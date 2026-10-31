@@ -69,6 +69,21 @@ pub fn promise_layout(version: u32) -> bool {
         PROMISE_VALUE_VERSION | FUNCTION_FIELD_VALUE_VERSION | HASHED_DICTIONARY_VALUE_VERSION
     )
 }
+/// Private fields of the guest's promise record that value16 readers
+/// (v35 `promise_values`) inspect to log a promise: its state and its
+/// settled value or reason. The compiler names the record's fields by these.
+pub const PROMISE_STATE_FIELD: &str = "state";
+pub const PROMISE_VALUE_FIELD: &str = "value";
+pub const PROMISE_REASON_FIELD: &str = "reason";
+
+/// Promise states as the guest stores them in its private promise record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum PromiseState {
+    Pending = 0,
+    Fulfilled = 1,
+    Rejected = 2,
+}
 /// Whether `version` admits the function tag: value14 (closure transport with
 /// an owner catalog) and value17 and value18 (function fields read through
 /// their closure envelope).
@@ -252,7 +267,20 @@ pub fn wide_field_mask(count: usize) -> u128 {
     if count >= MAX_WIDE_RECORD_FIELDS {
         u128::MAX
     } else {
-        (1u128 << count) - 1
+        slot_bit(count) - 1
+    }
+}
+/// The bit of `slot` (below [`MAX_WIDE_RECORD_FIELDS`]) in a slot-indexed
+/// set, built from 64-bit shifts: a variable 128-bit shift is a
+/// compiler-runtime call in 32-bit Wasm, where the linked readers run.
+#[must_use]
+#[inline]
+pub fn slot_bit(slot: usize) -> u128 {
+    const HALF: usize = u64::BITS as usize;
+    if slot < HALF {
+        u128::from(1u64 << slot)
+    } else {
+        u128::from(1u64 << (slot - HALF)) << HALF
     }
 }
 /// Read `words` consecutive little-endian presence or mask words at `at` as one
@@ -317,7 +345,10 @@ pub use primitive::{PrimitiveBox, string_range};
 mod reference;
 #[cfg(feature = "std")]
 pub use reference::validate_aggregate;
-pub use reference::{ReferenceBox, validate_aggregate_in};
+pub use reference::{
+    RecordEntry, RecordShape, ReferenceBox, read_record_in, read_record_with, record_descriptor,
+    validate_aggregate_in,
+};
 
 /// What a module's layout-bound readers may accept (v38 `program_limits`
 /// foundation): the static region holding its descriptors, keys and schemas,

@@ -66,6 +66,14 @@ pub fn entry<T>(body: impl FnOnce() -> T) -> T {
     result
 }
 
+/// Whether the running [`entry`] continued its arena above the guest heap's
+/// end, where the guest allocator grows: its allocations may then lie where
+/// a guest block is about to be placed (owned results stage through the
+/// result buffer instead, [`crate::text::owned`]).
+pub fn spilled() -> bool {
+    LIMIT.load(Relaxed) == UNBOUNDED && !GUEST.load(Relaxed)
+}
+
 /// While set, the entry allocates from guest blocks ([`scratch`]).
 static GUEST: AtomicBool = AtomicBool::new(false);
 /// The size of the newest guest scratch block.

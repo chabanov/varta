@@ -918,6 +918,8 @@ mod linked_intrinsic_tests;
 #[cfg(test)]
 mod linked_json_tests;
 #[cfg(test)]
+mod linked_stringify_tests;
+#[cfg(test)]
 mod linked_value_tests;
 #[cfg(test)]
 mod reclamation_tests;

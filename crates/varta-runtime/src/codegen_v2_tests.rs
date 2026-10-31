@@ -622,8 +622,8 @@ const V38_LIMIT_CASES: [&str; 2] = ["data_limit_cases", "json_limit_cases"];
 /// 9558). Before instantiation left guest fuel alone, macOS hid both by
 /// charging v37 a 16 KiB page for its data-segment copy.
 const COSTLIER_UNDER_V38: [(&str, u64, u64); 2] = [
-    ("unknown_cases/assertions.ts", 24_938, 26_166),
-    ("value15_cases/values.ts", 73_371, 77_988),
+    ("unknown_cases/assertions.ts", 24_938, 26_163),
+    ("value15_cases/values.ts", 73_371, 78_018),
 ];
 
 /// Every runtime case program behaves identically under v37 and v38: same
@@ -631,8 +631,12 @@ const COSTLIER_UNDER_V38: [(&str, u64, u64); 2] = [
 /// like (except [`COSTLIER_UNDER_V38`]): v38 charges no more for guest
 /// instructions than v37 does, with the host work of both charged at the
 /// published fair rates (`varta_common::fuel`; v37 is rated by a test-only
-/// switch). HTTP services are not started; network requests are denied (no
-/// grant), timers granted.
+/// switch). Linked serialization and logged text cost their instructions,
+/// above those rates on record-heavy values (`linked_stringify_tests`,
+/// pinned there and open in the development plan), so the fuel comparison of
+/// a program that serializes or logs a value runs its v38 build that imports
+/// them (`host_import_test_hook`, charged at the fair rates). HTTP services
+/// are not started; network requests are denied (no grant), timers granted.
 #[test]
 fn case_corpus_behaves_identically_under_v38() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -672,6 +676,24 @@ fn case_corpus_behaves_identically_under_v38() {
             continue;
         }
         let (before, after) = (run_rated(old, &grants, 1), run_with(new, &grants, 1));
+        let hosted = varta_compiler::host_import_test_hook::compile_with_profile(
+            &source,
+            V38,
+            &[
+                varta_common::HostOperation::JsonStringifyOwned,
+                varta_common::HostOperation::ValueFormatV12,
+            ],
+        )
+        .unwrap();
+        let fuel = if hosted == *new {
+            after.fuel
+        } else {
+            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
+            let run = run_with(&hosted, &grants, 1);
+            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
+            assert_eq!(run.lines, after.lines, "{}", path.display());
+            run.fuel
+        };
         // Fuel, or the BigInt work budget derived from it.
         let exhausted = |run: &Run| {
             run.error
@@ -683,7 +705,7 @@ fn case_corpus_behaves_identically_under_v38() {
             .find(|(case, ..)| path.ends_with(case))
         {
             assert_eq!(
-                (before.fuel, after.fuel),
+                (before.fuel, fuel),
                 (*old_fuel, *new_fuel),
                 "{}",
                 path.display()
@@ -692,10 +714,10 @@ fn case_corpus_behaves_identically_under_v38() {
         } else {
             // Both may run out of the same budget (a fair charge empties it).
             assert!(
-                after.fuel <= before.fuel || exhausted(&before) && exhausted(&after),
+                fuel <= before.fuel || exhausted(&before) && exhausted(&after),
                 "{}: v38 {} > v37 {} ({:?} / {:?})",
                 path.display(),
-                after.fuel,
+                fuel,
                 before.fuel,
                 after.error,
                 before.error

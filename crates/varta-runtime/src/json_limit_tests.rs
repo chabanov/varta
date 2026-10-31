@@ -162,14 +162,32 @@ fn v38_json_nesting_stops_at_the_host_depth_ceiling() {
     assert!(error.contains("checked JSON depth limit"), "{error}");
 }
 
-/// The owned serializer allocates through the module's value ABI helpers,
-/// which keep their host-free validation; the v38 module binds
-/// `json_stringify_owned` and never the v37 result-buffer import.
+/// V38 links the owned serializer: the module imports neither
+/// `json_stringify_owned` nor the v37 result-buffer import and exports no
+/// value ABI helpers for a host. The host import (the compiler's
+/// host-import test switch) allocates through those helpers, which keep
+/// their host-free validation.
 #[test]
 fn v38_owned_serializer_binds_host_free_value_helpers() {
     use crate::contract_tests::export_index;
     let source = "export function main():void{console.log(JSON.stringify([1]));}";
-    let bytes = compile(source, V38);
+    let linked = compile(source, V38);
+    let inspection = VartaRuntime::new().inspect_module(&linked).unwrap();
+    let names: Vec<_> = inspection.imports.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, ["log_string16"]);
+    assert!(
+        !inspection
+            .exports
+            .iter()
+            .any(|e| e == varta_common::value::VALUE_ALLOCATE)
+    );
+    let bytes = varta_compiler::host_import_test_hook::compile_with_profile(
+        source,
+        V38,
+        &[varta_common::HostOperation::JsonStringifyOwned],
+    )
+    .unwrap();
+    crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
     let inspection = VartaRuntime::new().inspect_module(&bytes).unwrap();
     let names: Vec<_> = inspection.imports.iter().map(|i| i.name.as_str()).collect();
     assert!(names.contains(&"json_stringify_owned"), "{names:?}");
@@ -204,6 +222,7 @@ fn v38_owned_serializer_binds_host_free_value_helpers() {
         vec![data]
     });
     let error = VartaRuntime::new().validate_module(&tampered).unwrap_err();
+    crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
     assert!(error.to_string().contains("signature mismatch"), "{error}");
 }
 

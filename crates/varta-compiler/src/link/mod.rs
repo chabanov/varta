@@ -33,9 +33,57 @@ pub(crate) struct GuestValues {
 }
 
 /// Whether a module of `profile` links `operation`: the profile's linked
-/// intrinsics, except (test-only, [`json_hook`]) the checked JSON parse.
+/// intrinsics, except (test-only, [`json_hook`]) the checked JSON parse and
+/// (test-only, [`import_hook`]) the operations the hook imports.
 pub(crate) fn links(profile: LanguageProfile, operation: HostOperation) -> bool {
-    profile.links(operation) && !(operation == HostOperation::JsonParseV19 && json_hook::enabled())
+    profile.links(operation)
+        && !(operation == HostOperation::JsonParseV19 && json_hook::enabled())
+        && !import_hook::imports(operation)
+}
+
+/// Whether the linked `operation` returns its text as an owned guest string
+/// (v38): its pointer, with the byte length in `env_result_len`, a fresh
+/// unrooted block from the guest allocator that the call site packs into a
+/// string handle instead of copying it out of the result buffer.
+pub(crate) fn owned_text(profile: LanguageProfile, operation: HostOperation) -> bool {
+    links(profile, operation)
+        && (operation.returns_string()
+            || matches!(
+                operation,
+                HostOperation::BigIntToString | HostOperation::BigIntToStringV2
+            ))
+}
+
+/// Test-only switch: while set on the current thread, v38 modules import
+/// the listed linked operations from the host instead of linking them, so
+/// tests compare linked serialization with the host imports. Importing
+/// `value_format_v12` means logging through the host's `value_log_v12`.
+pub(crate) mod import_hook {
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    use std::cell::RefCell;
+    use varta_common::HostOperation;
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    thread_local! {
+        static IMPORTED: RefCell<Vec<HostOperation>> = const { RefCell::new(Vec::new()) };
+    }
+    /// Whether the switch imports `operation` on this thread.
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    pub(crate) fn imports(operation: HostOperation) -> bool {
+        IMPORTED.with(|imported| imported.borrow().contains(&operation))
+    }
+    /// Without the test switch nothing linked is imported.
+    #[cfg(not(any(test, feature = "suspension-test-hook")))]
+    pub(crate) fn imports(_: HostOperation) -> bool {
+        false
+    }
+    /// Run `f` with `operations` imported on this thread.
+    #[cfg(any(test, feature = "suspension-test-hook"))]
+    pub(crate) fn with<T>(operations: &[HostOperation], f: impl FnOnce() -> T) -> T {
+        IMPORTED.with(|imported| *imported.borrow_mut() = operations.to_vec());
+        let result = f();
+        IMPORTED.with(|imported| imported.borrow_mut().clear());
+        result
+    }
 }
 
 /// Test-only switch: while enabled on the current thread, v38 modules import

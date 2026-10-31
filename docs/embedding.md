@@ -360,7 +360,7 @@ profile may import.
 | `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
 | `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
 | `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 53 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 51 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -424,13 +424,14 @@ implements **none** of them and MUST reject a module of such a profile that
 imports one (validation step 5). What remains for a host is the
 **Admitted under** column of the [host operation table](#host-operation-table):
 logging, the clock and entropy, the capability-checked environment, file,
-network and exit operations, timers, the scheduler and the operations listed
-under [Linked intrinsics pending](#linked-intrinsics-pending).
+network and exit operations, timers, the scheduler, KV storage, events,
+permissions and the view protocol: effects only
+([what is linked](#linked-intrinsics-what-is-linked)).
 
 <!-- generated:embedding-linked-intrinsics:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Profile | Linked, never imported | Linked stack |
 | --- | --- | --- |
-| `checked-f64-utf16-v38` | `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
+| `checked-f64-utf16-v38` | `value_format_v12`, `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11`, `value_is_array_v11`, `value_is_error_class_v7`, `json_parse_v19`, `primitive_to_string_v6`, `primitive_to_number_v6`, `bigint_from_value_v5`, `json_stringify_owned`, `primitive_compare`, `primitive_equal`, `bigint_width_v2`, `bigint_to_string_v2`, `bigint_compare_string`, `bigint_width`, `bigint_binary`, `bigint_unary`, `bigint_from_number`, `bigint_from_string`, `bigint_to_string`, `bigint_to_number`, `bigint_compare`, `bigint_compare_number`, `number_parse_int`, `number_parse_float`, `number_to_fixed`, `number_to_exponential`, `number_to_precision`, `number_to_string`, `primitive_to_number`, `primitive_to_string`, `string_char_at16`, `string_char_code_at16`, `string_to_upper_case16`, `string_to_lower_case16`, `number_remainder`, `number_power`, `number_acos`, `number_acosh`, `number_asin`, `number_asinh`, `number_atan`, `number_atanh`, `number_atan2`, `number_cbrt`, `number_cos`, `number_cosh`, `number_exp`, `number_expm1`, `number_log`, `number_log1p`, `number_log10`, `number_log2`, `number_sin`, `number_sinh`, `number_tan`, `number_tanh` | 16384 bytes in the intrinsic region of memory 0 (`abi::INTRINSIC_STACK_BYTES`) |
 <!-- generated:embedding-linked-intrinsics:end -->
 
 - **One memory.** A linked module has exactly one memory, so every engine
@@ -444,10 +445,11 @@ under [Linked intrinsics pending](#linked-intrinsics-pending).
   0 within its maximum like the guest allocator. A host never reads or writes the intrinsic region and
   needs no extra memory check: the region is part of memory 0, under its
   maximum and the memory budget. Linked code reaches guest values only
-  through compiler-generated `memory.copy` accessors and writes results
-  exactly where a host would (string results at `abi::RESULT_BASE`, with
-  `env_result_len`). Nothing survives a call: the arena is reset on entry and
-  a nested entry traps.
+  through compiler-generated accessors, and returns a string result as a
+  fresh guest string from the module's own allocator (its pointer, with
+  `env_result_len`); BigInt payloads still use the result buffer at
+  `abi::RESULT_BASE`. Nothing survives a call: the arena is reset on entry
+  and a nested entry traps.
 - **Budgets.** Linked operations are guest code: they consume fuel instead of a
   host call, and their failures (a noncanonical argument) are traps, where
   the reference host reports a fatal error for the same calls. An exhausted
@@ -463,7 +465,7 @@ under [Linked intrinsics pending](#linked-intrinsics-pending).
   unit below the correctly rounded value), and they may differ from a
   v37 module on the same host.
 
-#### Linked intrinsics pending
+#### Linked intrinsics: what is linked
 
 V38 links the value18 primitive conversions (`primitive_to_string_v6`,
 `primitive_to_number_v6`), the comparisons (`primitive_compare`,
@@ -473,20 +475,21 @@ V38 links the value18 primitive conversions (`primitive_to_string_v6`,
 `value_is_error_class_v7`): the compiler answers their common cases inline
 and links the shared library code behind that
 ([fast paths](architecture.md#linked-intrinsics-linked_intrinsics)).
-`json_parse_v19` is linked too (the shared `no_std` decoder
-`varta_common::json::scan` and builder `varta_common::json::build`, which the
-reference host's recoverable imports of earlier profiles run too). Two
-imports still read value layouts beyond primitive and BigInt cells:
-`json_stringify_owned` (checked JSON over records, arrays, dictionaries and
-schemas; it allocates through the guest's value ABI exports and is charged at
-the [fair rates](#fair-host-fuel-v38)) and `value_log_v12` (logging stays a
-host effect, but its rendering of records, arrays and dictionaries is the JSON
-diagnostic renderer). A host that implements only the documented effects runs
-every v38 module that imports neither; their contracts stay
-[unstable](#what-is-unstable). Linking them needs the JSON encoder in the
-`no_std` core and allocating linked call sites, the remaining work of the v38
-linked-intrinsics stream
-([development plan](development-plan.md#batch-v38-in-development)).
+Checked JSON is linked as well: `json_parse_v19` (the shared `no_std`
+decoder `varta_common::json::scan` and builder `varta_common::json::build`,
+which the reference host's recoverable imports of earlier profiles run too)
+and `json_stringify_owned` (the shared value18 encoder
+`varta_intrinsics::json`), and so is the text of a logged value,
+`value_format_v12`: a v38 module logs a value by passing that text to
+`log_string16`, and no profile admits the earlier renderer `value_log_v12`
+([linked serialization](architecture.md#linked-serialization-and-logging-v38)).
+Every text result of linked code is an owned guest string, so results
+larger than the 1 MiB result buffer need nothing from a host. No v38 import
+reads value layouts beyond primitive and BigInt cells: a host that
+implements only the documented effects runs every v38 module. Under v38,
+`log_string16` reads its argument within the profile's string limit (the
+[data limits](architecture.md#data-limits-data_limits)); earlier profiles
+keep the 1 MiB limit.
 
 ## Memory layout and encodings
 
@@ -1411,7 +1414,7 @@ import the operation, as contiguous runs in registry order.
 | `event_text` | (f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
 | `event_watch` | (f64, f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `json_parse_v19` | (i32, i32, i32, i32) → (i64) | 34 | none | yes | — | — |
-| `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `json_stringify_owned` | (i32, i32, i32) → (i64, i32) | 34 | none | — | — | — |
 | `kv_close` | (f64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `kv_commit` | (i32, i32) → (f64) | 34 | `kv.write` | — | — | `checked-f64-utf16-v38` |
 | `kv_entry` | (f64, f64) → (i32) | 34 | none | yes | yes | `checked-f64-utf16-v38` |
@@ -1427,9 +1430,10 @@ import the operation, as contiguous runs in registry order.
 | `permission_request` | (i32, i32) → (f64) | 34 | none | — | — | `checked-f64-utf16-v38` |
 | `primitive_to_number_v6` | (i64) → (f64) | 34 | none | — | — | — |
 | `primitive_to_string_v6` | (i64) → (i32) | 34 | none | yes | yes | — |
+| `value_format_v12` | (i64) → (i32) | 34 | none | yes | yes | — |
 | `value_is_array_v11` | (i64) → (i32) | 34 | none | — | — | — |
 | `value_is_error_class_v7` | (i64, i32) → (i32) | 34 | none | — | — | — |
-| `value_log_v12` | (i64) → () | 34 | none | — | — | `checked-f64-utf16-v38` |
+| `value_log_v12` | (i64) → () | 34 | none | — | — | — |
 | `value_nullish_equal_v11` | (i64, i64) → (i32) | 34 | none | — | — | — |
 | `value_nullish_v11` | (i64) → (i32) | 34 | none | — | — | — |
 | `value_strict_equal_v11` | (i64, i64) → (i32) | 34 | none | — | — | — |
@@ -1548,9 +1552,10 @@ before an `unreachable` trap. A host SHOULD report such a trap, and only an
 `unreachable` trap, as the named resource failure (the reference host returns
 `RuntimeError::Resource`: `resource limit: <resource> (requested <n>)`); the
 globals carry no authority and the failure is never delivered to the guest.
-`json_stringify_owned` (v38) calls back the module's validated host-free
-`varta.value_abi.allocate`/`retain` exports to place its result in an owned
-guest string; the host buffer it uses is bounded by the memory budget. An authorized exit ends it with its exit code (which may
+`json_stringify_owned` (v38) is linked; the reference host's import (kept
+for its comparison tests, admitted by no profile) calls back the module's
+validated host-free `varta.value_abi.allocate`/`retain` exports to place its
+result in an owned guest string. An authorized exit ends it with its exit code (which may
 be 0) and is not an exception. Neither is ever delivered to the guest as a
 catchable value.
 
@@ -2863,8 +2868,7 @@ accepts that the format may change in a later profile:
   functions and frames (value ABI 2 and later), and therefore every layout-bound
   pure import of the profiles that import them: `json_*`, `value_*`,
   `union_*`, `primitive_*`, `bigint_*` and the exception renderers (v38 links
-  all of them except `json_parse_v19`, `json_stringify_owned` and
-  `value_log_v12`);
+  all of them, and logs a value as linked text through `log_string16`);
 - the exact text of `number_to_*` formatting and parsing beyond the ECMAScript
   algorithms the profile sections cite;
 - the structural rules of `varta.functions` beyond the

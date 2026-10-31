@@ -32,9 +32,11 @@ fn invalid() -> ValueAbiError {
 fn invalid_table() -> ValueAbiError {
     ValueAbiError("noncanonical dictionary table".into())
 }
+#[inline(always)]
 fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
     data.u32_at(at).ok_or_else(invalid)
 }
+#[inline(always)]
 fn wide<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u64, ValueAbiError> {
     Ok(u64::from(word(data, at)?) | (u64::from(word(data, at + 4)?) << i32::BITS))
 }
@@ -126,26 +128,20 @@ impl Dictionary {
         if word(data, ptr + 4)? as usize != fields.len() {
             return Err(invalid());
         }
-        // The aggregate check validated entries, kinds and presence; require
-        // exactly the canonical required slots.
-        for (slot, (name, expected)) in fields.iter().enumerate() {
-            let found = (0..fields.len()).any(|index| {
-                let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
-                let (Ok(key), Ok(len), Ok(raw), Ok(kind)) = (
-                    word(data, entry),
-                    word(data, entry + 4),
-                    word(data, entry + 8),
-                    word(data, entry + 12),
-                ) else {
-                    return false;
-                };
-                raw as usize == slot
-                    && kind == *expected as u32
-                    && data
-                        .borrow(key as usize, len as usize)
-                        .is_some_and(|bytes| *bytes == *name.as_bytes())
-            });
-            if !found {
+        // The aggregate check validated entries, kinds and presence, and the
+        // entries' slots are distinct and cover every slot: require exactly
+        // the canonical required slots, each entry read once.
+        for index in 0..fields.len() {
+            let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
+            let raw = word(data, entry + 8)? as usize;
+            let Some((name, expected)) = fields.get(raw) else {
+                return Err(invalid());
+            };
+            if word(data, entry + 12)? != *expected as u32
+                || data
+                    .borrow(word(data, entry)? as usize, word(data, entry + 4)? as usize)
+                    .is_none_or(|bytes| *bytes != *name.as_bytes())
+            {
                 return Err(invalid());
             }
         }

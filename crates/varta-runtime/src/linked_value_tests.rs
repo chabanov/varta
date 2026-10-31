@@ -745,14 +745,6 @@ fn v38_validation_rejects_imported_conversions_comparisons_and_readers() {
     }
 }
 
-/// Value-layout-bound operations v38 still imports: checked JSON (linked by
-/// the JSON stream) and `value_log_v12`, whose rendering of records, arrays
-/// and dictionaries is the JSON diagnostic renderer.
-const PENDING: [HostOperation; 3] = [
-    HostOperation::JsonParseV19,
-    HostOperation::JsonStringifyOwned,
-    HostOperation::ValueLogV12,
-];
 /// Whether `operation` reads value layouts beyond primitive and BigInt cells
 /// or converts primitive cells: the operations a contract-only host cannot
 /// implement from `docs/embedding.md`.
@@ -767,11 +759,12 @@ fn layout_bound(operation: HostOperation) -> bool {
 }
 
 /// The generic v38 fixtures (the keyed view, the Markdown block parser, the
-/// dictionary workload and the TSX application) import effects only, apart
-/// from the pending JSON operations; the operations of this stream are
-/// linked.
+/// dictionary workload, the TSX application and a JSON round trip that logs
+/// records, arrays, dictionaries and unions) import effects only: checked
+/// JSON, serialization and the logged text of a value are linked, and
+/// logging is `log_string16`.
 #[test]
-fn v38_fixtures_import_only_effects_and_pending_json() {
+fn v38_fixtures_import_only_effects() {
     let dictionary = "export function main(): void { const d: Record<string, number> = {}; \
         for (let i = 0; i < 50; i++) { d[\"k\" + String(i)] = i; } let t = 0; \
         for (let i = 0; i < 50; i++) { const v = d[\"k\" + String(i)]; if (v !== undefined) { t = t + v; } } \
@@ -786,6 +779,10 @@ fn v38_fixtures_import_only_effects_and_pending_json() {
             compile(include_str!("codegen_v2_fixtures/markdown.ts"), V38),
         ),
         ("dictionary", compile(dictionary, V38)),
+        (
+            "JSON round trip and logged records",
+            compile(include_str!("codegen_v2_fixtures/json_log.ts"), V38),
+        ),
         (
             "TSX app",
             crate::view_tests::compile_tsx(
@@ -806,8 +803,12 @@ fn v38_fixtures_import_only_effects_and_pending_json() {
         for operation in &imported {
             assert!(!operation.linked(), "{name} imports {operation:?}");
             assert!(
-                !layout_bound(*operation) || PENDING.contains(operation),
+                !layout_bound(*operation),
                 "{name} imports the layout-bound {operation:?}"
+            );
+            assert!(
+                !matches!(operation, HostOperation::ValueLogV12),
+                "{name} logs through value_log_v12"
             );
         }
     }

@@ -45,7 +45,14 @@ pub(crate) fn classify(
             Some(limit) => RuntimeError::Execution(wasmtime::Error::new(
                 varta_common::json::JsonDecodeError::Limit(limit),
             )),
-            None => error,
+            // V38 linked serialization: the host serializer's failure.
+            None => {
+                match varta_intrinsics::json::EncodeError::from_linked_code(code, requested as u32)
+                {
+                    Some(failure) => RuntimeError::Execution(wasmtime::Error::new(failure)),
+                    None => error,
+                }
+            }
         },
     }
 }

@@ -52,6 +52,8 @@ fn register_log(
         move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
             caller.data_mut().tick()?;
             let value = read(&mut caller, value, version)?;
+            // The values the rendering visits: one for a scalar.
+            let mut visited = 1;
             let display = match value.kind {
                 Kind::BigInt => crate::bigint::native_work(&mut caller, |data, budget| {
                     let text = crate::bigint::integer(data, value.payload as i64, budget)?
@@ -136,7 +138,9 @@ fn register_log(
                         );
                         caller.set_fuel(budget.remaining_work())?;
                         caller.data().check_budget()?;
-                        String::from_utf8(result?).map_err(wasmtime::Error::new)?
+                        let (text, values) = result?;
+                        visited = values;
+                        String::from_utf8(text).map_err(wasmtime::Error::new)?
                     } else {
                         let module = caller.data().module;
                         String::from_utf8(crate::json::render_reference_in(
@@ -151,6 +155,17 @@ fn register_log(
                 }
                 _ => return Err(wasmtime::Error::msg("invalid value kind")),
             };
+            // Fair fuel (v38 rates, charged only to a rated module): the
+            // rendering is JSON serialization's work, the values visited and
+            // the text's code units, before the line is emitted.
+            crate::fair_fuel::charge(
+                &mut caller,
+                varta_common::fuel::work(visited, varta_common::fuel::JSON_STRINGIFY_VALUE)
+                    .saturating_add(varta_common::fuel::work(
+                        display.encode_utf16().count(),
+                        varta_common::fuel::JSON_STRINGIFY_UNIT,
+                    )),
+            )?;
             caller.data_mut().emit(format!("varta log: {display}"))
         },
     )?;

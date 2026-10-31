@@ -70,7 +70,10 @@ pub(crate) fn module_with(
                 varta_common::HostScalar::F64 => matches!(actual, wasmtime::ValType::F64),
                 varta_common::HostScalar::I64 => matches!(actual, wasmtime::ValType::I64),
             };
-        if language.profile.is_some_and(|p| p.links(host)) && !host_json_import(host) {
+        if language.profile.is_some_and(|p| p.links(host))
+            && !host_json_import(host)
+            && !host_import::admitted(host)
+        {
             return Err(wasmtime::Error::msg(format!(
                 "pure intrinsic must be linked into the module, not imported: {}",
                 import.name()
@@ -79,7 +82,7 @@ pub(crate) fn module_with(
         }
         if language
             .profile
-            .is_some_and(|p| p.host_operation(host) != host)
+            .is_some_and(|p| p.host_operation(host) != host && !host_import::admitted(host))
             || host.minimum_abi() > version
             || ty.params().len() != params.len()
             || ty.results().len() != results.len()
@@ -574,6 +577,28 @@ fn host_json_import(host: varta_common::HostOperation) -> bool {
 #[cfg(not(test))]
 fn host_json_import(_: varta_common::HostOperation) -> bool {
     false
+}
+/// Test-only: the comparisons of linked serialization with the host
+/// imports admit v38 modules that import `json_stringify_owned` and log
+/// through `value_log_v12` (`host_import_test_hook`).
+pub(crate) mod host_import {
+    #[cfg(test)]
+    thread_local! {
+        pub(crate) static ADMITTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    /// Whether a test admitted importing `host` although v38 links it.
+    #[cfg(test)]
+    pub(crate) fn admitted(host: varta_common::HostOperation) -> bool {
+        matches!(
+            host,
+            varta_common::HostOperation::JsonStringifyOwned
+                | varta_common::HostOperation::ValueLogV12
+        ) && ADMITTED.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    pub(crate) fn admitted(_: varta_common::HostOperation) -> bool {
+        false
+    }
 }
 #[cfg(test)]
 pub(crate) mod host_json {

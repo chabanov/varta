@@ -404,7 +404,7 @@ fn decimal(f: &mut Function, allocate: u32, linked: FastPaths, locals: Decimal) 
 /// `(number: f64) -> string`: `String(n)` of a Number boxed nowhere. A
 /// Number the decimal writer does not answer is boxed in a fresh cell for
 /// the linked conversion (the BigInt-free `primitive_to_string`).
-pub(super) fn number_text(allocate: u32, snapshot: u32, linked: FastPaths) -> Function {
+pub(super) fn number_text(allocate: u32, linked: FastPaths) -> Function {
     const NUMBER: u32 = 0;
     const LENGTH: u32 = 1;
     const DEST: u32 = 2;
@@ -463,16 +463,16 @@ pub(super) fn number_text(allocate: u32, snapshot: u32, linked: FastPaths) -> Fu
             I::I64Const((UNION_BYTES as i64) << LENGTH_SHIFT),
             I::I64Or,
             I::Call(linked.number_text.unwrap_or(0)),
-            I::GlobalGet(linked.result_len),
-            I::Call(snapshot),
-            I::End,
         ],
     );
+    // The linked conversion returns an owned string.
+    instructions(&mut f, super::owned_text(linked.result_len));
+    f.instruction(&I::End);
     f
 }
 
 /// `(cell: i64) -> string`.
-pub(super) fn text(allocate: u32, snapshot: u32, linked: FastPaths, bigint: bool) -> Function {
+pub(super) fn text(allocate: u32, linked: FastPaths, bigint: bool) -> Function {
     const CELL: u32 = 0;
     const TAG: u32 = 1;
     const LENGTH: u32 = 2;
@@ -554,8 +554,8 @@ pub(super) fn text(allocate: u32, snapshot: u32, linked: FastPaths, bigint: bool
             ],
         );
     }
-    // Every other cell: the linked conversion through the result buffer,
-    // the BigInt one only for a BigInt.
+    // Every other cell: the linked conversion into an owned string, the
+    // BigInt one only for a BigInt.
     if bigint {
         instructions(&mut f, is(TAG, ValueKind::BigInt));
         instructions(
@@ -576,10 +576,8 @@ pub(super) fn text(allocate: u32, snapshot: u32, linked: FastPaths, bigint: bool
             [I::LocalGet(CELL), I::Call(linked.number_text.unwrap_or(0))],
         );
     }
-    instructions(
-        &mut f,
-        [I::GlobalGet(linked.result_len), I::Call(snapshot), I::End],
-    );
+    instructions(&mut f, super::owned_text(linked.result_len));
+    f.instruction(&I::End);
     f
 }
 

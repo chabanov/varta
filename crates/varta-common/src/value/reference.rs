@@ -164,6 +164,7 @@ impl ReferenceBox {
 fn invalid() -> ValueAbiError {
     ValueAbiError("noncanonical reference union".into())
 }
+#[inline(always)]
 fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
     data.u32_at(at).ok_or_else(invalid)
 }
@@ -215,8 +216,34 @@ fn aggregate<M: Memory + ?Sized>(
         Vector::read_in(data, cell.payload, version, module)?;
         return Ok(());
     }
-    let ptr = cell.payload as u32 as usize;
-    let length = (cell.payload >> i32::BITS) as usize;
+    if cell.kind == ValueKind::Record {
+        return read_record_in(data, cell.payload, version, &module, |_| {}, |_| {});
+    }
+    let (ptr, length, header) = block(data, cell.payload, HEAP_ARRAY_FLAG)?;
+    let meta = word(data, ptr)?;
+    let count = word(data, ptr + 4)? as usize;
+    if count > module.limits.data.array_elements
+        || length != ARRAY_META_BYTES + count * ARRAY_SLOT_BYTES
+    {
+        return Err(invalid());
+    }
+    let kind = ValueKind::from_tag(meta)
+        .filter(|k| k.supported_by(version))
+        .ok_or_else(invalid)?;
+    if word(data, header + HEAP_LINK_OFFSET)? != u32::from(kind.is_reference()) {
+        return Err(invalid());
+    }
+    Ok(())
+}
+/// The `(pointer, length, header)` of a canonical managed record or legacy
+/// array block `payload` stamped `flag`.
+fn block<M: Memory + ?Sized>(
+    data: &M,
+    payload: u64,
+    flag: i32,
+) -> Result<(usize, usize, usize), ValueAbiError> {
+    let ptr = payload as u32 as usize;
+    let length = (payload >> i32::BITS) as usize;
     if ptr < abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES
         || !ptr.is_multiple_of(HEAP_ALIGNMENT)
     {
@@ -224,12 +251,6 @@ fn aggregate<M: Memory + ?Sized>(
     }
     let header = ptr - abi::STRING_HEADER_BYTES;
     let size = word(data, header)? as usize;
-    let is_array = cell.kind == ValueKind::Array;
-    let flag = if is_array {
-        HEAP_ARRAY_FLAG
-    } else {
-        HEAP_RECORD_FLAG
-    };
     if length < RECORD_META_BYTES
         || size < abi::STRING_HEADER_BYTES
         || length > size - abi::STRING_HEADER_BYTES
@@ -239,31 +260,215 @@ fn aggregate<M: Memory + ?Sized>(
     {
         return Err(invalid());
     }
-    let meta = word(data, ptr)?;
-    let count = word(data, ptr + 4)? as usize;
-    if is_array {
-        if count > module.limits.data.array_elements
-            || length != ARRAY_META_BYTES + count * ARRAY_SLOT_BYTES
+    Ok((ptr, length, header))
+}
+
+/// One field of a record as [`read_record_in`] validates it: its
+/// descriptor entry and its slot.
+#[derive(Debug, Clone, Copy)]
+pub struct RecordEntry {
+    /// The UTF-8 key's range in static data.
+    pub key: usize,
+    pub len: usize,
+    pub slot: usize,
+    /// The declared kind (a union or `undefined` for an optional field).
+    pub kind: ValueKind,
+    pub optional: bool,
+    /// Whether the field is an own property.
+    pub present: bool,
+    /// The slot's payload.
+    pub payload: u64,
+}
+/// Records with at most this many fields keep their borrowed names in
+/// place for the distinctness check; larger ones collect and sort them.
+const INLINE_NAMES: usize = 8;
+
+/// A validated record descriptor in static data: everything
+/// [`read_record_in`] checks that depends on the descriptor alone (its
+/// version and count, each entry's key, slot, kind and optional flag,
+/// distinct names, the slot and edge masks). Static data does not change
+/// while a reader runs, so a reader of many records of one shape (the
+/// linked serializer) validates the shape once and each record with
+/// [`read_record_with`].
+#[derive(Debug, Clone, Default)]
+pub struct RecordShape {
+    descriptor: usize,
+    count: usize,
+    /// The entries in descriptor order (`present` and `payload` unset).
+    entries: Vec<RecordEntry>,
+    /// Slots holding references (the record's link word, or the wide
+    /// record's trailing edge mask).
+    reference_mask: u128,
+}
+impl RecordShape {
+    /// Validate the descriptor at `descriptor` of a `count`-field record of
+    /// layout `version` within `module`.
+    pub fn read<M: Memory + ?Sized>(
+        data: &M,
+        descriptor: usize,
+        count: usize,
+        version: u32,
+        module: &ModuleBounds,
+    ) -> Result<Self, ValueAbiError> {
+        if count > max_record_fields(version)
+            || !module
+                .static_region
+                .contains(descriptor, descriptor_bytes(count))
+            || word(data, descriptor)? != version
+            || word(data, descriptor + 4)? as usize != count
         {
             return Err(invalid());
         }
-        let kind = ValueKind::from_tag(meta)
-            .filter(|k| k.supported_by(version))
-            .ok_or_else(invalid)?;
-        if word(data, header + HEAP_LINK_OFFSET)? != u32::from(kind.is_reference()) {
+        let mut slots = 0u128;
+        let mut reference_mask = 0u128;
+        let mut entries = Vec::with_capacity(count);
+        let mut inline = count <= INLINE_NAMES;
+        let mut names: Vec<Cow<'_, [u8]>> = Vec::new();
+        let mut inline_names: [&[u8]; INLINE_NAMES] = [&[]; INLINE_NAMES];
+        for index in 0..count {
+            let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
+            let key = word(data, entry)? as usize;
+            let len = word(data, entry + 4)? as usize;
+            let raw = word(data, entry + 8)?;
+            let slot = (raw & !OPTIONAL_FIELD_FLAG) as usize;
+            let optional = raw & OPTIONAL_FIELD_FLAG != 0;
+            if slot >= count
+                || slots & slot_bit(slot) != 0
+                || len > MAX_RECORD_KEY_BYTES
+                || !module.static_region.contains(key, len)
+                || key.checked_add(len).is_none_or(|end| end > data.size())
+            {
+                return Err(invalid());
+            }
+            let name = data.borrow(key, len).ok_or_else(invalid)?;
+            if !name.is_ascii() {
+                core::str::from_utf8(&name).map_err(|_| invalid())?;
+            }
+            match (name, inline_names.get_mut(index).filter(|_| inline)) {
+                (Cow::Borrowed(bytes), Some(inline_name)) => *inline_name = bytes,
+                (name, _) => {
+                    // A name the memory could not lend: collect them all.
+                    if inline {
+                        names.extend(
+                            inline_names[..index]
+                                .iter()
+                                .map(|name| Cow::Borrowed(*name)),
+                        );
+                        inline = false;
+                    }
+                    names.push(name);
+                }
+            }
+            let kind = word(data, entry + 12)
+                .ok()
+                .and_then(ValueKind::from_tag)
+                .filter(|k| k.supported_by(version))
+                .ok_or_else(invalid)?;
+            if optional
+                && !matches!(
+                    kind,
+                    ValueKind::Undefined | ValueKind::PrimitiveUnion | ValueKind::ReferenceUnion
+                )
+            {
+                return Err(invalid());
+            }
+            let bit = slot_bit(slot);
+            slots |= bit;
+            if kind.is_reference() {
+                reference_mask |= bit;
+            }
+            entries.push(RecordEntry {
+                key,
+                len,
+                slot,
+                kind,
+                optional,
+                present: false,
+                payload: 0,
+            });
+        }
+        // Field names are distinct.
+        let distinct_names = if inline {
+            let names = &inline_names[..count];
+            (1..names.len()).all(|index| !names[..index].contains(&names[index]))
+        } else {
+            distinct(&mut names)
+        };
+        if !distinct_names || slots != wide_field_mask(count) {
             return Err(invalid());
         }
-        return Ok(());
+        // A wide record's edge mask trails its descriptor.
+        if is_wide_record(count) {
+            let at = descriptor + RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY;
+            if read_slot_set(data, at, presence_words(count)).ok_or_else(invalid)? != reference_mask
+            {
+                return Err(invalid());
+            }
+        }
+        Ok(Self {
+            descriptor,
+            count,
+            entries,
+            reference_mask,
+        })
     }
-    if count > max_record_fields(version) || length != record_bytes(version, count) {
-        return Err(invalid());
+    /// The descriptor address this shape validated.
+    #[must_use]
+    pub fn descriptor(&self) -> usize {
+        self.descriptor
     }
-    let descriptor = meta as usize;
-    if !module
-        .static_region
-        .contains(descriptor, descriptor_bytes(count))
-        || word(data, descriptor)? != version
-        || word(data, descriptor + 4)? as usize != count
+    /// The field count this shape validated.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.count
+    }
+}
+
+/// The descriptor address and field count of the record block `payload`
+/// (`block` checked), for [`RecordShape::read`].
+pub fn record_descriptor<M: Memory + ?Sized>(
+    data: &M,
+    payload: u64,
+) -> Result<(usize, usize), ValueAbiError> {
+    let (ptr, _, _) = block(data, payload, HEAP_RECORD_FLAG)?;
+    Ok((word(data, ptr)? as usize, word(data, ptr + 4)? as usize))
+}
+
+/// Validate the record `payload` of layout `version` within `module`, as
+/// [`validate_aggregate_in`] does, reporting each field to `field` (in
+/// descriptor order) and each present slot to `order` (in insertion order)
+/// while it is checked: one pass for readers that need the fields, such as
+/// the linked serializer. What the callbacks received describes a canonical
+/// record only when the result is `Ok`.
+pub fn read_record_in<M: Memory + ?Sized>(
+    data: &M,
+    payload: u64,
+    version: u32,
+    module: &ModuleBounds,
+    field: impl FnMut(RecordEntry),
+    order: impl FnMut(usize),
+) -> Result<(), ValueAbiError> {
+    let (descriptor, count) = record_descriptor(data, payload)?;
+    let shape = RecordShape::read(data, descriptor, count, version, module)?;
+    read_record_with(data, payload, version, &shape, field, order)
+}
+
+/// [`read_record_in`] of a record whose descriptor `shape` validated: the
+/// record's own block, its presence and insertion order, its absent slots
+/// and its link word.
+pub fn read_record_with<M: Memory + ?Sized>(
+    data: &M,
+    payload: u64,
+    version: u32,
+    shape: &RecordShape,
+    mut field: impl FnMut(RecordEntry),
+    mut order: impl FnMut(usize),
+) -> Result<(), ValueAbiError> {
+    let (ptr, length, header) = block(data, payload, HEAP_RECORD_FLAG)?;
+    let count = shape.count;
+    if word(data, ptr)? as usize != shape.descriptor
+        || word(data, ptr + 4)? as usize != count
+        || length != record_bytes(version, count)
     {
         return Err(invalid());
     }
@@ -273,95 +478,48 @@ fn aggregate<M: Memory + ?Sized>(
     if present & !wide_field_mask(count) != 0 {
         return Err(invalid());
     }
-    let mut slots = 0u128;
-    let mut reference_mask = 0u128;
-    let mut names: Vec<Cow<'_, [u8]>> = Vec::with_capacity(count);
-    for index in 0..count {
-        let entry = descriptor + RECORD_DESCRIPTOR_HEADER + index * RECORD_DESCRIPTOR_ENTRY;
-        let key = word(data, entry)? as usize;
-        let len = word(data, entry + 4)? as usize;
-        let raw = word(data, entry + 8)?;
-        let slot = (raw & !OPTIONAL_FIELD_FLAG) as usize;
-        let optional = raw & OPTIONAL_FIELD_FLAG != 0;
-        if slot >= count
-            || slots & (1u128 << slot) != 0
-            || len > MAX_RECORD_KEY_BYTES
-            || !module.static_region.contains(key, len)
-            || key.checked_add(len).is_none_or(|end| end > data.size())
-        {
-            return Err(invalid());
-        }
-        let name = data.borrow(key, len).ok_or_else(invalid)?;
-        core::str::from_utf8(&name).map_err(|_| invalid())?;
-        names.push(name);
-        let kind = word(data, entry + 12)
-            .ok()
-            .and_then(ValueKind::from_tag)
-            .filter(|k| k.supported_by(version))
-            .ok_or_else(invalid)?;
-        if optional
-            && !matches!(
-                kind,
-                ValueKind::Undefined | ValueKind::PrimitiveUnion | ValueKind::ReferenceUnion
-            )
-        {
-            return Err(invalid());
-        }
-        let bit = 1u128 << slot;
-        slots |= bit;
-        if kind.is_reference() {
-            reference_mask |= bit;
-        }
-        if present & bit == 0 {
-            if !optional {
+    for entry in &shape.entries {
+        let slot = ptr + RECORD_META_BYTES + entry.slot * RECORD_SLOT_BYTES;
+        let payload =
+            u64::from(word(data, slot)?) | (u64::from(word(data, slot + 4)?) << i32::BITS);
+        let present = present & slot_bit(entry.slot) != 0;
+        if !present {
+            if !entry.optional {
                 return Err(invalid());
             }
-            let lo = word(data, ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES)?;
-            let hi = word(data, ptr + RECORD_META_BYTES + slot * RECORD_SLOT_BYTES + 4)?;
-            let payload = ((hi as u64) << i32::BITS) | lo as u64;
-            if kind == ValueKind::Undefined {
+            if entry.kind == ValueKind::Undefined {
                 if payload != 0 {
                     return Err(invalid());
                 }
-            } else {
-                let absent = PrimitiveBox::read(data, payload)?;
-                if absent.kind != ValueKind::Undefined {
-                    return Err(invalid());
-                }
+            } else if PrimitiveBox::read(data, payload)?.kind != ValueKind::Undefined {
+                return Err(invalid());
             }
         }
+        field(RecordEntry {
+            present,
+            payload,
+            ..*entry
+        });
     }
-    // Field names are distinct.
-    if !distinct(&mut names) {
-        return Err(invalid());
-    }
-    // A wide record's edge mask trails its descriptor; its link word is zero.
-    let (link, mask) = if is_wide_record(count) {
-        let at = descriptor + RECORD_DESCRIPTOR_HEADER + count * RECORD_DESCRIPTOR_ENTRY;
-        (
-            0,
-            read_slot_set(data, at, presence_words(count)).ok_or_else(invalid)?,
-        )
+    // A wide record's link word is zero (its edge mask trails the
+    // descriptor); a narrow record's link word is its edge mask.
+    let link = if is_wide_record(count) {
+        0
     } else {
-        (reference_mask as u32, reference_mask)
+        shape.reference_mask as u32
     };
-    if slots != wide_field_mask(count)
-        || word(data, header + HEAP_LINK_OFFSET)? != link
-        || mask != reference_mask
-    {
+    if word(data, header + HEAP_LINK_OFFSET)? != link {
         return Err(invalid());
     }
     let mut seen = 0u128;
     for index in 0..count {
-        let slot = word(data, ptr + order_offset(count) + index * 4)?;
+        let slot = word(data, ptr + order_offset(count) + index * 4)? as usize;
         if index < present.count_ones() as usize {
-            if slot as usize >= count
-                || seen & (1u128 << slot) != 0
-                || present & (1u128 << slot) == 0
-            {
+            if slot >= count || seen & slot_bit(slot) != 0 || present & slot_bit(slot) == 0 {
                 return Err(invalid());
             }
-            seen |= 1u128 << slot;
+            seen |= slot_bit(slot);
+            order(slot);
         } else if slot != 0 {
             return Err(invalid());
         }

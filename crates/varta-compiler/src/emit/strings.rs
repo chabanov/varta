@@ -531,18 +531,11 @@ impl Helper {
             Self::DictionaryPlace => dictionary_probe::place(),
             Self::DictionaryIndex => dictionary_probe::index(),
             Self::DictionaryInsertAt => dictionary_probe::insert_at(),
-            Self::PrimitiveText(bigint) => primitives::text(
-                helpers[&Self::Allocate],
-                helpers[&Self::Snapshot],
-                fast_paths,
-                bigint,
-            ),
+            Self::PrimitiveText(bigint) => {
+                primitives::text(helpers[&Self::Allocate], fast_paths, bigint)
+            }
             Self::PrimitiveNumber(bigint) => primitives::number(fast_paths, bigint),
-            Self::NumberText => primitives::number_text(
-                helpers[&Self::Allocate],
-                helpers[&Self::Snapshot],
-                fast_paths,
-            ),
+            Self::NumberText => primitives::number_text(helpers[&Self::Allocate], fast_paths),
             Self::StringNumber => primitives::string_number(
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
@@ -555,7 +548,7 @@ impl Helper {
             Self::PrimitiveEquals(cells) => {
                 primitives::equal(helpers[&Self::StringEquals], fast_paths, cells)
             }
-            Self::ValueTypeOf => readers::type_of(helpers[&Self::Snapshot], fast_paths),
+            Self::ValueTypeOf => readers::type_of(fast_paths),
             Self::ValueTruthy => readers::truthy(fast_paths),
             Self::ValueNullish => readers::kind_test(fast_paths, true),
             Self::ValueIsArray => readers::kind_test(fast_paths, false),
@@ -638,9 +631,9 @@ impl Helper {
     /// The helpers a fast-path helper calls.
     pub(super) fn fast_path_dependencies(self) -> &'static [Self] {
         match self {
-            Self::PrimitiveText(_) | Self::NumberText => &[Self::Allocate, Self::Snapshot],
+            // The linked conversions return owned strings (`link::owned_text`).
+            Self::PrimitiveText(_) | Self::NumberText | Self::ValueTypeOf => &[Self::Allocate],
             Self::StringNumber => &[Self::Allocate, Self::RootPush],
-            Self::ValueTypeOf => &[Self::Snapshot],
             Self::PrimitiveOrder(_) => &[Self::Compare],
             Self::PrimitiveEquals(_) | Self::ValueStrictEqual => &[Self::StringEquals],
             _ => &[],
@@ -699,6 +692,19 @@ pub(super) fn ascii_units() -> Vec<u8> {
     (0..text_codes::ASCII_UNITS)
         .flat_map(u16::to_le_bytes)
         .collect()
+}
+/// The handle of the owned string a linked v38 operation returned (its
+/// pointer on the stack, its byte length in the `result_len` global): packed
+/// in place, with no copy (`link::owned_text`).
+pub(super) fn owned_text(result_len: u32) -> [I<'static>; 6] {
+    [
+        I::I64ExtendI32U,
+        I::GlobalGet(result_len),
+        I::I64ExtendI32U,
+        I::I64Const(LENGTH_SHIFT as i64),
+        I::I64Shl,
+        I::I64Or,
+    ]
 }
 fn instructions(function: &mut Function, code: impl IntoIterator<Item = I<'static>>) {
     for instruction in code {

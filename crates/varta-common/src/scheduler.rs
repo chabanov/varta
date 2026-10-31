@@ -111,21 +111,11 @@ impl std::fmt::Display for RejectionReason {
     }
 }
 
-/// Private fields of the guest's promise record that value16 readers
-/// (v35 `promise_values`) inspect to log a promise: its state and its
-/// settled value or reason. The compiler names the record's fields by these.
-pub const PROMISE_STATE_FIELD: &str = "state";
-pub const PROMISE_VALUE_FIELD: &str = "value";
-pub const PROMISE_REASON_FIELD: &str = "reason";
-
-/// Promise states as the guest stores them in its private promise record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
-pub enum PromiseState {
-    Pending = 0,
-    Fulfilled = 1,
-    Rejected = 2,
-}
+/// The guest's private promise record (its fields and states), owned by the
+/// `no_std` value core, which the linked v38 renderer reads too.
+pub use crate::value::{
+    PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD, PromiseState,
+};
 
 /// Fatal scheduler failures. None of them is ever delivered to the guest as a
 /// rejection: each one terminates the execution.

@@ -14,6 +14,15 @@ fn read(
     ptr: i32,
     len: i32,
 ) -> Result<Vec<u8>, wasmtime::Error> {
+    read_within(caller, ptr, len, abi::MAX_STRING_BYTES)
+}
+/// [`read`] of a string of at most `limit` bytes.
+fn read_within(
+    caller: &mut Caller<'_, RuntimeContext>,
+    ptr: i32,
+    len: i32,
+    limit: usize,
+) -> Result<Vec<u8>, wasmtime::Error> {
     // V38 fair fuel: the argument's bytes (a negative length is rejected
     // below).
     crate::fair_fuel::bytes(caller, usize::try_from(len).unwrap_or(0))?;
@@ -21,7 +30,7 @@ fn read(
         return Err(wasmtime::Error::msg("missing memory"));
     };
     // The host copies: the result transfer needs the caller mutably.
-    string::read(memory.data(&*caller), ptr, len, abi::MAX_STRING_BYTES)
+    string::read(memory.data(&*caller), ptr, len, limit)
         .map(std::borrow::Cow::into_owned)
         .map_err(fatal)
 }
@@ -31,7 +40,11 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         Host::LogString16.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
             caller.data_mut().tick()?;
-            let units = read(&mut caller, ptr, len)?;
+            // A logged string follows the module's data limits (v38 logs
+            // every value as its text through this effect); the output
+            // budget bounds what is logged.
+            let limit = caller.data().module.limits.data.string_bytes;
+            let units = read_within(&mut caller, ptr, len, limit)?;
             // Diagnostic output is Unicode text, never a round-trippable resource identifier.
             caller.data_mut().emit(format!(
                 "varta log: {}",

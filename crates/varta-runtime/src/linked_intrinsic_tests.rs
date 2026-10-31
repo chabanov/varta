@@ -620,25 +620,20 @@ fn run_with_memory(bytes: &[u8], pages: u64) -> (Vec<String>, Result<(), Runtime
 
 #[test]
 fn an_exhausted_linked_arena_is_a_typed_memory_failure() {
-    // Upper-casing 65536 "ﬃ" units maps each to "FFI": the linked call needs
-    // about 18 bytes of scratch per input unit (the UTF-8 run, its mapping
-    // and the UTF-16 output), far beyond the reserved arena and the guest's
-    // own footprint, so sweeping the memory budget page by page reaches
-    // budgets where the input fits but the arena cannot grow. Every failure
-    // is the typed memory resource, never a bare trap. A failure after
-    // "built" whose request is not the guest's snapshot of the 393216-byte
-    // result (its heap block) is the linked arena's.
+    // Squaring a 207,745-bit BigInt: the linked multiplication's temporaries
+    // live in the per-call arena, far beyond the reserved arena, so sweeping
+    // the memory budget page by page reaches budgets where the operand fits
+    // but the arena cannot grow. Every failure is the typed memory resource,
+    // never a bare trap. (Case mapping no longer needs arena scratch: it
+    // streams its input into an owned result.)
     let source = r#"
 export function main(): void {
-  let t = "ﬃ";
-  for (let i = 0; i < 16; i++) { t = t + t; }
+  let t = 3n;
+  for (let i = 0; i < 17; i++) { t = t * t; }
   console.log("built");
-  console.log(t.toUpperCase().length);
+  console.log(String((t * t) % 1000n));
 }
 "#;
-    let result_bytes = 3 * 65536 * 2;
-    let snapshot = (result_bytes + abi::STRING_HEADER_BYTES)
-        .next_multiple_of(varta_common::value::HEAP_ALIGNMENT) as u32;
     let bytes = compile(source, V38);
     let mut initial = 0;
     for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
@@ -646,28 +641,31 @@ export function main(): void {
             initial = reader.into_iter().next().unwrap().unwrap().initial;
         }
     }
-    let mut linked_failures = 0;
+    let mut failures_after_build = 0;
     let mut succeeded = false;
     for pages in initial..=(abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64 {
         let (lines, result) = run_with_memory(&bytes, pages);
         match result {
             Ok(()) => {
-                assert_eq!(lines, ["varta log: built", "varta log: 196608"]);
+                assert_eq!(lines, ["varta log: built", "varta log: 881"]);
                 succeeded = true;
                 break;
             }
             Err(RuntimeError::Resource(failure)) => {
                 assert_eq!(failure.resource, varta_common::limits::Resource::Memory);
                 assert!(failure.requested > 0);
-                if lines == ["varta log: built"] && failure.requested != snapshot {
-                    linked_failures += 1;
+                if lines == ["varta log: built"] {
+                    failures_after_build += 1;
                 }
             }
             Err(other) => panic!("{pages} pages: {other:?}, after {lines:?}"),
         }
     }
-    assert!(succeeded, "the mapping runs once memory suffices");
-    assert!(linked_failures > 0, "a budget exhausts the linked arena");
+    assert!(succeeded, "the multiplication runs once memory suffices");
+    assert!(
+        failures_after_build > 0,
+        "a budget exhausts the linked arena"
+    );
 }
 
 #[test]
@@ -749,7 +747,8 @@ const IN_PLACE: &[(&str, &str, Cost)] = &[
     ("charAt", "t.charAt(501).length", Cost::Constant(900)),
     ("parseInt", "parseInt(t)", Cost::Constant(3_000)),
     ("parseFloat", "parseFloat(t)", Cost::Constant(2_000)),
-    // Measured 824 and 594 per unit; a copy of the input adds about 23.
+    // Streamed into an owned result (one pass up to 4096 result units);
+    // a copy of the input adds about 23 per unit.
     ("toUpperCase", "t.toUpperCase().length", Cost::PerUnit(835)),
     ("toLowerCase", "t.toLowerCase().length", Cost::PerUnit(605)),
 ];

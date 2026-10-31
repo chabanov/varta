@@ -87,13 +87,20 @@ fn v38_modules_import_only_value18_readers_and_channel_v9() {
     let new = imports(&compile(source, V38));
     let old = imports(&compile(source, V37));
     // Every value17 reader the v37 module uses has its value18 replacement,
-    // imported or linked (`linked_intrinsics`: the value18 readers other
-    // than logging and JSON parsing are linked), and no other import changes
-    // except the owned serializer.
+    // linked (`linked_intrinsics`), and no other import changes except the
+    // owned serializer (linked too) and logging, which v38 does through the
+    // linked text of the value and `log_string16`.
     let mut replaced = 0;
     for op in &old {
         let replacement = V38.host_operation(*op);
-        if replacement.value17_counterpart() == Some(*op) {
+        if replacement == H::ValueFormatV12 {
+            assert!(V38.links(replacement) && new.contains(&H::LogString16));
+            assert!(
+                !new.contains(op) && !new.contains(&H::ValueLogV12),
+                "{new:?}"
+            );
+            replaced += 1;
+        } else if replacement.value17_counterpart() == Some(*op) {
             assert!(!new.contains(op), "{op:?}");
             assert_eq!(replacement.minimum_abi(), abi::PROGRAM_LIMITS_VERSION);
             assert!(
@@ -102,6 +109,7 @@ fn v38_modules_import_only_value18_readers_and_channel_v9() {
             );
             replaced += 1;
         } else if *op != H::JsonStringifyV17 {
+            assert!(!new.contains(&H::JsonStringifyOwned), "{new:?}");
             // The checked JSON parse is linked under v38.
             let linked =
                 H::JsonParseV19.value17_counterpart() == Some(*op) && V38.links(H::JsonParseV19);
@@ -151,12 +159,29 @@ fn value17_and_value18_readers_reject_each_others_profiles() {
     let old = compile(source, V37);
     assert!(runtime.validate_module(&new).is_ok());
     assert!(runtime.validate_module(&old).is_ok());
-    // `json_parse_v19` is linked under v38: the v38 module imports neither.
-    assert!(!imports(&new).contains(&H::JsonParseV19));
+    // Checked JSON, serialization and logged values are linked under v38.
+    let linked = imports(&new);
+    for op in [
+        H::JsonParseV19,
+        H::JsonStringifyOwned,
+        H::ValueLogV12,
+        H::ValueLogV11,
+    ] {
+        assert!(!linked.contains(&op), "{op:?} in {linked:?}");
+    }
     {
         let (from, to) = ("value_log_v12", "value_log_v11");
-        // A v38 module may not read value18 graphs through value17 readers ...
-        let downgraded = rename(&new, from, to);
+        // A v38 module may read value18 graphs through neither the
+        // value17 reader nor the host's value18 logging ...
+        let hosted = varta_compiler::host_import_test_hook::compile_with_profile(
+            source,
+            V38,
+            &[H::JsonStringifyOwned, H::ValueFormatV12],
+        )
+        .unwrap();
+        assert!(imports(&hosted).contains(&H::ValueLogV12));
+        assert!(runtime.validate_module(&hosted).is_err(), "{from}");
+        let downgraded = rename(&hosted, from, to);
         assert!(runtime.validate_module(&downgraded).is_err(), "{to}");
         // ... and a v37 module may not reach the value18 readers.
         let upgraded = rename(&old, to, from);
@@ -173,11 +198,21 @@ fn value17_and_value18_readers_reject_each_others_profiles() {
     assert!(error.to_string().contains("exception"), "{error}");
 }
 
+/// The host's value18 readers (the host serializer, under the compiler's
+/// host-import test switch) report the stale storage; the linked serializer
+/// traps on it.
 #[test]
 fn value18_readers_reject_value17_stamped_descriptors_and_storage() {
     let source = "export function main():void{const d:Record<string,number>={k:1};\
         console.log(JSON.stringify(d));}";
-    let bytes = compile(source, V38);
+    let bytes = varta_compiler::host_import_test_hook::compile_with_profile(
+        source,
+        V38,
+        &[H::JsonStringifyOwned],
+    )
+    .unwrap();
+    crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
+    let linked = compile(source, V38);
     let runtime = VartaRuntime::new();
     assert_eq!(
         runtime.run_wasm_bytes(&bytes, &[]).unwrap().lines,
@@ -206,4 +241,18 @@ fn value18_readers_reject_value17_stamped_descriptors_and_storage() {
     renamed[at] = b'T';
     let error = runtime.run_wasm_bytes(&renamed, &[]).unwrap_err();
     assert!(error.to_string().contains("dictionary"), "{error}");
+    crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
+    // The linked serializer runs the same readers and traps.
+    assert_eq!(
+        runtime.run_wasm_bytes(&linked, &[]).unwrap().lines,
+        [r#"varta log: {"k":1}"#]
+    );
+    let at = linked
+        .windows(header.len())
+        .position(|w| w == header.as_slice())
+        .expect("value18 dictionary storage descriptor in the data section");
+    let mut stale = linked.clone();
+    stale[at..at + 4].copy_from_slice(&value::FUNCTION_FIELD_VALUE_VERSION.to_le_bytes());
+    let error = runtime.run_wasm_bytes(&stale, &[]).unwrap_err();
+    assert!(error.to_string().contains("unreachable"), "{error}");
 }

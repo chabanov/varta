@@ -3721,13 +3721,17 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   panic handler. An export has the exact name and scalar signature of its
   `HostOperation`, resets the arena through `arena::entry` when it allocates,
   reads guest memory only through `guest::Guest` (bounds-checked copies) and
-  publishes string results only through `guest::result`. It never calls the
-  guest allocator or collector: its arena lives above the guest heap's end
-  only while no guest allocation can run.
-- An operation that returns two i32 values (`HostOperation::scalar_signature`)
-  is exported returning one i64, first value in the low word; the linker's
-  synthesized adapter of the registry signature unpacks it
-  (`merge::export_signature`). Recoverable BigInt errors keep the host's
+  returns text only as an owned guest string (`text::owned`, `text::filled`,
+  `text::produce`; BigInt payloads still through `guest::result`). It calls
+  the guest allocator only for that result, after its arena scratch is
+  complete, and roots what it reads afterwards: its arena lives above the
+  guest heap's end only while no guest allocation can run, and text in an
+  arena that continued there is staged in the result buffer first.
+- An operation that returns two values (`HostOperation::scalar_signature`)
+  is exported returning one i64: two i32 values first in the low word, an
+  i64 handle and an i32 status as the handle or the sign bit with the status
+  in the low word; the linker's synthesized adapter of the registry
+  signature unpacks it (`merge::Packing`, `merge::export_signature`). Recoverable BigInt errors keep the host's
   `(0, class)` result; every other error traps. Host imports and linked
   exports of the BigInt family both call `varta_intrinsics::bigint`: the host
   with a fuel-derived `Budget` and the frozen string limits, linked code with
@@ -3812,6 +3816,36 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   collections amid failed parses. Index only `static` lookup tables in
   linked code: indexing a `const` array may copy it per call, and
   `memory.copy` costs one fuel per byte.
+- Linked text results are owned guest strings: a call site of an operation
+  for which `link::owned_text` holds packs the returned pointer with
+  `env_result_len` (`strings::owned_text`) and never snapshots it; extend
+  `HostOperation::returns_string` (or `link::owned_text`) with every new
+  linked text operation and its call sites, fast-path helpers included. The
+  block is unrooted: consume it before any later allocation.
+- Linked serialization (`json_stringify_owned`, `value_format_v12`) has one
+  encoder, `varta_intrinsics::json`, over the shared value18 readers. Keep
+  its output, check order and failures equal to the host serializer's
+  (`varta-runtime` `json`), which stays the reference: the compiler's
+  `host_import_test_hook` compiles v38 modules that import
+  `json_stringify_owned` and log through `value_log_v12`, and
+  `linked_stringify_tests` compares both on the case corpus, generated
+  graphs, records, the failures and collections; extend those corpora with
+  every new value kind or layout. Typed failures keep the host's messages
+  through `EncodeError::linked_code`; a noncanonical layout traps. The
+  traversal stays iterative; record descriptors may be validated once per
+  call (`RecordShape`, static data), never cached across calls. Sinks are
+  an enum (`text::Pass`), never a trait object.
+- V38 logs a value through `log_string16(value_format_v12(cell))`
+  (`lower::expr::logged_text`); never import a value renderer under v38. A
+  new loggable kind needs its text in `varta_intrinsics::json::format`, equal
+  to `value_log_v12`'s.
+- Linked serialization fuel is pinned against the fair rates of its host
+  import (`linked_serialization_stays_within_its_measured_cost`; table
+  `linked_serialization_fuel_measurement`); the like-with-like corpus check
+  compares a program's guest instructions through its build that imports
+  serialization. Index only `static` tables, avoid moving large structs
+  (`memory.copy` is charged per byte) and keep word readers of shared value
+  code inline.
 - Linked code runs in memory 0. The linker places its stack and reached data
   in the module's intrinsic region (`varta.intrinsics`, sized at emission by
   `link::region_pages` before any code that depends on the heap base is

@@ -187,10 +187,14 @@ export function main(): void {
             names.iter().any(|name| name.contains("function total")),
             "{names:?}"
         );
-        assert!(
-            !names
+        // V37's allocator is a host-free export the host calls, without
+        // probes; v38 links its serializer, which calls the allocator as
+        // ordinary guest code.
+        assert_eq!(
+            names
                 .iter()
                 .any(|name| name.as_str() == "<helper Allocate>"),
+            profile == V38,
             "{names:?}"
         );
     }

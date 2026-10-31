@@ -11,9 +11,11 @@ use value::ValueAbiError;
 fn invalid() -> ValueAbiError {
     ValueAbiError("noncanonical managed function envelope".into())
 }
+#[inline(always)]
 fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
     data.u32_at(at).ok_or_else(invalid)
 }
+#[inline(always)]
 fn wide<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u64, ValueAbiError> {
     data.u64_at(at).ok_or_else(invalid)
 }
