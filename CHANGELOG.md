@@ -41,9 +41,10 @@ in [conformance/README.md](conformance/README.md).
   budget is the typed memory resource; case mapping streams over its input
   in place. Differential tests against the host imports cover the case
   corpus, 288 generated value graphs, the failures and collections. Linked
-  serialization costs 0.56 to 1.07 times the fair host charge on strings,
-  numbers, arrays and repeated records and 1.3 to 3.3 times on dictionaries,
-  promises and one-shot values (pinned; open). The shared value core gains
+  serialization costs at most the fair host charge on every measured shape
+  since `JSON_STRINGIFY_VALUE` was recalibrated to it (1,500 to 5,500 per
+  value at the wave-3b integration; before, 0.56 to 3.31 times the charge).
+  The shared value core gains
   `read_record_in`/`read_record_with` over a once-validated `RecordShape`,
   inline word readers and 64-bit slot shifts; the library grows from
   443,815 to 515,798 bytes. Node 24 runs the JSON round-trip fixture with a
@@ -1280,6 +1281,13 @@ in [conformance/README.md](conformance/README.md).
 
 ### Changed
 
+- `fuel::JSON_STRINGIFY_VALUE` is 5,500 (was 1,500; owner decision): the
+  published calibration fitted to v38's linked encoder (the largest
+  per-value need of the measured shapes, a logged promise, 5,026, rounded
+  up), so a host serialization or value-logging import rated at the v38
+  rates never costs less than the linked encoder. V38 links both, so the
+  rate charges only test builds that import them and rated earlier
+  profiles; the generated fair-fuel table lists it.
 - V38 per-turn fuel default (owner decision): `budget::TURN_FUEL` =
   8,000,000 fuel per turn (`Budgets::TURN`), from the measured console turns
   at the fair host-fuel rates; a manifest can only lower it and only a host

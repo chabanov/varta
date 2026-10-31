@@ -313,3 +313,59 @@ export function main(): void {
         );
     }
 }
+
+/// Every event parses a JSON response of `__ROWS__` records, keeps it,
+/// serializes it and logs one record: a console-shaped turn whose garbage is
+/// the previous response, its text and the serialized output.
+const RESPONSES: &str = r#"
+interface Message { id: number; role: string; text: string; tags: string[] }
+let kept: Message[] = [];
+export function main(): void {
+  varta.events.listen('ui', (record: string) => {
+    let text = "[";
+    for (let i = 0; i < __ROWS__; i++) {
+      if (i > 0) { text += ","; }
+      text += `{"id":${i},"role":"assistant","text":"reply ${record} ${i} with some words","tags":["a","b${i}"]}`;
+    }
+    kept = JSON.parse(text + "]") as Message[];
+    const out = JSON.stringify(kept);
+    const last: unknown = kept[kept.length - 1];
+    console.log(last);
+    console.log(`${record} ${kept.length} ${out.length}`);
+  });
+}
+"#;
+
+/// The development-plan measurement of idle collection (`--nocapture`):
+/// per session, the turns' fuel, each idle period's maintenance fuel and the
+/// peak memory, on production budgets.
+#[test]
+#[ignore]
+fn idle_collection_measurement() {
+    let sessions = [
+        ("churn, 400 rows per event", churn(400)),
+        (
+            "JSON responses, 60 records (~5 KB) per event",
+            compile_with(&RESPONSES.replace("__ROWS__", "60"), V38),
+        ),
+    ];
+    for (label, bytes) in &sessions {
+        let (lines, report, failure) = session(bytes, RunOptions::default(), 12);
+        assert_eq!(failure, None, "{label}");
+        assert!(!lines.is_empty(), "{label}");
+        let largest = report.turns.iter().map(|t| t.fuel).max().unwrap_or(0);
+        let periods: Vec<String> = report
+            .maintenance
+            .iter()
+            .map(|p| format!("{} (after turn {})", p.fuel, p.after_turn))
+            .collect();
+        println!(
+            "| {label} | {} | {} | {largest} | {} | {} | {} |",
+            report.total_turns,
+            report.total_fuel,
+            periods.join(", "),
+            report.total_maintenance_fuel,
+            report.peak_memory_bytes
+        );
+    }
+}

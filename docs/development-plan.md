@@ -900,7 +900,7 @@ The selectors are registered; the table records what each stream admits.
 | `program_limits()` | Program limits: profile-dependent structural limits up to the Wasm limits, a shared descriptor-driven checked decoder, multi-page static data, table-driven resume dispatch, dead-code elimination (owns any value18 or static-region ABI change) | Implemented ([contract](architecture.md#program-limits-program_limits)): multi-page static region (host ABI 34, no value 18; the foundation), profile limits registry with the Wasm limits, table-driven `varta_resume`, unreachable async frames and unread constants removed, startup fuel independent of static size. Pending: per-type `request<T>` code (async frame and promise helpers, about 11 functions per response type) |
 | `data_limits()` | Data limits: arrays, dictionaries, `Map`/`Set`, `Uint8Array`, strings and JSON bounded only by the memory budget; more than 64 live frames without a trap | Implemented ([contract](architecture.md#data-limits-data_limits)): `DataLimits` registry (2^27 elements, 2^30 string bytes, JSON depth host ceiling 10000), value17 sparse backings above 1024 slots with one bit per slot, typed `RuntimeError::Resource` failures through the `resource_failure`/`resource_request` globals, geometric heap growth and a worklist mark, a hashed growable live-frame table and memory-derived scheduler bounds, `json_stringify_owned` (host ABI 34) into owned guest strings, iterative JSON parsing, lifted `Map`/`Set`/`Uint8Array` preludes and an O(n log n) `join`. Dictionary and mixed-record hashing landed in wave 2 (b) under value layout 18. Pending: per-element host calls of `String(x)` against the 1024 host-call budget (`%` no longer calls the host) and frozen limits in primitive conversions; `console.log` logs within the module's string limit since `v38-p2-finish` (`log_string16`, linked text) |
 | `turn_budgets()` | Turn budgets: per-event-turn fuel and deadline configurable by the manifest within the host ceiling; fuel profiler and logs before failure in `varta dev` | Admits event turns with per-turn budgets, manifest budgets capped by the ceiling, long-lived application instances, host event sources and permission broker v1; logs before failure and `--budget-report` in `dev`/`run`/companion ([contract](architecture.md#turn-budgets-and-application-instances-turn_budgets)). Pending: per-function fuel attribution (codegen stream), per-turn UI values from measurements on the targets |
-| `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Implemented in part ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): the pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping; since wave 2 every BigInt operation; since wave 3 the value18 conversions, the primitive comparisons and the value18 readers behind codegen-v2 fast paths) are guest code from the shared `varta-intrinsics` crate, linked function by function into the module's intrinsic region of memory 0 (one memory); the generated [embedding tables](embedding.md#linked-intrinsics-v38) list them and what a v38 host still implements. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38), [wave 3](#wave-3-conversions-and-readers-measurement-v38)). Since `v38-p2-finish` checked JSON serialization and the logged text of a value are linked too, every linked text result is an owned guest string, and a v38 module imports effects only ([linked serialization measurement](#linked-serialization-measurement-v38)). Open: linked serialization above the fair rates on records, dictionaries and promises (owner decision) |
+| `linked_intrinsics()` | Linked intrinsics: Rust pure intrinsics linked into the guest Wasm so third-party hosts stay thin | Implemented in part ([contract](architecture.md#linked-intrinsics-linked_intrinsics)): the pure operations (Math, `**`/`%`, Number text and parsing, primitive-cell conversions, UTF-16 access and case mapping; since wave 2 every BigInt operation; since wave 3 the value18 conversions, the primitive comparisons and the value18 readers behind codegen-v2 fast paths) are guest code from the shared `varta-intrinsics` crate, linked function by function into the module's intrinsic region of memory 0 (one memory); the generated [embedding tables](embedding.md#linked-intrinsics-v38) list them and what a v38 host still implements. Measured below ([linked intrinsics measurement](#linked-intrinsics-measurement-v38), [wave 3](#wave-3-conversions-and-readers-measurement-v38)). Since `v38-p2-finish` checked JSON serialization and the logged text of a value are linked too, every linked text result is an owned guest string, and a v38 module imports effects only ([linked serialization measurement](#linked-serialization-measurement-v38)). `JSON_STRINGIFY_VALUE` recalibrated to the linked encoder at the wave-3b integration ([fair host fuel](#fair-host-fuel-v38)) |
 | `view_protocol()` | View protocol: L0 `view_commit`, event delivery, headless renderer | Implemented (P7): `view_commit` (host ABI 34), synthesized event export, `varta-view` headless renderer (tree, cascade, accessibility; no layout), `ui.open_url`/`clipboard.write` decided by permission broker v1 with `command_result`; every view record is a host task of an application instance and runs as its own turn |
 | `tsx()` | TSX: TSX parsing and template compilation | Implemented (start of P8): `.tsx` parsing, AOT templates with getter holes, typed `JSX` namespace; L1 stays a package outside the engine |
 | `closure_narrowing()` | Narrowing in closures (TypeScript 5.4) | Implemented ([contract](architecture.md#v38-closure-narrowing-closure_narrowing)): parameters and `let` bindings keep their narrowing in arrows, function expressions and TSX holes created after their last assignment; raised by the UARP console chat screen |
@@ -1538,6 +1538,11 @@ and bytes).
   for small records, a one-pass canonical-slot check in `Dictionary::read_in`,
   and no per-record allocations. The `opt-level = 3` library would cut a
   further 18% for 70% more library bytes; it stays size-optimized.
+- **Recalibrated.** At the wave-3b integration `JSON_STRINGIFY_VALUE` rose
+  from 1,500 to 5,500 by the published method, so the linked encoder costs at
+  most the fair charge on every shape below
+  ([wave-3b measurement](#wave-3b-integration-measurement-v38)); the table
+  and the gap described next are the state before.
 - **Remaining gap.** Validation dominates where the fair rate counts one
   value: a dictionary's storage record and its key, value and table vectors,
   a promise's private record, a record's descriptor on first use, and the
@@ -1603,7 +1608,7 @@ Rates (`varta_common::fuel`, published in the
 | JSON value decoded (`JSON_PARSE_VALUE`) | 1,500 | fitted upper bound of the linked decoder and builder per value (400 to 1,200 measured) |
 | schema type (`JSON_SCHEMA_TYPE`) | 3,000 | linked schema read, validation and descriptor check per type |
 | schema field or union member (`JSON_SCHEMA_FIELD`) | 3,000 | the same per field (the 40-field `wide_json.ts` case) |
-| JSON value serialized (`JSON_STRINGIFY_VALUE`) | 1,500 | by symmetry with the parse rate; the linked encoder (`v38-p2-finish`) costs 0.56 to 1.07 times the fair charge on strings, numbers, arrays and repeated records and 1.3 to 3.3 times on dictionaries, promises and one-shot values ([measurement](#linked-serialization-measurement-v38); open, owner decision) |
+| JSON value serialized or logged (`JSON_STRINGIFY_VALUE`) | 5,500 | the largest per-value need of the linked encoder on the measured shapes, a logged fulfilled promise (5,026: 1,500 plus its 10,578 excess over 3 values), rounded up to 500; 1,500 by symmetry with the parse rate until the wave-3b integration, when the linked encoder cost 0.56 to 3.31 times it ([measurement](#linked-serialization-measurement-v38)). Since v38 links serialization the rate only documents its cost (rated v37 runs and test builds that import it) |
 | JSON output unit (`JSON_STRINGIFY_UNIT`) | 30 | by symmetry with the parse rate |
 
 Method: run each workload linked and through the host import without
@@ -1914,7 +1919,8 @@ Recorded, not implemented (owner decisions where stated):
   ([measurement](#compiled-json-decoders-measurement-v38)); KV decodes keep
   their host imports and per-call schema charges (see there).
 - Idle collection between turns, then an incremental collector (owner
-  decision; wave 3 (f)).
+  decision; wave 3 (f)): implemented on `v38-gc-turns`
+  ([measurement](#collection-between-and-within-turns-measurement-v38)).
 - HTTP adapters for v38 (owner decision).
 - A bounded network-wait step for scripted sessions (wave 3 (g)).
 - KV: the event-loop (async) completion model instead of the synchronous
@@ -1923,6 +1929,158 @@ Recorded, not implemented (owner decisions where stated):
   price SQLite's fixed I/O ([KV fair fuel](#kv-fair-fuel-v38)).
 - `if (res.ok)` narrowing on boolean-literal discriminants.
 - The L0 view protocol's open choices (wave 3 (i)).
+
+#### Wave-3b integration measurement (v38)
+
+Integrated tip `v38-wave3b-merge` (exact fuel determinism, compiled JSON
+decoders, linked serialization and logged text with owned text results,
+idle and incremental collection, declared response headers), debug test
+build on the reference macOS arm64 host; fuel is deterministic and equal on
+Linux ([fuel determinism](architecture.md#fuel-determinism)).
+
+Code generation v2 (`codegen_v2_fuel_ceilings_hold --nocapture`, v37 at
+production rules, host work uncharged):
+
+| Workload | Size | v37 fuel | v38 fuel | Ratio | v37 / iteration | v38 / iteration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| number loop | 10,000 | 950,609 | 140,835 | 6.75x | 95.0 | 14.0 |
+| 3-char string `===` | 4,000 | 1,113,008 | 305,116 | 3.65x | 278.0 | 76.0 |
+| string `===` literal | 4,000 | 1,501,064 | 133,078 | 11.28x | 375.0 | 33.0 |
+| `s = s + "x"` | 800 | 983,331 | 50,549 | 19.45x | 1,638.7 | 61.5 |
+| dictionary 50+50 | 50 | 620,050 | 161,145 | 3.85x | 15,870.9 | 3,127.6 |
+| record field reads | 1,000 | 163,743 | 22,901 | 7.15x | 163.0 | 22.0 |
+| function calls | 1,000 | 129,593 | 27,797 | 4.66x | 129.0 | 27.0 |
+| closure calls | 1,000 | 426,971 | 305,145 | 1.40x | 426.0 | 304.0 |
+| array push + index sum | 500 | 633,334 | 112,271 | 5.64x | 1,413.9 | 220.4 |
+| Markdown-like scan | 10 | 527,763 | 65,856 | 8.01x | 62,347.4 | 6,391.6 |
+| `JSON.parse` ~2 KB | 40 | 752,651 | 157,702 | 4.77x | 20,432.8 | 3,879.1 |
+| list render | 100 rows | 2,923,097 | 153,497 | 19.04x | 50,732.7 | 1,515.0 |
+| keyed diff | 100 rows | 4,989,513 | 483,285 | 10.32x | 73,849.8 | 4,806.8 |
+| keyed diff | 500 rows | fails (fuel) | 2,405,340 | – | – | 4,844.9 |
+| Markdown blocks fixture (chat replies) | 1 | 235,968 | 60,268 | 3.92x | 229,000.0 | 55,706.0 |
+| keyed view mount | 10 rows | 164,741 | 86,022 | 1.92x | 15,324.8 | 8,062.4 |
+| keyed view update | 10 rows | 878,389 | 161,914 | 5.43x | 141,983.4 | 15,625.0 |
+
+The rows that allocate rise 1% to 4% over the wave-3a integration with the
+collector's per-allocation bookkeeping (six instructions while no cycle
+marks); the keyed view mount's speedup pin is 1.9 (was 1.99). `JSON.parse`
+~2 KB is the compiled decoder's.
+
+Keyed view at the v38 turn budget (`keyed_view_rows_per_v38_turn`,
+8,000,000 fuel and 1,024 host calls, bisection): **630 rows mounted** (621
+at wave 3a) and **381 rows updated** (404), both bounded by fuel.
+
+Console turns (`console_turn_fuel`):
+
+| Turn | Wave 3a | Wave 3b | Share of the 8M turn |
+| --- | ---: | ---: | ---: |
+| keyed view mount, 50 rows | 388,892 | 404,694 | 5.1% |
+| keyed view update, 50 rows | 740,267 | 764,121 | 9.6% |
+| Markdown blocks, 3 replies | 169,910 | 173,098 | 2.2% |
+| 24-member union events, 25 parses | 1,196,587 | 386,462 | 4.8% |
+| response of 2 KB parsed | 458,859 | 176,443 | 2.2% |
+| response of 10 KB parsed | 2,228,788 | 912,410 | 11.4% |
+| response of 20 KB parsed | 4,761,240 | 1,837,444 | 23.0% |
+
+Checked JSON per parse (`json_decoder_fuel_measurement`,
+`linked_json_fuel_measurement`; the fuel of one `JSON.parse(text) as T`
+beyond the program without it):
+
+| Workload | Text units | v37 | v37 at fair rates | v38 import, fair | v38 linked decoder | v38 compiled decoder (production) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 record | 54 | 737 | 36,547 | 36,307 | 30,158 | 3,369 |
+| 40 records (~2 KB) | 2,181 | 18,755 | 455,335 | 449,011 | 369,002 | 107,417 |
+| 1,000 numbers | 4,001 | 275 | 1,627,855 | 1,627,771 | 886,662 | 276,278 |
+| RunEventV1-like member (`unknown`) | 76 | 1,995 | 66,967 | 66,229 | 43,474 | 6,707 |
+| 100 numbers `0.30000000000000004` | 2,001 | – | 217,855 | – | 374,007 | 488,196 |
+
+Serialization per value (`linked_serialization_fuel_measurement`; "fair"
+is the host import at the recalibrated rates, `JSON_STRINGIFY_VALUE`
+5,500):
+
+| Workload | Values | v38 import, uncharged | v38 import, fair | v38 linked (production) | linked / fair | Rate needed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| number `2.5` | 1 | 331 | 5,961 | 2,710 | 0.45 | 2,249 |
+| short string | 1 | 335 | 6,085 | 2,697 | 0.44 | 2,112 |
+| 1 record (3 fields) | 6 | 350 | 34,472 | 18,237 | 0.53 | 2,795 |
+| 40 records (~1.8 KB) | 241 | 384 | 1,376,960 | 431,656 | 0.31 | 1,578 |
+| 1000 numbers | 1,001 | 384 | 5,625,960 | 945,848 | 0.17 | 1,500 |
+| 40 strings | 41 | 377 | 236,751 | 48,112 | 0.20 | 1,500 |
+| 40 integers | 41 | 377 | 229,551 | 36,897 | 0.16 | 1,500 |
+| 40 arrays `["a","b"]` | 121 | 377 | 677,951 | 147,148 | 0.22 | 1,500 |
+| 40 empty arrays | 41 | 377 | 229,551 | 90,514 | 0.39 | 2,109 |
+| 40 empty records | 41 | 377 | 229,551 | 84,525 | 0.37 | 1,963 |
+| 40 records `{a,b,c}` | 161 | 377 | 909,951 | 285,124 | 0.31 | 1,620 |
+| dictionary, 5 entries | 6 | 350 | 34,472 | 25,674 | 0.74 | 4,034 |
+| dictionary, 20 entries (hashed) | 21 | 377 | 120,751 | 95,426 | 0.79 | 4,295 |
+| log: Number cell | 1 | −313 | 5,265 | 2,448 | 0.46 | 2,683 |
+| log: string cell | 1 | −309 | 5,329 | 421 | 0.08 | 1,500 |
+| log: 1 record | 6 | −301 | 33,767 | 18,238 | 0.54 | 2,912 |
+| log: 40 records | 241 | −301 | 1,376,217 | 439,690 | 0.32 | 1,614 |
+| log: fulfilled promise | 3 | −301 | 16,577 | 15,155 | 0.91 | 5,026 |
+
+"Rate needed" is the value rate at which the import's charge equals the
+linked encoder (the old rate, 1,500, plus the linked excess per value);
+the largest, 5,026, rounded up to 500 is the published rate. The linked
+encoder's fuel is unchanged by the recalibration; only rated v37 runs and
+test builds that import serialization pay it (the golden v37 `json rated`
+entry 57,680 → 97,680; `value15_cases/values.ts` rated 73,371 → 173,371).
+
+Idle collection (`idle_collection_measurement`, an application instance on
+production budgets, 12 events, an idle period after each turn):
+
+| Session | Turns | Turn fuel | Largest turn | Maintenance per idle period | Maintenance total | Peak memory (bytes) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| churn, 400 rows of strings and arrays per event | 13 | 24,426,072 | 2,230,826 | 856,161 to 1,143,620 | 12,880,376 | 4,718,592 |
+| JSON responses, 60 records (~5 KB) parsed, serialized and logged per event | 13 | 15,722,625 | 1,327,675 | 108,898 to 148,840 | 1,685,715 | 2,424,832 |
+
+The UARP console entry (`examples/uarp-console`) was not re-measured at this
+integration: its pinned uarp-sdk dependency is not installed in the
+integration worktree ([collection measurement](#collection-between-and-within-turns-measurement-v38)
+holds its branch numbers).
+
+Collector reconciliation: the compiled decoders and every linked intrinsic
+allocate through the module's `Allocate` helper, so they run collection
+steps and may start a cycle; their stores go into zero slots of blocks
+published (or retained) before the next allocation, so they need no barrier
+([profile rules](profile-rules.md#idle-and-incremental-collection-incremental_collection)).
+`collector_stress_tests::STORE_KINDS` adds the decoders (tape growth and the
+linked fallback), linked serialization of a graph being overwritten and the
+owned text results, and the stress builds run over the linked-JSON hand
+corpus, 24 random decoder schemas, the 12 generated serialization and
+logging programs and the JSON limit cases
+(`stress_builds_match_normal_builds_over_the_json_and_serialization_corpora`).
+
+Imports: a v38 module imports effects only (51 host operations, none
+reading value layouts); `json_stringify_owned`, `value_log_v12` and
+`json_parse_v19` are linked or not admitted under v38, KV decodes
+(`kv_key`, `kv_value`) remain host imports with their per-call schema
+charges.
+
+#### Wave-3b integration open items
+
+Recorded, not implemented (owner decisions where stated):
+
+- Checked `JSON.parse` builds records in sorted key order, so
+  `JSON.stringify(JSON.parse(t)) !== t` for a text whose keys are not
+  sorted; v38 should follow insertion order (the decoders and the linked
+  decoder share the shared builder's order).
+- The v1–v37 host serializers onto the shared `no_std` encoder.
+- A collector tuning pass (the per-allocation bookkeeping above, the
+  scripted-session turn-9 atomic collection, the 2 to 5 times total cost of an
+  incremental cycle moved to idle periods, peak memory; owner decision: the
+  stream's defaults are accepted for now).
+- KV: a compiled V8-serialization decoder, or the entry's text in the guest
+  for the compiled JSON decoders.
+- An Eisel–Lemire fast path for 16 to 19 significant digits (the
+  `0.30000000000000004` row above).
+- Direct decoding into discriminated-union members.
+- `String(1.5)` and BigInt text as linked code cost more than v37's rated
+  host calls (`COSTLIER_UNDER_V38`: `unknown_cases/assertions.ts` 24,938
+  against 26,683, `value15_cases/values.ts` 173,371 against 178,582).
+- Logging a value whose text needs more guest memory than is left fails with
+  the typed memory resource (owner decision: a consequence of the
+  effects-only host).
 
 ### Platform targets and application model
 

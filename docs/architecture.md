@@ -10644,12 +10644,17 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   succeeded; an Error message beyond the frozen 1 MiB, which the host
   renderer rejected, is logged.
 - **Fuel.** Linked serialization costs its instructions
-  ([measurement](development-plan.md#linked-serialization-measurement-v38)):
-  below the fair rates of the host import for strings, numbers and arrays of
-  them, above them for records, dictionaries, promises and small one-shot
-  values (open). The like-with-like corpus check compares a program's
-  guest instructions through its build that imports serialization; the
-  linked cost is pinned by `linked_serialization_stays_within_its_measured_cost`.
+  ([measurement](development-plan.md#linked-serialization-measurement-v38)).
+  `JSON_STRINGIFY_VALUE` is calibrated against it by the published method
+  (the largest per-value fuel of the linked encoder beyond the old charge on
+  the measured shapes, rounded up), so the host import of an earlier profile
+  rated at the v38 rates, or of a test build that imports serialization,
+  never costs less than the linked encoder; since v38 links serialization
+  the rate only documents that cost. The like-with-like corpus check
+  compares a program's guest instructions through its build that imports
+  serialization; `linked_serialization_stays_within_its_measured_cost`
+  requires the linked encoder to stay within the fair charge on every
+  measured shape.
   The host's value logging, under the test-only rating of earlier profiles,
   is charged the serialization rates (values visited, output units).
 
@@ -10853,8 +10858,9 @@ the guest's fuel rate, then rounded up. The JSON rates are calibrated against
 the linked equivalents
 ([fair host fuel](development-plan.md#fair-host-fuel-v38)): `CALL` the
 cheapest linked call, `BYTE` Wasmtime's `memory.copy` rate, the JSON rates
-the fitted upper bound of the linked decoder's fuel per unit, value and
-schema node, so a host import never costs less than its linked equivalent.
+the fitted upper bound of the linked decoder's and encoder's fuel per unit,
+value and schema node, so a host import never costs less than its linked
+equivalent.
 
 #### Web bytes (`web_bytes`)
 

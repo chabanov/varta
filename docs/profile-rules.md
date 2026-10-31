@@ -3897,9 +3897,11 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
   (`lower::expr::logged_text`); never import a value renderer under v38. A
   new loggable kind needs its text in `varta_intrinsics::json::format`, equal
   to `value_log_v12`'s.
-- Linked serialization fuel is pinned against the fair rates of its host
-  import (`linked_serialization_stays_within_its_measured_cost`; table
-  `linked_serialization_fuel_measurement`); the like-with-like corpus check
+- Linked serialization stays within the fair rates of its host import on
+  every measured shape (`linked_serialization_stays_within_its_measured_cost`;
+  table and rate fit `linked_serialization_fuel_measurement`); a change that
+  breaks it recalibrates `JSON_STRINGIFY_VALUE` by that fit, rounded up to
+  500, never the reverse. The like-with-like corpus check
   compares a program's guest instructions through its build that imports
   serialization. Index only `static` tables, avoid moving large structs
   (`memory.copy` is charged per byte) and keep word readers of shared value
