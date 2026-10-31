@@ -9527,5 +9527,273 @@
         "permission::MAX_DECISIONS_PER_APPLICATION"
       ]
     }
-  ]
+  ],
+  "net": {
+    "descriptor": {
+      "First line of `net_request_start`": "`varta-net-request-1`",
+      "First line of `net_request_start_v2`": "`varta-net-request-2`",
+      "Field separator (the only one; no `\\r`)": "U+000A (`\\n`)",
+      "Body flag: No body; the descriptor ends with the separator after the flag (`net_request_start`, `net_request_start_v2`)": "`0`",
+      "Body flag: Text body: the rest of the descriptor, sent as UTF-8 (`net_request_start`, `net_request_start_v2`)": "`1`",
+      "Body flag: Byte body: the rest, one byte per code unit 0x00–0xFF (`net_request_start_v2`)": "`2`",
+      "Largest header count": "64"
+    },
+    "examples": [
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttps://api.example.test/v1/items\n0\n0\n",
+        "canonical": true,
+        "fields": "method `GET`, URL `https://api.example.test/v1/items`; headers none; body none"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nPOST\nhttps://api.example.test/v1/items\n2\ncontent-type\ntext/plain;charset=UTF-8\nx-empty\n\n1\na\nb",
+        "canonical": true,
+        "fields": "method `POST`, URL `https://api.example.test/v1/items`; headers `content-type` = `\"text/plain;charset=UTF-8\"`, `x-empty` = `\"\"`; body 3 byte(s) `61 0A 62`"
+      },
+      {
+        "import": "net_request_start_v2",
+        "text": "varta-net-request-2\nGET\nhttp://127.0.0.1:8080/\n0\n0\n",
+        "canonical": true,
+        "fields": "method `GET`, URL `http://127.0.0.1:8080/`; headers none; body none"
+      },
+      {
+        "import": "net_request_start_v2",
+        "text": "varta-net-request-2\nPOST\nhttps://api.example.test/upload\n0\n1\né",
+        "canonical": true,
+        "fields": "method `POST`, URL `https://api.example.test/upload`; headers none; body 2 byte(s) `C3 A9`"
+      },
+      {
+        "import": "net_request_start_v2",
+        "text": "varta-net-request-2\nPUT\nhttps://api.example.test/blob\n1\ncontent-type\napplication/octet-stream\n2\n\u0000éÿ",
+        "canonical": true,
+        "fields": "method `PUT`, URL `https://api.example.test/blob`; headers `content-type` = `\"application/octet-stream\"`; body 3 byte(s) `00 E9 FF`"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nPOST\nhttps://api.example.test/v1/items\n0\n1\n",
+        "canonical": true,
+        "fields": "method `POST`, URL `https://api.example.test/v1/items`; headers none; body empty"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n+1\naccept\n*/*\n0\n",
+        "canonical": false,
+        "fields": "method `GET`, URL `http://a.test/`; headers `accept` = `\"*/*\"`; body none"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n01\naccept\n*/*\n0\n",
+        "canonical": false,
+        "fields": "method `GET`, URL `http://a.test/`; headers `accept` = `\"*/*\"`; body none"
+      }
+    ],
+    "rejections": [
+      {
+        "import": "net_request_start_v2",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n0\n0\n",
+        "why": "version 1 line under the version 2 import"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-2\nGET\nhttp://a.test/\n0\n0\n",
+        "why": "version 2 line under the version 1 import"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n0\n0",
+        "why": "no separator after the body flag"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n0\n0\nx",
+        "why": "text after the no-body flag"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n0\n2\nab",
+        "why": "byte-body flag under version 1"
+      },
+      {
+        "import": "net_request_start_v2",
+        "text": "varta-net-request-2\nGET\nhttp://a.test/\n0\n2\nĀ",
+        "why": "byte body with a code unit above 0xFF"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n65\n0\n",
+        "why": "header count above the limit"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n1\naccept\n0\n",
+        "why": "fewer header lines than the count"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\nx\n0\n",
+        "why": "count not a decimal integer"
+      },
+      {
+        "import": "net_request_start",
+        "text": "varta-net-request-1\nGET\nhttp://a.test/\n0\n",
+        "why": "no body flag"
+      }
+    ],
+    "runtimeHeaders": [
+      "connection",
+      "content-length",
+      "expect",
+      "host",
+      "keep-alive",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade"
+    ],
+    "completions": {
+      "Head": {
+        "code": 1,
+        "releases": false
+      },
+      "Chunk": {
+        "code": 2,
+        "releases": false
+      },
+      "End": {
+        "code": 3,
+        "releases": true
+      },
+      "Failed": {
+        "code": 4,
+        "releases": true
+      },
+      "Aborted": {
+        "code": 5,
+        "releases": true
+      },
+      "Denied": {
+        "code": 6,
+        "releases": true
+      }
+    },
+    "failures": [
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "invalid method: <method>"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "Invalid URL: <url>"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Denied",
+        "text": "<capability denied: net.request> (<method> <url>)"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "output budget exhausted"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "a GET or HEAD request cannot have a body"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "request headers are too large"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "header <name> is set by the runtime"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "invalid header name: <name>"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "invalid header value for <name>"
+      },
+      {
+        "raisedBy": "`net_request_start*`",
+        "kind": "Failed",
+        "text": "<error>"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "URL has no host"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "URL has no port"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "connect failed: <error>"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "invalid TLS server name: <error>"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "TLS handshake failed: <error>"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "HTTP handshake failed: <error>"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "invalid request: <error>"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "request failed: <error>"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "request timed out"
+      },
+      {
+        "raisedBy": "Body read",
+        "kind": "Failed",
+        "text": "response body failed: <error>"
+      },
+      {
+        "raisedBy": "Body read",
+        "kind": "Failed",
+        "text": "response body exceeds 524288 bytes"
+      },
+      {
+        "raisedBy": "Body read",
+        "kind": "Failed",
+        "text": "response body timed out"
+      }
+    ],
+    "errors": {
+      "NetError::Budget": "execution exceeds 8 pending network requests",
+      "NetError::Descriptor": "malformed network request descriptor",
+      "NetError::State": "invalid network request operation"
+    },
+    "headExample": "{\"headers\":[\"content-type\",\"application/json\",\"set-cookie\",\"a=1\",\"set-cookie\",\"b=2\"],\"location\":\"\",\"status\":200,\"statusText\":\"OK\",\"url\":\"https://api.example.test/v1/items\"}"
+  }
 }

@@ -2,6 +2,7 @@
 // the small helpers the validation and execution modules share.
 import { parseStrictJson } from "./strict-json.js";
 import { ValidationError, ExecutionFailure } from "./errors.js";
+import { netConstants } from "./net.js";
 
 export const SECTION = {
   abi: "varta.abi", language: "varta.language", values: "varta.values",
@@ -114,6 +115,7 @@ function constants(contract) {
     maxToolDescriptionBytes: limitBySource(contract, "MAX_TOOL_NAME_BYTES", 1),
     toolLimits: contract.toolCatalogExample.tools[0].limits,
     view: viewConstants(contract),
+    net: netConstants(contract),
     status,
     resume,
   };

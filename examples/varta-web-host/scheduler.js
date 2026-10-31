@@ -4,6 +4,7 @@ import { authorize } from "./policy.js";
 import { ExecutionFailure, Recoverable } from "./errors.js";
 import { MS_PER_SECOND, LIMIT, hostLimit, now } from "./context.js";
 import { checkException } from "./exception.js";
+import { requestKeepsAlive, deliverCompletion, waitForCompletion } from "./net.js";
 
 // Profiles whose runs are event turns: host calls and microtasks renew per turn
 // (embedding.md "Run lifecycle", step 2, v38 `turn_budgets`).
@@ -255,9 +256,9 @@ export function createInbox(C) {
       } else {
         const { kind, handler } = header(record);
         const coalescible = C.view.coalescible.has(kind);
-        const same = coalescible ? pending.findIndex((r) => header(r).kind === kind && header(r).handler === handler) : -1;
-        if (same >= 0) pending[same] = record;
-        else if (pending.length < C.view.pendingEvents) pending.push(record);
+        const same = coalescible ? pending.findIndex((p) => header(p.record).kind === kind && header(p.record).handler === handler) : -1;
+        if (same >= 0) pending[same] = { record, arrived: pending[same].arrived };
+        else if (pending.length < C.view.pendingEvents) pending.push({ record, arrived: now() });
         else if (!coalescible) failure ??= new ExecutionFailure("view event queue overflow");
       }
       wake?.();
@@ -277,82 +278,105 @@ export function createInbox(C) {
  * timer without the unref bit keeps it, until it fails or `stop` is requested.
  */
 export async function applicationLoop(ctx, exec, info, inbox, stopped) {
-  const { schedulerError } = ctx;
   if (info.profile?.scheduler && info.hasFrames) endTurn(ctx, exec, info);
   for (;;) {
     if (inbox.failure) throw inbox.failure;
     if (stopped()) return;
-    if (inbox.pending.length > 0) {
-      viewTurn(ctx, exec, info, inbox.pending.shift());
-      continue;
-    }
+    // One ready task per turn: the earliest instant wins, ties in the order host
+    // task, timer, completion (embedding.md "Completion ordering", application
+    // instances); a completion's instant is its arrival.
     const armed = [...exec.timers.values()].filter((t) => t.armed);
-    const keeps = armed.some((t) => !t.unref);
-    if (!keeps && !exec.viewAlive) return;
-    const next = armed.length > 0 ? armed.reduce((a, b) => (b.due < a.due || (b.due === a.due && b.seq < a.seq) ? b : a)) : null;
-    const arrival = inbox.next();
-    if (next === null) {
-      await arrival;
+    const next = earliest(armed);
+    const at = now();
+    const ready = [];
+    if (inbox.pending.length > 0) ready.push({ kind: "host", instant: inbox.pending[0].arrived });
+    if (next !== null && exec.startedAt + next.due <= at) ready.push({ kind: "timer", instant: exec.startedAt + next.due });
+    if (exec.net.queue.length > 0) ready.push({ kind: "completion", instant: exec.net.queue[0].arrived });
+    if (ready.length > 0) {
+      const task = ready.reduce((a, b) => (b.instant < a.instant ? b : a));
+      if (task.kind === "host") viewTurn(ctx, exec, info, inbox.pending.shift().record);
+      else {
+        if (task.kind === "timer") fireTimer(ctx, exec, info, next, true);
+        else completionTurn(ctx, exec, info, true);
+        endTurn(ctx, exec, info);
+      }
       continue;
     }
-    const wait = exec.startedAt + next.due - now();
-    let timed = true;
-    if (wait > 0) timed = await Promise.race([sleep(wait).then(() => true), arrival.then(() => false)]);
-    if (!timed) continue;
-    beginTurn(exec, info, true);
-    exec.loopTime = Math.max(exec.loopTime, next.due);
-    const reactions = exec.reactions.get(next.serial);
-    if (reactions === undefined) throw schedulerError("TimerState");
-    next.fired = true;
-    exec.queue.push(...reactions);
-    if (next.interval) {
-      exec.reactions.set(next.serial, []);
-      next.due += next.delay;
-      next.seq = exec.nextTimerSeq++;
-    } else {
-      exec.reactions.delete(next.serial);
-      next.armed = false;
-    }
-    endTurn(ctx, exec, info);
+    const keeps = exec.viewAlive || armed.some((t) => !t.unref) || requestKeepsAlive(exec);
+    if (!keeps) return;
+    const waits = [inbox.next().then(() => true)];
+    if (next !== null) waits.push(sleep(exec.startedAt + next.due - at).then(() => true));
+    if (requestKeepsAlive(exec)) waits.push(waitForCompletion(exec, 2 ** 31 - 1));
+    await Promise.race(waits);
   }
 }
 
-/** Microtask checkpoint, extended into the event loop of embedding.md "Timers". */
+/** Fires a due timer as one turn: its reaction moves to the microtask queue. */
+function fireTimer(ctx, exec, info, next, application) {
+  beginTurn(exec, info, application);
+  exec.loopTime = Math.max(exec.loopTime, next.due);
+  // A fired timer whose serial has no reaction list at all is fatal; an empty list
+  // (an interval whose frame has not registered again) coalesces the firing:
+  // it keeps the fired mark and wakes nothing (embedding.md "Timers").
+  const reactions = exec.reactions.get(next.serial);
+  if (reactions === undefined) throw ctx.schedulerError("TimerState");
+  next.fired = true;
+  exec.queue.push(...reactions);
+  if (next.interval) {
+    exec.reactions.set(next.serial, []);
+    next.due += next.delay;
+    next.seq = exec.nextTimerSeq++;
+  } else {
+    exec.reactions.delete(next.serial);
+    next.armed = false;
+  }
+}
+
+const earliest = (timers) => (timers.length === 0 ? null : timers.reduce((a, b) => (b.due < a.due || (b.due === a.due && b.seq < a.seq) ? b : a)));
+
+/** Delivers the oldest queued completion as one turn; loop time follows the wall clock. */
+function completionTurn(ctx, exec, info, application) {
+  beginTurn(exec, info, application);
+  deliverCompletion(exec, {
+    wake: (serial) => {
+      exec.queue.push(...(exec.reactions.get(serial) ?? []));
+      exec.reactions.delete(serial);
+    },
+  });
+  exec.loopTime = Math.max(exec.loopTime, now() - exec.startedAt);
+}
+
+/**
+ * The event loop of a bounded run (embedding.md "Timers", "Completion ordering"):
+ * while no request keeps it alive, the timer loop; while one does, a due timer
+ * comes first, otherwise the oldest completion, one per turn, until the deadline.
+ */
 export async function eventLoop(ctx, exec, info) {
   const { schedulerError } = ctx;
   if (!info.profile?.scheduler || !info.hasFrames) return;
   for (;;) {
-    drainMicrotasks(ctx, exec, info);
-    if (exec.unhandled.size > 0) {
-      // Rendering the boxed reason needs the unstable value layout: it is reported as opaque.
-      const reason = [...exec.unhandled.values()][0];
-      throw schedulerError("UnhandledRejection", { reason: `opaque value 0x${BigInt.asUintN(64, reason).toString(16)}`, count: exec.unhandled.size });
-    }
+    endTurn(ctx, exec, info);
     const armed = [...exec.timers.values()].filter((t) => t.armed);
-    if (!armed.some((t) => !t.unref)) return;
-    const next = armed.reduce((a, b) => (b.due < a.due || (b.due === a.due && b.seq < a.seq) ? b : a));
-    if (next.due >= exec.deadlineMs) throw schedulerError("TimerDeadline", { due_ms: Math.ceil(next.due).toFixed(0), deadline_seconds: Math.floor(exec.deadlineMs / MS_PER_SECOND) });
-    const wait = exec.startedAt + next.due - now();
-    if (wait > 0) await sleep(wait);
-    if (now() > exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
-    // A fired timer starts a new turn: v38 renews host calls and microtasks; a
-    // bounded run keeps its one deadline and its memory and output budgets.
-    beginTurn(exec, info, false);
-    exec.loopTime = Math.max(exec.loopTime, next.due);
-    // A fired timer whose serial has no reaction list at all is fatal; an empty list
-    // (an interval whose frame has not registered again) coalesces the firing:
-    // it keeps the fired mark and wakes nothing (embedding.md "Timers").
-    const reactions = exec.reactions.get(next.serial);
-    if (reactions === undefined) throw schedulerError("TimerState");
-    next.fired = true;
-    exec.queue.push(...reactions);
-    if (next.interval) {
-      exec.reactions.set(next.serial, []);
-      next.due += next.delay;
-      next.seq = exec.nextTimerSeq++;
-    } else {
-      exec.reactions.delete(next.serial);
-      next.armed = false;
+    const next = earliest(armed);
+    if (!requestKeepsAlive(exec)) {
+      if (!armed.some((t) => !t.unref)) return;
+      if (next.due >= exec.deadlineMs) throw schedulerError("TimerDeadline", { due_ms: Math.ceil(next.due).toFixed(0), deadline_seconds: Math.floor(exec.deadlineMs / MS_PER_SECOND) });
+      const wait = exec.startedAt + next.due - now();
+      if (wait > 0) await sleep(wait);
+      if (now() > exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
+      fireTimer(ctx, exec, info, next, false);
+      continue;
     }
+    const dueAt = next === null ? Infinity : exec.startedAt + next.due;
+    if (next !== null && now() >= dueAt && dueAt < exec.deadline) {
+      fireTimer(ctx, exec, info, next, false);
+      continue;
+    }
+    const until = Math.min(dueAt < exec.deadline ? dueAt : Infinity, exec.deadline);
+    if (await waitForCompletion(exec, until - now())) {
+      completionTurn(ctx, exec, info, false);
+      continue;
+    }
+    if (now() >= exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
   }
 }
