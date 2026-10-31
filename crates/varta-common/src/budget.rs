@@ -315,7 +315,7 @@ mod tests {
             Budgets::PRODUCTION
         );
         assert_eq!(BudgetKind::MaintenanceFuel.production(), MAINTENANCE_FUEL);
-        assert!(MAINTENANCE_STEP_FUEL < MAINTENANCE_FUEL);
+        const { assert!(MAINTENANCE_STEP_FUEL < MAINTENANCE_FUEL) };
         assert_eq!(
             BudgetKind::Deadline.production(),
             abi::DEADLINE_SECONDS * MILLISECONDS_PER_SECOND

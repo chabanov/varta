@@ -70,9 +70,9 @@ pub(in crate::emit) enum Slot {
     Overflow,
     /// The rescan cursor after an overflow (a block header), or zero.
     Scan,
-    /// An array whose tracing continues at `PartialSlot`, or zero.
+    /// An array whose tracing continues at `PartialNext`, or zero.
     Partial,
-    PartialSlot,
+    PartialNext,
     /// The lazy sweep's next block, its open dead run and the pending list of
     /// larger free runs.
     Cursor,
@@ -97,7 +97,7 @@ impl Slot {
         Self::Overflow,
         Self::Scan,
         Self::Partial,
-        Self::PartialSlot,
+        Self::PartialNext,
         Self::Cursor,
         Self::Run,
         Self::LargeHead,
@@ -321,7 +321,7 @@ pub(super) fn abandon(globals: Globals) -> Vec<I<'static>> {
         Slot::Overflow,
         Slot::Scan,
         Slot::Partial,
-        Slot::PartialSlot,
+        Slot::PartialNext,
         Slot::Run,
         Slot::LargeHead,
         Slot::LargeTail,
@@ -587,7 +587,7 @@ fn trace_code(
         I::LocalGet(start),
         I::LocalGet(max),
         I::I32Add,
-        I::GlobalSet(state.global(Slot::PartialSlot)),
+        I::GlobalSet(state.global(Slot::PartialNext)),
         I::LocalGet(max),
         I::LocalSet(FIELD_COUNT),
         I::I32Const(0),
@@ -1032,7 +1032,7 @@ pub(super) fn step(globals: Globals, calls: Calls, mark: u32) -> Function {
         I::LocalTee(CURRENT),
         I::If(BlockType::Empty),
     ];
-    code.extend(spend(trace(vec![I::GlobalGet(g(Slot::PartialSlot))])));
+    code.extend(spend(trace(vec![I::GlobalGet(g(Slot::PartialNext))])));
     code.extend(spend(vec![I::I32Const(1)]));
     code.extend([
         I::Br(AGAIN + 2),
