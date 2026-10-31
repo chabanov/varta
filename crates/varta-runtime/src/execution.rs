@@ -164,12 +164,15 @@ impl Execution {
             rated: None,
         })
     }
+    /// Test-only instantiation of compiler output, which never has a Wasm
+    /// start function: like every such module, its instantiation is not
+    /// charged to the guest.
     #[cfg(test)]
     pub fn instantiate(&mut self, module: &Module) -> Result<Instance, wasmtime::Error> {
         self.instantiate_owned(
             module,
             None,
-            (varta_common::value::ModuleBounds::LEGACY, false),
+            (varta_common::value::ModuleBounds::LEGACY, true),
             false,
         )
     }
@@ -180,7 +183,7 @@ impl Execution {
         self.instantiate_owned(
             &module.module,
             module.function_catalog.clone(),
-            (module.bounds(), module.profile.program_limits()),
+            (module.bounds(), !module.start_function),
             self.rated.unwrap_or(module.profile.fair_fuel()),
         )
     }
@@ -223,22 +226,25 @@ impl Execution {
             if self.store.data().profiler.is_some() {
                 crate::fuel_profile::register(&mut linker)?;
             }
-            // Wasmtime meters the data-segment copy of instantiation per byte
-            // of the initialized image. Under v38 that copy, bounded by the
-            // initial memory (the instance's memory budget, which includes a
-            // linked library's intrinsic region), gets its own allowance and
-            // the guest keeps its whole fuel budget: the first turn
-            // (instantiation, `_start` and its microtasks) is charged only for
-            // guest code.
+            // Owner decision (fuel determinism): instantiation never touches
+            // guest fuel, in every profile. Wasmtime meters its data-segment
+            // copy, which it performs, page-rounds or skips depending on the
+            // host's memory images, so the copy runs on an unmetered tank and
+            // the guest's budget is restored exactly before any guest code:
+            // the first turn (instantiation, `_start` and its microtasks) is
+            // charged only for guest code. Without a start function no guest
+            // code runs here; the work is bounded by the validated module
+            // size, the memory budget and the deadline. A start function is
+            // guest code, so such a module keeps paying its instantiation.
             let fuel = self.store.get_fuel()?;
             if uncharged_initialization {
-                let allowance = self.store.data().budgets.memory_bytes as u64;
-                self.store.set_fuel(fuel.saturating_add(allowance))?;
+                self.store.set_fuel(u64::MAX)?;
             }
-            let instance = linker.instantiate(&mut self.store, module)?;
+            let instance = linker.instantiate(&mut self.store, module);
             if uncharged_initialization {
                 self.store.set_fuel(fuel)?;
             }
+            let instance = instance?;
             crate::exceptions::initial(&instance, &mut self.store)?;
             Ok(instance)
         })();

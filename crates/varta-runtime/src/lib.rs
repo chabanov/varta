@@ -465,13 +465,15 @@ impl VartaRuntime {
     #[must_use]
     pub fn new() -> Self {
         let mut config = Config::new();
-        // Fuel must not depend on the host. Wasmtime meters instantiation's
-        // data-segment copy per byte, but with copy-on-write memory images
-        // (its default) the copy is skipped where the platform can map an
-        // image (memfd on Linux) and done over page-rounded images elsewhere
-        // (16 KiB pages on macOS arm64). Without images every host copies
-        // exactly the module's segments, so the same module consumes the
-        // same fuel everywhere.
+        // Fuel must not depend on the host. Instantiation is not charged to
+        // the guest, except in a module with a Wasm start function (possible
+        // before the exception profiles), which pays its whole instantiation.
+        // With copy-on-write memory images (Wasmtime's default) the metered
+        // data-segment copy is skipped where the platform can map an image
+        // (memfd on Linux) and done over page-rounded images elsewhere
+        // (16 KiB pages on macOS arm64); without them every host copies
+        // exactly the module's segments. Images save no measurable time for
+        // a fresh store per execution.
         config
             .consume_fuel(true)
             .epoch_interruption(true)

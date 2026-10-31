@@ -333,12 +333,15 @@ const PATTERNS: &[Pattern] = &[
         ceiling: 66_000,
         speedup: 3.3,
     },
+    // Re-pinned when instantiation stopped charging the guest: 2.0 held only
+    // because macOS charged v37 a 16 KiB page for its data-segment copy
+    // (181,126); the host-independent v37 fuel is 164,741 (1.994x).
     Pattern {
         name: "keyed view mount 10 rows",
         source: view_mount,
         size: 10,
         ceiling: 95_000,
-        speedup: 2.0,
+        speedup: 1.99,
     },
     Pattern {
         name: "keyed view update 10 rows",
@@ -610,14 +613,13 @@ fn v37_modules_keep_their_bytes() {
 /// Case directories whose programs need the lifted v38 data limits.
 const V38_LIMIT_CASES: [&str; 2] = ["data_limit_cases", "json_limit_cases"];
 
-/// Case programs whose v38 run costs more fuel than v37's guest code with
-/// its host work at the fair rates: (file, v37 fuel without its data-segment
-/// copy, v38 fuel), pinned exactly. V38 runs Number formatting of
-/// non-integers and BigInt arithmetic and conversion as linked guest code,
-/// which costs more than v37's host calls at the fair rates (`String(1.5)`:
-/// 530 against 4485; `String(7n * 2n)`: 1425 against 9558). Copy-on-write
-/// memory images hid both on macOS, where v37 paid a 16 KiB page for its
-/// data-segment copy.
+/// Case programs whose v38 run costs more fuel than v37's with its host work
+/// at the fair rates: (file, v37 fuel, v38 fuel), pinned exactly. V38 runs
+/// Number formatting of non-integers and BigInt arithmetic and conversion as
+/// linked guest code, which costs more than v37's host calls at the fair
+/// rates (`String(1.5)`: 530 against 4485; `String(7n * 2n)`: 1425 against
+/// 9558). Before instantiation left guest fuel alone, macOS hid both by
+/// charging v37 a 16 KiB page for its data-segment copy.
 const COSTLIER_UNDER_V38: [(&str, u64, u64); 2] = [
     ("unknown_cases/assertions.ts", 24_938, 26_166),
     ("value15_cases/values.ts", 73_371, 77_988),
@@ -628,9 +630,8 @@ const COSTLIER_UNDER_V38: [(&str, u64, u64); 2] = [
 /// like (except [`COSTLIER_UNDER_V38`]): v38 charges no more for guest
 /// instructions than v37 does, with the host work of both charged at the
 /// published fair rates (`varta_common::fuel`; v37 is rated by a test-only
-/// switch) and instantiation's data-segment copy, which v38 does not charge,
-/// left out of v37's fuel. HTTP services are not started; network requests
-/// are denied (no grant), timers granted.
+/// switch). HTTP services are not started; network requests are denied (no
+/// grant), timers granted.
 #[test]
 fn case_corpus_behaves_identically_under_v38() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -670,7 +671,6 @@ fn case_corpus_behaves_identically_under_v38() {
             continue;
         }
         let (before, after) = (run_rated(old, &grants, 1), run_with(new, &grants, 1));
-        let guest = before.fuel - instantiation_fuel(old);
         // Fuel, or the BigInt work budget derived from it.
         let exhausted = |run: &Run| {
             run.error
@@ -682,7 +682,7 @@ fn case_corpus_behaves_identically_under_v38() {
             .find(|(case, ..)| path.ends_with(case))
         {
             assert_eq!(
-                (guest, after.fuel),
+                (before.fuel, after.fuel),
                 (*old_fuel, *new_fuel),
                 "{}",
                 path.display()
@@ -691,11 +691,11 @@ fn case_corpus_behaves_identically_under_v38() {
         } else {
             // Both may run out of the same budget (a fair charge empties it).
             assert!(
-                after.fuel <= guest || exhausted(&before) && exhausted(&after),
+                after.fuel <= before.fuel || exhausted(&before) && exhausted(&after),
                 "{}: v38 {} > v37 {} ({:?} / {:?})",
                 path.display(),
                 after.fuel,
-                guest,
+                before.fuel,
                 after.error,
                 before.error
             );

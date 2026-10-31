@@ -1586,31 +1586,30 @@ the 8M per-turn fuel), debug test build on the reference macOS arm64 host;
 fuel is deterministic.
 
 Code generation v2 (`codegen_v2_fuel_ceilings_hold --nocapture`, v37 at
-production rules, host work uncharged). V37 totals include instantiation's
-data-segment copy at one fuel per byte, identical on every host since
-copy-on-write memory images were disabled ([fuel
-determinism](architecture.md#fuel-determinism)); the first measurement
-charged v37 the copy over 16 KiB macOS pages, which Linux skipped:
+production rules, host work uncharged). Instantiation is not charged in
+either profile ([fuel determinism](architecture.md#fuel-determinism)), so
+the numbers are the same on every host; the first measurement charged v37
+its data-segment copy over 16 KiB macOS pages, which Linux skipped:
 
 | Workload | Size | v37 fuel | v38 fuel | Ratio | v37 / iteration | v38 / iteration |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | number loop | 10,000 | 950,609 | 140,755 | 6.75x | 95.0 | 14.0 |
-| 3-char string `===` | 4,000 | 1,113,024 | 305,028 | 3.65x | 278.0 | 76.0 |
-| string `===` literal | 4,000 | 1,501,099 | 132,990 | 11.29x | 375.0 | 33.0 |
-| `s = s + "x"` | 800 | 983,336 | 50,413 | 19.51x | 1,638.7 | 61.4 |
-| dictionary 50+50 | 50 | 620,690 | 157,791 | 3.93x | 15,870.9 | 3,064.0 |
-| record field reads | 1,000 | 163,789 | 22,813 | 7.18x | 163.0 | 22.0 |
+| 3-char string `===` | 4,000 | 1,113,008 | 305,028 | 3.65x | 278.0 | 76.0 |
+| string `===` literal | 4,000 | 1,501,064 | 132,990 | 11.29x | 375.0 | 33.0 |
+| `s = s + "x"` | 800 | 983,331 | 50,413 | 19.51x | 1,638.7 | 61.4 |
+| dictionary 50+50 | 50 | 620,050 | 157,791 | 3.93x | 15,870.9 | 3,064.0 |
+| record field reads | 1,000 | 163,743 | 22,813 | 7.18x | 163.0 | 22.0 |
 | function calls | 1,000 | 129,593 | 27,717 | 4.68x | 129.0 | 27.0 |
 | closure calls | 1,000 | 426,971 | 305,041 | 1.40x | 426.0 | 304.0 |
-| array push + index sum | 500 | 633,452 | 112,105 | 5.65x | 1,413.9 | 220.3 |
-| Markdown-like scan | 10 | 527,842 | 65,336 | 8.08x | 62,347.4 | 6,350.0 |
-| `JSON.parse` ~2 KB | 40 | 753,102 | 412,273 | 1.83x | 20,432.8 | 9,797.0 |
-| list render | 100 rows | 2,923,242 | 148,503 | 19.68x | 50,732.7 | 1,466.6 |
-| keyed diff | 100 rows | 4,990,350 | 471,837 | 10.58x | 73,849.8 | 4,695.6 |
+| array push + index sum | 500 | 633,334 | 112,105 | 5.65x | 1,413.9 | 220.3 |
+| Markdown-like scan | 10 | 527,763 | 65,336 | 8.08x | 62,347.4 | 6,350.0 |
+| `JSON.parse` ~2 KB | 40 | 752,651 | 412,273 | 1.83x | 20,432.8 | 9,797.0 |
+| list render | 100 rows | 2,923,097 | 148,503 | 19.68x | 50,732.7 | 1,466.6 |
+| keyed diff | 100 rows | 4,989,513 | 471,837 | 10.57x | 73,849.8 | 4,695.6 |
 | keyed diff | 500 rows | fails (fuel) | 2,349,776 | – | – | 4,734.6 |
-| Markdown blocks fixture (chat replies) | 1 | 236,425 | 59,102 | 4.00x | 229,000.0 | 54,676.0 |
-| keyed view mount | 10 rows | 165,944 | 82,600 | 2.01x | 15,324.8 | 7,748.4 |
-| keyed view update | 10 rows | 879,592 | 156,736 | 5.61x | 141,983.4 | 15,143.4 |
+| Markdown blocks fixture (chat replies) | 1 | 235,968 | 59,102 | 3.99x | 229,000.0 | 54,676.0 |
+| keyed view mount | 10 rows | 164,741 | 82,600 | 1.99x | 15,324.8 | 7,748.4 |
+| keyed view update | 10 rows | 878,389 | 156,736 | 5.60x | 141,983.4 | 15,143.4 |
 
 Keyed view at the v38 turn budget (`keyed_view_rows_per_v38_turn`,
 8,000,000 fuel and 1,024 host calls, bisection): **621 rows mounted** and

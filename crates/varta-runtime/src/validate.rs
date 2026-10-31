@@ -16,7 +16,12 @@ pub(crate) fn module_with(
     bytes: &[u8],
     probes: bool,
 ) -> Result<(crate::PreparedModule, Option<varta_common::ToolCatalog>), RuntimeError> {
-    let (language, function_catalog, static_region) = preflight(bytes)?;
+    let Preflight {
+        language,
+        function_catalog,
+        static_region,
+        start_function,
+    } = preflight(bytes)?;
     let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
     if bytes.len() > language.profile.unwrap_or_default().limits().wasm_bytes
         || !bytes.starts_with(abi::WASM_HEADER)
@@ -118,6 +123,7 @@ pub(crate) fn module_with(
             function_catalog,
             static_region,
             profile: language.profile.unwrap_or_default(),
+            start_function,
         },
         tools,
     ))
@@ -143,16 +149,17 @@ pub(crate) fn value_version(bytes: &[u8]) -> Result<Option<u32>, RuntimeError> {
     Ok(None)
 }
 
-fn preflight(
-    bytes: &[u8],
-) -> Result<
-    (
-        varta_common::language::LanguageInspection,
-        Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
-        abi::StaticRegion,
-    ),
-    RuntimeError,
-> {
+/// What the section scan before compilation established.
+struct Preflight {
+    language: varta_common::language::LanguageInspection,
+    function_catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+    static_region: abi::StaticRegion,
+    /// The module has a Wasm start function (only before the exception
+    /// profiles).
+    start_function: bool,
+}
+
+fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
     use wasmparser::{Parser, Payload};
     // Bounded by the largest profile limit before the profile is known, then
     // by the declared profile's own (v38: the Wasm module-size limit).
@@ -177,11 +184,13 @@ fn preflight(
     let mut intrinsic_section = None;
     let mut memory_initial = None;
     let mut data_segments = Vec::new();
+    let mut start_function = false;
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.map_err(|e| error(&e.to_string()))? {
             Payload::StartSection { .. } if language.profile.is_some_and(|p| p.exceptions()) => {
                 return Err(error("exception profile forbids a Wasm start function"));
             }
+            Payload::StartSection { .. } => start_function = true,
             Payload::TypeSection(reader) => {
                 for (count, ty) in reader.into_iter_err_on_gc_types().enumerate() {
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
@@ -431,7 +440,12 @@ fn preflight(
             static_region,
         )))
     });
-    Ok((language, function_catalog, static_region))
+    Ok(Preflight {
+        language,
+        function_catalog,
+        static_region,
+        start_function,
+    })
 }
 
 /// A `program_limits` (v38) data segment: active, in memory 0, at a constant

@@ -3183,18 +3183,19 @@ profiles frozen, and add each stream's rules under its own heading here.
   catalog's `with_static_region`). The `*_with_version`/`read` forms are the
   single-page readers for legacy and test callers; a host function serving a
   v38 module passes `RuntimeContext::static_region`.
-- Instantiation of a `program_limits()` module gets its own fuel allowance
-  (at most the memory budget) and the guest's budget is restored before any
-  guest code; never charge the data-segment copy to the guest, and never
-  extend this to earlier profiles.
+- Instantiation never consumes guest fuel, in every profile: it runs on an
+  unmetered tank and the guest's budget is restored exactly before any guest
+  code. **Owner decision (2026-10-30):** this deliberately extends the v38
+  rule to v1–v37, an approved exception to frozen behaviour, because the
+  charged copy was host-dependent; every old artifact still fits its budget
+  on every platform. Only a pre-exception module with a Wasm start function
+  pays its instantiation (its start function is guest code).
 - Fuel never depends on the host ([fuel determinism](architecture.md#fuel-determinism)):
-  keep Wasmtime's copy-on-write memory images disabled and every engine
-  setting explicit, charge fair fuel only on guest-visible bytes and values,
-  and keep emission free of hash order, pointer width and paths. Fuel
-  comparisons between profiles compare guest work: leave v37's data-segment
-  copy out (`codegen_v2_tests::instantiation_fuel`), since v38 does not pay
-  it. Golden fuel numbers (`fuel_determinism_tests`) change only with a
-  deliberate profile change.
+  keep Wasmtime's copy-on-write memory images disabled (the start-function
+  charge depends on them) and every engine setting explicit, charge fair fuel
+  only on guest-visible bytes and values, and keep emission free of hash
+  order, pointer width and paths. Golden fuel numbers
+  (`fuel_determinism_tests`) change only with a deliberate profile change.
 
 ### Data limits (`data_limits`)
 

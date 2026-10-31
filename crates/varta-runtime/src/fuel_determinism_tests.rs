@@ -70,38 +70,38 @@ fn measure(name: &str, source: &str, profile: P) -> [(String, u64); 3] {
 }
 
 /// Exact fuel of representative programs, identical on every host
-/// (`fuel_is_identical_on_every_host --nocapture` prints the table). Before
-/// copy-on-write images were disabled, every v1–v37 entry differed by host:
-/// macOS arm64 charged the copy over 16 KiB pages (`literal 1` v37
-/// instantiation 16385) and Linux skipped it (0).
+/// (`fuel_is_identical_on_every_host --nocapture` prints the table).
+/// Instantiation is 0 in every profile; when v1–v37 were charged for it,
+/// every v1–v37 entry differed by host: macOS arm64 charged the copy over
+/// 16 KiB pages (`literal 1` v37 instantiation 16385) and Linux skipped it.
 const GOLDEN: &[(&str, u64)] = &[
-    ("portable CheckedI32Utf8V1 instantiation", 47),
-    ("portable CheckedI32Utf8V1 run", 18302),
-    ("portable CheckedI32Utf8V1 rated", 18433),
-    ("portable CheckedF64Utf16V20 instantiation", 90),
-    ("portable CheckedF64Utf16V20 run", 18875),
-    ("portable CheckedF64Utf16V20 rated", 19087),
-    ("portable CheckedF64Utf16V37 instantiation", 90),
-    ("portable CheckedF64Utf16V37 run", 23783),
-    ("portable CheckedF64Utf16V37 rated", 23995),
+    ("portable CheckedI32Utf8V1 instantiation", 0),
+    ("portable CheckedI32Utf8V1 run", 18255),
+    ("portable CheckedI32Utf8V1 rated", 18386),
+    ("portable CheckedF64Utf16V20 instantiation", 0),
+    ("portable CheckedF64Utf16V20 run", 18785),
+    ("portable CheckedF64Utf16V20 rated", 18997),
+    ("portable CheckedF64Utf16V37 instantiation", 0),
+    ("portable CheckedF64Utf16V37 run", 23693),
+    ("portable CheckedF64Utf16V37 rated", 23905),
     ("portable CheckedF64Utf16V38 instantiation", 0),
     ("portable CheckedF64Utf16V38 run", 6151),
     ("portable CheckedF64Utf16V38 rated", 6151),
-    ("literal 1 CheckedF64Utf16V37 instantiation", 7),
-    ("literal 1 CheckedF64Utf16V37 run", 84),
-    ("literal 1 CheckedF64Utf16V37 rated", 136),
-    ("literal 30000 CheckedF64Utf16V37 instantiation", 60005),
-    ("literal 30000 CheckedF64Utf16V37 run", 60082),
-    ("literal 30000 CheckedF64Utf16V37 rated", 60134),
-    ("records CheckedF64Utf16V37 instantiation", 111),
-    ("records CheckedF64Utf16V37 run", 84506),
-    ("records CheckedF64Utf16V37 rated", 88776),
-    ("json CheckedF64Utf16V37 instantiation", 498),
-    ("json CheckedF64Utf16V37 run", 5100),
-    ("json CheckedF64Utf16V37 rated", 58178),
-    ("unknown assertions CheckedF64Utf16V37 instantiation", 1639),
-    ("unknown assertions CheckedF64Utf16V37 run", 24319),
-    ("unknown assertions CheckedF64Utf16V37 rated", 26577),
+    ("literal 1 CheckedF64Utf16V37 instantiation", 0),
+    ("literal 1 CheckedF64Utf16V37 run", 77),
+    ("literal 1 CheckedF64Utf16V37 rated", 129),
+    ("literal 30000 CheckedF64Utf16V37 instantiation", 0),
+    ("literal 30000 CheckedF64Utf16V37 run", 77),
+    ("literal 30000 CheckedF64Utf16V37 rated", 129),
+    ("records CheckedF64Utf16V37 instantiation", 0),
+    ("records CheckedF64Utf16V37 run", 84395),
+    ("records CheckedF64Utf16V37 rated", 88665),
+    ("json CheckedF64Utf16V37 instantiation", 0),
+    ("json CheckedF64Utf16V37 run", 4602),
+    ("json CheckedF64Utf16V37 rated", 57680),
+    ("unknown assertions CheckedF64Utf16V37 instantiation", 0),
+    ("unknown assertions CheckedF64Utf16V37 run", 22680),
+    ("unknown assertions CheckedF64Utf16V37 rated", 24938),
     ("literal 1 CheckedF64Utf16V38 instantiation", 0),
     ("literal 1 CheckedF64Utf16V38 run", 102),
     ("literal 1 CheckedF64Utf16V38 rated", 102),
@@ -160,36 +160,72 @@ fn fuel_is_identical_on_every_host() {
     assert_eq!(GOLDEN.len(), measured.len());
 }
 
-/// Earlier profiles pay exactly one fuel per byte of their data segments at
-/// instantiation, on every host: the copy is never skipped (copy-on-write
-/// images) nor rounded to host pages.
-#[test]
-fn frozen_instantiation_pays_exactly_the_segment_bytes() {
-    let segment_bytes = |bytes: &[u8]| -> u64 {
-        wasmparser::Parser::new(0)
-            .parse_all(bytes)
-            .filter_map(|payload| match payload.unwrap() {
-                wasmparser::Payload::DataSection(reader) => Some(
-                    reader
-                        .into_iter()
-                        .map(|data| data.unwrap().data.len() as u64)
-                        .sum::<u64>(),
-                ),
-                _ => None,
-            })
-            .sum()
-    };
-    let small = compile(&literal(1), V37);
-    let large = compile(&literal(30_000), V37);
-    let growth = instantiation_fuel(&large) - instantiation_fuel(&small);
-    assert_eq!(growth, segment_bytes(&large) - segment_bytes(&small));
-    // 29999 more UTF-16 code units.
-    assert_eq!(growth, 2 * 29_999);
-    // V38 instantiation is charged to its own allowance, never the guest.
-    assert_eq!(instantiation_fuel(&compile(&literal(30_000), V38)), 0);
+/// A compiled module with a Wasm start function calling `_start` (legal
+/// before the exception profiles; the compiler never emits one).
+fn with_start_function(bytes: &[u8]) -> Vec<u8> {
+    let (index, end) = wasmparser::Parser::new(0)
+        .parse_all(bytes)
+        .find_map(|payload| match payload.unwrap() {
+            wasmparser::Payload::ExportSection(reader) => {
+                let end = reader.range().end;
+                let index = reader
+                    .into_iter()
+                    .map(Result::unwrap)
+                    .find(|export| export.name == abi::START_EXPORT)
+                    .map(|export| export.index);
+                Some((index.unwrap(), end))
+            }
+            _ => None,
+        })
+        .unwrap();
+    let index = u8::try_from(index).unwrap();
+    assert!(index < 0x80, "a one-byte LEB128 index");
+    let mut patched = bytes.to_vec();
+    // The start section (id 8, one byte of contents: the function index)
+    // directly follows the export section.
+    patched.splice(end..end, [8, 1, index]);
+    patched
 }
 
-/// The engine configuration that fuel determinism rests on.
+/// Owner decision: instantiation never touches guest fuel, in every
+/// profile, however much static data the module initializes and however
+/// little fuel the guest has. A module with a Wasm start function runs guest
+/// code during instantiation and keeps paying for it, exactly: without
+/// copy-on-write memory images its data-segment copy is the same on every
+/// host (with them, 34641 on macOS arm64 against 18257 on Linux).
+#[test]
+fn instantiation_never_touches_guest_fuel() {
+    let mut modules: Vec<_> = SUPPORTED_PROFILES
+        .iter()
+        .map(|profile| compile(PORTABLE, *profile))
+        .collect();
+    modules.push(compile(&literal(30_000), V37));
+    modules.push(compile(&literal(90_000), V38));
+    let runtime = VartaRuntime::new();
+    for bytes in &modules {
+        assert_eq!(instantiation_fuel(bytes), 0);
+        // One unit of guest fuel suffices and is left untouched.
+        let module = runtime.prepare_module(bytes).unwrap();
+        let mut execution = execution::Execution::new(&runtime.engine, &[], None).unwrap();
+        execution.store.set_fuel(1).unwrap();
+        execution.instantiate_prepared(&module).unwrap();
+        assert_eq!(execution.store.get_fuel().unwrap(), 1);
+    }
+    let started = with_start_function(&compile(PORTABLE, V1));
+    assert!(runtime.prepare_module(&started).unwrap().start_function);
+    assert_eq!(instantiation_fuel(&started), 18_303);
+    // Exception profiles reject a start function before compilation.
+    let refused = runtime.prepare_module(&with_start_function(&compile(PORTABLE, V20)));
+    assert!(
+        refused
+            .err()
+            .is_some_and(|e| e.to_string().contains("forbids a Wasm start function"))
+    );
+}
+
+/// The engine configuration that fuel determinism rests on: a module with a
+/// start function pays its instantiation, which copy-on-write memory images
+/// would make host-dependent.
 #[test]
 fn engine_never_uses_copy_on_write_images() {
     let runtime = VartaRuntime::new();
