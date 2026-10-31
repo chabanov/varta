@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varta view applications</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1b1f; --muted: #6b6b76; --ok: #1f7a3a; --bad: #b3261e; --line: #e4e4ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141418; --fg: #ececf1; --muted: #9a9aa6; --ok: #5cc27a; --bad: #ff8a80; --line: #2a2a31; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  #summary { font-weight: 600; margin-bottom: 12px; }
+  #stage { border: 1px dashed var(--line); padding: 12px; min-height: 40px; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<h1>Varta view applications in a Worker</h1>
+<p>A v38 view application runs as a long-lived instance in a module Worker; the L0 applier renders its batches here. The same scripted inputs as <code>varta dev --view-script</code> drive it, and the final tree is compared with the native headless tree in <code>out/view-expected.json</code>.</p>
+<div id="summary">Running…</div>
+<div id="stage"></div>
+<pre id="detail"></pre>
+<script type="module">
+  import { createApplier } from "../applier.js";
+
+  const contract = await (await fetch("../contract.json", { cache: "no-store" })).json();
+  const expected = await (await fetch("out/view-expected.json", { cache: "no-store" })).json();
+  // The first batch can take a while (the Worker fetches the contract and compiles
+  // the module); a later input either commits within the turn or changes nothing.
+  const START_MS = 10000;
+  const INPUT_MS = 500;
+  const summary = document.getElementById("summary");
+  const detail = document.getElementById("detail");
+
+  // Attributes compare as sets: the native tree sorts them, the DOM keeps insertion order.
+  const sorted = (attributes) => Object.fromEntries(Object.entries(attributes).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+
+  /** The native headless tree without node ids, listeners, edit counters or cascaded styles. */
+  function nativeShape(node) {
+    if ("text" in node) return { text: node.text };
+    const out = { tag: node.tag };
+    if (node.attributes) out.attributes = sorted(node.attributes);
+    if (node.class) out.class = node.class;
+    if (node.value !== undefined) out.value = node.value;
+    out.children = (node.children ?? []).map(nativeShape);
+    return out;
+  }
+
+  /** The same shape read from the applier's DOM. */
+  function domShape(node, root) {
+    if (node.nodeType === Node.TEXT_NODE) return { text: node.data };
+    const out = { tag: node === root ? "root" : node.localName };
+    const attributes = Object.fromEntries([...node.attributes].filter((a) => a.name !== "class" && !(node === root && a.name.startsWith("data-"))).map((a) => [a.name, a.value]));
+    if (Object.keys(attributes).length) out.attributes = sorted(attributes);
+    if (node.getAttribute("class")) out.class = node.getAttribute("class");
+    if (node.localName === "textarea" || node.localName === "input") out.value = node.value;
+    out.children = [...node.childNodes].map((c) => domShape(c, root));
+    return out;
+  }
+
+  async function runCase(c) {
+    const container = document.createElement("div");
+    document.getElementById("stage").replaceChildren(container);
+    const worker = new Worker("view-worker.js", { type: "module" });
+    let applier;
+    let committed = null;
+    const nextCommit = (ms) => new Promise((resolve) => {
+      const timer = setTimeout(() => ((committed = null), resolve(false)), ms);
+      committed = () => (clearTimeout(timer), (committed = null), resolve(true));
+    });
+    const finished = new Promise((resolve) => {
+      worker.onmessage = ({ data }) => {
+        if (data.type === "commit") {
+          try {
+            applier.apply(data.batch);
+          } catch (error) {
+            worker.postMessage({ type: "refused", message: error.message });
+          }
+          committed?.();
+        } else if (data.type === "finished") {
+          committed?.();
+          resolve(data.result);
+        }
+      };
+    });
+    applier = createApplier(contract.view, { container, onEvent: (record) => worker.postMessage({ type: "event", record }, [record.buffer]) });
+    const started = nextCommit(START_MS);
+    worker.postMessage({ type: "start", wasm: `../fixtures/${c.fixture}/dist/app.wasm`, manifest: `../fixtures/${c.fixture}/dist/app.manifest.json` });
+    await started;
+    const root = applier.debugRoot();
+    const find = (selector) => root.querySelector(selector);
+    for (const input of c.script.inputs) {
+      const target = find(input.target);
+      if (!target) throw new Error(`no element ${input.target}`);
+      const after = nextCommit(INPUT_MS);
+      if (input.input === "click") target.click();
+      else if (input.input === "type") {
+        target.value += input.text;
+        target.dispatchEvent(new InputEvent("input", { bubbles: true, data: input.text }));
+      } else if (input.input === "key") target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: input.key }));
+      await after;
+    }
+    const got = domShape(root, root);
+    worker.postMessage({ type: "stop" });
+    const result = await finished;
+    worker.terminate();
+    const want = nativeShape(c.tree);
+    return { ok: JSON.stringify(got) === JSON.stringify(want) && result.status === "ok", got, want, result };
+  }
+
+  let passed = 0;
+  const lines = [];
+  for (const c of expected) {
+    const r = await runCase(c);
+    if (r.ok) passed += 1;
+    lines.push(`${r.ok ? "ok  " : "FAIL"} ${c.label} (instance ${r.result.status}${r.result.error ? ": " + r.result.error : ""})`);
+    if (!r.ok) lines.push(`  native: ${JSON.stringify(r.want)}\n  dom:    ${JSON.stringify(r.got)}`);
+  }
+  summary.textContent = `${passed} passed, ${expected.length - passed} failed`;
+  summary.className = passed === expected.length ? "ok" : "bad";
+  detail.textContent = lines.join("\n");
+</script>
+</body>
+</html>

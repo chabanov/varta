@@ -12,7 +12,8 @@ will be generated from the `HostOperation` registry (platform increments P1 and 
 | R1 run host | Implemented: logging, clock, environment (embedder map), exit, Math and UTF-16 character intrinsics |
 | R2 scheduled run host | Implemented with reduced catalog validation: catalog rules 1–4 (exact index fields and bounds) and frame admission rules 1–5; guest memory is never read through the catalog. Includes the v36 timer event loop and, for `checked-f64-utf16-v38`, event turns (host calls and microtasks renewed per fired timer, one deadline per bounded run), the recoverable `timer_start_v2` and the v38 structure rules (functions counted with imports, `varta.static`/`varta.intrinsics` regions, data segment placement) |
 | v38 manifest | `budgets`, grant `required`/`purpose`, `fsRoots` (names in a package, directories in a ceiling), request `methods` and external-link patterns, checked against the generated manifest tables; root-name grammar checked against the contract's examples at start. Effective budgets (request capped by the ceiling) set host calls per turn, the deadline and output; memory is capped only by the module's declared maximum, so a lower `memoryBytes` is refused. Optional grants are denied: this host stores no decisions and has no prompt |
-| v38 effects still missing | File roots for `fs.*`, `view_commit` and view event delivery, long-lived application instances, `net.request`, `env_snapshot`, host events and permission prompts |
+| v38 view applications | `host.start` runs a long-lived application instance: `view_commit` (at most once per turn) hands each batch to the page's applier; view records come back as turns through `varta.view_abi.event` (written at the result base, input/scroll coalesced, the pending queue bounded); timers and records share one turn order; a refused batch ends the instance. The event export is admitted only under v38 with its registry signature |
+| v38 effects still missing | File roots for `fs.*`, `net.request`, `env_snapshot`, host events, permission prompts, `copy_text` and external links through a broker |
 | H1 HTTP host | Not implemented; HTTP modules are refused |
 
 Modules that import layout-bound intrinsics (`json_*`, `value_*`, `union_*`,
@@ -91,6 +92,7 @@ host claims no fuel conformance.
 | `tests/compare.mjs` | Differential test against the native runtime; writes `tests/out/expected.json` |
 | `tests/browser.html` | The same cases in a real browser, compared with `expected.json` |
 | `tests/applier.html` | Applier tests with batches encoded from the published tables |
+| `tests/view.html`, `tests/view-worker.js` | v38 view applications as long-lived instances in a Worker, rendered by the applier, driven by the scripted inputs and compared with the native headless tree (`out/view-expected.json`) |
 | `scripts/serve.py` | Serves `examples/` without caching for the browser test pages |
 
 ## Running
@@ -101,6 +103,7 @@ VARTA_BIN=/path/to/varta node tests/compare.mjs
 python3 scripts/serve.py 8766
 ```
 
-Then open `http://127.0.0.1:8766/varta-web-host/tests/browser.html` and
-`http://127.0.0.1:8766/varta-web-host/tests/applier.html`. `compare.mjs` must run
+Then open `http://127.0.0.1:8766/varta-web-host/tests/browser.html`,
+`http://127.0.0.1:8766/varta-web-host/tests/applier.html` and
+`http://127.0.0.1:8766/varta-web-host/tests/view.html`. `compare.mjs` must run
 first: it builds the fixtures and records the native observations.
