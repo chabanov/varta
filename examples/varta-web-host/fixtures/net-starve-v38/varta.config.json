@@ -1,0 +1,12 @@
+{
+  "entry": "src/main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "dist/app",
+  "languageProfile": "checked-f64-utf16-v38",
+  "capabilities": {
+    "env": { "get": ["BASE_URL"] },
+    "net": { "request": ["http://127.0.0.1:1/**"] },
+    "time": { "timer": true }
+  }
+}

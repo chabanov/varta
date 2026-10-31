@@ -5,7 +5,9 @@
 //
 // Honest guarantees (embedding.md "Budget guarantees", "Function and frame
 // catalogs"): memory through the declared maximum; host calls and output counted;
-// the deadline is checked at host calls only; fuel is NOT enforced; reduced
+// the deadline is checked at host calls only; fuel not metered (not conforming
+// for budgets until the packaging instrumentation lands); idle collection
+// skipped (turns carry the full collection cost); reduced
 // catalog validation (normative minimum and frame admission only; guest memory is
 // never read through the catalog).
 //
@@ -191,13 +193,14 @@ export function createHost(contract) {
     debugScheduler,
     guarantees: {
       memory: "module-declared maximum, checked before instantiation",
-      fuel: "not enforced",
+      fuel: "fuel not metered: not conforming for budgets until the packaging instrumentation lands",
+      collection: "varta.collector.idle is never called: turns carry the full cost of garbage collection",
       deadline: "checked at host calls only; terminate the Worker for runaway guest loops",
       hostCalls: "counted",
       output: "counted on the reference line text",
       catalog: "reduced catalog validation: normative minimum and frame admission; guest memory is never read through the catalog",
       requiredEffects: "unverified metadata",
-      network: "net.request over fetch: response headers as Fetch Headers report them; in a browser only CORS-exposed headers, browser-added request headers and no observable redirects",
+      network: "net.request over fetch: v38 heads are the canonical head of the visible names; v37 response headers as Fetch Headers report them; in a browser only CORS-exposed headers, browser-added request headers and no observable redirects",
     },
   };
 }

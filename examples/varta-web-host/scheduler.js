@@ -268,7 +268,10 @@ export function createInbox(C) {
       failure ??= error;
       wake?.();
     },
-    next: () => new Promise((resolve) => (wake = () => ((wake = null), resolve()))),
+    /** Sets the one function a record or a failure calls (null: none). */
+    listen: (fn) => {
+      wake = fn;
+    },
   };
 }
 
@@ -280,11 +283,14 @@ export function createInbox(C) {
 export async function applicationLoop(ctx, exec, info, inbox, stopped) {
   if (info.profile?.scheduler && info.hasFrames) endTurn(ctx, exec, info);
   for (;;) {
+    // Before choosing, transfers make the progress they can without waiting, so
+    // a stream of due timers cannot starve a completion.
+    await letTransfersProgress();
     if (inbox.failure) throw inbox.failure;
     if (stopped()) return;
     // One ready task per turn: the earliest instant wins, ties in the order host
-    // task, timer, completion (embedding.md "Completion ordering", application
-    // instances); a completion's instant is its arrival.
+    // task, timer, completion (embedding.md "Long-lived application instance
+    // (v38)"); a completion's instant is when its transfer reported it.
     const armed = [...exec.timers.values()].filter((t) => t.armed);
     const next = earliest(armed);
     const at = now();
@@ -304,11 +310,44 @@ export async function applicationLoop(ctx, exec, info, inbox, stopped) {
     }
     const keeps = exec.viewAlive || armed.some((t) => !t.unref) || requestKeepsAlive(exec);
     if (!keeps) return;
-    const waits = [inbox.next().then(() => true)];
-    if (next !== null) waits.push(sleep(exec.startedAt + next.due - at).then(() => true));
-    if (requestKeepsAlive(exec)) waits.push(waitForCompletion(exec, 2 ** 31 - 1));
-    await Promise.race(waits);
+    await idle(exec, inbox, next === null ? null : exec.startedAt + next.due - at);
   }
+}
+
+/**
+ * One macrotask turn of the embedder's event loop, in which network callbacks
+ * run (`setImmediate` follows Node's I/O poll; a browser posts a message).
+ */
+function letTransfersProgress() {
+  if (typeof globalThis.setImmediate === "function") return new Promise((resolve) => globalThis.setImmediate(resolve));
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
+/**
+ * Waits for the first of a host record, the next timer's due time (`sleepMs`,
+ * or none) and a completion; the wake-ups that did not fire are withdrawn, so
+ * no timer or listener outlives the wait.
+ */
+function idle(exec, inbox, sleepMs) {
+  return new Promise((resolve) => {
+    let timer = null;
+    const wake = () => {
+      if (timer !== null) clearTimeout(timer);
+      inbox.listen(null);
+      if (exec.net.notify === wake) exec.net.notify = null;
+      resolve();
+    };
+    inbox.listen(wake);
+    if (sleepMs !== null) timer = setTimeout(wake, Math.max(0, sleepMs));
+    if (requestKeepsAlive(exec)) exec.net.notify = wake;
+  });
 }
 
 /** Fires a due timer as one turn: its reaction moves to the microtask queue. */
@@ -360,7 +399,7 @@ export async function eventLoop(ctx, exec, info) {
     const next = earliest(armed);
     if (!requestKeepsAlive(exec)) {
       if (!armed.some((t) => !t.unref)) return;
-      if (next.due >= exec.deadlineMs) throw schedulerError("TimerDeadline", { due_ms: Math.ceil(next.due).toFixed(0), deadline_seconds: Math.floor(exec.deadlineMs / MS_PER_SECOND) });
+      if (next.due >= exec.deadlineMs) throw timerDeadline(schedulerError, exec, next);
       const wait = exec.startedAt + next.due - now();
       if (wait > 0) await sleep(wait);
       if (now() > exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
@@ -377,6 +416,13 @@ export async function eventLoop(ctx, exec, info) {
       completionTurn(ctx, exec, info, false);
       continue;
     }
-    if (now() >= exec.deadline) throw new ExecutionFailure("execution deadline exceeded");
+    if (now() >= exec.deadline) {
+      // v38: a timer still armed at or beyond the deadline fails as without a request.
+      if (TURN_PROFILES.has(info.profile?.name) && next !== null && next.due >= exec.deadlineMs) throw timerDeadline(schedulerError, exec, next);
+      throw new ExecutionFailure("execution deadline exceeded");
+    }
   }
 }
+
+const timerDeadline = (schedulerError, exec, next) =>
+  schedulerError("TimerDeadline", { due_ms: Math.ceil(next.due).toFixed(0), deadline_seconds: Math.floor(exec.deadlineMs / MS_PER_SECOND) });

@@ -99,13 +99,20 @@ writeFileSync(join(here, "out", "view-expected.json"), JSON.stringify(viewExpect
 const observed = await runJsCases(host, async (name) => build(name), contract);
 // Network requests: one loopback server, the grant rewritten to its port, the
 // same module and manifest in the native runtime and in the JS host (Node only:
-// the browser page has no server to reach).
-const NET_FIXTURE = "net-v38";
+// the browser page has no server to reach). A failed run compares its logs and
+// error text too.
+const NET_RUNS = [
+  { label: "v38 net.request: json, repeated headers, split UTF-8 stream, 404, POST, runtime header, too large, denied", fixture: "net-v38" },
+  { label: "v38 net.request: the pending-request limit is fatal before the broker writes a denial", fixture: "net-slots-v38" },
+  { label: "v38 net.request: a timer beyond the deadline while a request hangs (TimerDeadline text)", fixture: "net-deadline-v38" },
+];
 const SPLIT_LETTER = Buffer.from("в", "utf8");
 const server = createServer((req, res) => {
   if (req.url === "/json") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"ok":true}');
+  } else if (req.url === "/hang") {
+    // Never answered: the request holds its slot until the run ends.
   } else if (req.url === "/headers") {
     // Repeats and names out of order, as the wire carries them (raw flat list);
     // no Date field, which could differ between the native and the JS run.
@@ -133,23 +140,44 @@ const server = createServer((req, res) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
-const netFixture = build(NET_FIXTURE);
-const netManifest = JSON.parse(netFixture.manifest);
-netManifest.capabilities = netManifest.capabilities.map((g) => (g.id === "net.request" ? { ...g, patterns: [`${base}/**`] } : g));
-const netDir = mkdtempSync(join(scratch, "net-"));
-writeFileSync(join(netDir, "app.wasm"), netFixture.bytes);
-writeFileSync(join(netDir, "app.manifest.json"), JSON.stringify(netManifest));
-// The native run must not block this process: the server answers from this event loop.
-const nativeNet = await new Promise((resolve) => {
-  const child = spawn(varta, ["run", join(netDir, "app.wasm")], { env: { PATH: process.env.PATH, BASE_URL: base } });
-  let stdout = "";
-  child.stdout.on("data", (d) => (stdout += d));
-  child.on("close", (status) => resolve({ status, logs: stdout.split("\n").filter((l) => REFERENCE_PREFIXES.some((p) => l.startsWith(p))) }));
-});
-const jsNet = await host.run(netFixture.bytes, { manifest: JSON.stringify(netManifest), env: new Map([["BASE_URL", base]]) });
+const netOutcome = (status, logs, error) => ({ status, logs, error: status === "failed" ? error : null });
+for (const run of NET_RUNS) {
+  const netFixture = build(run.fixture);
+  const netManifest = JSON.parse(netFixture.manifest);
+  netManifest.capabilities = netManifest.capabilities.map((g) => (g.id === "net.request" ? { ...g, patterns: [`${base}/**`] } : g));
+  const netDir = mkdtempSync(join(scratch, "net-"));
+  writeFileSync(join(netDir, "app.wasm"), netFixture.bytes);
+  writeFileSync(join(netDir, "app.manifest.json"), JSON.stringify(netManifest));
+  // The native run must not block this process: the server answers from this event loop.
+  const nativeNet = await new Promise((resolve) => {
+    const child = spawn(varta, ["run", join(netDir, "app.wasm")], { env: { PATH: process.env.PATH, BASE_URL: base } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("close", (status) => {
+      const failure = `${stdout}\n${stderr}`.split("\n").find((l) => l.startsWith(FAILED));
+      resolve(netOutcome(status === 0 ? "ok" : "failed", stdout.split("\n").filter((l) => REFERENCE_PREFIXES.some((p) => l.startsWith(p))), failure?.slice(FAILED.length) ?? null));
+    });
+  });
+  const jsNet = await host.run(netFixture.bytes, { manifest: JSON.stringify(netManifest), env: new Map([["BASE_URL", base]]) });
+  expected.push({ label: run.label, expected: nativeNet });
+  observed.push({ label: run.label, observed: netOutcome(jsNet.status, jsNet.logs, jsNet.error ?? null) });
+}
+// A contract check of this host's application instances: a 1 ms interval keeps
+// the instance busy, and the completion must still run first.
+{
+  const label = "contract check, v38 application instance: a busy interval cannot starve a completion";
+  const app = build("net-starve-v38");
+  const manifest = JSON.parse(app.manifest);
+  manifest.capabilities = manifest.capabilities.map((g) => (g.id === "net.request" ? { ...g, patterns: [`${base}/**`] } : g));
+  const instance = host.start(app.bytes, { manifest: JSON.stringify(manifest), env: new Map([["BASE_URL", base]]) });
+  const outcome = await instance.finished;
+  expected.push({ label, expected: { status: "ok", logs: ["varta log: answered 200"] } });
+  observed.push({ label, observed: { status: outcome.status, logs: outcome.logs } });
+}
+server.closeAllConnections();
 server.close();
-expected.push({ label: "v38 net.request: json, repeated headers, split UTF-8 stream, 404, POST, runtime header, too large, denied", expected: { status: nativeNet.status === 0 ? "ok" : "failed", logs: nativeNet.logs } });
-observed.push({ label: "v38 net.request", observed: { status: jsNet.status, logs: jsNet.logs } });
 
 let failures = 0;
 expected.forEach(({ label, expected: want }, i) => {
