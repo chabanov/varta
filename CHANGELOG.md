@@ -11,6 +11,22 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 compiled JSON decoders (`json_decoders`): every checked parse of a
+  static target (`JSON.parse(text) as T`, `varta.json.parse<T>`, untyped
+  `JSON.parse` at `unknown`, the preludes' parses) runs a decoder the
+  compiler emits for that type, one checker and builder per schema node
+  shared by all call sites. It checks the whole input first (grammar, shape,
+  duplicates, required fields, limits) with no value allocation, its
+  scratch a rooted tape block, then builds top-down in the shared builder's
+  layout and order; every failure and the rare inputs it leaves alone
+  (escaped keys, index-like dictionary keys, more than 64 dictionary
+  entries, nesting deeper than 128, records wider than 64 fields, numbers
+  near the binary64 overflow) go to the linked `json_parse_v19`, so values,
+  `SyntaxError`/`TypeError` messages and typed limits are unchanged. Long
+  number literals convert through the linked `primitive_to_number`. No host
+  ABI, value layout or schema changes; v37 and earlier keep their bytes; KV
+  decodes stay host imports.
+
 - V38 KV storage pays fair host fuel (`kv`): `fuel::KV_OPERATION` (100,000)
   per open, read and commit, `fuel::KV_BYTE` (10) per key or value byte
   staged, committed and returned by a read, `fuel::KV_ENTRY` (2,000) per

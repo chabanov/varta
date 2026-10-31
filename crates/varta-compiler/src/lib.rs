@@ -89,6 +89,33 @@ pub mod host_json_test_hook {
     }
 }
 
+/// Test-only: compile v38 checked parses without the compiled JSON decoders
+/// (the linked `json_parse_v19` alone), or with decoders that collect before
+/// every block they allocate.
+#[cfg(any(test, feature = "suspension-test-hook"))]
+pub mod json_decoder_test_hook {
+    use crate::emit::decoder_hook::{Mode, with};
+    /// Compile one source whose checked parses call the linked decoder only.
+    pub fn compile_generic(
+        source: &str,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Result<Vec<u8>, crate::CompilerError> {
+        with(Mode::Generic, || {
+            crate::compile_typescript_with_profile(source, profile)
+        })
+    }
+    /// Compile one source whose decoders run a full collection before every
+    /// block they allocate.
+    pub fn compile_collecting(
+        source: &str,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Result<Vec<u8>, crate::CompilerError> {
+        with(Mode::Collecting, || {
+            crate::compile_typescript_with_profile(source, profile)
+        })
+    }
+}
+
 /// Parse an in-memory source using the compatibility filename `input.ts`.
 pub fn parse_typescript(source: &str) -> Result<usize, CompilerError> {
     parse_typescript_with_path(source, std::path::Path::new("input.ts"))

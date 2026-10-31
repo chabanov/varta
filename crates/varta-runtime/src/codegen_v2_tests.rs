@@ -285,14 +285,15 @@ const PATTERNS: &[Pattern] = &[
         ceiling: 75_000,
         speedup: 4.5,
     },
-    // Re-pinned for wave 3: v38 decodes JSON in guest code (421,398) and
-    // v37's host decoding is charged at the fair rates (769,036).
+    // Re-pinned for the compiled JSON decoders (`json_decoders`): v38
+    // measured 154,662 (412,273 with the linked decoder alone), v37's host
+    // decoding charged at the fair rates 769,036.
     Pattern {
         name: "JSON.parse ~2 KB",
         source: json_parse,
         size: 40,
-        ceiling: 485_000,
-        speedup: 1.6,
+        ceiling: 175_000,
+        speedup: 4.5,
     },
     Pattern {
         name: "list render 100 rows",

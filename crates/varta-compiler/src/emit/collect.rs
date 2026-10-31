@@ -9,6 +9,8 @@ pub(super) struct Collected<'a> {
     pub arrays: bool,
     pub unions: bool,
     pub schemas: BTreeMap<Type, Location<'a>>,
+    /// V38 (`json_decoders`): the checked parse targets of compiled decoders.
+    pub decoders: BTreeSet<Type>,
     schema_types: BTreeSet<Type>,
     types: &'a ir::ValueTypes,
 }
@@ -24,6 +26,7 @@ impl<'a> Collected<'a> {
             unions: false,
             types: &program.types,
             schemas: BTreeMap::new(),
+            decoders: BTreeSet::new(),
             schema_types: BTreeSet::new(),
         };
         for function in &program.functions {
@@ -194,6 +197,10 @@ impl<'a> Collected<'a> {
             E::ParseJson(text) => {
                 self.hosts.insert(self.types.profile.json_parse());
                 self.helpers.insert(strings::Helper::Allocate);
+                if super::decoders::enabled(self.types.profile) {
+                    self.decoders.insert(expr.ty);
+                    self.helpers.insert(strings::Helper::RootPush);
+                }
                 self.schemas.entry(expr.ty).or_insert((expr.span, source));
                 self.schema_type(expr.ty, (expr.span, source));
                 self.expression(text, source);

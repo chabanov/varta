@@ -476,6 +476,14 @@ impl Emitter<'_> {
                 self.unpack_slot(expr.ty);
             }
             E::Json(value, status) => self.json(value, expr.ty, *status)?,
+            // V38 (`json_decoders`): the target's compiled decoder, which
+            // falls back to the linked parse itself.
+            E::ParseJson(text) if self.decoders.contains_key(&expr.ty) => {
+                self.expr(text)?;
+                self.code.push(I::Call(self.decoders[&expr.ty]));
+                self.check_exception()?;
+                self.unpack_slot(expr.ty);
+            }
             E::ParseJson(text) => {
                 self.expr(text)?;
                 let (ptr, len) = self.schemas[&expr.ty];

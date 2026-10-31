@@ -9010,7 +9010,11 @@ by selectors; each admits nothing until its stream adds a subsection below:
   virtual paths under named roots that the host maps;
   [implemented](#virtual-file-roots-file_roots));
 - KV stream (wave 3): `kv()` (Deno KV database files at virtual paths behind
-  `kv.read`/`kv.write`; [implemented](#kv-storage-kv)).
+  `kv.read`/`kv.write`; [implemented](#kv-storage-kv));
+- JSON-decoders stream (wave 3b): `json_decoders()` (checked parses run
+  decoders compiled for their target types, the linked decoder their
+  fallback; [implemented](#compiled-json-decoders-json_decoders); it admits
+  no syntax).
 
 The view-protocol and TSX streams add
 [their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
@@ -10475,6 +10479,8 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   the compiler's test switch `host_json_test_hook` compiles v38 modules
   that import it, so tests compare both paths. The linked decoder's fuel is
   in the [measurement](development-plan.md#linked-json-measurement-v38).
+  Under [compiled decoders](#compiled-json-decoders-json_decoders) a parse
+  calls the linked decoder only as its fallback.
   `json_stringify_owned` stays a host import, charged at the fair rates.
 - **Rooted scratch blocks.** Linked JSON's scratch (tape, frames, key sets)
   is not a reserved gap: the library's allocator, inside a JSON entry
@@ -10504,6 +10510,77 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   keys ascending, then input order); value18 dictionaries are built
   unindexed (zero holes, zero table). A failed parse throws before the
   first value allocation, so no partial result exists.
+
+#### Compiled JSON decoders (`json_decoders`)
+
+Selector `json_decoders()` (v38 only) compiles every checked parse of a
+static target type (`JSON.parse(text) as T`, `varta.json.parse<T>`, the
+untyped `JSON.parse(text)` at `unknown`, and the preludes' parses such as
+`Response.json()` and the network head) to a decoder the compiler emits for
+that type. It changes no host ABI, value layout, schema version or import:
+the module still links `json_parse_v19` and embeds each target's schema 18,
+which the decoder calls for every input it does not accept itself. KV
+decodes (`kv_key`, `kv_value`) stay host imports. Contract:
+
+- **Same outcome.** For every input the result is the one the shared
+  decoder produces: the same value graph (layouts, presence and order words,
+  `undefined` cells of missing fields, own-key order, unindexed value18
+  dictionaries), or the same `SyntaxError`/`TypeError` with the same message,
+  or the same typed input limit. The decoder accepts an input only when it
+  is certain to agree; every failure, and the inputs it leaves alone (keys
+  with escapes, dictionary keys starting with a digit, more than 64
+  dictionary entries, nesting deeper than 128 containers, records of more
+  than 64 fields, numbers whose leading digit's decimal exponent reaches 308,
+  BigInt targets, inputs longer than a quarter of the byte limit), go to the
+  linked decoder unchanged, which then decides alone. No message, limit or
+  error class is produced by compiled code.
+- **Check, then build.** The entry roots the input string, takes one tape
+  block from the guest allocator (rooted; edge-free; it doubles while it
+  fills, the old block rooted until copied), and runs the node checkers over
+  the whole input: grammar, shape, duplicates, required fields and the v38
+  limits, allocating no value. Only an input accepted to its end is built:
+  the node builders read the tape and build top-down exactly as
+  `varta_common::json::build` does (each container published into its
+  reachable parent, or retained at the root, before any child is
+  allocated; the same allocation sequence). On return the root-stack top is
+  reset to its entry value and only a reference result is retained;
+  `env_result_len` is zero. Before a fallback the entry resets the root
+  stack too, so the linked decoder starts from the caller's state.
+- **Schema at compile time.** The checkers and builders are generated from
+  the target's schema nodes (one graph per module; every node is one value
+  type, shared by all call sites and targets reaching it): field names as
+  UTF-16 constants compared by length and then eight bytes at a time,
+  union members selected from the value's first unit as the shared decoder
+  selects them (the first member of that value kind; an object also selects
+  a dictionary member), required-field masks, record lengths, link masks,
+  presence and order words, and the static descriptors of records and
+  dictionary storage. The descriptors are the module's static data, as for
+  every record the guest builds; the linked fallback still checks the
+  schema and its descriptors on every call it makes.
+- **Numbers.** A literal is checked in the strict grammar; within 15
+  significant digits and a decimal exponent within 22 it converts exactly
+  (one correctly rounded multiplication or division by a power of ten, from
+  a 23-entry static table), otherwise the builder converts its text with the
+  linked `primitive_to_number` through a string cell (correctly rounded,
+  like the shared decoder's `core` path). Both give the shared decoder's
+  bits, `-0` included.
+- **Resources.** The decoders' recursion is bounded by their depth limit;
+  their scratch is the rooted tape (eight bytes per entry: a container count,
+  field slot, union member, string span, number or boolean; the first block
+  `min(4·len + 8, 4096)` bytes; the shared decoder's tape takes sixteen bytes
+  per node) and their work is paid as guest fuel. Five mutable i32
+  globals (input end, tape cursor, base, end and root slot) follow the
+  module's other globals; the decoder functions follow every other
+  function. Nothing survives a call.
+- **Tests.** `varta-runtime` `json_decoder_tests` compares the decoders with
+  the linked decoder alone (the compiler's test switch
+  `json_decoder_test_hook::compile_generic`) and with the host import on the
+  case corpus, a hand corpus, seeded random schemas, inputs and mutations,
+  wide unions, deep nesting to the limit, dictionaries around 64 entries,
+  wide records and the data-limit cases, and runs decoders that collect
+  before every block they allocate (`compile_collecting`); the compiler's
+  `emit::decoders::tests` validates the modules in Wasmtime and checks that
+  decoders are shared per type and absent before v38.
 
 #### Fair host fuel (`fair_fuel`)
 
