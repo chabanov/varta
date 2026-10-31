@@ -158,7 +158,7 @@ impl Emitter<'_> {
             let segment = entry / frame::SEGMENT_BINDINGS;
             if current != Some(segment) {
                 if current.is_some_and(|s| masks[s] != 0) {
-                    self.segment_mask(0);
+                    self.clear_segment();
                 }
                 self.checked_segment(layout, entry, masks[segment]);
                 current = Some(segment);
@@ -221,8 +221,15 @@ impl Emitter<'_> {
             }
         }
         if current.is_some_and(|s| masks[s] != 0) {
-            self.segment_mask(0);
+            self.clear_segment();
         }
+    }
+    /// Clear the mask of the restored segment in `self.temporary`: a
+    /// deletion of its references, so the segment is first traced whole while
+    /// a cycle marks (v38 `incremental_collection`).
+    fn clear_segment(&mut self) {
+        self.object_barrier(self.temporary);
+        self.segment_mask(0);
     }
     /// Resume prologue of a liveness frame: select the target state's saved
     /// set with one `br_table` and restore exactly that set.

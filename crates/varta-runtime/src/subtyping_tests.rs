@@ -150,9 +150,10 @@ fn only_view_accesses_get_accessors() {
     };
     let direct = program("{x:1,y:2}");
     let viewed = program("{x:1,y:2,z:3}");
+    // V38 adds only its collector's helpers (`incremental_collection`).
     assert_eq!(
         defined_functions(&compile(&direct, V38)),
-        defined_functions(&compile(&direct, V37))
+        defined_functions(&compile(&direct, V37)) + varta_compiler::collector_functions(V38)
     );
     // One read accessor per member read through the view `P`.
     assert_eq!(
@@ -696,9 +697,10 @@ fn only_converted_signatures_get_adapters() {
     };
     let direct = program("exact");
     let adapted = program("wide");
+    // V38 adds only its collector's helpers (`incremental_collection`).
     assert_eq!(
         defined_functions(&compile(&direct, V38)),
-        defined_functions(&compile(&direct, V37))
+        defined_functions(&compile(&direct, V37)) + varta_compiler::collector_functions(V38)
     );
     assert_eq!(
         defined_functions(&compile(&adapted, V38)),

@@ -32,6 +32,9 @@ impl Emitter<'_> {
             I::I32Const(0),
             I::LocalSet(cursor),
         ]);
+        // V38 (`incremental_collection`): the entries overwrite and clear the
+        // target's slots in place.
+        self.object_barrier(backing);
         let mut numeric = Vec::new();
         let mut names = Vec::new();
         for (slot, field) in fields.iter().enumerate() {

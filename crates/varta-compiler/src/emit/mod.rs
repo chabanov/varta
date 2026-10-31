@@ -1,5 +1,6 @@
 mod array_mutation;
 mod arrays;
+mod barriers;
 mod bitwise;
 mod classes;
 mod closures;
@@ -136,10 +137,59 @@ pub(crate) struct Emitted {
     /// The allocator, retention helper and root-stack global of a module
     /// with a managed heap (v38 linked JSON builds guest values with them).
     pub values: Option<crate::link::GuestValues>,
+    /// Test-only collector stress builds: the label of each code-section
+    /// body, named after linking.
+    pub names: Option<Vec<String>>,
 }
 
+/// The helpers of the v38 collector (`incremental_collection`) beyond the
+/// allocator, the atomic collection and the root push.
+const COLLECTOR_HELPERS: [strings::Helper; 8] = [
+    strings::Helper::CollectIdle,
+    strings::Helper::CollectBegin,
+    strings::Helper::CollectStep,
+    strings::Helper::CollectTrace,
+    strings::Helper::CollectMark,
+    strings::Helper::Shade,
+    strings::Helper::ShadeObject,
+    strings::Helper::Blacken,
+];
+pub(crate) const COLLECTOR_FUNCTIONS: usize = COLLECTOR_HELPERS.len();
+pub(crate) use strings::incremental::with_stress as with_collector_stress;
+
 pub(crate) fn emit(program: &ir::Program) -> Result<Emitted> {
+    // A test-only collector stress build names its functions, so a trap of
+    // the stress verification names the function that hit it.
+    if strings::incremental::stress().is_some() {
+        let mut names = Vec::new();
+        let emitted = emit_named(program, Some(&mut names))?;
+        return Ok(Emitted {
+            names: Some(names),
+            ..emitted
+        });
+    }
     emit_named(program, None)
+}
+
+/// Append a Wasm `name` section naming each body of the first code-section
+/// positions (a linked module's guest bodies keep their positions).
+pub(crate) fn name_section(module: &[u8], names: &[String]) -> Vec<u8> {
+    let imports = wasmparser::Parser::new(0)
+        .parse_all(module)
+        .find_map(|payload| match payload {
+            Ok(wasmparser::Payload::ImportSection(reader)) => Some(reader.count()),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let mut map = wasm_encoder::NameMap::new();
+    for (index, label) in names.iter().enumerate() {
+        map.append(imports + index as u32, label);
+    }
+    let mut section = wasm_encoder::NameSection::new();
+    section.functions(&map);
+    let mut bytes = module.to_vec();
+    wasm_encoder::Section::append_to(&section, &mut bytes);
+    bytes
 }
 
 /// A fuel-profile build: the emitted module with probes and function names
@@ -158,6 +208,7 @@ pub(crate) fn emit_profiled(program: &ir::Program) -> Result<Emitted> {
             retain: values.retain + probes,
             ..values
         }),
+        names: None,
     })
 }
 
@@ -335,6 +386,14 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             strings::Helper::Collect,
             strings::Helper::RootPush,
         ]);
+    }
+    // V38 (`incremental_collection`): the heap's collector state and its
+    // idle export, with the codegen v2 allocator.
+    let incremental = needs_arena
+        && crate::codegen_v2(program.types.profile)
+        && program.types.profile.incremental_collection();
+    if incremental {
+        helpers.extend(COLLECTOR_HELPERS);
     }
     let mut placement = static_data::Placement::new(program.types.profile);
     let mut offsets = BTreeMap::new();
@@ -580,6 +639,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         failure: None,
         collect_at: collect_policy.then_some(globals.len() + 3),
         classes: collect_policy.then_some(globals.len() + 4),
+        collector: None,
     };
     if needs_arena {
         for initial in [
@@ -618,6 +678,22 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
                 },
                 &wasm_encoder::ConstExpr::i64_const(0),
             );
+        }
+        if incremental {
+            memory_globals.collector = Some(strings::incremental::State {
+                first: globals.len(),
+                stress: strings::incremental::stress(),
+            });
+            for _ in strings::incremental::Slot::ALL {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(0),
+                );
+            }
         }
     }
     if reports {
@@ -828,6 +904,13 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         ] {
             exports.export(name, wasm_encoder::ExportKind::Func, helpers[&helper]);
         }
+    }
+    if incremental {
+        exports.export(
+            varta_common::collector::IDLE_EXPORT,
+            wasm_encoder::ExportKind::Func,
+            helpers[&strings::Helper::CollectIdle],
+        );
     }
     if host_values {
         for (name, helper) in [
@@ -1057,6 +1140,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             table: helpers.get(&strings::Helper::FrameTable).copied(),
             bindings: &binding_types,
             dispatch_table,
+            barrier: strings::Helper::barrier(needs_arena.then_some(memory_globals), &helpers),
         })?);
     }
     if let Some(exceptions) = exception_globals {
@@ -1068,6 +1152,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
                 &resume_bodies,
                 exceptions.pending,
                 program.types.generators[id as usize].body,
+                strings::Helper::barrier(needs_arena.then_some(memory_globals), &helpers),
             ));
         }
     } else if generator_types > 0 {
@@ -1222,6 +1307,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             retain: helpers[&strings::Helper::RootPush],
             roots: memory_globals.roots,
         }),
+        names: None,
     })
 }
 
@@ -1452,6 +1538,9 @@ impl Emitter<'_> {
                         I::LocalSet(self.string_temporary),
                         I::I32WrapI64,
                         I::LocalTee(self.temporary),
+                    ]);
+                    self.typed_slot_barrier(value.ty, self.temporary, records::field(*index));
+                    self.code.extend([
                         I::LocalGet(self.string_temporary),
                         I::I64Store(records::field(*index)),
                     ]);

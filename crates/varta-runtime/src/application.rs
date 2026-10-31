@@ -139,6 +139,9 @@ pub struct Application {
     /// A scripted headless session's virtual clock; `None`: timers follow
     /// the wall clock.
     horizon: Option<Horizon>,
+    /// The current idle period already ran its maintenance (v38
+    /// `incremental_collection`); a turn starts the next period.
+    maintained: bool,
 }
 
 /// When a timer is ready on the virtual clock of a scripted session; nothing
@@ -194,6 +197,7 @@ impl VartaRuntime {
             network: VecDeque::new(),
             max_turns: options.max_turns,
             horizon: None,
+            maintained: false,
         };
         let result = (|| {
             let store = &mut application.execution.store;
@@ -463,6 +467,18 @@ impl Application {
                 self.state = InstanceState::Finished { exit_code: 0 };
                 return Step::Finished { exit_code: 0 };
             }
+            // No task is runnable: the idle period's collection work runs
+            // once, under the maintenance budget, before the instance waits.
+            if !self.maintained {
+                self.maintained = true;
+                if let Err(error) =
+                    crate::maintenance::idle(&self.instance, &mut self.execution.store)
+                {
+                    self.fail(error);
+                    return Step::Failed;
+                }
+                continue;
+            }
             match self.wait(until) {
                 Ok(true) => {}
                 Ok(false) => return Step::Idle,
@@ -663,6 +679,7 @@ impl Application {
     }
 
     fn finish_turn(&mut self, result: Result<(), RuntimeError>) {
+        self.maintained = false;
         let store = &mut self.execution.store;
         store.data_mut().broker.gesture = false;
         let instance = &self.instance;

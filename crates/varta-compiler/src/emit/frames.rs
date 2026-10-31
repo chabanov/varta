@@ -319,6 +319,7 @@ pub(super) fn table_helper(
     allocate: u32,
     root_push: u32,
     limits: varta_common::limits::DataLimits,
+    barrier: Option<strings::incremental::Barrier>,
 ) -> wasm_encoder::Function {
     const HANDLE: u32 = 0;
     const OP: u32 = 1;
@@ -603,6 +604,11 @@ pub(super) fn table_helper(
         I::I32Add,
         I::Return,
         I::End,
+    ]);
+    // V38 (`incremental_collection`): the deletion removes and moves entries
+    // within the table, which is first traced whole while a cycle marks.
+    code.extend(strings::incremental::object_code(barrier, TABLE));
+    code.extend([
         // Release: backward-shift deletion keeps every probe chain unbroken.
         I::LocalGet(INDEX),
         I::LocalSet(CURSOR),
@@ -778,6 +784,7 @@ impl<'a> Emitter<'a> {
     /// and publish it as the frame's completion cell.
     fn store_completion(&mut self, ty: Type) -> Result<()> {
         if ty == Type::Void {
+            self.completion_barrier();
             self.code.extend([
                 I::LocalGet(FRAME_PARAM),
                 I::I32WrapI64,
@@ -795,6 +802,7 @@ impl<'a> Emitter<'a> {
         self.code.push(I::LocalSet(self.string_temporary));
         self.completion_cell(ty)?;
         self.code.push(I::LocalSet(self.string_temporary));
+        self.completion_barrier();
         self.code.extend([
             I::LocalGet(FRAME_PARAM),
             I::I32WrapI64,
@@ -802,6 +810,14 @@ impl<'a> Emitter<'a> {
             I::I64Store(records::field(frame::COMPLETION_FIELD)),
         ]);
         Ok(())
+    }
+    /// V38 (`incremental_collection`): before the frame's completion is
+    /// replaced.
+    fn completion_barrier(&mut self) {
+        if let Some(barrier) = self.barrier() {
+            self.code
+                .extend(barrier.handle_slot(FRAME_PARAM, records::field(frame::COMPLETION_FIELD)));
+        }
     }
     /// Suspension: publish the yielded value, save every binding, record the
     /// state and return to the dispatcher with an empty exception channel.
@@ -1020,7 +1036,10 @@ impl<'a> Emitter<'a> {
         for (index, slot) in resume.layout.slots.iter().enumerate() {
             if slot.shared {
                 self.segment(FRAME_PARAM, index);
+                self.code.push(I::LocalSet(self.temporary));
+                self.slot_barrier(self.temporary, Self::entry(index));
                 self.code.extend([
+                    I::LocalGet(self.temporary),
                     I::LocalGet(self.cell_slots[&slot.local]),
                     I::I64Store(Self::entry(index)),
                 ]);
@@ -1031,8 +1050,15 @@ impl<'a> Emitter<'a> {
             self.code.extend([
                 I::I64Load(Self::entry(index)),
                 I::I32WrapI64,
-                I::LocalGet(physical),
+                I::LocalSet(self.temporary),
             ]);
+            self.typed_slot_barrier(
+                slot.ty.result_value().unwrap_or(slot.ty),
+                self.temporary,
+                records::field(0),
+            );
+            self.code
+                .extend([I::LocalGet(self.temporary), I::LocalGet(physical)]);
             self.pack_slot(slot.ty.result_value().unwrap_or(slot.ty));
             self.code.push(I::I64Store(records::field(0)));
             if slot.ty.width() == 2 {
@@ -1386,6 +1412,8 @@ pub(super) struct Dispatch<'a> {
     /// V38 (`program_limits`): static address of the dispatch table, which
     /// replaces the per-layout check chain by one `br_table`.
     pub dispatch_table: Option<u32>,
+    /// V38 (`incremental_collection`): the write barrier.
+    pub barrier: Option<strings::incremental::Barrier>,
 }
 
 /// Bytes of one dispatch table entry (v38): the expected control function
@@ -1647,6 +1675,13 @@ pub(super) fn dispatcher(dispatch: &Dispatch<'_>) -> Result<wasm_encoder::Functi
             I::LocalGet(PTR),
             I::I32Const(frame::STATUS_RUNNING as i32),
             I::I32Store(word(frame::STATUS_FIELD, false)),
+        ]);
+        code.extend(strings::incremental::slot_code(
+            dispatch.barrier,
+            PTR,
+            records::field(frame::COMPLETION_FIELD),
+        ));
+        code.extend([
             I::LocalGet(PTR),
             I::I64Const(0),
             I::I64Store(records::field(frame::COMPLETION_FIELD)),
@@ -1732,6 +1767,13 @@ fn dispatch_epilogue(dispatch: &Dispatch<'_>, mut code: Vec<I<'static>>) -> wasm
         I::LocalGet(CELL),
         I::GlobalGet(globals.value),
         I::I64Store(records::field(0)),
+    ]);
+    code.extend(strings::incremental::slot_code(
+        dispatch.barrier,
+        PTR,
+        records::field(frame::COMPLETION_FIELD),
+    ));
+    code.extend([
         I::LocalGet(PTR),
         I::LocalGet(CELL),
         I::I64ExtendI32U,
@@ -1901,6 +1943,13 @@ fn table_dispatch(dispatch: &Dispatch<'_>, table: u32, code: &mut Vec<I<'static>
         I::LocalGet(PTR),
         I::I32Const(frame::STATUS_RUNNING as i32),
         I::I32Store(word(frame::STATUS_FIELD, false)),
+    ]);
+    code.extend(strings::incremental::slot_code(
+        dispatch.barrier,
+        PTR,
+        records::field(frame::COMPLETION_FIELD),
+    ));
+    code.extend([
         I::LocalGet(PTR),
         I::I64Const(0),
         I::I64Store(records::field(frame::COMPLETION_FIELD)),
@@ -2091,6 +2140,7 @@ pub(super) fn step_function(
     bodies: &[u32],
     pending: u32,
     keep_completion: bool,
+    barrier: Option<strings::incremental::Barrier>,
 ) -> wasm_encoder::Function {
     use ir::GeneratorOutcome as Out;
     const HANDLE: u32 = 0;
@@ -2162,6 +2212,11 @@ pub(super) fn step_function(
     code.push(I::End);
     status(&mut code, frame::STATUS_RUNNING);
     if !keep_completion {
+        code.extend(strings::incremental::slot_code(
+            barrier,
+            PTR,
+            records::field(frame::COMPLETION_FIELD),
+        ));
         code.extend([
             I::LocalGet(PTR),
             I::I64Const(0),

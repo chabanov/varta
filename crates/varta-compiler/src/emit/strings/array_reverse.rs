@@ -26,8 +26,15 @@ const BACKING: MemArg = MemArg {
     ..ROOT
 };
 
-pub(super) fn function(sparse: bool, sizes: sparse::Sizes) -> Function {
+pub(super) fn function(
+    sparse: bool,
+    sizes: sparse::Sizes,
+    barrier: Option<incremental::Barrier>,
+) -> Function {
     let mut f = Function::new([(9, ValType::I32), (1, ValType::I64)]);
+    // V38 (`incremental_collection`): the elements move in place; the
+    // backing is first traced whole.
+    instructions(&mut f, incremental::backing_code(barrier, INPUT));
     instructions(
         &mut f,
         [

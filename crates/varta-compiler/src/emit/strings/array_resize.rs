@@ -23,9 +23,16 @@ const BACKING: MemArg = MemArg {
     offset: values::VECTOR_STORAGE_OFFSET,
     ..ROOT
 };
-pub(super) fn function(allocate: u32, limits: varta_common::limits::DataLimits) -> Function {
+pub(super) fn function(
+    allocate: u32,
+    limits: varta_common::limits::DataLimits,
+    barrier: Option<incremental::Barrier>,
+) -> Function {
     let sizes = sparse::Sizes::new(limits);
     let mut f = Function::new([(9, ValType::I32)]);
+    // V38 (`incremental_collection`): a shrink clears removed elements in
+    // place; the backing is first traced whole.
+    instructions(&mut f, incremental::backing_code(barrier, TARGET));
     instructions(
         &mut f,
         [
@@ -156,6 +163,10 @@ pub(super) fn function(allocate: u32, limits: varta_common::limits::DataLimits) 
         ]),
     );
     pack(&mut f, BYTES, DEST);
+    // V38 (`incremental_collection`): the replaced backing is shaded with no
+    // allocation before the store (a cycle may have begun in the allocation
+    // above, after the barrier at the start).
+    instructions(&mut f, incremental::slot_code(barrier, CELL, BACKING));
     instructions(
         &mut f,
         [

@@ -15,6 +15,12 @@
 //! without a host ceiling that default is also the cap, so a package can
 //! lower its budgets but only the embedder can raise them. Earlier profiles
 //! keep their production budgets ([`Budgets::PRODUCTION`]) and ignore both.
+//!
+//! Collection work between the turns of an application instance (v38
+//! `incremental_collection`, [`crate::collector`]) runs under a separate,
+//! per-idle-period **maintenance budget** ([`MAINTENANCE_FUEL`],
+//! [`MAINTENANCE_DEADLINE_MS`]), requested and capped like the turn budgets
+//! and never charged to a turn. Earlier profiles and bounded runs have none.
 use crate::abi;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -30,6 +36,22 @@ pub const MAX_DEADLINE_PER_TURN_MS: u64 = 60_000;
 pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_HOST_CALLS_PER_TURN: u32 = 1 << 20;
 pub const MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+/// The maintenance fuel of one idle period of a v38 application instance:
+/// collection work the runtime runs between turns, when no task is runnable
+/// (`collector::IDLE_EXPORT`): half the per-turn fuel, enough for several
+/// complete cycles of the console's heap (wave 3 (f) measurement).
+pub const MAINTENANCE_FUEL: u64 = TURN_FUEL / 2;
+pub const MAX_MAINTENANCE_FUEL: u64 = MAX_FUEL_PER_TURN;
+/// The wall-clock bound of one idle period's maintenance; a hard bound only
+/// (the work done is set by fuel, so scripted sessions stay deterministic).
+pub const MAINTENANCE_DEADLINE_MS: u64 = 1000;
+pub const MAX_MAINTENANCE_DEADLINE_MS: u64 = MAX_DEADLINE_PER_TURN_MS;
+/// The most fuel one `collector::IDLE_EXPORT` call of
+/// `collector::IDLE_STEP_UNITS` units may use (measured bound with headroom,
+/// `idle_step_fuel_stays_within_its_bound`): the runtime starts another step
+/// only while this much maintenance fuel remains, so a step never exhausts
+/// the budget of a well-formed module.
+pub const MAINTENANCE_STEP_FUEL: u64 = 400_000;
 /// Milliseconds per second, for the deadline budget's wire unit.
 pub const MILLISECONDS_PER_SECOND: u64 = 1000;
 /// Turns whose usage a budget report keeps individually; later turns are
@@ -52,6 +74,10 @@ pub struct BudgetRequest {
     pub host_calls_per_turn: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_fuel: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_deadline_ms: Option<u64>,
 }
 
 /// One budget, by its wire name.
@@ -62,14 +88,20 @@ pub enum BudgetKind {
     Memory,
     HostCalls,
     Output,
+    /// Fuel of one idle period's maintenance (v38 `incremental_collection`).
+    MaintenanceFuel,
+    /// Wall-clock bound of one idle period's maintenance.
+    MaintenanceDeadline,
 }
 impl BudgetKind {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Fuel,
         Self::Deadline,
         Self::Memory,
         Self::HostCalls,
         Self::Output,
+        Self::MaintenanceFuel,
+        Self::MaintenanceDeadline,
     ];
     /// The manifest member name.
     #[must_use]
@@ -80,6 +112,8 @@ impl BudgetKind {
             Self::Memory => "memoryBytes",
             Self::HostCalls => "hostCallsPerTurn",
             Self::Output => "outputBytes",
+            Self::MaintenanceFuel => "maintenanceFuel",
+            Self::MaintenanceDeadline => "maintenanceDeadlineMs",
         }
     }
     /// The human name used in diagnostics and budget reports.
@@ -91,6 +125,8 @@ impl BudgetKind {
             Self::Memory => "memory",
             Self::HostCalls => "host-call",
             Self::Output => "output",
+            Self::MaintenanceFuel => "maintenance fuel",
+            Self::MaintenanceDeadline => "maintenance deadline",
         }
     }
     /// The engine maximum of this budget.
@@ -102,6 +138,8 @@ impl BudgetKind {
             Self::Memory => MAX_MEMORY_BYTES,
             Self::HostCalls => u64::from(MAX_HOST_CALLS_PER_TURN),
             Self::Output => MAX_OUTPUT_BYTES,
+            Self::MaintenanceFuel => MAX_MAINTENANCE_FUEL,
+            Self::MaintenanceDeadline => MAX_MAINTENANCE_DEADLINE_MS,
         }
     }
     /// The v38 production default ([`Budgets::TURN`]) in the wire unit: an
@@ -121,6 +159,8 @@ impl BudgetRequest {
             BudgetKind::Memory => self.memory_bytes,
             BudgetKind::HostCalls => self.host_calls_per_turn.map(u64::from),
             BudgetKind::Output => self.output_bytes,
+            BudgetKind::MaintenanceFuel => self.maintenance_fuel,
+            BudgetKind::MaintenanceDeadline => self.maintenance_deadline_ms,
         }
     }
     /// Every present value must be positive and within its engine maximum.
@@ -154,21 +194,30 @@ pub struct Budgets {
     pub memory_bytes: usize,
     pub host_calls_per_turn: u32,
     pub output_bytes: usize,
+    /// Fuel of one idle period's maintenance; zero: no maintenance.
+    pub maintenance_fuel: u64,
+    pub maintenance_deadline: Duration,
 }
 impl Budgets {
     /// The frozen production budgets (`abi`) of every profile before v38 and
-    /// of the tool and HTTP entry points.
+    /// of the tool and HTTP entry points, which run no maintenance.
     pub const PRODUCTION: Self = Self {
         fuel_per_turn: abi::FUEL,
         deadline_per_turn: Duration::from_secs(abi::DEADLINE_SECONDS),
         memory_bytes: abi::MAX_MEMORY_BYTES,
         host_calls_per_turn: abi::MAX_HOST_CALLS,
         output_bytes: abi::MAX_OUTPUT_BYTES,
+        maintenance_fuel: 0,
+        maintenance_deadline: Duration::ZERO,
     };
     /// The production budgets of a v38 (`turn_budgets`) instance, per turn:
-    /// [`TURN_FUEL`] fuel, the other budgets as [`Self::PRODUCTION`].
+    /// [`TURN_FUEL`] fuel and, per idle period, [`MAINTENANCE_FUEL`] and
+    /// [`MAINTENANCE_DEADLINE_MS`]; the other budgets as
+    /// [`Self::PRODUCTION`].
     pub const TURN: Self = Self {
         fuel_per_turn: TURN_FUEL,
+        maintenance_fuel: MAINTENANCE_FUEL,
+        maintenance_deadline: Duration::from_millis(MAINTENANCE_DEADLINE_MS),
         ..Self::PRODUCTION
     };
     /// One budget in its wire unit (milliseconds for the deadline).
@@ -182,6 +231,10 @@ impl Budgets {
             BudgetKind::Memory => self.memory_bytes as u64,
             BudgetKind::HostCalls => u64::from(self.host_calls_per_turn),
             BudgetKind::Output => self.output_bytes as u64,
+            BudgetKind::MaintenanceFuel => self.maintenance_fuel,
+            BudgetKind::MaintenanceDeadline => {
+                u64::try_from(self.maintenance_deadline.as_millis()).unwrap_or(u64::MAX)
+            }
         }
     }
     fn set(&mut self, kind: BudgetKind, value: u64) {
@@ -194,6 +247,10 @@ impl Budgets {
                 self.host_calls_per_turn = u32::try_from(value).unwrap_or(u32::MAX);
             }
             BudgetKind::Output => self.output_bytes = usize::try_from(value).unwrap_or(usize::MAX),
+            BudgetKind::MaintenanceFuel => self.maintenance_fuel = value,
+            BudgetKind::MaintenanceDeadline => {
+                self.maintenance_deadline = Duration::from_millis(value);
+            }
         }
     }
     /// Resolve a v38 package request against the host ceiling: each budget
@@ -246,14 +303,19 @@ mod tests {
         assert_eq!(resolved.budgets, Budgets::TURN);
         assert!(resolved.capped.is_empty());
         assert_eq!(BudgetKind::Fuel.production(), TURN_FUEL);
-        // Only the per-turn fuel differs from the frozen production budgets.
+        // Only the per-turn fuel and the maintenance budget differ from the
+        // frozen production budgets, which run no maintenance.
         assert_eq!(
             Budgets {
                 fuel_per_turn: abi::FUEL,
+                maintenance_fuel: 0,
+                maintenance_deadline: Duration::ZERO,
                 ..Budgets::TURN
             },
             Budgets::PRODUCTION
         );
+        assert_eq!(BudgetKind::MaintenanceFuel.production(), MAINTENANCE_FUEL);
+        assert!(MAINTENANCE_STEP_FUEL < MAINTENANCE_FUEL);
         assert_eq!(
             BudgetKind::Deadline.production(),
             abi::DEADLINE_SECONDS * MILLISECONDS_PER_SECOND
@@ -322,6 +384,10 @@ mod tests {
                         request.host_calls_per_turn = u32::try_from(bad).ok().or(Some(0));
                     }
                     BudgetKind::Output => request.output_bytes = Some(bad),
+                    BudgetKind::MaintenanceFuel => request.maintenance_fuel = Some(bad),
+                    BudgetKind::MaintenanceDeadline => {
+                        request.maintenance_deadline_ms = Some(bad);
+                    }
                 }
                 assert!(request.validate().is_err(), "{kind:?} {bad}");
             }

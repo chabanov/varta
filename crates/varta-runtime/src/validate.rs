@@ -109,6 +109,21 @@ pub(crate) fn module_with(
             return Err(error("invalid view event export"));
         }
     }
+    // V38 (`incremental_collection`): the idle collection export exists only
+    // in a profile that admits it, as `(i32 units) -> i32 status`.
+    if let Some(export) = module.get_export(varta_common::collector::IDLE_EXPORT) {
+        let wasmtime::ExternType::Func(ty) = export else {
+            return Err(error("the idle collection export must be a function"));
+        };
+        let params: Vec<_> = ty.params().collect();
+        let results: Vec<_> = ty.results().collect();
+        if !language.profile.is_some_and(|p| p.incremental_collection())
+            || !matches!(params.as_slice(), [wasmtime::ValType::I32])
+            || !matches!(results.as_slice(), [wasmtime::ValType::I32])
+        {
+            return Err(error("invalid idle collection export"));
+        }
+    }
     crate::exceptions::validate(&module, language.profile.unwrap_or_default())?;
     check_exports(&module)?;
     let tools = crate::contracts::validate(&module, bytes)?;

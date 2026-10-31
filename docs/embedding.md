@@ -150,13 +150,15 @@ cannot carry `budgets`, since its `abiVersion` equals its module's host ABI, and
 runs with the fixed values once per execution.
 
 <!-- generated:embedding-manifest-budgets:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
-| `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38`: default, and cap without a ceiling (per turn) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
+| `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38`: default, and cap without a ceiling (per turn; maintenance per idle period) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
 | --- | --- | --- | --- | --- |
 | `fuelPerTurn` | 1 to 1000000000 | 8000000 | 1000000 | `budget::MAX_FUEL_PER_TURN`, `budget::TURN_FUEL`, `abi::FUEL` |
 | `deadlinePerTurnMs` | 1 to 60000 | 5000 | 5000 | `budget::MAX_DEADLINE_PER_TURN_MS`, `abi::DEADLINE_SECONDS` |
 | `memoryBytes` | 1 to 1073741824 | 8388608 | 8388608 | `budget::MAX_MEMORY_BYTES`, `abi::MAX_MEMORY_BYTES` |
 | `hostCallsPerTurn` | 1 to 1048576 | 1024 | 1024 | `budget::MAX_HOST_CALLS_PER_TURN`, `abi::MAX_HOST_CALLS` |
 | `outputBytes` | 1 to 67108864 | 1048576 | 1048576 | `budget::MAX_OUTPUT_BYTES`, `abi::MAX_OUTPUT_BYTES` |
+| `maintenanceFuel` | 1 to 1000000000 | 4000000 | 0 | `budget::MAX_MAINTENANCE_FUEL`, `budget::MAINTENANCE_FUEL`, `Budgets::PRODUCTION` |
+| `maintenanceDeadlineMs` | 1 to 60000 | 1000 | 0 | `budget::MAX_MAINTENANCE_DEADLINE_MS`, `budget::MAINTENANCE_DEADLINE_MS`, `Budgets::PRODUCTION` |
 <!-- generated:embedding-manifest-budgets:end -->
 
 **Purpose rule.** A grant `purpose` is valid when it is not empty or only white

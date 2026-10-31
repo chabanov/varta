@@ -215,13 +215,7 @@ export function main(): void {
         },
     );
     assert!(report.failure.is_none(), "{:?}", report.failure);
-    let collections = report
-        .fuel_profile
-        .unwrap()
-        .functions
-        .iter()
-        .find(|row| row.name == "<helper Collect>")
-        .map_or(0, |row| row.calls);
+    let collections = crate::fuel_profile_tests::collections(&report.fuel_profile.unwrap());
     assert!(collections >= 3, "{collections} collections");
 }
 

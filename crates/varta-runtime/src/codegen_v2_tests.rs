@@ -742,11 +742,7 @@ fn string_builders_keep_aliases_and_survive_collections() {
     );
     assert!(report.failure.is_none(), "{:?}", report.failure);
     let profile = report.fuel_profile.unwrap();
-    let collections = profile
-        .functions
-        .iter()
-        .find(|row| row.name == "<helper Collect>")
-        .map_or(0, |row| row.calls);
+    let collections = crate::fuel_profile_tests::collections(&profile);
     assert!(collections >= 2, "{collections} collections");
     // A loop variable rebound each iteration starts a fresh builder.
     assert_eq!(

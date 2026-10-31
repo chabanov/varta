@@ -52,6 +52,7 @@ pub(super) fn function(
     allocate: u32,
     sparse: bool,
     limits: varta_common::limits::DataLimits,
+    barrier: Option<incremental::Barrier>,
 ) -> Function {
     let values_count = u32::from(count);
     let first = values_count + 1;
@@ -251,6 +252,8 @@ pub(super) fn function(
             ],
         );
     }
+    // V38 (`incremental_collection`): the replaced backing is shaded.
+    instructions(&mut f, incremental::slot_code(barrier, l.cell, BACKING));
     f.instruction(&I::LocalGet(l.cell));
     pack(&mut f, l.bytes, l.dest);
     instructions(

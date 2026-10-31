@@ -52,6 +52,31 @@ pub(crate) fn codegen_v2(profile: varta_common::language::LanguageProfile) -> bo
     profile.codegen_v2() || cfg!(feature = "codegen-v2-all-profiles")
 }
 
+/// Test-only: compile inside `body` as v38 collector stress builds, which
+/// run incremental cycles back to back with `units` work units per
+/// allocation, poison every block the sweep frees and verify every finished
+/// cycle with a complete collection (whose exact marking traps on a
+/// reachable freed block), so a reference store without its write barrier
+/// shows as a trap or in the program's own results. Stress builds are otherwise ordinary modules; production
+/// dependents never use them.
+#[doc(hidden)]
+pub fn with_collector_stress<T>(units: u32, body: impl FnOnce() -> T) -> T {
+    emit::with_collector_stress(units, body)
+}
+
+/// Defined functions the v38 collector (`incremental_collection`) adds to a
+/// module with a managed heap; tests that compare a v38 module's functions
+/// with v37's account for them.
+#[doc(hidden)]
+#[must_use]
+pub fn collector_functions(profile: varta_common::language::LanguageProfile) -> u32 {
+    if codegen_v2(profile) && profile.incremental_collection() {
+        emit::COLLECTOR_FUNCTIONS as u32
+    } else {
+        0
+    }
+}
+
 /// Test-only access to the K4.4 suspension lowering hook for other crates'
 /// tests (runtime admission of resumable frames). Never enabled by production
 /// dependents; no source profile admits suspension syntax through it.
@@ -188,7 +213,12 @@ fn compile_graph(
     } else {
         emit::emit(&program)
     }
-    .and_then(|emitted| link::link(emitted.bytes, profile, emitted.heap, emitted.values))
+    .and_then(|emitted| {
+        let names = emitted.names;
+        link::link(emitted.bytes, profile, emitted.heap, emitted.values).map(|bytes| {
+            names.map_or_else(|| bytes.clone(), |names| emit::name_section(&bytes, &names))
+        })
+    })
     .map_err(|e| root.source.locate(e, root.ast.span()))?;
     wasmparser::Validator::new()
         .validate_all(&bytes)

@@ -1,17 +1,17 @@
 //! Nonmoving mark/sweep with exact roots and bounded record-edge tracing.
 use super::*;
 
-const EDGE_CURSOR: u32 = 8;
-const EDGE_MASK: u32 = 9;
+pub(super) const EDGE_CURSOR: u32 = 8;
+pub(super) const EDGE_MASK: u32 = 9;
 const CHILD: u32 = 10;
 const CHANGED: u32 = 11;
-const BLOCK: u32 = 12;
-const FIELD_COUNT: u32 = 13;
-const IS_ARRAY: u32 = 14;
+pub(super) const BLOCK: u32 = 12;
+pub(super) const FIELD_COUNT: u32 = 13;
+pub(super) const IS_ARRAY: u32 = 14;
 /// Wide-record tracing (value15): the next edge-bitmap word, or zero when the
 /// block's edges are its 32-bit link-word mask.
 const EDGE_WORDS: u32 = 15;
-const EDGE_SLOT: u32 = 16;
+pub(super) const EDGE_SLOT: u32 = 16;
 /// V38 (`data_limits`) mark worklist pointer: header addresses of marked
 /// blocks whose edges are still to be traced, stacked upwards in the unused
 /// tail of the root region above the live roots.
@@ -51,6 +51,9 @@ pub(super) fn function(
         },
         ValType::I32,
     )]);
+    // V38 (`incremental_collection`): a complete collection abandons the
+    // incremental cycle in progress.
+    instructions(&mut function, super::incremental::abandon(globals));
     instructions(
         &mut function,
         [
@@ -504,9 +507,32 @@ fn drain(globals: Globals, closures: bool, frames: bool, array_elements: usize) 
     code
 }
 
+/// The heap flags of blocks with reference edges.
+pub(super) fn edge_flags(closures: bool, frames: bool) -> i32 {
+    use varta_common::value as values;
+    values::HEAP_ERROR_FLAG
+        | values::HEAP_RECORD_FLAG
+        | values::HEAP_ARRAY_FLAG
+        | values::HEAP_UNION_FLAG
+        | values::HEAP_VECTOR_FLAG
+        | if closures {
+            varta_common::function::HEAP_FLAG
+                | varta_common::function::ENVIRONMENT_FLAG
+                | varta_common::function::BINDING_FLAG
+        } else {
+            0
+        }
+        // Continuation frames trace their environment, completion and
+        // handler edges through the same exact edge mask.
+        | if frames {
+            varta_common::function::frame::FRAME_FLAG
+        } else {
+            0
+        }
+}
+
 /// `[] -> [i32]`: whether the block at `CURRENT` is marked and has edges.
 fn guard(closures: bool, frames: bool) -> Vec<I<'static>> {
-    use varta_common::value as values;
     const CURRENT: u32 = 1;
     vec![
         I::LocalGet(CURRENT),
@@ -517,27 +543,7 @@ fn guard(closures: bool, frames: bool) -> Vec<I<'static>> {
         I::I32Eq,
         I::LocalGet(CURRENT),
         I::I32Load(FLAG),
-        I::I32Const(
-            values::HEAP_ERROR_FLAG
-                    | values::HEAP_RECORD_FLAG
-                    | values::HEAP_ARRAY_FLAG
-                    | values::HEAP_UNION_FLAG
-                    | values::HEAP_VECTOR_FLAG
-                    | if closures {
-                        varta_common::function::HEAP_FLAG
-                            | varta_common::function::ENVIRONMENT_FLAG
-                            | varta_common::function::BINDING_FLAG
-                    } else {
-                        0
-                    }
-                    // Continuation frames trace their environment, completion
-                    // and handler edges through the same exact edge mask.
-                    | if frames {
-                        varta_common::function::frame::FRAME_FLAG
-                    } else {
-                        0
-                    },
-        ),
+        I::I32Const(edge_flags(closures, frames)),
         I::I32And,
         I::I32Eqz,
         I::I32Eqz,
@@ -554,6 +560,38 @@ fn edges(
     array_elements: usize,
     on_mark: &[I<'static>],
 ) -> Vec<I<'static>> {
+    let mut visit = vec![
+        I::LocalGet(BLOCK),
+        I::I32Load(FLAG),
+        I::I32Const(MARKED),
+        I::I32And,
+        I::I32Eqz,
+        I::If(BlockType::Empty),
+        I::LocalGet(BLOCK),
+        I::LocalGet(BLOCK),
+        I::I32Load(FLAG),
+        I::I32Const(MARKED),
+        I::I32Or,
+        I::I32Store(FLAG),
+    ];
+    visit.extend_from_slice(on_mark);
+    visit.push(I::End);
+    let (mut code, edge_loop) = edge_parts(globals, wide, array_elements, &visit);
+    code.extend(edge_loop);
+    code
+}
+
+/// The edges of the block at `CURRENT` in two parts: the setup (kind, edge
+/// mask, first slot and slot count in `IS_ARRAY`, `EDGE_MASK`, `EDGE_CURSOR`
+/// and `FIELD_COUNT`) and the slot loop, which runs `visit` with the header
+/// of every allocated child in `BLOCK` (a v38 incremental trace adjusts the
+/// cursor and count of an array between the two).
+pub(super) fn edge_parts(
+    globals: Globals,
+    wide: bool,
+    array_elements: usize,
+    visit: &[I<'static>],
+) -> (Vec<I<'static>>, Vec<I<'static>>) {
     use varta_common::value as values;
     const CURRENT: u32 = 1;
     const AGAIN: u32 = 0;
@@ -641,7 +679,7 @@ fn edges(
             I::End,
         ]);
     }
-    code.extend([
+    let mut edge_loop = vec![
         I::Block(BlockType::Empty),
         I::Loop(BlockType::Empty),
         I::LocalGet(FIELD_COUNT),
@@ -676,22 +714,9 @@ fn edges(
         I::If(BlockType::Empty),
         I::Unreachable,
         I::End,
-        I::LocalGet(BLOCK),
-        I::I32Load(FLAG),
-        I::I32Const(MARKED),
-        I::I32And,
-        I::I32Eqz,
-        I::If(BlockType::Empty),
-        I::LocalGet(BLOCK),
-        I::LocalGet(BLOCK),
-        I::I32Load(FLAG),
-        I::I32Const(MARKED),
-        I::I32Or,
-        I::I32Store(FLAG),
-    ]);
-    code.extend_from_slice(on_mark);
-    code.extend([
-        I::End,
+    ];
+    edge_loop.extend_from_slice(visit);
+    edge_loop.extend([
         I::End,
         I::End,
         I::LocalGet(EDGE_CURSOR),
@@ -708,7 +733,7 @@ fn edges(
         I::End,
     ]);
     if wide {
-        code.extend([
+        edge_loop.extend([
             I::LocalGet(EDGE_WORDS),
             I::If(BlockType::Empty),
             I::LocalGet(EDGE_SLOT),
@@ -733,7 +758,7 @@ fn edges(
             I::End,
         ]);
     }
-    code.extend([
+    edge_loop.extend([
         I::LocalGet(FIELD_COUNT),
         I::I32Const(1),
         I::I32Sub,
@@ -742,5 +767,5 @@ fn edges(
         I::End,
         I::End,
     ]);
-    code
+    (code, edge_loop)
 }

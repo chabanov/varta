@@ -32,6 +32,7 @@ pub(super) fn function(
     allocate: u32,
     sparse: bool,
     limits: varta_common::limits::DataLimits,
+    barrier: Option<incremental::Barrier>,
 ) -> Function {
     let sizes = sparse::Sizes::new(limits);
     let mut f = Function::new([(if sparse { 14 } else { 10 }, ValType::I32)]);
@@ -240,6 +241,8 @@ pub(super) fn function(
             ],
         );
     }
+    // V38 (`incremental_collection`): the replaced backing is shaded.
+    instructions(&mut f, incremental::slot_code(barrier, CELL, BACKING));
     f.instruction(&I::LocalGet(CELL));
     pack(&mut f, BYTES, DEST);
     instructions(
