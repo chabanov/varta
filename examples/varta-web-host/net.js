@@ -78,16 +78,18 @@ export function netConstants(contract) {
     bodyBytes: limit(NET_LIMIT.bodyBytes),
     forbiddenMethods: new Set(contract.manifestLimits.forbiddenMethods),
     forbiddenResponseHeaders,
-    canonicalHead: canonicalHeadImports(contract, rules),
+    v38Starts: v38StartImports(contract, rules),
   };
 }
 
 /**
- * The request-start imports (the descriptor table's) that show the canonical
- * head: those whose minimum host ABI admits grant `responseHeaders`
- * (embedding.md "Canonical head (v38)"); an earlier one lists every field.
+ * The v38 request-start imports: the descriptor table's whose minimum host ABI
+ * admits grant `responseHeaders`. They show the canonical head and check the
+ * pending-request limit before the broker (embedding.md "Canonical head (v38)",
+ * "Request lifecycle"); an earlier one lists every field and checks the limit
+ * after the decision.
  */
-function canonicalHeadImports(contract, rules) {
+function v38StartImports(contract, rules) {
   const names = new Set();
   for (const name of Object.keys(rules.versions)) {
     const op = contract.operations.find((o) => o.name === name);
@@ -293,9 +295,12 @@ export function netImports(N, exec, io) {
       if (error instanceof DescriptorError) descriptorError();
       throw error;
     }
+    const v38 = N.v38Starts.has(importName);
+    // v38: a full slot table is fatal before any check the broker could audit.
+    if (v38 && state.requests.size >= N.pending) throw fatal("Budget");
     const id = state.nextId++;
-    // A canonical-head import shows only the visible response headers; an earlier one every one.
-    const visible = N.canonicalHead.has(importName) ? io.responseHeaders() : null;
+    // A v38 import shows only the visible response headers; an earlier one every one.
+    const visible = v38 ? io.responseHeaders() : null;
     const r = { id, generation: 0, url: fields.url, visible, armed: false, completion: null, waiter: null, controller: new AbortController(), reader: null, buffered: new Uint8Array(0), held: new Uint8Array(0), received: 0, done: false, mode: "text" };
     const failNow = (text) => {
       state.requests.set(id, r);
