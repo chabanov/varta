@@ -6,6 +6,8 @@ import { authorize } from "./policy.js";
 import { ExecutionFailure, GuestExit, Recoverable } from "./errors.js";
 import { I32_MIN, I32_MAX, MS_PER_SECOND, utf8, strictUtf8, now } from "./context.js";
 import { schedulerState, schedulerImports } from "./scheduler.js";
+import { netState, netImports } from "./net.js";
+import { authorizeRequest } from "./policy.js";
 
 const MATH_FUNCTIONS = [
   "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cbrt", "cos", "cosh", "exp", "expm1",
@@ -22,11 +24,15 @@ export const IMPLEMENTED = new Set([
   "promise_handled", "promise_react", "promise_settle", "promise_unhandled", "scheduler_enqueue",
   "timer_start", "timer_start_v2", "timer_clear", "timer_take", "timer_uncaught",
   "view_commit",
+  "net_request_start", "net_request_start_v2", "net_request_watch", "net_request_take", "net_request_text",
+  "net_body_read", "net_body_read_bytes", "net_request_abort",
   ...MATH_FUNCTIONS.map((name) => `number_${name}`),
 ]);
 // Timer bookkeeping imports observe the deadline but are not counted host calls
 // (embedding.md "Timers", Budgets); `timer_start` is counted.
 const TIMER_BOOKKEEPING = new Set(["timer_clear", "timer_take", "timer_uncaught"]);
+// Network bookkeeping observes the deadline but is not counted (embedding.md "Request lifecycle").
+const NET_BOOKKEEPING = new Set(["net_request_watch", "net_request_take", "net_request_text", "net_body_read", "net_body_read_bytes", "net_request_abort"]);
 // embedding.md "Output and its budget": reference line texts.
 const LOG_PREFIX = "varta log: ";
 const ENV_PREFIX = "varta env: ";
@@ -105,6 +111,7 @@ export function createExecution(ctx, info, policies, options) {
     deadlineMs,
     viewCommitted: false,
     viewAlive: false,
+    net: netState(),
     deadline: now() + deadlineMs,
     ...schedulerState(deadlineMs),
   };
@@ -243,6 +250,19 @@ export function createExecution(ctx, info, policies, options) {
     string_char_at16: (ptr, len, index) => writeResult(decodeUtf16(guestRange(ptr, len, C.maxStringBytes, invalid), invalid).charAt(index)),
     string_char_code_at16: (ptr, len, index) => decodeUtf16(guestRange(ptr, len, C.maxStringBytes, invalid), invalid).charCodeAt(index),
     ...schedulerImports(ctx, exec, policies, info.profile?.name ?? null),
+    ...netImports(C.net, exec, {
+      guestRange,
+      emit: (text) => emit(LOG_PREFIX + text),
+      writeResult,
+      authorize: (url, method) => authorizeRequest(policies.package, policies.ceiling, url, method),
+      requireIssued: (serial) => Number.isInteger(serial) && serial >= 0 && serial <= C.maxSerials && serial <= exec.nextSerial - 1,
+      isTimerSerial: (serial) => exec.timerBySerial.has(serial),
+      wake: (serial) => {
+        exec.queue.push(...(exec.reactions.get(serial) ?? []));
+        exec.reactions.delete(serial);
+      },
+      schedulerError: ctx.schedulerError,
+    }),
     // embedding.md "View protocol": at most one batch per turn; the view validates the
     // whole batch and applies it atomically, and an invalid batch ends the instance.
     view_commit: (ptr, len) => {
@@ -270,7 +290,7 @@ export function createExecution(ctx, info, policies, options) {
   function wrap(op) {
     const body = impl[op.name];
     return (...args) => {
-      if (!op.scheduler && !TIMER_BOOKKEEPING.has(op.name)) {
+      if (!op.scheduler && !TIMER_BOOKKEEPING.has(op.name) && !NET_BOOKKEEPING.has(op.name)) {
         exec.hostCalls += 1;
         if (exec.hostCalls > exec.budgets.hostCalls) throw new ExecutionFailure("host call budget exhausted");
       }

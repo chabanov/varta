@@ -197,6 +197,7 @@ export function createHost(contract) {
       output: "counted on the reference line text",
       catalog: "reduced catalog validation: normative minimum and frame admission; guest memory is never read through the catalog",
       requiredEffects: "unverified metadata",
+      network: "net.request over fetch: response headers as Fetch Headers report them; in a browser only CORS-exposed headers, browser-added request headers and no observable redirects",
     },
   };
 }

@@ -13,7 +13,8 @@ will be generated from the `HostOperation` registry (platform increments P1 and 
 | R2 scheduled run host | Implemented with reduced catalog validation: catalog rules 1–4 (exact index fields and bounds) and frame admission rules 1–5; guest memory is never read through the catalog. Includes the v36 timer event loop and, for `checked-f64-utf16-v38`, event turns (host calls and microtasks renewed per fired timer, one deadline per bounded run), the recoverable `timer_start_v2` and the v38 structure rules (functions counted with imports, `varta.static`/`varta.intrinsics` regions, data segment placement) |
 | v38 manifest | `budgets`, grant `required`/`purpose`, `fsRoots` (names in a package, directories in a ceiling), request `methods` and external-link patterns, checked against the generated manifest tables; root-name grammar checked against the contract's examples at start. Effective budgets (request capped by the ceiling) set host calls per turn, the deadline and output; memory is capped only by the module's declared maximum, so a lower `memoryBytes` is refused. Optional grants are denied: this host stores no decisions and has no prompt |
 | v38 view applications | `host.start` runs a long-lived application instance: `view_commit` (at most once per turn) hands each batch to the page's applier; view records come back as turns through `varta.view_abi.event` (written at the result base, input/scroll coalesced, the pending queue bounded); timers and records share one turn order; a refused batch ends the instance. The event export is admitted only under v38 with its registry signature |
-| v38 effects still missing | File roots for `fs.*`, `net.request`, `env_snapshot`, host events, permission prompts, `copy_text` and external links through a broker |
+| `net.request` (v37/v38) | The eight `net_request_*`/`net_body_read*` imports over the host's `fetch`: the descriptor parser is checked at start against the contract's accepted and rejected examples; method, URL, grant (URL-aware: scheme, host and port exact, `*` after the authority; methods), slot, body and header checks in the order of the failure table; completions in one FIFO queue, one per turn, a due timer first in bounded runs and the earliest instant first in application instances; UTF-8 held back across chunks; the body bound. **Deviations:** response headers come from Fetch `Headers` (sorted, repeated fields combined except `set-cookie`), a browser reads only CORS-exposed headers and adds its own request headers, and a browser cannot observe redirects (an opaque redirect is a `Failed` completion) |
+| v38 effects still missing | File roots for `fs.*`, `env_snapshot`, host events, permission prompts, `copy_text` and external links through a broker |
 | H1 HTTP host | Not implemented; HTTP modules are refused |
 
 Modules that import layout-bound intrinsics (`json_*`, `value_*`, `union_*`,
@@ -87,9 +88,10 @@ host claims no fuel conformance.
 | `wasm-binary.js`, `wasm-code.js` | Section reader; function-body scanner for frame admission |
 | `tests/cases.js` | Shared cases, including catalog tampering through `replaceCustomSection` |
 | `strict-json.js`, `policy.js` | Duplicate-rejecting JSON; manifests, ceilings and patterns |
+| `net.js`, `net-descriptor.js` | `net.request`: imports over `fetch`, completions, the request descriptor grammar |
 | `cli.mjs` | Node runner: `run`, `invoke`, `validate` |
 | `fixtures/` | Programs compiled by the native `varta` for comparison |
-| `tests/compare.mjs` | Differential test against the native runtime; writes `tests/out/expected.json` |
+| `tests/compare.mjs` | Differential test against the native runtime, including a loopback HTTP server for `net.request`; writes `tests/out/expected.json` |
 | `tests/browser.html` | The same cases in a real browser, compared with `expected.json` |
 | `tests/applier.html` | Applier tests with batches encoded from the published tables |
 | `tests/view.html`, `tests/view-worker.js` | v38 view applications as long-lived instances in a Worker, rendered by the applier, driven by the scripted inputs and compared with the native headless tree (`out/view-expected.json`) |

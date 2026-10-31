@@ -272,6 +272,53 @@ function grantAllows(grants, id, resource) {
 }
 
 /**
+ * A URL against a URL pattern (embedding.md "Pattern matching"): scheme, normalized
+ * host and effective port exactly; `*` after the authority matches any run, and `?`
+ * keeps its query-separator meaning (a literal character).
+ */
+function urlMatches(pattern, url, maxWork) {
+  const scheme = /^([a-z]+):\/\/([^/]*)(.*)$/.exec(pattern);
+  if (!scheme) return false;
+  let authority;
+  try {
+    authority = new URL(`${scheme[1]}://${scheme[2]}/`);
+  } catch {
+    return false;
+  }
+  if (authority.protocol !== url.protocol || authority.hostname !== url.hostname || authority.port !== url.port) return false;
+  const rest = url.pathname + url.search;
+  const want = scheme[3] === "" ? "/" : scheme[3];
+  if (utf8Length(want) * utf8Length(rest) > maxWork) return false;
+  const p = [...want];
+  const s = [...rest];
+  const memo = new Map();
+  const go = (i, j) => {
+    const key = i * (s.length + 1) + j;
+    if (memo.has(key)) return memo.get(key);
+    let result;
+    if (i === p.length) result = j === s.length;
+    else if (p[i] === "*") result = go(i + 1, j) || (j < s.length && go(i, j + 1));
+    else result = j < s.length && p[i] === s[j] && go(i + 1, j + 1);
+    memo.set(key, result);
+    return result;
+  };
+  return go(0, 0);
+}
+
+function requestAllowed(grants, url, method) {
+  const grant = grants.get("net.request");
+  if (!grant || grant.required === false) return false;
+  if (grant.methods !== null && grant.methods !== undefined && !grant.methods.includes(method)) return false;
+  return grant.patterns.some((pattern) => urlMatches(pattern, url, grants.limits.maxPatternMatchWork));
+}
+
+/** `net.request`: the URL and method satisfy the package request and, when supplied, the ceiling. */
+export function authorizeRequest(packageGrants, ceilingGrants, url, method) {
+  if (!requestAllowed(packageGrants, url, method)) return false;
+  return ceilingGrants === null || requestAllowed(ceilingGrants, url, method);
+}
+
+/**
  * Package request intersected with the optional host ceiling. A supplied
  * ceiling must also allow the concrete resource; an empty one denies.
  * Permission broker v1 (architecture.md "Permission broker v1"): request ∩ ceiling,

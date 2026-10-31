@@ -4,7 +4,8 @@
 // the JS host under Node and compares.
 //
 //   VARTA_BIN=/path/to/varta node tests/compare.mjs
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync, spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -96,6 +97,54 @@ for (const c of viewCases) {
 writeFileSync(join(here, "out", "view-expected.json"), JSON.stringify(viewExpected, null, 2) + "\n");
 
 const observed = await runJsCases(host, async (name) => build(name), contract);
+// Network requests: one loopback server, the grant rewritten to its port, the
+// same module and manifest in the native runtime and in the JS host (Node only:
+// the browser page has no server to reach).
+const NET_FIXTURE = "net-v38";
+const SPLIT_LETTER = Buffer.from("в", "utf8");
+const server = createServer((req, res) => {
+  if (req.url === "/json") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"ok":true}');
+  } else if (req.url === "/stream") {
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    res.write(Buffer.concat([Buffer.from("при", "utf8"), SPLIT_LETTER.subarray(0, 1)]));
+    setTimeout(() => res.end(Buffer.concat([SPLIT_LETTER.subarray(1), Buffer.from("іт", "utf8")])), 30);
+  } else if (req.url === "/echo") {
+    const parts = [];
+    req.on("data", (chunk) => parts.push(chunk));
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+      res.end(Buffer.concat(parts));
+    });
+  } else if (req.url === "/large") {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("x".repeat(600000));
+  } else {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("nope");
+  }
+});
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const base = `http://127.0.0.1:${server.address().port}`;
+const netFixture = build(NET_FIXTURE);
+const netManifest = JSON.parse(netFixture.manifest);
+netManifest.capabilities = netManifest.capabilities.map((g) => (g.id === "net.request" ? { ...g, patterns: [`${base}/**`] } : g));
+const netDir = mkdtempSync(join(scratch, "net-"));
+writeFileSync(join(netDir, "app.wasm"), netFixture.bytes);
+writeFileSync(join(netDir, "app.manifest.json"), JSON.stringify(netManifest));
+// The native run must not block this process: the server answers from this event loop.
+const nativeNet = await new Promise((resolve) => {
+  const child = spawn(varta, ["run", join(netDir, "app.wasm")], { env: { PATH: process.env.PATH, BASE_URL: base } });
+  let stdout = "";
+  child.stdout.on("data", (d) => (stdout += d));
+  child.on("close", (status) => resolve({ status, logs: stdout.split("\n").filter((l) => REFERENCE_PREFIXES.some((p) => l.startsWith(p))) }));
+});
+const jsNet = await host.run(netFixture.bytes, { manifest: JSON.stringify(netManifest), env: new Map([["BASE_URL", base]]) });
+server.close();
+expected.push({ label: "v38 net.request: json, split UTF-8 stream, 404, POST, runtime header, too large, denied", expected: { status: nativeNet.status === 0 ? "ok" : "failed", logs: nativeNet.logs } });
+observed.push({ label: "v38 net.request", observed: { status: jsNet.status, logs: jsNet.logs } });
+
 let failures = 0;
 expected.forEach(({ label, expected: want }, i) => {
   const got = observed[i].observed;

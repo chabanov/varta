@@ -311,6 +311,23 @@ for (const name of ["embedding-module-limits", "embedding-scheduler-limits", "em
   }
 }
 
+// Network requests (embedding.md "Network requests (v37)").
+const jsonCell = (cell) => JSON.parse(code(cell));
+const net = {
+  descriptor: Object.fromEntries(detailRows("embedding-net-descriptor").map((r) => [r[0], r[1]])),
+  examples: detailRows("embedding-net-descriptor-examples").map((r) => ({ import: code(r[0]), text: jsonCell(r[1]), canonical: r[2] === "canonical", fields: r[3] })),
+  rejections: detailRows("embedding-net-descriptor-rejections").map((r) => ({ import: code(r[0]), text: jsonCell(r[1]), why: r[2] })),
+  runtimeHeaders: detailRows("embedding-net-runtime-headers").map((r) => code(r[0])),
+  completions: Object.fromEntries(detailRows("embedding-net-completions").map((r) => [code(r[1]), { code: Number(r[0]), releases: r[2] === "yes" }])),
+  failures: detailRows("embedding-net-failures").map((r) => ({ raisedBy: r[0], kind: code(r[1]), text: code(r[2]) })),
+  errors: Object.fromEntries(detailRows("embedding-net-errors").map((r) => [code(r[0]), code(r[1])])),
+  headExample: (() => {
+    const text = embedding.includes("<!-- generated:embedding-net-head-example:begin") ? block(embedding, "embedding-net-head-example") : "";
+    const match = /```json\n([\s\S]*?)\n```/.exec(text);
+    return match ? match[1] : null;
+  })(),
+};
+
 // Normative examples of the root name grammar; the host checks its grammar against them.
 const rootNameExamples = detailRows("embedding-root-names").map((r) => {
   const repeated = /^`(.)` repeated (\d+) times$/.exec(r[0]);
@@ -320,5 +337,5 @@ const rootNameExamples = detailRows("embedding-root-names").map((r) => {
 
 writeFileSync(
   outPath,
-  JSON.stringify({ profiles, acceptance, operations, layout, codes, reservedNames, limits, entryLimits, grantKinds, timers, schedulerErrors, schedulerMisuse, catalogTypes, toolCatalogExample, view, manifestBudgets, manifestLimits, rootNameExamples, hostLimits }, null, 2) + "\n",
+  JSON.stringify({ profiles, acceptance, operations, layout, codes, reservedNames, limits, entryLimits, grantKinds, timers, schedulerErrors, schedulerMisuse, catalogTypes, toolCatalogExample, view, manifestBudgets, manifestLimits, rootNameExamples, hostLimits, net }, null, 2) + "\n",
 );
