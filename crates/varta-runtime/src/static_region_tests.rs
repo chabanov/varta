@@ -243,10 +243,9 @@ pub(super) fn fuel_of(bytes: &[u8]) -> u64 {
     CEILING - store.get_fuel().unwrap()
 }
 
-/// Wasmtime meters instantiation's data-segment copy per byte of the
-/// initialized image (rounded to host pages, including the gap before a
-/// static extension). V38 does not charge it to the guest, so startup fuel
-/// does not grow with unused static data.
+/// Wasmtime meters instantiation's data-segment copy per byte of each
+/// segment, on every host (no copy-on-write images). V38 does not charge it
+/// to the guest, so startup fuel does not grow with unused static data.
 #[test]
 fn v38_startup_fuel_is_independent_of_static_size() {
     let program = |units: usize| {
@@ -263,11 +262,16 @@ fn v38_startup_fuel_is_independent_of_static_size() {
         assert_eq!(fuel(units), small, "{units} units");
     }
     assert!(small < 1_000, "{small}");
-    // Earlier profiles keep charging the copy (the amount is host-specific).
-    let older = varta_compiler::compile_typescript_with_profile(
-        &program(30_000),
-        LanguageProfile::CheckedF64Utf16V37,
-    )
-    .unwrap();
-    assert!(fuel_of(&older) >= small);
+    // Earlier profiles keep charging the copy: one fuel per byte of the
+    // segments, here 29999 more UTF-16 code units, on every host.
+    let older = |units: usize| {
+        fuel_of(
+            &varta_compiler::compile_typescript_with_profile(
+                &program(units),
+                LanguageProfile::CheckedF64Utf16V37,
+            )
+            .unwrap(),
+        )
+    };
+    assert_eq!(older(30_000) - older(1), 2 * 29_999);
 }

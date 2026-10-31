@@ -465,7 +465,17 @@ impl VartaRuntime {
     #[must_use]
     pub fn new() -> Self {
         let mut config = Config::new();
-        config.consume_fuel(true).epoch_interruption(true);
+        // Fuel must not depend on the host. Wasmtime meters instantiation's
+        // data-segment copy per byte, but with copy-on-write memory images
+        // (its default) the copy is skipped where the platform can map an
+        // image (memfd on Linux) and done over page-rounded images elsewhere
+        // (16 KiB pages on macOS arm64). Without images every host copies
+        // exactly the module's segments, so the same module consumes the
+        // same fuel everywhere.
+        config
+            .consume_fuel(true)
+            .epoch_interruption(true)
+            .memory_init_cow(false);
         // This configuration only enables supported built-in engine settings.
         let engine = Engine::new(&config).expect("valid built-in Wasmtime configuration");
         Self { engine }
@@ -1048,6 +1058,8 @@ mod dictionary_tests;
 mod error_subclass_tests;
 #[cfg(test)]
 mod frozen_profile_tests;
+#[cfg(test)]
+mod fuel_determinism_tests;
 #[cfg(test)]
 mod generic_tests;
 #[cfg(test)]

@@ -1252,6 +1252,16 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- Fuel is identical on every host. The runtime disables Wasmtime's
+  copy-on-write memory images (`Config::memory_init_cow(false)`): with them,
+  instantiation's metered data-segment copy was skipped on Linux (memfd
+  images) and charged over 16 KiB pages on macOS arm64, so a v1–v37 module
+  consumed host-dependent fuel (a one-byte segment cost 16,385 fuel on macOS
+  and 0 on Linux). Every host now charges one fuel per byte of each data
+  segment. V38 numbers are unchanged; v1–v37 instantiation fuel changes on
+  both platforms. `fuel_determinism_tests` pins exact fuel of representative
+  programs and checks that compilation is byte-identical across runs.
+
 - V38 wave-3a integration: a fair-fuel charge that empties the fuel inside
   `host::input` or `host::result*` of the event, network-text and KV imports
   is the typed fuel-budget error (`HostFailure::into_trap`), no longer an

@@ -330,9 +330,13 @@ fn regexps_and_match_arrays_are_ordinary_values() {
 fn test_fuel(pattern: &str, input: &str) -> Option<u64> {
     let base = format!("export function main():void{{const s={input};}}");
     let program = format!("export function main():void{{const s={input};{pattern}.test(s);}}");
-    let (empty, _) = cost(&base).ok()?;
-    let (fuel, _) = cost(&program).ok()?;
-    Some(fuel - empty)
+    // Guest fuel only: instantiation's data-segment copy (one fuel per byte of
+    // the pattern's static data) is not matcher work.
+    let guest = |source: &str| {
+        let (fuel, _) = cost(source).ok()?;
+        Some(fuel - crate::codegen_v2_tests::instantiation_fuel(&module(source)))
+    };
+    Some(guest(&program)? - guest(&base)?)
 }
 
 /// Patterns that backtrack catastrophically in backtracking engines run in

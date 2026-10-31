@@ -3187,6 +3187,14 @@ profiles frozen, and add each stream's rules under its own heading here.
   (at most the memory budget) and the guest's budget is restored before any
   guest code; never charge the data-segment copy to the guest, and never
   extend this to earlier profiles.
+- Fuel never depends on the host ([fuel determinism](architecture.md#fuel-determinism)):
+  keep Wasmtime's copy-on-write memory images disabled and every engine
+  setting explicit, charge fair fuel only on guest-visible bytes and values,
+  and keep emission free of hash order, pointer width and paths. Fuel
+  comparisons between profiles compare guest work: leave v37's data-segment
+  copy out (`codegen_v2_tests::instantiation_fuel`), since v38 does not pay
+  it. Golden fuel numbers (`fuel_determinism_tests`) change only with a
+  deliberate profile change.
 
 ### Data limits (`data_limits`)
 

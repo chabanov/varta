@@ -9404,12 +9404,12 @@ may lie there) nor heap; validation admits a data segment there
   instance and to its verified function catalog; it never comes from guest
   memory. Managed-handle lower bounds stay `OWNED_STRING_BASE + 16`, followed
   by the existing header and flag checks.
-- Wasmtime meters instantiation's data-segment copy per byte of the
-  initialized image (rounded to host pages and including the gap before an
-  extension). For a v38 module instantiation receives its own allowance of at
-  most the memory budget, and the guest's fuel budget is restored before any
-  guest code runs, so v38 startup fuel does not depend on static size (the
-  `FUEL` value is unchanged). Earlier profiles keep being charged.
+- Wasmtime meters instantiation's data-segment copy at one fuel per byte of
+  each data segment ([fuel determinism](#fuel-determinism)). For a v38 module
+  instantiation receives its own allowance of at most the memory budget, and
+  the guest's fuel budget is restored before any guest code runs, so v38
+  startup fuel does not depend on static size (the `FUEL` value is
+  unchanged). Earlier profiles keep being charged.
 
 A v38 module relabelled as v37 still fails at its host ABI section; with the
 host ABI downgraded as well, its `varta.static` section or its extension data
@@ -12223,6 +12223,26 @@ tables and globals before native compilation. Store budgets apply before Wasm
 start functions execute. Fuel/epoch interruption bound guest execution; HTTP uses
 the remaining deadline. Output is captured with a budget and returned to the
 caller. Errors and guest exit do not terminate an embedding process.
+
+### Fuel determinism
+
+Fuel is a function of the module bytes and the guest-visible inputs only:
+the same module with the same inputs consumes exactly the same fuel on every
+host and platform, so a budget means the same everywhere. The compiler's
+output does not depend on the host (no hash-ordered iteration, pointer width
+or paths in emission). The runtime configures Wasmtime explicitly with fuel,
+epoch interruption and no copy-on-write memory images
+(`memory_init_cow(false)` in `VartaRuntime::new`): with images, Wasmtime
+skips instantiation's metered data-segment copy where the platform can map
+an image (memfd on Linux) and copies host-page-rounded images elsewhere
+(16 KiB pages on macOS arm64). Without them every host runs the same
+instantiation: one fuel per byte of each active data segment plus the fixed
+operator cost of Wasmtime's startup function, charged to v1–v37 modules and
+taken from a separate allowance for v38. Fair host fuel charges depend only
+on the bytes and values the guest passes or receives. `fuel_determinism_tests`
+pins exact fuel of representative programs on every CI host and compiles the
+case corpus twice to compare bytes; a host-dependent engine setting or
+compiler output fails it.
 
 ## Artifact format and validation
 
