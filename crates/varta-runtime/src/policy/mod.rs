@@ -187,6 +187,34 @@ impl Policy {
         self.request_scope(input, Some(method))
     }
 
+    /// The response header names a v38 `net.request` shows the guest: the
+    /// package grant's visible set ([`varta_common::net::visible_response_headers`])
+    /// intersected with the ceiling grant's, when there is a ceiling. Only
+    /// a granted request asks, so a missing grant yields the empty set.
+    pub(crate) fn response_headers(&self) -> std::collections::BTreeSet<String> {
+        fn visible(grants: &[CapabilityGrant]) -> std::collections::BTreeSet<String> {
+            grants
+                .iter()
+                .filter(|g| g.id == varta_common::net::REQUEST_CAPABILITY)
+                .filter_map(|g| match &g.value {
+                    CapabilityValue::Requests(scope) => {
+                        Some(varta_common::net::visible_response_headers(
+                            scope.response_headers.as_deref(),
+                        ))
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        }
+        let mut names = visible(&self.requested);
+        if let Some(ceiling) = &self.ceiling {
+            let allowed = visible(ceiling);
+            names.retain(|name| allowed.contains(name));
+        }
+        names
+    }
+
     /// The URL scope of `net.request`; without a method, any granted method
     /// (a nonempty method list or none) qualifies.
     fn request_scope(&self, input: &str, method: Option<&str>) -> Option<url::Url> {
@@ -380,8 +408,55 @@ mod request_tests {
             value: CapabilityValue::Requests(RequestScope {
                 urls: urls.iter().map(|u| (*u).into()).collect(),
                 methods: methods.map(|m| m.iter().map(|m| (*m).into()).collect()),
+                response_headers: None,
             }),
         }
+    }
+
+    fn declaring(urls: &[&str], headers: Option<&[&str]>) -> CapabilityGrant {
+        let mut grant = grant(urls, None);
+        if let CapabilityValue::Requests(scope) = &mut grant.value {
+            scope.response_headers = headers.map(|h| h.iter().map(|h| (*h).into()).collect());
+        }
+        grant
+    }
+
+    #[test]
+    fn response_headers_are_declared_or_safelisted_and_narrowed_by_the_ceiling() {
+        let names = |policy: &Policy| policy.response_headers().into_iter().collect::<Vec<_>>();
+        let urls = ["https://api.test/**"];
+        let safelist: Vec<String> = varta_common::net::SAFELISTED_RESPONSE_HEADERS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        assert_eq!(names(&Policy::new(&[declaring(&urls, None)])), safelist);
+        let declared = [declaring(&urls, Some(&["x-request-id", "etag"]))];
+        assert_eq!(names(&Policy::new(&declared)), ["etag", "x-request-id"]);
+        assert!(names(&Policy::new(&[declaring(&urls, Some(&[]))])).is_empty());
+        // The ceiling intersects; without a declaration it is the safelist,
+        // so a ceiling that names nothing extra withholds custom headers.
+        let ceiling = [declaring(&urls, Some(&["x-request-id", "content-type"]))];
+        assert_eq!(
+            names(&Policy::with_ceiling(&declared, Some(&ceiling))),
+            ["x-request-id"]
+        );
+        assert!(
+            names(&Policy::with_ceiling(
+                &declared,
+                Some(&[declaring(&urls, None)])
+            ))
+            .is_empty()
+        );
+        assert_eq!(
+            names(&Policy::with_ceiling(
+                &[declaring(&urls, None)],
+                Some(&ceiling)
+            )),
+            ["content-type"]
+        );
+        // A ceiling cannot add a header the package did not declare.
+        assert!(names(&Policy::with_ceiling(&[], Some(&ceiling))).is_empty());
+        assert!(names(&Policy::with_ceiling(&declared, Some(&[]))).is_empty());
     }
 
     #[test]

@@ -12,6 +12,11 @@
 //! completion kind with `net_request_take` and its text with
 //! `net_request_text`. `net_request_abort` cancels the transfer and releases
 //! the request.
+//!
+//! Under v38 (`net_request_start_v2`) the head record is canonical and shows
+//! only the response headers the grant declares (`responseHeaders`, or the
+//! CORS-safelisted names without a declaration): see [`HeadForm`].
+use std::collections::{BTreeMap, BTreeSet, btree_map};
 
 /// The exact capability every request requires (URL scopes plus an optional
 /// method list), distinct from `net.fetch`, `net.get` and `net.listen`.
@@ -43,6 +48,31 @@ pub const MAX_FETCH_HEADER_BYTES: usize = crate::abi::MAX_INPUT_BYTES;
 pub const MAX_GRANT_METHODS: usize = 16;
 /// Methods `fetch` rejects (WHATWG "forbidden method"), never grantable.
 pub const FORBIDDEN_METHODS: [&str; 3] = ["CONNECT", "TRACE", "TRACK"];
+
+/// Response header names one `net.request` grant may declare
+/// (`responseHeaders`, v38).
+pub const MAX_GRANT_RESPONSE_HEADERS: usize = 64;
+/// Bytes of one declared response header name.
+pub const MAX_RESPONSE_HEADER_NAME_BYTES: usize = 256;
+/// Response header names no grant can declare and no host ever shows the
+/// guest (WHATWG Fetch "forbidden response-header names"; a browser never
+/// exposes them).
+pub const FORBIDDEN_RESPONSE_HEADERS: [&str; 2] = ["set-cookie", "set-cookie2"];
+/// The response headers a v38 request shows when its grant declares no
+/// `responseHeaders`: the CORS-safelisted response-header names, which a
+/// browser exposes without any server configuration. In byte order.
+pub const SAFELISTED_RESPONSE_HEADERS: [&str; 7] = [
+    "cache-control",
+    "content-language",
+    "content-length",
+    "content-type",
+    "expires",
+    "last-modified",
+    "pragma",
+];
+/// Joins the values of a repeated response header in a canonical (v38) head
+/// record, in arrival order (WHATWG Fetch "combine").
+pub const COMBINE_SEPARATOR: &str = ", ";
 
 /// Request headers the runtime's HTTP client controls (framing, the
 /// connection and the target authority); a request that sets one fails.
@@ -121,9 +151,10 @@ impl CompletionKind {
 /// checked `varta.json.parse`: `status` (number), `statusText`, `url` (the
 /// request URL as the runtime parsed it), `location` (the `Location` header
 /// resolved against `url`, or the empty string) and `headers` (lowercased
-/// names alternating with their values: names in the order of their first
-/// field, each repeated field as its own pair in arrival order; each value
-/// byte is one code unit, as for a WebIDL ByteString).
+/// names alternating with their values; each value byte is one code unit,
+/// as for a WebIDL ByteString). The `headers` of a version 1 descriptor
+/// (v37) are in [`HeadForm::Arrival`], those of a version 2 descriptor (v38)
+/// in [`HeadForm::Canonical`].
 pub const HEAD_FIELDS: [&str; 5] = ["status", "statusText", "url", "location", "headers"];
 
 /// The head record of a [`CompletionKind::Head`] completion: one compact JSON
@@ -152,6 +183,89 @@ pub fn head_record(
     record.insert(headers_field.to_owned(), headers.into());
     // `Value`'s `Display` writes compact JSON and cannot fail.
     serde_json::Value::Object(record).to_string()
+}
+
+/// How the `headers` member of a head record lists the response fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadForm {
+    /// V37 (`net_request_start`): every received field, names in the order
+    /// of their first field, each repeated field its own pair in arrival
+    /// order (never combined).
+    Arrival,
+    /// V38 (`net_request_start_v2`): only the visible names
+    /// ([`visible_response_headers`]) the response carries, each once, in
+    /// byte order, repeated values combined with [`COMBINE_SEPARATOR`] in
+    /// arrival order. A forbidden name never appears. This is the form a
+    /// browser's Fetch `Headers` produce, so every host can produce it
+    /// byte-identically.
+    Canonical(BTreeSet<String>),
+}
+impl HeadForm {
+    /// The `headers` member for `fields`: the received fields grouped as the
+    /// reference host's header map yields them (each name at its first
+    /// field, followed by its values in arrival order), with lowercase names
+    /// and values as code units.
+    #[must_use]
+    pub fn headers(&self, fields: impl IntoIterator<Item = (String, String)>) -> Vec<String> {
+        let Self::Canonical(visible) = self else {
+            return fields
+                .into_iter()
+                .flat_map(|(name, value)| [name, value])
+                .collect();
+        };
+        let mut combined: BTreeMap<String, String> = BTreeMap::new();
+        for (name, value) in fields {
+            if !visible.contains(&name) || forbidden_response_header(&name) {
+                continue;
+            }
+            match combined.entry(name) {
+                btree_map::Entry::Vacant(entry) => {
+                    entry.insert(value);
+                }
+                btree_map::Entry::Occupied(mut entry) => {
+                    let joined = entry.get_mut();
+                    joined.push_str(COMBINE_SEPARATOR);
+                    joined.push_str(&value);
+                }
+            }
+        }
+        combined
+            .into_iter()
+            .flat_map(|(name, value)| [name, value])
+            .collect()
+    }
+}
+
+/// Whether `name` (lowercase) is a forbidden response-header name.
+#[must_use]
+pub fn forbidden_response_header(name: &str) -> bool {
+    FORBIDDEN_RESPONSE_HEADERS.contains(&name)
+}
+
+/// The response header names one grant shows a v38 request: its declared
+/// `responseHeaders`, or [`SAFELISTED_RESPONSE_HEADERS`] when it declares
+/// none. With a host ceiling, a request sees the intersection of the
+/// package's set and the ceiling's set.
+#[must_use]
+pub fn visible_response_headers(declared: Option<&[String]>) -> BTreeSet<String> {
+    match declared {
+        Some(names) => names.iter().cloned().collect(),
+        None => SAFELISTED_RESPONSE_HEADERS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+    }
+}
+
+/// Whether `name` may be declared in `responseHeaders`: a nonempty RFC 9110
+/// token of lowercase ASCII, at most [`MAX_RESPONSE_HEADER_NAME_BYTES`], and
+/// no forbidden response-header name.
+#[must_use]
+pub fn declarable_response_header(name: &str) -> bool {
+    name.len() <= MAX_RESPONSE_HEADER_NAME_BYTES
+        && token(name)
+        && !name.bytes().any(|byte| byte.is_ascii_uppercase())
+        && !forbidden_response_header(name)
 }
 
 /// The text of a [`CompletionKind::Denied`] completion, also logged as
@@ -342,14 +456,19 @@ pub enum NetError {
     State,
 }
 
+/// Whether `text` is a nonempty RFC 9110 token.
+fn token(text: &str) -> bool {
+    const TOKEN_SYMBOLS: &[u8] = b"!#$%&'*+-.^_`|~";
+    !text.is_empty()
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || TOKEN_SYMBOLS.contains(&byte))
+}
+
 /// Whether `method` is an RFC 9110 token that `fetch` may send.
 #[must_use]
 pub fn valid_method(method: &str) -> bool {
-    const TOKEN_SYMBOLS: &[u8] = b"!#$%&'*+-.^_`|~";
-    !method.is_empty()
-        && method
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || TOKEN_SYMBOLS.contains(&byte))
+    token(method)
         && !FORBIDDEN_METHODS
             .iter()
             .any(|forbidden| forbidden.eq_ignore_ascii_case(method))
@@ -460,6 +579,93 @@ mod tests {
         assert_eq!(
             record,
             r#"{"headers":["a","1"],"location":"","status":200,"statusText":"OK","url":"http://a.test/"}"#
+        );
+    }
+
+    fn fields(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn canonical_heads_sort_combine_and_show_only_visible_names() {
+        let received = fields(&[
+            ("x-b", "1"),
+            ("x-b", "2"),
+            ("content-type", "text/plain"),
+            ("set-cookie", "a=1"),
+            ("set-cookie", "b=2"),
+            ("x-a", "z"),
+            ("x-hidden", "secret"),
+        ]);
+        // V37 keeps every field as its own pair, never combined.
+        assert_eq!(
+            HeadForm::Arrival.headers(received.clone()),
+            [
+                "x-b",
+                "1",
+                "x-b",
+                "2",
+                "content-type",
+                "text/plain",
+                "set-cookie",
+                "a=1",
+                "set-cookie",
+                "b=2",
+                "x-a",
+                "z",
+                "x-hidden",
+                "secret"
+            ]
+        );
+        // A visible set naming set-cookie still never shows it.
+        let visible = ["x-b", "x-a", "content-type", "set-cookie", "x-absent"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            HeadForm::Canonical(visible).headers(received.clone()),
+            ["content-type", "text/plain", "x-a", "z", "x-b", "1, 2"]
+        );
+        // Without a declaration only the safelisted content-type shows.
+        assert_eq!(
+            HeadForm::Canonical(visible_response_headers(None)).headers(received.clone()),
+            ["content-type", "text/plain"]
+        );
+        assert!(
+            HeadForm::Canonical(visible_response_headers(Some(&[])))
+                .headers(received)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn declarable_response_headers_are_lowercase_tokens_without_set_cookie() {
+        for name in ["x-request-id", "retry-after", "etag", "x_a.b~c"] {
+            assert!(declarable_response_header(name), "{name}");
+        }
+        let long = "a".repeat(MAX_RESPONSE_HEADER_NAME_BYTES + 1);
+        for name in [
+            "",
+            "X-Request-Id",
+            "x request",
+            "x:a",
+            "\u{e9}",
+            "set-cookie",
+            "set-cookie2",
+            long.as_str(),
+        ] {
+            assert!(!declarable_response_header(name), "{name}");
+        }
+        let mut sorted = SAFELISTED_RESPONSE_HEADERS;
+        sorted.sort_unstable();
+        assert_eq!(sorted, SAFELISTED_RESPONSE_HEADERS);
+        assert!(
+            SAFELISTED_RESPONSE_HEADERS
+                .iter()
+                .all(|name| declarable_response_header(name))
         );
     }
 

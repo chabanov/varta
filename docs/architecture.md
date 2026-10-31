@@ -7207,7 +7207,11 @@ dispatch, rooting and diagnostics for each type.
   pairs that are not of length 2 and for holes. Iteration (`for…of`, `entries`,
   `keys`, `values`, `forEach`) uses the sort-and-combine list, with each
   `set-cookie` value as its own entry. `forEach(callback)` rereads the list
-  after the callback mutates it, like the WebIDL pair iterator.
+  after the callback mutates it, like the WebIDL pair iterator. The
+  `Headers` of a v38 network `Response` hold only the response headers the
+  `net.request` grant shows, already canonical
+  ([Web bytes](#web-bytes-web_bytes)); a `Headers` the program builds itself
+  is unrestricted.
 - **Headers deviations.** `entries`, `keys` and `values` return fresh arrays of
   the current list rather than live iterators (no `next()`), and `for…of` over
   a `Headers` iterates the `entries` snapshot (always the `Headers`
@@ -8735,7 +8739,9 @@ as unknown names and keep their bytes and diagnostics.
   every request must satisfy both sides; a ceiling never adds a request. The
   operation is distinct from `net.fetch`, `net.get` and `net.listen` (exact
   operation ids; none authorizes another). Inspection and `validate` list
-  `net_request_start` with `net.request` through the shared registry.
+  `net_request_start` with `net.request` through the shared registry. V38
+  adds the optional `responseHeaders` list
+  ([Web bytes](#web-bytes-web_bytes)); v37 requests ignore it.
 - **Check before effect.** `net_request_start` parses the URL and asks the
   [permission broker](#permission-broker-v37) before anything is resolved or
   connected; transfers run only while the event loop waits, so no socket
@@ -10601,6 +10607,38 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   a byte request body is at most half of `net::MAX_REQUEST_BYTES`
   ([values](embedding.md#network-request-limits-v37)).
   `env_snapshot (ptr:i32, len:i32) -> i32` is below.
+- **Declared response headers and the canonical head.** Under v38 the
+  `net.request` grant gains an optional `responseHeaders` list (manifest
+  `{"id": "net.request", "patterns": [...], "responseHeaders": [...]}`,
+  project form `"net": {"request": {"urls": [...], "methods": [...],
+  "responseHeaders": [...]}}`), admitted only from host ABI 34
+  (`abi::PROGRAM_LIMITS_VERSION`), so an earlier manifest that names it is
+  rejected. Each entry is an exact lowercase RFC 9110 token, listed once,
+  within `net::MAX_GRANT_RESPONSE_HEADERS` names of at most
+  `net::MAX_RESPONSE_HEADER_NAME_BYTES`; `net::FORBIDDEN_RESPONSE_HEADERS`
+  (`set-cookie`, `set-cookie2`, in any case) are never declarable and fail
+  validation with a diagnostic naming the header. The request's visible set
+  is the declared list, or `net::SAFELISTED_RESPONSE_HEADERS` (the
+  CORS-safelisted response-header names a browser always exposes) when the
+  grant declares none; `[]` shows nothing. A host ceiling may declare the
+  field too, and the visible set is then the intersection of both sides'
+  sets, each computed the same way (a ceiling without the field admits only
+  the safelisted names; a ceiling never adds a name). The runtime builds the
+  head record of a `net_request_start_v2` request in the canonical form
+  (`net::HeadForm::Canonical`): undeclared and forbidden fields are dropped
+  before the record exists, every remaining name appears once in byte order
+  of the lowercase names, and repeated values are combined with
+  `net::COMBINE_SEPARATOR` in arrival order. Fair host fuel charges the
+  record's bytes, so a dropped field costs nothing. `Response.headers`
+  therefore holds only visible names, `get()` of any other name is `null`
+  on every host, and `getSetCookie()` of a network response is empty; a
+  `Blob` from `blob()` has an empty type when `content-type` is not
+  visible. `location` stays a separate head member used only to follow
+  redirects (each hop is checked again). `net_request_start` (v37) ignores
+  the field and keeps its frozen record (every field, in arrival grouping).
+  The normative rule, the examples and the browser note
+  (`Access-Control-Expose-Headers` is deployment configuration) are in
+  [Canonical head](embedding.md#canonical-head-v38).
 - **`ArrayBuffer`, `Blob`, `FormData`** (`<varta>/web/blob.ts`, guest code,
   no host import, loaded when a module names one of them). `ArrayBuffer`
   (`new ArrayBuffer(n)`, `byteLength`, `slice`, `ArrayBuffer.isView`) owns

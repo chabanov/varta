@@ -351,6 +351,16 @@ declare function fetch(input: string | URL | Request, init?: RequestInit): Promi
 // the exactly granted names, else that one variable; JSON object in the host
 // result buffer]. A class merged with a same-named interface takes the
 // interface's members from one `Object.assign(this, …)` in its constructor.
+// checked-f64-utf16-v38 response headers: a network `Response.headers` holds
+// exactly the response headers the `net.request` grant declares and the
+// response carries ("net": {"request": {"urls": [...], "methods": [...],
+// "responseHeaders": ["x-request-id", "retry-after"]}}, exact lowercase
+// names); without `responseHeaders` only the CORS-safelisted cache-control,
+// content-language, content-length, content-type, expires, last-modified
+// and pragma. A host ceiling narrows the set. `get()` of any other name
+// returns null on every host, repeated fields arrive combined with ", ",
+// and set-cookie/set-cookie2 can never be declared, so `getSetCookie()` of
+// a network response is always empty. v37 responses keep every field.
 type BlobPart = string | Blob | ArrayBuffer | Uint8Array;
 interface BlobPropertyBag {
   type?: string;

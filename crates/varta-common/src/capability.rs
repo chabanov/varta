@@ -26,6 +26,12 @@ pub struct RequestScope {
     pub urls: Vec<String>,
     /// `None` admits every method `fetch` can send.
     pub methods: Option<Vec<String>>,
+    /// V38 (host ABI 34 and later): the exact lowercase response header
+    /// names a v38 request shows the guest; `None` shows the CORS-safelisted
+    /// names ([`crate::net::visible_response_headers`]). A forbidden
+    /// response-header name (`set-cookie`) can never be declared. V37
+    /// requests ignore it.
+    pub response_headers: Option<Vec<String>>,
 }
 
 /// Methods `fetch` normalizes to uppercase (WHATWG "normalize a method"); a
@@ -214,6 +220,7 @@ impl RequestScope {
             }
             validate_url_pattern(pattern, &[HTTP_SCHEME, HTTPS_SCHEME])?;
         }
+        self.validate_response_headers(id)?;
         let Some(methods) = &self.methods else {
             return Ok(());
         };
@@ -230,6 +237,36 @@ impl RequestScope {
             if !crate::net::valid_method(method) || unnormalized || !seen.insert(method) {
                 return Err(VartaError::InvalidManifest(format!(
                     "invalid method for {id}: {method}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// `responseHeaders` (v38): at most
+    /// [`crate::net::MAX_GRANT_RESPONSE_HEADERS`] distinct declarable names.
+    fn validate_response_headers(&self, id: &str) -> Result<()> {
+        let Some(names) = &self.response_headers else {
+            return Ok(());
+        };
+        if names.len() > crate::net::MAX_GRANT_RESPONSE_HEADERS {
+            return Err(VartaError::InvalidManifest(format!(
+                "too many responseHeaders in one {id} grant"
+            )));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for name in names {
+            if crate::net::FORBIDDEN_RESPONSE_HEADERS
+                .iter()
+                .any(|forbidden| forbidden.eq_ignore_ascii_case(name))
+            {
+                return Err(VartaError::InvalidManifest(format!(
+                    "responseHeaders of {id} cannot declare {name}: it is never visible to a program"
+                )));
+            }
+            if !crate::net::declarable_response_header(name) || !seen.insert(name) {
+                return Err(VartaError::InvalidManifest(format!(
+                    "invalid response header for {id}: {name} (an exact lowercase header name, listed once)"
                 )));
             }
         }

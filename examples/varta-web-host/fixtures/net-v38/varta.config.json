@@ -6,6 +6,12 @@
   "languageProfile": "checked-f64-utf16-v38",
   "capabilities": {
     "env": { "get": ["BASE_URL"] },
-    "net": { "request": ["http://127.0.0.1:1/**"] }
+    "net": {
+      "request": {
+        "urls": ["http://127.0.0.1:1/**"],
+        "methods": ["GET", "POST"],
+        "responseHeaders": ["content-type", "x-b"]
+      }
+    }
   }
 }

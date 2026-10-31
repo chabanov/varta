@@ -5699,6 +5699,40 @@ counting up only when a part contains it). `FormData` has no iterators:
 `keys()`, `values()` and `entries()` return arrays. There is no `File`; a
 file entry is its `Blob` plus a name.
 
+A v38 response shows only the response headers its grant declares, so a
+program sees the same headers on every host, the browser included. Declare
+the names it reads with `responseHeaders` (exact lowercase names):
+
+```json
+{
+  "languageProfile": "checked-f64-utf16-v38",
+  "capabilities": {
+    "net": { "request": {
+      "urls": ["https://api.example.com/v1/**"],
+      "methods": ["GET", "POST"],
+      "responseHeaders": ["content-type", "retry-after", "x-request-id"]
+    } }
+  }
+}
+```
+
+```ts
+async function load(url: string): Promise<string> {
+  const response = await fetch(url);
+  const id = response.headers.get('x-request-id'); // declared: the value
+  const server = response.headers.get('server'); // undeclared: always null
+  return `${id ?? 'none'} ${server ?? 'hidden'}`;
+}
+```
+
+Without `responseHeaders` a request shows only `cache-control`,
+`content-language`, `content-length`, `content-type`, `expires`,
+`last-modified` and `pragma`; `"responseHeaders": []` shows none. Repeated
+headers arrive combined (`"a, b"`), and `set-cookie` is never visible and
+cannot be declared. A host policy may narrow the list further. In a browser,
+a cross-origin server must also name the declared headers in
+`Access-Control-Expose-Headers`.
+
 `globalThis` is typed. Feature detection and the environment work through
 it; anything it does not declare is a compile error:
 

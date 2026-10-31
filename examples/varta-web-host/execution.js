@@ -7,7 +7,7 @@ import { ExecutionFailure, GuestExit, Recoverable } from "./errors.js";
 import { I32_MIN, I32_MAX, MS_PER_SECOND, utf8, strictUtf8, now } from "./context.js";
 import { schedulerState, schedulerImports } from "./scheduler.js";
 import { netState, netImports } from "./net.js";
-import { authorizeRequest } from "./policy.js";
+import { authorizeRequest, visibleResponseHeaders } from "./policy.js";
 
 const MATH_FUNCTIONS = [
   "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cbrt", "cos", "cosh", "exp", "expm1",
@@ -255,6 +255,7 @@ export function createExecution(ctx, info, policies, options) {
       emit: (text) => emit(LOG_PREFIX + text),
       writeResult,
       authorize: (url, method) => authorizeRequest(policies.package, policies.ceiling, url, method),
+      responseHeaders: () => visibleResponseHeaders(policies.package, policies.ceiling),
       requireIssued: (serial) => Number.isInteger(serial) && serial >= 0 && serial <= C.maxSerials && serial <= exec.nextSerial - 1,
       isTimerSerial: (serial) => exec.timerBySerial.has(serial),
       wake: (serial) => {

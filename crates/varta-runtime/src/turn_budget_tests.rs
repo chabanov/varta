@@ -448,6 +448,7 @@ export function main(): void {
             value: CapabilityValue::Requests(varta_common::RequestScope {
                 urls: vec![format!("{}/**", server.base)],
                 methods: None,
+                response_headers: None,
             }),
         },
         boolean(TIMER_CAPABILITY),

@@ -31,6 +31,7 @@ fn requests(urls: &[String], methods: Option<&[&str]>) -> CapabilityGrant {
         value: CapabilityValue::Requests(RequestScope {
             urls: urls.to_vec(),
             methods: methods.map(|m| m.iter().map(|m| (*m).into()).collect()),
+            response_headers: None,
         }),
     }
 }

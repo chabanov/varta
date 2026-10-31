@@ -11,6 +11,8 @@ use std::time::Duration;
 
 /// Bytes of the oversized body route, beyond the response body limit.
 pub(crate) const BIG_BODY_BYTES: usize = varta_common::net::MAX_RESPONSE_BODY_BYTES + 1;
+/// Value bytes of the `x-pad` field of the `/pad1` route.
+pub(crate) const PAD_BYTES: usize = 4096;
 /// Pause between the chunks of the streaming routes.
 const CHUNK_PAUSE: Duration = Duration::from_millis(20);
 /// How long a route that never answers keeps its connection.
@@ -248,6 +250,28 @@ fn answer<S: Read + Write>(mut stream: S) {
                 .map(|value| format!("content-type: {value}\r\n"))
                 .unwrap_or_default();
             fixed(&mut stream, "200 OK", &content_type, &request.raw);
+        }
+        // V38 canonical heads: names out of order and in mixed case, repeats
+        // split by other fields, cookies and an undeclared field.
+        "/headers" => fixed(
+            &mut stream,
+            "200 OK",
+            "x-b: 1\r\ncontent-type: text/plain\r\nset-cookie: a=1\r\nx-a: z\r\nX-B: 2\r\nset-cookie: b=2\r\ncache-control: no-store\r\nx-hidden: secret\r\n",
+            b"h",
+        ),
+        // The same head with (`/pad1`) and without (`/pad0`) a large field.
+        "/pad0" | "/pad1" => {
+            let pad = if path == "/pad1" {
+                format!("x-pad: {}\r\n", "p".repeat(PAD_BYTES))
+            } else {
+                String::new()
+            };
+            fixed(
+                &mut stream,
+                "200 OK",
+                &format!("content-type: text/plain\r\n{pad}"),
+                b"h",
+            );
         }
         "/redirect" => fixed(&mut stream, "302 Found", "location: /hello\r\n", b""),
         "/missing" => fixed(

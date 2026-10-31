@@ -9002,6 +9002,21 @@
       "POST",
       "PUT"
     ],
+    "maxGrantResponseHeaders": 64,
+    "maxResponseHeaderNameBytes": 256,
+    "forbiddenResponseHeaders": [
+      "set-cookie",
+      "set-cookie2"
+    ],
+    "safelistedResponseHeaders": [
+      "cache-control",
+      "content-language",
+      "content-length",
+      "content-type",
+      "expires",
+      "last-modified",
+      "pragma"
+    ],
     "maxUrlBytes": 8192,
     "maxFetchHeaderBytes": 65536,
     "maxEnvNameBytes": 256,
@@ -9794,6 +9809,6 @@
       "NetError::Descriptor": "malformed network request descriptor",
       "NetError::State": "invalid network request operation"
     },
-    "headExample": "{\"headers\":[\"content-type\",\"application/json\",\"set-cookie\",\"a=1\",\"set-cookie\",\"b=2\"],\"location\":\"\",\"status\":200,\"statusText\":\"OK\",\"url\":\"https://api.example.test/v1/items\"}"
+    "headExample": "{\"headers\":[\"content-type\",\"application/json\",\"retry-after\",\"5\",\"x-request-id\",\"r1, r2\"],\"location\":\"\",\"status\":200,\"statusText\":\"OK\",\"url\":\"https://api.example.test/v1/items\"}"
   }
 }

@@ -230,6 +230,7 @@ fn sse_line_loop_across_streams_matches_node() {
         value: CapabilityValue::Requests(RequestScope {
             urls: vec![format!("{}/**", server.base)],
             methods: None,
+            response_headers: None,
         }),
     }];
     let output = VartaRuntime::new()

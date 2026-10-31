@@ -58,6 +58,15 @@ pub struct WireGrant {
     /// method, and no other operation accepts it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub methods: Option<Vec<String>>,
+    /// The response headers a v38 request shows (`net.request` only, host
+    /// ABI 34 and later): exact lowercase names; absent shows the
+    /// CORS-safelisted names ([`crate::net::visible_response_headers`]).
+    #[serde(
+        default,
+        rename = "responseHeaders",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub response_headers: Option<Vec<String>>,
     /// Permission broker v1 (host ABI 34 and later): whether the application
     /// cannot run without this grant; absent means required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,6 +103,10 @@ impl Manifest {
                     },
                     methods: match &g.value {
                         CapabilityValue::Requests(scope) => scope.methods.clone(),
+                        _ => None,
+                    },
+                    response_headers: match &g.value {
+                        CapabilityValue::Requests(scope) => scope.response_headers.clone(),
                         _ => None,
                     },
                     required: None,
@@ -255,6 +268,15 @@ impl Manifest {
             if let Some(purpose) = &wire.purpose {
                 crate::permission::validate_purpose(&wire.id, purpose)?;
             }
+            if wire.response_headers.is_some()
+                && self.abi_version < crate::abi::PROGRAM_LIMITS_VERSION
+            {
+                return Err(VartaError::InvalidManifest(format!(
+                    "responseHeaders of {} require abiVersion {} or later (checked-f64-utf16-v38)",
+                    wire.id,
+                    crate::abi::PROGRAM_LIMITS_VERSION
+                )));
+            }
         }
         let mut seen = std::collections::BTreeSet::new();
         let grants: Vec<CapabilityGrant> = self
@@ -268,7 +290,9 @@ impl Manifest {
                     )));
                 }
                 let kind = capability_kind(&wire.id);
-                if wire.methods.is_some() && kind != Some(GrantKind::Requests) {
+                if (wire.methods.is_some() || wire.response_headers.is_some())
+                    && kind != Some(GrantKind::Requests)
+                {
                     return Err(VartaError::InvalidManifest(format!(
                         "invalid grant shape for {}",
                         wire.id
@@ -280,6 +304,7 @@ impl Manifest {
                         CapabilityValue::Requests(RequestScope {
                             urls: p.clone(),
                             methods: wire.methods.clone(),
+                            response_headers: wire.response_headers.clone(),
                         })
                     }
                     (Some(GrantKind::Patterns), Some(p), None) => {
@@ -364,6 +389,7 @@ mod tests {
                     "http://127.0.0.1:8080/**".into()
                 ],
                 methods: Some(vec!["GET".into(), "PATCH".into()]),
+                response_headers: None,
             })
         );
         // The wire form round-trips; a grant without methods keeps no field.
@@ -374,10 +400,79 @@ mod tests {
             value: CapabilityValue::Requests(RequestScope {
                 urls: vec!["https://api.test/**".into()],
                 methods: None,
+                response_headers: None,
             }),
         }]);
         let text = String::from_utf8(any.to_bytes().unwrap()).unwrap();
         assert!(!text.contains("methods"), "{text}");
+        assert!(!text.contains("responseHeaders"), "{text}");
+    }
+    #[test]
+    fn declared_response_headers_require_host_abi_34_and_exact_names() {
+        let manifest = Manifest::parse(
+            br#"{"abiVersion":34,"capabilities":[{"id":"net.request","patterns":["https://api.test/**"],"responseHeaders":["x-request-id","retry-after"]}]}"#,
+        )
+        .unwrap();
+        let grants = manifest.grants().unwrap();
+        let CapabilityValue::Requests(scope) = &grants[0].value else {
+            panic!("{grants:?}");
+        };
+        assert_eq!(
+            scope.response_headers.as_deref(),
+            Some(&["x-request-id".to_owned(), "retry-after".to_owned()][..])
+        );
+        // The wire form round-trips, and a host ceiling may declare them too.
+        let again = Manifest::parse(&manifest.to_bytes().unwrap()).unwrap();
+        assert_eq!(again.grants().unwrap(), grants);
+        manifest.validate_ceiling().unwrap();
+        let empty = Manifest::parse(
+            br#"{"abiVersion":34,"capabilities":[{"id":"net.request","patterns":["https://api.test/**"],"responseHeaders":[]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            empty.grants().unwrap()[0].value,
+            CapabilityValue::Requests(RequestScope {
+                urls: vec!["https://api.test/**".into()],
+                methods: None,
+                response_headers: Some(Vec::new()),
+            })
+        );
+        let too_many = (0..=crate::net::MAX_GRANT_RESPONSE_HEADERS)
+            .map(|i| format!("\"x-{i}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        let long = format!(
+            "\"{}\"",
+            "a".repeat(crate::net::MAX_RESPONSE_HEADER_NAME_BYTES + 1)
+        );
+        let grant = |headers: &str| {
+            format!(
+                r#"{{"abiVersion":34,"capabilities":[{{"id":"net.request","patterns":["https://api.test/**"],"responseHeaders":[{headers}]}}]}}"#
+            )
+        };
+        for source in [
+            // Earlier manifests (and ceilings without an abiVersion) reject it.
+            r#"{"abiVersion":33,"capabilities":[{"id":"net.request","patterns":["https://api.test/**"],"responseHeaders":["etag"]}]}"#.to_owned(),
+            r#"{"capabilities":[{"id":"net.request","patterns":["https://api.test/**"],"responseHeaders":["etag"]}]}"#.to_owned(),
+            // Only net.request accepts it.
+            r#"{"abiVersion":34,"capabilities":[{"id":"net.fetch","patterns":["http://api.test/**"],"responseHeaders":["etag"]}]}"#.to_owned(),
+            r#"{"abiVersion":34,"capabilities":[{"id":"net.request","patterns":["https://api.test/**"],"responseHeaders":"etag"}]}"#.to_owned(),
+            grant(r#""ETag""#),
+            grant(r#""x a""#),
+            grant(r#""""#),
+            grant(r#""etag","etag""#),
+            grant(&too_many),
+            grant(&long),
+        ] {
+            assert!(Manifest::parse(source.as_bytes()).is_err(), "{source}");
+        }
+        // set-cookie is never declarable, in any case, with its own reason.
+        for name in ["set-cookie", "Set-Cookie", "set-cookie2"] {
+            let error = Manifest::parse(grant(&format!("\"{name}\"")).as_bytes())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("never visible"), "{error}");
+        }
     }
     #[test]
     fn instance_schema_requires_host_abi_34() {

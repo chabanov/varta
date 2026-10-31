@@ -7,8 +7,10 @@ use varta_common::{
 pub enum CapabilitySpec {
     Patterns(Vec<String>),
     Enabled(bool),
-    /// `"net": { "request": { "urls": [...], "methods": [...] } }` (v37); a
-    /// plain pattern list admits every method.
+    /// `"net": { "request": { "urls": [...], "methods": [...] } }` (v37),
+    /// plus the optional v38 `"responseHeaders": [...]`; a plain pattern
+    /// list admits every method and shows the CORS-safelisted response
+    /// headers.
     Requests(RequestSpec),
 }
 
@@ -18,6 +20,10 @@ pub enum CapabilitySpec {
 pub struct RequestSpec {
     pub urls: Vec<String>,
     pub methods: Vec<String>,
+    /// The response header names a v38 request shows the guest
+    /// (`languageProfile` checked-f64-utf16-v38 only).
+    #[serde(default, rename = "responseHeaders")]
+    pub response_headers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -157,6 +163,7 @@ impl VartaConfig {
                                 CapabilityValue::Requests(RequestScope {
                                     urls: patterns.clone(),
                                     methods: None,
+                                    response_headers: None,
                                 })
                             }
                             // Any other operation rejects the shape in validation.
@@ -164,6 +171,7 @@ impl VartaConfig {
                                 CapabilityValue::Requests(RequestScope {
                                     urls: spec.urls.clone(),
                                     methods: Some(spec.methods.clone()),
+                                    response_headers: spec.response_headers.clone(),
                                 })
                             }
                             CapabilitySpec::Patterns(patterns)
@@ -244,6 +252,7 @@ mod tests {
             CapabilityValue::Requests(RequestScope {
                 urls: vec!["https://api.test/v1/**".into()],
                 methods: None,
+                response_headers: None,
             })
         );
         let scoped = config(serde_json::json!({"net":{"request":{
@@ -254,6 +263,7 @@ mod tests {
             CapabilityValue::Requests(RequestScope {
                 urls: vec!["http://127.0.0.1:8080/**".into()],
                 methods: Some(vec!["GET".into(), "POST".into()]),
+                response_headers: None,
             })
         );
         for grants in [
@@ -272,6 +282,50 @@ mod tests {
             assert!(
                 parsed.map_or(true, |config| config.validate().is_err()),
                 "{grants}"
+            );
+        }
+    }
+    #[test]
+    fn v38_request_grants_declare_response_headers() {
+        let declared = |profile: &str, headers: serde_json::Value| {
+            serde_json::from_value::<VartaConfig>(serde_json::json!({
+                "entry":"src/main.ts","target":"native","out":"dist/app",
+                "languageProfile": profile,
+                "capabilities":{"net":{"request":{
+                    "urls":["https://api.test/**"],"methods":["GET"],
+                    "responseHeaders": headers}}}}))
+            .unwrap()
+        };
+        let v38 = declared(
+            "checked-f64-utf16-v38",
+            serde_json::json!(["x-request-id", "retry-after"]),
+        );
+        v38.validate().unwrap();
+        let manifest = v38.manifest();
+        assert_eq!(
+            manifest.capabilities[0].response_headers.as_deref(),
+            Some(&["x-request-id".to_owned(), "retry-after".to_owned()][..])
+        );
+        // Earlier profiles' manifests cannot carry the field.
+        let v37 = declared("checked-f64-utf16-v37", serde_json::json!(["etag"]));
+        let error = v37.validate().unwrap_err().to_string();
+        assert!(error.contains("abiVersion 34"), "{error}");
+        // set-cookie is never declarable, with a diagnostic that says why.
+        let cookie = declared("checked-f64-utf16-v38", serde_json::json!(["set-cookie"]));
+        let error = cookie.validate().unwrap_err().to_string();
+        assert!(
+            error.contains("set-cookie") && error.contains("never visible"),
+            "{error}"
+        );
+        for headers in [
+            serde_json::json!(["X-Request-Id"]),
+            serde_json::json!(["etag", "etag"]),
+        ] {
+            assert!(
+                declared("checked-f64-utf16-v38", headers.clone())
+                    .validate()
+                    .is_err(),
+                "{headers}"
             );
         }
     }

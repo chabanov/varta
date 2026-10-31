@@ -11,6 +11,10 @@ const MANIFEST_FIELDS = ["schemaVersion", "abiVersion", "policy", "entry", "targ
 const V34_MEMBERS = ["budgets", "fsRoots"];
 const GRANT_V34_FIELDS = ["required", "purpose"];
 const REQUEST_SCOPE_FIELDS = ["methods"];
+// v34 manifests only, in a package or a ceiling (embedding.md "Canonical head (v38)").
+const REQUEST_SCOPE_V34_FIELDS = ["responseHeaders"];
+// A declared response header: an RFC 9110 token without uppercase letters.
+const LOWERCASE_TOKEN = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
 // embedding.md "Root names": ASCII, a lowercase first letter, then a–z, 0–9, `-`, `_`.
 const ROOT_NAME = /^[a-z][a-z0-9_-]*$/;
 // RFC 9110 `token`.
@@ -83,17 +87,23 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds, 
     const kind = grantKinds[grant.id];
     if (!kind) throw new PolicyError(`${where}: unknown capability id ${grant.id}`);
     if (grants.has(grant.id)) throw new PolicyError(`${where}: duplicate capability id ${grant.id}`);
-    const optional = [...(v34 && !ceiling ? GRANT_V34_FIELDS : []), ...(kind === "requests" ? REQUEST_SCOPE_FIELDS : [])];
+    const optional = [
+      ...(v34 && !ceiling ? GRANT_V34_FIELDS : []),
+      ...(kind === "requests" ? REQUEST_SCOPE_FIELDS : []),
+      ...(kind === "requests" && v34 ? REQUEST_SCOPE_V34_FIELDS : []),
+    ];
     try {
       exactKeys(grant, kind === "boolean" ? ["id", "enabled"] : ["id", "patterns"], optional, `${where} grant ${grant.id}`);
     } catch (error) {
       if (!v34 && GRANT_V34_FIELDS.some((f) => f in grant)) throw new PolicyError(`${where}: ${grant.id}.required/purpose need abiVersion ${limits.turnBudgetsAbi}`);
+      if (!v34 && REQUEST_SCOPE_V34_FIELDS.some((f) => f in grant)) throw new PolicyError(`${where}: ${grant.id}.responseHeaders need abiVersion ${limits.turnBudgetsAbi}`);
       if (ceiling && GRANT_V34_FIELDS.some((f) => f in grant)) throw new PolicyError(`${where}: a host ceiling may not carry required or purpose`);
       throw new PolicyError(error.message);
     }
     if ("required" in grant && typeof grant.required !== "boolean") throw new PolicyError(`${where}: ${grant.id}.required must be a boolean`);
     if ("purpose" in grant) checkPurpose(grant.purpose, limits, `${where}: ${grant.id}.purpose`);
     const methods = "methods" in grant ? parseMethods(grant.methods, limits, `${where}: ${grant.id}.methods`) : null;
+    const responseHeaders = "responseHeaders" in grant ? parseResponseHeaders(grant.responseHeaders, limits, `${where}: ${grant.id}.responseHeaders`) : null;
     if (kind === "boolean") {
       if (typeof grant.enabled !== "boolean") throw new PolicyError(`${where}: ${grant.id}.enabled must be a boolean`);
       grants.set(grant.id, { kind, enabled: grant.enabled, required: grant.required !== false });
@@ -109,7 +119,7 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds, 
       const reason = unsafeReason(pattern, kind, limits) ?? (kind === "paths" && packageRoots ? unsafeRootedPath(pattern, packageRoots) : null);
       if (reason) throw new PolicyError(`${where}: unsafe ${grant.id} pattern ${JSON.stringify(pattern)}: ${reason}`);
     }
-    grants.set(grant.id, { kind, patterns: grant.patterns, methods, required: grant.required !== false });
+    grants.set(grant.id, { kind, patterns: grant.patterns, methods, responseHeaders, required: grant.required !== false });
   }
   return Object.assign(grants, { abiVersion, budgets, fsRoots, limits });
 }
@@ -178,6 +188,35 @@ function parseMethods(methods, limits, where) {
     seen.add(method);
   }
   return methods;
+}
+
+/** `responseHeaders`: lowercase tokens within the published bounds, no duplicates, never a forbidden name. */
+function parseResponseHeaders(names, limits, where) {
+  if (!Array.isArray(names) || names.some((n) => typeof n !== "string")) throw new PolicyError(`${where} must be strings`);
+  if (names.length > limits.maxGrantResponseHeaders) throw new PolicyError(`${where}: more than ${limits.maxGrantResponseHeaders} names`);
+  const seen = new Set();
+  for (const name of names) {
+    if (limits.forbiddenResponseHeaders.includes(name.toLowerCase())) throw new PolicyError(`${where}: ${name} is never visible to a program`);
+    if (!LOWERCASE_TOKEN.test(name) || utf8Length(name) > limits.maxResponseHeaderNameBytes) throw new PolicyError(`${where}: ${JSON.stringify(name)} is not an exact lowercase header name`);
+    if (seen.has(name)) throw new PolicyError(`${where}: duplicate ${name}`);
+    seen.add(name);
+  }
+  return names;
+}
+
+/** The names one parsed grant map shows a v38 request: its declaration, else the safelist. */
+function visibleSet(grants) {
+  const grant = grants.get("net.request");
+  if (!grant) return new Set();
+  return new Set(grant.responseHeaders ?? grants.limits.safelistedResponseHeaders);
+}
+
+/** embedding.md "Canonical head (v38)": the package's visible set, narrowed by the ceiling's. */
+export function visibleResponseHeaders(packageGrants, ceilingGrants) {
+  const names = visibleSet(packageGrants);
+  if (ceilingGrants === null) return names;
+  const allowed = visibleSet(ceilingGrants);
+  return new Set([...names].filter((name) => allowed.has(name)));
 }
 
 /** v34 packages: an fs.* pattern starts with a literal declared root and has only ordinary components. */

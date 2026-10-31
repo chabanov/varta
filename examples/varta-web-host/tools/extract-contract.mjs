@@ -259,7 +259,7 @@ for (const r of detailRows("embedding-manifest-budgets")) {
   manifestBudgets[code(r[0])] = { min: Number(range[1]), max: Number(range[2]), turnDefault: Number(r[2]), executionValue: Number(r[3]) };
 }
 const MANIFEST_LIMIT_KEYS = {
-  "`abiVersion` that admits `budgets`, grant `required` and `purpose`, and `fsRoots`": "turnBudgetsAbi",
+  "`abiVersion` that admits `budgets`, grant `required` and `purpose`, `fsRoots`, and `net.request` `responseHeaders`": "turnBudgetsAbi",
   "Grant `purpose` (UTF-8 bytes)": "maxPurposeBytes",
   "`fsRoots` entries (package names or host mappings)": "maxFileRoots",
   "Root name (bytes)": "rootNameBytes",
@@ -267,6 +267,10 @@ const MANIFEST_LIMIT_KEYS = {
   "Methods in one `net.request` grant": "maxGrantMethods",
   "Methods never grantable (in any case)": "forbiddenMethods",
   "Methods a grant must spell in uppercase": "normalizedMethods",
+  "Names in one `net.request` grant's `responseHeaders`": "maxGrantResponseHeaders",
+  "Declared response header name (bytes)": "maxResponseHeaderNameBytes",
+  "Response headers never declarable (in any case)": "forbiddenResponseHeaders",
+  "Response headers a v38 request shows without `responseHeaders`": "safelistedResponseHeaders",
   "Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied)": "maxUrlBytes",
   "Grants in one manifest or host policy": "maxPolicyGrants",
   "Patterns, listen endpoints and request URLs across all grants": "maxPolicyPatterns",
