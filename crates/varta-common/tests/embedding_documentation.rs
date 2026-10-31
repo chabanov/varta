@@ -6,6 +6,8 @@
 mod limits;
 #[path = "embedding_documentation/manifest.rs"]
 mod manifest;
+#[path = "embedding_documentation/net.rs"]
+mod net;
 mod support;
 #[path = "embedding_documentation/view.rs"]
 mod view;
