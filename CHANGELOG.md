@@ -1252,6 +1252,24 @@ in [conformance/README.md](conformance/README.md).
 
 ### Fixed
 
+- Fuel is identical on every host. Wasmtime meters instantiation's
+  data-segment copy, which copy-on-write memory images skipped on Linux
+  (memfd) and charged over 16 KiB pages on macOS arm64, so a v1–v37 module
+  consumed host-dependent fuel (a one-byte segment cost 16,385 fuel on macOS
+  and 0 on Linux). Owner decision: instantiation is no longer charged to the
+  guest in any profile, as v38 already did, so every artifact that fit its
+  budget still fits on every platform; Linux fuel is unchanged and macOS fuel
+  only goes down. A module with a Wasm start function (possible before the
+  exception profiles; the compiler never emits one) runs guest code during
+  instantiation and keeps paying for it; the runtime disables copy-on-write
+  images (`Config::memory_init_cow(false)`) so that charge is one fuel per
+  segment byte everywhere (they save no measurable time for a fresh store).
+  `fuel_determinism_tests` pins exact fuel of representative programs, that
+  instantiation leaves guest fuel untouched, and that compilation is
+  byte-identical across runs. Emitted bytes are unchanged. The codegen-v2
+  keyed view mount speedup is re-pinned from 2.0 to 1.99 (v37 164,741 against
+  v38 82,600; 2.0 held only with the macOS page charge).
+
 - V38 wave-3a integration: a fair-fuel charge that empties the fuel inside
   `host::input` or `host::result*` of the event, network-text and KV imports
   is the typed fuel-budget error (`HostFailure::into_trap`), no longer an

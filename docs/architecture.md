@@ -9404,12 +9404,11 @@ may lie there) nor heap; validation admits a data segment there
   instance and to its verified function catalog; it never comes from guest
   memory. Managed-handle lower bounds stay `OWNED_STRING_BASE + 16`, followed
   by the existing header and flag checks.
-- Wasmtime meters instantiation's data-segment copy per byte of the
-  initialized image (rounded to host pages and including the gap before an
-  extension). For a v38 module instantiation receives its own allowance of at
-  most the memory budget, and the guest's fuel budget is restored before any
-  guest code runs, so v38 startup fuel does not depend on static size (the
-  `FUEL` value is unchanged). Earlier profiles keep being charged.
+- Wasmtime meters instantiation's data-segment copy, but instantiation is
+  not charged to the guest ([fuel determinism](#fuel-determinism)): the
+  guest's fuel budget is restored exactly before any guest code runs, so
+  startup fuel does not depend on static size (the `FUEL` value is
+  unchanged).
 
 A v38 module relabelled as v37 still fails at its host ABI section; with the
 host ABI downgraded as well, its `varta.static` section or its extension data
@@ -10397,8 +10396,8 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   intrinsic region; linked functions and signatures count against v38's own
   structural limits (the Wasm limits of
   [program limits](#program-limits-program_limits)). The region is part of
-  memory 0, so the store limits and the v38 instantiation allowance (the
-  memory budget) cover it with no extra memory or fuel.
+  memory 0, so the store limits cover it with no extra memory, and
+  instantiation, which is not charged to the guest, with no extra fuel.
 - **Semantics and budgets.** Results equal the host implementation's on the
   same inputs, with two documented differences: Math and `**` use the portable
   `libm` backend (bit-identical on every host, faithful but not always
@@ -10408,8 +10407,8 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   typed resource failure above. Linked BigInt multiplication and decimal
   text of operands near a million bits exhaust the 8 MiB budget in linked
   code where the host import (native allocator) succeeds. Linked calls
-  consume fuel and no host-call budget; their data segments are covered by
-  the v38 instantiation allowance like every v38 data segment, and the region
+  consume fuel and no host-call budget; their data segments are initialized
+  without guest fuel like every data segment, and the region
   takes `m` pages of the memory budget. Integral `Number.prototype.toString(radix)`
   arguments below 2^53 take an exact integer-digit path instead of the
   big-integer interval search. Production budgets are unchanged. Linked
@@ -12223,6 +12222,42 @@ tables and globals before native compilation. Store budgets apply before Wasm
 start functions execute. Fuel/epoch interruption bound guest execution; HTTP uses
 the remaining deadline. Output is captured with a budget and returned to the
 caller. Errors and guest exit do not terminate an embedding process.
+
+### Fuel determinism
+
+Fuel is a function of the module bytes and the guest-visible inputs only:
+the same module with the same inputs consumes exactly the same fuel on every
+host and platform, so a budget means the same everywhere. The compiler's
+output does not depend on the host (no hash-ordered iteration, pointer width
+or paths in emission). Fair host fuel charges depend only on the bytes and
+values the guest passes or receives.
+
+**Instantiation is not charged to the guest, in every profile (owner
+decision, 2026-10-30).** Wasmtime meters instantiation's data-segment copy,
+and with copy-on-write memory images it skips that copy where the platform
+can map an image (memfd on Linux) and copies host-page-rounded images
+elsewhere (16 KiB pages on macOS arm64), so charging it made v1–v37 fuel
+host-dependent (a one-byte segment cost 16,385 fuel on macOS and 0 on
+Linux). The runtime therefore instantiates on an unmetered tank and restores
+the guest's fuel exactly before any guest code runs (`Execution`'s
+instantiation); the work is bounded by the validated module size, the memory
+budget and the deadline, and an instantiation never fails for fuel. This is
+an approved exception to keeping earlier profiles' behaviour: every artifact
+that fit its budget before still fits on every platform (Linux fuel is
+unchanged, macOS fuel only goes down). A module with a Wasm start function,
+which only the profiles before the exception profiles admit and the compiler
+never emits, runs guest code during instantiation and pays its whole
+instantiation, start function and copy included. For that charge to be the
+same everywhere the runtime configures Wasmtime explicitly with fuel, epoch
+interruption and no copy-on-write images (`memory_init_cow(false)` in
+`VartaRuntime::new`): every host copies exactly the module's segments, one
+fuel per byte. Images save no measurable time for one fresh store per
+execution (measured within noise on Linux aarch64; macOS never maps them).
+
+`fuel_determinism_tests` pins exact fuel of representative programs, that
+instantiation leaves even one unit of guest fuel untouched, and the start
+function charge, on every CI host, and compiles the case corpus twice to
+compare bytes; a host-dependent engine setting or compiler output fails it.
 
 ## Artifact format and validation
 

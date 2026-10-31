@@ -1515,7 +1515,10 @@ One **execution** owns one fresh store and instance and is never reused:
 1. Validate the module and both policies.
 2. Create the execution budgets (fuel, deadline, memory, host calls, output) from
    the [limits table](architecture.md#resource-limits); they cover the whole
-   execution, including instantiation and every job. **v38 (`turn_budgets`):**
+   execution, including instantiation and every job, except that
+   instantiation MUST NOT consume guest fuel (unless the module has a Wasm
+   start function; see [fuel determinism](architecture.md#fuel-determinism)).
+   **v38 (`turn_budgets`):**
    resolve the manifest's `budgets` against the host ceiling (each budget is
    the request or the v38 default, capped by the ceiling's value or by the
    default; the maxima and the v38 defaults are in the
@@ -2844,7 +2847,7 @@ A host that runs Varta modules MUST:
 | Budget | Reference host (Wasmtime) | JavaScript host today |
 | --- | --- | --- |
 | Memory | Store limiter | Module-declared maximum, checked before instantiation (validation step 4) |
-| Fuel (instructions) | Engine fuel metering | **Not enforceable**: JavaScript engines expose no instruction metering; a host MUST state that fuel is not enforced. The accepted design adds a deterministic metering transform at browser packaging ([decision 5](development-plan.md#accepted-decisions-2026-10-29)), not implemented yet |
+| Fuel (instructions) | Engine fuel metering, identical on every platform ([fuel determinism](architecture.md#fuel-determinism)): instantiation is not charged to the guest in any profile (a pre-exception module with a Wasm start function pays its whole instantiation, its data-segment copy at one fuel per byte, so no copy-on-write memory images); a Wasmtime host MUST NOT enable a setting that makes fuel depend on the platform | **Not enforceable**: JavaScript engines expose no instruction metering; a host MUST state that fuel is not enforced. The accepted design adds a deterministic metering transform at browser packaging ([decision 5](development-plan.md#accepted-decisions-2026-10-29)), not implemented yet |
 | Deadline | Epoch interruption inside guest code | Checked at host calls only; a guest loop without host calls runs until the embedder terminates it (in a browser: `Worker.terminate()`) |
 | Host calls, output | Counted per call | Counted per call (enforceable) |
 | Per-turn renewal (v38) | Fuel, host calls and microtasks renewed per turn; deadline per turn in application instances | Renewable at turn boundaries the host itself drives; fuel only with the metering transform |

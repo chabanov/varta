@@ -12,11 +12,13 @@ pub struct PreparedModule {
     /// against its memory and data segments before compilation.
     pub(crate) static_region: varta_common::abi::StaticRegion,
     /// The declared profile (the legacy profile for undeclared modules): its
-    /// structural limits bound the instance's readers, and under v38
-    /// (`program_limits`) instantiation, whose data-segment copy Wasmtime
-    /// meters per byte of the initialized image (including the gap before a
-    /// static extension), is not charged to the guest's fuel.
+    /// structural limits bound the instance's readers.
     pub(crate) profile: varta_common::language::LanguageProfile,
+    /// The module has a Wasm start function (possible only before the
+    /// exception profiles; the compiler never emits one). Its instantiation
+    /// runs guest code and stays charged to the guest's fuel; every other
+    /// module's instantiation never touches guest fuel.
+    pub(crate) start_function: bool,
 }
 impl PreparedModule {
     pub fn module(&self) -> &wasmtime::Module {
