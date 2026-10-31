@@ -11354,6 +11354,21 @@ into the static type the program names. V37 and earlier profiles reject
   `Uint8Array`, BigInt or an array with holes has no checked type yet. Any
   mismatch rejects with a catchable `TypeError: KV value does not match the
   checked type: …`; reading a `KvU64` or `Uint8Array` entry needs that type.
+- **Expiry.** `set(key, value, { expireIn })` stores `expiration_ms` = the
+  commit's instant on the KV clock plus `expireIn`, as Deno stamps it. The KV
+  clock (`varta-runtime` `kv::clock`) is the only time Varta's KV code reads,
+  once per commit: the system clock in production, a fixed instant in tests.
+  Whether an entry has expired is the storage engine's decision on the
+  system clock, exactly as in Deno and in every Deno process sharing the
+  file: `denokv_sqlite`'s worker deletes the entries whose expiration has
+  passed when a database is opened writable, and later on its own schedule
+  (by the earliest expiration and at least once a minute, with up to a
+  second of jitter), as one version step. Reads, lists and atomic checks see
+  what the file holds, so an expired entry may still be read, and still
+  match a check, until it is collected (Deno documents the same for
+  `expireIn`); a read-only database is never collected. Scripted sessions do
+  not move the KV clock: virtual time governs timers only, and an
+  expiration is an instant every process opening the file shares.
 - **Versionstamps.** 20 lowercase hex digits: the 8-byte big-endian
   `data_version.version` of the commit followed by two zero bytes, as Deno
   formats them. `denokv_sqlite` advances the version by a random step of 1 to
@@ -11388,7 +11403,13 @@ into the static type the program names. V37 and earlier profiles reject
 - **Tests** never use production data: the Deno 2.9.4 fixture
   (`kv_cases/deno-2.9.4`, written in a throwaway container by its generator,
   with every row in hex) and the Deno 2.9.7 serializer probe
-  (`kv_cases/deno-2.9.7-probe`) are synthetic.
+  (`kv_cases/deno-2.9.7-probe`) are synthetic. No test depends on the date:
+  the fixture's one expiring entry (`["fixture", "expire"]`, written
+  2026-10-30T16:53:27.447Z with a day to live, its `expiration_ms` minus its
+  `expireIn`) has expired on the system clock, so the tests that read the
+  fixture as Deno wrote it open it read-only, the `expireIn` stamp is checked
+  against Deno's row on a KV clock pinned to that write time, and collection
+  is tested with stamps relative to the system clock.
 
 ### V38 closure narrowing (`closure_narrowing()`)
 

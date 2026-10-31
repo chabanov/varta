@@ -15,6 +15,7 @@
 //! entry a read returns, and the checked JSON rates for the schema and the
 //! values a decode builds.
 mod charge;
+mod clock;
 mod decode;
 mod stage;
 pub(crate) mod store;
@@ -78,6 +79,8 @@ pub(crate) struct Kv {
     /// The last outcome: a versionstamp, or `<ErrorName>\n<message>`.
     text: String,
     runtime: Option<tokio::runtime::Runtime>,
+    /// The clock `expireIn` is stamped on (`clock`).
+    clock: clock::Clock,
 }
 
 impl Kv {
@@ -701,7 +704,8 @@ fn parse_commit<'a>(
             kv::MAX_MUTATIONS
         ))));
     }
-    let now = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now());
+    // One reading of the KV clock for every `expireIn` of the commit.
+    let now = state.clock.now();
     let mut parsed = Vec::with_capacity(mutations);
     for _ in 0..mutations {
         let code = MutationCode::from_code(number(next(fields)?)?)
@@ -744,11 +748,7 @@ fn parse_commit<'a>(
             None
         } else {
             let milliseconds: u64 = number(expire_in)?;
-            match i64::try_from(milliseconds)
-                .ok()
-                .and_then(chrono::TimeDelta::try_milliseconds)
-                .and_then(|delta| now.checked_add_signed(delta))
-            {
+            match clock::expire_at(now, milliseconds) {
                 Some(at) => Some(at),
                 None => {
                     return Ok(Err(KvError::type_error(format!(

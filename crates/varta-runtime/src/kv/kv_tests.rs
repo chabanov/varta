@@ -4,12 +4,24 @@
 use super::*;
 use crate::policy::FileRoots;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use varta_common::{CapabilityGrant, CapabilityValue, language::LanguageProfile};
 
 const FIXTURE: &[u8] = include_bytes!("../kv_cases/deno-2.9.4/fixture.kv");
 const MANIFEST: &str = include_str!("../kv_cases/deno-2.9.4/manifest.json");
 const ROWS: &str = include_str!("../kv_cases/deno-2.9.4/rows.json");
 const LOG: &str = "varta log: ";
+/// When Deno's generator wrote the fixture's one expiring entry,
+/// `["fixture", "expire"]` (`expireIn` one day), in Unix milliseconds:
+/// 2026-10-30T16:53:27.447Z. Derived from the fixture's own data by
+/// [`fixture_expiry`]: the row's `expiration_ms` in `rows.json` minus the
+/// `expireIn` the manifest records. The entry expired on the system clock a
+/// day later, so a writable open of the fixture after that moment lets
+/// Deno's engine collect it; the tests that read the fixture as Deno wrote
+/// it open it read-only, which the engine never collects.
+const FIXTURE_EXPIRE_WRITTEN_MS: i64 = 1_793_379_207_447;
+/// One day in milliseconds: the fixture's `expireIn`.
+const DAY_MS: u64 = 86_400_000;
 
 /// A temporary host tree: `root/` (the `data` root) and `outside/`.
 pub(super) struct Tree(PathBuf);
@@ -57,6 +69,12 @@ pub(super) fn read_write() -> Vec<CapabilityGrant> {
         grant(kv::READ_CAPABILITY, &["/data/**"]),
         grant(kv::WRITE_CAPABILITY, &["/data/**"]),
     ]
+}
+
+/// `kv.read` alone: the database opens read-only, and Deno's engine does no
+/// maintenance on it (nothing expired is collected).
+fn read_only() -> Vec<CapabilityGrant> {
+    vec![grant(kv::READ_CAPABILITY, &["/data/**"])]
 }
 
 pub(super) fn compile(source: &str) -> Vec<u8> {
@@ -165,6 +183,58 @@ pub(super) fn rows(path: &Path) -> Vec<(Vec<u8>, Vec<u8>, i64, i64)> {
         .unwrap()
 }
 
+/// The fixture's expiring entry as Deno wrote it, in milliseconds: when it
+/// was written (its stored `expiration_ms` minus the `expireIn` the manifest
+/// records), its `expireIn` and its `expiration_ms`.
+fn fixture_expiry() -> (i64, i64, i64) {
+    let manifest: serde_json::Value = serde_json::from_str(MANIFEST).unwrap();
+    let entry = manifest["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == serde_json::json!(["fixture", "expire"]))
+        .unwrap();
+    let expire_in: i64 = entry["note"]
+        .as_str()
+        .and_then(|note| note.strip_prefix("expireIn "))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let key = key_bytes(&entry["key"]);
+    let rows: serde_json::Value = serde_json::from_str(ROWS).unwrap();
+    let expiration = rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| hex(row["k"].as_str().unwrap()) == key)
+        .unwrap()["expiration_ms"]
+        .as_i64()
+        .unwrap();
+    (expiration - expire_in, expire_in, expiration)
+}
+
+/// Every row of a database file as `(k, expiration_ms)`.
+fn expirations(path: &Path) -> Vec<(Vec<u8>, i64)> {
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let mut statement = connection
+        .prepare("select k, expiration_ms from kv order by k")
+        .unwrap();
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+fn data_version(path: &Path) -> i64 {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row("select version from data_version where k = 0", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
 fn key_bytes(key: &serde_json::Value) -> Vec<u8> {
     let parts = key
         .as_array()
@@ -189,7 +259,7 @@ fn deno_written_versionstamps_read_back_for_every_manifest_key() {
            for (const e of entries) { console.log((e.value ?? 'missing') + ' ' + (e.versionstamp ?? '-')); }",
     );
     assert_eq!(
-        run(&source, read_write(), tree.roots()),
+        run(&source, read_only(), tree.roots()),
         [
             "missing -",
             "k 00000000000000070000",
@@ -206,7 +276,7 @@ fn deno_written_versionstamps_read_back_for_every_manifest_key() {
                 "    const e = await kv.get<unknown>({key}); console.log(e.versionstamp ?? 'missing');"
             ),
         );
-        lines.push(run(&source, read_write(), tree.roots()));
+        lines.push(run(&source, read_only(), tree.roots()));
     }
     for ((key, versionstamp), lines) in entries.iter().zip(&lines) {
         let shown = &lines[0];
@@ -237,6 +307,175 @@ fn deno_written_versionstamps_read_back_for_every_manifest_key() {
         .count();
     // bigint, holes, bytes, bytes_in_obj, date, map, set, u64 plain, u64 sum.
     assert_eq!(unreadable, 9, "{lines:?}");
+    // The read-only opens left the fixture as Deno wrote it. A writable open
+    // lets Deno's engine collect what the system clock has expired: the
+    // `expire` entry once its day has passed (it has, since 2026-10-31).
+    let (_, _, expiration) = fixture_expiry();
+    let expiration = UNIX_EPOCH + Duration::from_millis(u64::try_from(expiration).unwrap());
+    let expired = SystemTime::now() >= expiration;
+    let source = program(
+        "/data/fixture.kv",
+        "  const e = await kv.get<string>(['fixture', 'expire']); console.log(e.value ?? 'missing');",
+    );
+    assert_eq!(
+        run(&source, read_write(), tree.roots()),
+        [if expired { "missing" } else { "lives a day" }]
+    );
+}
+
+/// Under a KV clock pinned to the moment Deno's generator wrote the fixture,
+/// Varta stamps the generator's `set(['fixture', 'expire'], 'lives a day',
+/// { expireIn: 86400000 })` exactly as Deno did: the commit's mutation has
+/// the key, value and `expiration_ms` of the fixture's row.
+#[test]
+fn expire_in_is_stamped_on_the_kv_clock_as_deno_stamped_the_fixture() {
+    let (written, expire_in, expiration) = fixture_expiry();
+    assert_eq!(written, FIXTURE_EXPIRE_WRITTEN_MS);
+    assert_eq!(u64::try_from(expire_in).unwrap(), DAY_MS);
+    // It is the fixture's only expiring row.
+    let rows: serde_json::Value = serde_json::from_str(ROWS).unwrap();
+    let expiring = rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["expiration_ms"].as_i64() != Some(-1))
+        .count();
+    assert_eq!(expiring, 1);
+    let at = UNIX_EPOCH + Duration::from_millis(u64::try_from(written).unwrap());
+    let mut state = Kv {
+        clock: clock::Clock::Fixed(at),
+        ..Kv::default()
+    };
+    let text = |text: &str| v8::Value::String(text.encode_utf16().collect());
+    let key = v8::Value::Object(std::rc::Rc::new(v8::Object::Dense(vec![
+        Some(text("fixture")),
+        Some(text("expire")),
+    ])));
+    state
+        .staged
+        .push(staged_value(StageMode::Value, &key).unwrap());
+    state
+        .staged
+        .push(staged_value(StageMode::Value, &text("lives a day")).unwrap());
+    // No checks; one set of stage 0 to stage 1 with `expireIn`.
+    let code = (MutationCode::Set as u8).to_string();
+    let expire_in = DAY_MS.to_string();
+    let descriptor =
+        ["0", "1", &code, "0", "1", &expire_in].join(&kv::DESCRIPTOR_SEPARATOR.to_string());
+    let (checks, mutations) = parse_commit(&state, &mut descriptor.split(kv::DESCRIPTOR_SEPARATOR))
+        .unwrap()
+        .unwrap();
+    assert!(checks.is_empty());
+    let [mutation] = &mutations[..] else {
+        panic!("{} mutations", mutations.len());
+    };
+    let (deno_value, deno_encoding) = deno_row(&mutation.key);
+    assert_eq!(deno_encoding, 1);
+    assert!(
+        matches!(&mutation.kind, MutationKind::Set(KvValue::V8(bytes)) if *bytes == deno_value)
+    );
+    assert_eq!(
+        mutation.expire_at.map(|at| at.timestamp_millis()),
+        Some(expiration)
+    );
+    // The system clock stamps a later expiration than Deno's.
+    state.clock = clock::Clock::System;
+    let (_, mutations) = parse_commit(&state, &mut descriptor.split(kv::DESCRIPTOR_SEPARATOR))
+        .unwrap()
+        .unwrap();
+    assert!(mutations[0].expire_at.unwrap().timestamp_millis() > expiration);
+}
+
+/// One `set` of `["expiry", name]` to the string `"x"`, expiring at `at`.
+fn expiring_set(name: &str, at: chrono::DateTime<chrono::Utc>) -> denokv_proto::Mutation {
+    let key = denokv_proto::encode_key(&denokv_proto::Key(vec![
+        KeyPart::String("expiry".into()),
+        KeyPart::String(name.into()),
+    ]))
+    .unwrap();
+    let value = v8::encode(
+        &v8::Value::String(vec![u16::from(b'x')]),
+        kv::MAX_VALUE_BYTES,
+    )
+    .unwrap();
+    denokv_proto::Mutation {
+        key,
+        kind: MutationKind::Set(KvValue::V8(value)),
+        expire_at: Some(at),
+    }
+}
+
+/// Whether each of `keys` reads back from `database`.
+fn present(database: &mut store::Database, keys: &[Vec<u8>]) -> Vec<bool> {
+    let runtime = waiting_runtime();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let ranges = keys
+        .iter()
+        .map(|key| denokv_proto::ReadRange {
+            start: key.clone(),
+            end: key.iter().copied().chain(Some(0)).collect(),
+            limit: std::num::NonZeroU32::MIN,
+            reverse: false,
+        })
+        .collect();
+    let Ok(outputs) = database.read(&runtime, deadline, ranges) else {
+        panic!("read failed");
+    };
+    outputs
+        .iter()
+        .map(|output| !output.entries.is_empty())
+        .collect()
+}
+
+/// Expiry is Deno's: the KV clock stamps `expireIn`, and the storage engine
+/// collects an entry whose expiration the system clock has passed when a
+/// database is opened writable. Until then the entry is still read, and a
+/// read-only open never collects it. The stamps are taken relative to the
+/// system clock, so this holds on any date.
+#[test]
+fn expired_entries_are_collected_by_a_writable_open_only() {
+    let tree = Tree::new();
+    let path = tree.root().join("expiry.kv");
+    let system = SystemTime::now();
+    // Stamped two days back with a day to live: expired a day ago on the
+    // system clock. Stamped now with a day to live: a day left.
+    let past = clock::Clock::Fixed(system - Duration::from_millis(2 * DAY_MS)).now();
+    let now = clock::Clock::Fixed(system).now();
+    let expired = expiring_set("expired", clock::expire_at(past, DAY_MS).unwrap());
+    let live = expiring_set("live", clock::expire_at(now, DAY_MS).unwrap());
+    let keys = [expired.key.clone(), live.key.clone()];
+    let day = i64::try_from(DAY_MS).unwrap();
+    let stamped = [
+        (expired.key.clone(), past.timestamp_millis() + day),
+        (live.key.clone(), now.timestamp_millis() + day),
+    ];
+    let runtime = waiting_runtime();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut database = open_at(&tree, "/data/expiry.kv", true);
+    assert!(
+        database
+            .commit(&runtime, deadline, Vec::new(), vec![expired, live])
+            .unwrap()
+            .is_some()
+    );
+    // The worker collected at open, before the commit; its next collection
+    // is at least a minute away (`denokv_sqlite`'s fallback interval), so
+    // the expired entry is still read.
+    assert_eq!(present(&mut database, &keys), [true, true]);
+    drop(database);
+    assert_eq!(expirations(&path), stamped);
+    // A read-only open never collects.
+    let mut database = open_at(&tree, "/data/expiry.kv", false);
+    assert_eq!(present(&mut database, &keys), [true, true]);
+    drop(database);
+    assert_eq!(expirations(&path), stamped);
+    // A writable open collects the expired entry, as one version step.
+    let version = data_version(&path);
+    let mut database = open_at(&tree, "/data/expiry.kv", true);
+    assert_eq!(present(&mut database, &keys), [false, true]);
+    drop(database);
+    assert_eq!(expirations(&path), stamped[1..]);
+    assert_eq!(data_version(&path), version + 1);
 }
 
 #[test]
@@ -285,7 +524,7 @@ fn deno_written_values_decode_strictly_into_their_types() {
         )
     );
     assert_eq!(
-        run(&source, read_write(), tree.roots()),
+        run(&source, read_only(), tree.roots()),
         [
             r#"{"a":1,"b":"two","c":true,"d":null}"#,
             "Привіт 🌍",
@@ -344,7 +583,7 @@ fn deno_written_holey_kinds_shared_objects_and_undefined_fields_read_strictly() 
         )
     );
     assert_eq!(
-        run(&source, read_write(), tree.roots()),
+        run(&source, read_only(), tree.roots()),
         [
             "[1,5,3]",
             "[1,2]",
@@ -390,7 +629,7 @@ fn mismatched_stored_values_are_catchable_type_errors() {
             "/data/fixture.kv",
             &format!("    await kv.get<{ty}>({key});"),
         );
-        let lines = run(&source, read_write(), tree.roots());
+        let lines = run(&source, read_only(), tree.roots());
         assert!(
             lines[0].starts_with("TypeError: KV value does not match the checked type")
                 && lines[0].contains(detail),
@@ -403,7 +642,7 @@ fn mismatched_stored_values_are_catchable_type_errors() {
         "    const e = await kv.get<KvU64>(['fixture', 'str', 'ascii']);",
     );
     assert_eq!(
-        run(&source, read_write(), tree.roots()),
+        run(&source, read_only(), tree.roots()),
         ["TypeError: the stored value is not a KvU64"]
     );
 }
@@ -434,7 +673,7 @@ fn lists_follow_deno_key_order_selectors_and_cursors() {
         .into_iter()
         .filter_map(|(key, versionstamp)| Some((key.to_string(), versionstamp?)))
         .collect();
-    let lines = run(&source, read_write(), tree.roots());
+    let lines = run(&source, read_only(), tree.roots());
     // Strings before numbers, numbers ascending, as Deno orders keys.
     let order = [
         r#"["fixture","key","string"]"#,
@@ -837,15 +1076,18 @@ fn a_file_locked_by_another_writer_fails_clearly() {
 
 /// A writable database of `tree`'s `fixture.kv`, opened directly.
 fn open_fixture(tree: &Tree) -> store::Database {
+    open_at(tree, "/data/fixture.kv", true)
+}
+
+/// The database at the virtual `path` of `tree`, opened directly.
+fn open_at(tree: &Tree, path: &str, writable: bool) -> store::Database {
     let policy = crate::policy::Policy::with_files(
         &read_write(),
         None,
         &crate::policy::FileMode::Virtual(tree.roots()),
     );
-    let target = policy
-        .database(kv::READ_CAPABILITY, "/data/fixture.kv")
-        .unwrap();
-    store::open(target, "/data/fixture.kv", true).unwrap()
+    let target = policy.database(kv::READ_CAPABILITY, path).unwrap();
+    store::open(target, path, writable).unwrap_or_else(|e| panic!("{e:?}"))
 }
 
 /// One `set` of `["fenced", name]` to the string `"x"`.

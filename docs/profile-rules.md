@@ -3400,6 +3400,14 @@ Normative contract: [architecture](architecture.md#kv-storage-kv).
   thread.
 - `watch`, queues, `consistency` and in-memory databases are not admitted;
   keep them compile errors until their own increment.
+- Time: the KV code reads time only through `kv::clock::Clock` (the
+  `expireIn` stamp, once per commit). Expiry itself is the engine's, on the
+  system clock; do not filter reads or checks by expiration in Varta (that
+  is hand-rolled SQL on the KV tables). No KV test may depend on the date:
+  read Deno-written fixtures read-only (the engine collects only writable
+  databases), stamp expiring entries relative to the system clock or on
+  `Clock::Fixed`, and never assert a fixture entry's presence through a
+  writable open without comparing its expiration with the system clock.
 - Fair fuel (`kv::charge`): `KV_OPERATION` per open, read and commit after
   the grant and before the file, the read or the submit; `KV_BYTE` per key or
   value byte when it is staged, committed and returned by a read; `KV_ENTRY`
