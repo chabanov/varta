@@ -78,7 +78,23 @@ export function netConstants(contract) {
     bodyBytes: limit(NET_LIMIT.bodyBytes),
     forbiddenMethods: new Set(contract.manifestLimits.forbiddenMethods),
     forbiddenResponseHeaders,
+    canonicalHead: canonicalHeadImports(contract, rules),
   };
+}
+
+/**
+ * The request-start imports (the descriptor table's) that show the canonical
+ * head: those whose minimum host ABI admits grant `responseHeaders`
+ * (embedding.md "Canonical head (v38)"); an earlier one lists every field.
+ */
+function canonicalHeadImports(contract, rules) {
+  const names = new Set();
+  for (const name of Object.keys(rules.versions)) {
+    const op = contract.operations.find((o) => o.name === name);
+    if (!op) throw new Error(`contract has no host operation ${name}`);
+    if (op.minHostAbi >= contract.manifestLimits.turnBudgetsAbi) names.add(name);
+  }
+  return names;
 }
 
 const fill = (template, values) => template.replace(/<([a-z]+)>/g, (whole, key) => (key in values ? values[key] : whole));
@@ -278,8 +294,8 @@ export function netImports(N, exec, io) {
       throw error;
     }
     const id = state.nextId++;
-    // v38 (`net_request_start_v2`) shows only the visible response headers; v37 every one.
-    const visible = importName === "net_request_start_v2" ? io.responseHeaders() : null;
+    // A canonical-head import shows only the visible response headers; an earlier one every one.
+    const visible = N.canonicalHead.has(importName) ? io.responseHeaders() : null;
     const r = { id, generation: 0, url: fields.url, visible, armed: false, completion: null, waiter: null, controller: new AbortController(), reader: null, buffered: new Uint8Array(0), held: new Uint8Array(0), received: 0, done: false, mode: "text" };
     const failNow = (text) => {
       state.requests.set(id, r);
@@ -325,8 +341,7 @@ export function netImports(N, exec, io) {
   }
 
   return {
-    net_request_start: (ptr, len) => start("net_request_start", ptr, len),
-    net_request_start_v2: (ptr, len) => start("net_request_start_v2", ptr, len),
+    ...Object.fromEntries(Object.keys(N.rules.versions).map((name) => [name, (ptr, len) => start(name, ptr, len)])),
     net_request_watch: (serial, id) => {
       if (!io.requireIssued(serial) || serial === 0 || io.isTimerSerial(serial) || (exec.reactions.get(serial) ?? []).length !== 1) throw io.schedulerError("UnknownSerial");
       const r = request(id);
