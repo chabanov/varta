@@ -70,6 +70,9 @@ pub(crate) struct Task {
     pub gesture: bool,
     pub coalesce: bool,
     pub arrived: Instant,
+    /// The task's place in the arrival order of the instance's host tasks
+    /// and network completions ([`HostEvents::stamp`]).
+    pub order: u64,
 }
 impl Task {
     /// Whether `self` is a pending task the coalescible `next` replaces: the
@@ -121,9 +124,17 @@ pub(crate) struct HostEvents {
     queue: VecDeque<Task>,
     next_id: u64,
     taken: Option<(u64, String)>,
+    /// The next arrival order number (v38 application instances).
+    next_order: u64,
 }
 
 impl HostEvents {
+    /// The next number of the arrival order shared by host tasks and network
+    /// completions: deterministic, in the order the runtime receives them.
+    pub fn stamp(&mut self) -> u64 {
+        self.next_order += 1;
+        self.next_order
+    }
     fn insert(&mut self, name: Option<String>, phase: Phase) -> Result<u64, EventError> {
         if self.sources.len() >= MAX_EVENT_SOURCES {
             return Err(EventError::QueueFull);
@@ -244,6 +255,7 @@ impl HostEvents {
             gesture: event.gesture,
             coalesce: event.coalesce,
             arrived: Instant::now(),
+            order: self.stamp(),
         };
         let full = self.queue.len() >= MAX_PENDING_HOST_TASKS;
         self.enqueue(task, full).ok_or(EventError::QueueFull)
@@ -289,6 +301,7 @@ impl HostEvents {
             kind: TaskKind::View,
             gesture: delivery.gesture,
             arrived: Instant::now(),
+            order: self.stamp(),
         };
         self.enqueue(task, full)
             .ok_or(varta_view::ViewError::QueueOverflow)
@@ -298,6 +311,7 @@ impl HostEvents {
         if self.queue.len() >= MAX_PENDING_HOST_TASKS {
             return Err(EventError::QueueFull);
         }
+        let order = self.stamp();
         self.queue.push_back(Task {
             source,
             payload: Payload::Text(state.name().to_owned()),
@@ -305,18 +319,26 @@ impl HostEvents {
             gesture: false,
             coalesce: false,
             arrived: Instant::now(),
+            order,
         });
         Ok(())
     }
     /// The arrival time of the next task whose source is still open.
     pub fn next_arrival(&mut self) -> Option<Instant> {
+        self.next_task().map(|task| task.arrived)
+    }
+    /// The arrival order of the next task whose source is still open.
+    pub fn next_order(&mut self) -> Option<u64> {
+        self.next_task().map(|task| task.order)
+    }
+    fn next_task(&mut self) -> Option<&Task> {
         while let Some(task) = self.queue.front() {
             if task.kind == TaskKind::View || self.sources.contains_key(&task.source) {
-                return Some(task.arrived);
+                break;
             }
             self.queue.pop_front();
         }
-        None
+        self.queue.front()
     }
     pub fn pop(&mut self) -> Option<Task> {
         self.next_arrival()?;

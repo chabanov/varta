@@ -808,6 +808,13 @@ fn network_turn(
         return Ok(Some(TurnKind::Network));
     }
     if Instant::now() >= deadline {
+        // V38: a timer due at or beyond the deadline reports `TimerDeadline`,
+        // as when no request is in flight; v37 keeps the deadline error.
+        if context.turns.renew
+            && let Some(error) = timer.and_then(|(due, _)| beyond_deadline(context, due))
+        {
+            return Err(error.into());
+        }
         return Err(context.deadline_error().into());
     }
     if timer.is_some_and(|(_, at)| fires(at) && at <= Instant::now()) {

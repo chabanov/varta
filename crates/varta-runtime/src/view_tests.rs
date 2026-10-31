@@ -220,6 +220,39 @@ fn a_tsx_app_runs_headless_with_scripted_inputs() {
     assert_eq!(a11y["role"], "main");
 }
 
+/// A scripted session's budget report is deterministic too: N runs give the
+/// same output, tree, commits, turns and idle maintenance with their fuel
+/// (only wall-clock times differ), on virtual time with arrival-ordered
+/// tasks.
+#[test]
+fn scripted_budget_reports_are_deterministic_across_runs() {
+    let bytes = compile_tsx(APP, &[("signals.ts", SIGNALS)]);
+    let inputs = r##"{"inputs":[
+        {"input":"click","target":"#inc"},
+        {"input":"type","target":"#box","text":"hello"},
+        {"input":"key","target":"#box","key":"Enter"},
+        {"input":"wait","ms":5},
+        {"input":"click","target":"#inc"}
+    ]}"##;
+    let grants = [clipboard(true)];
+    let session = || {
+        let run =
+            run_view(&bytes, &grants, None, &script(inputs)).unwrap_or_else(|e| panic!("{e}"));
+        let mut budget = run.report.budget.clone().unwrap();
+        for turn in &mut budget.turns {
+            turn.wall = std::time::Duration::ZERO;
+        }
+        for period in &mut budget.maintenance {
+            period.wall = std::time::Duration::ZERO;
+        }
+        (run.output.lines, run.snapshot, run.commits, budget)
+    };
+    let first = session();
+    for _ in 0..3 {
+        assert_eq!(session(), first);
+    }
+}
+
 /// The guest encoder keeps an L0 batch cheap: until per-turn budgets land,
 /// every turn of a view shares one execution's production fuel, so the
 /// example app's first render must stay well inside it.

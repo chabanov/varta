@@ -8775,7 +8775,9 @@ as unknown names and keep their bytes and diagnostics.
   body as the rest (lone surrogates become U+FFFD; the body is sent as UTF-8).
   A malformed descriptor, an operation on an unknown or released id, a second
   waiter, a read while an operation is armed, and starting more than
-  `net::MAX_PENDING_REQUESTS` requests are fatal `NetError`s, because only a
+  `net::MAX_PENDING_REQUESTS` requests are fatal `NetError`s (v38 checks the
+  pending-request limit before the permission broker decides, so such a
+  request is never prompted or audited), because only a
   tampered module can cause them (`net_request_abort` ignores an unknown or
   released id). The values of the `net::MAX_*` bounds are in the
   [network request limits](embedding.md#network-request-limits-v37); the
@@ -9135,7 +9137,11 @@ rejection nobody handles, so the instance fails after that turn.
 
 Ordering is FIFO by arrival across host tasks, due timers (by due time, then
 registration) and network completions (in completion order); at most one task
-runs per turn. A record marked coalescible replaces the pending coalescible
+runs per turn. A completion's arrival is the moment its transfer reported it,
+and the instance drives its transfers before every choice, so host tasks or
+timers never starve it; a scripted session derives the same order from arrival
+order numbers and loop time instead of the wall clock
+([completion ordering](embedding.md#completion-ordering)). A record marked coalescible replaces the pending coalescible
 record of the same source, so a burst costs one turn. At most
 `events::MAX_PENDING_HOST_TASKS` tasks wait at once: overflow drops a
 coalescible record and fails the instance for any other. Records are at most

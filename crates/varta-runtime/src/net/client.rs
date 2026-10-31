@@ -78,6 +78,7 @@ pub(super) async fn run(
         let _ = events.send(Event {
             id,
             completion: Completion { kind, text },
+            arrived: std::time::Instant::now(),
         });
     };
     let fail = |failure: RequestFailure| send(CompletionKind::Failed, failure.to_string());

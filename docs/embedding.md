@@ -841,7 +841,9 @@ below is generated from `varta_common::net`.
 
 - **`net_request_start*(ptr, len) → id`** is a counted host call. It reads the
   [descriptor](#request-descriptor), checks it (a structural error is fatal),
-  checks the method and URL, asks the permission broker for the exact
+  under v38 checks the pending-request limit (exceeding it is fatal before the
+  broker decides, prompts or audits anything; v37 checks it after the
+  decision), checks the method and URL, asks the permission broker for the exact
   `net.request` grant (and the host ceiling), then checks the body and headers.
   Every refusal is a recoverable completion that is **already waiting** when
   the call returns: nothing was resolved or connected. Otherwise the head is
@@ -1139,17 +1141,26 @@ checkpoint does the following:
    with the deadline error. When the timer has become due, fire it as in step 1.
 
 While a request keeps the loop alive, a timer due at or beyond the deadline does
-not raise `TimerDeadline`. The loop waits for completions until the deadline.
+not end the run at once: the loop waits for completions until the deadline (a
+completion may still clear the timer). If the deadline passes with such a timer
+still armed, a v38 run fails with the same `TimerDeadline` as without a request;
+v37 fails with the deadline error.
 
-**Long-lived application instance (v38).** Each turn runs one ready task: the
-oldest host task, a timer whose wall-clock time has passed, or the oldest
-completion. The task with the earliest instant wins. A host task's instant is
-its arrival, and a timer's instant is its wall-clock due time. The reference
-host does not record when a completion arrived: a completion's instant is the
-moment of selection. So a completion runs only when no host task is queued and no
-timer is due. On equal instants the order is host task, then timer, then
-completion. Under a scripted virtual clock, the order is a host task first, then
-a timer due by the horizon, then a completion that has already arrived.
+**Long-lived application instance (v38).** Each turn runs one ready task, FIFO
+by arrival: the oldest host task, a timer whose wall-clock time has passed, or
+the oldest completion. Before choosing, the instance lets its transfers make
+the progress they can without waiting, so completions arrive while other tasks
+keep it busy. The task with the earliest instant wins. A host task's instant is
+its arrival, a timer's instant is its wall-clock due time, and a completion's
+instant is the moment its transfer reported it. A sustained stream of host
+tasks or timers therefore cannot starve a completion. On equal instants the
+order is host task, then timer, then completion. The instance also stamps every
+host task and every completion it receives with one arrival order number, in
+the order it receives them. Under a scripted virtual clock nothing reads the
+wall clock: the oldest completion runs before any host task received after it
+and before a timer due by the horizon that became due after the loop time at
+which the completion arrived; otherwise a host task comes first, then a timer
+due by the horizon, then the completion.
 
 ### Permissions and host events (v38)
 
