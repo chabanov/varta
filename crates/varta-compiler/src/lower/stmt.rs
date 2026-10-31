@@ -9,8 +9,11 @@ pub(super) fn unparen(mut expr: &ast::Expr) -> &ast::Expr {
 impl Lower<'_> {
     pub(super) fn block(&mut self, statements: &[ast::Stmt], scope: bool) -> Result<Vec<S>> {
         self.depth += 1;
-        if self.depth > 64 {
-            return Err(invalid("nesting exceeds 64 scopes"));
+        if self.depth > super::MAX_NESTING {
+            return Err(invalid(format!(
+                "nesting exceeds {} scopes",
+                super::MAX_NESTING
+            )));
         }
         if scope {
             self.scopes.push(BTreeMap::new());

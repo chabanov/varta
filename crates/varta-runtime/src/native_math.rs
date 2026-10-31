@@ -110,7 +110,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     for &operation in NativeMath::ALL {
         if operation == NativeMath::Atan2 {
             linker.func_wrap(
-                "varta",
+                varta_common::abi::HOST_MODULE,
                 operation.host().name(),
                 |mut caller: Caller<'_, RuntimeContext>,
                  y: f64,
@@ -124,7 +124,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             )?;
         } else {
             linker.func_wrap(
-                "varta",
+                varta_common::abi::HOST_MODULE,
                 operation.host().name(),
                 move |mut caller: Caller<'_, RuntimeContext>,
                       x: f64|

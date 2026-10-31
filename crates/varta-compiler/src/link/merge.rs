@@ -32,6 +32,9 @@ use wasmparser::{
 
 /// Guest memory 0: the only memory of a linked module.
 const GUEST_MEMORY: u32 = 0;
+/// The parameters of `memory_read`/`memory_write`, passed through as the
+/// destination, source and length operands of `memory.copy`.
+const COPY_PARAMS: u32 = 3;
 
 pub(super) struct Import<'a> {
     pub module: &'a str,
@@ -318,7 +321,7 @@ impl Accessor {
                 function.instruction(&I::I64Const(pages as i64));
             }
             Self::MemoryRead | Self::MemoryWrite => {
-                for local in 0..3 {
+                for local in 0..COPY_PARAMS {
                     function.instruction(&I::LocalGet(local));
                 }
                 function.instruction(&I::MemoryCopy {

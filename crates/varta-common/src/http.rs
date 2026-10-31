@@ -17,6 +17,18 @@ pub const MAX_TARGET_BYTES: usize = 1024;
 pub const HEADER_SECONDS: u64 = 2;
 pub const CONNECTION_SECONDS: u64 = 10;
 pub const HTTP_BUFFER_BYTES: usize = 8192;
+/// One bounded active connection and worker.
+pub const MAX_CONNECTIONS: usize = 1;
+/// Effects one contract may list.
+pub const MAX_REQUIRED_EFFECTS: usize = 16;
+/// The capability every contract requires and `http_stop` checks.
+pub const LISTEN_CAPABILITY: &str = "net.listen";
+/// The response statuses an adapter may return (RFC 9110 2xx to 5xx).
+pub const MIN_STATUS: i32 = 200;
+pub const MAX_STATUS: i32 = 599;
+/// Statuses whose response never has a body (RFC 9110: No Content, Reset
+/// Content, Not Modified).
+pub const BODYLESS_STATUSES: [i32; 3] = [204, 205, 304];
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
@@ -44,14 +56,14 @@ pub struct HttpLimits {
 impl Default for HttpLimits {
     fn default() -> Self {
         Self {
-            connections: 1,
+            connections: MAX_CONNECTIONS,
             request_bytes: abi::MAX_INPUT_BYTES,
             body_bytes: MAX_BODY_BYTES,
             header_bytes: MAX_HEADER_BYTES,
             headers: MAX_HEADERS,
             target_bytes: MAX_TARGET_BYTES,
             response_bytes: abi::MAX_RESULT_BYTES,
-            handler_deadline_ms: abi::DEADLINE_SECONDS * 1000,
+            handler_deadline_ms: abi::DEADLINE_SECONDS * crate::budget::MILLISECONDS_PER_SECOND,
         }
     }
 }
@@ -74,8 +86,8 @@ impl HttpContract {
             || self.export != HANDLER
             || addr.to_string() != self.bind
             || self.limits != HttpLimits::default()
-            || self.required_effects.len() > 16
-            || !self.required_effects.iter().any(|s| s == "net.listen")
+            || self.required_effects.len() > MAX_REQUIRED_EFFECTS
+            || !self.required_effects.iter().any(|s| s == LISTEN_CAPABILITY)
             || self.required_effects.windows(2).any(|p| p[0] >= p[1])
             || self
                 .required_effects

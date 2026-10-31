@@ -18,7 +18,7 @@ fn format(format: NumberFormat, value: f64, digits: f64) -> Result<String, wasmt
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     for &mode in NumberFormat::ALL {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             mode.host().name(),
             move |mut caller: Caller<'_, RuntimeContext>,
                   value: f64,

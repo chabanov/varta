@@ -32,7 +32,7 @@ pub(super) fn canonical_display(value: f64) -> String {
 }
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::FloatPower.name(),
         |mut caller: Caller<'_, RuntimeContext>,
          base: f64,
@@ -46,7 +46,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::LogUndefined.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: i32| {
             caller.data_mut().tick()?;
@@ -58,7 +58,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     )?;
     for operation in [Host::LogFloat, Host::LogFloatV2] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             operation.name(),
             move |mut caller: Caller<'_, RuntimeContext>, value: f64| {
                 caller.data_mut().tick()?;
@@ -72,7 +72,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         )?;
     }
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::FloatRemainder.name(),
         |mut caller: Caller<'_, RuntimeContext>, a: f64, b: f64| -> Result<f64, wasmtime::Error> {
             caller.data_mut().tick()?;
@@ -82,7 +82,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::ExitFloat.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: f64| -> Result<(), wasmtime::Error> {
             host::reset(&mut caller)?;

@@ -11,6 +11,22 @@ use std::{convert::Infallible, time::Duration};
 use varta_common::http::{self, HttpHeader, HttpRequest, HttpResponse};
 
 type Reply = Response<Full<Bytes>>;
+/// Headers that frame the connection or message; the transport sets them and
+/// an adapter response must not.
+const FRAMING_HEADERS: [&str; 9] = [
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "upgrade",
+    "keep-alive",
+    "trailer",
+    "te",
+    "proxy-authenticate",
+    "proxy-authorization",
+];
+/// Statuses whose HEAD response carries no `content-length`.
+const LENGTHLESS_HEAD_STATUSES: [StatusCode; 2] =
+    [StatusCode::NO_CONTENT, StatusCode::NOT_MODIFIED];
 fn failure(status: StatusCode) -> Reply {
     let mut response = Response::new(Full::new(Bytes::from_static(b"request failed\n")));
     *response.status_mut() = status;
@@ -22,7 +38,7 @@ fn failure(status: StatusCode) -> Reply {
 }
 fn response(value: HttpResponse, head: bool) -> Result<Reply, HttpError> {
     let fail = || HttpError::Message("response status, body or headers".into());
-    if !(200..=599).contains(&value.status)
+    if !(http::MIN_STATUS..=http::MAX_STATUS).contains(&value.status)
         || value.body.len() > abi::MAX_RESULT_BYTES
         || value.headers.len() > http::MAX_HEADERS
         || value
@@ -31,7 +47,7 @@ fn response(value: HttpResponse, head: bool) -> Result<Reply, HttpError> {
             .map(|h| h.name.len() + h.value.len())
             .sum::<usize>()
             > http::MAX_HEADER_BYTES
-        || matches!(value.status, 204 | 205 | 304) && !value.body.is_empty()
+        || http::BODYLESS_STATUSES.contains(&value.status) && !value.body.is_empty()
     {
         return Err(fail());
     }
@@ -46,18 +62,7 @@ fn response(value: HttpResponse, head: bool) -> Result<Reply, HttpError> {
     for header in value.headers {
         let name =
             hyper::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| fail())?;
-        if matches!(
-            name.as_str(),
-            "connection"
-                | "content-length"
-                | "transfer-encoding"
-                | "upgrade"
-                | "keep-alive"
-                | "trailer"
-                | "te"
-                | "proxy-authenticate"
-                | "proxy-authorization"
-        ) {
+        if FRAMING_HEADERS.contains(&name.as_str()) {
             return Err(fail());
         }
         let value = hyper::header::HeaderValue::from_str(&header.value).map_err(|_| fail())?;
@@ -67,7 +72,7 @@ fn response(value: HttpResponse, head: bool) -> Result<Reply, HttpError> {
         hyper::header::CONNECTION,
         hyper::header::HeaderValue::from_static("close"),
     );
-    if head && !matches!(status.as_u16(), 204 | 304) {
+    if head && !LENGTHLESS_HEAD_STATUSES.contains(&status) {
         response.headers_mut().insert(
             hyper::header::CONTENT_LENGTH,
             hyper::header::HeaderValue::from_str(&length.to_string()).map_err(|_| fail())?,

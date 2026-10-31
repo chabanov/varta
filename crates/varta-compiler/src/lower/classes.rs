@@ -445,7 +445,10 @@ fn receiver_width(signature: &Signature) -> Result<()> {
         .sum::<u32>() as usize
         > varta_common::abi::MAX_WASM_PARAMETERS
     {
-        return Err(invalid("function parameters exceed 32 Wasm value slots"));
+        return Err(invalid(format!(
+            "function parameters exceed {} Wasm value slots",
+            varta_common::abi::MAX_WASM_PARAMETERS
+        )));
     }
     Ok(())
 }

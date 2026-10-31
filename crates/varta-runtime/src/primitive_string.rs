@@ -10,11 +10,12 @@ pub(super) fn convert(bytes: &[u8], cell: i64) -> Result<Vec<u8>, wasmtime::Erro
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::PrimitiveString.name(),
         |mut caller: Caller<'_, RuntimeContext>, cell: i64| -> Result<i32, wasmtime::Error> {
             caller.data_mut().tick()?;
-            let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+            let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT)
+            else {
                 return Err(wasmtime::Error::msg("missing value memory"));
             };
             let result = convert(memory.data(&caller), cell)?;

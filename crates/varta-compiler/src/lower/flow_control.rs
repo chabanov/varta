@@ -27,7 +27,7 @@ pub(super) fn truth(expr: &ast::Expr) -> Option<bool> {
     truth_inner(expr, 0)
 }
 fn truth_inner(expr: &ast::Expr, depth: usize) -> Option<bool> {
-    if depth >= 64 {
+    if depth >= super::MAX_ANALYSIS_DEPTH {
         return None;
     }
     match stmt::unparen(expr) {

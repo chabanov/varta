@@ -71,7 +71,7 @@ impl Default for ToolLimits {
             memory_bytes: abi::MAX_MEMORY_BYTES,
             fuel: abi::FUEL,
             host_calls: abi::MAX_HOST_CALLS,
-            deadline_ms: abi::DEADLINE_SECONDS * 1000,
+            deadline_ms: abi::DEADLINE_SECONDS * crate::budget::MILLISECONDS_PER_SECOND,
         }
     }
 }

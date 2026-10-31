@@ -373,7 +373,7 @@ impl FilePolicy {
             Authority::Host(rules) => rules,
         };
         let path = Path::new(input);
-        if input.len() > 4096
+        if input.len() > varta_common::MAX_HOST_PATH_BYTES
             || !path.is_absolute()
             || path.components().any(|c| matches!(c, Component::ParentDir))
         {
@@ -402,7 +402,7 @@ impl FilePolicy {
             Authority::Host(rules) => rules,
         };
         let path = Path::new(input);
-        if input.len() > 4096
+        if input.len() > varta_common::MAX_HOST_PATH_BYTES
             || !path.is_absolute()
             || path.components().any(|c| matches!(c, Component::ParentDir))
         {

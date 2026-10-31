@@ -56,7 +56,7 @@ fn descriptors(
 
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::JsonParse.name(),
         |caller: Caller<'_, RuntimeContext>,
          ptr: i32,
@@ -119,7 +119,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         ),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             operation.name(),
             move |caller: Caller<'_, RuntimeContext>,
                   ptr: i32,
@@ -163,7 +163,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         ),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             operation.name(),
             move |caller: Caller<'_, RuntimeContext>,
                   ptr: i32,
@@ -285,7 +285,7 @@ fn decode(
     if recoverable {
         exceptions::ready(&mut caller)?;
     }
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(error("missing memory"));
     };
     let module = caller.data().module;

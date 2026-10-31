@@ -46,10 +46,11 @@ impl Lower<'_> {
         hints: Option<references::AggregateHints>,
     ) -> Result<Expr> {
         self.depth += 1;
-        if self.depth > 64 {
-            return Err(self
-                .source
-                .locate(invalid("expression nesting exceeds 64"), expression.span()));
+        if self.depth > super::MAX_NESTING {
+            return Err(self.source.locate(
+                invalid(format!("expression nesting exceeds {}", super::MAX_NESTING)),
+                expression.span(),
+            ));
         }
         let context = if expected.is_some() {
             self.context(expression, expected)

@@ -53,6 +53,9 @@ pub const INVALID_DESCRIPTOR: i32 = 0;
 pub const DESCRIPTOR_VERSION: &str = "varta-permission-1";
 /// Separates descriptor fields: version, name, resource flag, resource.
 pub const DESCRIPTOR_SEPARATOR: char = '\n';
+/// The fields of one descriptor; the resource, the last, may contain the
+/// separator.
+pub const DESCRIPTOR_FIELDS: usize = 4;
 /// The resource flag of a descriptor without and with a resource.
 pub const DESCRIPTOR_NO_RESOURCE: &str = "0";
 pub const DESCRIPTOR_RESOURCE: &str = "1";

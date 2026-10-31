@@ -8726,10 +8726,11 @@ as unknown names and keep their bytes and diagnostics.
   with `http://` and `https://`: exact scheme, normalized host and effective
   port, wildcards only after the authority, no credentials, fragments, control
   characters, whitespace or encoded paths, at most `net::MAX_URL_BYTES` per
-  URL. Methods are RFC 9110 tokens matched exactly; the six methods `fetch`
-  normalizes (`DELETE GET HEAD OPTIONS POST PUT`) must be written in uppercase,
-  `CONNECT`, `TRACE` and `TRACK` are never grantable, duplicates are errors and
-  at most `net::MAX_GRANT_METHODS` are listed. An empty URL list or an empty
+  URL. Methods are RFC 9110 tokens matched exactly; the methods `fetch`
+  normalizes (`NORMALIZED_METHODS`) must be written in uppercase,
+  `net::FORBIDDEN_METHODS` are never grantable, duplicates are errors and
+  at most `net::MAX_GRANT_METHODS` are listed (values in the
+  [manifest limits](embedding.md#manifest-limits)). An empty URL list or an empty
   method list denies every request. With a host ceiling, the URL and method of
   every request must satisfy both sides; a ceiling never adds a request. The
   operation is distinct from `net.fetch`, `net.get` and `net.listen` (exact
@@ -8775,7 +8776,8 @@ as unknown names and keep their bytes and diagnostics.
   A malformed descriptor, an operation on an unknown or released id, a second
   waiter, a read while an operation is armed, and starting more than
   `net::MAX_PENDING_REQUESTS` requests are fatal `NetError`s, because only a
-  tampered module can cause them.
+  tampered module can cause them. The values of the `net::MAX_*` bounds are
+  in the [network request limits](embedding.md#network-request-limits-v37).
 - **Transport.** HTTP/1.1 through hyper's client on a current-thread Tokio
   runtime created by the first request; HTTPS through rustls (ring provider,
   TLS 1.2 and 1.3, ALPN `http/1.1`) verifying the server against the
@@ -9049,7 +9051,8 @@ request budgets; the host ceiling caps them:
 
 Members are `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`,
 `hostCallsPerTurn` and `outputBytes`, each optional and in `1..=` its engine
-maximum (`budget::MAX_*`); unknown members are errors. The effective value of
+maximum (`budget::MAX_*`, values in the
+[budget table](embedding.md#manifest-limits)); unknown members are errors. The effective value of
 each budget is the request (or the production default when omitted) capped by
 the host ceiling's `budgets` value (or by the production default when the
 ceiling sets none): a package can lower its budgets, and only the embedder can
@@ -9172,7 +9175,8 @@ this application identity; (3) the prompt seam, or `denied` where none exists.
 
 - **Manifest.** A grant may carry `"required": false` (default `true`) and
   `"purpose"`: nonblank text without control characters, at most
-  `permission::MAX_PURPOSE_BYTES` bytes, untrusted, shown in a prompt as a quote
+  `permission::MAX_PURPOSE_BYTES` bytes ([manifest limits](embedding.md#manifest-limits)),
+  untrusted, shown in a prompt as a quote
   next to the broker's own description of the operation and the exact
   requested patterns. Both need `abiVersion` 34; a host policy rejects them.
 - **Required grants** are granted by policy at start (request ∩ ceiling); a
@@ -9221,6 +9225,10 @@ this application identity; (3) the prompt seam, or `denied` where none exists.
   counted) with its sequence, time since start, source (`policy`, `stored`,
   `prompt`), operation, bounded resource and outcome. The guest can neither
   read nor write it.
+- **Values.** The `permission::MAX_*` bounds, the descriptor fields and the
+  `events::MAX_*` bounds of [host event sources](#host-event-sources-turn_budgets)
+  are in the embedding contract's
+  [permission and event limits](embedding.md#permissions-and-host-events-v38).
 
 Internal imports (host ABI 34, no capability, not charged to the host-call
 budget): `permission_query(ptr, len) -> state` and `permission_request(ptr, len)
@@ -9430,7 +9438,7 @@ earlier compile byte-identically (pinned by FNV digests of 14 v37 modules in
 | JSON parse input | 64 KiB | `json_input_bytes` = 2^30 | The guest string, so the memory budget |
 | JSON output | 1 MiB result buffer | Memory budget (`json_stringify_owned`) | Memory budget |
 | Live continuation frames | 64 (fixed root table) | Hashed table up to 2^27 entries | Memory budget |
-| Pending resume tokens / timers (host) | 64 / 32 | 131072 / 65536 | Memory budget per 64-byte frame block |
+| Pending resume tokens / timers (host) | `scheduler::MAX_PENDING_CONTINUATIONS` / `scheduler::MAX_PENDING_TIMERS` | `V38_MAX_PENDING_CONTINUATIONS` / `V38_MAX_PENDING_TIMERS` ([scheduler limits](embedding.md#scheduler-limits)) | Memory budget per `FRAME_BLOCK_BYTES` frame block |
 
 The v38 element and string limits are Wasm-derived: the largest sparse
 backing (`8 + 8·2^27 + 2^27/8` bytes) and string, with their heap header,
@@ -10586,7 +10594,8 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   an unfinished UTF-8 sequence come first); it is bookkeeping (no
   capability, no host-call charge, the deadline observed). Chunks keep
   `net::MAX_CHUNK_BYTES` and the body keeps `net::MAX_RESPONSE_BODY_BYTES`;
-  a byte request body is at most half of `net::MAX_REQUEST_BYTES`.
+  a byte request body is at most half of `net::MAX_REQUEST_BYTES`
+  ([values](embedding.md#network-request-limits-v37)).
   `env_snapshot (ptr:i32, len:i32) -> i32` is below.
 - **`ArrayBuffer`, `Blob`, `FormData`** (`<varta>/web/blob.ts`, guest code,
   no host import, loaded when a module names one of them). `ArrayBuffer`
@@ -10732,6 +10741,8 @@ the manifest and host-policy schemas gain one member under host ABI 34
 ([Filesystem](#filesystem) has the rules). V1–v37 keep absolute host paths
 with their exact behaviour; the runtime chooses the mode from the module's
 declared profile (`LanguageProfile::file_roots`), never from the manifest.
+The values of the `files::MAX_*` bounds are in the embedding contract's
+[manifest limits](embedding.md#manifest-limits).
 
 - **Roots and names.** A root name is 1 to `files::MAX_ROOT_NAME_BYTES` bytes of
   lowercase ASCII letters, digits, `-` and `_`, starting with a letter, and
@@ -10930,7 +10941,8 @@ into the static type the program names. V37 and earlier profiles reject
   encoded bytes, `kv::MAX_READ_RANGES` ranges and `kv::MAX_READ_ENTRIES`
   entries per read, `kv::MAX_CHECKS` checks and `kv::MAX_MUTATIONS` mutations
   per commit, `kv::MAX_TOTAL_MUTATION_BYTES` and `kv::MAX_TOTAL_KEY_BYTES` per
-  commit; empty keys cannot be written. Decoding uses the module's data limits
+  commit (values in the [KV limits](embedding.md#kv-storage-v38)); empty keys
+  cannot be written. Decoding uses the module's data limits
   (depth, nodes, string and element limits); a stored value beyond them is a
   recoverable `TypeError`. A list reads at most its batch size per read.
 - **Keys.** Arrays of strings and numbers (`KvKeyPart = string | number`),
@@ -11562,9 +11574,12 @@ Only `strict` is implemented. `compat` is rejected until it has an actual
 behavioral contract. Unknown operations, unknown fields, duplicate manifest
 grants, wrong value types and unsafe patterns are errors. Empty lists and false
 are valid explicit denials; omitted grants also deny. Policy complexity is capped
-at 128 grants and 256 patterns, with at most 64 patterns per grant and 512 bytes
-per pattern. A wildcard comparison also fails closed when the product of
-pattern/input byte lengths exceeds 65,536, bounding work outside Wasm fuel.
+by `MAX_POLICY_GRANTS` grants and `MAX_POLICY_PATTERNS` patterns, with at most
+`MAX_GRANT_PATTERNS` patterns per grant and `MAX_PATTERN_BYTES` bytes per
+pattern. A wildcard comparison also fails closed when the product of
+pattern/input byte lengths exceeds `MAX_PATTERN_MATCH_WORK`, bounding work
+outside Wasm fuel. The values are in the embedding contract's
+[manifest limits](embedding.md#manifest-limits).
 
 Canonical manifest:
 
@@ -11750,13 +11765,16 @@ The compiler derives ordered named parameters and the result from the checked
 function signature. Supported input types are `number` (signed i32), `boolean`
 and `string`; `void` is additionally supported as a result. Optional/default/rest
 parameters, objects, arrays, `VartaResult` and generic tool signatures are not
-supported. Parameter names use ASCII JS identifier characters, at most 64 bytes.
-Tool names start with an ASCII letter and contain ASCII letters/digits, `_`, `-`
-or `.`, at most 64 bytes. Descriptions are nonblank UTF-8, at most 2048 bytes,
-without NUL. There are at most 64 tools and 16 parameters per tool.
+supported. Parameter names use ASCII JS identifier characters, at most
+`MAX_TOOL_NAME_BYTES` bytes. Tool names start with an ASCII letter and contain
+ASCII letters/digits, `_`, `-` or `.`, at most `MAX_TOOL_NAME_BYTES` bytes.
+Descriptions are nonblank UTF-8, at most `MAX_TOOL_DESCRIPTION_BYTES` bytes,
+without NUL. There are at most `MAX_TOOLS` tools and `MAX_TOOL_PARAMETERS`
+parameters per tool (values in the
+[entry-point limits](embedding.md#entry-point-limits)).
 
 One `varta.tools` custom section contains strict JSON `ToolCatalog` metadata,
-bounded to 256 KiB, with independent `contractVersion: 1` and
+bounded to `MAX_TOOL_CATALOG_BYTES`, with independent `contractVersion: 1` and
 `invocationAbiVersion: 1`. Unknown/duplicate JSON fields, unsupported versions,
 noncanonical ordering and invalid limits/types fail closed. The catalog is sorted
 by tool name; parameters retain signature order. Applications with no tools omit
@@ -12165,17 +12183,21 @@ budgets are the same for every profile except the v38 per-turn fuel
 | Static extension pages | 0 | 65518 | `static_extension_pages` |
 <!-- generated:program-limits:end -->
 
-Limits that are derived from several constants or enforced outside `abi`:
+Limits that are derived from several constants or enforced outside `abi`
+(the policy, module, scheduler, network, permission and event limits a host
+enforces are in the [embedding contract](embedding.md#manifest-limits)):
 
-| Resource | Default limit |
-| --- | --- |
-| Managed string/record/array storage | Within the 8 MiB memory budget, after static page, 1 MiB host buffer and 64 KiB root stack; includes block metadata |
-| Reference roots | 8192 handle slots across active frames and temporaries |
-| JSON serialization | 1 MiB encoded, depth 64, 4096 visited values per call |
-| Checked JSON parsing | 64 KiB encoded input, depth 64, 4096 values; schemas at most 64 KiB in the shared static pool (type counts above) |
-| HTTP response headers | 64 KiB |
-| Manifest/config | 256 KiB |
-| Function parameters | Each captured `VartaResult` uses two physical parameters |
+<!-- generated:derived-limits:begin (checked by crates/varta-common/tests/documentation.rs) -->
+| Resource | Default limit | Source constants |
+| --- | --- | --- |
+| Managed string/record/array storage | Within the 8 MiB memory budget, after the 64 KiB static page, 1 MiB host buffer and 64 KiB root stack; includes block metadata | `abi::RESULT_BASE`, `abi::MAX_RESULT_BYTES`, `abi::STRING_ROOT_BYTES`, `abi::MAX_MEMORY_BYTES` |
+| Reference roots | 8192 handle slots across active frames and temporaries | `abi::STRING_ROOT_BYTES` / `abi::STRING_ROOT_SLOT_BYTES` |
+| JSON serialization | 1 MiB encoded, depth 64, 4096 visited values per call | `abi::MAX_RESULT_BYTES`, `value::MAX_JSON_*` |
+| Checked JSON parsing | 64 KiB encoded input, depth 64, 4096 values; schemas at most 64 KiB in the shared static pool (type counts above) | `abi::MAX_INPUT_BYTES`, `value::MAX_JSON_*`, `json::MAX_SCHEMA_BYTES` |
+| `net_get`/`net_fetch` response head | 64 KiB | `net::MAX_FETCH_HEADER_BYTES` |
+| Manifest, host policy, decision file or project configuration | 256 KiB | `MAX_MANIFEST_BYTES` |
+| Function parameters | Each captured `VartaResult` uses two physical parameters | `abi::MAX_WASM_PARAMETERS` |
+<!-- generated:derived-limits:end -->
 
 The per-value rows above (array elements and spread arguments, string
 values, JSON depth, visited values, input and output, live frames, pending

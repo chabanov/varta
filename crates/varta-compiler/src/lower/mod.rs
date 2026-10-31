@@ -9,6 +9,11 @@ use swc_common::Spanned;
 use swc_ecma_ast as ast;
 
 type Result<T> = std::result::Result<T, CompilerError>;
+/// The deepest nesting of blocks, labels and expressions the lowering accepts.
+const MAX_NESTING: usize = 64;
+/// The deepest recursion of a static analysis over expressions and types;
+/// a deeper input is treated as unknown.
+const MAX_ANALYSIS_DEPTH: usize = 64;
 fn invalid(message: impl Into<String>) -> CompilerError {
     CompilerError::Invalid(message.into())
 }

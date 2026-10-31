@@ -24,10 +24,16 @@ impl RandomSource {
     }
 }
 
+/// The significand bits of an `f64`, including the implicit bit: every
+/// integer below `2^SAMPLE_BITS` is exactly representable.
+const SAMPLE_BITS: u32 = f64::MANTISSA_DIGITS;
+/// `2^-SAMPLE_BITS`, the step between adjacent samples.
+const SAMPLE_STEP: f64 = 1.0 / (1u64 << SAMPLE_BITS) as f64;
+
 fn sample(word: u64) -> f64 {
     // Every 53-bit integer is exactly representable. Power-of-two scaling is
     // exact, so the greatest sample is 1 - 2^-53 and zero always has positive sign.
-    ((word >> 11) as f64) * (1.0 / 9007199254740992.0)
+    ((word >> (u64::BITS - SAMPLE_BITS)) as f64) * SAMPLE_STEP
 }
 
 fn draw(
@@ -42,7 +48,7 @@ fn draw(
 
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::DateNow.name(),
         |mut caller: Caller<'_, RuntimeContext>| -> Result<f64, wasmtime::Error> {
             caller.data_mut().tick()?;
@@ -66,7 +72,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::MathRandom.name(),
         |mut caller: Caller<'_, RuntimeContext>| -> Result<f64, wasmtime::Error> {
             draw(caller.data_mut(), |context| context.random.word())

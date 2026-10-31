@@ -1399,6 +1399,8 @@ const NOT_DISPATCHED: u32 = u32::MAX;
 const UNCHECKED_INPUT: u32 = u32::MAX;
 /// A `Return` completion the layout does not admit.
 const RETURN_FORBIDDEN: u32 = u32::MAX - 1;
+/// Bytes of one per-state input limit word after the entries.
+const INPUT_LIMIT_BYTES: i32 = size_of::<u32>() as i32;
 
 /// The largest scalar input a state admits: booleans 0/1, `undefined` and
 /// `void` 0; other inputs are not range-checked here.
@@ -1857,7 +1859,7 @@ fn table_dispatch(dispatch: &Dispatch<'_>, table: u32, code: &mut Vec<I<'static>
         I::LocalGet(STATE),
         I::I32Const(1),
         I::I32Sub,
-        I::I32Const(4),
+        I::I32Const(INPUT_LIMIT_BYTES),
         I::I32Mul,
         I::I32Add,
         I::I32Load(strings::WORD),

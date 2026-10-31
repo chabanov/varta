@@ -14,6 +14,14 @@ use std::{
 };
 use varta_common::launcher::{self, LauncherInfo};
 
+/// How often the probe polls the runtime companion for its exit.
+const PROBE_POLL_MS: u64 = 10;
+/// Attempts to create a fresh private staging directory.
+const STAGING_ATTEMPTS: usize = 16;
+/// Owner-only permissions of the staging directory and the staged runtime.
+#[cfg(unix)]
+const PRIVATE_MODE: u32 = 0o700;
+
 pub(crate) struct VerifiedLauncher {
     directory: PathBuf,
     executable: PathBuf,
@@ -51,7 +59,7 @@ impl VerifiedLauncher {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                target.set_permissions(fs::Permissions::from_mode(0o700))?;
+                target.set_permissions(fs::Permissions::from_mode(PRIVATE_MODE))?;
             }
             target.sync_all()?;
         }
@@ -94,7 +102,7 @@ fn directory() -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .map_err(|e| ProjectError::Artifact(e.to_string()))?
         .as_nanos();
-    for _ in 0..16 {
+    for _ in 0..STAGING_ATTEMPTS {
         let path = std::env::temp_dir().join(format!(
             "varta-launcher-{}-{now}-{}",
             std::process::id(),
@@ -104,7 +112,7 @@ fn directory() -> Result<PathBuf> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
+            builder.mode(PRIVATE_MODE);
         }
         match builder.create(&path) {
             Ok(()) => return Ok(path),
@@ -168,7 +176,7 @@ fn probe(path: &Path, args: &[OsString]) -> Result<Vec<u8>> {
         if Instant::now() >= until {
             return Err(invalid("runtime launcher probe timed out"));
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(PROBE_POLL_MS));
     };
     let take = |receive: mpsc::Receiver<std::io::Result<Vec<u8>>>| -> Result<Vec<u8>> {
         let bytes = receive

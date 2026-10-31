@@ -134,6 +134,41 @@ fn quoted_list(items: &[&str]) -> String {
 fn manifest_limits() -> String {
     let rows: Vec<(&str, String, &str)> = vec![
         (
+            "Grants in one manifest or host policy",
+            varta_common::MAX_POLICY_GRANTS.to_string(),
+            "`MAX_POLICY_GRANTS`",
+        ),
+        (
+            "Patterns, listen endpoints and request URLs across all grants",
+            varta_common::MAX_POLICY_PATTERNS.to_string(),
+            "`MAX_POLICY_PATTERNS`",
+        ),
+        (
+            "Patterns, listen endpoints or request URLs in one grant",
+            varta_common::MAX_GRANT_PATTERNS.to_string(),
+            "`MAX_GRANT_PATTERNS`",
+        ),
+        (
+            "Name, path or URL pattern (bytes)",
+            varta_common::MAX_PATTERN_BYTES.to_string(),
+            "`MAX_PATTERN_BYTES`",
+        ),
+        (
+            "Pattern bytes × input bytes of one comparison (more fails closed)",
+            varta_common::MAX_PATTERN_MATCH_WORK.to_string(),
+            "`MAX_PATTERN_MATCH_WORK`",
+        ),
+        (
+            "`target` values",
+            quoted_list(&varta_common::MANIFEST_TARGETS),
+            "`MANIFEST_TARGETS`",
+        ),
+        (
+            "Manifest, host ceiling or decision file the reference CLI and launcher read (bytes)",
+            varta_common::MAX_MANIFEST_BYTES.to_string(),
+            "`MAX_MANIFEST_BYTES`",
+        ),
+        (
             "`abiVersion` that admits `budgets`, grant `required` and `purpose`, and `fsRoots`",
             format!("{} or later", abi::PROGRAM_LIMITS_VERSION),
             "`abi::PROGRAM_LIMITS_VERSION`",
@@ -177,6 +212,21 @@ fn manifest_limits() -> String {
             "Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied)",
             net::MAX_URL_BYTES.to_string(),
             "`net::MAX_URL_BYTES`",
+        ),
+        (
+            "Response head of `net_get*` and `net_fetch*` (bytes; a larger head is an I/O failure)",
+            net::MAX_FETCH_HEADER_BYTES.to_string(),
+            "`net::MAX_FETCH_HEADER_BYTES`",
+        ),
+        (
+            "Environment variable name of `env_*` (bytes; nonempty, a longer name is denied)",
+            varta_common::MAX_ENV_NAME_BYTES.to_string(),
+            "`MAX_ENV_NAME_BYTES`",
+        ),
+        (
+            "Absolute host path of `fs_*` before v38 (bytes; a longer path is denied)",
+            varta_common::MAX_HOST_PATH_BYTES.to_string(),
+            "`MAX_HOST_PATH_BYTES`",
         ),
     ];
     table(

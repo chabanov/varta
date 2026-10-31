@@ -34,7 +34,7 @@ pub(crate) fn input(
     if crate::fair_fuel::bytes(caller, len as usize).is_err() {
         return Err(HostFailure::exhausted());
     }
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(HostFailure::invalid());
     };
     let bytes = memory
@@ -100,7 +100,7 @@ pub(super) fn result_bytes(
     if crate::fair_fuel::bytes(caller, bytes.len()).is_err() {
         return Err(HostFailure::exhausted());
     }
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(HostFailure::invalid());
     };
     let Some(Extern::Global(length)) = caller.get_export(abi::RESULT_LEN) else {
@@ -108,7 +108,7 @@ pub(super) fn result_bytes(
     };
     let desired = abi::RESULT_BASE + bytes.len();
     if desired > memory.data_size(&*caller) {
-        let pages = (desired - memory.data_size(&*caller)).div_ceil(65_536);
+        let pages = (desired - memory.data_size(&*caller)).div_ceil(abi::WASM_PAGE_BYTES);
         memory
             .grow(&mut *caller, pages as u64)
             .map_err(HostFailure::io)?;
@@ -162,14 +162,14 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     crate::references::register(linker)?;
     // Internal feature negotiation: binding is authorized by the service runner.
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         varta_common::HostOperation::HttpService.name(),
         |mut caller: Caller<'_, RuntimeContext>| -> Result<(), wasmtime::Error> {
             caller.data_mut().tick()
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         varta_common::HostOperation::HttpStop.name(),
         |mut caller: Caller<'_, RuntimeContext>| -> Result<(), wasmtime::Error> {
             reset(&mut caller)?;
@@ -177,7 +177,10 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 return failure(&mut caller, HostFailure::invalid());
             };
             if !caller.data().policy.listen(&endpoint) {
-                return failure(&mut caller, HostFailure::denied("net.listen", &endpoint));
+                return failure(
+                    &mut caller,
+                    HostFailure::denied(varta_common::http::LISTEN_CAPABILITY, &endpoint),
+                );
             }
             control.shutdown();
             Ok(())
@@ -186,7 +189,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     crate::json::register(linker)?;
     crate::json_parse::register(linker)?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         "log_i32",
         |mut caller: Caller<'_, RuntimeContext>, value: i32| {
             caller.data_mut().tick()?;
@@ -194,7 +197,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         "log_string",
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
             caller.data_mut().tick()?;
@@ -205,7 +208,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         "time_now",
         |mut caller: Caller<'_, RuntimeContext>| -> Result<i32, wasmtime::Error> {
             reset(&mut caller)?;
@@ -231,7 +234,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         "process_exit",
         |mut caller: Caller<'_, RuntimeContext>, code: i32| -> Result<(), wasmtime::Error> {
             reset(&mut caller)?;
@@ -248,7 +251,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         ("env_get16", "env.get", true),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             name,
             move |mut caller: Caller<'_, RuntimeContext>,
                   ptr: i32,
@@ -281,7 +284,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         )?;
     }
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::EnvSnapshot.name(),
         |mut caller: Caller<'_, RuntimeContext>,
          ptr: i32,
@@ -323,7 +326,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     )?;
     for (name, utf16) in [("env_print", false), ("env_print16", true)] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             name,
             move |mut caller: Caller<'_, RuntimeContext>,
                   ptr: i32,
@@ -357,7 +360,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         ("net_fetch16", "net.fetch", true),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             name,
             move |mut caller: Caller<'_, RuntimeContext>,
                   ptr: i32,
@@ -402,7 +405,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     }
     for (name, utf16) in [("fs_print", false), ("fs_print16", true)] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             name,
             move |mut caller: Caller<'_, RuntimeContext>,
                   ptr: i32,

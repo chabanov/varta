@@ -8,8 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub const CATALOG_SECTION: &str = "varta.functions";
 pub const CATALOG_VERSION: u32 = 1;
-pub const MAX_CAPTURE_TYPES: usize =
-    MAX_TYPES + value::MAX_RECORD_SHAPES + value::MAX_ARRAY_TYPES + 2 * value::MAX_UNION_TYPES + 32;
+pub const MAX_CAPTURE_TYPES: usize = MAX_TYPES
+    + value::MAX_RECORD_SHAPES
+    + value::MAX_ARRAY_TYPES
+    + 2 * value::MAX_UNION_TYPES
+    + SCALAR_CAPTURE_TYPES;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FunctionCatalog {

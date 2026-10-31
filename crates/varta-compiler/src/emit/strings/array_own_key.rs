@@ -1,5 +1,8 @@
 //! Exact UTF-16 own keys over bounded sparse arrays, without coercion or allocation.
 use super::*;
+/// The one non-index own key of an array, and its UTF-16 byte length.
+const LENGTH_KEY: &str = "length";
+const LENGTH_KEY_BYTES: i32 = (LENGTH_KEY.len() * size_of::<u16>()) as i32;
 pub(super) fn function(present: u32, limits: varta_common::limits::DataLimits) -> Function {
     const ARRAY: u32 = 0;
     const KEY: u32 = 1;
@@ -8,7 +11,7 @@ pub(super) fn function(present: u32, limits: varta_common::limits::DataLimits) -
     const OFFSET: u32 = 4;
     const DIGIT: u32 = 5;
     const INDEX: u32 = 6;
-    let max_key_bytes = ((limits.array_elements - 1).to_string().len() * 2) as i32;
+    let max_key_bytes = ((limits.array_elements - 1).to_string().len() * size_of::<u16>()) as i32;
     let mut f = Function::new([(5, ValType::I32)]);
     length(&mut f, KEY, LEN);
     instructions(
@@ -18,18 +21,18 @@ pub(super) fn function(present: u32, limits: varta_common::limits::DataLimits) -
             I::I32WrapI64,
             I::LocalSet(PTR),
             I::LocalGet(LEN),
-            I::I32Const(12),
+            I::I32Const(LENGTH_KEY_BYTES),
             I::I32Eq,
             I::If(BlockType::Empty),
         ],
     );
-    for (offset, unit) in "length".encode_utf16().enumerate() {
+    for (offset, unit) in LENGTH_KEY.encode_utf16().enumerate() {
         instructions(
             &mut f,
             [
                 I::LocalGet(PTR),
                 I::I32Load16U(MemArg {
-                    offset: (offset * 2) as u64,
+                    offset: (offset * size_of::<u16>()) as u64,
                     align: 1,
                     memory_index: MEMORY,
                 }),

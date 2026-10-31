@@ -487,7 +487,10 @@ pub(crate) struct Descriptor {
 /// fatal (only a tampered or miscompiled module can produce one); an unknown
 /// name is an ordinary invalid descriptor the guest reports as `TypeError`.
 pub(crate) fn descriptor(text: &str) -> Result<Descriptor, varta_common::events::EventError> {
-    let mut fields = text.splitn(4, DESCRIPTOR_SEPARATOR);
+    let mut fields = text.splitn(
+        varta_common::permission::DESCRIPTOR_FIELDS,
+        DESCRIPTOR_SEPARATOR,
+    );
     let malformed = varta_common::events::EventError::State;
     if fields.next() != Some(DESCRIPTOR_VERSION) {
         return Err(malformed);

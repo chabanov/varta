@@ -19,7 +19,7 @@ pub(crate) fn module_with(
     let (language, function_catalog, static_region) = preflight(bytes)?;
     let version = language.profile.map_or(abi::VERSION, |p| p.host_abi());
     if bytes.len() > language.profile.unwrap_or_default().limits().wasm_bytes
-        || !bytes.starts_with(b"\0asm\x01\0\0\0")
+        || !bytes.starts_with(abi::WASM_HEADER)
     {
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
     }
@@ -43,7 +43,9 @@ pub(crate) fn module_with(
             }
             continue;
         }
-        if import.module() != "varta" || varta_common::host_capability(import.name()).is_none() {
+        if import.module() != varta_common::abi::HOST_MODULE
+            || varta_common::host_capability(import.name()).is_none()
+        {
             return Err(wasmtime::Error::msg(format!(
                 "unknown host import: {}.{}",
                 import.module(),
@@ -84,7 +86,7 @@ pub(crate) fn module_with(
             );
         }
     }
-    if let Some(export) = module.get_export("_start") {
+    if let Some(export) = module.get_export(varta_common::abi::START_EXPORT) {
         let wasmtime::ExternType::Func(ty) = export else {
             return Err(wasmtime::Error::msg("_start must be a function").into());
         };
@@ -185,20 +187,20 @@ fn preflight(
                     let ty = ty.map_err(|e| error(&e.to_string()))?;
                     if count >= limits.wasm_signatures
                         || ty.params().len() > abi::MAX_WASM_PARAMETERS
-                        || ty.results().len() > 2
+                        || ty.results().len() > abi::MAX_WASM_RESULTS
                     {
                         return Err(error("Wasm signature complexity exceeds limits"));
                     }
                 }
             }
-            Payload::ImportSection(reader) if reader.count() > 64 => {
+            Payload::ImportSection(reader) if reader.count() as usize > abi::MAX_IMPORTS => {
                 return Err(error("too many imports"));
             }
             Payload::ImportSection(reader) => {
                 imports = reader.count() as usize;
                 for import in reader {
                     let import = import.map_err(|e| error(&e.to_string()))?;
-                    union_imports |= import.module == "varta"
+                    union_imports |= import.module == varta_common::abi::HOST_MODULE
                         && varta_common::HostOperation::from_name(import.name).is_some_and(|op| {
                             matches!(
                                 op.minimum_abi(),
@@ -211,7 +213,7 @@ fn preflight(
                             )
                         });
 
-                    if import.module == "varta"
+                    if import.module == varta_common::abi::HOST_MODULE
                         && let Some(operation) = varta_common::HostOperation::from_name(import.name)
                         && matches!(
                             operation,
@@ -280,14 +282,14 @@ fn preflight(
                 return Err(error("too many functions"));
             }
             Payload::MemorySection(reader) => {
-                if reader.count() > 1 {
+                if reader.count() as usize > abi::MAX_MEMORIES {
                     return Err(error("only one memory is supported"));
                 }
                 for memory in reader {
                     let memory = memory.map_err(|e| error(&e.to_string()))?;
                     if memory.memory64
                         || memory.shared
-                        || memory.initial > (abi::MAX_MEMORY_BYTES / abi::RESULT_BASE) as u64
+                        || memory.initial > (abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64
                     {
                         return Err(error("unsupported memory type or initial size"));
                     }
@@ -323,17 +325,17 @@ fn preflight(
                 intrinsic_section = Some(section.data());
             }
             Payload::TableSection(reader) => {
-                if reader.count() > 1 {
+                if reader.count() as usize > abi::MAX_TABLES {
                     return Err(error("only one table is supported"));
                 }
                 for table in reader {
                     let table = table.map_err(|e| error(&e.to_string()))?;
-                    if table.ty.initial > 1024 {
+                    if table.ty.initial > abi::MAX_TABLE_ELEMENTS as u64 {
                         return Err(error("table exceeds element budget"));
                     }
                 }
             }
-            Payload::GlobalSection(reader) if reader.count() > 128 => {
+            Payload::GlobalSection(reader) if reader.count() as usize > abi::MAX_GLOBALS => {
                 return Err(error("too many globals"));
             }
             Payload::CodeSectionEntry(body) => {
@@ -501,7 +503,7 @@ fn check_exports(module: &Module) -> Result<(), RuntimeError> {
             .is_some_and(|host| host.needs_result_globals());
     }
     if needs_memory {
-        match module.get_export("memory") {
+        match module.get_export(varta_common::abi::MEMORY_EXPORT) {
             Some(ExternType::Memory(memory)) if !memory.is_64() && !memory.is_shared() => {}
             _ => {
                 return Err(error(

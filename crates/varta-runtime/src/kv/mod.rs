@@ -236,7 +236,7 @@ fn stage(
 ) -> Result<f64, wasmtime::Error> {
     caller.data_mut().tick()?;
     let mode = StageMode::from_code(mode).ok_or_else(|| fatal("stage mode"))?;
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(fatal("missing memory"));
     };
     let context = caller.data();
@@ -855,7 +855,7 @@ fn decoded(
     key: bool,
 ) -> Result<i64, wasmtime::Error> {
     caller.data_mut().tick()?;
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(fatal("missing memory"));
     };
     let schema = crate::json_parse::checked_schema(caller, memory, schema_ptr, schema_len)?;
@@ -909,22 +909,22 @@ fn decoded(
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvOpen.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| open(&mut caller, ptr, len),
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvRead.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| read(&mut caller, ptr, len),
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvCommit.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| commit(&mut caller, ptr, len),
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvStage.name(),
         |mut caller: Caller<'_, RuntimeContext>, mode: i32, kind: i32, lo: i32, hi: i32| {
             let packed = ((hi as u32 as u64) << i32::BITS) | (lo as u32 as u64);
@@ -932,7 +932,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvEntry.name(),
         |mut caller: Caller<'_, RuntimeContext>,
          index: f64,
@@ -944,21 +944,21 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvKey.name(),
         |mut caller: Caller<'_, RuntimeContext>, index: f64, ptr: i32, len: i32| {
             decoded(&mut caller, index, ptr, len, true)
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvValue.name(),
         |mut caller: Caller<'_, RuntimeContext>, index: f64, ptr: i32, len: i32| {
             decoded(&mut caller, index, ptr, len, false)
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvText.name(),
         |mut caller: Caller<'_, RuntimeContext>| -> Result<i32, wasmtime::Error> {
             caller.data().check_deadline()?;
@@ -968,7 +968,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::KvClose.name(),
         |mut caller: Caller<'_, RuntimeContext>, id: f64| -> Result<(), wasmtime::Error> {
             caller.data().check_deadline()?;

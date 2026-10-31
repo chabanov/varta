@@ -2,6 +2,8 @@
 //! facts: host operations, profile admission, memory layout, reserved names,
 //! status codes and entry-point limits. Its tables are generated here from the
 //! registries, so a registry change fails the gate until the document follows.
+#[path = "embedding_documentation/limits.rs"]
+mod limits;
 #[path = "embedding_documentation/manifest.rs"]
 mod manifest;
 mod support;
@@ -997,11 +999,6 @@ fn timers() -> String {
                     scheduler::TIMER_MAX_DELAY_MS
                 ),
                 "`scheduler::TIMER_MIN_DELAY_MS`, `scheduler::TIMER_MAX_DELAY_MS`",
-            ),
-            (
-                "Timers armed or awaiting their take at once",
-                scheduler::MAX_PENDING_TIMERS.to_string(),
-                "`scheduler::MAX_PENDING_TIMERS`",
             ),
             (
                 "Denied `timer_start` (fatal) diagnostic",

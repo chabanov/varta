@@ -36,7 +36,7 @@ pub(super) fn native_work<T>(
 ) -> Result<Result<T, Error>, wasmtime::Error> {
     let fuel = caller.get_fuel()?;
     let mut budget = Budget::new(MAX_BITS, fuel);
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(wasmtime::Error::msg("missing BigInt memory"));
     };
     let result = run(memory.data(&*caller), &mut budget);
@@ -69,7 +69,7 @@ fn numeric(result: Result<f64, Error>) -> Result<f64, wasmtime::Error> {
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::PrimitiveCompare.name(),
         |mut caller: Caller<'_, RuntimeContext>, left: i64, right: i64| {
             numeric(work(&mut caller, |data, budget| {
@@ -78,7 +78,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::PrimitiveEqual.name(),
         |mut caller: Caller<'_, RuntimeContext>,
          strict: i32,
@@ -93,7 +93,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntWidthV2.name(),
         |mut caller: Caller<'_, RuntimeContext>, signed: i32, width: i64, value: i64| {
             let result = work(&mut caller, |data, budget| {
@@ -103,7 +103,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntToStringV2.name(),
         |mut caller: Caller<'_, RuntimeContext>, receiver: i64, radix: i64| {
             let result = work(&mut caller, |data, budget| {
@@ -113,7 +113,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntWidth.name(),
         |mut caller: Caller<'_, RuntimeContext>, signed: i32, value: i64, width: f64| {
             let result = work(&mut caller, |data, budget| {
@@ -123,7 +123,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntBinary.name(),
         |mut caller: Caller<'_, RuntimeContext>, op: i32, left: i64, right: i64| {
             let result = work(&mut caller, |data, budget| {
@@ -133,7 +133,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntUnary.name(),
         |mut caller: Caller<'_, RuntimeContext>, op: i32, value: i64| {
             let result = work(&mut caller, |data, budget| {
@@ -143,7 +143,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntFromNumber.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: f64| {
             let result = work(&mut caller, |_, budget| shared::from_number(value, budget))?;
@@ -151,7 +151,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntFromString.name(),
         |mut caller: Caller<'_, RuntimeContext>, pointer: i32, length: i32| {
             let result = work(&mut caller, |data, budget| {
@@ -161,7 +161,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntToString.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: i64, radix: f64| {
             let result = work(&mut caller, |data, budget| {
@@ -171,7 +171,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntToNumber.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: i64| {
             numeric(work(&mut caller, |data, budget| {
@@ -180,7 +180,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntCompareString.name(),
         |mut caller: Caller<'_, RuntimeContext>, left: i64, pointer: i32, length: i32| {
             numeric(work(&mut caller, |data, budget| {
@@ -189,7 +189,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntCompare.name(),
         |mut caller: Caller<'_, RuntimeContext>, left: i64, right: i64| {
             numeric(work(&mut caller, |data, budget| {
@@ -198,7 +198,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         H::BigIntCompareNumber.name(),
         |mut caller: Caller<'_, RuntimeContext>, left: i64, right: f64| {
             numeric(work(&mut caller, |data, budget| {
@@ -237,7 +237,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         ),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             string.name(),
             move |mut caller: Caller<'_, RuntimeContext>,
                   cell: i64|
@@ -251,7 +251,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             number.name(),
             move |mut caller: Caller<'_, RuntimeContext>,
                   cell: i64|
@@ -262,7 +262,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
             },
         )?;
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             from_value.name(),
             move |mut caller: Caller<'_, RuntimeContext>, cell: i64| {
                 let result = work(&mut caller, |data, budget| {

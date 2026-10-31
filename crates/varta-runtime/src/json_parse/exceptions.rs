@@ -54,7 +54,7 @@ pub(super) fn ready(caller: &mut Caller<'_, RuntimeContext>) -> Result<(), wasmt
     if value.get(&mut *caller).i64() != Some(0) {
         return Err(invalid());
     }
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(invalid());
     };
     if bytes(

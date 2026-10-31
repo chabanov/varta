@@ -54,15 +54,17 @@ impl<'a> Setup<'a> {
 
 /// Every module has one memory, guest memory 0; v38 linked intrinsics live in
 /// its intrinsic region (`abi::StaticRegion::intrinsic_base`).
-const GUEST_MEMORIES: usize = 1;
+const GUEST_MEMORIES: usize = varta_common::abi::MAX_MEMORIES;
+/// One instance per store: every execution and request owns a fresh store.
+const STORE_INSTANCES: usize = 1;
 /// Store limits of an instance whose memory is bounded by its memory budget.
 fn limits(memory_bytes: usize) -> wasmtime::StoreLimits {
     StoreLimitsBuilder::new()
         .memory_size(memory_bytes)
         .memories(GUEST_MEMORIES)
-        .tables(1)
-        .table_elements(1024)
-        .instances(1)
+        .tables(varta_common::abi::MAX_TABLES)
+        .table_elements(varta_common::abi::MAX_TABLE_ELEMENTS)
+        .instances(STORE_INSTANCES)
         .build()
 }
 

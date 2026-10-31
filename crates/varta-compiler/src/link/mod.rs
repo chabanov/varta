@@ -84,7 +84,7 @@ pub(crate) fn link(
         .iter()
         .enumerate()
         .filter_map(|(index, import)| {
-            let operation = (import.module == "varta")
+            let operation = (import.module == varta_common::abi::HOST_MODULE)
                 .then(|| HostOperation::from_name(import.name))
                 .flatten()?;
             links(profile, operation).then_some((index as u32, operation))

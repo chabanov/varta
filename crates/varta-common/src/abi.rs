@@ -102,6 +102,12 @@ pub use static_region::{
     WASM_MEMORY32_PAGES,
 };
 pub const SECTION: &str = "varta.abi";
+/// The module of every host import.
+pub const HOST_MODULE: &str = "varta";
+/// The guest's exported linear memory.
+pub const MEMORY_EXPORT: &str = "memory";
+/// The entry point export.
+pub const START_EXPORT: &str = "_start";
 pub const RESULT_LEN: &str = "env_result_len";
 pub const RESULT_STATUS: &str = "result_status";
 pub const RESULT_BASE: usize = 65_536;
@@ -123,6 +129,17 @@ pub const SPARSE_INTERNAL_FUNCTIONS: usize = 12;
 pub const MAX_INTERNAL_FUNCTIONS: usize = 13;
 pub const MAX_WASM_SIGNATURES: usize = 256;
 pub const MAX_WASM_PARAMETERS: usize = 32;
+/// Module structure a host checks before instantiation: results of one
+/// function type, imports, memories, tables, initial elements of the one
+/// table (the reference host's store limit as well) and globals.
+pub const MAX_WASM_RESULTS: usize = 2;
+pub const MAX_IMPORTS: usize = 64;
+pub const MAX_MEMORIES: usize = 1;
+pub const MAX_TABLES: usize = 1;
+pub const MAX_TABLE_ELEMENTS: usize = 1024;
+pub const MAX_GLOBALS: usize = 128;
+/// The binary magic and version 1 every portable Wasm module starts with.
+pub const WASM_HEADER: &[u8; 8] = b"\0asm\x01\0\0\0";
 /// Bounded flattened argument count for checked spread calls.
 pub const MAX_SPREAD_ARGUMENTS: usize = crate::value::MAX_ARRAY_ELEMENTS;
 pub const MAX_MEMORY_BYTES: usize = 8 * 1024 * 1024;

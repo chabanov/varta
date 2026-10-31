@@ -1,6 +1,7 @@
 use crate::HostFailure;
 use std::time::Duration;
-use varta_common::abi::{MAX_INPUT_BYTES, MAX_RESULT_BYTES};
+use varta_common::abi::MAX_RESULT_BYTES;
+use varta_common::net::MAX_FETCH_HEADER_BYTES;
 
 pub(crate) fn fetch(
     url: &url::Url,
@@ -12,7 +13,7 @@ pub(crate) fn fetch(
         .proxy(None)
         .max_redirects(0)
         .http_status_as_error(false)
-        .max_response_header_size(MAX_INPUT_BYTES)
+        .max_response_header_size(MAX_FETCH_HEADER_BYTES)
         .timeout_global(Some(remaining))
         .build()
         .into();

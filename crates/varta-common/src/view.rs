@@ -642,7 +642,8 @@ pub const ROLES: &[&str] = &[
 /// The value grammar of an attribute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttributeValue {
-    /// `[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters, unique in the tree.
+    /// `[A-Za-z][A-Za-z0-9_-]*`, at most [`attributes::MAX_IDENT_CHARS`]
+    /// characters, unique in the tree.
     Ident,
     /// Space-separated `Ident` references.
     IdentList,
@@ -671,7 +672,10 @@ impl AttributeValue {
     #[must_use]
     pub fn describe(self) -> String {
         match self {
-            Self::Ident => "ident: `[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters".into(),
+            Self::Ident => format!(
+                "ident: `[A-Za-z][A-Za-z0-9_-]*`, at most {} characters",
+                attributes::MAX_IDENT_CHARS
+            ),
             Self::IdentList => "space-separated ident list".into(),
             Self::Text => "text".into(),
             Self::Boolean => "boolean: present with an empty value; remove to make false".into(),

@@ -32,6 +32,24 @@ pub struct RequestScope {
 /// grant must spell them in uppercase, the only form a request carries.
 pub const NORMALIZED_METHODS: [&str; 6] = ["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"];
 
+/// Policy complexity: at most this many grants in one manifest or host policy.
+pub const MAX_POLICY_GRANTS: usize = 128;
+/// Policy complexity: at most this many patterns, listen endpoints and
+/// request URLs across all grants of one policy.
+pub const MAX_POLICY_PATTERNS: usize = 256;
+/// At most this many patterns, listen endpoints or request URLs in one grant.
+pub const MAX_GRANT_PATTERNS: usize = 64;
+/// The longest name, path or URL pattern (bytes); the exact any-HTTPS form
+/// of `ui.open_url` is exempt.
+pub const MAX_PATTERN_BYTES: usize = 512;
+/// The longest environment variable name an `env.*` operation accepts (bytes).
+pub const MAX_ENV_NAME_BYTES: usize = 256;
+/// The longest absolute host path a v1–v37 `fs.*` operation accepts (bytes).
+pub const MAX_HOST_PATH_BYTES: usize = 4096;
+/// Pattern matching is host work outside Wasm fuel: a comparison whose
+/// pattern bytes × input bytes exceed this fails closed.
+pub const MAX_PATTERN_MATCH_WORK: usize = 64 * 1024;
+
 use crate::{Result, VartaError};
 
 /// Canonical host operations. Unknown operations and mismatched grant shapes fail closed.
@@ -43,7 +61,7 @@ pub fn capability_kind(id: &str) -> Option<GrantKind> {
         crate::kv::READ_CAPABILITY | crate::kv::WRITE_CAPABILITY => Some(GrantKind::Patterns),
         "net.fetch" | "net.get" => Some(GrantKind::Urls),
         crate::net::REQUEST_CAPABILITY => Some(GrantKind::Requests),
-        "net.listen" => Some(GrantKind::Listeners),
+        crate::http::LISTEN_CAPABILITY => Some(GrantKind::Listeners),
         crate::view::OPEN_URL_CAPABILITY => Some(GrantKind::OpenUrls),
         crate::view::CLIPBOARD_WRITE_CAPABILITY => Some(GrantKind::Boolean),
         _ => None,
@@ -80,13 +98,13 @@ impl CapabilityGrant {
             (GrantKind::Boolean, CapabilityValue::Boolean(_)) => Ok(()),
             (GrantKind::Patterns, CapabilityValue::PathGlobs(patterns))
             | (GrantKind::Urls, CapabilityValue::UrlGlobs(patterns)) => {
-                if patterns.len() > 64 {
+                if patterns.len() > MAX_GRANT_PATTERNS {
                     return Err(VartaError::InvalidManifest(
                         "too many patterns in one grant".into(),
                     ));
                 }
                 for pattern in patterns {
-                    if pattern.len() > 512
+                    if pattern.len() > MAX_PATTERN_BYTES
                         || pattern.trim().is_empty()
                         || pattern.trim_matches(['*', '?']).is_empty()
                         || pattern.contains('\0')
@@ -120,7 +138,7 @@ impl CapabilityGrant {
                 validate_open_url_patterns(&self.id, patterns)
             }
             (GrantKind::Listeners, CapabilityValue::ListenEndpoints(endpoints)) => {
-                if endpoints.len() > 64 {
+                if endpoints.len() > MAX_GRANT_PATTERNS {
                     return Err(VartaError::InvalidManifest(
                         "too many listener endpoints".into(),
                     ));
@@ -158,7 +176,7 @@ pub fn validate_grants(grants: &[CapabilityGrant]) -> Result<()> {
             CapabilityValue::Boolean(_) => 0,
         })
         .sum();
-    if grants.len() > 128 || patterns > 256 {
+    if grants.len() > MAX_POLICY_GRANTS || patterns > MAX_POLICY_PATTERNS {
         return Err(VartaError::InvalidManifest(
             "capability policy exceeds complexity limits".into(),
         ));
@@ -183,13 +201,13 @@ const SCHEME_SEPARATOR: &str = "://";
 
 impl RequestScope {
     fn validate(&self, id: &str) -> Result<()> {
-        if self.urls.len() > 64 {
+        if self.urls.len() > MAX_GRANT_PATTERNS {
             return Err(VartaError::InvalidManifest(
                 "too many patterns in one grant".into(),
             ));
         }
         for pattern in &self.urls {
-            if pattern.len() > 512 || pattern.contains('\0') {
+            if pattern.len() > MAX_PATTERN_BYTES || pattern.contains('\0') {
                 return Err(VartaError::InvalidManifest(format!(
                     "unsafe pattern for {id}: {pattern}"
                 )));
@@ -219,10 +237,11 @@ impl RequestScope {
     }
 }
 
-/// `ui.open_url` (v38): at most 64 patterns, each the exact any-HTTPS form or
-/// an `https://`/`http://` URL pattern under the network URL rules.
+/// `ui.open_url` (v38): at most [`MAX_GRANT_PATTERNS`] patterns, each the
+/// exact any-HTTPS form or an `https://`/`http://` URL pattern under the
+/// network URL rules.
 fn validate_open_url_patterns(id: &str, patterns: &[String]) -> Result<()> {
-    if patterns.len() > 64 {
+    if patterns.len() > MAX_GRANT_PATTERNS {
         return Err(VartaError::InvalidManifest(
             "too many patterns in one grant".into(),
         ));
@@ -231,7 +250,7 @@ fn validate_open_url_patterns(id: &str, patterns: &[String]) -> Result<()> {
         if pattern == crate::view::ANY_HTTPS_PATTERN {
             continue;
         }
-        if pattern.len() > 512 || pattern.contains('\0') {
+        if pattern.len() > MAX_PATTERN_BYTES || pattern.contains('\0') {
             return Err(VartaError::InvalidManifest(format!(
                 "unsafe pattern for {id}: {pattern}"
             )));

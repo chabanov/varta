@@ -23,7 +23,7 @@ impl Impact {
 }
 pub(super) fn callbacks(ty: Type, types: &ir::ValueTypes, depth: usize) -> bool {
     fn visit(ty: Type, types: &ir::ValueTypes, depth: usize, seen: &mut BTreeSet<Type>) -> bool {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return true;
         }
         if !seen.insert(ty) {
@@ -58,7 +58,7 @@ pub(super) fn callbacks(ty: Type, types: &ir::ValueTypes, depth: usize) -> bool 
 }
 impl Lower<'_> {
     fn function_proof(&self, value: &Expr, depth: usize) -> Option<BTreeSet<usize>> {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return None;
         }
         match &value.kind {
@@ -126,7 +126,7 @@ impl Lower<'_> {
             .any(|signature| signature.index == index)
     }
     fn callback_value(&self, value: &Expr, depth: usize) -> Impact {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return Impact::unknown();
         }
         if !callbacks(value.ty, self.types, 0) {
@@ -153,7 +153,7 @@ impl Lower<'_> {
         callback: bool,
         depth: usize,
     ) -> Impact {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return Impact::unknown();
         }
         let mut impact = Impact::default();

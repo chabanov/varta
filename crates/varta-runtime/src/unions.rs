@@ -7,7 +7,7 @@ use varta_common::{
 use wasmtime::{Caller, Extern, Linker};
 
 fn data<'a>(caller: &'a mut Caller<'_, RuntimeContext>) -> Result<&'a [u8], wasmtime::Error> {
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(wasmtime::Error::msg("missing union memory"));
     };
     Ok(memory.data(&*caller))
@@ -29,7 +29,7 @@ fn text(bytes: &[u8], cell: PrimitiveBox) -> &[u8] {
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::UnionLog.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: i64| {
             caller.data_mut().tick()?;
@@ -49,7 +49,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::UnionTypeOf.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: i64| {
             caller.data_mut().tick()?;
@@ -68,7 +68,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     )?;
     for (operation, is_nullish) in [(Host::UnionTruthy, false), (Host::UnionNullish, true)] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             operation.name(),
             move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
                 caller.data_mut().tick()?;
@@ -96,7 +96,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (Host::UnionNullishEqual, true),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             operation.name(),
             move |mut caller: Caller<'_, RuntimeContext>, a: i64, b: i64| {
                 caller.data_mut().tick()?;

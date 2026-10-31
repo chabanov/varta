@@ -10,10 +10,9 @@ pub(super) fn wildcard(
     filesystem: bool,
     question_wildcard: bool,
 ) -> bool {
-    const MAX_MATCH_WORK: usize = 64 * 1024;
     // Policy matching is host work and cannot consume Wasm fuel. Fail closed on
     // adversarial pattern/input combinations instead of doing unbounded CPU work.
-    if pattern.len().saturating_mul(text.len()) > MAX_MATCH_WORK {
+    if pattern.len().saturating_mul(text.len()) > varta_common::MAX_PATTERN_MATCH_WORK {
         return false;
     }
     let p: Vec<_> = pattern.chars().collect();

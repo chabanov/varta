@@ -159,12 +159,23 @@ impl ProgramLimits {
     /// (schema 15+) the dictionary slot and unions.
     #[must_use]
     pub fn schema_types(&self, unions: bool) -> usize {
-        4 + self.record_shapes + self.array_types + if unions { 1 + self.union_types } else { 0 }
+        crate::json::PRIMITIVE_SCHEMA_TYPES
+            + self.record_shapes
+            + self.array_types
+            + if unions {
+                crate::json::DICTIONARY_SCHEMA_TYPES + self.union_types
+            } else {
+                0
+            }
     }
     /// Distinct capture types of one function catalog.
     #[must_use]
     pub fn capture_types(&self) -> usize {
-        self.function_types + self.record_shapes + self.array_types + 2 * self.union_types + 32
+        self.function_types
+            + self.record_shapes
+            + self.array_types
+            + 2 * self.union_types
+            + crate::function::SCALAR_CAPTURE_TYPES
     }
 }
 

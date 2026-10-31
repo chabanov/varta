@@ -2014,7 +2014,7 @@ impl HostOperation {
             Self::NetFetch | Self::NetFetch16 => "net.fetch",
             Self::NetGet | Self::NetGet16 => "net.get",
             Self::Exit | Self::ExitFloat => "process.exit",
-            Self::HttpStop => "net.listen",
+            Self::HttpStop => crate::http::LISTEN_CAPABILITY,
         })
     }
 }

@@ -151,7 +151,7 @@ impl Policy {
     }
 
     fn env_scope(&self, id: &str, name: &str) -> bool {
-        !name.is_empty() && name.len() <= 256 && !name.contains(['=', '\0']) && self.permits(|grants| {
+        !name.is_empty() && name.len() <= varta_common::MAX_ENV_NAME_BYTES && !name.contains(['=', '\0']) && self.permits(|grants| {
             grants.iter().any(|g| g.id == id && matches!(&g.value, CapabilityValue::PathGlobs(p) if p.iter().any(|p| glob(p, name, false))))
         })
     }

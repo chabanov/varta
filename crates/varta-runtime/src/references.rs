@@ -22,7 +22,7 @@ fn fatal(error: ValueError) -> wasmtime::Error {
     }
 }
 fn data<'a>(caller: &'a mut Caller<'_, RuntimeContext>) -> Result<&'a [u8], wasmtime::Error> {
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(wasmtime::Error::msg("missing value memory"));
     };
     Ok(memory.data(&*caller))
@@ -47,7 +47,7 @@ fn register_log(
     log: Host,
 ) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         log.name(),
         move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
             caller.data_mut().tick()?;
@@ -261,7 +261,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     ] {
         register_log(linker, version, log)?;
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             type_of.name(),
             move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
                 caller.data_mut().tick()?;
@@ -273,7 +273,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         )?;
         for operation in [truthy, is_nullish, is_array] {
             linker.func_wrap(
-                "varta",
+                varta_common::abi::HOST_MODULE,
                 operation.name(),
                 move |mut caller: Caller<'_, RuntimeContext>, value: i64| {
                     caller.data_mut().tick()?;
@@ -291,7 +291,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         }
         for operation in [strict_equal, nullish_equal] {
             linker.func_wrap(
-                "varta",
+                varta_common::abi::HOST_MODULE,
                 operation.name(),
                 move |mut caller: Caller<'_, RuntimeContext>, a: i64, b: i64| {
                     caller.data_mut().tick()?;
@@ -320,7 +320,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         }
     }
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::ValueIsError.name(),
         |mut caller: Caller<'_, RuntimeContext>, value: i64| {
             caller.data_mut().tick()?;
@@ -359,7 +359,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         ),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             operation.name(),
             move |mut caller: Caller<'_, RuntimeContext>, value: i64, class: i32| {
                 caller.data_mut().tick()?;

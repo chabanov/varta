@@ -211,7 +211,7 @@ impl Emitter<'_> {
             I::LocalGet(self.temporary),
             I::I32Const(count),
             I::I32Store(wasm_encoder::MemArg {
-                offset: 4,
+                offset: size_of::<u32>() as u64,
                 ..strings::WORD
             }),
         ]);

@@ -112,6 +112,14 @@ fn layout() -> String {
             view::DRAFT_MAX_PENDING_COMMANDS.to_string(),
         ),
         (
+            "Placeholder: tokens of one CSS property value".into(),
+            view::css::MAX_VALUE_TOKENS.to_string(),
+        ),
+        (
+            "`id` / `for` ident characters".into(),
+            view::attributes::MAX_IDENT_CHARS.to_string(),
+        ),
+        (
             "Key filter: any key".into(),
             format!("key code {}", view::ANY_KEY),
         ),

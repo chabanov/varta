@@ -109,7 +109,7 @@ impl Lower<'_> {
         expression: &ast::Expr,
         depth: usize,
     ) -> Option<u32> {
-        if depth >= 64 || !self.types.profile.classes() {
+        if depth >= crate::lower::MAX_ANALYSIS_DEPTH || !self.types.profile.classes() {
             return None;
         }
         let ty = match stmt::unparen(expression) {

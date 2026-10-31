@@ -376,7 +376,7 @@ fn read_text(
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::EventSourceOpen.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
             caller.data().check_deadline()?;
@@ -385,7 +385,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::EventWatch.name(),
         |mut caller: Caller<'_, RuntimeContext>, serial: f64, id: f64| {
             caller.data().check_deadline()?;
@@ -394,7 +394,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::EventTake.name(),
         |mut caller: Caller<'_, RuntimeContext>, id: f64| {
             caller.data().check_deadline()?;
@@ -402,7 +402,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::EventText.name(),
         |mut caller: Caller<'_, RuntimeContext>, id: f64| -> Result<i32, wasmtime::Error> {
             caller.data().check_deadline()?;
@@ -412,7 +412,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::EventSourceClose.name(),
         |mut caller: Caller<'_, RuntimeContext>, id: f64| {
             caller.data().check_deadline()?;
@@ -421,7 +421,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::PermissionQuery.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
             caller.data().check_deadline()?;
@@ -435,7 +435,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::PermissionRequest.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
             caller.data().check_deadline()?;

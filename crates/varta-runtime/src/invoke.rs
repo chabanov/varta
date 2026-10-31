@@ -137,7 +137,7 @@ impl VartaRuntime {
 
 fn memory(execution: &mut Execution, instance: &Instance) -> Result<Memory, Error> {
     instance
-        .get_memory(&mut execution.store, "memory")
+        .get_memory(&mut execution.store, varta_common::abi::MEMORY_EXPORT)
         .ok_or_else(|| Error::InvalidResult("missing ABI memory".into()))
 }
 fn transfer(execution: &mut Execution, instance: &Instance, input: &str) -> Result<i64, Error> {

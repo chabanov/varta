@@ -226,6 +226,75 @@ fn limits() -> String {
     )
 }
 
+/// Limits derived from several constants or enforced outside `abi`.
+fn derived_limits() -> String {
+    let mib = |bytes: usize| format!("{} MiB", bytes / (1024 * 1024));
+    let kib = |bytes: usize| format!("{} KiB", bytes / 1024);
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "Managed string/record/array storage",
+            format!(
+                "Within the {} memory budget, after the {} static page, {} host buffer and {} root stack; includes block metadata",
+                mib(abi::MAX_MEMORY_BYTES),
+                kib(abi::RESULT_BASE),
+                mib(abi::MAX_RESULT_BYTES),
+                kib(abi::STRING_ROOT_BYTES)
+            ),
+            "`abi::RESULT_BASE`, `abi::MAX_RESULT_BYTES`, `abi::STRING_ROOT_BYTES`, `abi::MAX_MEMORY_BYTES`",
+        ),
+        (
+            "Reference roots",
+            format!(
+                "{} handle slots across active frames and temporaries",
+                abi::STRING_ROOT_BYTES / abi::STRING_ROOT_SLOT_BYTES
+            ),
+            "`abi::STRING_ROOT_BYTES` / `abi::STRING_ROOT_SLOT_BYTES`",
+        ),
+        (
+            "JSON serialization",
+            format!(
+                "{} encoded, depth {}, {} visited values per call",
+                mib(abi::MAX_RESULT_BYTES),
+                value::MAX_JSON_DEPTH,
+                value::MAX_JSON_NODES
+            ),
+            "`abi::MAX_RESULT_BYTES`, `value::MAX_JSON_*`",
+        ),
+        (
+            "Checked JSON parsing",
+            format!(
+                "{} encoded input, depth {}, {} values; schemas at most {} in the shared static pool (type counts above)",
+                kib(abi::MAX_INPUT_BYTES),
+                value::MAX_JSON_DEPTH,
+                value::MAX_JSON_NODES,
+                kib(json::MAX_SCHEMA_BYTES)
+            ),
+            "`abi::MAX_INPUT_BYTES`, `value::MAX_JSON_*`, `json::MAX_SCHEMA_BYTES`",
+        ),
+        (
+            "`net_get`/`net_fetch` response head",
+            kib(varta_common::net::MAX_FETCH_HEADER_BYTES),
+            "`net::MAX_FETCH_HEADER_BYTES`",
+        ),
+        (
+            "Manifest, host policy, decision file or project configuration",
+            kib(varta_common::MAX_MANIFEST_BYTES),
+            "`MAX_MANIFEST_BYTES`",
+        ),
+        (
+            "Function parameters",
+            "Each captured `VartaResult` uses two physical parameters".to_owned(),
+            "`abi::MAX_WASM_PARAMETERS`",
+        ),
+    ];
+    table(
+        &["Resource", "Default limit", "Source constants"],
+        rows.into_iter().map(|(resource, limit, constant)| {
+            vec![resource.to_owned(), limit, constant.to_owned()]
+        }),
+    )
+}
+
 /// Structural program limits per profile family, from `varta_common::limits`.
 fn program_limits() -> String {
     fn count(n: usize) -> String {
@@ -362,6 +431,7 @@ fn architecture_version_matrix_matches_registries() {
 fn architecture_limits_match_constants() {
     assert_block("docs/architecture.md", "limits", &limits());
     assert_block("docs/architecture.md", "program-limits", &program_limits());
+    assert_block("docs/architecture.md", "derived-limits", &derived_limits());
 }
 
 #[test]

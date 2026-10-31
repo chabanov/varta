@@ -727,14 +727,21 @@ pub(crate) fn versionstamp_text(versionstamp: &denokv_proto::Versionstamp) -> St
         .collect()
 }
 
+/// Hexadecimal digits of one versionstamp byte, and their radix.
+const HEX_DIGITS_PER_BYTE: usize = 2;
+const HEX_RADIX: u32 = 16;
+/// The digits of a versionstamp text: 20 for Deno's ten-byte versionstamp.
+const VERSIONSTAMP_DIGITS: usize = HEX_DIGITS_PER_BYTE * size_of::<denokv_proto::Versionstamp>();
+
 /// A versionstamp text Deno accepts in a check: exactly 20 hex digits.
 pub(crate) fn parse_versionstamp(text: &str) -> Option<denokv_proto::Versionstamp> {
-    if text.len() != 20 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if text.len() != VERSIONSTAMP_DIGITS || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let mut versionstamp = [0; 10];
+    let mut versionstamp = denokv_proto::Versionstamp::default();
     for (index, byte) in versionstamp.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&text[2 * index..2 * index + 2], 16).ok()?;
+        let digits = HEX_DIGITS_PER_BYTE * index..HEX_DIGITS_PER_BYTE * (index + 1);
+        *byte = u8::from_str_radix(&text[digits], HEX_RADIX).ok()?;
     }
     Some(versionstamp)
 }

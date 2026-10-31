@@ -14,6 +14,8 @@ use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE};
 /// Tokens of one property value (placeholder budget, like the `DRAFT_*`
 /// limits): every subset grammar needs far fewer.
 pub const MAX_VALUE_TOKENS: usize = 128;
+/// Hexadecimal digits a `<hex>` colour admits: `#rgb`, `#rrggbb`, `#rrggbbaa`.
+pub const HEX_COLOR_DIGITS: [usize; 3] = [3, 6, 8];
 
 #[derive(Debug, Clone, PartialEq)]
 enum G {
@@ -268,7 +270,7 @@ fn composite(name: &str) -> Option<&'static str> {
 fn leaf(name: &str, token: &V) -> bool {
     let V::Word(word) = token else {
         return match (name, token) {
-            ("<hex>", V::Hash(hex)) => matches!(hex.len(), 3 | 6 | 8),
+            ("<hex>", V::Hash(hex)) => HEX_COLOR_DIGITS.contains(&hex.len()),
             ("<string>", V::Str) => true,
             _ => false,
         };

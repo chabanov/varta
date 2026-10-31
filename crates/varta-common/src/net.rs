@@ -36,6 +36,9 @@ pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 pub const MAX_RESPONSE_BODY_BYTES: usize = crate::abi::MAX_STRING_BYTES / 2;
 /// Bytes of a request URL, as for the earlier network operations.
 pub const MAX_URL_BYTES: usize = 8192;
+/// Bytes of the response head `net_get` and `net_fetch` accept (a larger
+/// head is an I/O failure): the host input limit.
+pub const MAX_FETCH_HEADER_BYTES: usize = crate::abi::MAX_INPUT_BYTES;
 /// Methods of one `net.request` grant.
 pub const MAX_GRANT_METHODS: usize = 16;
 /// Methods `fetch` rejects (WHATWG "forbidden method"), never grantable.

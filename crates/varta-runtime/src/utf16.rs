@@ -17,7 +17,7 @@ fn read(
     // V38 fair fuel: the argument's bytes (a negative length is rejected
     // below).
     crate::fair_fuel::bytes(caller, usize::try_from(len).unwrap_or(0))?;
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(wasmtime::Error::msg("missing memory"));
     };
     // The host copies: the result transfer needs the caller mutably.
@@ -27,7 +27,7 @@ fn read(
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::LogString16.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
             caller.data_mut().tick()?;
@@ -40,7 +40,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::StringCharAt16.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32, position: f64| {
             caller.data_mut().tick()?;
@@ -50,7 +50,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         },
     )?;
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         Host::StringCharCodeAt16.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32, position: f64| {
             caller.data_mut().tick()?;
@@ -63,7 +63,7 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         (Host::StringToLowerCase16, false),
     ] {
         linker.func_wrap(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             operation.name(),
             move |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
                 caller.data_mut().tick()?;

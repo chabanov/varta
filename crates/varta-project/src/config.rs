@@ -75,7 +75,7 @@ impl VartaConfig {
                 "entry and out must not be empty".into(),
             ));
         }
-        if !matches!(self.target.as_str(), "wasm" | "native") {
+        if !varta_common::MANIFEST_TARGETS.contains(&self.target.as_str()) {
             return Err(VartaError::InvalidManifest(format!(
                 "unsupported target: {}",
                 self.target

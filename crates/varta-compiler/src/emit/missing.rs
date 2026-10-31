@@ -1,5 +1,7 @@
 use super::*;
 use varta_common::value as values;
+/// Bytes of one insertion-order word of an optional-field record.
+const ORDER_WORD_BYTES: i32 = size_of::<u32>() as i32;
 impl Emitter<'_> {
     pub(super) fn record_delete(
         &mut self,
@@ -51,7 +53,7 @@ impl Emitter<'_> {
             I::BrIf(1),
             I::LocalGet(self.temporary),
             I::LocalGet(scan),
-            I::I32Const(4),
+            I::I32Const(ORDER_WORD_BYTES),
             I::I32Mul,
             I::I32Add,
             I::I32Load(wasm_encoder::MemArg {
@@ -63,12 +65,12 @@ impl Emitter<'_> {
             I::If(BlockType::Empty),
             I::LocalGet(self.temporary),
             I::LocalGet(write),
-            I::I32Const(4),
+            I::I32Const(ORDER_WORD_BYTES),
             I::I32Mul,
             I::I32Add,
             I::LocalGet(self.temporary),
             I::LocalGet(scan),
-            I::I32Const(4),
+            I::I32Const(ORDER_WORD_BYTES),
             I::I32Mul,
             I::I32Add,
             I::I32Load(wasm_encoder::MemArg {
@@ -93,7 +95,7 @@ impl Emitter<'_> {
             I::End,
             I::LocalGet(self.temporary),
             I::LocalGet(write),
-            I::I32Const(4),
+            I::I32Const(ORDER_WORD_BYTES),
             I::I32Mul,
             I::I32Add,
             I::I32Const(0),
@@ -160,7 +162,7 @@ impl Emitter<'_> {
         ]);
         self.present_count(&[I::LocalGet(self.temporary)], count);
         self.code.extend([
-            I::I32Const(4),
+            I::I32Const(ORDER_WORD_BYTES),
             I::I32Mul,
             I::I32Add,
             I::I32Const(slot as i32),

@@ -4,7 +4,7 @@ use flow_calls::{Impact, callbacks};
 use std::collections::BTreeSet;
 impl Lower<'_> {
     fn ast_callback(&self, expression: &ast::Expr, depth: usize, expand_literals: bool) -> Impact {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return Impact::unknown();
         }
         match stmt::unparen(expression) {
@@ -134,7 +134,7 @@ impl Lower<'_> {
         depth: usize,
         expand_literals: bool,
     ) -> Impact {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return Impact::unknown();
         }
         if super::flow::native(call, self) {

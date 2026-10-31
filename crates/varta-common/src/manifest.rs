@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 
 const SCHEMA_VERSION: u32 = 1;
 pub const STRICT_POLICY: &str = "strict";
+/// The `target` values a manifest or project configuration may name.
+pub const MANIFEST_TARGETS: [&str; 2] = ["wasm", "native"];
+/// The largest manifest, host policy, decision file or project
+/// configuration a reader accepts (bytes).
+pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 fn default_policy() -> String {
     STRICT_POLICY.into()
 }
@@ -211,7 +216,7 @@ impl Manifest {
     }
 
     pub fn grants(&self) -> Result<Vec<CapabilityGrant>> {
-        if self.capabilities.len() > 128 {
+        if self.capabilities.len() > crate::MAX_POLICY_GRANTS {
             return Err(VartaError::InvalidManifest(
                 "too many capability grants".into(),
             ));
@@ -222,7 +227,7 @@ impl Manifest {
             || self
                 .target
                 .as_ref()
-                .is_some_and(|t| !matches!(t.as_str(), "wasm" | "native"))
+                .is_some_and(|t| !MANIFEST_TARGETS.contains(&t.as_str()))
         {
             return Err(VartaError::InvalidManifest(
                 "unsupported manifest version, ABI, policy or target".into(),

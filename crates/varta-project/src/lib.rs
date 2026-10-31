@@ -319,7 +319,11 @@ pub fn validate(artifact: &Artifact) -> Result<()> {
             )));
         }
     }
-    if module.http_service.is_some() && !grants.iter().any(|g| g.id == "net.listen") {
+    if module.http_service.is_some()
+        && !grants
+            .iter()
+            .any(|g| g.id == varta_common::http::LISTEN_CAPABILITY)
+    {
         return Err(ProjectError::Artifact(
             "HTTP service requires a net.listen declaration".into(),
         ));

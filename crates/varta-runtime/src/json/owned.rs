@@ -20,7 +20,7 @@ const OUTPUT_LIMIT: usize = abi::MAX_MEMORY_BYTES;
 
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         varta_common::HostOperation::JsonStringifyOwned.name(),
         |mut caller: Caller<'_, RuntimeContext>,
          kind: i32,
@@ -28,7 +28,8 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
          hi: i32|
          -> Result<(i64, i32), wasmtime::Error> {
             caller.data_mut().tick()?;
-            let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+            let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT)
+            else {
                 return Err(error("missing memory"));
             };
             let packed = ((hi as u32 as u64) << i32::BITS) | (lo as u32 as u64);

@@ -3,8 +3,12 @@ use super::*;
 use varta_common::value::ValueKind;
 impl Emitter<'_> {
     fn boolean_string(&mut self) {
-        self.code
-            .extend([I::I64Const(32), I::I64ShrU, I::I64Eqz, I::I32Eqz]);
+        self.code.extend([
+            I::I64Const(i64::from(strings::LENGTH_SHIFT)),
+            I::I64ShrU,
+            I::I64Eqz,
+            I::I32Eqz,
+        ]);
     }
     pub(super) fn boolean_conversion(&mut self, value: &Expr) -> Result<()> {
         self.expr(value)?;

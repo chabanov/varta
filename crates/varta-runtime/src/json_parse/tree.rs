@@ -11,6 +11,9 @@ use super::*;
 use heap::Writer;
 use varta_common::{json::JsonValue, limits::DataLimits};
 
+/// The array meta words: the element kind, then the length.
+const META_WORD_BYTES: usize = size_of::<u32>();
+
 /// Where a built payload goes: the retained root, or a slot of a published
 /// container.
 #[derive(Clone, Copy)]
@@ -137,8 +140,8 @@ fn vector(
     let capacity = array_capacity(count);
     let bitmap = ARRAY_META_BYTES + capacity * ARRAY_SLOT_BYTES;
     let mut data = vec![0; bitmap + DataLimits::sparse_bitmap_bytes(capacity)];
-    data[..4].copy_from_slice(&(kind as u32).to_le_bytes());
-    data[4..8].copy_from_slice(&length.to_le_bytes());
+    data[..META_WORD_BYTES].copy_from_slice(&(kind as u32).to_le_bytes());
+    data[META_WORD_BYTES..ARRAY_META_BYTES].copy_from_slice(&length.to_le_bytes());
     for index in 0..count {
         data[bitmap + index / u8::BITS as usize] |= 1 << (index % u8::BITS as usize);
     }

@@ -269,7 +269,7 @@ impl Turns {
 
 fn memory_bytes(instance: Option<&Instance>, store: &mut Store<RuntimeContext>) -> usize {
     instance
-        .and_then(|instance| instance.get_memory(&mut *store, "memory"))
+        .and_then(|instance| instance.get_memory(&mut *store, varta_common::abi::MEMORY_EXPORT))
         .map_or(0, |memory| memory.data_size(&*store))
 }
 

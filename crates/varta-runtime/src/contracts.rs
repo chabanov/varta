@@ -188,7 +188,7 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
     Ok(Some(catalog))
 }
 fn bounded_memory(module: &Module, values: bool) -> Result<(), RuntimeError> {
-    match module.get_export("memory") {
+    match module.get_export(varta_common::abi::MEMORY_EXPORT) {
         Some(ExternType::Memory(memory))
             if !memory.is_64()
                 && !memory.is_shared()

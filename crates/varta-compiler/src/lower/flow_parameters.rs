@@ -19,7 +19,7 @@ impl Lower<'_> {
         }
     }
     pub(super) fn parameter_value(&self, value: &Expr, depth: usize) -> Option<(usize, u32)> {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return None;
         }
         match &value.kind {

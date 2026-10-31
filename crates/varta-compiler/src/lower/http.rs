@@ -196,7 +196,7 @@ pub(super) fn collect(
                     ));
                 }
                 let mut effects = tools::function_effects(handler.index, functions);
-                effects.insert("net.listen".into());
+                effects.insert(varta_common::http::LISTEN_CAPABILITY.into());
                 let contract = HttpContract {
                     version: varta_common::http::VERSION,
                     bind: addr.to_string(),

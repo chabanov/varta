@@ -71,7 +71,8 @@ formatting, BigInt) are not specified here at the bit level; see
   smallest valid ceiling is `{"capabilities":[]}` (deny everything). Its
   `abiVersion`, when present, must be a supported host ABI but is **not** compared
   with the module's; `entry` and `target` are ignored metadata; the reference CLI
-  reads at most 256 KiB. A missing, unreadable or malformed ceiling is an error,
+  reads at most the manifest bytes of the [limits table](#manifest-limits). A
+  missing, unreadable or malformed ceiling is an error,
   never a fallback to the package's grants. Under v38 it is also the only source
   of the [file-root mapping](#file-roots-v38) for a packaged application.
 
@@ -98,7 +99,7 @@ engine payloads from package input.
 | `abiVersion` | Optional, default 1; must be a supported host ABI. In a package manifest it must **equal the module's host ABI**: the `varta.abi` value, or 1 when the module has no `varta.abi` section (legacy and unspecified generic Wasm). A missing sidecar is synthesized with the module's host ABI and no grants |
 | `policy` | Optional, default `"strict"`; must be `"strict"` |
 | `entry` | Optional string, metadata only |
-| `target` | Optional; `"wasm"` or `"native"` |
+| `target` | Optional; one of the `target` values of the [limits table](#manifest-limits) |
 | `capabilities` | Required array of grants (`[]` denies everything) |
 | `budgets` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, each an integer in its accepted range of the [budget table](#manifest-limits); in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
 | grant `required` | Optional boolean, default `true`; requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
@@ -122,13 +123,15 @@ one grant kind:
 | Listen endpoints | `"patterns": ["127.0.0.1:8080"]` | `net.listen` |
 <!-- generated:embedding-grant-kinds:end -->
 
-Policy complexity is capped at 128 grants and 256 patterns in total, and at most
-64 patterns per grant. Empty lists and `false` are explicit denials; an omitted id
-denies. A pattern is **unsafe**, and the whole manifest is rejected, when:
+Policy complexity is capped by the grant and pattern counts of the
+[limits table](#manifest-limits): grants per policy, patterns (listen endpoints
+and request URLs included) across all grants, and patterns per grant. Empty
+lists and `false` are explicit denials; an omitted id denies. A pattern is
+**unsafe**, and the whole manifest is rejected, when:
 
 | Grant kind | Unsafe pattern |
 | --- | --- |
-| Names, paths and URLs | Longer than 512 bytes; empty or only whitespace; only `*` and `?` characters; contains NUL |
+| Names, paths and URLs | Longer than the pattern bytes of the [limits table](#manifest-limits); empty or only whitespace; only `*` and `?` characters; contains NUL |
 | `fs.*` paths (additionally) | Not absolute, or contains a `..` component |
 | `fs.*` paths of a package whose `abiVersion` admits `fsRoots` (additionally) | The first component is not a literal root named by the package's `fsRoots`; contains `\`, a control character, or an empty or `.` component |
 | Request methods | Not an RFC 9110 token; a method never grantable, in any case; a method a grant must spell in uppercase, spelled in any other case; a duplicate; more methods than one `net.request` grant admits (the three lists and the count are in the [limits table](#manifest-limits)) |
@@ -137,7 +140,8 @@ denies. A pattern is **unsafe**, and the whole manifest is rejected, when:
 
 #### Manifest limits
 
-A host validates a package manifest and a host ceiling with the values below.
+A host validates a package manifest and a host ceiling with the values below;
+the guest-input rows bound operation arguments before any matching.
 Each `budgets` member, in a request or a ceiling, is an integer in its accepted
 range. The effective budget of a v38 run is the request (the default when
 omitted) capped by the ceiling's value, or by the default when no ceiling is
@@ -163,6 +167,13 @@ includes line breaks and tabs).
 <!-- generated:embedding-manifest-limits:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
 | Limit | Value | Source constant |
 | --- | --- | --- |
+| Grants in one manifest or host policy | 128 | `MAX_POLICY_GRANTS` |
+| Patterns, listen endpoints and request URLs across all grants | 256 | `MAX_POLICY_PATTERNS` |
+| Patterns, listen endpoints or request URLs in one grant | 64 | `MAX_GRANT_PATTERNS` |
+| Name, path or URL pattern (bytes) | 512 | `MAX_PATTERN_BYTES` |
+| Pattern bytes × input bytes of one comparison (more fails closed) | 65536 | `MAX_PATTERN_MATCH_WORK` |
+| `target` values | `wasm`, `native` | `MANIFEST_TARGETS` |
+| Manifest, host ceiling or decision file the reference CLI and launcher read (bytes) | 262144 | `MAX_MANIFEST_BYTES` |
 | `abiVersion` that admits `budgets`, grant `required` and `purpose`, and `fsRoots` | 34 or later | `abi::PROGRAM_LIMITS_VERSION` |
 | Grant `purpose` (UTF-8 bytes) | 256 | `permission::MAX_PURPOSE_BYTES` |
 | `fsRoots` entries (package names or host mappings) | 16 | `files::MAX_FILE_ROOTS` |
@@ -172,6 +183,9 @@ includes line breaks and tabs).
 | Methods never grantable (in any case) | `CONNECT`, `TRACE`, `TRACK` | `net::FORBIDDEN_METHODS` |
 | Methods a grant must spell in uppercase | `DELETE`, `GET`, `HEAD`, `OPTIONS`, `POST`, `PUT` | `NORMALIZED_METHODS` |
 | Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied) | 8192 | `net::MAX_URL_BYTES` |
+| Response head of `net_get*` and `net_fetch*` (bytes; a larger head is an I/O failure) | 65536 | `net::MAX_FETCH_HEADER_BYTES` |
+| Environment variable name of `env_*` (bytes; nonempty, a longer name is denied) | 256 | `MAX_ENV_NAME_BYTES` |
+| Absolute host path of `fs_*` before v38 (bytes; a longer path is denied) | 4096 | `MAX_HOST_PATH_BYTES` |
 <!-- generated:embedding-manifest-limits:end -->
 
 ## Module validation
@@ -181,16 +195,15 @@ reject the module on the first failure. None of these checks executes guest code
 Passing validation is not proof of provenance or authorization.
 
 1. **Size and format.** At most the declared profile's Wasm module limit
-   (`LanguageProfile::limits().wasm_bytes`: the frozen `abi::MAX_WASM_BYTES` for
-   v1–v37 and generic Wasm, the 1 GiB Wasm module limit for v38; see the
-   [program limits table](architecture.md#resource-limits)), the standard binary
-   magic and version 1. A host that bounds input before it reads the profile uses
+   (`LanguageProfile::limits().wasm_bytes`, by profile in the
+   [module limits](#module-limits); generic Wasm uses the frozen limit), the
+   standard binary magic and version 1. A host that bounds input before it reads the profile uses
    `limits::MAXIMUM.wasm_bytes` first.
 2. **Version sections.** At most one `varta.abi` section holding exactly four
    bytes, a little-endian `u32` host ABI version listed in the
    [profile table](#profiles); at most one `varta.language` section holding strict
-   JSON `{"schemaVersion":1,"profile":"<name>"}` of at most
-   `language::MAX_METADATA_BYTES`, with no unknown, missing or duplicate fields and
+   JSON `{"schemaVersion":1,"profile":"<name>"}` of at most the metadata bytes of
+   the [module limits](#module-limits), with no unknown, missing or duplicate fields and
    a listed profile. Pairing:
 
    | `varta.language` | `varta.abi` | Result |
@@ -203,12 +216,13 @@ Passing validation is not proof of provenance or authorization.
 
 3. **Structure limits.** Structural limits come from the profile's registry
    entry `LanguageProfile::limits()` (`limits::FROZEN` for v1–v37, the Wasm
-   implementation limits `limits::WASM` for v38): at most `wasm_signatures`
-   function types, each with at most `abi::MAX_WASM_PARAMETERS` parameters and 2
-   results; at most 64 imports; at most one memory, 32-bit and not shared, with
-   an initial size of at most `abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES`
-   pages (a profile that [links intrinsics](#linked-intrinsics-v38) keeps that
-   one memory); at most one table with at most 1024 initial elements; at most 128 globals;
+   implementation limits `limits::WASM` for v38) and the fixed counts of the
+   [module limits](#module-limits): at most `wasm_signatures` function types,
+   each within the parameter and result counts; at most the imports; at most
+   the memories, 32-bit and not shared, with an initial size of at most the
+   memory pages (a profile that [links intrinsics](#linked-intrinsics-v38)
+   keeps that one memory); at most the tables, each with at most the initial
+   elements; at most the globals;
    every function body at most `function_body_bytes`; at most the profile's
    **Max defined functions** from the [acceptance table](#profiles): for v1–v37
    `abi::MAX_USER_FUNCTIONS` plus its helper allowance plus
@@ -230,8 +244,8 @@ Passing validation is not proof of provenance or authorization.
    ([memory layout](#memory-layout-and-encodings)).
 4. **Memory maximum (third-party hosts).** The reference host caps growth with a
    store limiter. Hosts without one, including every JavaScript host, MUST parse
-   the memory section and reject a memory whose maximum is absent or above
-   `abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES` pages; the guest's own
+   the memory section and reject a memory whose maximum is absent or above the
+   memory pages of the [module limits](#module-limits); the guest's own
    `memory.grow` is otherwise unbounded. Varta-compiled modules always declare
    that maximum.
 5. **Imports.** Every import is a function in module `varta` whose name is in the
@@ -272,6 +286,30 @@ Passing validation is not proof of provenance or authorization.
    `http_service` import occur together or not at all. A `varta.functions`
    catalog and the `varta_resume` dispatcher follow
    [Function and frame catalogs](#function-and-frame-catalogs).
+
+### Module limits
+
+The values of the checks above. The module size is the declared profile's;
+the other rows hold for every profile.
+
+<!-- generated:embedding-module-limits:begin (checked by crates/varta-common/tests/embedding_documentation/limits.rs) -->
+| Limit | Value | Source constant |
+| --- | --- | --- |
+| Binary header (magic and version 1) | `00 61 73 6d 01 00 00 00` | `abi::WASM_HEADER` |
+| `varta.language` metadata (bytes) | 1024 | `language::MAX_METADATA_BYTES` |
+| Wasm module (bytes), `checked-i32-utf8-v1` – `checked-f64-utf16-v37` | 4194304 | `abi::MAX_WASM_BYTES` |
+| Wasm module (bytes), `checked-f64-utf16-v38` | 1073741824 | `limits::WASM` |
+| Parameters of one function type | 32 | `abi::MAX_WASM_PARAMETERS` |
+| Results of one function type | 2 | `abi::MAX_WASM_RESULTS` |
+| Imports | 64 | `abi::MAX_IMPORTS` |
+| Memories | 1 | `abi::MAX_MEMORIES` |
+| Initial and maximum memory pages | 128 | `abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES` |
+| Tables | 1 | `abi::MAX_TABLES` |
+| Initial elements of the table | 1024 | `abi::MAX_TABLE_ELEMENTS` |
+| Globals | 128 | `abi::MAX_GLOBALS` |
+| User functions, v1–v37 | 256 | `abi::MAX_USER_FUNCTIONS` |
+| HTTP adapters, v1–v37 | 1 | `abi::MAX_HTTP_HANDLERS` |
+<!-- generated:embedding-module-limits:end -->
 
 ## Profiles
 
@@ -600,11 +638,11 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | --- | --- | --- |
 | Logging | `log_i32`, `log_string`, `log_string16`, `log_f64*`, `log_undefined` | Emit one line, no capability; see [Logging](#logging) |
 | Clock | `time_now` | Requires `time.now` enabled. Unix seconds as i32; a time outside i32 is status 2 with 0 |
-| Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most 256 bytes, no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
-| Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..` rejected; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it. Under v38, paths and patterns are virtual paths under host-mapped roots ([File roots](#file-roots-v38)) |
+| Environment | `env_has*`, `env_get*`, `env_print*` | Name nonempty, at most the environment name bytes of the [limits table](#manifest-limits), no `=` or NUL, matched against `patterns` with the [pattern rules](#pattern-matching). `env_has` returns 1 if the variable is set and 0 otherwise (status 0 either way). For an allowed name whose variable is **unset** (or whose value is not valid Unicode), `env_get` returns 0 with status 3 (I/O) and `env_print` emits nothing but the diagnostic and sets status 3; a value larger than `abi::MAX_RESULT_BYTES` is status 4. `env_get` returns the value as a string result, `env_print` emits `varta env: <name>=<value>` |
+| Files | `fs_read*`, `fs_print*` | Absolute patterns; paths with `..`, or longer than the host path bytes of the [limits table](#manifest-limits), denied; opened relative to pinned granted roots with no-follow at every component; regular files only; UTF-8 content. `fs_read` returns the content, `fs_print` emits it. Under v38, paths and patterns are virtual paths under host-mapped roots ([File roots](#file-roots-v38)) |
 | KV storage (v38) | `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_key`, `kv_value`, `kv_entry`, `kv_text`, `kv_close` | Deno KV database files at virtual paths ([KV storage (v38)](#kv-storage-v38)); `kv_open`/`kv_read` need `kv.read`, `kv_commit` needs `kv.write`, decided before any effect, denials recoverable (`kv::FAILED` with `NotAllowedError` in `kv_text`; [codes](#status-and-control-codes), [limits](#kv-storage-v38)). Open, read, commit, stage and the decoders are charged to the host-call budget. A malformed descriptor or an unknown id is fatal |
-| Permissions and host events (v38) | `permission_query`, `permission_request`, `event_source_*`, `event_watch`, `event_take`, `event_text` | No capability, not charged to the host-call budget; broker states, descriptors and the one-shot answer source in [Permission broker v1](architecture.md#permission-broker-v1-turn_budgets); named sources, host tasks and ordering in [Host event sources](architecture.md#host-event-sources-turn_budgets). A malformed descriptor, id, watch or take is fatal. The instance and event interfaces are [unstable](#what-is-unstable) |
-| Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`; the URL bounded by the [limits table](#manifest-limits)); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; bounds and descriptor in [Network requests](architecture.md#network-requests-net_request) |
+| Permissions and host events (v38) | `permission_query`, `permission_request`, `event_source_*`, `event_watch`, `event_take`, `event_text` | No capability, not charged to the host-call budget; broker states, descriptors and the one-shot answer source in [Permission broker v1](architecture.md#permission-broker-v1-turn_budgets); named sources, host tasks and ordering in [Host event sources](architecture.md#host-event-sources-turn_budgets); limits in [Permissions and host events](#permissions-and-host-events-v38). A malformed descriptor, id, watch or take is fatal. The instance and event interfaces are [unstable](#what-is-unstable) |
+| Network requests (v37) | `net_request_*`, `net_body_read`, `timer_start_v2` | Asynchronous `fetch` over `net.request` (URL scopes plus an optional method list; `http`/`https`; the URL bounded by the [limits table](#manifest-limits)); decided by the permission broker before any effect, a denial is a recoverable completion (logged), never a trap; completions wake the one reaction of a scheduled frame like a timer; descriptor in [Network requests](architecture.md#network-requests-net_request), bounds in [Network request limits](#network-request-limits-v37) |
 | Network | `net_get*`, `net_fetch*` | `http:` URLs only, bounded by the [limits table](#manifest-limits); parsed and normalized before matching; no credentials, fragments, control characters, whitespace or percent-encoded paths; no redirects or proxies; bounded by the deadline. `net_get` returns the UTF-8 body; `net_fetch` returns the HTTP status (4xx/5xx are successes) or -1 |
 | Exit | `process_exit`, `process_exit_f64` | Requires `process.exit` enabled. Authorized: end the execution with the code (not the host process); no result is produced. Denied: status 1 and the guest continues. `process_exit_f64` requires a finite integral value within i32, otherwise status 2 and the guest continues |
 | HTTP | `http_service`, `http_stop` | Feature marker and owned shutdown of [HTTP service v1](architecture.md#http-service-v1) |
@@ -649,7 +687,8 @@ Logging never resets `result_status`, and display text never authorizes anything
 Patterns are matched per Unicode scalar value. `*` matches any run of characters;
 for filesystem ids it does not cross `/`, and `**` does. `?` matches one character
 (not `/` for filesystem ids). Every other character matches itself. A comparison
-fails closed when pattern bytes × input bytes exceeds 65,536. URL patterns allow
+fails closed when pattern bytes × input bytes exceeds the comparison bound of
+the [limits table](#manifest-limits). URL patterns allow
 wildcards only after the authority; scheme, normalized host and effective port
 must match exactly, and `?` keeps its query-separator meaning there. Listen
 endpoints are canonical `IP:port` strings matched exactly.
@@ -765,6 +804,57 @@ row says fatal.
 <!-- generated:embedding-kv-limits:end -->
 
 The KV interface is [unstable](#what-is-unstable) until the batch closes.
+
+### Network request limits (v37)
+
+A host that implements `net_request_*` enforces the bounds below; the
+descriptor and completion records are in
+[Network requests](architecture.md#network-requests-net_request). The request
+URL is bounded by the [limits table](#manifest-limits).
+
+<!-- generated:embedding-net-limits:begin (checked by crates/varta-common/tests/embedding_documentation/limits.rs) -->
+| Limit | Value | Source constant |
+| --- | --- | --- |
+| Requests holding a runtime slot at once | 8 | `net::MAX_PENDING_REQUESTS` |
+| Request descriptor, body included (UTF-16 bytes) | 262144 | `net::MAX_REQUEST_BYTES` |
+| Request header fields | 64 | `net::MAX_REQUEST_HEADERS` |
+| Request header name and value bytes | 16384 | `net::MAX_REQUEST_HEADER_BYTES` |
+| Response header fields | 100 | `net::MAX_RESPONSE_HEADERS` |
+| Response header name and value bytes | 65536 | `net::MAX_RESPONSE_HEADER_BYTES` |
+| Body bytes of one `net_body_read` completion | 65536 | `net::MAX_CHUNK_BYTES` |
+| Body bytes of one response | 524288 | `net::MAX_RESPONSE_BODY_BYTES` |
+| First descriptor line: `net_request_start` / `net_request_start_v2` | `varta-net-request-1` / `varta-net-request-2` | `net::DESCRIPTOR_VERSION`, `net::DESCRIPTOR_VERSION_BYTES` |
+<!-- generated:embedding-net-limits:end -->
+
+### Permissions and host events (v38)
+
+The permission broker and the host event queue of a long-lived instance
+enforce the limits below ([Permission broker v1](architecture.md#permission-broker-v1-turn_budgets),
+[Host event sources](architecture.md#host-event-sources-turn_budgets)). Both
+interfaces are [unstable](#what-is-unstable).
+
+<!-- generated:embedding-permission-limits:begin (checked by crates/varta-common/tests/embedding_documentation/limits.rs) -->
+| Limit | Value | Source constant |
+| --- | --- | --- |
+| Descriptor (UTF-16 bytes) | 16384 | `permission::MAX_DESCRIPTOR_BYTES` |
+| Descriptor fields (version, name, resource flag, resource) | 4 | `permission::DESCRIPTOR_FIELDS` |
+| First descriptor line | `varta-permission-1` | `permission::DESCRIPTOR_VERSION` |
+| Prompts open at once per instance | 1 | `permission::MAX_OPEN_PROMPTS` |
+| Dismissals of one grant before a stored denial | 3 | `permission::MAX_DISMISSALS` |
+| Audit entries kept per instance (older are dropped and counted) | 256 | `permission::MAX_AUDIT_ENTRIES` |
+| Resource bytes kept per audit entry | 512 | `permission::MAX_AUDIT_RESOURCE_BYTES` |
+| Applications in one decision file | 64 | `permission::MAX_DECISION_APPLICATIONS` |
+| Decisions per application | 128 | `permission::MAX_DECISIONS_PER_APPLICATION` |
+<!-- generated:embedding-permission-limits:end -->
+
+<!-- generated:embedding-event-limits:begin (checked by crates/varta-common/tests/embedding_documentation/limits.rs) -->
+| Limit | Value | Source constant |
+| --- | --- | --- |
+| Sources open at once per instance (named sources and pending permission answers) | 32 | `events::MAX_EVENT_SOURCES` |
+| Host tasks queued at once per instance | 256 | `events::MAX_PENDING_HOST_TASKS` |
+| Event record (UTF-8 bytes) | 65536 | `events::MAX_EVENT_RECORD_BYTES` |
+| Source name (bytes) | 64 | `events::MAX_EVENT_NAME_BYTES` |
+<!-- generated:embedding-event-limits:end -->
 
 ### Host operation table
 
@@ -1187,12 +1277,12 @@ never retains a guest reference.
   returns a new tracking id (1, 2, …); `promise_handled(id)` withdraws it. The host
   MAY render the boxed `reason` for its diagnostic (unstable layout).
 - **Bounds.** A token is *held* from `scheduler_enqueue` or `promise_react` until
-  the host takes it from the queue. At most
-  `scheduler::MAX_PENDING_CONTINUATIONS` tokens are held at once, **counting queued
+  the host takes it from the queue. At most the held tokens of the
+  [scheduler limits](#scheduler-limits) are held at once, **counting queued
   tokens and tokens registered as reactions together**; registering one more is
-  fatal. At most `scheduler::MAX_EXECUTION_JOBS` tokens are taken from the queue
-  per execution (taking one more is fatal). Serials and tracking ids are separate
-  counters, each at most `scheduler::MAX_PROMISE_SERIALS` per execution.
+  fatal. At most the taken tokens of that table are taken from the queue per
+  execution (taking one more is fatal). Serials and tracking ids are separate
+  counters, each at most the promise serials of that table per execution.
 - Holding a token that is already held, a serial or id that is not an integer in
   range or was not issued, settling a serial twice, reacting to a settled serial
   and withdrawing an id twice are fatal errors. Fatal scheduler errors are never
@@ -1205,6 +1295,25 @@ must be the `Suspended` or `Returned` outcome code; then the exception channel m
 be empty. When the queue is empty, any outstanding unhandled rejection fails the
 execution. Scheduler imports are not charged to the host-call budget but still
 observe the deadline.
+
+#### Scheduler limits
+
+The held-token and timer bounds are the declared profile's data limits
+(`LanguageProfile::data()`); the other rows hold for every scheduler profile.
+
+<!-- generated:embedding-scheduler-limits:begin (checked by crates/varta-common/tests/embedding_documentation/limits.rs) -->
+| Limit | Value | Source constant |
+| --- | --- | --- |
+| Tokens held at once (queued and registered), `checked-f64-utf16-v34` – `checked-f64-utf16-v37` | 64 | `scheduler::MAX_PENDING_CONTINUATIONS` |
+| Tokens held at once (queued and registered), `checked-f64-utf16-v38` | 131072 | `limits::V38_MAX_PENDING_CONTINUATIONS` |
+| Timers armed or awaiting their take at once, `checked-f64-utf16-v36` – `checked-f64-utf16-v37` | 32 | `scheduler::MAX_PENDING_TIMERS` |
+| Timers armed or awaiting their take at once, `checked-f64-utf16-v38` | 65536 | `limits::V38_MAX_PENDING_TIMERS` |
+| Tokens taken from the queue per execution (v38: per turn) | 65536 | `scheduler::MAX_EXECUTION_JOBS` |
+| Promise serials, and separately tracking ids and timer ids, per execution | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
+| Unhandled-rejection reasons kept | 16 | `scheduler::MAX_RETAINED_REJECTION_REASONS` |
+| UTF-16 units per rendered reason field | 256 | `scheduler::MAX_REJECTION_REASON_UNITS` |
+| Bytes per rendered reason | 2048 | `scheduler::MAX_REJECTION_REASON_BYTES` |
+<!-- generated:embedding-scheduler-limits:end -->
 
 ### Timers
 
@@ -1221,7 +1330,6 @@ fatal scheduler error.
 | `timer_start` flag: interval | 1 | `scheduler::TIMER_INTERVAL` |
 | `timer_start` flag: unref | 2 | `scheduler::TIMER_UNREF` |
 | Delay range in ms (others become the minimum) | 1 to 2147483647 | `scheduler::TIMER_MIN_DELAY_MS`, `scheduler::TIMER_MAX_DELAY_MS` |
-| Timers armed or awaiting their take at once | 32 | `scheduler::MAX_PENDING_TIMERS` |
 | Denied `timer_start` (fatal) diagnostic | `<capability denied: time.timer> (setTimeout and setInterval require an exact time.timer grant)` | `scheduler::SchedulerError::TimerDenied` |
 <!-- generated:embedding-timers:end -->
 
@@ -1229,10 +1337,10 @@ fatal scheduler error.
   requires an exact `time.timer` grant (boolean, package and ceiling); a denial is
   **fatal**, not a status. `flags` may contain only the interval and unref bits.
   `serial` must be an issued serial of a pending promise that has **exactly one**
-  registered reaction (the timer frame) and no timer yet. At most
-  `scheduler::MAX_PENDING_TIMERS` timers may exist at once (armed or fired but not
-  yet taken); ids are 1, 2, … per execution, at most
-  `scheduler::MAX_PROMISE_SERIALS`. The delay is normalized as in Node: a value
+  registered reaction (the timer frame) and no timer yet. At most the pending
+  timers of the [scheduler limits](#scheduler-limits) may exist at once (armed or
+  fired but not yet taken); ids are 1, 2, … per execution, at most the promise
+  serials of that table. The delay is normalized as in Node: a value
   that is not a number from the minimum to the maximum delay (NaN, zero, negative,
   too large) becomes the minimum; fractions are kept. The timer is armed with due
   time = loop time + delay and the next value of a per-execution sequence counter.
@@ -1268,9 +1376,10 @@ fatal scheduler error.
   That token is *held* in the sense of the [microtask bounds](#microtask-checkpoint):
   while registered as the reaction and while queued after a firing or a clear, until
   the host takes it from the queue. So each pending timer accounts for exactly one
-  held token against `scheduler::MAX_PENDING_CONTINUATIONS`, and an interval frame
-  holds a new one each time it registers again. `scheduler::MAX_PENDING_TIMERS`
-  separately bounds the timers themselves.
+  held token against the held-token bound of the
+  [scheduler limits](#scheduler-limits), and an interval frame holds a new one
+  each time it registers again. The timer bound of that table separately bounds
+  the timers themselves.
 - **Interval due again before the previous firing was taken.** Firings
   **coalesce**: a firing marks the timer fired and wakes whatever reaction is
   registered at that moment; if the frame has not registered again yet, the firing
@@ -1810,6 +1919,8 @@ values:
 | Placeholder: live nodes / listeners | 65536 / 8192 |
 | Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
 | Placeholder: pending `copy_text` requests | 16 |
+| Placeholder: tokens of one CSS property value | 128 |
+| `id` / `for` ident characters | 64 |
 | Key filter: any key | key code 0 |
 | Key filter: modifier mask | 15 (shift, ctrl, alt, meta event flags) |
 | `listen` option `preventDefault` | bit value 1 |

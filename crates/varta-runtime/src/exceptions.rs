@@ -49,7 +49,7 @@ pub(crate) fn validate(
             }
         }
     }
-    match module.get_export("memory") {
+    match module.get_export(varta_common::abi::MEMORY_EXPORT) {
         Some(ExternType::Memory(m))
             if !m.is_64()
                 && !m.is_shared()
@@ -99,7 +99,7 @@ pub(crate) fn initial(
         .get_global(&mut *store, abi::VALUE)
         .and_then(|g| g.get(&mut *store).i64());
     let memory = instance
-        .get_memory(&mut *store, "memory")
+        .get_memory(&mut *store, varta_common::abi::MEMORY_EXPORT)
         .ok_or_else(|| wasmtime::Error::new(ValueAbiError("missing exception memory".into())))?;
     let root = memory
         .data(&*store)
@@ -130,7 +130,7 @@ pub(crate) fn finish(
         .i64()
         .ok_or_else(|| invalid("invalid exception value"))? as u64;
     let memory = instance
-        .get_memory(&mut *store, "memory")
+        .get_memory(&mut *store, varta_common::abi::MEMORY_EXPORT)
         .ok_or_else(|| invalid("missing exception memory"))?;
     let channel = Channel::detect(|name| instance.get_global(&mut *store, name).is_some())
         .in_module(store.data().module);

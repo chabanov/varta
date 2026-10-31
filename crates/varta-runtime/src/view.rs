@@ -120,7 +120,7 @@ fn fatal(error: ViewError) -> wasmtime::Error {
 
 pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::ViewCommit.name(),
         |mut caller: Caller<'_, RuntimeContext>,
          ptr: i32,
@@ -179,7 +179,7 @@ fn batch(
     if length > view::DRAFT_MAX_BATCH_BYTES {
         return Err(invalid(varta_view::Violation::BatchTooLarge));
     }
-    let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
+    let Some(Extern::Memory(memory)) = caller.get_export(varta_common::abi::MEMORY_EXPORT) else {
         return Err(wasmtime::Error::msg(
             "view_commit requires an exported memory",
         ));
@@ -233,7 +233,7 @@ pub(crate) fn deliver(
     };
     let export = export.typed::<i32, ()>(&*store)?;
     let memory = instance
-        .get_memory(&mut *store, "memory")
+        .get_memory(&mut *store, varta_common::abi::MEMORY_EXPORT)
         .ok_or_else(|| wasmtime::Error::msg("view events require an exported memory"))?;
     let desired = abi::RESULT_BASE + record.len();
     if desired > memory.data_size(&*store) {

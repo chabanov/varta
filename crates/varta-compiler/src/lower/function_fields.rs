@@ -142,7 +142,7 @@ impl Lower<'_> {
     /// without lowering it, so a call can select field dispatch before the
     /// builtin method names.
     pub(super) fn peek_type(&self, expression: &ast::Expr, depth: usize) -> Option<Type> {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return None;
         }
         match stmt::unparen(expression) {

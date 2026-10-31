@@ -9,7 +9,7 @@ fn format(value: f64, radix: f64) -> Result<String, wasmtime::Error> {
 }
 pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(
-        "varta",
+        varta_common::abi::HOST_MODULE,
         HostOperation::NumberToString.name(),
         |mut caller: Caller<'_, RuntimeContext>,
          value: f64,

@@ -24,8 +24,11 @@ impl Lower<'_> {
             ));
         }
         self.depth += 1;
-        if self.depth > 64 {
-            return Err(invalid("nesting exceeds 64 scopes"));
+        if self.depth > super::MAX_NESTING {
+            return Err(invalid(format!(
+                "nesting exceeds {} scopes",
+                super::MAX_NESTING
+            )));
         }
         let id = self.next_label;
         self.next_label = id

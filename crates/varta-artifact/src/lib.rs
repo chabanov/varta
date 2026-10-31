@@ -12,8 +12,22 @@ mod frames;
 
 const MAGIC: &[u8; 8] = b"VARTA3\0\0";
 const FORMAT_VERSION: u32 = 1;
-const FOOTER_BYTES: usize = 32;
-pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
+/// The footer's reserved word, zero in format version 1.
+const RESERVED: u32 = 0;
+/// Footer fields in order: the little-endian `u64` Wasm and manifest
+/// lengths, the `u32` format version, the reserved `u32`, then the magic.
+const LENGTH_BYTES: usize = size_of::<u64>();
+const WORD_BYTES: usize = size_of::<u32>();
+const WASM_LEN_AT: usize = 0;
+const MANIFEST_LEN_AT: usize = WASM_LEN_AT + LENGTH_BYTES;
+const VERSION_AT: usize = MANIFEST_LEN_AT + LENGTH_BYTES;
+const RESERVED_AT: usize = VERSION_AT + WORD_BYTES;
+const MAGIC_AT: usize = RESERVED_AT + WORD_BYTES;
+const FOOTER_BYTES: usize = MAGIC_AT + MAGIC.len();
+/// Permissions of a written executable (`rwxr-xr-x`).
+#[cfg(unix)]
+const EXECUTABLE_MODE: u32 = 0o755;
+pub use varta_common::MAX_MANIFEST_BYTES;
 /// Payloads are read within the largest module limit of any profile (v38:
 /// the Wasm module-size limit); validation then applies the declared
 /// profile's own limit.
@@ -39,9 +53,9 @@ impl Artifact {
             return Err(invalid("expected a regular file"));
         }
         let size = metadata.len();
-        let mut head = [0u8; 8];
+        let mut head = [0u8; abi::WASM_HEADER.len()];
         file.read_exact(&mut head)?;
-        if head == *b"\0asm\x01\0\0\0" {
+        if head == *abi::WASM_HEADER {
             file.seek(SeekFrom::Start(0))?;
             let mut wasm = Vec::new();
             (&mut file)
@@ -80,7 +94,7 @@ impl Artifact {
             return Ok(None);
         }
         file.seek(SeekFrom::End(-(MAGIC.len() as i64)))?;
-        let mut magic = [0; 8];
+        let mut magic = [0; MAGIC.len()];
         file.read_exact(&mut magic)?;
         if &magic != MAGIC {
             return Ok(None);
@@ -94,16 +108,16 @@ impl Artifact {
         file.seek(SeekFrom::Start(footer_start))?;
         let mut footer = [0u8; FOOTER_BYTES];
         file.read_exact(&mut footer)?;
-        if &footer[24..] != MAGIC
-            || footer[16..20] != FORMAT_VERSION.to_le_bytes()
-            || footer[20..24] != [0; 4]
+        if &footer[MAGIC_AT..] != MAGIC
+            || footer[VERSION_AT..RESERVED_AT] != FORMAT_VERSION.to_le_bytes()
+            || footer[RESERVED_AT..MAGIC_AT] != RESERVED.to_le_bytes()
         {
             return Err(invalid(
                 "unsupported artifact format; legacy/native AOT payloads are not accepted",
             ));
         }
-        let wasm_len = read_u64(&footer[..8])?;
-        let manifest_len = read_u64(&footer[8..16])?;
+        let wasm_len = read_u64(&footer[WASM_LEN_AT..MANIFEST_LEN_AT])?;
+        let manifest_len = read_u64(&footer[MANIFEST_LEN_AT..VERSION_AT])?;
         if wasm_len == 0
             || wasm_len > MAX_WASM_BYTES as u64
             || manifest_len == 0
@@ -121,7 +135,7 @@ impl Artifact {
         file.read_exact(&mut wasm)?;
         let mut manifest = vec![0u8; manifest_len as usize];
         file.read_exact(&mut manifest)?;
-        if !wasm.starts_with(b"\0asm\x01\0\0\0") {
+        if !wasm.starts_with(abi::WASM_HEADER) {
             return Err(invalid("container must contain portable Wasm"));
         }
         let artifact = Self {
@@ -133,7 +147,7 @@ impl Artifact {
     }
 
     fn validate_payload(&self) -> Result<()> {
-        if self.wasm.len() > MAX_WASM_BYTES || !self.wasm.starts_with(b"\0asm\x01\0\0\0") {
+        if self.wasm.len() > MAX_WASM_BYTES || !self.wasm.starts_with(abi::WASM_HEADER) {
             return Err(invalid("artifact must contain bounded portable Wasm"));
         }
         if self.manifest.to_bytes()?.len() > MAX_MANIFEST_BYTES {
@@ -179,12 +193,12 @@ impl Artifact {
             file.write_all(&(self.wasm.len() as u64).to_le_bytes())?;
             file.write_all(&(manifest.len() as u64).to_le_bytes())?;
             file.write_all(&FORMAT_VERSION.to_le_bytes())?;
-            file.write_all(&0u32.to_le_bytes())?;
+            file.write_all(&RESERVED.to_le_bytes())?;
             file.write_all(MAGIC)?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                file.set_permissions(fs::Permissions::from_mode(0o755))?;
+                file.set_permissions(fs::Permissions::from_mode(EXECUTABLE_MODE))?;
             }
             Ok(())
         })

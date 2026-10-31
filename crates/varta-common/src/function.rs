@@ -14,6 +14,10 @@ pub const ENVIRONMENT_MASK: i32 = 2;
 pub const ENVIRONMENT_FLAG: i32 = 256;
 pub const BINDING_FLAG: i32 = 512;
 pub const MAX_CAPTURES: usize = 32;
+/// Capture types of one catalog beyond its function, record, array and union
+/// types: the allowance for the scalar and singleton kinds (primitives,
+/// errors, classes, generators, `unknown`, promises).
+pub const SCALAR_CAPTURE_TYPES: usize = 32;
 pub const INTERNAL_KIND: i32 = 0;
 
 /// Compiler budgets for one parameter list or lexical declaration's patterns.

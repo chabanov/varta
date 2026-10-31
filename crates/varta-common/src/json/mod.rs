@@ -61,9 +61,14 @@ pub fn dynamic_schema(version: u32) -> bool {
     )
 }
 pub const MAX_SCHEMA_BYTES: usize = crate::abi::RESULT_BASE;
+/// The primitive schema slots every schema has, and (schema 15+) the
+/// dictionary slot.
+pub const PRIMITIVE_SCHEMA_TYPES: usize = 4;
+pub const DICTIONARY_SCHEMA_TYPES: usize = 1;
 pub const LEGACY_MAX_SCHEMA_TYPES: usize =
-    4 + crate::value::MAX_RECORD_SHAPES + crate::value::MAX_ARRAY_TYPES;
-pub const MAX_SCHEMA_TYPES: usize = LEGACY_MAX_SCHEMA_TYPES + 1 + crate::value::MAX_UNION_TYPES;
+    PRIMITIVE_SCHEMA_TYPES + crate::value::MAX_RECORD_SHAPES + crate::value::MAX_ARRAY_TYPES;
+pub const MAX_SCHEMA_TYPES: usize =
+    LEGACY_MAX_SCHEMA_TYPES + DICTIONARY_SCHEMA_TYPES + crate::value::MAX_UNION_TYPES;
 /// The frozen member limit of one schema union (schemas of v5 to v37);
 /// readers take it from `ProgramLimits::json_union_members`.
 pub const MAX_UNION_MEMBERS: usize = 7;

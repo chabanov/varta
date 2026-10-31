@@ -179,7 +179,7 @@ impl Lower<'_> {
     /// Whether `expression` statically is a collection: a typed binding or
     /// field, `new Map/Set/Uint8Array(...)`, or a chained `add`/`set` call.
     pub(super) fn collection_receiver(&self, expression: &ast::Expr, depth: usize) -> bool {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return false;
         }
         if matches!(

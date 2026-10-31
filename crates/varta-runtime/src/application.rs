@@ -197,7 +197,7 @@ impl VartaRuntime {
         };
         let result = (|| {
             let store = &mut application.execution.store;
-            if let Some(start) = instance.get_func(&mut *store, "_start") {
+            if let Some(start) = instance.get_func(&mut *store, varta_common::abi::START_EXPORT) {
                 start.call(&mut *store, &[], &mut [])?;
             }
             exceptions::finish(&instance, store)?;

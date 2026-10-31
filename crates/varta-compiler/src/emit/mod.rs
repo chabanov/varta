@@ -486,7 +486,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
     let mut imports = wasm_encoder::ImportSection::new();
     for host in hosts.keys() {
         imports.import(
-            "varta",
+            varta_common::abi::HOST_MODULE,
             host.name(),
             wasm_encoder::EntityType::Function(host_types[host]),
         );
@@ -754,7 +754,11 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             index,
         );
     }
-    exports.export("memory", wasm_encoder::ExportKind::Memory, 0);
+    exports.export(
+        varta_common::abi::MEMORY_EXPORT,
+        wasm_encoder::ExportKind::Memory,
+        0,
+    );
     if let Some(globals) = exception_globals {
         exports.export(
             varta_common::exceptions::PENDING,
@@ -793,7 +797,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         result_status,
     );
     exports.export(
-        "_start",
+        varta_common::abi::START_EXPORT,
         wasm_encoder::ExportKind::Func,
         functions_begin + program.main as u32,
     );

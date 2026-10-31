@@ -16,7 +16,7 @@ pub(super) fn execute(
         Some((shared.contract.bind.clone(), shared.stop.clone()));
     let instance = execution.instantiate_prepared(&shared.module)?;
     let memory = instance
-        .get_memory(&mut execution.store, "memory")
+        .get_memory(&mut execution.store, varta_common::abi::MEMORY_EXPORT)
         .ok_or_else(|| HttpError::Message("missing ABI memory".into()))?;
     if request.len() > abi::MAX_INPUT_BYTES {
         return Err(HttpError::Message("request envelope limit".into()).into());

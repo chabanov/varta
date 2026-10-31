@@ -135,7 +135,7 @@ impl Effects<'_, '_> {
     }
     fn enter(&mut self) -> bool {
         self.depth += 1;
-        if self.depth > 64 {
+        if self.depth > super::MAX_ANALYSIS_DEPTH {
             self.exhausted = true;
             self.depth -= 1;
             false
@@ -278,7 +278,7 @@ impl Lower<'_> {
         expression: &ast::Expr,
         depth: usize,
     ) -> flow_calls::Impact {
-        if depth >= 64 {
+        if depth >= super::MAX_ANALYSIS_DEPTH {
             return flow_calls::Impact {
                 unknown: true,
                 ..Default::default()
