@@ -412,7 +412,7 @@ pub(super) fn index() -> Function {
 /// up by one (both bitmaps are already full over the new length), and every
 /// table reference to a shifted entry follows it. The caller then places the
 /// new entry. Returns 0.
-pub(super) fn insert_at() -> Function {
+pub(super) fn insert_at(barrier: Option<incremental::Barrier>) -> Function {
     const KEYS: u32 = 0;
     const VALUES: u32 = 1;
     const TABLE: u32 = 2;
@@ -424,6 +424,11 @@ pub(super) fn insert_at() -> Function {
     const LAST: u32 = 8;
     const REFERENCE: u32 = 9;
     let mut f = Function::new([(4, ValType::I32), (1, ValType::I64), (1, ValType::F64)]);
+    // V38 (`incremental_collection`): the entries move within both vectors,
+    // which are first traced whole.
+    for vector in [KEYS, VALUES] {
+        instructions(&mut f, incremental::backing_code(barrier, vector));
+    }
     instructions(
         &mut f,
         [I::LocalGet(POSITION), I::I32TruncF64U, I::LocalSet(AT)],

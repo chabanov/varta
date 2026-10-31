@@ -34,6 +34,13 @@ impl Emitter<'_> {
             I::LocalSet(self.string_temporary),
             I::I32WrapI64,
             I::LocalSet(self.temporary),
+        ]);
+        self.typed_slot_barrier(
+            self.records[shape as usize].fields[slot as usize].ty,
+            self.temporary,
+            records::field(slot),
+        );
+        self.code.extend([
             I::LocalGet(self.temporary),
             I::LocalGet(self.string_temporary),
             I::I64Store(records::field(slot)),

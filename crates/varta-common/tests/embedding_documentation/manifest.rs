@@ -68,6 +68,24 @@ fn budget_constants(kind: BudgetKind) -> [(u64, &'static str); 3] {
             (abi::MAX_OUTPUT_BYTES as u64, "abi::MAX_OUTPUT_BYTES"),
             (abi::MAX_OUTPUT_BYTES as u64, "abi::MAX_OUTPUT_BYTES"),
         ],
+        // Per idle period of an application instance; earlier profiles run
+        // no maintenance (0).
+        BudgetKind::MaintenanceFuel => [
+            (budget::MAX_MAINTENANCE_FUEL, "budget::MAX_MAINTENANCE_FUEL"),
+            (budget::MAINTENANCE_FUEL, "budget::MAINTENANCE_FUEL"),
+            (0, "Budgets::PRODUCTION"),
+        ],
+        BudgetKind::MaintenanceDeadline => [
+            (
+                budget::MAX_MAINTENANCE_DEADLINE_MS,
+                "budget::MAX_MAINTENANCE_DEADLINE_MS",
+            ),
+            (
+                budget::MAINTENANCE_DEADLINE_MS,
+                "budget::MAINTENANCE_DEADLINE_MS",
+            ),
+            (0, "Budgets::PRODUCTION"),
+        ],
     }
 }
 
@@ -87,7 +105,9 @@ fn budgets() -> String {
     let header = [
         "`budgets` member".to_owned(),
         "Accepted request or ceiling value".to_owned(),
-        format!("{v38}: default, and cap without a ceiling (per turn)"),
+        format!(
+            "{v38}: default, and cap without a ceiling (per turn; maintenance per idle period)"
+        ),
         format!("{earlier}: fixed (per execution)"),
         "Source constants".to_owned(),
     ];

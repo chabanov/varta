@@ -336,13 +336,16 @@ const PATTERNS: &[Pattern] = &[
     },
     // Re-pinned when instantiation stopped charging the guest: 2.0 held only
     // because macOS charged v37 a 16 KiB page for its data-segment copy
-    // (181,126); the host-independent v37 fuel is 164,741 (1.994x).
+    // (181,126); the host-independent v37 fuel is 164,741 (1.994x). Re-pinned
+    // again for the incremental collector's per-allocation bookkeeping
+    // (`incremental_collection`): v38 at most 82,784 before, 86,022 with it
+    // (1.92x).
     Pattern {
         name: "keyed view mount 10 rows",
         source: view_mount,
         size: 10,
         ceiling: 95_000,
-        speedup: 1.99,
+        speedup: 1.9,
     },
     Pattern {
         name: "keyed view update 10 rows",
@@ -622,8 +625,8 @@ const V38_LIMIT_CASES: [&str; 2] = ["data_limit_cases", "json_limit_cases"];
 /// 9558). Before instantiation left guest fuel alone, macOS hid both by
 /// charging v37 a 16 KiB page for its data-segment copy.
 const COSTLIER_UNDER_V38: [(&str, u64, u64); 2] = [
-    ("unknown_cases/assertions.ts", 24_938, 26_163),
-    ("value15_cases/values.ts", 73_371, 78_018),
+    ("unknown_cases/assertions.ts", 24_938, 26_683),
+    ("value15_cases/values.ts", 173_371, 178_582),
 ];
 
 /// Every runtime case program behaves identically under v37 and v38: same
@@ -632,11 +635,12 @@ const COSTLIER_UNDER_V38: [(&str, u64, u64); 2] = [
 /// instructions than v37 does, with the host work of both charged at the
 /// published fair rates (`varta_common::fuel`; v37 is rated by a test-only
 /// switch). Linked serialization and logged text cost their instructions,
-/// above those rates on record-heavy values (`linked_stringify_tests`,
-/// pinned there and open in the development plan), so the fuel comparison of
-/// a program that serializes or logs a value runs its v38 build that imports
-/// them (`host_import_test_hook`, charged at the fair rates). HTTP services
-/// are not started; network requests are denied (no grant), timers granted.
+/// which the serialization rates bound from above (`linked_stringify_tests`),
+/// so the fuel comparison of a program that serializes or logs a value runs
+/// its v38 build that imports them (`host_import_test_hook`, charged at the
+/// fair rates; it may run out of fuel where the linked build finishes, and
+/// then v37 must too). HTTP services are not started; network requests are
+/// denied (no grant), timers granted.
 #[test]
 fn case_corpus_behaves_identically_under_v38() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -685,21 +689,29 @@ fn case_corpus_behaves_identically_under_v38() {
             ],
         )
         .unwrap();
-        let fuel = if hosted == *new {
-            after.fuel
-        } else {
-            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
-            let run = run_with(&hosted, &grants, 1);
-            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
-            assert_eq!(run.lines, after.lines, "{}", path.display());
-            run.fuel
-        };
         // Fuel, or the BigInt work budget derived from it.
         let exhausted = |run: &Run| {
             run.error
                 .as_ref()
                 .is_some_and(|e| e.contains("fuel") || e.contains("work budget"))
         };
+        let measured = if hosted == *new {
+            None
+        } else {
+            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
+            let run = run_with(&hosted, &grants, 1);
+            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
+            // The fair charges may empty the hosted build's budget before the
+            // linked build finishes; it then stopped on the same lines.
+            if exhausted(&run) {
+                assert!(after.lines.starts_with(&run.lines), "{}", path.display());
+            } else {
+                assert_eq!(run.lines, after.lines, "{}", path.display());
+            }
+            Some(run)
+        };
+        let measured = measured.as_ref().unwrap_or(&after);
+        let fuel = measured.fuel;
         if let Some((_, old_fuel, new_fuel)) = COSTLIER_UNDER_V38
             .iter()
             .find(|(case, ..)| path.ends_with(case))
@@ -714,12 +726,12 @@ fn case_corpus_behaves_identically_under_v38() {
         } else {
             // Both may run out of the same budget (a fair charge empties it).
             assert!(
-                fuel <= before.fuel || exhausted(&before) && exhausted(&after),
+                fuel <= before.fuel || exhausted(&before) && exhausted(measured),
                 "{}: v38 {} > v37 {} ({:?} / {:?})",
                 path.display(),
                 fuel,
                 before.fuel,
-                after.error,
+                measured.error,
                 before.error
             );
         }
@@ -805,11 +817,7 @@ fn string_builders_keep_aliases_and_survive_collections() {
     );
     assert!(report.failure.is_none(), "{:?}", report.failure);
     let profile = report.fuel_profile.unwrap();
-    let collections = profile
-        .functions
-        .iter()
-        .find(|row| row.name == "<helper Collect>")
-        .map_or(0, |row| row.calls);
+    let collections = crate::fuel_profile_tests::collections(&profile);
     assert!(collections >= 2, "{collections} collections");
     // A loop variable rebound each iteration starts a fresh builder.
     assert_eq!(

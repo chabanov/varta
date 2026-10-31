@@ -31,6 +31,9 @@ pub enum TurnKind {
     /// A whole execution of an earlier profile, whose budgets are not
     /// renewed per turn.
     Execution,
+    /// Collection work between two turns of an application instance, under
+    /// the maintenance budget (v38 `incremental_collection`); not a turn.
+    Maintenance,
 }
 impl TurnKind {
     #[must_use]
@@ -43,6 +46,7 @@ impl TurnKind {
             Self::Permission => "permission",
             Self::View => "view",
             Self::Execution => "execution",
+            Self::Maintenance => "maintenance",
         }
     }
 }
@@ -66,8 +70,27 @@ pub struct TurnUsage {
     pub memory_bytes: usize,
 }
 
+/// What the maintenance of one idle period used (v38
+/// `incremental_collection`): collection work between two turns, charged to
+/// the maintenance budget and never to a turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaintenanceUsage {
+    /// The turn the idle period follows.
+    pub after_turn: u64,
+    /// Fuel of the idle period's collection steps.
+    pub fuel: u64,
+    /// Idle-collection calls that did work.
+    pub steps: u32,
+    /// Whether the last step completed a collection cycle.
+    pub completed: bool,
+    pub wall: Duration,
+    /// Linear memory size after the idle period.
+    pub memory_bytes: usize,
+}
+
 /// The budget report of an instance: its effective budgets, the requests the
-/// host ceiling lowered, and the usage of each turn.
+/// host ceiling lowered, the usage of each turn and of each idle period's
+/// maintenance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetReport {
     pub budgets: Budgets,
@@ -82,6 +105,11 @@ pub struct BudgetReport {
     pub total_fuel: u64,
     pub peak_memory_bytes: usize,
     pub output_bytes: usize,
+    /// The first [`MAX_REPORTED_TURNS`] idle periods that did collection
+    /// work.
+    pub maintenance: Vec<MaintenanceUsage>,
+    pub total_maintenance_periods: u64,
+    pub total_maintenance_fuel: u64,
 }
 
 /// The prefix of every budget report line (`--budget-report`).
@@ -100,28 +128,30 @@ impl BudgetReport {
         } else {
             "per execution"
         };
-        let mut lines: Vec<String> = self
-            .turns
-            .iter()
-            .map(|turn| {
-                let label = if self.per_turn {
-                    format!("turn {} {}", turn.turn, turn.kind.name())
-                } else {
-                    turn.kind.name().to_owned()
-                };
-                format!(
-                    "{BUDGET_REPORT_PREFIX}{label}: fuel {}/{}, host calls {}/{}, microtasks {}, wall {} ms ({deadline} ms {scope}), memory {}/{} bytes",
-                    turn.fuel,
-                    budgets.fuel_per_turn,
-                    turn.host_calls,
-                    budgets.host_calls_per_turn,
-                    turn.microtasks,
-                    turn.wall.as_millis(),
-                    turn.memory_bytes,
-                    budgets.memory_bytes,
-                )
-            })
-            .collect();
+        let mut maintenance = self.maintenance.iter().peekable();
+        let mut lines = Vec::new();
+        for turn in &self.turns {
+            let label = if self.per_turn {
+                format!("turn {} {}", turn.turn, turn.kind.name())
+            } else {
+                turn.kind.name().to_owned()
+            };
+            lines.push(format!(
+                "{BUDGET_REPORT_PREFIX}{label}: fuel {}/{}, host calls {}/{}, microtasks {}, wall {} ms ({deadline} ms {scope}), memory {}/{} bytes",
+                turn.fuel,
+                budgets.fuel_per_turn,
+                turn.host_calls,
+                budgets.host_calls_per_turn,
+                turn.microtasks,
+                turn.wall.as_millis(),
+                turn.memory_bytes,
+                budgets.memory_bytes,
+            ));
+            while let Some(period) = maintenance.next_if(|period| period.after_turn == turn.turn) {
+                lines.push(self.maintenance_line(period));
+            }
+        }
+        lines.extend(maintenance.map(|period| self.maintenance_line(period)));
         let unlisted = self.total_turns.saturating_sub(self.turns.len() as u64);
         if unlisted > 0 {
             lines.push(format!(
@@ -137,6 +167,12 @@ impl BudgetReport {
             self.output_bytes,
             budgets.output_bytes,
         ));
+        if self.total_maintenance_periods > 0 {
+            lines.push(format!(
+                "{BUDGET_REPORT_PREFIX}maintenance total: {} idle periods, fuel {}",
+                self.total_maintenance_periods, self.total_maintenance_fuel,
+            ));
+        }
         lines.extend(self.capped.iter().map(|capped| {
             format!(
                 "{BUDGET_REPORT_PREFIX}capped {}: requested {}, allowed {}",
@@ -146,6 +182,25 @@ impl BudgetReport {
             )
         }));
         lines
+    }
+    fn maintenance_line(&self, period: &MaintenanceUsage) -> String {
+        let budgets = &self.budgets;
+        format!(
+            "{BUDGET_REPORT_PREFIX}maintenance after turn {}: fuel {}/{}, steps {}, {}, wall {} ms ({} ms per idle period), memory {}/{} bytes",
+            period.after_turn,
+            period.fuel,
+            budgets.maintenance_fuel,
+            period.steps,
+            if period.completed {
+                "cycle completed"
+            } else {
+                "cycle continues"
+            },
+            period.wall.as_millis(),
+            budgets.value(BudgetKind::MaintenanceDeadline),
+            period.memory_bytes,
+            budgets.memory_bytes,
+        )
     }
 }
 
@@ -171,6 +226,8 @@ fn unit(budget: BudgetKind) -> &'static str {
         BudgetKind::Memory => " bytes per instance",
         BudgetKind::HostCalls => " calls per turn",
         BudgetKind::Output => " bytes per instance",
+        BudgetKind::MaintenanceFuel => " instructions per idle period",
+        BudgetKind::MaintenanceDeadline => " ms per idle period",
     }
 }
 
@@ -195,6 +252,9 @@ pub(crate) struct Turns {
     total_turns: u64,
     total_fuel: u64,
     peak_memory: usize,
+    maintenance: Vec<MaintenanceUsage>,
+    total_maintenance_periods: u64,
+    total_maintenance_fuel: u64,
 }
 impl Turns {
     pub fn new(renew: bool, renew_deadline: bool, capped: Vec<CappedBudget>) -> Self {
@@ -215,6 +275,31 @@ impl Turns {
             total_turns: 0,
             total_fuel: 0,
             peak_memory: 0,
+            maintenance: Vec::new(),
+            total_maintenance_periods: 0,
+            total_maintenance_fuel: 0,
+        }
+    }
+    /// The kind of the current (or last) turn.
+    pub fn kind(&self) -> TurnKind {
+        self.kind
+    }
+    /// Collection work runs between turns (`maintenance`): exhausted budgets
+    /// are reported against `kind` until the next turn begins.
+    pub fn set_kind(&mut self, kind: TurnKind) {
+        self.kind = kind;
+    }
+    /// Record one idle period's maintenance: its fuel always counts toward
+    /// the totals, and a period that did work is listed.
+    pub fn record_maintenance(&mut self, usage: MaintenanceUsage) {
+        self.total_maintenance_fuel = self.total_maintenance_fuel.saturating_add(usage.fuel);
+        self.peak_memory = self.peak_memory.max(usage.memory_bytes);
+        if usage.steps == 0 {
+            return;
+        }
+        self.total_maintenance_periods += 1;
+        if self.maintenance.len() < MAX_REPORTED_TURNS {
+            self.maintenance.push(usage);
         }
     }
     /// The number of the current (or last) turn.
@@ -263,11 +348,17 @@ impl Turns {
             total_fuel: self.total_fuel,
             peak_memory_bytes: self.peak_memory,
             output_bytes,
+            maintenance: self.maintenance.clone(),
+            total_maintenance_periods: self.total_maintenance_periods,
+            total_maintenance_fuel: self.total_maintenance_fuel,
         }
     }
 }
 
-fn memory_bytes(instance: Option<&Instance>, store: &mut Store<RuntimeContext>) -> usize {
+pub(crate) fn memory_bytes(
+    instance: Option<&Instance>,
+    store: &mut Store<RuntimeContext>,
+) -> usize {
     instance
         .and_then(|instance| instance.get_memory(&mut *store, varta_common::abi::MEMORY_EXPORT))
         .map_or(0, |memory| memory.data_size(&*store))
@@ -350,7 +441,10 @@ pub(crate) fn classify(error: RuntimeError, context: &RuntimeContext) -> Runtime
         Ok(exhausted) => return RuntimeError::Budget(exhausted),
         Err(source) => source,
     };
+    let maintenance = context.turns.kind == TurnKind::Maintenance;
     let budget = match source.downcast_ref::<wasmtime::Trap>() {
+        Some(wasmtime::Trap::OutOfFuel) if maintenance => BudgetKind::MaintenanceFuel,
+        Some(wasmtime::Trap::Interrupt) if maintenance => BudgetKind::MaintenanceDeadline,
         Some(wasmtime::Trap::OutOfFuel) => BudgetKind::Fuel,
         Some(wasmtime::Trap::Interrupt) => BudgetKind::Deadline,
         _ => return RuntimeError::Execution(source),

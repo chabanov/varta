@@ -39,6 +39,12 @@ impl Emitter<'_> {
                 );
                 self.pack_value(bytes);
                 self.code.push(I::LocalSet(cell));
+            } else if ty.needs_root()
+                && let Some(barrier) = self.barrier()
+            {
+                // V38: an assignment replaces the captured binding's value.
+                self.code
+                    .extend(barrier.handle_slot(cell, records::field(0)));
             }
             self.code.extend([
                 I::LocalGet(cell),

@@ -3411,6 +3411,54 @@ Normative contract: [architecture](architecture.md#kv-storage-kv).
   `HostFailure::into_trap`. A new KV work unit gets a rate calibrated with
   `kv_fuel_calibration` (release build), never left free.
 
+### Idle and incremental collection (`incremental_collection`)
+
+Normative contract: [architecture](architecture.md#idle-and-incremental-collection-incremental_collection).
+
+- Every v38 store that overwrites or removes a managed reference in a heap
+  object that may predate the current cycle emits the deletion barrier before
+  the store: `Emitter::slot_barrier`/`typed_slot_barrier` (payload address in
+  an i32 local), `Barrier::handle_slot` (an i64 handle local), or, for a
+  helper, `incremental::slot_code`. A bulk change of an object (a move within
+  it, a fill, a truncation, a mask that a resumption clears) uses the
+  whole-object barrier (`object_barrier`, `incremental::backing_code`) before
+  the first change. A new store path without its barrier is a bug; add the
+  path to `collector_stress_tests::STORE_KINDS` in the same change.
+- Never let an allocation run between a barrier and the store it protects:
+  a cycle may begin inside any allocation, after an early barrier, and a
+  value copied into a fresh (black) block from an unprotected source is then
+  lost. Place the barrier after the operation's last allocation.
+- Stores into a block the same operation allocated, before any later
+  allocation, need no barrier (literals, creators, fresh backings, cells).
+  Spare slots and holes hold zero, so writing them needs none either.
+- The compiled JSON decoders (`json_decoders`) and every linked intrinsic
+  allocate only through the module's `Allocate` helper (the decoders'
+  `Shared::Block`, the linker's `allocate` accessor), so they run collection
+  steps and start cycles like any other allocation. Their stores need no
+  barrier because they keep two rules: a decoder container is zeroed and
+  published into its reachable parent (or retained) before its first child
+  is allocated, and each child is stored into a zero slot before the next
+  allocation; linked code writes only blocks it allocated in the same call
+  (owned text results, the parse builder) and reads every other guest value
+  rooted by its call site or its rooted scratch blocks. A new decoder or
+  linked store that overwrites a nonzero reference, or that allocates between
+  computing a value and storing it into a block allocated earlier, needs the
+  barrier and a `collector_stress_tests::STORE_KINDS` entry.
+- Collector state lives in `strings::incremental::Slot` globals after the
+  exact-size lists, mark state only in the side bitmaps; never set a mark in a
+  block header from v38 incremental code, and never let a host reader see one.
+- The collector helpers (`COLLECTOR_HELPERS` in `emit`) exist only in v38
+  modules with a managed heap; tests that compare v38 and v37 function counts
+  add `varta_compiler::collector_functions(V38)`. V37 and earlier keep their
+  bytes (frozen digests).
+- Maintenance runs only between turns of an application instance
+  (`maintenance::idle` from `Application::step`), under `Budgets::maintenance_*`,
+  never inside a turn and never in a bounded run. Its work is set by fuel
+  only; the deadline is a hard bound. Tests compare budget reports without
+  their wall-clock fields.
+- Pacing constants (`collector::STEP_*`, `IDLE_*`, `TRACE_CHUNK_SLOTS`, mark
+  stack sizing) live in `varta_common::collector`; never inline them.
+
 ### Code generation v2 (`codegen_v2`)
 
 Every codegen path goes through `varta_compiler::codegen_v2(profile)`, which is

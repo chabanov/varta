@@ -24,8 +24,8 @@
 //! call and its return); [`BYTE`] is Wasmtime's `memory.copy` rate, the
 //! guest cost of moving a byte; the JSON rates are fitted to the fuel the
 //! linked decoder and encoder spend beyond the host import on the measured
-//! workloads (input units, values, schema types), so a host import and its
-//! linked equivalent cost the same order of fuel for the same work.
+//! workloads (input units, values, schema types) and rounded up, so a host
+//! import never costs less than its linked equivalent for the same work.
 
 /// One host import call.
 pub const CALL: u64 = 50;
@@ -40,8 +40,12 @@ pub const JSON_SCHEMA_TYPE: u64 = 3000;
 /// One record field or union member of the schema read and checked (with
 /// its descriptor entry).
 pub const JSON_SCHEMA_FIELD: u64 = 3000;
-/// One value visited by checked JSON serialization.
-pub const JSON_STRINGIFY_VALUE: u64 = 1500;
+/// One value visited by checked JSON serialization or by the rendering of a
+/// logged value: the largest per-value fuel of the linked encoder beyond
+/// this charge on the measured shapes (a logged promise, about 5,000),
+/// rounded up, so the host import never costs less than v38's linked
+/// serialization.
+pub const JSON_STRINGIFY_VALUE: u64 = 5500;
 /// One UTF-16 code unit of serialized JSON output.
 pub const JSON_STRINGIFY_UNIT: u64 = 30;
 /// One KV storage operation (v38 `kv`): opening a database, one snapshot

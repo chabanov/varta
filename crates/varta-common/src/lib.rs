@@ -21,6 +21,9 @@ pub mod bigint;
 pub mod budget;
 #[cfg(feature = "std")]
 mod capability;
+/// Idle and incremental collection (v38 `incremental_collection`).
+#[cfg(feature = "std")]
+pub mod collector;
 #[cfg(feature = "std")]
 mod diagnostic;
 /// Host event sources and host tasks (v38 `turn_budgets`).

@@ -26,8 +26,15 @@ const STORAGE_WORD: MemArg = MemArg {
     ..ROOT
 };
 
-pub(super) fn function(sparse: bool, sizes: sparse::Sizes) -> Function {
+pub(super) fn function(
+    sparse: bool,
+    sizes: sparse::Sizes,
+    barrier: Option<incremental::Barrier>,
+) -> Function {
     let mut f = Function::new([(7, ValType::I32)]);
+    // V38 (`incremental_collection`): the filled elements are overwritten;
+    // the backing is first traced whole.
+    instructions(&mut f, incremental::backing_code(barrier, INPUT));
     instructions(
         &mut f,
         [

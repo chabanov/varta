@@ -475,26 +475,36 @@ fn mutate(random: &mut Random, text: &str) -> String {
     units.into_iter().collect()
 }
 
+/// Twenty-four seeded random schemas, each a program parsing ten valid
+/// inputs and ten mutations of them (shared with the collector stress
+/// builds).
+pub(super) fn random_schema_programs() -> Vec<String> {
+    let mut random = Random(0x5eed_1234_abcd_0042);
+    (0..24)
+        .map(|_| {
+            let mut records = 0;
+            let target = shape(&mut random, 3, &mut records);
+            let mut declarations = Vec::new();
+            let spelled = target.spell(&mut declarations);
+            let mut texts = Vec::new();
+            for _ in 0..10 {
+                let mut text = String::new();
+                target.value(&mut random, 0, &mut text);
+                texts.push(mutate(&mut random, &text));
+                texts.push(text);
+            }
+            corpus_program(&declarations.join("\n"), &spelled, &texts)
+        })
+        .collect()
+}
+
 /// Seeded random schemas, each with valid inputs and mutations of them:
 /// the decoders agree with the linked decoder on every outcome.
 #[test]
 fn decoders_match_the_linked_decoder_on_random_schemas_and_inputs() {
-    let mut random = Random(0x5eed_1234_abcd_0042);
     let mut accepted = 0;
     let mut rejected = 0;
-    for _ in 0..24 {
-        let mut records = 0;
-        let target = shape(&mut random, 3, &mut records);
-        let mut declarations = Vec::new();
-        let spelled = target.spell(&mut declarations);
-        let mut texts = Vec::new();
-        for _ in 0..10 {
-            let mut text = String::new();
-            target.value(&mut random, 0, &mut text);
-            texts.push(mutate(&mut random, &text));
-            texts.push(text);
-        }
-        let program = corpus_program(&declarations.join("\n"), &spelled, &texts);
+    for program in random_schema_programs() {
         let (decoded, _) = same(&program, 200);
         assert_eq!(decoded.error, None, "{program}");
         accepted += decoded

@@ -101,7 +101,7 @@ engine payloads from package input.
 | `entry` | Optional string, metadata only |
 | `target` | Optional; one of the `target` values of the [limits table](#manifest-limits) |
 | `capabilities` | Required array of grants (`[]` denies everything) |
-| `budgets` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, each an integer in its accepted range of the [budget table](#manifest-limits); in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
+| `budgets` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, `maintenanceFuel`, `maintenanceDeadlineMs`, each an integer in its accepted range of the [budget table](#manifest-limits); in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
 | grant `required` | Optional boolean, default `true`; requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
 | grant `purpose` | Optional untrusted text shown as a quote in prompts, valid by the [purpose rule](#manifest-limits); requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling |
 | `fsRoots` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). In a package: an array of [root names](#root-names), no duplicates; an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most the host root directory bytes of the [limits table](#manifest-limits), no duplicate key); an array is rejected. Either form holds at most the `fsRoots` entries of the [limits table](#manifest-limits). See [File roots](#file-roots-v38) |
@@ -150,13 +150,15 @@ cannot carry `budgets`, since its `abiVersion` equals its module's host ABI, and
 runs with the fixed values once per execution.
 
 <!-- generated:embedding-manifest-budgets:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
-| `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38`: default, and cap without a ceiling (per turn) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
+| `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38`: default, and cap without a ceiling (per turn; maintenance per idle period) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
 | --- | --- | --- | --- | --- |
 | `fuelPerTurn` | 1 to 1000000000 | 8000000 | 1000000 | `budget::MAX_FUEL_PER_TURN`, `budget::TURN_FUEL`, `abi::FUEL` |
 | `deadlinePerTurnMs` | 1 to 60000 | 5000 | 5000 | `budget::MAX_DEADLINE_PER_TURN_MS`, `abi::DEADLINE_SECONDS` |
 | `memoryBytes` | 1 to 1073741824 | 8388608 | 8388608 | `budget::MAX_MEMORY_BYTES`, `abi::MAX_MEMORY_BYTES` |
 | `hostCallsPerTurn` | 1 to 1048576 | 1024 | 1024 | `budget::MAX_HOST_CALLS_PER_TURN`, `abi::MAX_HOST_CALLS` |
 | `outputBytes` | 1 to 67108864 | 1048576 | 1048576 | `budget::MAX_OUTPUT_BYTES`, `abi::MAX_OUTPUT_BYTES` |
+| `maintenanceFuel` | 1 to 1000000000 | 4000000 | 0 | `budget::MAX_MAINTENANCE_FUEL`, `budget::MAINTENANCE_FUEL`, `Budgets::PRODUCTION` |
+| `maintenanceDeadlineMs` | 1 to 60000 | 1000 | 0 | `budget::MAX_MAINTENANCE_DEADLINE_MS`, `budget::MAINTENANCE_DEADLINE_MS`, `Budgets::PRODUCTION` |
 <!-- generated:embedding-manifest-budgets:end -->
 
 **Purpose rule.** A grant `purpose` is valid when it is not empty or only white
@@ -559,7 +561,7 @@ bounded by the turn deadline and the commit cutoff, not by fuel.
 | each checked JSON value decoded | 1500 | `fuel::JSON_PARSE_VALUE` | before the first guest allocation |
 | each schema type checked | 3000 | `fuel::JSON_SCHEMA_TYPE` | before the first guest allocation |
 | each schema record field or union member checked | 3000 | `fuel::JSON_SCHEMA_FIELD` | before the first guest allocation |
-| each value JSON serialization visits | 1500 | `fuel::JSON_STRINGIFY_VALUE` | before the result is published |
+| each value JSON serialization visits | 5500 | `fuel::JSON_STRINGIFY_VALUE` | before the result is published |
 | each UTF-16 unit of serialized JSON | 30 | `fuel::JSON_STRINGIFY_UNIT` | before the result is published |
 | each KV open, read or commit (`kv_open`, `kv_read`, `kv_commit`) | 100000 | `fuel::KV_OPERATION` | after the grant, before the file, the read or the submit |
 | each KV key or value byte staged (`kv_stage`) or committed | 10 | `fuel::KV_BYTE` | before it is kept or submitted |
@@ -842,7 +844,9 @@ below is generated from `varta_common::net`.
 
 - **`net_request_start*(ptr, len) → id`** is a counted host call. It reads the
   [descriptor](#request-descriptor), checks it (a structural error is fatal),
-  checks the method and URL, asks the permission broker for the exact
+  under v38 checks the pending-request limit (exceeding it is fatal before the
+  broker decides, prompts or audits anything; v37 checks it after the
+  decision), checks the method and URL, asks the permission broker for the exact
   `net.request` grant (and the host ceiling), then checks the body and headers.
   Every refusal is a recoverable completion that is **already waiting** when
   the call returns: nothing was resolved or connected. Otherwise the head is
@@ -1140,17 +1144,26 @@ checkpoint does the following:
    with the deadline error. When the timer has become due, fire it as in step 1.
 
 While a request keeps the loop alive, a timer due at or beyond the deadline does
-not raise `TimerDeadline`. The loop waits for completions until the deadline.
+not end the run at once: the loop waits for completions until the deadline (a
+completion may still clear the timer). If the deadline passes with such a timer
+still armed, a v38 run fails with the same `TimerDeadline` as without a request;
+v37 fails with the deadline error.
 
-**Long-lived application instance (v38).** Each turn runs one ready task: the
-oldest host task, a timer whose wall-clock time has passed, or the oldest
-completion. The task with the earliest instant wins. A host task's instant is
-its arrival, and a timer's instant is its wall-clock due time. The reference
-host does not record when a completion arrived: a completion's instant is the
-moment of selection. So a completion runs only when no host task is queued and no
-timer is due. On equal instants the order is host task, then timer, then
-completion. Under a scripted virtual clock, the order is a host task first, then
-a timer due by the horizon, then a completion that has already arrived.
+**Long-lived application instance (v38).** Each turn runs one ready task, FIFO
+by arrival: the oldest host task, a timer whose wall-clock time has passed, or
+the oldest completion. Before choosing, the instance lets its transfers make
+the progress they can without waiting, so completions arrive while other tasks
+keep it busy. The task with the earliest instant wins. A host task's instant is
+its arrival, a timer's instant is its wall-clock due time, and a completion's
+instant is the moment its transfer reported it. A sustained stream of host
+tasks or timers therefore cannot starve a completion. On equal instants the
+order is host task, then timer, then completion. The instance also stamps every
+host task and every completion it receives with one arrival order number, in
+the order it receives them. Under a scripted virtual clock nothing reads the
+wall clock: the oldest completion runs before any host task received after it
+and before a timer due by the horizon that became due after the loop time at
+which the completion arrived; otherwise a host task comes first, then a timer
+due by the horizon, then the completion.
 
 ### Permissions and host events (v38)
 
@@ -1534,6 +1547,23 @@ One **execution** owns one fresh store and instance and is never reused:
    execution; a long-lived application instance renews it per turn. A host
    that cannot renew a budget per turn MUST NOT claim v38 conformance for that
    budget (see [Budget guarantees](#budget-guarantees)).
+   **Idle collection (v38 `incremental_collection`).** A v38 module with a
+   managed heap exports `varta.collector.idle`, `(i32 units) -> i32 status`
+   (`collector::IDLE_EXPORT`). It reaches no host import, allocates nothing
+   through the host and changes no host status. A long-lived application
+   instance MAY call it whenever no task is runnable, at most once per idle
+   period between two turns, under a fresh maintenance allowance of
+   `maintenanceFuel` fuel and `maintenanceDeadlineMs` wall-clock time (the
+   [budget table](#manifest-limits)), never a turn's fuel. The reference host
+   calls it with `collector::IDLE_STEP_UNITS` units while at least
+   `budget::MAINTENANCE_STEP_FUEL` maintenance fuel remains, until it returns
+   `collector::IDLE_NONE` (0, no collection due) or `IDLE_DONE` (2, the cycle
+   completed); `IDLE_MORE` (1) means work was done and the cycle continues.
+   Any other status is a fatal error. The guest decides from its own heap
+   state alone, so the same turns give the same maintenance. An exhausted
+   maintenance budget terminates the instance like an exhausted turn budget.
+   A bounded run, a tool or HTTP invocation and a host that never calls the
+   export are conforming: collection then happens inside turns.
 3. Instantiate exactly once, linking only the imports the module declares. A
    failed instantiation ends the execution; never instantiate the same execution
    twice.

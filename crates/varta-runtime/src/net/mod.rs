@@ -32,6 +32,14 @@ pub(crate) struct Completion {
 pub(crate) struct Event {
     id: u64,
     completion: Completion,
+    /// When the transfer task reported it (v38 application instances order
+    /// it by this arrival among host tasks and due timers).
+    arrived: Instant,
+}
+impl Event {
+    pub(crate) fn arrived(&self) -> Instant {
+        self.arrived
+    }
 }
 
 enum Phase {
@@ -110,12 +118,17 @@ impl Net {
             .values()
             .any(|request| request.watcher.is_some() && matches!(request.phase, Phase::Armed))
     }
-    /// A new request: a slot, then either an immediate completion (a denial,
-    /// an invalid URL or request) or a transfer task.
-    fn start(&mut self, outcome: Result<client::Plan, Completion>) -> Result<f64, wasmtime::Error> {
+    /// The pending-request limit: one more request is fatal (`Budget`).
+    fn full(&self) -> Result<(), wasmtime::Error> {
         if self.requests.len() >= MAX_PENDING_REQUESTS {
             return Err(wasmtime::Error::new(NetError::Budget));
         }
+        Ok(())
+    }
+    /// A new request: a slot, then either an immediate completion (a denial,
+    /// an invalid URL or request) or a transfer task.
+    fn start(&mut self, outcome: Result<client::Plan, Completion>) -> Result<f64, wasmtime::Error> {
+        self.full()?;
         self.next_id += 1;
         let id = self.next_id;
         let (phase, transfer) = match outcome {
@@ -258,6 +271,14 @@ impl Net {
             scheduler.wake(serial).map_err(wasmtime::Error::new)?;
         }
         Ok(())
+    }
+    /// Let the transfers make the progress they can without waiting, so
+    /// completions arrive while a long-lived instance stays busy with other
+    /// tasks (v38).
+    pub(crate) fn drive(&mut self) {
+        if let Some(runtime) = &self.runtime {
+            runtime.block_on(tokio::task::yield_now());
+        }
     }
     /// A completion that already arrived, without driving the transfers.
     pub(crate) fn poll(&mut self) -> Option<Event> {
@@ -424,6 +445,12 @@ fn start(
     let text = read_descriptor(caller, ptr, len).map_err(fatal)?;
     let request = RequestDescriptor::parse(&text, version).map_err(fatal)?;
     let context = caller.data_mut();
+    // V38: the pending-request limit fails before the permission broker
+    // decides (no prompt, decision or audit entry for a request that cannot
+    // start); v37 keeps its order.
+    if context.turns.renew {
+        context.net.full()?;
+    }
     let outcome = plan(context, &request);
     context.net.start(outcome)
 }

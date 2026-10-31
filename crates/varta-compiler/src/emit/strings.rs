@@ -3,6 +3,7 @@ mod allocate;
 mod free_classes;
 pub(super) use free_classes::CLASSES as FREE_CLASSES;
 mod array_append;
+pub(super) mod incremental;
 pub(super) use array_append::{MAX_VALUES as MAX_APPENDED, MIN_CAPACITY as MIN_APPEND_CAPACITY};
 mod array_enumeration;
 mod array_fill;
@@ -82,6 +83,9 @@ pub(super) struct Globals {
     /// heading the exact-size free lists of small blocks; the i64 mask of
     /// nonempty classes follows them.
     pub classes: Option<u32>,
+    /// V38 (`incremental_collection`): the first of the collector's state
+    /// globals ([`incremental::State`]).
+    pub collector: Option<incremental::State>,
 }
 impl Globals {
     /// Trap, first recording `resource` and the amount in local `amount` when
@@ -136,6 +140,23 @@ pub(super) enum Helper {
     StringTrimEnd,
     Allocate,
     Collect,
+    /// V38 (`incremental_collection`): the idle collection export
+    /// (`varta_common::collector::IDLE_EXPORT`).
+    CollectIdle,
+    /// V38: start an incremental cycle (`incremental::begin`).
+    CollectBegin,
+    /// V38: one bounded quantum of the cycle in progress.
+    CollectStep,
+    /// V38: shade the children of one marked block.
+    CollectTrace,
+    /// V38: drain the mark stack within a work budget.
+    CollectMark,
+    /// V38: the deletion barrier's slow path for one old reference.
+    Shade,
+    /// V38: the barrier before a bulk change of one object.
+    ShadeObject,
+    /// V38: make a block handed out while marking black.
+    Blacken,
     RootPush,
     ArrayIndex,
     ArrayKeys,
@@ -298,6 +319,12 @@ impl Helper {
             Self::FromUnits => (vec![ValType::I64], vec![ValType::I64]),
             Self::Units(count) => (vec![ValType::F64; usize::from(count)], vec![ValType::I64]),
             Self::Collect => (vec![], vec![]),
+            Self::CollectIdle | Self::CollectStep => (vec![ValType::I32], vec![ValType::I32]),
+            Self::CollectBegin => (vec![], vec![ValType::I32]),
+            Self::CollectMark => (vec![ValType::I32], vec![ValType::I32]),
+            Self::CollectTrace => (vec![ValType::I32; 3], vec![ValType::I32]),
+            Self::Shade => (vec![ValType::I64], vec![]),
+            Self::ShadeObject | Self::Blacken => (vec![ValType::I32], vec![]),
             Self::FrameTable => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
             Self::PrimitiveText(_) => (vec![ValType::I64], vec![ValType::I64]),
             Self::NumberText => (vec![ValType::F64], vec![ValType::I64]),
@@ -362,6 +389,41 @@ impl Helper {
             Self::ArrayIndex => (vec![ValType::I64, ValType::I32], vec![ValType::I32]),
         }
     }
+    /// The collector helpers of a v38 module (`incremental_collection`).
+    fn collector_calls(helpers: &BTreeMap<Self, u32>) -> Option<incremental::Calls> {
+        Some(incremental::Calls {
+            collect: *helpers.get(&Self::Collect)?,
+            begin: *helpers.get(&Self::CollectBegin)?,
+            step: *helpers.get(&Self::CollectStep)?,
+            trace: *helpers.get(&Self::CollectTrace)?,
+            shade: *helpers.get(&Self::Shade)?,
+            blacken: *helpers.get(&Self::Blacken)?,
+        })
+    }
+    /// As [`Self::collector_calls`] for a collector helper, which exists only
+    /// with the others.
+    fn calls(helpers: &BTreeMap<Self, u32>) -> incremental::Calls {
+        Self::collector_calls(helpers).unwrap_or(incremental::Calls {
+            collect: 0,
+            begin: 0,
+            step: 0,
+            trace: 0,
+            shade: 0,
+            blacken: 0,
+        })
+    }
+    /// The write barrier of a v38 module (`incremental_collection`).
+    pub(super) fn barrier(
+        globals: Option<Globals>,
+        helpers: &BTreeMap<Self, u32>,
+    ) -> Option<incremental::Barrier> {
+        let state = globals?.collector?;
+        Some(incremental::Barrier {
+            marking: state.global(incremental::Slot::Marking),
+            shade: *helpers.get(&Self::Shade)?,
+            shade_object: *helpers.get(&Self::ShadeObject)?,
+        })
+    }
     pub(super) fn needs_arena(self) -> bool {
         !matches!(
             self,
@@ -410,6 +472,12 @@ impl Helper {
             remainder,
             fast_paths,
         } = linked;
+        let tracing = incremental::Tracing {
+            closures: profile.closures(),
+            frames: frames.is_some(),
+            wide: profile.wide_records(),
+            limits: profile.data(),
+        };
         // Emission adds the complete allocator dependency set before indexing.
         match self {
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
@@ -420,7 +488,12 @@ impl Helper {
             Self::StringGrow => concat::grow(helpers[&Self::Allocate]),
             Self::StringEquals => compare::equals(profile.utf16()),
             Self::Compare => compare::function(profile.utf16(), crate::codegen_v2(profile)),
-            Self::Allocate => allocate::function(globals, helpers[&Self::Collect], profile.data()),
+            Self::Allocate => allocate::function(
+                globals,
+                helpers[&Self::Collect],
+                profile.data(),
+                Self::collector_calls(helpers),
+            ),
             Self::Collect => collect::function(
                 globals,
                 trace_values,
@@ -429,12 +502,25 @@ impl Helper {
                 profile.wide_records(),
                 profile.data(),
             ),
+            Self::CollectIdle => incremental::idle(globals, Self::calls(helpers)),
+            Self::CollectBegin => incremental::begin(globals, Self::calls(helpers)),
+            Self::CollectStep => incremental::step(
+                globals,
+                Self::calls(helpers),
+                helpers.get(&Self::CollectMark).copied().unwrap_or(0),
+            ),
+            Self::CollectTrace => incremental::trace(globals, tracing),
+            Self::CollectMark => incremental::mark(globals, tracing),
+            Self::Shade => incremental::shade(globals),
+            Self::ShadeObject => incremental::shade_object(globals, helpers[&Self::CollectTrace]),
+            Self::Blacken => incremental::blacken(globals),
             Self::FrameTable => super::frames::table_helper(
                 globals,
                 frames,
                 helpers[&Self::Allocate],
                 helpers[&Self::RootPush],
                 profile.data(),
+                Self::barrier(Some(globals), helpers),
             ),
             Self::RootPush => roots::function(globals),
             Self::ArraySearch => array_search::function(
@@ -493,12 +579,16 @@ impl Helper {
                 profile.sparse_arrays(),
                 sparse::Sizes::new(profile.data()),
             ),
-            Self::ArrayReverse => {
-                array_reverse::function(profile.sparse_arrays(), sparse::Sizes::new(profile.data()))
-            }
-            Self::ArrayFill => {
-                array_fill::function(profile.sparse_arrays(), sparse::Sizes::new(profile.data()))
-            }
+            Self::ArrayReverse => array_reverse::function(
+                profile.sparse_arrays(),
+                sparse::Sizes::new(profile.data()),
+                Self::barrier(Some(globals), helpers),
+            ),
+            Self::ArrayFill => array_fill::function(
+                profile.sparse_arrays(),
+                sparse::Sizes::new(profile.data()),
+                Self::barrier(Some(globals), helpers),
+            ),
             Self::ArrayKeys | Self::ArrayValues => array_enumeration::function(
                 globals,
                 helpers[&Self::Allocate],
@@ -511,14 +601,20 @@ impl Helper {
                 helpers[&Self::Allocate],
                 profile.sparse_arrays(),
                 profile.data(),
+                Self::barrier(Some(globals), helpers),
             ),
             Self::ArrayAppend(count) => array_append::function(
                 count,
                 helpers[&Self::Allocate],
                 profile.sparse_arrays(),
                 profile.data(),
+                Self::barrier(Some(globals), helpers),
             ),
-            Self::ArrayResize => array_resize::function(helpers[&Self::Allocate], profile.data()),
+            Self::ArrayResize => array_resize::function(
+                helpers[&Self::Allocate],
+                profile.data(),
+                Self::barrier(Some(globals), helpers),
+            ),
             Self::ArrayPresent => sparse::function(false, profile.data()),
             Self::ArrayStringHasOwn => {
                 array_own_key::function(helpers[&Self::ArrayPresent], profile.data())
@@ -530,7 +626,9 @@ impl Helper {
             Self::DictionaryUnlink => dictionary_probe::find(helpers[&Self::StringEquals], true),
             Self::DictionaryPlace => dictionary_probe::place(),
             Self::DictionaryIndex => dictionary_probe::index(),
-            Self::DictionaryInsertAt => dictionary_probe::insert_at(),
+            Self::DictionaryInsertAt => {
+                dictionary_probe::insert_at(Self::barrier(Some(globals), helpers))
+            }
             Self::PrimitiveText(bigint) => {
                 primitives::text(helpers[&Self::Allocate], fast_paths, bigint)
             }

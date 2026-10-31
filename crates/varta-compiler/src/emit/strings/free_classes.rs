@@ -154,7 +154,32 @@ pub(super) struct AllocateLocals {
 /// collects; growth keeps the threshold and budget checks of the allocator),
 /// else take the smallest nonempty larger class, splitting off a remainder of
 /// at least one header and alignment unit into its own class.
-pub(super) fn allocate(heap: u32, lists: Lists, l: AllocateLocals) -> Vec<I<'static>> {
+pub(super) fn allocate(
+    heap: u32,
+    lists: Lists,
+    l: AllocateLocals,
+    blacken: Vec<I<'static>>,
+) -> Vec<I<'static>> {
+    // V38 (`incremental_collection`): a block handed out while a cycle
+    // marks is black (`blacken` runs with it in `l.current`).
+    let take = |block: u32| {
+        let mut code = vec![
+            I::LocalGet(block),
+            I::I32Const(ALLOCATED),
+            I::I32Store(FLAG),
+            I::LocalGet(block),
+            I::I32Const(0),
+            I::I32Store(LINK),
+        ];
+        code.extend(blacken.iter().cloned());
+        code.extend([
+            I::LocalGet(block),
+            I::I32Const(HEADER as i32),
+            I::I32Add,
+            I::Return,
+        ]);
+        code
+    };
     // While every list is empty (a growing heap) only the bump runs.
     let mut code = vec![
         I::GlobalGet(lists.mask),
@@ -251,20 +276,4 @@ pub(super) fn allocate(heap: u32, lists: Lists, l: AllocateLocals) -> Vec<I<'sta
     code.extend(take(l.current));
     code.extend([I::End, I::End, I::End]);
     code
-}
-
-/// Mark the block in `block` allocated and return its payload.
-fn take(block: u32) -> [I<'static>; 10] {
-    [
-        I::LocalGet(block),
-        I::I32Const(ALLOCATED),
-        I::I32Store(FLAG),
-        I::LocalGet(block),
-        I::I32Const(0),
-        I::I32Store(LINK),
-        I::LocalGet(block),
-        I::I32Const(HEADER as i32),
-        I::I32Add,
-        I::Return,
-    ]
 }

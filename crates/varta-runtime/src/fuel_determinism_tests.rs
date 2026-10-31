@@ -74,6 +74,17 @@ fn measure(name: &str, source: &str, profile: P) -> [(String, u64); 3] {
 /// Instantiation is 0 in every profile; when v1–v37 were charged for it,
 /// every v1–v37 entry differed by host: macOS arm64 charged the copy over
 /// 16 KiB pages (`literal 1` v37 instantiation 16385) and Linux skipped it.
+///
+/// Re-pinned at the v38 wave-3b integration (no v37 `run` or
+/// `instantiation` entry changed): v38 `json` 51759 -> 24289 (the compiled
+/// decoder replaces the linked `json_parse_v19`) -> 33498 (`JSON.stringify`
+/// runs the linked encoder instead of a fair-charged import); v38
+/// `unknown assertions` 26166 -> 26163 (owned text results skip the
+/// result-buffer snapshot); every v38 `run` that allocates rises with the
+/// incremental collector's per-allocation bookkeeping (`portable` 6151 ->
+/// 6255, `records` 32636 -> 33772, `json` -> 33674, `unknown assertions` ->
+/// 26683); v37 `json rated` 57680 -> 97680: its 10 serialized values are
+/// charged the recalibrated `JSON_STRINGIFY_VALUE` (1,500 -> 5,500).
 const GOLDEN: &[(&str, u64)] = &[
     ("portable CheckedI32Utf8V1 instantiation", 0),
     ("portable CheckedI32Utf8V1 run", 18255),
@@ -85,8 +96,8 @@ const GOLDEN: &[(&str, u64)] = &[
     ("portable CheckedF64Utf16V37 run", 23693),
     ("portable CheckedF64Utf16V37 rated", 23905),
     ("portable CheckedF64Utf16V38 instantiation", 0),
-    ("portable CheckedF64Utf16V38 run", 6151),
-    ("portable CheckedF64Utf16V38 rated", 6151),
+    ("portable CheckedF64Utf16V38 run", 6255),
+    ("portable CheckedF64Utf16V38 rated", 6255),
     ("literal 1 CheckedF64Utf16V37 instantiation", 0),
     ("literal 1 CheckedF64Utf16V37 run", 77),
     ("literal 1 CheckedF64Utf16V37 rated", 129),
@@ -98,7 +109,7 @@ const GOLDEN: &[(&str, u64)] = &[
     ("records CheckedF64Utf16V37 rated", 88665),
     ("json CheckedF64Utf16V37 instantiation", 0),
     ("json CheckedF64Utf16V37 run", 4602),
-    ("json CheckedF64Utf16V37 rated", 57680),
+    ("json CheckedF64Utf16V37 rated", 97680),
     ("unknown assertions CheckedF64Utf16V37 instantiation", 0),
     ("unknown assertions CheckedF64Utf16V37 run", 22680),
     ("unknown assertions CheckedF64Utf16V37 rated", 24938),
@@ -109,14 +120,14 @@ const GOLDEN: &[(&str, u64)] = &[
     ("literal 30000 CheckedF64Utf16V38 run", 102),
     ("literal 30000 CheckedF64Utf16V38 rated", 102),
     ("records CheckedF64Utf16V38 instantiation", 0),
-    ("records CheckedF64Utf16V38 run", 32636),
-    ("records CheckedF64Utf16V38 rated", 32636),
+    ("records CheckedF64Utf16V38 run", 33772),
+    ("records CheckedF64Utf16V38 rated", 33772),
     ("json CheckedF64Utf16V38 instantiation", 0),
-    ("json CheckedF64Utf16V38 run", 33498),
-    ("json CheckedF64Utf16V38 rated", 33498),
+    ("json CheckedF64Utf16V38 run", 33674),
+    ("json CheckedF64Utf16V38 rated", 33674),
     ("unknown assertions CheckedF64Utf16V38 instantiation", 0),
-    ("unknown assertions CheckedF64Utf16V38 run", 26163),
-    ("unknown assertions CheckedF64Utf16V38 rated", 26163),
+    ("unknown assertions CheckedF64Utf16V38 run", 26683),
+    ("unknown assertions CheckedF64Utf16V38 rated", 26683),
     ("literal 90000 CheckedF64Utf16V38 instantiation", 0),
     ("literal 90000 CheckedF64Utf16V38 run", 102),
     ("literal 90000 CheckedF64Utf16V38 rated", 102),

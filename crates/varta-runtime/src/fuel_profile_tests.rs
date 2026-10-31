@@ -35,6 +35,21 @@ pub(crate) fn profiled(text: &str, profile: P) -> Vec<u8> {
     wasmtime::Module::new(&VartaRuntime::new().engine, &bytes).unwrap();
     bytes
 }
+/// Collections of a profiled run: complete collections and, in v38
+/// (`incremental_collection`), the incremental cycles started.
+pub(crate) fn collections(profile: &varta_common::profile::FuelProfile) -> u64 {
+    profile
+        .functions
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.name.as_str(),
+                "<helper Collect>" | "<helper CollectBegin>"
+            )
+        })
+        .map(|row| row.calls)
+        .sum()
+}
 fn plain(text: &str, profile: P) -> Vec<u8> {
     varta_compiler::compile_typescript_with_profile(text, profile)
         .unwrap_or_else(|e| panic!("{e}\n{text}"))

@@ -233,6 +233,16 @@ impl Emitter<'_> {
             ]);
             self.string_helper(strings::Helper::ArrayPresent)?;
         }
+        // V38 (`incremental_collection`): the removed element is shaded.
+        if element.needs_root()
+            && let Some(barrier) = self.barrier()
+        {
+            self.code
+                .extend([I::GlobalGet(barrier.marking), I::If(BlockType::Empty)]);
+            self.pop_slot_address();
+            self.code
+                .extend([I::I64Load(strings::ROOT), I::Call(barrier.shade), I::End]);
+        }
         // Preserve the removed payload on the Wasm stack; no allocation occurs
         // until boxing roots its actual reference, after clearing the slot.
         self.pop_slot_address();

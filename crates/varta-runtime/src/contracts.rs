@@ -1,6 +1,7 @@
 //! Validate public metadata against portable code without instantiating it.
 use crate::RuntimeError;
 use std::collections::{BTreeMap, BTreeSet};
+use varta_common::collector::IDLE_EXPORT;
 use varta_common::{ToolCatalog, ToolType, abi};
 use wasmparser::{ExternalKind, Operator, Parser, Payload};
 use wasmtime::{ExternType, Module, ValType};
@@ -129,6 +130,8 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
         if parses || http.is_some() {
             bounded_memory(module, true)?;
             check_effects(module, bytes, None, http.as_ref())?;
+        } else if module.get_export(IDLE_EXPORT).is_some() {
+            check_effects(module, bytes, None, None)?;
         }
         return Ok(None);
     };
@@ -331,6 +334,22 @@ fn check_effects(
                 });
             }
         }
+    }
+    // V38 (`incremental_collection`): idle collection runs between turns
+    // under the maintenance budget and must not reach any host effect. The
+    // fuel-profile probes of a profile build are not host effects.
+    let effects: Vec<bool> = module
+        .imports()
+        .map(|import| import.module() != varta_common::profile::MODULE)
+        .collect();
+    if let Some(index) = exports.get(IDLE_EXPORT)
+        && reachable(*index, &calls)?
+            .iter()
+            .any(|index| effects.get(*index).copied().unwrap_or(false))
+    {
+        return Err(invalid_value(
+            "the idle collection export cannot call host imports",
+        ));
     }
     if let Some(http) = http {
         let index = *exports

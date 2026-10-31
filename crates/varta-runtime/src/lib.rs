@@ -29,9 +29,12 @@ mod fair_fuel;
 mod fuel_profile;
 #[cfg(test)]
 mod fuel_profile_tests;
+mod maintenance;
 mod turns;
 pub use permission::PermissionPrompter;
-pub use turns::{BUDGET_REPORT_PREFIX, BudgetExhausted, BudgetReport, TurnKind, TurnUsage};
+pub use turns::{
+    BUDGET_REPORT_PREFIX, BudgetExhausted, BudgetReport, MaintenanceUsage, TurnKind, TurnUsage,
+};
 mod prepared;
 #[cfg(test)]
 mod prepared_tests;
@@ -53,6 +56,8 @@ pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
 #[cfg(test)]
 mod array_inference_tests;
 #[cfg(test)]
+mod arrival_order_tests;
+#[cfg(test)]
 mod async_generator_tests;
 #[cfg(test)]
 mod async_method_tests;
@@ -64,6 +69,8 @@ mod bitwise_compound_tests;
 mod bitwise_tests;
 #[cfg(test)]
 mod call_flow_tests;
+#[cfg(test)]
+mod collector_stress_tests;
 #[cfg(test)]
 mod data_limit_tests;
 #[cfg(test)]
@@ -102,6 +109,8 @@ mod language_tests;
 mod literal_type_tests;
 #[cfg(test)]
 mod logical_assignment_tests;
+#[cfg(test)]
+mod maintenance_tests;
 #[cfg(test)]
 mod math_f16_tests;
 #[cfg(test)]

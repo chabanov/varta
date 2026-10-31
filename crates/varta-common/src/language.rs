@@ -707,6 +707,15 @@ impl LanguageProfile {
     pub fn codegen_v2(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave-3 collection stream: idle collection between the
+    /// turns of an application instance under a separate maintenance budget
+    /// ([`crate::collector::IDLE_EXPORT`]) and an incremental collector with
+    /// a deletion write barrier and lazy sweeping inside turns. Admits no
+    /// syntax and changes no value layout.
+    #[must_use]
+    pub fn incremental_collection(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-2 dictionary-hashing stream: value layout 18
     /// ([`crate::value::HASHED_DICTIONARY_VALUE_VERSION`]) with hashed
     /// dictionaries and mixed records (an open-addressing table of entry
@@ -3180,6 +3189,7 @@ mod tests {
                 profile.closure_narrowing(),
                 profile.structural_subtyping(),
                 profile.codegen_v2(),
+                profile.incremental_collection(),
                 profile.dictionary_hashing(),
                 profile.strict_members(),
                 profile.web_bytes(),

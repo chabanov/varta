@@ -42,6 +42,19 @@ impl Emitter<'_> {
             .extend([I::LocalGet(self.temporary), I::I32Const(1), I::I32Add]);
         self.string_helper(strings::Helper::ArrayResize)?;
         self.code.push(I::End);
+        // V38 (`incremental_collection`): the element it replaces is shaded
+        // while a cycle marks (its address is computed again only then).
+        if self.element(array.ty).is_some_and(Type::needs_root)
+            && let Some(barrier) = self.barrier()
+        {
+            self.code
+                .extend([I::GlobalGet(barrier.marking), I::If(BlockType::Empty)]);
+            self.scratch_get(base, array.ty);
+            self.code.push(I::LocalGet(self.temporary));
+            self.string_helper(strings::Helper::ArrayIndex)?;
+            self.code
+                .extend([I::I64Load(strings::ROOT), I::Call(barrier.shade), I::End]);
+        }
         self.scratch_get(base, array.ty);
         self.code.push(I::LocalGet(self.temporary));
         self.string_helper(strings::Helper::ArrayIndex)?;
@@ -131,6 +144,10 @@ impl Emitter<'_> {
             I::I32TruncF64U,
         ]);
         self.string_helper(strings::Helper::ArrayPresent)?;
+        let slot = wasm_encoder::MemArg {
+            offset: values::ARRAY_META_BYTES as u64,
+            ..strings::ROOT
+        };
         self.code.extend([
             I::If(BlockType::Empty),
             I::LocalGet(self.string_temporary),
@@ -145,11 +162,15 @@ impl Emitter<'_> {
             I::I32Const(values::ARRAY_SLOT_BYTES as i32),
             I::I32Mul,
             I::I32Add,
+        ]);
+        // V38 (`incremental_collection`): the deleted element is shaded.
+        if self.element(array.ty).is_some_and(Type::needs_root) && self.barrier().is_some() {
+            self.code.push(I::LocalTee(self.temporary));
+            self.slot_barrier(self.temporary, slot);
+        }
+        self.code.extend([
             I::I64Const(0),
-            I::I64Store(wasm_encoder::MemArg {
-                offset: values::ARRAY_META_BYTES as u64,
-                ..strings::ROOT
-            }),
+            I::I64Store(slot),
             I::LocalGet(self.string_temporary),
             I::LocalGet(self.float_temporary),
             I::I32TruncF64U,

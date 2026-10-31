@@ -49,6 +49,22 @@ in [conformance/README.md](conformance/README.md).
   443,815 to 515,798 bytes. Node 24 runs the JSON round-trip fixture with a
   host that implements only `log_string16`, output identical to
   `varta dev`.
+- V38 collection between and within turns (`incremental_collection`, wave 3
+  (f)). Long-lived application instances run collection work at idle points
+  (no runnable task; on the virtual clock of a scripted session, the
+  quiescence before the next input) through the host-free guest export
+  `varta.collector.idle`, under a separate per-idle-period maintenance
+  budget (`maintenanceFuel`, default `budget::MAINTENANCE_FUEL`;
+  `maintenanceDeadlineMs`, default `budget::MAINTENANCE_DEADLINE_MS`;
+  requested by the manifest, capped by the host ceiling) that is never
+  charged to a turn; `--budget-report` lists each idle period that did work
+  and a maintenance total. Inside turns the v38 collector is incremental: a
+  cycle marks from a root snapshot with a deletion write barrier before every
+  reference store (whole-object shading before bulk changes), keeps marks in
+  side bitmaps that no value reader sees, sweeps lazily and performs bounded
+  work per allocation, while a request the memory budget refuses still
+  collects completely first. Collector stress builds verify every store kind
+  and the runtime case corpus. V37 and earlier keep their bytes.
 
 - V38 KV storage pays fair host fuel (`kv`): `fuel::KV_OPERATION` (100,000)
   per open, read and commit, `fuel::KV_BYTE` (10) per key or value byte
@@ -1308,6 +1324,13 @@ in [conformance/README.md](conformance/README.md).
   byte-identical across runs. Emitted bytes are unchanged. The codegen-v2
   keyed view mount speedup is re-pinned from 2.0 to 1.99 (v37 164,741 against
   v38 82,600; 2.0 held only with the macOS page charge).
+- V38 application instances order network completions by their arrival
+  among host tasks and due timers (they drive their transfers before every
+  choice), so a stream of host events or timers no longer starves a
+  completion; scripted sessions derive the order from arrival numbers and
+  loop time. The pending-request limit fails before the permission broker
+  decides, and a timer due beyond a bounded run's deadline reports
+  `TimerDeadline` while a request is in flight. V37 is unchanged.
 
 - V38 wave-3a integration: a fair-fuel charge that empties the fuel inside
   `host::input` or `host::result*` of the event, network-text and KV imports

@@ -54,6 +54,7 @@ pub(super) fn function(
     globals: Globals,
     collect: u32,
     limits: varta_common::limits::DataLimits,
+    calls: Option<super::incremental::Calls>,
 ) -> Function {
     use varta_common::limits::Resource;
     let bounded = globals.collect_at.is_some();
@@ -70,8 +71,9 @@ pub(super) fn function(
         I::If(BlockType::Empty),
     ];
     code.extend(globals.fail(Resource::ValueSize, LEN));
+    code.push(I::End);
+    code.extend(super::incremental::allocation(globals, LEN, calls));
     code.extend([
-        I::End,
         I::LocalGet(LEN),
         I::I32Const((HEADER + ALIGN - 1) as i32),
         I::I32Add,
@@ -94,6 +96,7 @@ pub(super) fn function(
                 next: NEXT,
                 mask: CLASS_MASK,
             },
+            super::incremental::blacken_taken(globals, CURRENT, calls),
         ));
     }
     code.extend([
@@ -185,6 +188,9 @@ pub(super) fn function(
         I::LocalGet(CURRENT),
         I::I32Const(0),
         I::I32Store(LINK),
+    ]);
+    code.extend(super::incremental::blacken_taken(globals, CURRENT, calls));
+    code.extend([
         I::LocalGet(CURRENT),
         I::I32Const(HEADER as i32),
         I::I32Add,
@@ -231,6 +237,46 @@ pub(super) fn function(
         ]);
     }
     code.push(I::If(BlockType::Empty));
+    if let (Some(state), Some(calls)) = (globals.collector, calls) {
+        // V38 (`incremental_collection`): while the heap end stays in the
+        // lower part of the memory maximum, the heap grows while a cycle
+        // runs, and past the threshold a cycle starts once the heap is large
+        // enough (after one full scan of the free list) and the request
+        // retries, since the cycle's metadata moved the heap end. Any other
+        // request past the threshold (a small heap, a large request, an end
+        // above that part, a cycle that could not start) collects at once,
+        // abandoning a cycle in progress.
+        code.extend([
+            I::GlobalGet(state.global(super::incremental::Slot::Phase)),
+            I::GlobalGet(globals.heap),
+            I::I32Const(globals.base as i32),
+            I::I32Sub,
+            I::I32Const(varta_common::collector::INCREMENTAL_MIN_HEAP_BYTES as i32),
+            I::I32GeU,
+            I::I32Or,
+            I::LocalGet(END),
+            I::I32Const(
+                (abi::MAX_MEMORY_BYTES / varta_common::collector::INCREMENTAL_HEAP_DIVISOR as usize)
+                    as i32,
+            ),
+            I::I32LeU,
+            I::I32And,
+            // A large request collects at once and goes where the garbage was.
+            I::LocalGet(NEED),
+            I::GlobalGet(globals.heap),
+            I::I32Const(globals.base as i32),
+            I::I32Sub,
+            I::I32Const(varta_common::collector::LARGE_REQUEST_SHIFT as i32),
+            I::I32ShrU,
+            I::I32LtU,
+            I::I32And,
+            I::If(BlockType::Empty),
+            I::GlobalGet(state.global(super::incremental::Slot::Phase)),
+            I::BrIf(1),
+        ]);
+        code.extend(scan_everything_first(globals, RETRY_FROM_IF + 1));
+        code.extend([I::Call(calls.begin), I::BrIf(RETRY_FROM_IF + 1), I::End]);
+    }
     code.extend(scan_everything_first(globals, RETRY_FROM_IF));
     code.extend([I::I32Const(1), I::LocalSet(RETRIED), I::Call(collect)]);
     code.extend(collection_threshold(globals));
@@ -367,11 +413,20 @@ fn scan_everything_first(globals: Globals, retry: u32) -> Vec<I<'static>> {
 /// V38 (`codegen_v2`): after a collection, grow without collecting until the
 /// heap end reaches twice the managed heap the collection left (bounded by
 /// the memory budget). Nothing for other modules.
-fn collection_threshold(globals: Globals) -> Vec<I<'static>> {
+pub(super) fn collection_threshold(globals: Globals) -> Vec<I<'static>> {
+    let mut code = super::incremental::collected(globals);
+    code.extend(threshold(globals));
+    code
+}
+
+/// V38 (`codegen_v2`): the next collection threshold, twice the managed heap
+/// left by a collection. Nothing for other modules.
+pub(super) fn threshold(globals: Globals) -> Vec<I<'static>> {
     let Some(collect_at) = globals.collect_at else {
         return Vec::new();
     };
-    vec![
+    let mut code = Vec::new();
+    code.extend([
         I::GlobalGet(globals.heap),
         I::I32Const(globals.base as i32),
         I::I32Sub,
@@ -380,5 +435,6 @@ fn collection_threshold(globals: Globals) -> Vec<I<'static>> {
         I::I32Const(globals.base as i32),
         I::I32Add,
         I::GlobalSet(collect_at),
-    ]
+    ]);
+    code
 }

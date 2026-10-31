@@ -121,11 +121,65 @@ pub enum Step {
     Failed,
 }
 
+/// A network completion as the instance received it: its place in the
+/// arrival order shared with host tasks and the loop time then (the order a
+/// scripted session compares on virtual time).
+struct Arrival {
+    event: crate::net::Event,
+    order: u64,
+    loop_time: f64,
+}
+
 /// A ready task of the next turn, by arrival.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ready {
     Host,
     Timer,
     Network,
+}
+
+/// The next task on the wall clock: the earliest instant among the oldest
+/// host task's arrival, the due time of a timer that has passed and the
+/// oldest completion's arrival; ties go to the host task, then the timer.
+fn wall_next(
+    host: Option<Instant>,
+    timer: Option<Instant>,
+    network: Option<Instant>,
+) -> Option<Ready> {
+    [
+        (host, Ready::Host),
+        (timer, Ready::Timer),
+        (network, Ready::Network),
+    ]
+    .into_iter()
+    .filter_map(|(at, ready)| at.map(|at| (at, ready)))
+    .min_by_key(|(at, _)| *at)
+    .map(|(_, ready)| ready)
+}
+
+/// The next task on the virtual clock of a scripted session, from arrival
+/// orders and loop times only: the oldest completion (its order and the loop
+/// time it arrived at) runs before a host task received after it and before
+/// a timer (due by the horizon) that became due after it arrived; otherwise
+/// host tasks come first, then the timer, then the completion.
+fn virtual_next(
+    host: Option<u64>,
+    timer: Option<f64>,
+    network: Option<(u64, f64)>,
+) -> Option<Ready> {
+    if let Some((order, arrived)) = network
+        && host.is_none_or(|host| order < host)
+        && timer.is_none_or(|due| due > arrived)
+    {
+        return Some(Ready::Network);
+    }
+    if host.is_some() {
+        Some(Ready::Host)
+    } else if timer.is_some() {
+        Some(Ready::Timer)
+    } else {
+        network.map(|_| Ready::Network)
+    }
 }
 
 pub struct Application {
@@ -134,11 +188,15 @@ pub struct Application {
     _module: PreparedModule,
     state: InstanceState,
     failure: Option<RuntimeError>,
-    network: VecDeque<crate::net::Event>,
+    /// Network completions received, in arrival order.
+    network: VecDeque<Arrival>,
     max_turns: Option<u64>,
     /// A scripted headless session's virtual clock; `None`: timers follow
     /// the wall clock.
     horizon: Option<Horizon>,
+    /// The current idle period already ran its maintenance (v38
+    /// `incremental_collection`); a turn starts the next period.
+    maintained: bool,
 }
 
 /// When a timer is ready on the virtual clock of a scripted session; nothing
@@ -194,6 +252,7 @@ impl VartaRuntime {
             network: VecDeque::new(),
             max_turns: options.max_turns,
             horizon: None,
+            maintained: false,
         };
         let result = (|| {
             let store = &mut application.execution.store;
@@ -463,6 +522,18 @@ impl Application {
                 self.state = InstanceState::Finished { exit_code: 0 };
                 return Step::Finished { exit_code: 0 };
             }
+            // No task is runnable: the idle period's collection work runs
+            // once, under the maintenance budget, before the instance waits.
+            if !self.maintained {
+                self.maintained = true;
+                if let Err(error) =
+                    crate::maintenance::idle(&self.instance, &mut self.execution.store)
+                {
+                    self.fail(error);
+                    return Step::Failed;
+                }
+                continue;
+            }
             match self.wait(until) {
                 Ok(true) => {}
                 Ok(false) => return Step::Idle,
@@ -499,26 +570,45 @@ impl Application {
         Ok(())
     }
 
-    /// The earliest ready task by arrival, if any; on the virtual clock,
-    /// host tasks first, then a timer due by the horizon, then a completion.
-    fn ready(&mut self) -> Option<Ready> {
+    /// Receive a network completion: stamp it with the next arrival order
+    /// and the loop time.
+    fn receive(&mut self, event: crate::net::Event) {
         let context = self.execution.store.data_mut();
-        while let Some(event) = context.net.poll() {
-            self.network.push_back(event);
+        let order = context.events.stamp();
+        let loop_time = context.scheduler.loop_time();
+        self.network.push_back(Arrival {
+            event,
+            order,
+            loop_time,
+        });
+    }
+
+    /// The earliest ready task by arrival (FIFO across host tasks, due timers
+    /// and network completions), if any. On the wall clock a host task's
+    /// instant is its arrival, a timer's its due time and a completion's the
+    /// moment its transfer reported it; ties go to the host task, then the
+    /// timer. On the virtual clock of a scripted session nothing reads the
+    /// wall clock: a completion runs before a host task received after it
+    /// and before a timer that became due after it arrived (by loop time),
+    /// and otherwise host tasks come first, then a timer due by the horizon.
+    fn ready(&mut self) -> Option<Ready> {
+        self.execution.store.data_mut().net.drive();
+        while let Some(event) = self.execution.store.data_mut().net.poll() {
+            self.receive(event);
         }
+        let context = self.execution.store.data_mut();
         if let Some(horizon) = self.horizon {
             let scheduler = &context.scheduler;
             let due = |due: f64| match horizon {
                 Horizon::Input => due <= scheduler.loop_time() || scheduler.immediate_armed(),
                 Horizon::Until(end) => due <= end,
             };
-            return if context.events.next_arrival().is_some() {
-                Some(Ready::Host)
-            } else if scheduler.next_due(true).is_some_and(due) {
-                Some(Ready::Timer)
-            } else {
-                (!self.network.is_empty()).then_some(Ready::Network)
-            };
+            let timer = scheduler.next_due(true).filter(|at| due(*at));
+            let network = self
+                .network
+                .front()
+                .map(|arrival| (arrival.order, arrival.loop_time));
+            return virtual_next(context.events.next_order(), timer, network);
         }
         let now = Instant::now();
         let host = context.events.next_arrival();
@@ -527,16 +617,8 @@ impl Application {
             .next_due(true)
             .map(|due| scheduler::target(context, due))
             .filter(|at| *at <= now);
-        let network = self.network.front().map(|_| now);
-        [
-            (host, Ready::Host),
-            (timer, Ready::Timer),
-            (network, Ready::Network),
-        ]
-        .into_iter()
-        .filter_map(|(at, ready)| at.map(|at| (at, ready)))
-        .min_by_key(|(at, _)| *at)
-        .map(|(_, ready)| ready)
+        let network = self.network.front().map(|arrival| arrival.event.arrived());
+        wall_next(host, timer, network)
     }
 
     /// Whether anything can still produce a task.
@@ -578,7 +660,7 @@ impl Application {
             .unwrap_or(slice);
         if busy {
             if let Some(event) = context.net.wait(deadline) {
-                self.network.push_back(event);
+                self.receive(event);
                 return Ok(true);
             }
         } else if deadline > Instant::now() {
@@ -627,7 +709,7 @@ impl Application {
                 }
                 Ready::Network => {
                     turns::begin(store, kind)?;
-                    if let Some(event) = self.network.pop_front() {
+                    if let Some(Arrival { event, .. }) = self.network.pop_front() {
                         let context = store.data_mut();
                         context.net.deliver(&mut context.scheduler, event)?;
                         if self.horizon.is_none() {
@@ -663,6 +745,7 @@ impl Application {
     }
 
     fn finish_turn(&mut self, result: Result<(), RuntimeError>) {
+        self.maintained = false;
         let store = &mut self.execution.store;
         store.data_mut().broker.gesture = false;
         let instance = &self.instance;
@@ -695,6 +778,66 @@ impl Application {
         report.collect(self.execution.store.data_mut());
         if let InstanceState::Finished { exit_code } = self.state {
             report.output.exit_code = exit_code;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// On the wall clock tasks run FIFO by arrival: a completion that arrived
+    /// before a host task or a due timer runs first, so a sustained stream of
+    /// either cannot starve it; ties keep host task, timer, completion.
+    #[test]
+    fn wall_clock_tasks_run_by_arrival() {
+        let start = Instant::now();
+        let at = |ms: u64| Some(start + Duration::from_millis(ms));
+        assert_eq!(wall_next(at(5), at(3), at(1)), Some(Ready::Network));
+        assert_eq!(wall_next(at(1), at(3), at(5)), Some(Ready::Host));
+        assert_eq!(wall_next(at(4), at(2), at(3)), Some(Ready::Timer));
+        assert_eq!(wall_next(at(1), at(1), at(1)), Some(Ready::Host));
+        assert_eq!(wall_next(None, at(1), at(1)), Some(Ready::Timer));
+        assert_eq!(wall_next(None, None, None), None);
+    }
+
+    /// On the virtual clock the same order is derived without the wall
+    /// clock: completions interleave with host tasks by arrival order and
+    /// with timers by the loop time they arrived at.
+    #[test]
+    fn virtual_clock_tasks_interleave_by_arrival() {
+        // A completion received after host task 1 and before host task 3.
+        assert_eq!(
+            virtual_next(Some(1), None, Some((2, 0.0))),
+            Some(Ready::Host)
+        );
+        assert_eq!(
+            virtual_next(Some(3), None, Some((2, 0.0))),
+            Some(Ready::Network)
+        );
+        // A timer due at or before the completion's arrival runs first; one
+        // that became due after it (a re-armed chain) does not.
+        assert_eq!(
+            virtual_next(None, Some(10.0), Some((2, 10.0))),
+            Some(Ready::Timer)
+        );
+        assert_eq!(
+            virtual_next(None, Some(11.0), Some((2, 10.0))),
+            Some(Ready::Network)
+        );
+        assert_eq!(virtual_next(Some(5), Some(1.0), None), Some(Ready::Host));
+        assert_eq!(virtual_next(None, Some(1.0), None), Some(Ready::Timer));
+        assert_eq!(
+            virtual_next(None, None, Some((1, 0.0))),
+            Some(Ready::Network)
+        );
+        assert_eq!(virtual_next(None, None, None), None);
+        // A chain of later host tasks and timers never overtakes it.
+        for later in 3..100 {
+            assert_eq!(
+                virtual_next(Some(later), Some(f64::from(later as u32)), Some((2, 1.0))),
+                Some(Ready::Network)
+            );
         }
     }
 }

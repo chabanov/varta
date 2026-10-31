@@ -120,9 +120,13 @@ fn cause(error: &Option<String>) -> Option<String> {
 }
 /// The host-import run and the linked run of `source`: identical lines and
 /// failure. `None` when the program neither serializes nor logs a value.
+/// The host imports run uncharged: the fair rates bound the linked
+/// encoder's cost from above (`linked_serialization_stays_within_its_measured_cost`),
+/// so a charged reference would run out of fuel where the linked build
+/// finishes.
 fn same(source: &str, budgets: u64) -> Option<(Run, Run)> {
     let host_bytes = host(source)?;
-    let host = run(&host_bytes, budgets, None);
+    let host = run(&host_bytes, budgets, Some(false));
     let linked = run(&linked(source), budgets, None);
     assert_eq!(
         linked.lines, host.lines,
@@ -308,22 +312,31 @@ impl Generator {
     }
 }
 
+/// Twelve generated programs that each serialize and log 24 random value
+/// graphs (48 lines), shared with the collector stress builds.
+pub(crate) fn generated_programs() -> Vec<String> {
+    let mut generator = Generator(0x9E37_79B9_7F4A_7C15);
+    (0..12)
+        .map(|_| {
+            let shows: Vec<String> = (0..24)
+                .map(|_| format!("  show({});", generator.value(4)))
+                .collect();
+            format!(
+                "{HELPERS}\nexport function main(): void {{\n{}\n}}\n",
+                shows.join("\n")
+            )
+        })
+        .collect()
+}
+
 /// Generated value graphs (records, arrays, hashed dictionaries with holes,
 /// sparse arrays, unions, functions, errors, promises, BigInts, lone
 /// surrogates, integer-like and private-looking keys) serialize and log
 /// identically.
 #[test]
 fn linked_serialization_matches_the_host_imports_on_generated_graphs() {
-    let mut generator = Generator(0x9E37_79B9_7F4A_7C15);
-    for program in 0..12 {
-        let shows: Vec<String> = (0..24)
-            .map(|_| format!("  show({});", generator.value(4)))
-            .collect();
-        let source = format!(
-            "{HELPERS}\nexport function main(): void {{\n{}\n}}\n",
-            shows.join("\n")
-        );
-        let (host, _) = same(&source, 400).unwrap_or_else(|| panic!("program {program}"));
+    for (program, source) in generated_programs().iter().enumerate() {
+        let (host, _) = same(source, 400).unwrap_or_else(|| panic!("program {program}"));
         assert_eq!(host.error, None, "program {program}\n{source}");
         assert_eq!(host.lines.len(), 48, "program {program}");
     }
@@ -625,10 +638,24 @@ fn workloads() -> Vec<Workload> {
         workload("log: fulfilled promise", "", "Promise.resolve(7)", true),
     ]
 }
-/// Fuel of one serialization or logged value beyond the same program
-/// without it: the host-import build uncharged and at the fair rates, and
-/// the linked build.
-fn workload_fuel(workload: &Workload) -> (i64, i64, i64) {
+/// One measured workload: the fuel of one serialization or logged value
+/// beyond the same program without it, through the host-import build
+/// uncharged and at the fair rates and through the linked build, and the
+/// values the host serializer visited.
+struct Measured {
+    free: i64,
+    fair: i64,
+    linked: i64,
+    values: i64,
+}
+/// Measure `workload`. The values visited follow from the fair charge: it
+/// is the stringify charge (`JSON_STRINGIFY_VALUE` per value,
+/// `JSON_STRINGIFY_UNIT` per output unit, `CALL` for a serialization's
+/// import) plus the difference of the two programs' logged string bytes
+/// (`BYTE` per UTF-16 byte; a logged value's hosted import replaces the
+/// other program's `log_string16` call).
+fn workload_fuel(workload: &Workload) -> Measured {
+    use varta_common::fuel;
     let program = |serialize: bool| {
         let body = match (serialize, workload.log) {
             (true, false) => "console.log(String(JSON.stringify(v).length));",
@@ -640,67 +667,114 @@ fn workload_fuel(workload: &Workload) -> (i64, i64, i64) {
             workload.prelude, workload.value
         )
     };
-    let fuel = |bytes: &[u8], rated| run(bytes, 400, rated).fuel as i64;
+    let hosted = |serialize: bool| {
+        varta_compiler::host_import_test_hook::compile_with_profile(
+            &program(serialize),
+            V38,
+            &HOSTED,
+        )
+        .unwrap()
+    };
     let delta = |linked_build: bool, rated: Option<bool>| {
         let build = |serialize: bool| {
-            let source = program(serialize);
             if linked_build {
-                linked(&source)
+                linked(&program(serialize))
             } else {
-                varta_compiler::host_import_test_hook::compile_with_profile(&source, V38, &HOSTED)
-                    .unwrap()
+                hosted(serialize)
             }
         };
-        fuel(&build(true), rated) - fuel(&build(false), rated)
+        run(&build(true), 400, rated).fuel as i64 - run(&build(false), 400, rated).fuel as i64
     };
-    (
+    let (free, fair, linked) = (
         delta(false, Some(false)),
         delta(false, Some(true)),
         delta(true, None),
-    )
+    );
+    let line = |serialize: bool| {
+        let run = run(&hosted(serialize), 400, Some(false));
+        assert_eq!(run.lines.len(), 1, "{}: {:?}", workload.label, run.lines);
+        let line = &run.lines[0];
+        line.strip_prefix(LOG_PREFIX).unwrap_or(line).to_owned()
+    };
+    let units = |text: &str| text.encode_utf16().count() as i64;
+    let byte = fuel::BYTE as i64 * size_of::<u16>() as i64;
+    let (shown, typed) = (line(true), units(&line(false)));
+    let (output, others) = if workload.log {
+        (units(&shown), -byte * typed)
+    } else {
+        let output: i64 = shown.parse().unwrap();
+        (output, fuel::CALL as i64 + byte * (units(&shown) - typed))
+    };
+    let charged = fair - free - others - output * fuel::JSON_STRINGIFY_UNIT as i64;
+    let rate = fuel::JSON_STRINGIFY_VALUE as i64;
+    assert_eq!(charged % rate, 0, "{}: {charged}", workload.label);
+    Measured {
+        free,
+        fair,
+        linked,
+        values: charged / rate,
+    }
 }
 
-/// The development-plan table (`--nocapture`).
+/// The `JSON_STRINGIFY_VALUE` a workload needs for its host import never to
+/// cost less than the linked encoder: the published rate plus the linked
+/// excess per value visited, rounded up.
+fn needed_value_rate(measured: &Measured) -> u64 {
+    let excess = (measured.linked - measured.fair).max(0) as u64;
+    varta_common::fuel::JSON_STRINGIFY_VALUE + excess.div_ceil(measured.values as u64)
+}
+
+/// The prefix of a captured output line.
+const LOG_PREFIX: &str = "varta log: ";
+
+/// The granularity the fair rates are rounded up to.
+const RATE_STEP: u64 = 500;
+
+/// The development-plan table and the calibration of `JSON_STRINGIFY_VALUE`
+/// (`--nocapture`): the rate is the largest per-value rate any workload
+/// needs, rounded up to a multiple of [`RATE_STEP`].
 #[test]
 #[ignore]
 fn linked_serialization_fuel_measurement() {
     println!(
-        "| workload | v38 import, uncharged | v38 import, fair rates | v38 linked | linked / fair |"
+        "| workload | values | v38 import, uncharged | v38 import, fair | v38 linked | linked / fair | rate needed |"
     );
+    let mut fitted = 0;
     for workload in workloads() {
-        let (free, fair, linked) = workload_fuel(&workload);
+        let measured = workload_fuel(&workload);
+        let needed = needed_value_rate(&measured);
+        fitted = fitted.max(needed);
         println!(
-            "| {} | {free} | {fair} | {linked} | {:.2} |",
+            "| {} | {} | {} | {} | {} | {:.2} | {needed} |",
             workload.label,
-            linked as f64 / fair as f64
+            measured.values,
+            measured.free,
+            measured.fair,
+            measured.linked,
+            measured.linked as f64 / measured.fair as f64
         );
     }
+    println!(
+        "fitted JSON_STRINGIFY_VALUE: {} (largest need {fitted})",
+        fitted.next_multiple_of(RATE_STEP)
+    );
 }
 
-/// Linked serialization costs its instructions: at most these multiples of
-/// the host import's fair charge for the same work, as measured (open in
-/// the development plan: the stringify rates or further optimization). A
-/// change that makes linked serialization costlier fails here.
+/// The calibration holds: on every measured workload the host import's fair
+/// charge covers the linked encoder (serialization and logged values), so a
+/// change that makes linked serialization costlier than the published rates
+/// fails here.
 #[test]
 fn linked_serialization_stays_within_its_measured_cost() {
-    const CEILINGS: &[(&str, f64)] = &[
-        ("40 records (~1.8 KB)", 1.15),
-        ("1000 numbers", 0.65),
-        ("40 strings", 0.75),
-        ("40 integers", 0.65),
-        ("40 records {a,b,c}", 1.2),
-        ("log: 40 records", 1.2),
-        ("dictionary, 5 entries", 2.7),
-        ("log: fulfilled promise", 3.6),
-        ("number", 1.5),
-    ];
-    let workloads = workloads();
-    for &(label, ceiling) in CEILINGS {
-        let workload = workloads.iter().find(|w| w.label == label).unwrap();
-        let (_, fair, linked) = workload_fuel(workload);
+    for workload in workloads() {
+        let measured = workload_fuel(&workload);
         assert!(
-            linked as f64 <= fair as f64 * ceiling,
-            "{label}: linked {linked} > {ceiling} x fair {fair}"
+            measured.linked <= measured.fair,
+            "{}: linked {} > fair {} (needs JSON_STRINGIFY_VALUE {})",
+            workload.label,
+            measured.linked,
+            measured.fair,
+            needed_value_rate(&measured)
         );
     }
 }
