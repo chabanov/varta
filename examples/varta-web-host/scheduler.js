@@ -2,7 +2,7 @@
 // loop of embedding.md "Timers". Misuse raises the reference scheduler errors.
 import { authorize } from "./policy.js";
 import { ExecutionFailure, Recoverable } from "./errors.js";
-import { MS_PER_SECOND, now } from "./context.js";
+import { MS_PER_SECOND, LIMIT, hostLimit, now } from "./context.js";
 import { checkException } from "./exception.js";
 
 // Profiles whose runs are event turns: host calls and microtasks renew per turn
@@ -33,8 +33,13 @@ export function schedulerState(deadlineMs) {
 }
 
 /** Bodies of the scheduler and timer imports for one execution. */
-export function schedulerImports(ctx, exec, policies) {
+export function schedulerImports(ctx, exec, policies, profileName) {
   const { C, schedulerError } = ctx;
+  // Frozen profiles and v38 hold different numbers of tokens and timers (embedding.md "Scheduler limits").
+  const scheduled = profileName !== null && ctx.contract.hostLimits.some((r) => r.limit === LIMIT.heldTokens && r.profiles?.includes(profileName));
+  const maxHeldTokens = scheduled ? hostLimit(ctx.contract, LIMIT.heldTokens, profileName) : 0;
+  const timed = profileName !== null && ctx.contract.hostLimits.some((r) => r.limit === LIMIT.pendingTimers && r.profiles?.includes(profileName));
+  const maxPendingTimers = timed ? hostLimit(ctx.contract, LIMIT.pendingTimers, profileName) : 0;
 
   // embedding.md "Which error each misuse raises": "not issued" means not an
   // integer, outside 0 to MAX_PROMISE_SERIALS, or above the last value issued.
@@ -42,7 +47,7 @@ export function schedulerImports(ctx, exec, policies) {
     if (!Number.isInteger(serial) || serial < 0 || serial > C.maxSerials || serial > exec.nextSerial - 1) throw schedulerError("UnknownSerial");
   }
   function hold(token) {
-    if (exec.held.size >= C.maxHeldTokens) throw schedulerError("QueueFull");
+    if (exec.held.size >= maxHeldTokens) throw schedulerError("QueueFull");
     if (exec.held.has(token)) throw schedulerError("DuplicateToken");
     exec.held.add(token);
   }
@@ -59,7 +64,7 @@ export function schedulerImports(ctx, exec, policies) {
     if (flags & ~(C.timer.interval | C.timer.unref)) throw schedulerError("TimerState");
     requireIssued(serial);
     if (serial === 0 || (exec.reactions.get(serial) ?? []).length !== 1 || exec.timerBySerial.has(serial)) throw schedulerError("TimerState");
-    if (exec.timers.size >= C.timer.maxPending) throw schedulerError("TimerBudget");
+    if (exec.timers.size >= maxPendingTimers) throw schedulerError("TimerBudget");
     if (exec.nextTimerId > C.maxSerials) throw schedulerError("SerialBudget");
     const normalized = delay >= C.timer.minDelay && delay <= C.timer.maxDelay ? delay : C.timer.minDelay;
     const id = exec.nextTimerId++;

@@ -38,7 +38,6 @@ const DIAGNOSTIC = {
 const ENV_UNSET_TEXT = "environment variable not found";
 // Diagnostic targets of boolean grants (embedding.md "Call protocol", denial targets).
 const BOOLEAN_TARGET = { "time.now": "clock", "process.exit": "process" };
-const ENV_NAME_MAX_BYTES = 256;
 const UTF16_UNIT_BYTES = 2;
 const lenientUtf16 = new TextDecoder("utf-16le");
 
@@ -177,7 +176,7 @@ export function createExecution(ctx, info, policies, options) {
 
   function envName(ptr, len, id) {
     const name = resourceString(ptr, len);
-    if (name.length === 0 || utf8.encode(name).length > ENV_NAME_MAX_BYTES || name.includes("=") || name.includes("\0")) invalid();
+    if (name.length === 0 || utf8.encode(name).length > ctx.contract.manifestLimits.maxEnvNameBytes || name.includes("=") || name.includes("\0")) invalid();
     requireGrant(id, name);
     return name;
   }
@@ -239,7 +238,7 @@ export function createExecution(ctx, info, policies, options) {
     number_random: () => Math.random(),
     string_char_at16: (ptr, len, index) => writeResult(decodeUtf16(guestRange(ptr, len, C.maxStringBytes, invalid), invalid).charAt(index)),
     string_char_code_at16: (ptr, len, index) => decodeUtf16(guestRange(ptr, len, C.maxStringBytes, invalid), invalid).charCodeAt(index),
-    ...schedulerImports(ctx, exec, policies),
+    ...schedulerImports(ctx, exec, policies, info.profile?.name ?? null),
   };
   impl.env_has16 = impl.env_has;
   impl.env_get16 = impl.env_get;

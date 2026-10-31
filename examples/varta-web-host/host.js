@@ -134,7 +134,10 @@ export function createHost(contract) {
    */
   function debugScheduler(manifest = null) {
     const used = contract.operations.filter((op) => op.scheduler || op.name.startsWith("timer_"));
-    const { exec, imports } = createExecution(ctx, { used, profile: null }, parsePolicies({ manifest }), {});
+    // The misuse table is checked under the last profile that admits `timer_start`.
+    const timerStart = contract.operations.find((op) => op.name === "timer_start");
+    const profile = ctx.profiles.get(timerStart.admittedUnder[timerStart.admittedUnder.length - 1]);
+    const { exec, imports } = createExecution(ctx, { used, profile }, parsePolicies({ manifest }), {});
     exec.instance = { exports: {} };
     return { call: (name, ...args) => imports.varta[name](...args), exec };
   }

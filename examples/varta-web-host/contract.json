@@ -7655,7 +7655,6 @@
     "scheduler::TIMER_INTERVAL": "1",
     "scheduler::TIMER_UNREF": "2",
     "scheduler::TIMER_MIN_DELAY_MS, scheduler::TIMER_MAX_DELAY_MS": "1 to 2147483647",
-    "scheduler::MAX_PENDING_TIMERS": "32",
     "scheduler::SchedulerError::TimerDenied": "`<capability denied: time.timer> (setTimeout and setInterval require an exact time.timer grant)`"
   },
   "schedulerErrors": {
@@ -7966,6 +7965,8 @@
       "Placeholder: live nodes / listeners": "65536 / 8192",
       "Placeholder: value bytes / stylesheet bytes / pending events": "65536 / 262144 / 64",
       "Placeholder: pending `copy_text` requests": "16",
+      "Placeholder: tokens of one CSS property value": "128",
+      "`id` / `for` ident characters": "64",
       "Key filter: any key": "key code 0",
       "Key filter: modifier mask": "15 (shift, ctrl, alt, meta event flags)",
       "`listen` option `preventDefault`": "bit value 1",
@@ -8969,6 +8970,16 @@
     }
   },
   "manifestLimits": {
+    "maxPolicyGrants": 128,
+    "maxPolicyPatterns": 256,
+    "maxGrantPatterns": 64,
+    "maxPatternBytes": 512,
+    "maxPatternMatchWork": 65536,
+    "manifestTargets": [
+      "wasm",
+      "native"
+    ],
+    "maxManifestBytes": 262144,
     "turnBudgetsAbi": 34,
     "maxPurposeBytes": 256,
     "maxFileRoots": 16,
@@ -8991,7 +9002,10 @@
       "POST",
       "PUT"
     ],
-    "maxUrlBytes": 8192
+    "maxUrlBytes": 8192,
+    "maxFetchHeaderBytes": 65536,
+    "maxEnvNameBytes": 256,
+    "maxHostPathBytes": 4096
   },
   "rootNameExamples": [
     {
@@ -9049,6 +9063,469 @@
     {
       "name": "café",
       "valid": false
+    }
+  ],
+  "hostLimits": [
+    {
+      "table": "embedding-module-limits",
+      "limit": "Binary header (magic and version 1)",
+      "profiles": null,
+      "value": "`00 61 73 6d 01 00 00 00`",
+      "sources": [
+        "abi::WASM_HEADER"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "`varta.language` metadata (bytes)",
+      "profiles": null,
+      "value": 1024,
+      "sources": [
+        "language::MAX_METADATA_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Wasm module (bytes)",
+      "profiles": [
+        "checked-i32-utf8-v1",
+        "checked-f64-utf8-v1",
+        "checked-f64-utf8-v2",
+        "checked-f64-utf16-v1",
+        "checked-f64-utf16-v2",
+        "checked-f64-utf16-v3",
+        "checked-f64-utf16-v4",
+        "checked-f64-utf16-v5",
+        "checked-f64-utf16-v6",
+        "checked-f64-utf16-v7",
+        "checked-f64-utf16-v8",
+        "checked-f64-utf16-v9",
+        "checked-f64-utf16-v10",
+        "checked-f64-utf16-v11",
+        "checked-f64-utf16-v12",
+        "checked-f64-utf16-v13",
+        "checked-f64-utf16-v14",
+        "checked-f64-utf16-v15",
+        "checked-f64-utf16-v16",
+        "checked-f64-utf16-v17",
+        "checked-f64-utf16-v18",
+        "checked-f64-utf16-v19",
+        "checked-f64-utf16-v20",
+        "checked-f64-utf16-v21",
+        "checked-f64-utf16-v22",
+        "checked-f64-utf16-v23",
+        "checked-f64-utf16-v24",
+        "checked-f64-utf16-v25",
+        "checked-f64-utf16-v26",
+        "checked-f64-utf16-v27",
+        "checked-f64-utf16-v28",
+        "checked-f64-utf16-v29",
+        "checked-f64-utf16-v30",
+        "checked-f64-utf16-v31",
+        "checked-f64-utf16-v32",
+        "checked-f64-utf16-v33",
+        "checked-f64-utf16-v34",
+        "checked-f64-utf16-v35",
+        "checked-f64-utf16-v36",
+        "checked-f64-utf16-v37"
+      ],
+      "value": 4194304,
+      "sources": [
+        "abi::MAX_WASM_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Wasm module (bytes)",
+      "profiles": [
+        "checked-f64-utf16-v38"
+      ],
+      "value": 1073741824,
+      "sources": [
+        "limits::WASM"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Parameters of one function type",
+      "profiles": null,
+      "value": 32,
+      "sources": [
+        "abi::MAX_WASM_PARAMETERS"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Results of one function type",
+      "profiles": null,
+      "value": 2,
+      "sources": [
+        "abi::MAX_WASM_RESULTS"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Imports",
+      "profiles": null,
+      "value": 64,
+      "sources": [
+        "abi::MAX_IMPORTS"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Memories",
+      "profiles": null,
+      "value": 1,
+      "sources": [
+        "abi::MAX_MEMORIES"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Initial and maximum memory pages",
+      "profiles": null,
+      "value": 128,
+      "sources": [
+        "abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Tables",
+      "profiles": null,
+      "value": 1,
+      "sources": [
+        "abi::MAX_TABLES"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Initial elements of the table",
+      "profiles": null,
+      "value": 1024,
+      "sources": [
+        "abi::MAX_TABLE_ELEMENTS"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "Globals",
+      "profiles": null,
+      "value": 128,
+      "sources": [
+        "abi::MAX_GLOBALS"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "User functions, v1–v37",
+      "profiles": null,
+      "value": 256,
+      "sources": [
+        "abi::MAX_USER_FUNCTIONS"
+      ]
+    },
+    {
+      "table": "embedding-module-limits",
+      "limit": "HTTP adapters, v1–v37",
+      "profiles": null,
+      "value": 1,
+      "sources": [
+        "abi::MAX_HTTP_HANDLERS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Tokens held at once (queued and registered)",
+      "profiles": [
+        "checked-f64-utf16-v34",
+        "checked-f64-utf16-v35",
+        "checked-f64-utf16-v36",
+        "checked-f64-utf16-v37"
+      ],
+      "value": 64,
+      "sources": [
+        "scheduler::MAX_PENDING_CONTINUATIONS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Tokens held at once (queued and registered)",
+      "profiles": [
+        "checked-f64-utf16-v38"
+      ],
+      "value": 131072,
+      "sources": [
+        "limits::V38_MAX_PENDING_CONTINUATIONS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Timers armed or awaiting their take at once",
+      "profiles": [
+        "checked-f64-utf16-v36",
+        "checked-f64-utf16-v37"
+      ],
+      "value": 32,
+      "sources": [
+        "scheduler::MAX_PENDING_TIMERS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Timers armed or awaiting their take at once",
+      "profiles": [
+        "checked-f64-utf16-v38"
+      ],
+      "value": 65536,
+      "sources": [
+        "limits::V38_MAX_PENDING_TIMERS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Tokens taken from the queue per execution (v38: per turn)",
+      "profiles": null,
+      "value": 65536,
+      "sources": [
+        "scheduler::MAX_EXECUTION_JOBS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Promise serials, and separately tracking ids and timer ids, per execution",
+      "profiles": null,
+      "value": 1048576,
+      "sources": [
+        "scheduler::MAX_PROMISE_SERIALS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Unhandled-rejection reasons kept",
+      "profiles": null,
+      "value": 16,
+      "sources": [
+        "scheduler::MAX_RETAINED_REJECTION_REASONS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "UTF-16 units per rendered reason field",
+      "profiles": null,
+      "value": 256,
+      "sources": [
+        "scheduler::MAX_REJECTION_REASON_UNITS"
+      ]
+    },
+    {
+      "table": "embedding-scheduler-limits",
+      "limit": "Bytes per rendered reason",
+      "profiles": null,
+      "value": 2048,
+      "sources": [
+        "scheduler::MAX_REJECTION_REASON_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-event-limits",
+      "limit": "Sources open at once per instance (named sources and pending permission answers)",
+      "profiles": null,
+      "value": 32,
+      "sources": [
+        "events::MAX_EVENT_SOURCES"
+      ]
+    },
+    {
+      "table": "embedding-event-limits",
+      "limit": "Host tasks queued at once per instance",
+      "profiles": null,
+      "value": 256,
+      "sources": [
+        "events::MAX_PENDING_HOST_TASKS"
+      ]
+    },
+    {
+      "table": "embedding-event-limits",
+      "limit": "Event record (UTF-8 bytes)",
+      "profiles": null,
+      "value": 65536,
+      "sources": [
+        "events::MAX_EVENT_RECORD_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-event-limits",
+      "limit": "Source name (bytes)",
+      "profiles": null,
+      "value": 64,
+      "sources": [
+        "events::MAX_EVENT_NAME_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Requests holding a runtime slot at once",
+      "profiles": null,
+      "value": 8,
+      "sources": [
+        "net::MAX_PENDING_REQUESTS"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Request descriptor, body included (UTF-16 bytes)",
+      "profiles": null,
+      "value": 262144,
+      "sources": [
+        "net::MAX_REQUEST_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Request header fields",
+      "profiles": null,
+      "value": 64,
+      "sources": [
+        "net::MAX_REQUEST_HEADERS"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Request header name and value bytes",
+      "profiles": null,
+      "value": 16384,
+      "sources": [
+        "net::MAX_REQUEST_HEADER_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Response header fields",
+      "profiles": null,
+      "value": 100,
+      "sources": [
+        "net::MAX_RESPONSE_HEADERS"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Response header name and value bytes",
+      "profiles": null,
+      "value": 65536,
+      "sources": [
+        "net::MAX_RESPONSE_HEADER_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Body bytes of one `net_body_read` completion",
+      "profiles": null,
+      "value": 65536,
+      "sources": [
+        "net::MAX_CHUNK_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Body bytes of one response",
+      "profiles": null,
+      "value": 524288,
+      "sources": [
+        "net::MAX_RESPONSE_BODY_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "First descriptor line: `net_request_start` / `net_request_start_v2`",
+      "profiles": null,
+      "value": "`varta-net-request-1` / `varta-net-request-2`",
+      "sources": [
+        "net::DESCRIPTOR_VERSION",
+        "net::DESCRIPTOR_VERSION_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Descriptor (UTF-16 bytes)",
+      "profiles": null,
+      "value": 16384,
+      "sources": [
+        "permission::MAX_DESCRIPTOR_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Descriptor fields (version, name, resource flag, resource)",
+      "profiles": null,
+      "value": 4,
+      "sources": [
+        "permission::DESCRIPTOR_FIELDS"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "First descriptor line",
+      "profiles": null,
+      "value": "`varta-permission-1`",
+      "sources": [
+        "permission::DESCRIPTOR_VERSION"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Prompts open at once per instance",
+      "profiles": null,
+      "value": 1,
+      "sources": [
+        "permission::MAX_OPEN_PROMPTS"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Dismissals of one grant before a stored denial",
+      "profiles": null,
+      "value": 3,
+      "sources": [
+        "permission::MAX_DISMISSALS"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Audit entries kept per instance (older are dropped and counted)",
+      "profiles": null,
+      "value": 256,
+      "sources": [
+        "permission::MAX_AUDIT_ENTRIES"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Resource bytes kept per audit entry",
+      "profiles": null,
+      "value": 512,
+      "sources": [
+        "permission::MAX_AUDIT_RESOURCE_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Applications in one decision file",
+      "profiles": null,
+      "value": 64,
+      "sources": [
+        "permission::MAX_DECISION_APPLICATIONS"
+      ]
+    },
+    {
+      "table": "embedding-permission-limits",
+      "limit": "Decisions per application",
+      "profiles": null,
+      "value": 128,
+      "sources": [
+        "permission::MAX_DECISIONS_PER_APPLICATION"
+      ]
     }
   ]
 }

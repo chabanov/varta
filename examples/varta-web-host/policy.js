@@ -4,15 +4,9 @@ import { parseStrictJson, exactKeys, JsonNumber } from "./strict-json.js";
 
 export class PolicyError extends Error {}
 
-const MAX_GRANTS = 128;
-const MAX_PATTERNS = 256;
-const MAX_PATTERNS_PER_GRANT = 64;
-const MAX_PATTERN_BYTES = 512;
-const MAX_MATCH_WORK = 65536;
 const SCHEMA_VERSION = 1;
 const DEFAULT_ABI_VERSION = 1;
 const STRICT_POLICY = "strict";
-const TARGETS = ["wasm", "native"];
 const MANIFEST_FIELDS = ["schemaVersion", "abiVersion", "policy", "entry", "target", "budgets", "fsRoots"];
 const V34_MEMBERS = ["budgets", "fsRoots"];
 const GRANT_V34_FIELDS = ["required", "purpose"];
@@ -59,7 +53,7 @@ function integer(value, where) {
  */
 export function parseManifest(text, { where = "manifest", hostAbis, grantKinds, ceiling = false, budgetTable, limits }) {
   const grants = new Map();
-  if (text === null) return Object.assign(grants, { abiVersion: undefined });
+  if (text === null) return Object.assign(grants, { abiVersion: undefined, limits });
   let doc;
   try {
     doc = parseStrictJson(text);
@@ -72,7 +66,7 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds, 
   if (!hostAbis.has(abiVersion)) throw new PolicyError(`${where}: unsupported abiVersion ${abiVersion}`);
   if ("policy" in doc && doc.policy !== STRICT_POLICY) throw new PolicyError(`${where}: policy must be "${STRICT_POLICY}"`);
   if ("entry" in doc && typeof doc.entry !== "string") throw new PolicyError(`${where}: entry must be a string`);
-  if ("target" in doc && !TARGETS.includes(doc.target)) throw new PolicyError(`${where}: target must be "wasm" or "native"`);
+  if ("target" in doc && !limits.manifestTargets.includes(doc.target)) throw new PolicyError(`${where}: target must be one of ${limits.manifestTargets.join(", ")}`);
   const v34 = abiVersion >= limits.turnBudgetsAbi;
   for (const member of V34_MEMBERS) {
     if (member in doc && !v34) throw new PolicyError(`${where}: ${member} needs abiVersion ${limits.turnBudgetsAbi}`);
@@ -82,7 +76,7 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds, 
   // A v34 package names its roots; its fs.* patterns must start with one of them.
   const packageRoots = !ceiling && v34 ? new Set(fsRoots ?? []) : null;
   if (!Array.isArray(doc.capabilities)) throw new PolicyError(`${where}: capabilities must be an array`);
-  if (doc.capabilities.length > MAX_GRANTS) throw new PolicyError(`${where}: too many grants`);
+  if (doc.capabilities.length > limits.maxPolicyGrants) throw new PolicyError(`${where}: too many grants`);
   let patternCount = 0;
   for (const grant of doc.capabilities) {
     if (grant === null || typeof grant !== "object" || typeof grant.id !== "string") throw new PolicyError(`${where}: grant needs an id`);
@@ -108,16 +102,16 @@ export function parseManifest(text, { where = "manifest", hostAbis, grantKinds, 
     if (!Array.isArray(grant.patterns) || grant.patterns.some((p) => typeof p !== "string")) {
       throw new PolicyError(`${where}: ${grant.id}.patterns must be strings`);
     }
-    if (grant.patterns.length > MAX_PATTERNS_PER_GRANT) throw new PolicyError(`${where}: too many patterns for ${grant.id}`);
+    if (grant.patterns.length > limits.maxGrantPatterns) throw new PolicyError(`${where}: too many patterns for ${grant.id}`);
     patternCount += grant.patterns.length;
-    if (patternCount > MAX_PATTERNS) throw new PolicyError(`${where}: too many patterns`);
+    if (patternCount > limits.maxPolicyPatterns) throw new PolicyError(`${where}: too many patterns`);
     for (const pattern of grant.patterns) {
-      const reason = unsafeReason(pattern, kind, grant.id) ?? (kind === "paths" && packageRoots ? unsafeRootedPath(pattern, packageRoots) : null);
+      const reason = unsafeReason(pattern, kind, limits) ?? (kind === "paths" && packageRoots ? unsafeRootedPath(pattern, packageRoots) : null);
       if (reason) throw new PolicyError(`${where}: unsafe ${grant.id} pattern ${JSON.stringify(pattern)}: ${reason}`);
     }
     grants.set(grant.id, { kind, patterns: grant.patterns, methods, required: grant.required !== false });
   }
-  return Object.assign(grants, { abiVersion, budgets, fsRoots });
+  return Object.assign(grants, { abiVersion, budgets, fsRoots, limits });
 }
 
 /** `budgets`: known members only, each an integer in its published range. */
@@ -196,9 +190,9 @@ function unsafeRootedPath(pattern, roots) {
 }
 
 // embedding.md "Manifest": unsafe patterns, per grant kind.
-function unsafeReason(pattern, kind, id) {
+function unsafeReason(pattern, kind, limits) {
   if (kind === "endpoints") return canonicalEndpoint(pattern) ? null : "not a canonical IP:port";
-  if (utf8Length(pattern) > MAX_PATTERN_BYTES) return "longer than 512 bytes";
+  if (utf8Length(pattern) > limits.maxPatternBytes) return `longer than ${limits.maxPatternBytes} bytes`;
   if (pattern.trim() === "") return "empty or only whitespace";
   if (/^[*?]+$/.test(pattern)) return "only wildcards";
   if (pattern.includes("\0")) return "contains NUL";
@@ -248,8 +242,8 @@ function canonicalEndpoint(text) {
 }
 
 /** Glob match per Unicode scalar value; fails closed on excessive work. */
-export function matchPattern(pattern, input, { paths = false } = {}) {
-  if (utf8Length(pattern) * utf8Length(input) > MAX_MATCH_WORK) return false;
+export function matchPattern(pattern, input, { paths = false, maxWork }) {
+  if (utf8Length(pattern) * utf8Length(input) > maxWork) return false;
   const p = [...pattern];
   const s = [...input];
   const memo = new Map();
@@ -274,14 +268,12 @@ function grantAllows(grants, id, resource) {
   const grant = grants.get(id);
   if (!grant) return false;
   if (grant.kind === "boolean") return grant.enabled;
-  return grant.patterns.some((pattern) => matchPattern(pattern, resource, { paths: grant.kind === "paths" }));
+  return grant.patterns.some((pattern) => matchPattern(pattern, resource, { paths: grant.kind === "paths", maxWork: grants.limits.maxPatternMatchWork }));
 }
 
 /**
  * Package request intersected with the optional host ceiling. A supplied
  * ceiling must also allow the concrete resource; an empty one denies.
- */
-/**
  * Permission broker v1 (architecture.md "Permission broker v1"): request ∩ ceiling,
  * then the stored decision, then the prompt seam. This host stores no decisions and
  * has no prompt seam, so an optional grant (`required: false`) is denied.

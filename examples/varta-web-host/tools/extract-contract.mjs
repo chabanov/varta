@@ -268,6 +268,16 @@ const MANIFEST_LIMIT_KEYS = {
   "Methods never grantable (in any case)": "forbiddenMethods",
   "Methods a grant must spell in uppercase": "normalizedMethods",
   "Guest URL of `net_get*`, `net_fetch*` and `net_request_*` (bytes; a longer URL is denied)": "maxUrlBytes",
+  "Grants in one manifest or host policy": "maxPolicyGrants",
+  "Patterns, listen endpoints and request URLs across all grants": "maxPolicyPatterns",
+  "Patterns, listen endpoints or request URLs in one grant": "maxGrantPatterns",
+  "Name, path or URL pattern (bytes)": "maxPatternBytes",
+  "Pattern bytes × input bytes of one comparison (more fails closed)": "maxPatternMatchWork",
+  "`target` values": "manifestTargets",
+  "Manifest, host ceiling or decision file the reference CLI and launcher read (bytes)": "maxManifestBytes",
+  "Response head of `net_get*` and `net_fetch*` (bytes; a larger head is an I/O failure)": "maxFetchHeaderBytes",
+  "Environment variable name of `env_*` (bytes; nonempty, a longer name is denied)": "maxEnvNameBytes",
+  "Absolute host path of `fs_*` before v38 (bytes; a longer path is denied)": "maxHostPathBytes",
 };
 const manifestLimits = {};
 for (const r of detailRows("embedding-manifest-limits")) {
@@ -280,6 +290,27 @@ for (const r of detailRows("embedding-manifest-limits")) {
   else if (r[1].startsWith("`")) manifestLimits[key] = codesIn(r[1]);
   else manifestLimits[key] = Number(r[1]);
 }
+// Host limit tables (module, scheduler, events, network, permissions): every row as
+// { limit, profiles, value, sources }. A row whose label ends in a profile or a
+// profile run applies to those profiles only; the host picks the row by profile.
+function profileRun(text) {
+  const names = codesIn(text);
+  if (names.length === 0 || names.some((n) => !profileIndex.has(n))) return null;
+  const from = profileIndex.get(names[0]);
+  const to = profileIndex.get(names[names.length - 1]);
+  return profiles.slice(from, to + 1).map((p) => p.name);
+}
+const hostLimits = [];
+for (const name of ["embedding-module-limits", "embedding-scheduler-limits", "embedding-event-limits", "embedding-net-limits", "embedding-permission-limits"]) {
+  for (const r of detailRows(name)) {
+    const comma = r[0].lastIndexOf(", `");
+    const run = comma < 0 ? null : profileRun(r[0].slice(comma + 2));
+    const limit = run ? r[0].slice(0, comma) : r[0];
+    const value = /^\d+$/.test(r[1]) ? Number(r[1]) : r[1];
+    hostLimits.push({ table: name, limit, profiles: run, value, sources: codesIn(r[2]) });
+  }
+}
+
 // Normative examples of the root name grammar; the host checks its grammar against them.
 const rootNameExamples = detailRows("embedding-root-names").map((r) => {
   const repeated = /^`(.)` repeated (\d+) times$/.exec(r[0]);
@@ -289,5 +320,5 @@ const rootNameExamples = detailRows("embedding-root-names").map((r) => {
 
 writeFileSync(
   outPath,
-  JSON.stringify({ profiles, acceptance, operations, layout, codes, reservedNames, limits, entryLimits, grantKinds, timers, schedulerErrors, schedulerMisuse, catalogTypes, toolCatalogExample, view, manifestBudgets, manifestLimits, rootNameExamples }, null, 2) + "\n",
+  JSON.stringify({ profiles, acceptance, operations, layout, codes, reservedNames, limits, entryLimits, grantKinds, timers, schedulerErrors, schedulerMisuse, catalogTypes, toolCatalogExample, view, manifestBudgets, manifestLimits, rootNameExamples, hostLimits }, null, 2) + "\n",
 );

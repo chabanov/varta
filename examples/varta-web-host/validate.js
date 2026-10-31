@@ -4,7 +4,7 @@ import { readModule, functionType, globalAt, WasmFormatError } from "./wasm-bina
 import { exactKeys } from "./strict-json.js";
 import { ValidationError } from "./errors.js";
 import {
-  SECTION, LEGACY_PROFILE, LEGACY_HOST_ABI, TOOL_NAME, sameSignature, utf8, customSections, strictSection,
+  SECTION, LEGACY_PROFILE, LEGACY_HOST_ABI, TOOL_NAME, LIMIT, hostLimit, sameSignature, utf8, customSections, strictSection,
 } from "./context.js";
 import { checkFunctionCatalog, checkFrameAdmission } from "./catalog.js";
 import { IMPLEMENTED } from "./execution.js";
@@ -15,10 +15,6 @@ const MEMORY_FREE_IMPORTS = new Set([
 ]);
 const RESERVED_PREFIXES = ["varta.exception.", "varta.tool.", "varta.http_abi."];
 const LANGUAGE_SCHEMA_VERSION = 1;
-const MAX_IMPORTS = 64;
-const MAX_TABLE_ELEMENTS = 1024;
-const MAX_GLOBALS = 128;
-const MAX_RESULTS = 2;
 const VERSION_SECTION_BYTES = 4;
 const PAGE_COUNT_BYTES = 4;
 // Profiles whose modules may declare `varta.static` / `varta.intrinsics` (embedding.md step 3).
@@ -68,19 +64,19 @@ export function createValidator(ctx) {
   function checkStructure(module, profile) {
     if (module.types.length > C.maxSignatures) throw new ValidationError("too many function types");
     for (const type of module.types) {
-      if (type.params.length > C.maxParameters || type.results.length > MAX_RESULTS) throw new ValidationError("function type too wide");
+      if (type.params.length > C.maxParameters || type.results.length > C.maxResults) throw new ValidationError("function type too wide");
     }
-    if (module.imports.length > MAX_IMPORTS) throw new ValidationError("too many imports");
-    if (module.memories.length > 1) throw new ValidationError("more than one memory");
+    if (module.imports.length > C.maxImports) throw new ValidationError("too many imports");
+    if (module.memories.length > C.maxMemories) throw new ValidationError("more than one memory");
     for (const memory of module.memories) {
       if (memory.is64 || memory.shared) throw new ValidationError("memory must be 32-bit and not shared");
       if (memory.min * C.pageBytes > C.maxMemoryBytes) throw new ValidationError("initial memory too large");
       // Step 4: JavaScript hosts have no store limiter, so the declared maximum is the budget.
       if (memory.max === null || memory.max * C.pageBytes > C.maxMemoryBytes) throw new ValidationError("memory maximum absent or above the memory budget");
     }
-    if (module.tables.length > 1) throw new ValidationError("more than one table");
-    if (module.tables.some((t) => t.limits.min > MAX_TABLE_ELEMENTS)) throw new ValidationError("table too large");
-    if (module.globals.length > MAX_GLOBALS) throw new ValidationError("too many globals");
+    if (module.tables.length > C.maxTables) throw new ValidationError("more than one table");
+    if (module.tables.some((t) => t.limits.min > C.maxTableElements)) throw new ValidationError("table too large");
+    if (module.globals.length > C.maxGlobals) throw new ValidationError("too many globals");
     if (module.bodySizes.some((size) => size > C.maxBodyBytes)) throw new ValidationError("function body too large");
     const acceptance = acceptanceOf(profile);
     const imported = module.imports.filter((i) => i.kind === "function").length;
@@ -307,6 +303,7 @@ export function createValidator(ctx) {
       throw error;
     }
     const { profile, hostAbi } = resolveProfile(module);
+    if (bytes.length > hostLimit(ctx.contract, LIMIT.wasmBytes, profile?.name ?? null)) throw new ValidationError("Wasm file too large for its profile");
     checkStructure(module, profile);
     const used = checkImports(module, profile, hostAbi);
     const exportsByName = new Map(module.exports.map((e) => [e.name, e]));
