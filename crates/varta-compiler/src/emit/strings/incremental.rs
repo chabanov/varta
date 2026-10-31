@@ -12,18 +12,22 @@
 //! reachable when the cycle began is marked; blocks allocated during the
 //! marking are black. Marking state lives outside the block headers, in two
 //! side bitmaps with one bit per header-sized span of the managed heap below
-//! the cycle's limit (the heap end when it began): the block's mark bit and
-//! its traced bit. Value readers therefore never see a mark. Blocks at or above the limit were allocated
-//! during the cycle and are implicitly marked and traced. Gray blocks wait
-//! on a mark stack; a full stack records an overflow, after which a rescan
-//! of the heap traces every marked block not yet traced, so no mark is
-//! lost. An array is traced `collector::TRACE_CHUNK_SLOTS` slots per
-//! quantum. When nothing is gray the sweep starts and runs lazily over the
-//! blocks below the limit, rebuilding the exact-size lists as it goes and
-//! publishing the larger free runs and clearing both bitmaps when it
-//! finishes. The bitmaps and the mark stack are ordinary heap blocks taken from the heap end without a
-//! collection (and only within the memory budget), kept across cycles and
-//! counted against the memory budget like any other block.
+//! the cycle's limit (the heap end when it began): the block's mark bit and a
+//! bit recording that a bulk barrier or black allocation covered the whole
+//! object. Value readers therefore never see a mark. Blocks at or above the
+//! limit were allocated during the cycle and are implicitly marked. Gray
+//! blocks wait on a mark stack; a full stack records an overflow, after which
+//! a rescan of the heap traces every marked block again, so no mark is lost.
+//! An array is traced `collector::TRACE_CHUNK_SLOTS` slots per quantum. When
+//! nothing is gray the sweep starts and runs lazily over the blocks below the
+//! limit, rebuilding the exact-size lists as it goes and publishing the
+//! larger free runs when it finishes. The bitmaps and the mark stack share one
+//! ordinary heap block per cycle, taken from the heap end without a
+//! collection (and only within the memory budget) and freed by the next
+//! cycle's sweep. Cycles start only for a heap of at least
+//! `collector::INCREMENTAL_MIN_HEAP_BYTES` below the memory maximum divided by
+//! `collector::INCREMENTAL_HEAP_DIVISOR`, and not for a large request
+//! (`collector::LARGE_REQUEST_SHIFT`); such requests collect completely.
 //!
 //! A request the memory budget or the store refuses still runs one
 //! complete, atomic collection first (which abandons a cycle in progress
@@ -53,12 +57,11 @@ pub(in crate::emit) enum Slot {
     Marking,
     /// The heap end when the cycle began; blocks at or above it are black.
     Limit,
-    /// The mark bitmap and the traced bitmap (one bit per header-sized span
-    /// of the heap below the limit each, in one block), and the capacity of
-    /// each in bytes.
+    /// The mark bitmap and the whole-object-shaded bitmap (one bit per
+    /// header-sized span of the heap below the limit each), in the cycle's
+    /// metadata block before the mark stack.
     Bitmap,
     Traced,
-    BitmapBytes,
     /// The payload of the mark stack block, its top and its end.
     Stack,
     StackTop,
@@ -80,7 +83,7 @@ pub(in crate::emit) enum Slot {
     Swept,
 }
 impl Slot {
-    pub(in crate::emit) const ALL: [Self; 20] = [
+    pub(in crate::emit) const ALL: [Self; 19] = [
         Self::Allocated,
         Self::Live,
         Self::Phase,
@@ -88,7 +91,6 @@ impl Slot {
         Self::Limit,
         Self::Bitmap,
         Self::Traced,
-        Self::BitmapBytes,
         Self::Stack,
         Self::StackTop,
         Self::StackEnd,
@@ -313,7 +315,6 @@ pub(super) fn abandon(globals: Globals) -> Vec<I<'static>> {
         Slot::Marking,
         Slot::Bitmap,
         Slot::Traced,
-        Slot::BitmapBytes,
         Slot::Stack,
         Slot::StackTop,
         Slot::StackEnd,
@@ -878,20 +879,31 @@ pub(super) fn begin(globals: Globals, calls: Calls) -> Function {
         I::GlobalGet(globals.heap),
         I::GlobalSet(g(Slot::Limit)),
     ];
+    // One fresh metadata block per cycle: both bitmaps (zeroed), then the
+    // mark stack, one entry per heap bytes per entry and at least the
+    // minimum. The block of the previous cycle is garbage now, freed by this
+    // cycle's sweep, so no metadata outlives its cycle to split the heap.
     code.extend(bitmap_bytes(globals, state));
     code.extend([
-        I::LocalTee(BITMAP_BYTES),
-        I::GlobalGet(g(Slot::BitmapBytes)),
+        I::LocalSet(BITMAP_BYTES),
+        I::GlobalGet(g(Slot::Limit)),
+        I::I32Const(globals.base as i32),
+        I::I32Sub,
+        I::I32Const(collector::MARK_STACK_BYTES_PER_ENTRY as i32),
+        I::I32DivU,
+        I::LocalTee(STACK_BYTES),
+        I::I32Const(collector::MIN_MARK_STACK_ENTRIES as i32),
+        I::LocalGet(STACK_BYTES),
+        I::I32Const(collector::MIN_MARK_STACK_ENTRIES as i32),
         I::I32GtU,
-        I::If(BlockType::Empty),
-        // Both bitmaps with room for twice the heap, zeroed once; every
-        // sweep leaves them zero.
+        I::Select,
+        I::I32Const(ENTRY),
+        I::I32Mul,
+        I::LocalTee(STACK_BYTES),
         I::LocalGet(BITMAP_BYTES),
         I::I32Const(1),
         I::I32Shl,
-        I::LocalTee(BITMAP_BYTES),
-        I::I32Const(1),
-        I::I32Shl,
+        I::I32Add,
         I::LocalSet(SIZE),
     ]);
     code.extend(bump(globals, SIZE, END, CURSOR, PTR));
@@ -914,48 +926,19 @@ pub(super) fn begin(globals: Globals, calls: Calls) -> Function {
         I::LocalGet(BITMAP_BYTES),
         I::I32Add,
         I::GlobalSet(g(Slot::Traced)),
+        I::LocalGet(PTR),
         I::LocalGet(BITMAP_BYTES),
-        I::GlobalSet(g(Slot::BitmapBytes)),
-        I::End,
-        // One entry per heap bytes per entry, at least the minimum.
-        I::GlobalGet(g(Slot::Limit)),
-        I::I32Const(globals.base as i32),
-        I::I32Sub,
-        I::I32Const(collector::MARK_STACK_BYTES_PER_ENTRY as i32),
-        I::I32DivU,
-        I::LocalTee(STACK_BYTES),
-        I::I32Const(collector::MIN_MARK_STACK_ENTRIES as i32),
-        I::LocalGet(STACK_BYTES),
-        I::I32Const(collector::MIN_MARK_STACK_ENTRIES as i32),
-        I::I32GtU,
-        I::Select,
-        I::I32Const(ENTRY),
-        I::I32Mul,
-        I::LocalSet(STACK_BYTES),
-        I::GlobalGet(g(Slot::StackEnd)),
-        I::GlobalGet(g(Slot::Stack)),
-        I::I32Sub,
-        I::LocalGet(STACK_BYTES),
-        I::I32LtU,
-        I::If(BlockType::Empty),
-    ]);
-    code.extend(bump(globals, STACK_BYTES, SIZE, END, PTR));
-    code.extend([
-        I::LocalGet(PTR),
-        I::I32Eqz,
-        I::If(BlockType::Empty),
-        I::I32Const(0),
-        I::Return,
-        I::End,
-        I::LocalGet(PTR),
+        I::I32Const(1),
+        I::I32Shl,
+        I::I32Add,
+        I::LocalTee(PTR),
         I::GlobalSet(g(Slot::Stack)),
+        I::LocalGet(PTR),
+        I::GlobalSet(g(Slot::StackTop)),
         I::LocalGet(PTR),
         I::LocalGet(STACK_BYTES),
         I::I32Add,
         I::GlobalSet(g(Slot::StackEnd)),
-        I::End,
-        I::GlobalGet(g(Slot::Stack)),
-        I::GlobalSet(g(Slot::StackTop)),
         I::I32Const(Phase::Marking as i32),
         I::GlobalSet(g(Slot::Phase)),
         I::I32Const(1),
@@ -963,15 +946,6 @@ pub(super) fn begin(globals: Globals, calls: Calls) -> Function {
     ]);
     for slot in [Slot::Overflow, Slot::Scan, Slot::Partial] {
         code.extend([I::I32Const(0), I::GlobalSet(g(slot))]);
-    }
-    // Metadata kept from earlier cycles lies below the limit.
-    for slot in [Slot::Bitmap, Slot::Stack] {
-        code.extend([
-            I::GlobalGet(g(slot)),
-            I::I32Const(HEADER as i32),
-            I::I32Sub,
-            I::Call(calls.blacken),
-        ]);
     }
     // The snapshot: every root slot is shaded.
     code.extend([
@@ -1307,14 +1281,12 @@ fn close_run(
 }
 
 /// The end of the sweep: a dead run ending at the heap end returns to it,
-/// the larger free runs are published in address order, both bitmaps are
-/// cleared below the limit, the live bytes are the new estimate and the next
-/// in-turn cycle starts at twice the heap.
+/// the larger free runs are published in address order, the live bytes are
+/// the new estimate and the next in-turn cycle starts at twice the heap.
 fn finish(globals: Globals, state: State, lists: super::free_classes::Lists) -> Vec<I<'static>> {
     const RUN: u32 = 3;
     const RUN_SIZE: u32 = 4;
     const CLASS: u32 = 5;
-    const SIZE: u32 = 2;
     let g = |slot| state.global(slot);
     let mut code = vec![
         I::GlobalGet(g(Slot::Run)),
@@ -1335,22 +1307,17 @@ fn finish(globals: Globals, state: State, lists: super::free_classes::Lists) -> 
         I::End,
     ];
     code.extend(close_run(state, lists, RUN, RUN_SIZE, CLASS));
-    code.extend(bitmap_bytes(globals, state));
-    code.push(I::LocalSet(SIZE));
-    for bitmap in [Slot::Bitmap, Slot::Traced] {
-        code.extend([
-            I::GlobalGet(g(bitmap)),
-            I::I32Const(0),
-            I::LocalGet(SIZE),
-            I::MemoryFill(MEMORY),
-        ]);
-    }
     code.extend([
         I::GlobalGet(g(Slot::LargeHead)),
         I::GlobalSet(globals.free),
         I::I32Const(Phase::Idle as i32),
         I::GlobalSet(g(Slot::Phase)),
+        // Live: what the sweep kept plus what the cycle allocated.
         I::GlobalGet(g(Slot::Swept)),
+        I::GlobalGet(globals.heap),
+        I::GlobalGet(g(Slot::Limit)),
+        I::I32Sub,
+        I::I32Add,
         I::GlobalSet(g(Slot::Live)),
         I::I32Const(0),
         I::GlobalSet(g(Slot::Allocated)),

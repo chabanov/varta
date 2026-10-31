@@ -1034,12 +1034,16 @@ impl<'a> Emitter<'a> {
             return self.save_slots(resume.layout, state);
         }
         for (index, slot) in resume.layout.slots.iter().enumerate() {
+            // V38 (`incremental_collection`): the replaced cell or value is
+            // shaded; other profiles keep their bytes.
+            let barrier = self.barrier().is_some();
             if slot.shared {
                 self.segment(FRAME_PARAM, index);
-                self.code.push(I::LocalSet(self.temporary));
-                self.slot_barrier(self.temporary, Self::entry(index));
+                if barrier {
+                    self.code.push(I::LocalTee(self.temporary));
+                    self.slot_barrier(self.temporary, Self::entry(index));
+                }
                 self.code.extend([
-                    I::LocalGet(self.temporary),
                     I::LocalGet(self.cell_slots[&slot.local]),
                     I::I64Store(Self::entry(index)),
                 ]);
@@ -1047,18 +1051,17 @@ impl<'a> Emitter<'a> {
             }
             let physical = self.local_slots[slot.local as usize];
             self.segment(FRAME_PARAM, index);
-            self.code.extend([
-                I::I64Load(Self::entry(index)),
-                I::I32WrapI64,
-                I::LocalSet(self.temporary),
-            ]);
-            self.typed_slot_barrier(
-                slot.ty.result_value().unwrap_or(slot.ty),
-                self.temporary,
-                records::field(0),
-            );
             self.code
-                .extend([I::LocalGet(self.temporary), I::LocalGet(physical)]);
+                .extend([I::I64Load(Self::entry(index)), I::I32WrapI64]);
+            if barrier {
+                self.code.push(I::LocalTee(self.temporary));
+                self.typed_slot_barrier(
+                    slot.ty.result_value().unwrap_or(slot.ty),
+                    self.temporary,
+                    records::field(0),
+                );
+            }
+            self.code.push(I::LocalGet(physical));
             self.pack_slot(slot.ty.result_value().unwrap_or(slot.ty));
             self.code.push(I::I64Store(records::field(0)));
             if slot.ty.width() == 2 {

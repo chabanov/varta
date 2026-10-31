@@ -9017,6 +9017,11 @@ by selectors; each admits nothing until its stream adds a subsection below:
   [implemented](#virtual-file-roots-file_roots));
 - KV stream (wave 3): `kv()` (Deno KV database files at virtual paths behind
   `kv.read`/`kv.write`; [implemented](#kv-storage-kv)).
+- collection stream (wave 3 (f)): `incremental_collection()` (idle
+  collection between turns under a maintenance budget and an incremental
+  collector with a deletion write barrier inside turns;
+  [implemented](#idle-and-incremental-collection-incremental_collection); it
+  admits no syntax and changes no value layout).
 
 The view-protocol and TSX streams add
 [their subsection](#v38-view-protocol-and-tsx-view_protocol-tsx). Until a
@@ -9123,6 +9128,97 @@ and packaged applications print the captured lines, then (with
 `--budget-report`) the `varta budget:` lines on stderr, then the failure
 diagnostic. Per-function fuel attribution is a later extension of `TurnUsage`
 (the code-generation stream); the per-turn totals are its baseline.
+
+#### Idle and incremental collection (`incremental_collection()`)
+
+V38 collects in two places, both deterministic functions of the allocation
+history, both nonmoving with the exact roots and block layout of the
+[managed heap](#dense-arrays) (wave 3 (f), owner decision):
+
+- **Between turns, under a maintenance budget.** Every v38 module with a
+  managed heap exports `varta.collector.idle`, `(i32 units) -> i32 status`
+  (`collector::IDLE_EXPORT`), validated like the host-free value ABI helpers:
+  exactly that signature, only in a profile with `incremental_collection()`,
+  and nothing it reaches through direct calls may call a host import (the
+  fuel-profile probes of a profile build excepted). When an application
+  instance has no runnable task (`Application::step` before it waits; on the
+  virtual clock of a scripted session, the quiescence before the next input),
+  the runtime runs one idle period of **maintenance**: a fresh allowance of
+  `Budgets::maintenance_fuel` (`budget::MAINTENANCE_FUEL`) and
+  `maintenance_deadline` (`budget::MAINTENANCE_DEADLINE_MS`), requested by
+  the manifest members `maintenanceFuel` and `maintenanceDeadlineMs` and
+  capped by the host ceiling like every budget (the
+  [budget table](embedding.md#manifest-limits)); earlier profiles, bounded
+  runs and tool or HTTP invocations have none (`Budgets::PRODUCTION`: 0). It
+  calls the export with `collector::IDLE_STEP_UNITS` units while at least
+  `budget::MAINTENANCE_STEP_FUEL` remains, until the guest answers
+  `IDLE_NONE` (no cycle due) or `IDLE_DONE` (the cycle completed). The guest
+  starts a cycle when the bytes it allocated since the last completed cycle
+  reach both `collector::IDLE_MIN_BYTES` and the live bytes that cycle left
+  shifted right by `collector::IDLE_LIVE_SHIFT`; a cycle in progress always
+  continues. The deadline is a hard bound only, so the work done depends on
+  fuel alone. An exhausted maintenance budget fails the instance with
+  `BudgetExhausted` of kind `maintenance` (`turn N (maintenance) exhausted its
+  maintenance fuel budget (… instructions per idle period)`). Maintenance fuel
+  is never charged to a turn: the budget report lists each idle period that did
+  work as `varta budget: maintenance after turn N: fuel F/B, steps S, cycle
+  completed|continues, wall …, memory …` after that turn's line, and a
+  `maintenance total` line counts idle periods and fuel (polls that found no
+  work included). A fuel profile spans the maintenance too.
+- **Inside turns, incrementally.** A cycle marks from a snapshot of the root
+  region taken when it begins (snapshot at the beginning). Every allocation
+  while a cycle runs performs a bounded quantum, `collector::STEP_MIN_UNITS`
+  plus the request's bytes shifted right by `collector::STEP_BYTE_SHIFT`
+  work units (a traced slot, or a popped, rescanned or swept block); an array
+  is traced `collector::TRACE_CHUNK_SLOTS` slots per quantum. While the cycle
+  marks, a **deletion write barrier** before every store that overwrites or
+  removes a heap reference shades the old value (`Shade`): record and class
+  fields, optional-field deletion, array element writes, `pop` and `delete`,
+  array backings replaced by `push`, appends and resizes, captured binding
+  cells, frame completions and saved cell slots; a bulk change of an object
+  first traces the whole object once per cycle (`ShadeObject`): `reverse`,
+  `fill`, shrinking resizes, dictionary ordered insertion, liveness frame
+  segments whose masks a resumption clears, the live-frame table's deletion
+  and enumeration into an existing backing. No allocation may separate a
+  barrier from the store it protects (a cycle can begin inside any
+  allocation). Stores into a block allocated by the same operation need no
+  barrier: blocks allocated while marking are black (a block taken from a
+  free list below the cycle's **limit**, the heap end when it began, is
+  blackened; blocks at or above it are black by address). Mark state lives in
+  two side bitmaps with one bit per header-sized span below the limit (a
+  block's mark bit, and a bit recording that a bulk barrier or black
+  allocation already covered the whole object), never in a block header, so
+  no value reader sees it. Only blocks with reference edges are pushed. Gray blocks wait on a mark stack sized
+  from the heap (`collector::MIN_MARK_STACK_ENTRIES`,
+  `MARK_STACK_BYTES_PER_ENTRY`); a full stack records an overflow and the
+  cycle then rescans the heap below the limit until a pass overflows no more,
+  so no mark is lost. The sweep runs lazily over the blocks below the limit:
+  it rebuilds the exact-size lists as it passes, publishes the larger free
+  runs in address order when it finishes. The bitmaps and the stack share one
+  ordinary heap block per cycle, taken from the heap end without a collection
+  and only within the memory budget (zeroed bitmaps), which the next cycle's
+  sweep frees. **When a cycle starts.** A request that would grow memory past
+  the collection threshold (twice the heap the last collection or cycle left)
+  starts a cycle only while the managed heap holds at least
+  `collector::INCREMENTAL_MIN_HEAP_BYTES`, the heap end stays below the memory
+  maximum divided by `collector::INCREMENTAL_HEAP_DIVISOR`, and the request is
+  smaller than the managed heap shifted right by
+  `collector::LARGE_REQUEST_SHIFT`; every other such request (a small heap,
+  a heap near the budget, a large request) collects completely at once as
+  before, abandoning a cycle in progress, so a large block goes where the
+  garbage was and a heap near the budget is not fragmented by a cycle's
+  floating garbage and metadata. A request that the memory budget or the store
+  refuses still runs one complete atomic collection first, so an allocation
+  fails exactly where it did before; when the metadata does not fit, that
+  collection runs instead of a cycle. Barriers are inline: `global.get
+  marking; if … end`, two instructions per reference store while no cycle
+  marks.
+
+Collector stress builds (`varta_compiler::with_collector_stress`, test-only)
+run cycles back to back with a fixed small quantum, poison every block a
+sweep frees and verify every finished cycle with a complete collection whose
+exact marking traps on any reachable freed block; `collector_stress_tests`
+runs every store kind and the runtime case corpus through them.
 
 #### Host event sources (`turn_budgets()`)
 

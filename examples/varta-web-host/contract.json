@@ -8967,6 +8967,18 @@
       "max": 67108864,
       "turnDefault": 1048576,
       "executionValue": 1048576
+    },
+    "maintenanceFuel": {
+      "min": 1,
+      "max": 1000000000,
+      "turnDefault": 4000000,
+      "executionValue": 0
+    },
+    "maintenanceDeadlineMs": {
+      "min": 1,
+      "max": 60000,
+      "turnDefault": 1000,
+      "executionValue": 0
     }
   },
   "manifestLimits": {

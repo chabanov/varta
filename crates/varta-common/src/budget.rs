@@ -51,7 +51,7 @@ pub const MAX_MAINTENANCE_DEADLINE_MS: u64 = MAX_DEADLINE_PER_TURN_MS;
 /// `idle_step_fuel_stays_within_its_bound`): the runtime starts another step
 /// only while this much maintenance fuel remains, so a step never exhausts
 /// the budget of a well-formed module.
-pub const MAINTENANCE_STEP_FUEL: u64 = 400_000;
+pub const MAINTENANCE_STEP_FUEL: u64 = 1_000_000;
 /// Milliseconds per second, for the deadline budget's wire unit.
 pub const MILLISECONDS_PER_SECOND: u64 = 1000;
 /// Turns whose usage a budget report keeps individually; later turns are

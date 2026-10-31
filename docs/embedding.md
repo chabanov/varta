@@ -101,7 +101,7 @@ engine payloads from package input.
 | `entry` | Optional string, metadata only |
 | `target` | Optional; one of the `target` values of the [limits table](#manifest-limits) |
 | `capabilities` | Required array of grants (`[]` denies everything) |
-| `budgets` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, each an integer in its accepted range of the [budget table](#manifest-limits); in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
+| `budgets` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). Requested `fuelPerTurn`, `deadlinePerTurnMs`, `memoryBytes`, `hostCallsPerTurn`, `outputBytes`, `maintenanceFuel`, `maintenanceDeadlineMs`, each an integer in its accepted range of the [budget table](#manifest-limits); in a host ceiling, the budgets it allows. See [Run lifecycle](#run-lifecycle) |
 | grant `required` | Optional boolean, default `true`; requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling. Permission broker v1 ([architecture](architecture.md#permission-broker-v1-turn_budgets)) |
 | grant `purpose` | Optional untrusted text shown as a quote in prompts, valid by the [purpose rule](#manifest-limits); requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling |
 | `fsRoots` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). In a package: an array of [root names](#root-names), no duplicates; an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most the host root directory bytes of the [limits table](#manifest-limits), no duplicate key); an array is rejected. Either form holds at most the `fsRoots` entries of the [limits table](#manifest-limits). See [File roots](#file-roots-v38) |
@@ -1540,6 +1540,23 @@ One **execution** owns one fresh store and instance and is never reused:
    execution; a long-lived application instance renews it per turn. A host
    that cannot renew a budget per turn MUST NOT claim v38 conformance for that
    budget (see [Budget guarantees](#budget-guarantees)).
+   **Idle collection (v38 `incremental_collection`).** A v38 module with a
+   managed heap exports `varta.collector.idle`, `(i32 units) -> i32 status`
+   (`collector::IDLE_EXPORT`). It reaches no host import, allocates nothing
+   through the host and changes no host status. A long-lived application
+   instance MAY call it whenever no task is runnable, at most once per idle
+   period between two turns, under a fresh maintenance allowance of
+   `maintenanceFuel` fuel and `maintenanceDeadlineMs` wall-clock time (the
+   [budget table](#manifest-limits)), never a turn's fuel. The reference host
+   calls it with `collector::IDLE_STEP_UNITS` units while at least
+   `budget::MAINTENANCE_STEP_FUEL` maintenance fuel remains, until it returns
+   `collector::IDLE_NONE` (0, no collection due) or `IDLE_DONE` (2, the cycle
+   completed); `IDLE_MORE` (1) means work was done and the cycle continues.
+   Any other status is a fatal error. The guest decides from its own heap
+   state alone, so the same turns give the same maintenance. An exhausted
+   maintenance budget terminates the instance like an exhausted turn budget.
+   A bounded run, a tool or HTTP invocation and a host that never calls the
+   export are conforming: collection then happens inside turns.
 3. Instantiate exactly once, linking only the imports the module declares. A
    failed instantiation ends the execution; never instantiate the same execution
    twice.

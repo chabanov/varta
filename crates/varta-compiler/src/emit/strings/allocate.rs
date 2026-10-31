@@ -238,15 +238,38 @@ pub(super) fn function(
     }
     code.push(I::If(BlockType::Empty));
     if let (Some(state), Some(calls)) = (globals.collector, calls) {
-        // V38 (`incremental_collection`): within the memory budget the heap
-        // grows while a cycle runs; past the threshold a cycle starts (after
-        // one full scan of the free list) and the request retries, since the
-        // cycle's metadata moved the heap end. Only a request beyond the
-        // budget, or whose cycle could not start, collects at once.
+        // V38 (`incremental_collection`): while the heap end stays in the
+        // lower part of the memory maximum, the heap grows while a cycle
+        // runs, and past the threshold a cycle starts once the heap is large
+        // enough (after one full scan of the free list) and the request
+        // retries, since the cycle's metadata moved the heap end. Any other
+        // request past the threshold (a small heap, a large request, an end
+        // above that part, a cycle that could not start) collects at once,
+        // abandoning a cycle in progress.
         code.extend([
+            I::GlobalGet(state.global(super::incremental::Slot::Phase)),
+            I::GlobalGet(globals.heap),
+            I::I32Const(globals.base as i32),
+            I::I32Sub,
+            I::I32Const(varta_common::collector::INCREMENTAL_MIN_HEAP_BYTES as i32),
+            I::I32GeU,
+            I::I32Or,
             I::LocalGet(END),
-            I::I32Const(abi::MAX_MEMORY_BYTES as i32),
+            I::I32Const(
+                (abi::MAX_MEMORY_BYTES / varta_common::collector::INCREMENTAL_HEAP_DIVISOR as usize)
+                    as i32,
+            ),
             I::I32LeU,
+            I::I32And,
+            // A large request collects at once and goes where the garbage was.
+            I::LocalGet(NEED),
+            I::GlobalGet(globals.heap),
+            I::I32Const(globals.base as i32),
+            I::I32Sub,
+            I::I32Const(varta_common::collector::LARGE_REQUEST_SHIFT as i32),
+            I::I32ShrU,
+            I::I32LtU,
+            I::I32And,
             I::If(BlockType::Empty),
             I::GlobalGet(state.global(super::incremental::Slot::Phase)),
             I::BrIf(1),

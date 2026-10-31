@@ -1017,7 +1017,7 @@ integrated.
 | (c) Owned string results | Results larger than the 1 MiB result buffer (case mapping) are returned as owned guest strings | Open; `String(x)` of a string cell returns the cell's string since (a); the linker's `allocate`/`retain` accessors of (b) are the allocation path, the case-mapping call sites still read the result buffer |
 | (d) ASCII case mapping inline | An inline ASCII fast path for `toUpperCase`/`toLowerCase` in front of the linked case mapping, which costs about 820 (upper) and 595 (lower) fuel per unit through the core Unicode tables | Open |
 | (e) Coalescing intrinsic arena | A merging (coalescing) arena for linked scratch, so linked BigInt work near a million bits fits the memory budget as the host import does (today its size-class free lists do not coalesce and such operands exhaust the 8 MiB budget) | Open |
-| (f) Collection work per turn | Owner decision: first idle collection between turns with a deterministic per-instance maintenance budget reported by `--budget-report`; then an incremental collector with bounded work per allocation (write barriers on every reference store, exact rooting kept provable). Motivated by a console turn costing about 910k fuel instead of about 430k when a collection fires inside it | Open |
+| (f) Collection work per turn | Owner decision: first idle collection between turns with a deterministic per-instance maintenance budget reported by `--budget-report`; then an incremental collector with bounded work per allocation (write barriers on every reference store, exact rooting kept provable). Motivated by a console turn costing about 910k fuel instead of about 430k when a collection fires inside it | Implemented on `v38-gc-turns` under `incremental_collection()` ([contract](architecture.md#idle-and-incremental-collection-incremental_collection), [measurement](#collection-between-and-within-turns-measurement-v38)): the host-free `varta.collector.idle` export run at idle points under `maintenanceFuel`/`maintenanceDeadlineMs`, a snapshot-at-the-beginning incremental collector with a deletion barrier on every reference store, side bitmaps and a lazy sweep, collector stress builds over every store kind and the case corpus. Open: below |
 | (g) Network wait in scripted sessions | A bounded, explicit network-wait step for `--view-script` sessions, so scripted views that await responses stay deterministic on virtual time | Open |
 | (h) Linked value18 readers | Link the value18 readers (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12` as linked rendering plus the `log_string16` effect, `json_parse_v19`, `primitive_to_string_v6`/`primitive_to_number_v6` with (a)); `bigint_from_value_v5` is already linked at the integration, since it reads only primitive and BigInt cells | Implemented in part on `v38-p2-conversions`: the reference, vector, dictionary (with its full table validation), Error and closure-envelope readers are generic over `Memory` in the `no_std` core; `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11` and `value_is_error_class_v7` are `varta_intrinsics::value` (also the value8–value17 host readers), linked behind tag fast paths. Pending: `value_log_v12` (its record, array and dictionary rendering is the JSON diagnostic renderer, with the JSON stream); `json_parse_v19` is linked by (b) |
 | (i) L0 open choices | The L0 view protocol's open choices, including `role="separator"` and `role="group"` | Open |
@@ -1155,17 +1155,19 @@ the v12 entry-check contract and its malformed-environment tests). Decision
 creation is still detected; closure calls are not made cheaper by trusting
 guest-built environments.
 
-**Open: incremental or generational collection (deferred, 2026-10-30).** A
-v38 collection marks the live heap once through the worklist and then sweeps
-the whole heap: about 300k fuel per collection at 6000 live and 9000 dead
-blocks (a 3000-node linked list built while dropping small arrays; two
-collections took 619k fuel), so one turn with a large live heap can still
-exhaust its fuel in a single collection. Bounding that per turn needs an
-incremental (or generational, remembered-set) collector, which needs a write
-barrier on every reference store (record and class fields, array elements,
-binding cells, environments, frames, promise and timer state) with exact
-rooting kept provable. Scheduled as wave 3 (f) (owner decision): idle collection
-between turns first, then incremental collection.
+**Incremental collection (wave 3 (f), implemented on `v38-gc-turns`).** A
+v38 collection used to mark the live heap once through the worklist and then
+sweep the whole heap inside whichever turn crossed the threshold: about 300k
+fuel per collection at 6000 live and 9000 dead blocks. Both owner steps are
+in place ([contract](architecture.md#idle-and-incremental-collection-incremental_collection),
+[measurement](#collection-between-and-within-turns-measurement-v38)). Open
+items: an incremental cycle costs more fuel in total than an atomic
+collection of the same heap (side bitmaps, per-block bit lookups and the
+quantum bookkeeping; see the measurement), so the per-cycle cost and the
+pacing constants want a second pass; scripted sessions whose timer chains
+leave no idle point still collect inside the chain; and a cycle's floating
+garbage raises peak memory, which the thresholds bound by collecting
+atomically near the budget and for large requests.
 
 #### Dictionary hashing measurement (v38)
 
@@ -1577,6 +1579,55 @@ I/O waits as guest work; whether to add a per-open or per-durable-commit rate
 is an [open item](#wave-3a-integration-open-items). An unaffordable charge is
 the typed fuel error before the effect: an unaffordable commit is never
 submitted (`an_unaffordable_commit_is_the_typed_fuel_error_and_writes_nothing`).
+
+#### Collection between and within turns measurement (v38)
+
+Branch `v38-gc-turns` (release CLI on the reference macOS arm64 host;
+fuel is deterministic, wall times are not). Main is c033125.
+
+UARP console view entry (`examples/uarp-console`, `TEST_VIEW=chat`,
+uarp-sdk 0.13.2), **wall-clock application run** (`varta dev --app
+--budget-report`, the timers have real delays, so idle points exist; which
+turns are followed by one varies between runs with the host's speed):
+
+| | Main | Branch |
+| --- | ---: | ---: |
+| Turn 9 (the turn a collection fired in) | 863,896 | 434,215 |
+| Largest turn after the first | 863,896 | 435,709 |
+| Fuel of the 14 turns | 3,994,329 | 3,590,507 |
+| Idle maintenance (6 periods, outside turns) | – | 3,140,454 |
+| Peak memory (bytes) | 1,966,080 | 2,162,688 |
+
+The same entry **scripted** (`--view-script src/tests/view/chat.script.json`,
+virtual time): the streaming timer chain (turns 2 to 14) leaves no idle
+point, and the request that crosses the threshold in turn 9 is large (at
+least the managed heap shifted right by `collector::LARGE_REQUEST_SHIFT`), so
+it still collects atomically there: turn 9 863,896 → 857,590, turn 10
+283,193 → 566,290 (the next cycle runs incrementally), the 19 turns
+4,487,916 → 4,686,279 fuel, two idle periods after the chain 1,529,017
+maintenance fuel, peak memory 1,966,080 → 3,014,656 bytes. The output equals
+`chat.expected.json` and `stream.expected.json` (stream: 2,800,682 →
+2,849,722 turn fuel, one idle period of 531,103).
+
+Collector work, a 1500-node linked list built while dropping two small
+arrays per node (`main` then one timer, `--app`): main 3,010,132 → 3,313,773
+fuel in-turn; the idle period after it runs one complete cycle of the
+2.8 MB heap, 1,983,000 maintenance fuel (with 4096-unit steps; the
+reference step is now `collector::IDLE_STEP_UNITS`) (two atomic collections
+of the same program on main cost 722,685 together). An incremental cycle
+therefore costs about 2 to 5 times an atomic collection in total; the
+in-turn share is bounded per allocation (`collector::STEP_MIN_UNITS` plus the
+request's bytes shifted right by `collector::STEP_BYTE_SHIFT` units), and the
+idle period takes the rest outside turns.
+
+Barrier and allocation cost while no cycle marks: two instructions per
+reference store and six per allocation (the allocation counter and the phase
+test). Keyed view (`codegen_v2_fixtures/keyed_view.ts`, bounded run): mount
+of 50 rows 388,892 → 404,694, update of 50 rows 740,267 → 764,121, 120 rows
+mounted 961,525 (still within one `abi::FUEL`, the pinned
+`keyed_views_fit_one_production_budget` holds unchanged). The case-corpus
+parity test (`case_corpus_behaves_identically_under_v38`, v38 never more fuel
+than v37) holds unchanged.
 
 #### Wave-3a integration measurement (v38)
 

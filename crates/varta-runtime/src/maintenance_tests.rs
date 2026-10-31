@@ -274,3 +274,42 @@ export function main(): void { const xs: string[] = ['a']; xs.push('b'); if (noi
         "{error}"
     );
 }
+
+/// One idle step of `collector::IDLE_STEP_UNITS` units fits
+/// `budget::MAINTENANCE_STEP_FUEL`: with exactly that maintenance fuel every
+/// idle period that has work runs one step and never exhausts it (rows of
+/// strings and arrays, and a linked list traced through deep chains; a step
+/// may also start a cycle, shading every root and zeroing its bitmaps).
+#[test]
+fn idle_step_fuel_stays_within_its_bound() {
+    const LIST: &str = r#"
+interface Node { label: string; parts: number[]; next: Node | undefined }
+let head: Node | undefined = undefined;
+let count = 0;
+export function main(): void {
+  varta.events.listen('ui', (record: string) => {
+    for (let i = 0; i < 300; i++) {
+      head = { label: `${record}${i}`, parts: [i, i + 1], next: head };
+      const dropped: number[] = [i, i];
+      count += dropped.length;
+    }
+    console.log(`${record} ${count}`);
+  });
+}
+"#;
+    for bytes in [churn(400), compile_with(LIST, V38)] {
+        let mut options = RunOptions::default();
+        options.budgets.maintenance_fuel = Some(MAINTENANCE_STEP_FUEL);
+        let (lines, report, failure) = session(&bytes, options, 16);
+        assert_eq!(failure, None);
+        assert_eq!(lines.len(), 16);
+        assert!(report.maintenance.iter().all(|period| period.steps == 1));
+        assert!(!report.maintenance.is_empty());
+        assert!(
+            report
+                .maintenance
+                .iter()
+                .all(|period| period.fuel <= MAINTENANCE_STEP_FUEL)
+        );
+    }
+}

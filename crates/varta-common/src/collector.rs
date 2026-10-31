@@ -34,7 +34,7 @@ pub const IDLE_MORE: i32 = 1;
 /// [`IDLE_EXPORT`] status: work was done and the cycle completed.
 pub const IDLE_DONE: i32 = 2;
 /// Work units the reference runtime grants one [`IDLE_EXPORT`] call.
-pub const IDLE_STEP_UNITS: u32 = 4096;
+pub const IDLE_STEP_UNITS: u32 = 2048;
 /// Bytes allocated since the last completed cycle below which an idle
 /// period never starts one.
 pub const IDLE_MIN_BYTES: u32 = 64 * 1024;
@@ -45,6 +45,20 @@ pub const IDLE_LIVE_SHIFT: u32 = 2;
 pub const STEP_MIN_UNITS: u32 = 8;
 /// An allocation of `n` bytes performs `n >> STEP_BYTE_SHIFT` further units.
 pub const STEP_BYTE_SHIFT: u32 = 4;
+/// An in-turn cycle starts only once the managed heap holds at least this
+/// many bytes; a smaller heap collects completely at once, as before (its
+/// pause is short, and a cycle's floating garbage would grow it).
+pub const INCREMENTAL_MIN_HEAP_BYTES: u32 = 64 * 1024;
+/// An in-turn cycle starts only while the heap end stays below the memory
+/// maximum divided by this; above it a request past the threshold collects
+/// completely at once, as before, so a heap near the budget is compacted at
+/// its end and never fragmented by a cycle's metadata and floating garbage.
+pub const INCREMENTAL_HEAP_DIVISOR: u32 = 2;
+/// A request of at least the managed heap's bytes shifted right by this
+/// that crosses the threshold collects completely instead of starting a
+/// cycle: its own initialization costs work in proportion, and its block then
+/// goes where the garbage was instead of past a cycle's floating garbage.
+pub const LARGE_REQUEST_SHIFT: u32 = 3;
 /// Reference slots of one object traced per work quantum; a larger array is
 /// traced in chunks.
 pub const TRACE_CHUNK_SLOTS: u32 = 256;
