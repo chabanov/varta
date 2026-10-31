@@ -1585,6 +1585,8 @@ and bytes).
   with a 25-line host that implements only `log_string16` and refuses any
   other import: one import, output identical to `varta dev` and to the
   `build --single` launcher, first run 7 ms.
+- **Full gate.** `python3 scripts/verify.py full` passed on `87ac3c9`
+  (local macOS arm64 only; Linux not run).
 
 #### Fair host fuel (v38)
 
