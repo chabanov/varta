@@ -16,7 +16,7 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::net::{
     CompletionKind, MAX_CHUNK_BYTES, MAX_RESPONSE_BODY_BYTES, MAX_RESPONSE_HEADER_BYTES,
-    MAX_RESPONSE_HEADERS,
+    MAX_RESPONSE_HEADERS, RequestFailure,
 };
 
 /// A validated request, ready for the transport.
@@ -80,16 +80,14 @@ pub(super) async fn run(
             completion: Completion { kind, text },
         });
     };
+    let fail = |failure: RequestFailure| send(CompletionKind::Failed, failure.to_string());
     let response = match tokio::time::timeout_at(deadline, connect_and_send(&plan)).await {
         Ok(Ok(response)) => response,
-        Ok(Err(reason)) => return send(CompletionKind::Failed, reason),
-        Err(_) => return send(CompletionKind::Failed, "request timed out".into()),
+        Ok(Err(failure)) => return fail(failure),
+        Err(_) => return fail(RequestFailure::Timeout),
     };
     let (parts, body, _connection) = response;
-    match head(&plan.url, &parts) {
-        Ok(text) => send(CompletionKind::Head, text),
-        Err(reason) => return send(CompletionKind::Failed, reason),
-    }
+    send(CompletionKind::Head, head(&plan.url, &parts));
     let mut reader = BodyReader::new(body);
     loop {
         let Some(mode) = pull.recv().await else {
@@ -98,8 +96,8 @@ pub(super) async fn run(
         match tokio::time::timeout_at(deadline, reader.next(mode)).await {
             Ok(Ok(Some(text))) => send(CompletionKind::Chunk, text),
             Ok(Ok(None)) => return send(CompletionKind::End, String::new()),
-            Ok(Err(reason)) => return send(CompletionKind::Failed, reason),
-            Err(_) => return send(CompletionKind::Failed, "response body timed out".into()),
+            Ok(Err(failure)) => return fail(failure),
+            Err(_) => return fail(RequestFailure::BodyTimeout),
         }
     }
 }
@@ -114,30 +112,33 @@ impl Drop for Connection {
 
 type Response = (hyper::http::response::Parts, Incoming, Connection);
 
-async fn connect_and_send(plan: &Plan) -> Result<Response, String> {
-    let host = plan.url.host_str().ok_or("URL has no host")?;
-    let port = plan.url.port_or_known_default().ok_or("URL has no port")?;
+async fn connect_and_send(plan: &Plan) -> Result<Response, RequestFailure> {
+    let host = plan.url.host_str().ok_or(RequestFailure::NoHost)?;
+    let port = plan
+        .url
+        .port_or_known_default()
+        .ok_or(RequestFailure::NoPort)?;
     // An IPv6 host keeps its brackets in the URL; the socket needs the bare address.
     let address = host.trim_start_matches('[').trim_end_matches(']');
     let tcp = tokio::net::TcpStream::connect((address, port))
         .await
-        .map_err(|error| format!("connect failed: {error}"))?;
+        .map_err(|error| RequestFailure::Connect(error.to_string()))?;
     // Latency matters more than packet count for request/response traffic.
     let _ = tcp.set_nodelay(true);
     if let Some(config) = &plan.tls {
         let name = rustls::pki_types::ServerName::try_from(address.to_owned())
-            .map_err(|error| format!("invalid TLS server name: {error}"))?;
+            .map_err(|error| RequestFailure::ServerName(error.to_string()))?;
         let tls = tokio_rustls::TlsConnector::from(config.clone())
             .connect(name, tcp)
             .await
-            .map_err(|error| format!("TLS handshake failed: {error}"))?;
+            .map_err(|error| RequestFailure::TlsHandshake(error.to_string()))?;
         exchange(plan, hyper_util::rt::TokioIo::new(tls)).await
     } else {
         exchange(plan, hyper_util::rt::TokioIo::new(tcp)).await
     }
 }
 
-async fn exchange<T>(plan: &Plan, io: T) -> Result<Response, String>
+async fn exchange<T>(plan: &Plan, io: T) -> Result<Response, RequestFailure>
 where
     T: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
 {
@@ -148,7 +149,7 @@ where
     let (mut sender, connection) = builder
         .handshake::<_, http_body_util::Full<Bytes>>(io)
         .await
-        .map_err(|error| format!("HTTP handshake failed: {error}"))?;
+        .map_err(|error| RequestFailure::HttpHandshake(error.to_string()))?;
     let connection = Connection(tokio::spawn(async move {
         // The outcome reaches the request through its response or body.
         let _ = connection.await;
@@ -165,17 +166,19 @@ where
         .body(http_body_util::Full::new(
             plan.body.clone().unwrap_or_default(),
         ))
-        .map_err(|error| format!("invalid request: {error}"))?;
+        .map_err(|error| RequestFailure::Request(error.to_string()))?;
     let response = sender
         .send_request(request)
         .await
-        .map_err(|error| format!("request failed: {error}"))?;
+        .map_err(|error| RequestFailure::Send(error.to_string()))?;
     let (parts, body) = response.into_parts();
     Ok((parts, body, connection))
 }
 
-/// The head record (`varta_common::net::HEAD_FIELDS`) as JSON.
-fn head(url: &url::Url, parts: &hyper::http::response::Parts) -> Result<String, String> {
+/// The head record (`varta_common::net::head_record`). Names are lowercase;
+/// the header map yields each name once at its first field, followed by all
+/// its values in arrival order.
+fn head(url: &url::Url, parts: &hyper::http::response::Parts) -> String {
     let status = parts.status.as_u16();
     let reason = parts
         .extensions
@@ -195,14 +198,7 @@ fn head(url: &url::Url, parts: &hyper::http::response::Parts) -> Result<String, 
         .and_then(|value| url.join(value).ok())
         .map(String::from)
         .unwrap_or_default();
-    serde_json::to_string(&serde_json::json!({
-        "status": status,
-        "statusText": reason,
-        "url": url.as_str(),
-        "location": location,
-        "headers": headers,
-    }))
-    .map_err(|error| error.to_string())
+    varta_common::net::head_record(status, &reason, url.as_str(), &location, headers)
 }
 
 /// Each byte is one code unit, as for a WebIDL ByteString.
@@ -235,7 +231,7 @@ impl BodyReader {
     }
     /// The next nonempty chunk (text, or bytes as code units), or `None` at
     /// the end of the body.
-    async fn next(&mut self, mode: ReadMode) -> Result<Option<String>, String> {
+    async fn next(&mut self, mode: ReadMode) -> Result<Option<String>, RequestFailure> {
         loop {
             if mode == ReadMode::Bytes && (!self.buffer.is_empty() || !self.carry.is_empty()) {
                 // Bytes an earlier text read kept for an unfinished sequence
@@ -272,7 +268,7 @@ impl BodyReader {
     }
     /// Take every frame that is ready, until the chunk bound or the end; wait
     /// only while nothing was taken.
-    fn fill(&mut self, context: &mut std::task::Context<'_>) -> Poll<Result<(), String>> {
+    fn fill(&mut self, context: &mut std::task::Context<'_>) -> Poll<Result<(), RequestFailure>> {
         while self.buffer.len() < MAX_CHUNK_BYTES {
             match std::pin::Pin::new(&mut self.body).poll_frame(context) {
                 Poll::Pending if self.buffer.is_empty() => return Poll::Pending,
@@ -282,7 +278,7 @@ impl BodyReader {
                     break;
                 }
                 Poll::Ready(Some(Err(error))) => {
-                    return Poll::Ready(Err(format!("response body failed: {error}")));
+                    return Poll::Ready(Err(RequestFailure::Body(error.to_string())));
                 }
                 Poll::Ready(Some(Ok(frame))) => {
                     // Trailers carry no body bytes.
@@ -291,9 +287,7 @@ impl BodyReader {
                     };
                     self.total = self.total.saturating_add(data.len());
                     if self.total > MAX_RESPONSE_BODY_BYTES {
-                        return Poll::Ready(Err(format!(
-                            "response body exceeds {MAX_RESPONSE_BODY_BYTES} bytes"
-                        )));
+                        return Poll::Ready(Err(RequestFailure::BodyLimit));
                     }
                     self.buffer.extend_from_slice(&data);
                 }
@@ -342,6 +336,35 @@ fn incomplete_suffix(bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn head_records_group_repeated_fields_under_their_first_name() {
+        let response = hyper::Response::builder()
+            .status(201)
+            .header("Set-Cookie", "a=1")
+            .header("X-Mark", "\u{e9}".as_bytes())
+            .header("set-cookie", "b=2")
+            .header("Location", "../next")
+            .body(())
+            .unwrap();
+        let (mut parts, ()) = response.into_parts();
+        let url = url::Url::parse("http://a.test/dir/page").unwrap();
+        assert_eq!(
+            head(&url, &parts),
+            concat!(
+                r#"{"headers":["set-cookie","a=1","set-cookie","b=2","x-mark","#,
+                "\"\u{c3}\u{a9}\",",
+                r#""location","../next"],"location":"http://a.test/next","status":201,"#,
+                r#""statusText":"Created","url":"http://a.test/dir/page"}"#
+            )
+        );
+        // A received reason phrase other than the canonical one is kept as
+        // received, an empty one included.
+        parts
+            .extensions
+            .insert(hyper::ext::ReasonPhrase::from_static(b""));
+        assert!(head(&url, &parts).contains(r#""statusText":"","#));
+    }
 
     #[test]
     fn split_sequences_wait_for_their_continuation() {

@@ -18,9 +18,8 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::HostOperation;
 use varta_common::net::{
-    CompletionKind, DESCRIPTOR_BODY, DESCRIPTOR_BYTES, DESCRIPTOR_NO_BODY, DESCRIPTOR_SEPARATOR,
-    DESCRIPTOR_VERSION, DESCRIPTOR_VERSION_BYTES, MAX_PENDING_REQUESTS, MAX_REQUEST_BYTES,
-    MAX_REQUEST_HEADER_BYTES, MAX_REQUEST_HEADERS, NetError, REQUEST_CAPABILITY, RUNTIME_HEADERS,
+    CompletionKind, DescriptorVersion, MAX_PENDING_REQUESTS, MAX_REQUEST_BYTES,
+    MAX_REQUEST_HEADER_BYTES, NetError, RUNTIME_HEADERS, RequestDescriptor, RequestFailure,
 };
 use wasmtime::{Caller, Extern, Linker};
 
@@ -287,99 +286,25 @@ fn request_id(value: f64) -> Option<u64> {
     (value >= 1.0 && value <= u64::MAX as f64 && value.fract() == 0.0).then_some(value as u64)
 }
 
-fn failed(text: impl Into<String>) -> Completion {
+fn failed(failure: RequestFailure) -> Completion {
     Completion {
         kind: CompletionKind::Failed,
-        text: text.into(),
+        text: failure.to_string(),
     }
-}
-
-/// The parsed fields of a request descriptor (`varta_common::net`).
-struct Descriptor<'a> {
-    method: &'a str,
-    url: &'a str,
-    headers: Vec<(&'a str, &'a str)>,
-    body: Option<Vec<u8>>,
-}
-
-/// The descriptor form an import accepts: version 1 (`net_request_start`,
-/// text bodies) or version 2 (`net_request_start_v2`, v38, text or bytes).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Form {
-    Text,
-    Bytes,
-}
-impl Form {
-    fn version(self) -> &'static str {
-        match self {
-            Self::Text => DESCRIPTOR_VERSION,
-            Self::Bytes => DESCRIPTOR_VERSION_BYTES,
-        }
-    }
-}
-
-/// Split a descriptor. A malformed structure is fatal: only a tampered or
-/// miscompiled module can produce one.
-fn descriptor(text: &str, form: Form) -> Result<Descriptor<'_>, NetError> {
-    let mut fields = text.splitn(4, DESCRIPTOR_SEPARATOR);
-    let mut field = || fields.next().ok_or(NetError::Descriptor);
-    if field()? != form.version() {
-        return Err(NetError::Descriptor);
-    }
-    let method = field()?;
-    let url = field()?;
-    let mut rest = field()?;
-    let count: usize = split(&mut rest)?
-        .parse()
-        .map_err(|_| NetError::Descriptor)?;
-    if count > MAX_REQUEST_HEADERS {
-        return Err(NetError::Descriptor);
-    }
-    let mut headers = Vec::with_capacity(count);
-    for _ in 0..count {
-        let name = split(&mut rest)?;
-        let value = split(&mut rest)?;
-        headers.push((name, value));
-    }
-    let body = match rest.split_once(DESCRIPTOR_SEPARATOR) {
-        Some((DESCRIPTOR_NO_BODY, "")) => None,
-        Some((DESCRIPTOR_BODY, body)) => Some(body.as_bytes().to_vec()),
-        // Version 2 bytes: each code unit is one byte.
-        Some((DESCRIPTOR_BYTES, body)) if form == Form::Bytes => Some(
-            body.chars()
-                .map(|unit| u8::try_from(u32::from(unit)).ok())
-                .collect::<Option<Vec<u8>>>()
-                .ok_or(NetError::Descriptor)?,
-        ),
-        _ => return Err(NetError::Descriptor),
-    };
-    Ok(Descriptor {
-        method,
-        url,
-        headers,
-        body,
-    })
-}
-fn split<'a>(rest: &mut &'a str) -> Result<&'a str, NetError> {
-    let (field, tail) = rest
-        .split_once(DESCRIPTOR_SEPARATOR)
-        .ok_or(NetError::Descriptor)?;
-    *rest = tail;
-    Ok(field)
 }
 
 /// Check a request against the grants and build its transfer plan; every
 /// refusal is an immediate completion, so nothing is resolved or connected.
 fn plan(
     context: &mut RuntimeContext,
-    request: &Descriptor<'_>,
+    request: &RequestDescriptor<'_>,
 ) -> Result<client::Plan, Completion> {
     let method = hyper::Method::from_bytes(request.method.as_bytes())
         .ok()
         .filter(|_| varta_common::net::valid_method(request.method))
-        .ok_or_else(|| failed(format!("invalid method: {}", request.method)))?;
+        .ok_or_else(|| failed(RequestFailure::Method(request.method.to_owned())))?;
     if url::Url::parse(request.url).is_err() {
-        return Err(failed(format!("Invalid URL: {}", request.url)));
+        return Err(failed(RequestFailure::Url(request.url.to_owned())));
     }
     let url = match context
         .broker
@@ -387,15 +312,12 @@ fn plan(
     {
         crate::permission::Decision::Granted(url) => url,
         crate::permission::Decision::Denied => {
-            let text = format!(
-                "<capability denied: {REQUEST_CAPABILITY}> ({} {})",
-                request.method, request.url
-            );
+            let text = varta_common::net::denial_text(request.method, request.url);
             // The denial stays observable in the host diagnostics, like every
             // other capability denial, while the guest gets a catchable
             // `NotAllowedError`.
             if context.emit(format!("varta log: {text}")).is_err() {
-                return Err(failed("output budget exhausted"));
+                return Err(failed(RequestFailure::OutputBudget));
             }
             return Err(Completion {
                 kind: CompletionKind::Denied,
@@ -404,35 +326,40 @@ fn plan(
         }
     };
     if request.body.is_some() && matches!(method, hyper::Method::GET | hyper::Method::HEAD) {
-        return Err(failed("a GET or HEAD request cannot have a body"));
+        return Err(failed(RequestFailure::BodyNotAllowed));
     }
     let mut bytes = 0usize;
     let mut headers = Vec::with_capacity(request.headers.len());
     for (name, value) in &request.headers {
         bytes = bytes.saturating_add(name.len() + value.len());
         if bytes > MAX_REQUEST_HEADER_BYTES {
-            return Err(failed("request headers are too large"));
+            return Err(failed(RequestFailure::HeaderBytes));
         }
         if RUNTIME_HEADERS
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(name))
         {
-            return Err(failed(format!("header {name} is set by the runtime")));
+            return Err(failed(RequestFailure::RuntimeHeader((*name).to_owned())));
         }
         let name = hyper::header::HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| failed(format!("invalid header name: {name}")))?;
+            .map_err(|_| failed(RequestFailure::HeaderName((*name).to_owned())))?;
         // Header values are ByteStrings: one byte per code unit.
         let value = value
             .chars()
             .map(|unit| u8::try_from(u32::from(unit)).ok())
             .collect::<Option<Vec<u8>>>()
             .and_then(|bytes| hyper::header::HeaderValue::from_bytes(&bytes).ok())
-            .ok_or_else(|| failed(format!("invalid header value for {name}")))?;
+            .ok_or_else(|| failed(RequestFailure::HeaderValue(name.to_string())))?;
         headers.push((name, value));
     }
     // Plain HTTP requests never build the TLS configuration.
     let tls = match url.scheme() {
-        client::HTTPS => Some(context.net.tls().map_err(failed)?),
+        client::HTTPS => Some(
+            context
+                .net
+                .tls()
+                .map_err(|error| failed(RequestFailure::TlsConfig(error)))?,
+        ),
         _ => None,
     };
     Ok(client::Plan {
@@ -491,11 +418,11 @@ fn start(
     caller: &mut Caller<'_, RuntimeContext>,
     ptr: i32,
     len: i32,
-    form: Form,
+    version: DescriptorVersion,
 ) -> Result<f64, wasmtime::Error> {
     caller.data_mut().tick()?;
     let text = read_descriptor(caller, ptr, len).map_err(fatal)?;
-    let request = descriptor(&text, form).map_err(fatal)?;
+    let request = RequestDescriptor::parse(&text, version).map_err(fatal)?;
     let context = caller.data_mut();
     let outcome = plan(context, &request);
     context.net.start(outcome)
@@ -506,14 +433,14 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         "varta",
         HostOperation::NetRequestStart.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
-            start(&mut caller, ptr, len, Form::Text)
+            start(&mut caller, ptr, len, DescriptorVersion::V1)
         },
     )?;
     linker.func_wrap(
         "varta",
         HostOperation::NetRequestStartV2.name(),
         |mut caller: Caller<'_, RuntimeContext>, ptr: i32, len: i32| {
-            start(&mut caller, ptr, len, Form::Bytes)
+            start(&mut caller, ptr, len, DescriptorVersion::V2)
         },
     )?;
     linker.func_wrap(
@@ -593,69 +520,6 @@ pub(crate) fn wait(context: &mut RuntimeContext, until: Instant) -> Result<bool,
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn descriptors_split_into_bounded_fields() {
-        let text = format!(
-            "{DESCRIPTOR_VERSION}\nPOST\nhttp://127.0.0.1:1/x\n2\naccept\n*/*\nx-a\nb\n1\nline1\nline2"
-        );
-        let parsed = descriptor(&text, Form::Text).unwrap();
-        assert_eq!(parsed.method, "POST");
-        assert_eq!(parsed.url, "http://127.0.0.1:1/x");
-        assert_eq!(parsed.headers, [("accept", "*/*"), ("x-a", "b")]);
-        assert_eq!(parsed.body.as_deref(), Some(&b"line1\nline2"[..]));
-        let get = format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n0\n0\n");
-        assert_eq!(descriptor(&get, Form::Text).unwrap().body, None);
-        // Version 1 never carries bytes, and each import accepts only its
-        // own version.
-        let bytes = format!("{DESCRIPTOR_VERSION}\nPOST\nhttp://a.test/\n0\n2\nab");
-        assert_eq!(
-            descriptor(&bytes, Form::Text).err(),
-            Some(NetError::Descriptor)
-        );
-        assert_eq!(
-            descriptor(&text, Form::Bytes).err(),
-            Some(NetError::Descriptor)
-        );
-        for bad in [
-            String::new(),
-            "varta-net-request-0\nGET\nhttp://a.test/\n0\n0\n".into(),
-            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n1\nx\n0\n"),
-            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\nx\n0\n"),
-            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n0\n2\n"),
-            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n0\n0\nextra"),
-            format!("{DESCRIPTOR_VERSION}\nGET\nhttp://a.test/\n65\n0\n"),
-        ] {
-            assert_eq!(
-                descriptor(&bad, Form::Text).err(),
-                Some(NetError::Descriptor),
-                "{bad:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn version_two_descriptors_carry_text_or_bytes() {
-        let head = format!("{DESCRIPTOR_VERSION_BYTES}\nPOST\nhttp://a.test/\n0\n");
-        let text = format!("{head}1\n\u{e9}");
-        assert_eq!(
-            descriptor(&text, Form::Bytes).unwrap().body.as_deref(),
-            Some("\u{e9}".as_bytes())
-        );
-        let bytes = format!("{head}2\n\u{0}\u{e9}\u{ff}");
-        assert_eq!(
-            descriptor(&bytes, Form::Bytes).unwrap().body.as_deref(),
-            Some(&[0x00, 0xE9, 0xFF][..])
-        );
-        // A code unit above 0xFF is no byte.
-        let wide = format!("{head}2\n\u{100}");
-        assert_eq!(
-            descriptor(&wide, Form::Bytes).err(),
-            Some(NetError::Descriptor)
-        );
-        let none = format!("{DESCRIPTOR_VERSION_BYTES}\nGET\nhttp://a.test/\n0\n0\n");
-        assert_eq!(descriptor(&none, Form::Bytes).unwrap().body, None);
-    }
 
     #[test]
     fn request_ids_are_positive_integers() {
