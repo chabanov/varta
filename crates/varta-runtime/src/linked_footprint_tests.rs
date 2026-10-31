@@ -104,6 +104,12 @@ const PROPORTIONAL: &[(&str, &str)] = &[
          console.log(t.toUpperCase().length + t.toLowerCase().length);",
     ),
     (
+        "serialization and logged text, 5000 levels and 2000 records",
+        "let v: unknown = 0; for (let i = 0; i < 5000; i++) { const n: { c: unknown; d: Record<string, unknown> } = { c: v, d: { k: i } }; v = n; }
+         const rs: unknown[] = []; for (let i = 0; i < 2000; i++) rs.push({ id: i, name: 'n' + String(i), tags: ['a', 'é😀'] });
+         const w: unknown = rs; console.log(JSON.stringify(v).length + JSON.stringify(w).length); console.log(w);",
+    ),
+    (
         "long parse",
         "const t = '7'.repeat(100000) + '.5e-99999';
          console.log(parseFloat(t) + parseInt(t, 10) + Number('0b' + '1'.repeat(1023)));",

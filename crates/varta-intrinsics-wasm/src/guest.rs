@@ -167,7 +167,7 @@ impl Memory for Guest {
     }
     /// Words are loaded in place, as [`Memory::borrow`] lends ranges: the
     /// value readers read many header and descriptor words per call.
-    #[inline]
+    #[inline(always)]
     fn u32_at(&self, at: usize) -> Option<u32> {
         if !in_place(at, size_of::<u32>()) {
             let mut word = [0; 4];
@@ -180,7 +180,7 @@ impl Memory for Guest {
         // loads are little-endian and may be unaligned.
         Some(unsafe { (at as *const u32).read_unaligned() })
     }
-    #[inline]
+    #[inline(always)]
     fn u64_at(&self, at: usize) -> Option<u64> {
         if !in_place(at, size_of::<u64>()) {
             let mut word = [0; 8];
@@ -220,7 +220,7 @@ impl Memory for Guest {
 
 /// Whether guest `[at, at + len)` can be read in place: nonnull, inside
 /// memory 0 and outside the result buffer, which linked code writes.
-#[inline]
+#[inline(always)]
 fn in_place(at: usize, len: usize) -> bool {
     let size = core::arch::wasm32::memory_size(MEMORY) * WASM_PAGE_BYTES;
     at.checked_add(len).is_some_and(|end| {

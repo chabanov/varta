@@ -130,6 +130,11 @@ pub enum HostOperation {
     /// value17 counterpart's signature and contract, reading value18 layouts
     /// (which add the dictionary hash table and entry holes) and nothing else.
     ValueLogV12,
+    /// V38 (`linked_intrinsics`): the text `value_log_v12` logs for a value18
+    /// cell, as an owned guest string (`(cell) -> ptr`, its byte length in
+    /// `env_result_len`). Linked guest code only: v38 logs a value as this
+    /// text through `log_string16`, so no host implements it.
+    ValueFormatV12,
     ValueTypeOfV11,
     ValueTruthyV11,
     ValueNullishV11,
@@ -461,7 +466,10 @@ impl HostOperation {
         if let Some(value13) = self.value13_counterpart() {
             return value13.returns_string();
         }
-        if matches!(self, Self::PrimitiveStringV2 | Self::ValueTypeOfV7) {
+        if matches!(
+            self,
+            Self::PrimitiveStringV2 | Self::ValueTypeOfV7 | Self::ValueFormatV12
+        ) {
             return true;
         }
         matches!(
@@ -527,6 +535,7 @@ impl HostOperation {
                 | Self::JsonStringifyV13
                 | Self::PrimitiveStringV2
                 | Self::ValueTypeOfV7
+                | Self::ValueFormatV12
         ) {
             return true;
         }
@@ -574,6 +583,7 @@ impl HostOperation {
             Self::PrimitiveNumberV5 => "primitive_to_number_v5",
             Self::BigIntFromValueV4 => "bigint_from_value_v4",
             Self::ValueLogV12 => "value_log_v12",
+            Self::ValueFormatV12 => "value_format_v12",
             Self::ValueTypeOfV11 => "value_typeof_v11",
             Self::ValueTruthyV11 => "value_truthy_v11",
             Self::ValueNullishV11 => "value_nullish_v11",
@@ -879,8 +889,8 @@ impl HostOperation {
                 | Self::PrimitiveEqual
                 // The value18 readers (`varta_intrinsics::value`) over the
                 // `no_std` core readers of every value18 layout, the
-                // dictionary hash table included. Logging (`value_log_v12`)
-                // stays an import until its rendering is linked.
+                // dictionary hash table included. Logging is the linked
+                // text (`value_format_v12`) and the `log_string16` effect.
                 | Self::ValueTypeOfV11
                 | Self::ValueTruthyV11
                 | Self::ValueNullishV11
@@ -909,6 +919,11 @@ impl HostOperation {
                 // (`varta_common::json::scan`, `build`) building through the
                 // guest's own allocator and roots.
                 | Self::JsonParseV19
+                // Value18 serialization (`varta_intrinsics::json`): checked
+                // JSON into an owned string, and the logged text of a value,
+                // which v38 then logs through `log_string16`.
+                | Self::JsonStringifyOwned
+                | Self::ValueFormatV12
         )
     }
     /// The v37 (`collections`) Unicode case conversions.
@@ -1010,7 +1025,9 @@ impl HostOperation {
         {
             return crate::abi::NET_REQUEST_VERSION;
         }
-        if self == Self::JsonStringifyOwned || self.value17_counterpart().is_some() {
+        if matches!(self, Self::JsonStringifyOwned | Self::ValueFormatV12)
+            || self.value17_counterpart().is_some()
+        {
             return crate::abi::PROGRAM_LIMITS_VERSION;
         }
         if self.value16_counterpart().is_some() || self.timer() {
@@ -1326,6 +1343,7 @@ impl HostOperation {
             | Self::JsonStringifyV14
             | Self::JsonStringifyV13 => (&[I32, I32, I32], &[I32, I32]),
             Self::JsonStringifyOwned => (&[I32, I32, I32], &[I64, I32]),
+            Self::ValueFormatV12 => (&[I64], &[I32]),
             Self::ValueIsErrorClassV7
             | Self::ValueIsErrorClassV6
             | Self::ValueIsErrorClassV5
@@ -1542,6 +1560,7 @@ impl HostOperation {
             "primitive_to_number_v5" => Self::PrimitiveNumberV5,
             "bigint_from_value_v4" => Self::BigIntFromValueV4,
             "value_log_v12" => Self::ValueLogV12,
+            "value_format_v12" => Self::ValueFormatV12,
             "value_typeof_v11" => Self::ValueTypeOfV11,
             "value_truthy_v11" => Self::ValueTruthyV11,
             "value_nullish_v11" => Self::ValueNullishV11,
@@ -1785,6 +1804,7 @@ impl HostOperation {
             Self::ViewCommit
             | Self::ValueLogV11
             | Self::ValueLogV12
+            | Self::ValueFormatV12
             | Self::ValueLogV10
             | Self::ValueTypeOfV10
             | Self::ValueTypeOfV11

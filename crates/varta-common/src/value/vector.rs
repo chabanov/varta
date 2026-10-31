@@ -21,6 +21,7 @@ fn zero(bytes: &[u8]) -> bool {
     let (words, rest) = bytes.as_chunks::<8>();
     words.iter().all(|word| u64::from_ne_bytes(*word) == 0) && rest.iter().all(|byte| *byte == 0)
 }
+#[inline(always)]
 fn word<M: Memory + ?Sized>(data: &M, at: usize) -> Result<u32, ValueAbiError> {
     data.u32_at(at).ok_or_else(invalid)
 }

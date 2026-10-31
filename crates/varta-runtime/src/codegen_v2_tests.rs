@@ -603,9 +603,13 @@ const V38_LIMIT_CASES: [&str; 2] = ["data_limit_cases", "json_limit_cases"];
 /// acceptance, output lines and failure cause, and never more fuel like with
 /// like: v38 charges no more for guest instructions than v37 does, with the
 /// host work of both charged at the published fair rates
-/// (`varta_common::fuel`; v37 is rated by a test-only switch). HTTP
-/// services are not started; network requests are denied (no grant),
-/// timers granted.
+/// (`varta_common::fuel`; v37 is rated by a test-only switch). Linked
+/// serialization and logged text cost their instructions, above those rates
+/// on record-heavy values (`linked_stringify_tests`, pinned there and open
+/// in the development plan), so the fuel comparison of a program that
+/// serializes or logs a value runs its v38 build that imports them
+/// (`host_import_test_hook`, charged at the fair rates). HTTP services are
+/// not started; network requests are denied (no grant), timers granted.
 #[test]
 fn case_corpus_behaves_identically_under_v38() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -645,6 +649,24 @@ fn case_corpus_behaves_identically_under_v38() {
             continue;
         }
         let (before, after) = (run_rated(old, &grants, 1), run_with(new, &grants, 1));
+        let hosted = varta_compiler::host_import_test_hook::compile_with_profile(
+            &source,
+            V38,
+            &[
+                varta_common::HostOperation::JsonStringifyOwned,
+                varta_common::HostOperation::ValueFormatV12,
+            ],
+        )
+        .unwrap();
+        let fuel = if hosted == *new {
+            after.fuel
+        } else {
+            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
+            let run = run_with(&hosted, &grants, 1);
+            crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
+            assert_eq!(run.lines, after.lines, "{}", path.display());
+            run.fuel
+        };
         // Fuel, or the BigInt work budget derived from it.
         let exhausted = |run: &Run| {
             run.error
@@ -653,10 +675,10 @@ fn case_corpus_behaves_identically_under_v38() {
         };
         // Both may run out of the same budget (a fair charge empties it).
         assert!(
-            after.fuel <= before.fuel || exhausted(&before) && exhausted(&after),
+            fuel <= before.fuel || exhausted(&before) && exhausted(&after),
             "{}: v38 {} > v37 {} ({:?} / {:?})",
             path.display(),
-            after.fuel,
+            fuel,
             before.fuel,
             after.error,
             before.error

@@ -11,6 +11,30 @@ in [conformance/README.md](conformance/README.md).
 
 ### Added
 
+- V38 links checked JSON serialization and the logged text of a value, so a
+  v38 module imports effects only (a host implements 51 imports, none of
+  them reading value layouts): `json_stringify_owned` is linked (one
+  `no_std` value18 encoder, `varta_intrinsics::json`, iterative, with the
+  host serializer's output, checks and failure messages: cycles, the depth
+  ceiling, the output limit, a callable `toJSON` and the BigInt
+  `TypeError`), and `console.log` of a value is `log_string16` of the linked
+  `value_format_v12` text (no profile admits `value_log_v12`; under v38
+  `log_string16` reads within the module's string limit). Every linked text
+  result (Number text, `charAt`, case mapping, `typeof`, BigInt text,
+  serialization, logged text) is an owned guest string, so results beyond
+  the 1 MiB result buffer succeed within the memory budget and an exhausted
+  budget is the typed memory resource; case mapping streams over its input
+  in place. Differential tests against the host imports cover the case
+  corpus, 288 generated value graphs, the failures and collections. Linked
+  serialization costs 0.56 to 1.07 times the fair host charge on strings,
+  numbers, arrays and repeated records and 1.3 to 3.3 times on dictionaries,
+  promises and one-shot values (pinned; open). The shared value core gains
+  `read_record_in`/`read_record_with` over a once-validated `RecordShape`,
+  inline word readers and 64-bit slot shifts; the library grows from
+  443,815 to 515,798 bytes. Node 24 runs the JSON round-trip fixture with a
+  host that implements only `log_string16`, output identical to
+  `varta dev`.
+
 - V38 KV storage pays fair host fuel (`kv`): `fuel::KV_OPERATION` (100,000)
   per open, read and commit, `fuel::KV_BYTE` (10) per key or value byte
   staged, committed and returned by a read, `fuel::KV_ENTRY` (2,000) per

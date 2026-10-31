@@ -58,23 +58,19 @@ fn checked(function: &mut Function, tag: u32, fallback: &[I<'static>]) {
 }
 
 /// `(cell: i64) -> string`: `typeof`.
-pub(super) fn type_of(snapshot: u32, linked: FastPaths) -> Function {
+pub(super) fn type_of(linked: FastPaths) -> Function {
     const CELL: u32 = 0;
     const TAG: u32 = 1;
     const PAYLOAD: u32 = 2;
     let mut f = Function::new([(1, ValType::I32), (1, ValType::I64)]);
     let host = linked.type_of.unwrap_or(0);
     read(&mut f, CELL, TAG, PAYLOAD);
-    checked(
-        &mut f,
-        TAG,
-        &[
-            I::LocalGet(CELL),
-            I::Call(host),
-            I::GlobalGet(linked.result_len),
-            I::Call(snapshot),
-        ],
-    );
+    // The linked reader returns an owned string.
+    let fallback: Vec<I<'static>> = [I::LocalGet(CELL), I::Call(host)]
+        .into_iter()
+        .chain(super::owned_text(linked.result_len))
+        .collect();
+    checked(&mut f, TAG, &fallback);
     instructions(&mut f, among(TAG, &OBJECTS));
     instructions(
         &mut f,

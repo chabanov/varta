@@ -218,8 +218,9 @@ fn intrinsic_library_exports_every_linked_operation_with_its_signature() {
         };
         assert!(operation.linked(), "{name} is exported but not linked");
         let (params, results) = operation.scalar_signature();
-        // A pair of i32 results is exported packed into one i64.
-        let expected = if results == [HostScalar::I32, HostScalar::I32] {
+        // Two results (a pair of i32, or a handle and a status) are
+        // exported packed into one i64.
+        let expected = if results.len() == 2 {
             FuncType::new(params.iter().map(scalar), [ValType::I64])
         } else {
             FuncType::new(params.iter().map(scalar), results.iter().map(scalar))

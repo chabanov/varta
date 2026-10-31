@@ -7,7 +7,8 @@
 //! answer the common primitive cases before these are called.
 use crate::{
     arena::entry,
-    guest::{Guest, bounds, fatal_bigint, fatal_value, result},
+    guest::{Guest, bounds, fatal_bigint, fatal_value},
+    text::owned,
 };
 use varta_bigint::{Budget, Error};
 use varta_common::{
@@ -21,8 +22,9 @@ use varta_intrinsics::{
     value::{self, ValueError},
 };
 
-/// Linked code is v38 code: v38 string arguments, results in the result
-/// buffer.
+/// Linked code is v38 code: v38 string arguments; text results are owned
+/// guest strings, BigInt text within the result buffer's size (longer text
+/// is the `RangeError` it always was).
 const LINKED: Limits = Limits {
     string_bytes: V38_MAX_STRING_BYTES,
     result_bytes: MAX_RESULT_BYTES,
@@ -47,7 +49,7 @@ fn cell(handle: i64) -> ReferenceBox {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn value_typeof_v11(handle: i64) -> i32 {
-    entry(|| result(&text::encode(checked(value::type_of(cell(handle))))))
+    entry(|| owned(&text::encode(checked(value::type_of(cell(handle))))))
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn value_truthy_v11(handle: i64) -> i32 {
@@ -101,7 +103,7 @@ pub extern "C" fn value_is_error_class_v7(handle: i64, class: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn primitive_to_string_v6(handle: i64) -> i32 {
     entry(|| {
-        result(&numeric(shared::primitive_to_string(
+        owned(&numeric(shared::primitive_to_string(
             &Guest,
             handle as u64,
             &mut budget(),

@@ -631,9 +631,8 @@ impl Emitter<'_> {
                     I::I32Eqz,
                     I::If(BlockType::Result(wasm_encoder::ValType::I64)),
                     I::LocalGet(self.temporary),
-                    I::GlobalGet(self.result_len),
                 ]);
-                self.string_helper(strings::Helper::Snapshot)?;
+                self.text_result(*host)?;
                 if expr.ty == Type::BigInt {
                     self.bigint_leaf();
                 }
@@ -686,8 +685,7 @@ impl Emitter<'_> {
                     self.code.push(I::F64ConvertI32S);
                 }
                 if expr.ty == Type::String {
-                    self.code.push(I::GlobalGet(self.result_len));
-                    self.string_helper(strings::Helper::Snapshot)?;
+                    self.text_result(*host)?;
                 }
             }
             E::NumberSameValue(left, right) => {
@@ -905,6 +903,18 @@ impl Emitter<'_> {
 }
 
 impl Emitter<'_> {
+    /// The string a host call of `host` returned (its pointer on the stack,
+    /// its byte length in `env_result_len`): an owned string of a linked
+    /// v38 operation becomes its handle in place; a result-buffer string is
+    /// copied into an owned one.
+    pub(super) fn text_result(&mut self, host: varta_common::HostOperation) -> Result<()> {
+        if crate::link::owned_text(self.profile, host) {
+            self.code.extend(strings::owned_text(self.result_len));
+            return Ok(());
+        }
+        self.code.push(I::GlobalGet(self.result_len));
+        self.string_helper(strings::Helper::Snapshot)
+    }
     fn bigint_leaf(&mut self) {
         self.code.extend([
             I::LocalTee(self.string_temporary),

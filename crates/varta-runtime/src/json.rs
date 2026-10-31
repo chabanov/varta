@@ -211,9 +211,9 @@ pub(super) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
 
 pub(crate) use varta_common::value::PRIVATE_KEY_PREFIX;
 
-/// How value17 diagnostics (logged values) show a function value: as Node
-/// shows an anonymous function, since closures carry no source name.
-pub(crate) const FUNCTION_DISPLAY: &str = "[Function (anonymous)]";
+/// How value17 diagnostics (logged values) show a function value
+/// (`varta_intrinsics::json`, which the linked v38 renderer shares).
+pub(crate) use varta_intrinsics::json::FUNCTION_DISPLAY;
 
 #[cfg(test)]
 pub(super) fn render_reference(
@@ -250,6 +250,7 @@ pub(super) fn render_with_functions(
     encoder.encode_optional(kind, payload)
 }
 
+/// The diagnostic text of a logged aggregate and the values it visited.
 pub(super) fn render_diagnostic(
     data: &[u8],
     kind: u32,
@@ -257,11 +258,11 @@ pub(super) fn render_diagnostic(
     version: u32,
     module: ModuleBounds,
     budget: &mut varta_bigint::Budget,
-) -> Result<Vec<u8>, wasmtime::Error> {
+) -> Result<(Vec<u8>, usize), wasmtime::Error> {
     let mut encoder = Encoder::with_version(data, version);
     encoder.diagnostic_budget = Some(budget);
     encoder.module = module;
-    encoder.encode(kind, payload)
+    encoder.encode_visited(kind, payload)
 }
 
 /// Encoded UTF-8 output, capped at `limit` bytes: the 1 MiB host result
@@ -345,7 +346,15 @@ impl<'a, 'b> Encoder<'a, 'b> {
             deadline: None,
         }
     }
-    fn encode(mut self, kind: u32, value: u64) -> Result<Vec<u8>, wasmtime::Error> {
+    fn encode(self, kind: u32, value: u64) -> Result<Vec<u8>, wasmtime::Error> {
+        self.encode_visited(kind, value).map(|(bytes, _)| bytes)
+    }
+    /// [`Self::encode`] with the values it visited.
+    fn encode_visited(
+        mut self,
+        kind: u32,
+        value: u64,
+    ) -> Result<(Vec<u8>, usize), wasmtime::Error> {
         let (kind, value) = self.resolve(kind, value)?;
         if kind == ValueKind::Undefined as u32 {
             return Err(error("undefined root requires optional encoding"));
@@ -354,7 +363,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
         if self.bigint_seen {
             return Err(wasmtime::Error::new(BigIntSerialization));
         }
-        Ok(self.output.0)
+        Ok((self.output.0, self.nodes))
     }
     /// [`Self::encode_optional`] with the values it visited (v38 fair fuel).
     fn encode_counted(

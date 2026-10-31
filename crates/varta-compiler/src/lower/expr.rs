@@ -1385,10 +1385,15 @@ impl Lower<'_> {
                             .locate(type_error(format!("cannot log {}", arg.ty)), arg.span));
                     }
                 };
+                let profile = self.types.profile;
+                let host = profile.host_operation(host);
+                if host == Host::ValueFormatV12 {
+                    return Ok(logged_text(profile, call.span, arg));
+                }
                 return Ok(Expr {
                     span: call.span,
                     ty: Type::Void,
-                    kind: E::Host(self.types.profile.host_operation(host), vec![arg]),
+                    kind: E::Host(host, vec![arg]),
                 });
             }
             "varta.http.stop" => (Host::HttpStop, None, Type::Void),
@@ -1429,6 +1434,33 @@ impl Lower<'_> {
             ty: result,
             kind: E::Host(self.types.profile.host_operation(host), args),
         })
+    }
+}
+
+/// V38 logs a value cell as its linked text (`value_format_v12`) through the
+/// `log_string16` effect, so logging needs no host renderer; under the
+/// compiler's host-import test switch, through the host's `value_log_v12`.
+fn logged_text(
+    profile: varta_common::language::LanguageProfile,
+    span: swc_common::Span,
+    cell: Expr,
+) -> Expr {
+    let kind = if crate::link::links(profile, Host::ValueFormatV12) {
+        E::Host(
+            profile.host_operation(Host::LogString),
+            vec![Expr {
+                span,
+                ty: Type::String,
+                kind: E::Host(Host::ValueFormatV12, vec![cell]),
+            }],
+        )
+    } else {
+        E::Host(Host::ValueLogV12, vec![cell])
+    };
+    Expr {
+        span,
+        ty: Type::Void,
+        kind,
     }
 }
 

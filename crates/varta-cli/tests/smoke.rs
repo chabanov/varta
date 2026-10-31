@@ -16727,6 +16727,10 @@ console.log((big*3n).toString(16)+" "+String(BigInt.asIntN(64,big))+" "+(big>1e2
 const u:number|string=Math.random()>2?"x":2.5;
 const v:unknown=Math.random()>2?[1]:new RangeError("r");
 console.log(String(u)+" "+String(Number(u))+" "+(u<3)+" "+(u==2.5)+" "+typeof v+" "+Array.isArray(v)+" "+(v instanceof RangeError)+" "+(v===null)+" k"+7);
+const call:{name:string;arguments:Record<string,unknown>}={name:"list",arguments:{path:"/n\ud800",limit:2,tags:["a"]}};
+console.log(JSON.stringify(call.arguments));
+const shown:unknown=call;
+console.log(shown);
 }"#,
         serde_json::json!({}),
     );
@@ -16741,6 +16745,10 @@ console.log(String(u)+" "+String(Number(u))+" "+(u<3)+" "+(u==2.5)+" "+typeof v+
         // The primitive conversions, comparisons and value18 readers
         // (wave 3) are linked as well.
         "varta log: 2.5 2.5 true true object false true false k7",
+        // So are serialization and the logged text of a value, which v38
+        // logs through `log_string16`.
+        "varta log: {\"path\":\"/n\\ud800\",\"limit\":2,\"tags\":[\"a\"]}",
+        "varta log: {\"name\":\"list\",\"arguments\":{\"path\":\"/n\\ud800\",\"limit\":2,\"tags\":[\"a\"]}}",
     ];
     let logs = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stdout)
@@ -16780,6 +16788,11 @@ console.log(String(u)+" "+String(Number(u))+" "+(u<3)+" "+(u==2.5)+" "+typeof v+
                 .and_then(HostOperation::from_name)
                 .unwrap_or_else(|| panic!("unknown import {import}"));
             assert!(!operation.linked(), "v38 imports linked {import}");
+            assert_ne!(
+                operation,
+                HostOperation::ValueLogV12,
+                "v38 logs through the host"
+            );
         }
     }
     let mut commands = Vec::new();

@@ -9520,8 +9520,10 @@ a buffer bounded by the memory budget, allocates the owned UTF-16 result
 through the module's host-free `varta.value_abi.allocate`, writes it in 64 KiB
 chunks, retains it through `varta.value_abi.retain` and returns its packed
 handle (zero for `undefined`; the error class word is as for
-`json_stringify_v17`); the 1 MiB result buffer is not used. Visited values are
-bounded by the encoded size. Nesting is bounded by the host JSON depth ceiling
+`json_stringify_v17`); the 1 MiB result buffer is not used. V38 links it
+([linked serialization](#linked-serialization-and-logging-v38): the same
+output, limits and errors); the host import serves the compiler's
+host-import test switch. Visited values are bounded by the encoded size. Nesting is bounded by the host JSON depth ceiling
 `limits::V38_MAX_JSON_DEPTH` (10000; Node 24 overflows its stack at 6182
 nested arrays): values nested deeper than 64 are traversed on a dedicated
 256 MiB JSON host stack (committed as touched), and deeper values fail with a
@@ -10187,23 +10189,29 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   constants and the cell readers (`value::PrimitiveBox`,
   `value::ReferenceBox`, `value::Vector`, `value::Dictionary` with the full
   value18 hash-table validation, `value::ErrorObject`, the record check
-  `value::validate_aggregate_in`, the BigInt leaf check
+  `value::validate_aggregate_in` with its one-pass forms
+  `value::read_record_in` (which reports each field and the insertion order
+  while it validates) and `value::read_record_with` over a descriptor
+  validated once (`value::RecordShape`), the BigInt leaf check
   `bigint::BigIntView::check` and the closure envelope check
   `function::check_closure_envelope`, every one generic over `Memory`), the
   module bounds `value::ModuleBounds` (with the v38 bounds
   `ModuleBounds::v38`), the data and v38 program limits (`limits`, including
   `limits::WASM` and `DataLimits::V38`) and the UTF-16 helpers (`text`).
-  Uniqueness checks sort borrowed keys and field names instead of building
-  sets, and array backings and presence bitmaps are checked a word at a
-  time. `varta-intrinsics` and the shim
+  Uniqueness checks sort borrowed keys instead of building sets (the names
+  of a record of at most eight fields are compared in place), slot sets use
+  64-bit shifts (`value::slot_bit`; a variable 128-bit shift is a
+  compiler-runtime call in 32-bit Wasm), and array backings and presence
+  bitmaps are checked a word at a time. `varta-intrinsics` and the shim
   depend on it with `default-features = false` (checked by the boundary test
   `engine_dependencies_cannot_point_back_to_project_tooling_or_cli`), so host
   imports and linked code read cells with the same code; the profile tables
   and frozen ceilings that name engine modules stay `std` only. Linked code
   reads string arguments and string cells within the v38 data limit
   (`limits::V38_MAX_STRING_BYTES`); host imports of earlier profiles pass the
-  frozen `abi::MAX_STRING_BYTES`. String results of both still travel through
-  the result buffer, whose size (`abi::MAX_RESULT_BYTES`) bounds them.
+  frozen `abi::MAX_STRING_BYTES`. Host imports return string results
+  through the result buffer (`abi::MAX_RESULT_BYTES`); linked code returns
+  owned guest strings ([owned text results](#owned-text-results-v38)).
 - **Linked set.** `HostOperation::linked` names the operations with a linked
   implementation; `LanguageProfile::links` is true for them under v38 only.
   Today they are Math (the unary functions and `atan2`), `number_power`,
@@ -10222,20 +10230,22 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `bigint_unary`, `bigint_width`/`_v2`, `bigint_from_number`,
   `bigint_from_string`, `bigint_from_value_v5`, `bigint_to_string`/`_v2`,
   `bigint_to_number`, `bigint_compare`, `bigint_compare_number`,
-  `bigint_compare_string`), and the checked JSON parse `json_parse_v19`
-  ([shared decoder](#shared-checked-json-decoder-and-linked-json-wave-3)).
+  `bigint_compare_string`), the checked JSON parse `json_parse_v19`
+  ([shared decoder](#shared-checked-json-decoder-and-linked-json-wave-3)),
+  checked JSON serialization `json_stringify_owned` and the logged text of a
+  value `value_format_v12`
+  ([linked serialization](#linked-serialization-and-logging-v38)).
   The BigInt family is `varta_intrinsics::bigint`
   over `varta-bigint` (both `no_std`); the host imports of v28–v37 call the
   same functions with a fuel-derived work budget and the frozen string
   limits, linked code with fuel as its only work bound (the bit capacity
-  still applies). An operation whose registry signature returns two i32
-  values is exported returning one i64 (low word first) and the linker
-  synthesizes an adapter of the registry signature that unpacks it. Still
-  host imports (see [pending](embedding.md#linked-intrinsics-pending)):
-  `json_stringify_owned` (checked JSON serialization; `json_parse_v19` is
-  linked, see [linked JSON](#shared-checked-json-decoder-and-linked-json-wave-3))
-  and `value_log_v12`, whose rendering of records, arrays and dictionaries is the
-  JSON diagnostic renderer; logging itself stays a host effect.
+  still applies). An operation whose registry signature returns two values
+  is exported returning one i64 and the linker synthesizes an adapter of the
+  registry signature that unpacks it (`merge::Packing`): two i32 values low
+  word first, or an i64 handle and an i32 status (the sign bit set and the
+  status in the low word; a handle never sets it). No operation that reads
+  value layouts remains a host import: v38 logs a value as its linked text
+  through the `log_string16` effect, and no profile admits `value_log_v12`.
   `bigint_from_value_v5` reads only primitive and BigInt cells, whose value18
   layout is value17's, so the value18 BigInt conversion is linked like the
   other BigInt operations (`bigint_from_value_v4` stays a v36/v37 host
@@ -10321,9 +10331,11 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   inputs of every linked family (every Math function at extreme arguments,
   Number text of the largest, smallest-normal and subnormal Numbers with 100
   digits and every radix, long parse prefixes, `BigInt(Number.MAX_VALUE)`,
-  case mapping of 2^16 expanding units, 100,000-digit parses and BigInt
-  multiplication, division, widths and text of 300,000-bit operands). The
-  maximum stack depth is 5,016 bytes and the largest bounded scratch (the
+  case mapping of 2^16 expanding units, 100,000-digit parses, BigInt
+  multiplication, division, widths and text of 300,000-bit operands, and
+  serialization and logged text of 5,000 nesting levels and 2,000 records).
+  The maximum stack depth is 5,372 bytes (serialization) and the largest
+  bounded scratch (the
   operations whose inputs are Numbers or bounded prefixes) 6,984 bytes; both
   constants are 16 KiB, at least twice the measurement, and the test fails
   when a rebuilt library needs more than half of either or when bounded
@@ -10360,10 +10372,12 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `RuntimeError::Resource` (memory budget exhausted, with the request) of the
   [data limits](#data-limits-data_limits), never a bare trap. The arena's
   memory, reserved or grown, counts against the memory budget like any guest
-  memory. Linked code never calls the guest allocator or collector, so
-  nothing else writes above the heap end during the call; afterwards the
-  guest allocator uses those bytes as fresh heap space (it initializes every
-  block it hands out, as it does for reused blocks).
+  memory. Linked code calls the guest allocator (which may collect) only for
+  its owned result, after its arena scratch is complete and with the text in
+  the reserved arena or staged in the result buffer, so nothing else writes
+  above the heap end while arena data lives there; afterwards the guest
+  allocator uses those bytes as fresh heap space (it initializes every block
+  it hands out, as it does for reused blocks).
 - **Arguments in place.** String arguments and string cells are read in
   place in guest memory after their bounds, limit and UTF-16 length checks
   (`memory::Memory::borrow`), so an operation never copies its input per
@@ -10381,11 +10395,13 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   `arena_reserved_end`), `resource_failure` and the module's static
   extension pages (`static_pages`, a constant: the static region of the
   linked value readers, whose other bounds are the v38 limits); words and
-  ranges outside the result buffer are read in place; string results are written at
-  `abi::RESULT_BASE` exactly as a host writes them. Each allocating export
-  resets the arena on entry and traps on a nested entry, so no pointer or
-  state survives a call; linked code never allocates in, roots or retains
-  guest heap values.
+  ranges outside the result buffer are read in place; string results are
+  owned guest strings from the `allocate` accessor (BigInt payloads still
+  use the result buffer, and so does text staged while an arena continued
+  above the heap). Each allocating export resets the arena on entry and
+  traps on a nested entry, so no pointer or state survives a call; linked
+  code allocates guest heap values only for its owned results, linked JSON
+  and linked serialization, and roots what it reads across an allocation.
 - **Validation.** A v38 module that imports a linked operation is rejected
   before instantiation ("pure intrinsic must be linked"). Every module has at
   most one memory. The library's data segments are the only ones a v38 module
@@ -10409,18 +10425,118 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   takes `m` pages of the memory budget. Integral `Number.prototype.toString(radix)`
   arguments below 2^53 take an exact integer-digit path instead of the
   big-integer interval search. Production budgets are unchanged. Linked
-  string intrinsics read strings within the v38 data limit; a result above
-  the 1 MiB result buffer (case mapping) traps, as the host's result transfer
-  fails. `String(x)` of a string cell is that string itself (the fast path),
-  so it no longer passes through the result buffer, nor traps on a longer
-  string. Delivering the remaining results as owned guest strings needs
-  allocating call sites and is open. Linked conversions read string cells
+  string intrinsics read strings within the v38 data limit, and every
+  linked operation that returns text returns an owned guest string
+  ([owned text results](#owned-text-results-v38)), so case mapping,
+  serialization and the logged text of a value beyond the 1 MiB result
+  buffer succeed within the memory budget, and an exhausted budget is the
+  typed resource failure. `String(x)` of a string cell is that string itself
+  (the fast path). Linked conversions read string cells
   within the v38 data limit (the host imports of earlier profiles keep the
   frozen 1 MiB), so `Number(s)` of a longer string parses. The fuel of the
   general linked paths (fractional Number text, parsing a non-digit string,
   comparisons with a large BigInt) is their instructions: several thousand
   per call where the host import charged none
   ([measurements](development-plan.md#wave-3-conversions-and-readers-measurement-v38)).
+
+#### Owned text results (v38)
+
+- **Every linked text result is an owned guest string.** Number text
+  (`number_to_string`, `number_to_fixed`, `number_to_exponential`,
+  `number_to_precision`, `primitive_to_string`, `primitive_to_string_v6`),
+  `string_char_at16`, case mapping (`string_to_upper_case16`,
+  `string_to_lower_case16`), `value_typeof_v11`, BigInt text
+  (`bigint_to_string`, `bigint_to_string_v2`) and `value_format_v12` return
+  a fresh string from the guest allocator (`varta-intrinsics-wasm` `text`):
+  its pointer (0 for the empty string) with its byte length in
+  `env_result_len`, the registry signature unchanged. The call site
+  (`link::owned_text`, `strings::owned_text`, the fast-path helpers
+  included) packs the two into the string handle instead of copying the
+  text out of the result buffer; like a snapshot's result the block is
+  unrooted and consumed before any later allocation.
+- **Allocation.** An operation computes its text in the reserved arena and
+  allocates the result last; what it reads after allocating is rooted for
+  the call (case mapping roots its input). When an arena allocation
+  continued above the heap end, where the allocator places blocks, the text
+  is staged in the result buffer first (the texts of this path are bounded
+  by it).
+- **Case mapping** streams over its input in place (`string::map_case`):
+  one pass sizes the result and keeps up to 4,096 units of it in the
+  reserved arena; a longer result is mapped again directly into its owned
+  string, so nothing proportional to the input is allocated besides the
+  result. `Final_Sigma` is decided from the characters around a capital
+  sigma within its well-formed run, as `str::to_lowercase` decides it;
+  `string::convert_case`, which host imports keep, is the reference of a
+  differential test over every BMP unit, sigma contexts and random mixes.
+- **Limits.** A result within the v38 string limit and the memory budget
+  succeeds; beyond the budget it is the guest allocator's typed
+  `RuntimeError::Resource` (memory budget exhausted, with the request),
+  beyond the string limit `Resource::ValueSize`. BigInt text keeps its bound
+  (a text longer than the result buffer is the `RangeError` it always was).
+
+#### Linked serialization and logging (v38)
+
+- **One encoder.** `varta_intrinsics::json` serializes value layout 18 for
+  `JSON.stringify` (`stringify`, private state hidden as by
+  `json_stringify_v17`) and for the text of a logged value (`format`, the
+  notation of `value_log_v12`: BigInts with `n`, functions as
+  `[Function (anonymous)]`, promises as `Promise { … }`, private state shown;
+  scalars, strings and Error objects as that host import shows them). It is
+  the host serializer's behavior: the same output, the same order of checks
+  over the graph and the same failures. Aggregates are read by the shared
+  readers (`read_record_with` over a descriptor validated once per call,
+  `Vector::read_in`, `Dictionary::read_in`, `ErrorObject::read_in`; a union
+  cell by its header, `ReferenceBox::read_envelope`, since the member's own
+  reader validates it next), and a noncanonical layout traps. The traversal
+  is iterative (a frame stack; the cycle path is scanned while short and
+  kept in a set beyond 32 aggregates), so nesting up to
+  `limits::V38_MAX_JSON_DEPTH` needs no native stack; the UTF-8 bytes of the
+  output are counted against the host's output limits (the memory budget
+  for JSON, the result buffer for a logged aggregate). Numbers use an exact
+  fast path (`number::Shortest`: integers below 2^53, decimals of at most
+  six fraction digits and fifteen significant digits, checked by the
+  correctly rounded quotient) and `ryu-js` otherwise; the text equals
+  `canonical_display` (a random differential test).
+- **Failures.** A BigInt inside `JSON.stringify` is the recoverable
+  `TypeError` after the whole graph was validated (the export sets the sign
+  bit with the class, and the adapter yields `(0, class)`). A cycle, the
+  depth limit (`JSON.stringify`: "nesting exceeds the host depth ceiling of
+  10000"; logged text: "depth or node limit"), the output limit and a
+  callable `toJSON` field store `EncodeError::linked_code` (above the
+  `JsonInputLimit` codes; the request word carries the ceiling) and trap,
+  and the runtime reports `EncodeError`, whose messages are the host
+  serializer's. The execution deadline is the engine's for linked code (the
+  host import checked it every 1,024 values).
+- **Memory.** Both run in a scratch entry (rooted guest blocks, as linked
+  JSON) with the serialized value rooted. The first pass counts the output
+  and keeps up to 16,384 units (the first 32 in place) to copy into the
+  result, allocated at its exact length; a longer output is written by a
+  second pass into the result, which stays rooted while that pass
+  allocates scratch. The result is exactly as long as the host's, so the
+  memory budget admits the same values. `json_stringify_owned` retains its
+  result, as the host import does; `value_format_v12` returns an unrooted
+  owned text, and a string cell's own string without a copy.
+- **Logging.** V38 lowers `console.log` of a value cell to
+  `log_string16(value_format_v12(cell))`, so a v38 module imports no value
+  renderer: `LanguageProfile::host_operation` maps the logging operations to
+  `value_format_v12`, and no profile admits `value_log_v12` (the runtime
+  keeps it for the compiler's `host_import_test_hook`). Under v38
+  `log_string16` reads its argument within the module's string limit
+  (earlier profiles: the frozen 1 MiB), and the output budget bounds what is
+  logged. The logged text lives in guest memory until the effect reads it:
+  logging a value whose text needs more memory than the budget has left is
+  the typed memory failure where the host renderer, working in host memory,
+  succeeded; an Error message beyond the frozen 1 MiB, which the host
+  renderer rejected, is logged.
+- **Fuel.** Linked serialization costs its instructions
+  ([measurement](development-plan.md#linked-serialization-measurement-v38)):
+  below the fair rates of the host import for strings, numbers and arrays of
+  them, above them for records, dictionaries, promises and small one-shot
+  values (open). The like-with-like corpus check compares a program's
+  guest instructions through its build that imports serialization; the
+  linked cost is pinned by `linked_serialization_stays_within_its_measured_cost`.
+  The host's value logging, under the test-only rating of earlier profiles,
+  is charged the serialization rates (values visited, output units).
 
 #### Shared checked JSON decoder and linked JSON (wave 3)
 
@@ -10475,7 +10591,8 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   the compiler's test switch `host_json_test_hook` compiles v38 modules
   that import it, so tests compare both paths. The linked decoder's fuel is
   in the [measurement](development-plan.md#linked-json-measurement-v38).
-  `json_stringify_owned` stays a host import, charged at the fair rates.
+  `json_stringify_owned` is linked too
+  ([linked serialization](#linked-serialization-and-logging-v38)).
 - **Rooted scratch blocks.** Linked JSON's scratch (tape, frames, key sets)
   is not a reserved gap: the library's allocator, inside a JSON entry
   (`arena::scratch`), takes ordinary guest heap blocks from the guest

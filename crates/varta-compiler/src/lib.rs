@@ -89,6 +89,23 @@ pub mod host_json_test_hook {
     }
 }
 
+/// Test-only: compile v38 programs that import the listed linked operations
+/// from the host instead of linking them (`json_stringify_owned`, and
+/// `value_format_v12` for logging through the host's `value_log_v12`).
+#[cfg(any(test, feature = "suspension-test-hook"))]
+pub mod host_import_test_hook {
+    /// Compile one source with `operations` imported on this thread.
+    pub fn compile_with_profile(
+        source: &str,
+        profile: varta_common::language::LanguageProfile,
+        operations: &[varta_common::HostOperation],
+    ) -> Result<Vec<u8>, crate::CompilerError> {
+        crate::link::import_hook::with(operations, || {
+            crate::compile_typescript_with_profile(source, profile)
+        })
+    }
+}
+
 /// Parse an in-memory source using the compatibility filename `input.ts`.
 pub fn parse_typescript(source: &str) -> Result<usize, CompilerError> {
     parse_typescript_with_path(source, std::path::Path::new("input.ts"))

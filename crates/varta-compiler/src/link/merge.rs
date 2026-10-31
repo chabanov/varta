@@ -650,16 +650,29 @@ fn registry_signature(operation: HostOperation) -> FuncType {
     let (params, results) = operation.scalar_signature();
     FuncType::new(params.iter().map(scalar), results.iter().map(scalar))
 }
-/// Whether `operation` returns two i32 values, which its library export
-/// packs into one i64 (stable Rust has no multi-value C ABI).
-pub(super) fn packed_pair(operation: HostOperation) -> bool {
-    operation.scalar_signature().1 == [HostScalar::I32, HostScalar::I32]
+/// How a library export returns the two results of its registry signature
+/// in one i64 (stable Rust has no multi-value C ABI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Packing {
+    /// Two i32 values: the first in the low word, the second in the high.
+    Pair,
+    /// An i64 handle and an i32 status: the handle, or the sign bit set and
+    /// the status in the low word (a handle never sets the sign bit).
+    HandleStatus,
+}
+/// The packing of `operation`'s results, if they are two values.
+pub(super) fn packing(operation: HostOperation) -> Option<Packing> {
+    match operation.scalar_signature().1 {
+        [HostScalar::I32, HostScalar::I32] => Some(Packing::Pair),
+        [HostScalar::I64, HostScalar::I32] => Some(Packing::HandleStatus),
+        _ => None,
+    }
 }
 /// The signature of `operation`'s library export: the registry signature,
-/// with a packed i64 for a pair of i32 results.
+/// with one packed i64 for two results.
 pub(super) fn export_signature(operation: HostOperation) -> FuncType {
     let (params, _) = operation.scalar_signature();
-    if packed_pair(operation) {
+    if packing(operation).is_some() {
         FuncType::new(params.iter().map(scalar), [ValType::I64])
     } else {
         registry_signature(operation)
@@ -667,37 +680,58 @@ pub(super) fn export_signature(operation: HostOperation) -> FuncType {
 }
 
 /// A synthesized function of an operation's registry signature that calls
-/// its library export, which returns the two i32 results packed in one i64
-/// (low word first), and unpacks them.
+/// its library export, which returns the two results packed in one i64
+/// ([`Packing`]), and unpacks them.
 struct Adapter {
     /// The guest function import it replaces.
     import: u32,
     /// Its merged function index.
     index: u32,
     operation: HostOperation,
+    packing: Packing,
 }
 impl Adapter {
     fn body(&self, export: u32) -> encoder::Function {
         use encoder::Instruction as I;
         let params = self.operation.scalar_signature().0.len() as u32;
-        // One i64 local after the parameters holds the packed pair.
+        // One i64 local after the parameters holds the packed results.
         let packed = params;
         let mut function = encoder::Function::new([(1, encoder::ValType::I64)]);
         for local in 0..params {
             function.instruction(&I::LocalGet(local));
         }
-        for instruction in [
-            I::Call(export),
-            I::LocalTee(packed),
-            I::I32WrapI64,
-            I::LocalGet(packed),
-            I::I64Const(i64::from(u32::BITS)),
-            I::I64ShrU,
-            I::I32WrapI64,
-            I::End,
-        ] {
-            function.instruction(&instruction);
+        function.instruction(&I::Call(export));
+        function.instruction(&I::LocalSet(packed));
+        let unpack: &[I<'static>] = match self.packing {
+            Packing::Pair => &[
+                I::LocalGet(packed),
+                I::I32WrapI64,
+                I::LocalGet(packed),
+                I::I64Const(i64::from(u32::BITS)),
+                I::I64ShrU,
+                I::I32WrapI64,
+            ],
+            // (negative ? 0 : packed, negative ? low word : 0)
+            Packing::HandleStatus => &[
+                I::I64Const(0),
+                I::LocalGet(packed),
+                I::LocalGet(packed),
+                I::I64Const(0),
+                I::I64LtS,
+                I::Select,
+                I::LocalGet(packed),
+                I::I32WrapI64,
+                I::I32Const(0),
+                I::LocalGet(packed),
+                I::I64Const(0),
+                I::I64LtS,
+                I::Select,
+            ],
+        };
+        for instruction in unpack {
+            function.instruction(instruction);
         }
+        function.instruction(&I::End);
         function
     }
 }
@@ -769,17 +803,18 @@ impl<'a> Plan<'a> {
             .map(|(offset, &index)| (index, base + offset as u32))
             .collect();
         // The checked stack-pointer setter follows the accessors, and the
-        // pair adapters follow it.
+        // result adapters follow it.
         let check = base + functions.len() as u32;
         let linked_stack = closure.globals.contains(&library.stack_pointer);
         let adapters: Vec<Adapter> = linked
             .iter()
-            .filter(|(_, operation)| packed_pair(*operation))
+            .filter_map(|&(import, operation)| Some((import, operation, packing(operation)?)))
             .enumerate()
-            .map(|(offset, &(import, operation))| Adapter {
+            .map(|(offset, (import, operation, packing))| Adapter {
                 import,
                 index: check + u32::from(linked_stack) + offset as u32,
                 operation,
+                packing,
             })
             .collect();
         let mut next = 0;
@@ -1126,7 +1161,7 @@ impl<'a> Plan<'a> {
                 .roots
                 .get(&adapter.import)
                 .and_then(|export| self.library_indices.functions.get(export))
-                .ok_or("intrinsic library: unmapped pair adapter")?;
+                .ok_or("intrinsic library: unmapped result adapter")?;
             section.function(&adapter.body(*export));
         }
         module.section(&section);

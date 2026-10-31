@@ -1839,7 +1839,8 @@ impl LanguageProfile {
             let value17 = LanguageProfile::CheckedF64Utf16V37.host_operation(operation);
             return match value17 {
                 JsonStringifyV17 => JsonStringifyOwned,
-                ValueLogV11 => ValueLogV12,
+                // V38 logs a value as its linked text through `log_string16`.
+                ValueLogV11 | ValueLogV12 => ValueFormatV12,
                 ValueTypeOfV10 => ValueTypeOfV11,
                 ValueTruthyV10 => ValueTruthyV11,
                 ValueNullishV10 => ValueNullishV11,
@@ -3071,13 +3072,18 @@ mod tests {
             H::ValueIsErrorClassV7,
             // Wave 3: linked checked JSON parsing.
             H::JsonParseV19,
+            // Linked serialization and the logged text of a value.
+            H::JsonStringifyOwned,
+            H::ValueFormatV12,
         ] {
             assert!(operation.linked() && v38.links(operation), "{operation:?}");
             assert!(operation.capability().is_none(), "{operation:?}");
             assert!(!operation.scheduler() && !operation.timer() && !operation.net());
         }
-        // Effects, logging, entropy, JSON stringify and value logging stay
-        // imports; the value17 forms are never v38 operations.
+        // Effects, logging and entropy stay imports; the value17 forms are
+        // never v38 operations, and v38 logs a value as its linked text.
+        assert_eq!(v38.host_operation(H::UnionLog), H::ValueFormatV12);
+        assert_eq!(v38.host_operation(H::ValueLogV12), H::ValueFormatV12);
         for operation in [
             H::LogString16,
             H::LogFloatV2,
@@ -3089,7 +3095,6 @@ mod tests {
             H::TimerStartV2,
             H::JsonParseV18,
             H::JsonStringifyV17,
-            H::JsonStringifyOwned,
             H::ValueLogV12,
             H::ValueTypeOfV10,
             H::PrimitiveStringV5,
@@ -3269,11 +3274,20 @@ mod tests {
         assert_eq!(new.host_operation(H::TimerStart), H::TimerStartV2);
         // Every value17 reader is replaced by its value18 counterpart, which
         // requires host ABI 34; v37 keeps the value17 reader.
+        // V38 logs a value as its linked text: the logging operations map to
+        // `value_format_v12`, which returns the text `value_log_v11` logged.
+        for operation in [H::UnionLog, H::ValueLogV10] {
+            assert_eq!(new.host_operation(operation), H::ValueFormatV12);
+            assert!(new.links(H::ValueFormatV12) && !old.links(H::ValueFormatV12));
+            assert_eq!(
+                H::ValueFormatV12.scalar_signature().0,
+                old.host_operation(operation).scalar_signature().0
+            );
+            assert!(H::ValueFormatV12.returns_string());
+        }
         for operation in [
-            H::UnionLog,
             H::ValueTypeOf,
             H::ValueIsError,
-            H::ValueLogV10,
             H::JsonParseV17,
             H::PrimitiveStringV4,
             H::PrimitiveNumberV4,

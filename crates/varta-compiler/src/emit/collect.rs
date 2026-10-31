@@ -46,6 +46,17 @@ impl<'a> Collected<'a> {
     /// V38 `charAt` and string index reads: the ASCII fast path in static
     /// data and the general path, the linked `string_char_at16` intrinsic
     /// with its snapshot.
+    /// The helpers a string result of `host` needs: the allocator the
+    /// linked v38 operation allocates its owned result with, or the
+    /// snapshot that copies a result-buffer string.
+    fn text_result(&mut self, host: Host) {
+        self.helpers
+            .insert(if crate::link::owned_text(self.types.profile, host) {
+                strings::Helper::Allocate
+            } else {
+                strings::Helper::Snapshot
+            });
+    }
     fn char_at(&mut self, span: swc_common::Span, source: &'a crate::source::Source) {
         self.helpers
             .extend([strings::Helper::CharAt, strings::Helper::Allocate]);
@@ -383,14 +394,14 @@ impl<'a> Collected<'a> {
             }
             E::CheckedBigIntHost { host, args, .. } => {
                 self.hosts.insert(*host);
-                self.helpers.insert(strings::Helper::Snapshot);
+                self.text_result(*host);
                 for arg in args {
                     self.expression(arg, source);
                 }
             }
             E::Host(host, args) => {
                 if host.returns_string() {
-                    self.helpers.insert(strings::Helper::Snapshot);
+                    self.text_result(*host);
                 }
                 self.fast_path(*host, args, expr.span, source);
                 for arg in args {

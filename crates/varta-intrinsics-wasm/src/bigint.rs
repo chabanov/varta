@@ -25,10 +25,19 @@ const LINKED: Limits = Limits {
 fn budget() -> Budget {
     Budget::new(MAX_BITS, u64::MAX)
 }
-/// The packed `(pointer, 0)` or `(0, error class)` pair.
+/// The packed `(pointer, 0)` or `(0, error class)` pair of a BigInt result
+/// in the result buffer.
 fn pair(outcome: Result<alloc::vec::Vec<u8>, Error>) -> i64 {
+    packed(outcome, result)
+}
+/// [`pair`] of BigInt text, an owned guest string ([`crate::text`]); text
+/// longer than the result buffer stays the `RangeError` it always was.
+fn text_pair(outcome: Result<alloc::vec::Vec<u8>, Error>) -> i64 {
+    packed(outcome, crate::text::owned)
+}
+fn packed(outcome: Result<alloc::vec::Vec<u8>, Error>, publish: impl FnOnce(&[u8]) -> i32) -> i64 {
     let (first, second) = match outcome {
-        Ok(bytes) => (result(&bytes), 0),
+        Ok(bytes) => (publish(&bytes), 0),
         Err(error) => match error.recoverable_class() {
             Some(class) => (0, class as i32),
             None => fatal_bigint(error),
@@ -100,7 +109,7 @@ pub extern "C" fn bigint_from_string(pointer: i32, length: i32) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn bigint_to_string(value: i64, radix: f64) -> i64 {
     entry(|| {
-        pair(shared::to_string(
+        text_pair(shared::to_string(
             &Guest,
             value as u64,
             radix,
@@ -112,7 +121,7 @@ pub extern "C" fn bigint_to_string(value: i64, radix: f64) -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn bigint_to_string_v2(receiver: i64, radix: i64) -> i64 {
     entry(|| {
-        pair(shared::to_string_v2(
+        text_pair(shared::to_string_v2(
             &Guest,
             receiver as u64,
             radix as u64,

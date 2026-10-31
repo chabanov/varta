@@ -3,13 +3,14 @@
 //!
 //! Linked code is v38 code: string arguments and string cells are read
 //! within the v38 data limit (`limits::V38_MAX_STRING_BYTES`); string
-//! results still travel through the result buffer, whose size
-//! (`abi::MAX_RESULT_BYTES`) bounds them.
+//! results are owned guest strings ([`crate::text`]), not the result buffer.
 use crate::{
     arena::entry,
-    guest::{Guest, checked, result},
+    guest::{self, Guest, checked},
+    text::{filled, owned},
 };
-use varta_common::{abi::MAX_RESULT_BYTES, limits::V38_MAX_STRING_BYTES as STRING_BYTES};
+use varta_common::limits::V38_MAX_STRING_BYTES as STRING_BYTES;
+use varta_intrinsics::json::Sink;
 use varta_intrinsics::{
     format::{self, Mode},
     math::{self, Portable, Unary},
@@ -63,11 +64,11 @@ pub extern "C" fn number_remainder(dividend: f64, divisor: f64) -> f64 {
 pub extern "C" fn number_to_string(value: f64, radix: f64) -> i32 {
     entry(|| {
         let text = checked(radix::format(value, radix));
-        result(&varta_common::text::encode(&text))
+        owned(&varta_common::text::encode(&text))
     })
 }
 fn decimal(mode: Mode, value: f64, digits: f64) -> i32 {
-    entry(|| result(&checked(format::format16(mode, value, digits))))
+    entry(|| owned(&checked(format::format16(mode, value, digits))))
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn number_to_fixed(value: f64, digits: f64) -> i32 {
@@ -100,7 +101,7 @@ pub extern "C" fn number_parse_int(input: i64, radix: i64) -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn primitive_to_string(cell: i64) -> i32 {
     entry(|| {
-        result(&checked(primitive::to_string(
+        owned(&checked(primitive::to_string(
             &Guest,
             cell as u64,
             STRING_BYTES,
@@ -116,7 +117,7 @@ pub extern "C" fn primitive_to_number(cell: i64) -> f64 {
 pub extern "C" fn string_char_at16(ptr: i32, len: i32, position: f64) -> i32 {
     entry(|| {
         let units = checked(string::read(&Guest, ptr, len, STRING_BYTES));
-        result(&string::char_at(&units, position))
+        owned(&string::char_at(&units, position))
     })
 }
 #[unsafe(no_mangle)]
@@ -126,14 +127,44 @@ pub extern "C" fn string_char_code_at16(ptr: i32, len: i32, position: f64) -> f6
         string::char_code_at(&units, position)
     })
 }
+/// Result units of case conversion kept in the reserved arena: a result up
+/// to this length is mapped once and copied, a longer one mapped again into
+/// its owned string. (8 KiB, half the reserved arena: the arena never
+/// continues above the heap, which the result's allocation may claim.)
+const CASE_BUFFERED_UNITS: usize = 4096;
+
+/// Default case conversion into an owned string, streamed over the input
+/// read in place: the first pass sizes the result (keeping up to
+/// [`CASE_BUFFERED_UNITS`] of it), a second one fills a longer result.
+/// Nothing proportional to the input is allocated besides the result, and
+/// the input is rooted while the result is allocated.
 fn case(ptr: i32, len: i32, upper: bool) -> i32 {
     entry(|| {
-        let units = checked(string::read(&Guest, ptr, len, STRING_BYTES));
-        result(&checked(string::convert_case16(
-            &units,
-            upper,
-            MAX_RESULT_BYTES,
-        )))
+        let input = checked(string::read(&Guest, ptr, len, STRING_BYTES));
+        let mut buffer = alloc::vec::Vec::new();
+        if !input.is_empty() {
+            buffer.reserve_exact(CASE_BUFFERED_UNITS);
+        }
+        let mut units = 0;
+        string::map_case(&input, upper, &mut |mapped| {
+            units += mapped.len();
+            if units <= CASE_BUFFERED_UNITS {
+                buffer.extend_from_slice(mapped);
+            }
+        });
+        let roots = guest::root_top();
+        guest::retain_root(((len as u64) << u32::BITS) | ptr as u32 as u64);
+        let handle = filled(units, |fill| {
+            if units <= CASE_BUFFERED_UNITS {
+                fill.units(&buffer);
+                return;
+            }
+            string::map_case(&input, upper, &mut |mapped| fill.units(mapped));
+        });
+        guest::reset_roots(roots);
+        let (result, bytes) = varta_common::value::string_range(handle);
+        guest::set_result_len(bytes as i32);
+        result as i32
     })
 }
 #[unsafe(no_mangle)]
