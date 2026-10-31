@@ -25,6 +25,15 @@ export async function main(): Promise<void> {
     const r = await fetch(base + "/stream");
     return await r.text();
   });
+  await attempt("headers", async () => {
+    const r = await fetch(base + "/headers");
+    await r.text();
+    const parts: string[] = [];
+    r.headers.forEach((value: string, name: string) => {
+      parts.push(name + "=" + value);
+    });
+    return parts.join(";") + " | " + (r.headers.get("x-b") ?? "none") + " | " + r.headers.getSetCookie().join(",");
+  });
   await attempt("missing", async () => {
     const r = await fetch(base + "/missing");
     return String(r.status) + " " + String(r.ok);
