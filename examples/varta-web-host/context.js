@@ -40,6 +40,37 @@ function limitBySource(contract, constant, position = 0) {
   throw new Error(`contract has no limit ${constant}`);
 }
 
+// Labels of the generated host limit tables (embedding.md "Module limits", "Scheduler limits").
+export const LIMIT = {
+  wasmBytes: "Wasm module (bytes)",
+  metadataBytes: "`varta.language` metadata (bytes)",
+  parameters: "Parameters of one function type",
+  results: "Results of one function type",
+  imports: "Imports",
+  memories: "Memories",
+  tables: "Tables",
+  tableElements: "Initial elements of the table",
+  globals: "Globals",
+  heldTokens: "Tokens held at once (queued and registered)",
+  pendingTimers: "Timers armed or awaiting their take at once",
+  jobs: "Tokens taken from the queue per execution (v38: per turn)",
+  serials: "Promise serials, and separately tracking ids and timer ids, per execution",
+};
+
+/** The value of a host limit for a profile (null: unspecified generic Wasm, the frozen row). */
+export function hostLimit(contract, label, profileName) {
+  const rows = contract.hostLimits.filter((r) => r.limit === label);
+  const name = profileName ?? LEGACY_PROFILE;
+  const row = rows.find((r) => r.profiles === null || r.profiles.includes(name));
+  if (!row) throw new Error(`contract has no ${label} limit for ${name}`);
+  return row.value;
+}
+
+/** The largest value of a host limit over every profile (bounds input before the profile is known). */
+function largestLimit(contract, label) {
+  return Math.max(...contract.hostLimits.filter((r) => r.limit === label).map((r) => r.value));
+}
+
 function constants(contract) {
   const range = (name) => contract.layout[name];
   const status = Object.fromEntries(contract.codes.filter((c) => c.channel === "result_status").map((c) => [c.name, c.code]));
@@ -52,10 +83,16 @@ function constants(contract) {
     maxInputBytes: limitBySource(contract, "abi::MAX_INPUT_BYTES"),
     maxStringBytes: range("One host result / one string value").bytes,
     maxMemoryBytes: limitBySource(contract, "abi::MAX_MEMORY_BYTES"),
-    maxWasmBytes: limitBySource(contract, "abi::MAX_WASM_BYTES"),
+    maxWasmBytes: largestLimit(contract, LIMIT.wasmBytes),
     maxBodyBytes: limitBySource(contract, "abi::MAX_WASM_FUNCTION_BODY_BYTES"),
     maxSignatures: limitBySource(contract, "abi::MAX_WASM_SIGNATURES"),
-    maxParameters: limitBySource(contract, "abi::MAX_WASM_PARAMETERS"),
+    maxParameters: hostLimit(contract, LIMIT.parameters, null),
+    maxResults: hostLimit(contract, LIMIT.results, null),
+    maxImports: hostLimit(contract, LIMIT.imports, null),
+    maxMemories: hostLimit(contract, LIMIT.memories, null),
+    maxTables: hostLimit(contract, LIMIT.tables, null),
+    maxTableElements: hostLimit(contract, LIMIT.tableElements, null),
+    maxGlobals: hostLimit(contract, LIMIT.globals, null),
     maxUserFunctions: limitBySource(contract, "abi::MAX_USER_FUNCTIONS"),
     maxCatalogTypes: limitBySource(contract, "function::MAX_CAPTURE_TYPES", 0),
     maxCatalogBindings: limitBySource(contract, "function::MAX_CAPTURE_TYPES", 1),
@@ -67,10 +104,9 @@ function constants(contract) {
     maxHostCalls: limitBySource(contract, "abi::MAX_HOST_CALLS"),
     maxOutputBytes: limitBySource(contract, "abi::MAX_OUTPUT_BYTES"),
     deadlineMs: limitBySource(contract, "abi::DEADLINE_SECONDS") * MS_PER_SECOND,
-    maxMetadataBytes: limitBySource(contract, "language::MAX_METADATA_BYTES"),
-    maxHeldTokens: limitBySource(contract, "scheduler::MAX_PENDING_CONTINUATIONS"),
-    maxJobs: limitBySource(contract, "scheduler::MAX_EXECUTION_JOBS"),
-    maxSerials: limitBySource(contract, "scheduler::MAX_PROMISE_SERIALS"),
+    maxMetadataBytes: hostLimit(contract, LIMIT.metadataBytes, null),
+    maxJobs: hostLimit(contract, LIMIT.jobs, null),
+    maxSerials: hostLimit(contract, LIMIT.serials, null),
     maxCatalogBytes: limitBySource(contract, "MAX_TOOL_CATALOG_BYTES"),
     maxTools: limitBySource(contract, "MAX_TOOLS", 0),
     maxToolParameters: limitBySource(contract, "MAX_TOOLS", 1),
@@ -91,7 +127,6 @@ function timerConstants(contract) {
     unref: Number(t["scheduler::TIMER_UNREF"]),
     minDelay,
     maxDelay,
-    maxPending: Number(t["scheduler::MAX_PENDING_TIMERS"]),
   };
 }
 

@@ -11,7 +11,7 @@
 //
 // This file is the lifecycle: policies, run, invoke. Validation, catalogs,
 // execution, the scheduler and the Tool ABI live in their own modules.
-import { parseManifest, PolicyError } from "./policy.js";
+import { parseManifest, checkRootNameGrammar, PolicyError } from "./policy.js";
 import { ValidationError, ExecutionFailure, GuestExit } from "./errors.js";
 import { createContext, LEGACY_HOST_ABI, TOOL_NAME, utf8 } from "./context.js";
 import { createValidator } from "./validate.js";
@@ -27,13 +27,15 @@ export function createHost(contract) {
   const ctx = createContext(contract);
   const { C, hostAbis } = ctx;
   const validate = createValidator(ctx);
+  const manifestOptions = { hostAbis, grantKinds: contract.grantKinds, budgetTable: contract.manifestBudgets, limits: contract.manifestLimits };
+  checkRootNameGrammar(contract.manifestLimits, contract.rootNameExamples);
 
   function parsePolicies(options) {
     try {
       return {
-        package: parseManifest(options.manifest ?? null, { where: "manifest", hostAbis, grantKinds: contract.grantKinds }),
+        package: parseManifest(options.manifest ?? null, { where: "manifest", ...manifestOptions }),
         // Same schema; its abiVersion is not compared with the module's.
-        ceiling: options.ceiling == null ? null : parseManifest(options.ceiling, { where: "host ceiling", hostAbis, grantKinds: contract.grantKinds }),
+        ceiling: options.ceiling == null ? null : parseManifest(options.ceiling, { where: "host ceiling", ceiling: true, ...manifestOptions }),
       };
     } catch (error) {
       if (error instanceof PolicyError) throw new ValidationError(error.message);
@@ -65,6 +67,9 @@ export function createHost(contract) {
     const info = validate(bytes);
     checkManifestAbi(policies, info);
     const { exec, imports } = createExecution(ctx, info, policies, options);
+    // A JavaScript host caps memory only through the module's declared maximum.
+    const declared = (info.module.memories[0]?.max ?? 0) * C.pageBytes;
+    if (declared > exec.budgets.memoryBytes) throw new ValidationError(`this host cannot cap memory below the module's declared maximum (${declared} bytes > memoryBytes ${exec.budgets.memoryBytes})`);
     try {
       exec.instance = await WebAssembly.instantiate(await WebAssembly.compile(bytes), imports);
       checkException(C, exec, info, "initial");
@@ -129,7 +134,10 @@ export function createHost(contract) {
    */
   function debugScheduler(manifest = null) {
     const used = contract.operations.filter((op) => op.scheduler || op.name.startsWith("timer_"));
-    const { exec, imports } = createExecution(ctx, { used, profile: null }, parsePolicies({ manifest }), {});
+    // The misuse table is checked under the last profile that admits `timer_start`.
+    const timerStart = contract.operations.find((op) => op.name === "timer_start");
+    const profile = ctx.profiles.get(timerStart.admittedUnder[timerStart.admittedUnder.length - 1]);
+    const { exec, imports } = createExecution(ctx, { used, profile }, parsePolicies({ manifest }), {});
     exec.instance = { exports: {} };
     return { call: (name, ...args) => imports.varta[name](...args), exec };
   }
