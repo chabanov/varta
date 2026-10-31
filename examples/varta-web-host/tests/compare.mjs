@@ -106,6 +106,12 @@ const server = createServer((req, res) => {
   if (req.url === "/json") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"ok":true}');
+  } else if (req.url === "/headers") {
+    // Repeats and names out of order, as the wire carries them (raw flat list);
+    // no Date field, which could differ between the native and the JS run.
+    res.sendDate = false;
+    res.writeHead(200, ["x-b", "1", "content-type", "text/plain", "set-cookie", "a=1", "x-a", "z", "x-b", "2", "set-cookie", "b=2"]);
+    res.end("h");
   } else if (req.url === "/stream") {
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
     res.write(Buffer.concat([Buffer.from("при", "utf8"), SPLIT_LETTER.subarray(0, 1)]));
@@ -142,7 +148,7 @@ const nativeNet = await new Promise((resolve) => {
 });
 const jsNet = await host.run(netFixture.bytes, { manifest: JSON.stringify(netManifest), env: new Map([["BASE_URL", base]]) });
 server.close();
-expected.push({ label: "v38 net.request: json, split UTF-8 stream, 404, POST, runtime header, too large, denied", expected: { status: nativeNet.status === 0 ? "ok" : "failed", logs: nativeNet.logs } });
+expected.push({ label: "v38 net.request: json, repeated headers, split UTF-8 stream, 404, POST, runtime header, too large, denied", expected: { status: nativeNet.status === 0 ? "ok" : "failed", logs: nativeNet.logs } });
 observed.push({ label: "v38 net.request", observed: { status: jsNet.status, logs: jsNet.logs } });
 
 let failures = 0;

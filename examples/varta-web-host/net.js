@@ -37,6 +37,7 @@ export function netConstants(contract) {
   const net = contract.net;
   const rules = descriptorRules(net);
   checkDescriptorExamples(rules, net);
+  if (net.headExample !== null) checkHeadExample(net.headExample);
   const limit = (label) => hostLimit(contract, label, null);
   const failure = (text) => {
     const row = net.failures.find((f) => f.text.startsWith(text));
@@ -74,6 +75,36 @@ export function netConstants(contract) {
 }
 
 const fill = (template, values) => template.replace(/<([a-z]+)>/g, (whole, key) => (key in values ? values[key] : whole));
+
+/**
+ * The head record (embedding.md "Head record"): compact JSON, members in name
+ * order, lowercase header names as name, value pairs. Fetch `Headers` iterate
+ * sorted by name with each `set-cookie` its own pair and other repeated fields
+ * combined; that order and combining are this host's stated deviation.
+ */
+function headRecord(headers, status, statusText, url) {
+  const pairs = [];
+  for (const [name, value] of headers) pairs.push(name, value);
+  const locationValue = headers.get("location");
+  let location = "";
+  if (locationValue !== null && VISIBLE_ASCII.test(locationValue)) {
+    try {
+      location = new URL(locationValue, url).href;
+    } catch {
+      location = "";
+    }
+  }
+  return JSON.stringify({ headers: pairs, location, status, statusText, url });
+}
+
+/** The contract's head example, rebuilt through `headRecord`; a disagreement stops the host. */
+function checkHeadExample(example) {
+  const record = JSON.parse(example);
+  const fields = [];
+  for (let i = 0; i < record.headers.length; i += 2) fields.push([record.headers[i], record.headers[i + 1]]);
+  const rebuilt = headRecord(new Headers(fields), record.status, record.statusText, record.url);
+  if (rebuilt !== example) throw new Error(`head record disagrees with the contract's example: ${rebuilt}`);
+}
 
 /** Network fields of one execution; `notify` wakes a loop waiting for a completion. */
 export function netState() {
@@ -153,23 +184,8 @@ export function netImports(N, exec, io) {
       report(r, N.code.Failed, fill(N.failures.request, { error: "the browser does not expose redirect responses" }));
       return;
     }
-    const headers = [];
-    for (const [name, value] of response.headers) {
-      if (name === "set-cookie" && typeof response.headers.getSetCookie === "function") continue;
-      headers.push(name, value);
-    }
-    if (typeof response.headers.getSetCookie === "function") for (const value of response.headers.getSetCookie()) headers.push("set-cookie", value);
-    const locationValue = response.headers.get("location");
-    let location = "";
-    if (locationValue !== null && VISIBLE_ASCII.test(locationValue)) {
-      try {
-        location = new URL(locationValue, r.url).href;
-      } catch {
-        location = "";
-      }
-    }
     r.reader = response.body ? response.body.getReader() : null;
-    report(r, N.code.Head, JSON.stringify({ headers, location, status: response.status, statusText: response.statusText, url: r.url }));
+    report(r, N.code.Head, headRecord(response.headers, response.status, response.statusText, r.url));
   }
 
   /** Serves one armed read: the buffered bytes now, else waits for the body stream. */
