@@ -190,10 +190,15 @@ fn every_v37_case_runs_identically_under_v38() {
 
 #[test]
 fn v37_v36_and_legacy_modules_and_diagnostics_stay_byte_identical() {
+    // Intentional 2026-11-01 Promise-resolution validation fix: v37's
+    // net_cases/{abort,basics,denial,redirects,streams}.ts and
+    // v37_integration_cases/sse_lines.ts gain guards for erased resolutions.
+    // Compared all 133 programs against b2a36e0: the other 127 are unchanged;
+    // v36 and legacy retain their original aggregate baselines.
     let expected = [
         (
             Some(LanguageProfile::CheckedF64Utf16V37),
-            (8_526_664_588_381_694_690, 133, 0),
+            (5_094_723_932_438_141_295, 133, 0),
         ),
         (
             Some(LanguageProfile::CheckedF64Utf16V36),

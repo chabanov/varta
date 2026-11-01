@@ -399,7 +399,6 @@ impl Lower<'_> {
                     .resolve_union(span, value, context)?
                     .ok_or_else(|| CompilerError::Internal("missing promise member".into()));
             }
-            let value = self.guarded_unknown(value)?;
             let target = context.unwrap_or(value.ty);
             let ty = intern(target, self.types).map_err(|e| self.source.locate(e, span))?;
             let Type::Promise(id) = ty else {

@@ -1,3 +1,4 @@
+import { hostLimit, LIMIT } from "../context.js";
 // Cases shared by the Node differential test and the browser runner. Log lines are
 // compared verbatim: their reference text is normative (embedding.md "Output and
 // its budget"); only the human `error` message of failures is ignored.
@@ -107,7 +108,26 @@ export const viewCases = [
 
 // `expect` defaults to "refused". Catalog cases are contract checks of the JS host
 // (tampered sections the native compiler never emits), not native comparisons.
+// A valid table-only core module: no compiler or fixture can conceal the
+// declared ceiling. These cases run in Node and the browser runner alike.
+function tableModule(min, max) {
+  const unsigned = (value) => {
+    const bytes = [];
+    do { const low = value & 0x7f; value >>>= 7; bytes.push(low | (value ? 0x80 : 0)); } while (value);
+    return bytes;
+  };
+  const HEADER = [0, 97, 115, 109, 1, 0, 0, 0];
+  const TABLE_SECTION = 4;
+  const FUNCREF = 0x70;
+  const table = [1, FUNCREF, max === null ? 0 : 1, ...unsigned(min), ...(max === null ? [] : unsigned(max))];
+  return Uint8Array.from([...HEADER, TABLE_SECTION, ...unsigned(table.length), ...table]);
+}
+
 export const refusalCases = [
+  { label: "table without maximum is refused", fixture: "run-i32", moduleBytes: () => tableModule(0, null), pattern: "table maximum" },
+  { label: "table maximum above budget is refused", fixture: "run-i32", moduleBytes: (c) => tableModule(0, hostLimit(c, LIMIT.tableElements, null) + 1), pattern: "table maximum" },
+  { label: "table maximum at budget is accepted", fixture: "run-i32", moduleBytes: (c) => tableModule(0, hostLimit(c, LIMIT.tableElements, null)), expect: "accepted" },
+  { label: "table initial size above budget is refused", fixture: "run-i32", moduleBytes: (c) => { const over = hostLimit(c, LIMIT.tableElements, null) + 1; return tableModule(over, over); }, pattern: "table maximum" },
   { label: "refuses unstable JSON intrinsics", fixture: "json-v36", pattern: "does not implement json_stringify" },
   { label: "rule 4: bindings[].ty out of range", fixture: "run-v36", catalog: (c) => (c.bindings[0].ty = 9999), pattern: "bindings[].ty index out of range" },
   { label: "rule 4: frames[].slots[].binding out of range", fixture: "run-v36", catalog: (c) => (c.frames[0].slots.push({ binding: 9999, shared: false })), pattern: "frames[].slots[].binding index out of range" },
@@ -266,7 +286,7 @@ export async function runJsCases(host, load, contract) {
     const fixture = await load(c.fixture);
     let observed;
     try {
-      host.validate(c.catalog ? tamperedCatalog(fixture.bytes, c.catalog) : fixture.bytes);
+      host.validate(c.moduleBytes ? c.moduleBytes(contract) : c.catalog ? tamperedCatalog(fixture.bytes, c.catalog) : fixture.bytes);
       observed = "accepted";
     } catch (error) {
       observed = c.pattern && error.message.includes(c.pattern) ? "refused" : `refused differently: ${error.message}`;

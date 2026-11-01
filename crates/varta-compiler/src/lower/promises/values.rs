@@ -163,42 +163,61 @@ impl Lower<'_> {
             ),
         }))
     }
-    /// Statements that throw the adoption `TypeError` when the `unknown` in
-    /// `slot` holds a promise (v35); nothing for other types and profiles.
-    pub(super) fn unknown_promise_guard(
+    /// Reject unsupported resolution, including values hidden by `unknown`.
+    pub(super) fn resolution_guard(
         &mut self,
         span: swc_common::Span,
         slot: u32,
         ty: Type,
     ) -> Result<Vec<S>> {
-        if !self.types.profile.promise_values() || ty != Type::Unknown {
+        reject_thenable(ty, self.types)?;
+        if !needs_resolution_guard(ty, self.types) {
             return Ok(Vec::new());
         }
-        // Every promise shares the one tag; any promise type names it.
-        let any = intern(Type::Void, self.types)?;
-        let error = self.array_error(ErrorClass::TypeError, UNKNOWN_PROMISE, span)?;
-        Ok(vec![S::If(
+        let mut body = Vec::new();
+        if self.types.profile.promise_values() && ty == Type::Unknown {
+            let any = intern(Type::Void, self.types)?;
+            let error = self.array_error(ErrorClass::TypeError, UNKNOWN_PROMISE, span)?;
+            body.push(S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsUnionMember(Box::new(local(span, slot, ty)), any),
+                },
+                vec![S::Throw(error)],
+                vec![],
+            ));
+        }
+        let thenable = self.array_error(
+            ErrorClass::TypeError,
+            "structural thenable resolution is not supported",
+            span,
+        )?;
+        let cell = unknown::widen(local(span, slot, ty), self.types)?;
+        body.push(S::If(
             Expr {
                 span,
                 ty: Type::Boolean,
-                kind: E::IsUnionMember(Box::new(local(span, slot, ty)), any),
+                kind: E::Intrinsic(ir::Intrinsic::HasCallableThen, vec![cell]),
             },
-            vec![S::Throw(error)],
+            vec![S::Throw(thenable)],
             vec![],
-        )])
+        ));
+        Ok(body)
     }
-    /// `value` (an `unknown`) checked by [`Self::unknown_promise_guard`].
-    pub(super) fn guarded_unknown(&mut self, value: Expr) -> Result<Expr> {
-        if !self.types.profile.promise_values() || value.ty != Type::Unknown {
+
+    pub(super) fn guarded_resolution(&mut self, value: Expr) -> Result<Expr> {
+        reject_thenable(value.ty, self.types)?;
+        if !needs_resolution_guard(value.ty, self.types) {
             return Ok(value);
         }
-        let span = value.span;
-        let slot = self.hidden(Type::Unknown);
+        let (span, ty) = (value.span, value.ty);
+        let slot = self.hidden(ty);
         let mut body = vec![S::Init(slot, value)];
-        body.extend(self.unknown_promise_guard(span, slot, Type::Unknown)?);
+        body.extend(self.resolution_guard(span, slot, ty)?);
         Ok(Expr {
             span,
-            ty: Type::Unknown,
+            ty,
             kind: E::ValueBlock {
                 output: slot,
                 marker: self.hidden(Type::Number),
@@ -206,5 +225,31 @@ impl Lower<'_> {
                 body,
             },
         })
+    }
+}
+
+/// Only a top-level `then` matters: arrays and records containing other
+/// thenables are ordinary values, and a non-callable `then` is harmless.
+fn needs_resolution_guard(ty: Type, types: &ir::ValueTypes) -> bool {
+    let dynamic = |ty| {
+        unions::members(ty, types)
+            .iter()
+            .any(|ty| matches!(ty, Type::Unknown | Type::Object(_) | Type::Function(_)))
+    };
+    match ty.erased() {
+        Type::Unknown | Type::Object(_) => true,
+        Type::Dictionary(id) => dynamic(types.dictionaries[id as usize].value),
+        Type::Record(id) => types.records[id as usize]
+            .fields
+            .iter()
+            .any(|f| f.name == "then" && dynamic(f.ty)),
+        Type::Class(id) => types.records[types.classes.shape(id) as usize]
+            .fields
+            .iter()
+            .any(|f| f.name == "then" && dynamic(f.ty)),
+        Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
+            .iter()
+            .any(|member| needs_resolution_guard(*member, types)),
+        _ => false,
     }
 }

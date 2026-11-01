@@ -255,7 +255,9 @@ Passing validation is not proof of provenance or authorization.
    the memory section and reject a memory whose maximum is absent or above the
    memory pages of the [module limits](#module-limits); the guest's own
    `memory.grow` is otherwise unbounded. Varta-compiled modules always declare
-   that maximum.
+   that maximum. The same applies to tables: a host without a table-growth
+   limiter MUST reject a table with no maximum or a maximum above the table
+   element limit. Checking its initial size alone does not bound `table.grow`.
 5. **Imports.** Every import is a function in module `varta` whose name is in the
    [host operation table](#host-operations); its parameter and result types equal
    the **Signature** column exactly; its minimum host ABI is at most the declared
@@ -1769,7 +1771,7 @@ fatal scheduler error.
   fired but not yet taken); ids are 1, 2, … per execution, at most the promise
   serials of that table. The delay is normalized as in Node: a value
   that is not a number from the minimum to the maximum delay (NaN, zero, negative,
-  too large) becomes the minimum; fractions are kept. The timer is armed with due
+  too large) becomes the minimum; valid fractional delays are truncated to an integer. The timer is armed with due
   time = loop time + delay and the next value of a per-execution sequence counter.
   An unset interval bit makes a timeout.
 - **`timer_clear(id)`** ignores an id that is not an integer naming an armed

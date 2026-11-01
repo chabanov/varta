@@ -263,6 +263,9 @@ fn v37_keeps_rejecting_structural_subtyping() {
 
 /// FNV-1a digests of v37 modules compiled before the v38 streams: v37 keeps
 /// its bytes while v38 admits views.
+// The SSE fixture includes the intentional 2026-11-01 Promise-resolution
+// validation fix. Other entries in this table remain unchanged; the complete
+// corpus exception is documented in frozen_profile_tests.rs.
 const FROZEN_V37: [u64; 10] = [
     5707565312455711993,
     15521361347602854831,
@@ -271,7 +274,7 @@ const FROZEN_V37: [u64; 10] = [
     17396809930316693728,
     11415845110343043954,
     10668204331314575741,
-    13309652669340266339,
+    14291898538202111501,
     1212660727472207371,
     7775064625867875443,
 ];

@@ -1069,3 +1069,39 @@ console.log(`${SDK_VERSION} ${SCOPES.length} ${auth}`);console.log(users.list())
         assert!(packaged.contains(line), "{packaged}");
     }
 }
+
+/// A flat source type can lower into a deep IR conditional spine. The old
+/// recursive emitter aborted on 180 alternatives on the normal macOS stack.
+#[test]
+fn generated_union_checks_compile_on_the_normal_cli_stack() {
+    let alternatives = (0..180)
+        .map(|n| format!("\"v{n}\""))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let project = Project::new(&format!(
+        "type Allowed = {alternatives}; function narrow(v:unknown):Allowed{{return v as Allowed;}} export function main():void{{console.log(narrow(\"v179\"));}}"
+    ));
+    project.write("varta.config.json", r#"{"entry":"src/main.ts","target":"wasm","policy":"strict","out":"dist/app","languageProfile":"checked-f64-utf16-v38","capabilities":{}}"#);
+    success(project.command(&["check"]));
+    assert!(success(project.command(&["dev"])).contains("varta log: v179"));
+    success(project.command(&["build"]));
+    fs::remove_file(project.root.join("src/main.ts")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains("varta log: v179"));
+}
+
+#[test]
+fn thenable_resolution_is_checked_across_modules_in_source_free_artifacts() {
+    let project = Project::new(
+        r#"import {value} from './value.ts';
+        export async function main():Promise<void>{
+            try {await value(); console.log("wrong");}
+            catch(e){console.log(e instanceof TypeError ? "blocked" : "wrong");}
+        }"#,
+    );
+    project.write("src/value.ts", "export function value():unknown{return {then:(resolve:(n:number)=>void):void=>{resolve(7);}};}");
+    project.write("varta.config.json", r#"{"entry":"src/main.ts","target":"wasm","policy":"strict","out":"dist/app","languageProfile":"checked-f64-utf16-v38","capabilities":{}}"#);
+    assert!(success(project.command(&["dev"])).contains("varta log: blocked"));
+    success(project.command(&["build"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains("varta log: blocked"));
+}

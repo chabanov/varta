@@ -101,6 +101,52 @@ pub(super) fn stored(value: Type) -> Type {
     }
 }
 
+/// A definitely callable `then` (or unsupported accessor) is a source error.
+/// Optional/union members are inspected at resolution so a non-callable or
+/// absent `then` remains an ordinary value. Only the top-level value matters.
+fn reject_thenable(ty: Type, types: &ir::ValueTypes) -> Result<()> {
+    fn definite(ty: Type, types: &ir::ValueTypes) -> bool {
+        let fields = match ty.erased() {
+            Type::Record(id) => Some(&types.records[id as usize].fields),
+            Type::Class(id) => {
+                let class = types.classes.get(id);
+                if class.methods.contains_key("then") || class.generic_methods.contains_key("then")
+                {
+                    return true;
+                }
+                // Forward class annotations precede layout; actual resolution
+                // checks the completed layout again.
+                types
+                    .records
+                    .get(types.classes.shape(id) as usize)
+                    .filter(|shape| shape.class == Some(id))
+                    .map(|shape| &shape.fields)
+            }
+            Type::Union(id) | Type::ReferenceUnion(id) => {
+                return !types.unions[id as usize].is_empty()
+                    && types.unions[id as usize]
+                        .iter()
+                        .all(|m| definite(*m, types));
+            }
+            _ => None,
+        };
+        fields.is_some_and(|fields| {
+            fields.iter().any(|f| {
+                f.name == "then"
+                    && !f.optional
+                    && unions::members(f.ty, types)
+                        .iter()
+                        .all(|m| matches!(m, Type::Function(_)))
+            })
+        })
+    }
+    if definite(ty, types) {
+        Err(rejected("structural thenable resolution"))
+    } else {
+        Ok(())
+    }
+}
+
 /// `Promise<T>`.
 pub(super) fn annotation(reference: &ast::TsTypeRef, types: &mut ir::ValueTypes) -> Result<Type> {
     let params = reference
@@ -119,6 +165,7 @@ pub(super) fn annotation(reference: &ast::TsTypeRef, types: &mut ir::ValueTypes)
 pub(super) fn intern(value: Type, types: &mut ir::ValueTypes) -> Result<Type> {
     // Literal types are compile-time sets of their base primitive.
     let value = value.erased();
+    reject_thenable(value, types)?;
     if matches!(value, Type::Promise(_)) {
         return Err(rejected(
             "Promise<Promise<T>>; a promise never fulfills with a promise",
@@ -327,7 +374,9 @@ impl Lower<'_> {
         } else {
             PromiseState::Pending
         };
-        let mut fulfilled = fulfilled;
+        let mut fulfilled = fulfilled
+            .map(|value| self.guarded_resolution(value))
+            .transpose()?;
         let mut fields = Vec::with_capacity(shape.fields.len());
         for (slot, field) in shape.fields.iter().enumerate() {
             let value = match field.name.as_str() {
@@ -535,14 +584,34 @@ impl Lower<'_> {
                 |child, params, _| {
                     let (p, v) = (params[0], params[1]);
                     // An unknown holding a promise is never adopted silently.
-                    let mut body = child.unknown_promise_guard(span, v, value)?;
-                    body.extend(child.settle_body(
+                    let guard = child.resolution_guard(span, v, value)?;
+                    let settle = child.settle_body(
                         span,
                         || local(span, p, ty),
                         PromiseState::Fulfilled,
                         local(span, v, value),
-                    )?);
-                    Ok(body)
+                    )?;
+                    if guard.is_empty() {
+                        return Ok(settle);
+                    }
+                    // A resolver has already locked its promise. A failed
+                    // resolution rejects that promise itself; letting the
+                    // error escape would leave it locked and pending forever.
+                    let reason = child.exception_type()?;
+                    let error = child.hidden(reason);
+                    let reject = child.reject_helper(span, id)?;
+                    let mut body = guard;
+                    body.extend(settle);
+                    Ok(vec![S::TryCatch {
+                        body,
+                        binding: Some(error),
+                        handler: vec![invoke(
+                            span,
+                            reject,
+                            vec![local(span, p, ty), local(span, error, reason)],
+                        )],
+                        marker: child.hidden(Type::Number),
+                    }])
                 },
             )
         })

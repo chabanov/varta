@@ -17,6 +17,7 @@ mod array_slice;
 mod collect;
 mod compare;
 mod concat;
+mod thenable;
 pub(super) use concat::MAX_OPERANDS as MAX_CONCATENATED;
 mod dictionary_probe;
 mod index_key;
@@ -111,6 +112,7 @@ impl Globals {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Helper {
+    HasCallableThen,
     Snapshot,
     Concat,
     /// V38 (`codegen_v2`): one concatenation of this many operands.
@@ -308,6 +310,7 @@ impl Helper {
                 vec![ValType::I64, ValType::I64, ValType::I64, ValType::F64],
                 vec![ValType::F64],
             ),
+            Self::HasCallableThen => (vec![ValType::I64], vec![ValType::I32]),
             Self::Compare | Self::ArrayStringHasOwn => (vec![ValType::I64; 2], vec![ValType::I32]),
             Self::Allocate => (vec![ValType::I32], vec![ValType::I32]),
             Self::ArrayIndexKey | Self::UnitIndex(_) => (vec![ValType::I64], vec![ValType::F64]),
@@ -427,7 +430,8 @@ impl Helper {
     pub(super) fn needs_arena(self) -> bool {
         !matches!(
             self,
-            Self::Compare
+            Self::HasCallableThen
+                | Self::Compare
                 | Self::StringEquals
                 | Self::ArrayStringHasOwn
                 | Self::ArrayIndexKey
@@ -480,6 +484,7 @@ impl Helper {
         };
         // Emission adds the complete allocator dependency set before indexing.
         match self {
+            Self::HasCallableThen => thenable::function(profile),
             Self::Snapshot => snapshot(helpers[&Self::Allocate]),
             Self::Concat => concat::function(helpers[&Self::Allocate]),
             Self::ConcatMany(count) => {

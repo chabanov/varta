@@ -192,6 +192,8 @@ mod record_compound_tests;
 mod record_tests;
 #[cfg(test)]
 mod reduce_right_tests;
+#[cfg(test)]
+mod resolution_review_tests;
 mod scheduler;
 #[cfg(test)]
 mod timer_tests;

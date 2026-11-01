@@ -45,6 +45,26 @@ Next work, in order:
 Completed increment logs, earlier checkpoints and verification records are in
 [history.md](history.md).
 
+## Review correction batch — 2026-11-01
+
+Four reproduced review defects are addressed together: native compiler stack
+exhaustion on generated conditional spines, unbounded table growth in the JS host,
+unsupported thenables silently fulfilled as ordinary values, and fractional timer
+delays diverging from the stated Node normalization. Regressions cover normal
+CLI check/dev and source-free artifacts, static and erased resolution paths,
+record presence and class members, typed/unknown dictionaries, timer ordering and
+JS validation boundaries. Six v37 programs (five network cases and the SSE case)
+intentionally gain resolution guards. A per-file comparison with `b2a36e0`
+confirmed the other 127 programs unchanged; v36 and legacy aggregate baselines
+and measured fuel numbers retain their values. These are corrections, not new completed CORE
+work streams or a general thenable compatibility claim.
+
+Verification follows the scoped/full workflow: focused regression and historical
+profile/fuel suites at the completed boundary, the actual UARP console on the
+normal stack, and the shared Node/browser-host differential corpus. The final
+full workspace gate and source fingerprints are recorded under
+`target/verification/`; no broader platform result is inferred from local tests.
+
 ## Product direction
 
 Varta targets general-purpose, typed TS/JS applications compiled to portable

@@ -67,7 +67,7 @@ export function schedulerImports(ctx, exec, policies, profileName) {
     if (serial === 0 || (exec.reactions.get(serial) ?? []).length !== 1 || exec.timerBySerial.has(serial)) throw schedulerError("TimerState");
     if (exec.timers.size >= maxPendingTimers) throw schedulerError("TimerBudget");
     if (exec.nextTimerId > C.maxSerials) throw schedulerError("SerialBudget");
-    const normalized = delay >= C.timer.minDelay && delay <= C.timer.maxDelay ? delay : C.timer.minDelay;
+    const normalized = delay >= C.timer.minDelay && delay <= C.timer.maxDelay ? Math.trunc(delay) : C.timer.minDelay;
     const id = exec.nextTimerId++;
     exec.timers.set(id, {
       serial,

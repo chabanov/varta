@@ -632,3 +632,19 @@ pub(super) fn patched(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
     bytes[at..at + to.len()].copy_from_slice(to);
     bytes
 }
+
+#[test]
+fn fractional_timer_delays_use_node_integer_order() {
+    let source = r#"export function main(): void {
+        setTimeout(() => console.log("first"), 1.9);
+        setTimeout(() => console.log("second"), 1.1);
+        let id = 0;
+        id = setInterval(() => { console.log("interval"); clearInterval(id); }, 2.9);
+        setTimeout(() => console.log("timeout"), 2.1);
+    }"#;
+    for profile in [V36, LanguageProfile::CheckedF64Utf16V38] {
+        let (logs, result) = observe_with_profile(source, &timer_grant(), false, profile);
+        result.unwrap();
+        assert_eq!(logs, lines(&["first", "second", "interval", "timeout"]));
+    }
+}

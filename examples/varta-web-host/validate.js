@@ -77,7 +77,11 @@ export function createValidator(ctx) {
       if (memory.max === null || memory.max * C.pageBytes > C.maxMemoryBytes) throw new ValidationError("memory maximum absent or above the memory budget");
     }
     if (module.tables.length > C.maxTables) throw new ValidationError("more than one table");
-    if (module.tables.some((t) => t.limits.min > C.maxTableElements)) throw new ValidationError("table too large");
+    // Unlike Wasmtime, JS has no store limiter for table.grow. Require a
+    // declared ceiling so a small initial table cannot grow past the budget.
+    if (module.tables.some((t) => t.limits.min > C.maxTableElements || t.limits.max === null || t.limits.max > C.maxTableElements)) {
+      throw new ValidationError("table maximum absent or above the element budget");
+    }
     if (module.globals.length > C.maxGlobals) throw new ValidationError("too many globals");
     if (module.bodySizes.some((size) => size > C.maxBodyBytes)) throw new ValidationError("function body too large");
     const acceptance = acceptanceOf(profile);

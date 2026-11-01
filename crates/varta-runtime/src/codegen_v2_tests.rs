@@ -560,6 +560,9 @@ fn digest(bytes: &[u8]) -> u64 {
 /// Digests of these case programs under v37, produced by the compiler before
 /// the codegen-v2 stream (8fc9965).
 #[cfg(not(feature = "codegen-v2-all-profiles"))]
+// The SSE fixture includes the intentional 2026-11-01 Promise-resolution
+// validation fix. Other entries in this table remain unchanged; the complete
+// corpus exception is documented in frozen_profile_tests.rs.
 const FROZEN_V37: &[(&str, u64)] = &[
     (
         include_str!("collection_cases/strings.ts"),
@@ -575,7 +578,7 @@ const FROZEN_V37: &[(&str, u64)] = &[
     ),
     (
         include_str!("v37_integration_cases/sse_lines.ts"),
-        0xb8b5_6295_cfdb_2f63,
+        0xc65705ffaf761e0d,
     ),
     (
         include_str!("value15_cases/dictionary_json.ts"),

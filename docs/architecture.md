@@ -6636,7 +6636,16 @@ primitive.
   settles the target alike: two extra jobs, as in Node. Resolving a promise
   with itself rejects it with
   `TypeError("Chaining cycle detected for promise #<Promise>")`. Arbitrary
-  structural thenables, getters, subclassing and `Promise.withResolvers` are
+  structural thenables and `then` accessors are not admitted: a definitely callable
+  `then` field or class member is rejected during resolution lowering. Values
+  erased to `unknown`/`object`, optional/union `then` fields and dictionaries are checked
+  by an allocation-free guest reader, including optional presence, wide record
+  slots and class methods/getters. Unsupported resolution throws `TypeError`
+  without invoking the hook. A resolving closure rejects its locked promise
+  on that error; it never leaves the promise locked and pending. Non-callable
+  `then` fields and nested thenables are ordinary values. This is a deliberate
+  resolution bug fix across existing profiles, not general thenable admission.
+  Subclassing and `Promise.withResolvers` are
   not admitted; neither are the combinators `Promise.all`, `allSettled`,
   `race` and `any`, which need promises inside arrays (a value tag) and fail
   by name.
@@ -7698,7 +7707,7 @@ diagnostic there.
   guest code was slow). Delays follow Node: a delay that is not a number in
   `1..=TIMER_MAX_DELAY_MS` (2^31 - 1, Node's `TIMEOUT_MAX`) is 1 ms (Node also
   prints a `TimeoutOverflowWarning` for too large delays), fractions are
-  kept, and an interval re-arms at its fire time plus its delay. A cleared
+  truncated to whole milliseconds, and an interval re-arms at its fire time plus its delay. A cleared
   timer wakes its frame through the microtask queue; the frame completes
   without calling the callback, so the release is unobservable and finishes
   in the next checkpoint.
@@ -12962,3 +12971,25 @@ and layout and frame catalog version 2 validation in preflight
 scheduler-owned token, root and generation policy that lets suspended frames
 outlive the guest call that created them
 ([microtask scheduler](#microtask-scheduler-promises)).
+
+
+### Review corrections (2026-11-01)
+
+Generated checked casts can contain conditional spines much deeper than the
+bounded source AST (a 180-member literal union is sufficient). The emitter uses
+an explicit work stack for conditional branches and their root-scope epilogues;
+it preserves instruction order, root marks, branch result roots and fuel without
+requiring a larger native thread stack. The CLI regression checks, executes and
+builds the cast, then runs its artifact after the source has been removed. The
+UARP console remains an external integration workload, not an engine dependency.
+
+Thenable rejection is enforced both statically and at dynamic resolution sites,
+including constructor/withResolvers resolvers, reaction results and async returns.
+Six v37 programs include the changed resolution helpers: the network abort,
+basics, denial, redirects and streams cases, and the SSE integration case. Their
+corrected aggregate baseline was checked by comparing all 133 programs with
+`b2a36e0`; the other 127 programs are byte-identical. V36 and legacy aggregate
+baselines and fuel golden numbers remain unchanged. Existing portable artifacts, host signatures and
+capability grants keep their ABI. Timer imports in both native and JavaScript
+hosts now implement the stated Node integer-delay normalization; the previous
+fraction-preserving description was erroneous.

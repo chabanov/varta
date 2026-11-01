@@ -1,5 +1,12 @@
 use super::*;
 
+/// Host-side bookkeeping only: it must not change emitted fuel or root order.
+enum ExpressionScope {
+    Direct,
+    Quiet { root: bool },
+    Marked { marker: u32, root: bool },
+}
+
 impl Emitter<'_> {
     pub(super) fn expr(&mut self, expr: &Expr) -> Result<()> {
         self.expr_rooted(expr, true)
@@ -11,66 +18,42 @@ impl Emitter<'_> {
         self.expr_rooted(expr, !self.codegen_v2())
     }
     fn expr_rooted(&mut self, expr: &Expr, root: bool) -> Result<()> {
+        if self.memory.is_some()
+            && self.codegen_v2()
+            && !self.quiet_mode
+            && let E::Call(index, args) = &expr.kind
+            && !self.frame_functions.contains_key(index)
+            && args.iter().all(|arg| self.quiet(arg))
+        {
+            // Quiet arguments push nothing; the callee roots parameters.
+            self.quiet_mode = true;
+            let emitted = args.iter().try_for_each(|arg| self.expr_inner(arg));
+            self.quiet_mode = false;
+            emitted?;
+            self.code
+                .push(I::Call(self.functions_begin + *index as u32));
+            self.check_exception()?;
+            if root {
+                self.root_result(expr.ty)?;
+            }
+            return Ok(());
+        }
+        let scope = self.begin_expression(expr, root);
+        let emitted = self.expr_inner(expr);
+        self.finish_expression(scope, expr.ty, emitted)
+    }
+
+    fn begin_expression(&mut self, expr: &Expr, root: bool) -> ExpressionScope {
         let Some(memory) = self.memory else {
-            return self.expr_inner(expr);
+            return ExpressionScope::Direct;
         };
         if self.codegen_v2() {
             if self.quiet_mode {
-                // Inside a quiet subtree nothing allocates before the
-                // outermost quiet expression's consumer.
-                return self.expr_inner(expr);
+                return ExpressionScope::Direct;
             }
-            if self.quiet(expr) {
+            if self.quiet(expr) || self.stable_operands(expr) || self.quiet_function_call(expr) {
                 self.quiet_mode = true;
-                let emitted = self.expr_inner(expr);
-                self.quiet_mode = false;
-                emitted?;
-                if root {
-                    self.root_result(expr.ty)?;
-                }
-                return Ok(());
-            }
-            if self.stable_operands(expr) {
-                self.quiet_mode = true;
-                let emitted = self.expr_inner(expr);
-                self.quiet_mode = false;
-                emitted?;
-                if root {
-                    self.root_result(expr.ty)?;
-                }
-                return Ok(());
-            }
-            if let E::Call(index, args) = &expr.kind
-                && !self.frame_functions.contains_key(index)
-                && args.iter().all(|arg| self.quiet(arg))
-            {
-                // Quiet arguments push nothing, the callee roots its
-                // parameters before any allocation and every callee exit
-                // restores the root stack pointer, so the call needs no mark.
-                self.quiet_mode = true;
-                let emitted = args.iter().try_for_each(|arg| self.expr_inner(arg));
-                self.quiet_mode = false;
-                emitted?;
-                self.code
-                    .push(I::Call(self.functions_begin + *index as u32));
-                self.check_exception()?;
-                if root {
-                    self.root_result(expr.ty)?;
-                }
-                return Ok(());
-            }
-            if self.quiet_function_call(expr) {
-                // The same for a function value read from an unchanged
-                // binding: the checked dispatch reads the value before the
-                // call, and the callee roots its parameters and cells.
-                self.quiet_mode = true;
-                let emitted = self.expr_inner(expr);
-                self.quiet_mode = false;
-                emitted?;
-                if root {
-                    self.root_result(expr.ty)?;
-                }
-                return Ok(());
+                return ExpressionScope::Quiet { root };
             }
         }
         let marker = self.root_mark_base + self.expr_depth;
@@ -78,13 +61,77 @@ impl Emitter<'_> {
         self.max_expr_depth = self.max_expr_depth.max(self.expr_depth);
         self.code
             .extend([I::GlobalGet(memory.roots), I::LocalSet(marker)]);
-        self.expr_inner(expr)?;
-        self.code
-            .extend([I::LocalGet(marker), I::GlobalSet(memory.roots)]);
-        if root {
-            self.root_result(expr.ty)?;
+        ExpressionScope::Marked { marker, root }
+    }
+
+    fn finish_expression(
+        &mut self,
+        scope: ExpressionScope,
+        ty: Type,
+        emitted: Result<()>,
+    ) -> Result<()> {
+        match scope {
+            ExpressionScope::Direct => emitted,
+            ExpressionScope::Quiet { root } => {
+                self.quiet_mode = false;
+                emitted?;
+                if root {
+                    self.root_result(ty)?;
+                }
+                Ok(())
+            }
+            ExpressionScope::Marked { marker, root } => {
+                emitted?;
+                let memory = self.memory.expect("a marked expression has managed memory");
+                self.code
+                    .extend([I::LocalGet(marker), I::GlobalSet(memory.roots)]);
+                if root {
+                    self.root_result(ty)?;
+                }
+                self.expr_depth -= 1;
+                Ok(())
+            }
         }
-        self.expr_depth -= 1;
+    }
+
+    /// Lowering can build conditional spines much deeper than the source AST
+    /// (for example a generated checked cast of a large union). Emit both
+    /// branches with an explicit work stack, preserving the exact instruction
+    /// and root-scope sequence of recursive emission, including old profiles.
+    fn conditional(&mut self, test: &Expr, yes: &Expr, no: &Expr, ty: Type) -> Result<()> {
+        enum Work<'a> {
+            Branch(&'a Expr),
+            Finish(ExpressionScope, Type),
+            Else,
+            End,
+        }
+        self.test(test)?;
+        self.code.push(I::If(BlockType::Result(wasm_types(ty)[0])));
+        let mut work = vec![Work::End, Work::Branch(no), Work::Else, Work::Branch(yes)];
+        while let Some(next) = work.pop() {
+            match next {
+                Work::Else => self.code.push(I::Else),
+                Work::End => self.code.push(I::End),
+                Work::Finish(scope, ty) => self.finish_expression(scope, ty, Ok(()))?,
+                Work::Branch(expr) => {
+                    if let E::Conditional(test, yes, no) = &expr.kind {
+                        let scope = self.begin_expression(expr, true);
+                        self.test(test)?;
+                        self.code
+                            .push(I::If(BlockType::Result(wasm_types(expr.ty)[0])));
+                        work.extend([
+                            Work::Finish(scope, expr.ty),
+                            Work::End,
+                            Work::Branch(no),
+                            Work::Else,
+                            Work::Branch(yes),
+                        ]);
+                    } else {
+                        self.expr(expr)?;
+                    }
+                }
+            }
+        }
         Ok(())
     }
     pub(super) fn root_result(&mut self, ty: Type) -> Result<()> {
@@ -210,6 +257,51 @@ impl Emitter<'_> {
                     self.expr(arg)?;
                 }
                 match op {
+                    ir::Intrinsic::HasCallableThen => {
+                        // An unknown cell's record tag is checked before reading
+                        // its descriptor; class methods have no own field slot.
+                        self.code.extend([
+                            I::LocalSet(self.string_temporary),
+                            I::LocalGet(self.string_temporary),
+                            I::I32WrapI64,
+                            I::I32Load(strings::WORD),
+                            I::I32Const(varta_common::value::ValueKind::Record as i32),
+                            I::I32Eq,
+                            I::If(BlockType::Result(ValType::I32)),
+                            I::LocalGet(self.string_temporary),
+                            I::I32WrapI64,
+                            I::I64Load(records::field(0)),
+                            I::I32WrapI64,
+                            I::I32Load(strings::WORD),
+                            I::LocalSet(self.temporary),
+                            I::I32Const(0),
+                        ]);
+                        let offsets: BTreeSet<_> = self
+                            .layouts
+                            .iter()
+                            .filter(|(key, _)| self.thenable_shapes.contains(&key.0))
+                            .map(|(_, offset)| *offset)
+                            .collect();
+                        for offset in offsets {
+                            self.code.extend([
+                                I::LocalGet(self.temporary),
+                                I::I32Const(offset as i32),
+                                I::I32Eq,
+                                I::I32Or,
+                            ]);
+                        }
+                        self.code.extend([
+                            I::Else,
+                            I::I32Const(0),
+                            I::End,
+                            I::If(BlockType::Result(ValType::I32)),
+                            I::I32Const(1),
+                            I::Else,
+                            I::LocalGet(self.string_temporary),
+                        ]);
+                        self.string_helper(strings::Helper::HasCallableThen)?;
+                        self.code.push(I::End);
+                    }
                     ir::Intrinsic::CodeUnit => self.string_helper(strings::Helper::CodeUnit)?,
                     ir::Intrinsic::FromUnits => self.string_helper(strings::Helper::FromUnits)?,
                     ir::Intrinsic::CharAt => self.string_helper(strings::Helper::CharAt)?,
@@ -315,13 +407,7 @@ impl Emitter<'_> {
                 }
             }
             E::Conditional(test, yes, no) => {
-                self.test(test)?;
-                self.code
-                    .push(I::If(BlockType::Result(wasm_types(expr.ty)[0])));
-                self.expr(yes)?;
-                self.code.push(I::Else);
-                self.expr(no)?;
-                self.code.push(I::End);
+                self.conditional(test, yes, no, expr.ty)?;
             }
             E::UnionLogical(op, a, b) => self.union_logical(*op, a, b)?,
 

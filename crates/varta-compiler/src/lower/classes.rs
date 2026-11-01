@@ -264,6 +264,19 @@ impl Classes {
             }
         }
     }
+    /// Instance layouts with a callable prototype `then`, including inherited
+    /// and generic methods. Computed at emission, after all classes exist.
+    pub(crate) fn thenable_shapes(&self) -> Vec<u32> {
+        self.list
+            .iter()
+            .filter(|c| {
+                !c.is_template()
+                    && c.state == State::Ready
+                    && (c.methods.contains_key("then") || c.generic_methods.contains_key("then"))
+            })
+            .map(|c| c.shape)
+            .collect()
+    }
     /// Record shapes of `ancestor` and all of its descendants.
     pub(crate) fn family_shapes(&self, ancestor: u32) -> Vec<u32> {
         (0..self.list.len() as u32)

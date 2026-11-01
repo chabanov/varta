@@ -59,11 +59,11 @@ const _: () =
 
 /// Node's delay normalization (`lib/internal/timers.js`): a delay that is not
 /// a number in `1..=TIMEOUT_MAX` (NaN, zero, negative or too large) is 1 ms;
-/// fractions are kept.
+/// non-integer delays are truncated to a whole millisecond.
 #[must_use]
 pub fn timer_delay(ms: f64) -> f64 {
     if (TIMER_MIN_DELAY_MS..=TIMER_MAX_DELAY_MS).contains(&ms) {
-        ms
+        ms.trunc()
     } else {
         TIMER_MIN_DELAY_MS
     }
@@ -176,7 +176,8 @@ mod tests {
             (f64::INFINITY, 1.0),
             (TIMER_MAX_DELAY_MS + 1.0, 1.0),
             (0.5, 1.0),
-            (1.5, 1.5),
+            (1.5, 1.0),
+            (1.9, 1.0),
             (250.0, 250.0),
             (TIMER_MAX_DELAY_MS, TIMER_MAX_DELAY_MS),
         ] {

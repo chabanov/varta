@@ -782,6 +782,9 @@ pub(crate) enum UnitClass {
 /// intrinsics); they make no host call and read no capability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Intrinsic {
+    /// `(unknown) -> boolean`: unsupported thenable resolution, without
+    /// executing a hook. Reads own fields and the closed class method table.
+    HasCallableThen,
     /// `(string, index) -> number`: the UTF-16 code unit at a non-negative
     /// integral index, or NaN outside the string.
     CodeUnit,

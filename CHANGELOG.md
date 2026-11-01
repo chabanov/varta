@@ -9,6 +9,18 @@ describe the state when it was written. Current status is in the
 [development plan](docs/development-plan.md#status) and current conformance counts
 in [conformance/README.md](conformance/README.md).
 
+### Fixed
+
+- Emit generated conditional spines with an explicit work stack, preserving
+  rooting and instruction order while avoiding native-stack exhaustion on large
+  checked casts and the UARP console's normal CLI workflow.
+- Reject unsupported structural thenables at typed or erased Promise resolution
+  boundaries, without calling hooks; resolver failures reject their locked
+  promise. Preserve ordinary non-callable `then` properties and nested values.
+- Require bounded table maxima in the JavaScript host, closing the `table.grow`
+  gap left by initial-size checks.
+- Truncate valid fractional timer delays consistently in native and JS hosts.
+
 ### Added
 
 - V38 compiled JSON decoders (`json_decoders`): every checked parse of a

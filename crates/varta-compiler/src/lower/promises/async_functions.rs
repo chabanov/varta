@@ -40,7 +40,6 @@ impl Lower<'_> {
             self.flow_reentry();
             return Ok(result);
         }
-        let value = self.guarded_unknown(value)?;
         let promise = match value.ty {
             Type::Promise(_) => value,
             ty => {

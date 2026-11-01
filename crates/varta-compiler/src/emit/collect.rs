@@ -437,6 +437,9 @@ impl<'a> Collected<'a> {
             }
             E::Intrinsic(op, args) => {
                 match op {
+                    ir::Intrinsic::HasCallableThen => {
+                        self.helpers.insert(strings::Helper::HasCallableThen);
+                    }
                     ir::Intrinsic::CodeUnit => {
                         self.helpers.insert(strings::Helper::CodeUnit);
                     }

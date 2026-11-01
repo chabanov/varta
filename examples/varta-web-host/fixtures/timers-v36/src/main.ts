@@ -1,5 +1,7 @@
 export function main(): void {
   console.log("start");
+  setTimeout(() => console.log("fraction first"), 1.9);
+  setTimeout(() => console.log("fraction second"), 1.1);
   setTimeout(() => console.log("t30"), 30);
   setTimeout(() => console.log("t10"), 10);
   const cancelled = setTimeout(() => console.log("never"), 20);
