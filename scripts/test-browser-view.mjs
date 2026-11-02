@@ -55,6 +55,35 @@ try {
       const cascaded=oracle.flex.cascade.tree.children[0].children[0].style.display;
       const projected=oracle.flex.projected.tree.children[0].children[0].style.display;
       assert.equal(cascaded,'inline');assert.equal(projected,'block');assert.equal(comparison.result.value,projected);
+      const workCases=oracle.cases.filter(item=>item.name.startsWith('select-work-'));
+      assert(workCases.length,'native select work fixtures missing');
+      const work=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
+        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        let checks=0;const mismatches=[];
+        for(const fixture of ${JSON.stringify(workCases)}){
+          const host=document.createElement('div');document.body.append(host);let title='';
+          const app=createViewDom({container:host,onTitle:value=>{title=value;}});
+          const signature=()=>JSON.stringify({model:app.snapshot(),text:app.inspectNode(1).textContent,
+            index:app.inspectNode(2)?.selectedIndex,value:app.inspectNode(2)?.value,title});
+          for(let i=0;i<fixture.batches.length;i++){
+            const before=signature(),expected=fixture.results[i];let ok=true,error;
+            try{app.apply(Uint8Array.from(fixture.batches[i]));}catch(caught){ok=false;error=caught;}
+            if(ok!==expected.ok)mismatches.push([fixture.name,i,'acceptance']);
+            if(!ok&&signature()!==before)mismatches.push([fixture.name,i,'rollback']);
+            if(expected.budget&&(error?.rule!=='select work budget'||(error.operation??null)!==expected.operation))mismatches.push([fixture.name,i,'budget position']);
+            if(app.snapshot().title!==expected.snapshot.title)mismatches.push([fixture.name,i,'title']);
+            const field=expected.snapshot.tree.children?.[0];
+            if(field?.tag==='select'&&app.inspectNode(2).value!==field.value)mismatches.push([fixture.name,i,'DOM value']);
+            if(field?.style?.color==='#123456'&&getComputedStyle(app.inspectNode(2)).color!=='rgb(18, 52, 86)')mismatches.push([fixture.name,i,'prepared stylesheet index']);
+            checks++;
+          }
+          app.close();host.remove();
+        }
+        return {checks,mismatches};
+      })()`});
+      assert(!work.exceptionDetails,JSON.stringify(work.exceptionDetails));
+      assert.deepEqual(work.result.value.mismatches,[]);
+      console.log(`Native/Chrome select work admission, rejection position and rollback: ${work.result.value.checks} batches passed`);
       const radioCases=oracle.cases.filter(item=>item.name.startsWith('radio-'));
       assert(radioCases.length,'native radio group fixture missing');
       const radios=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{

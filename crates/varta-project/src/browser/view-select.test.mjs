@@ -52,3 +52,47 @@ test('unchanged selected attributes preserve live selection and explicit none',(
   commit(m,{name:'remove_attribute',node:4,attribute:'selected'},attr(4,'selected',''));
   assert.equal(state(m,4).optionSelected,true);
 });
+
+test('repeated select scans share a transaction allowance with atomic rejection',()=>{
+  for(const text of ['X'.repeat(4096),'😀'.repeat(1024)]){
+    const m=createViewModel();
+    commit(m,create(2,'select'),insert(1,2),...Array.from({length:20},(_,i)=>option(i+3,text,'A')).flat());
+    const ordinary=Array.from({length:100},(_,i)=>value(2,`missing${i}`));
+    commit(m,...ordinary);assert.equal(state(m,2).value,'');
+    commit(m,...Array.from({length:512},()=>value(2,'missing',99)),...Array.from({length:512},()=>value(2,'')));
+    commit(m,value(2,text));const before=m.snapshot();
+    assert.throws(()=>commit(m,{name:'set_title',text:'must roll back'},...Array.from({length:128},(_,i)=>value(2,`missing${i}`))),/select work budget/);
+    assert.deepEqual(m.snapshot(),before);commit(m,...ordinary);
+  }
+});
+
+test('detached option inventory is charged before deriving final values',()=>{
+  const m=createViewModel(),text='😀'.repeat(16384);
+  for(let group=0;group<41;group++)commit(m,...Array.from({length:3},(_,offset)=>{
+    const id=2+group*3+offset;return [create(id,'option'),attr(id,'value',text)];
+  }).flat());
+  const before=m.snapshot();
+  assert.throws(()=>commit(m,{name:'set_title',text:'must roll back'},...[125,126,127].flatMap(id=>[create(id,'option'),attr(id,'value',text)])),/select work budget/);
+  assert.deepEqual(m.snapshot(),before);
+  commit(m,create(125,'option'),attr(125,'value','small'));
+});
+
+test('deep ownership searches consume the shared allowance without a select owner',()=>{
+  const m=createViewModel(),setup=[{name:'set_title',text:'before'}];
+  for(let id=2;id<402;id++)setup.push(create(id,'div'),insert(id-1,id));
+  commit(m,...setup,{name:'create_text',node:402,text:'A'},insert(401,402));
+  const before=m.snapshot();
+  assert.throws(()=>commit(m,{name:'set_title',text:'must roll back'},...Array.from({length:2000},()=>({name:'set_text',node:402,text:'B'}))),/select work budget/);
+  assert.deepEqual(m.snapshot(),before);commit(m,{name:'set_text',node:402,text:'C'});
+});
+
+test('identical select writes skip DOM replay without losing original wire indices',()=>{
+  const m=fixture(),writes=Array.from({length:1024},()=>value(2,'missing'));
+  const result=commit(m,...writes,{name:'stylesheet',sheet:1,text:'.probe { color:#123456; }'});
+  assert.equal(result.operations.length,1025);assert.equal(result.skippedValues.size,1023);
+  assert(!result.skippedValues.has(0));assert(!result.skippedValues.has(1024));
+  assert.equal(state(m,2).value,'');
+  commit(m,value(2,'new'),attr(4,'value','new'),value(2,'new'));
+  assert.equal(state(m,2).value,'new');
+  commit(m,value(2,'other',99),value(2,'other',0));assert.equal(state(m,2).value,'');
+});

@@ -33,6 +33,7 @@ pub(super) fn registry() -> Value {
         "batchBytes":v::DRAFT_MAX_BATCH_BYTES,"operations":v::DRAFT_MAX_BATCH_OPERATIONS,
         "nodes":v::DRAFT_MAX_LIVE_NODES,"listeners":v::DRAFT_MAX_LIVE_LISTENERS,
         "valueBytes":v::DRAFT_MAX_VALUE_BYTES,"stylesheetBytes":v::DRAFT_MAX_STYLESHEET_BYTES,
+        "selectWork":v::DRAFT_MAX_SELECT_WORK,"selectNodeWork":v::DRAFT_SELECT_NODE_WORK,
         "events":v::DRAFT_MAX_PENDING_EVENTS,"commands":v::DRAFT_MAX_PENDING_COMMANDS,
         "identChars":v::attributes::MAX_IDENT_CHARS,"cssTokens":v::css::MAX_VALUE_TOKENS,"hexDigits":v::css::HEX_COLOR_DIGITS,
     });

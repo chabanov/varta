@@ -112,6 +112,14 @@ fn layout() -> String {
             view::DRAFT_MAX_PENDING_COMMANDS.to_string(),
         ),
         (
+            "Placeholder: single-select work / node visit units".into(),
+            format!(
+                "{} / {}",
+                view::DRAFT_MAX_SELECT_WORK,
+                view::DRAFT_SELECT_NODE_WORK
+            ),
+        ),
+        (
             "Placeholder: tokens of one CSS property value".into(),
             view::css::MAX_VALUE_TOKENS.to_string(),
         ),

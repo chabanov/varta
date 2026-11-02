@@ -2,6 +2,7 @@
 use crate::tree::Tree;
 use crate::{EventRecord, InputError, View};
 use varta_common::view::{Attribute, EventKind, Key, Tag};
+mod work;
 
 pub(crate) const POPUP_ROWS: usize = 8;
 
@@ -13,16 +14,8 @@ pub(crate) struct SelectPopup {
 }
 
 impl Tree {
-    pub(crate) fn select_owner(&self, mut id: u32) -> Option<u32> {
-        loop {
-            if self
-                .element(id)
-                .is_some_and(|element| element.tag == Tag::Select)
-            {
-                return Some(id);
-            }
-            id = self.nodes.get(&id)?.parent?;
-        }
+    pub(crate) fn select_owner(&self, id: u32) -> Option<u32> {
+        self.select_owner_work(id).0
     }
     pub(crate) fn select_options(&self, id: u32) -> Vec<u32> {
         self.nodes.get(&id).map_or_else(Vec::new, |node| {

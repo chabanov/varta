@@ -2277,6 +2277,29 @@ draft.
   event envelope without changing the Wasm event wire. It validates that metadata
   before mutation and retains it with deferred Worker events; a removed/stale
   option falls back to the event's recorded value.
+- **Single-select work.** Each transaction has the allowance and node-visit weight
+  in the layout/limits table below. Its admission units count source UTF-8 bytes
+  and weighted node visits; they are separate from guest fuel. Before `set_text`,
+  `insert` or `remove`, charge the walks that find the select owners, including
+  walks that find no owner. A changed `value`, `selected` or `disabled` attribute
+  of an option also charges its owner walk. `set_value` on a select charges its
+  owner walk independently of the live value and edit counter: an undelivered
+  local edit must not change Worker/main-thread admission. Consecutive writes with
+  identical node, value and base counter collapse to one lookup and one charge,
+  including unmatched values; every intervening operation clears that shortcut.
+  Stale/equal writes retain their value/selection no-op semantics. Unchanged
+  attributes and removal of an absent attribute skip the owner/catalog charge.
+  For each distinct owner found by an operation, charge its complete option
+  catalog: one node weight per option and per direct text child, plus the raw
+  UTF-8 sizes of option values and text children. `insert` additionally charges
+  its incoming option or text node by the same rule, and each charged operation
+  includes its incoming text's UTF-8 size. Before final derived-value checks,
+  charge the complete option inventory once, including detached/disabled options.
+  The counter accumulates across the batch and resets only for the next one.
+  Exceeding it rejects the complete transaction before external effects. Size
+  accounting must not repeatedly encode/read the complete text catalog merely
+  to estimate its cost: the official JS model retains host-owned UTF-8 sizes on
+  text/value mutation. Those caches follow transaction copy/rollback semantics.
 - **Radio groups.** Radios group by an equal nonempty `name`, a common tree and
   the closest enclosing `form` (or no form). Missing/empty names are independent.
   Checking a radio, changing a checked radio's type/name or inserting its subtree
@@ -2395,6 +2418,7 @@ values:
 | Placeholder: live nodes / listeners | 65536 / 8192 |
 | Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
 | Placeholder: pending `copy_text` requests | 16 |
+| Placeholder: single-select work / node visit units | 8388608 / 16 |
 | Placeholder: tokens of one CSS property value | 128 |
 | `id` / `for` ident characters | 64 |
 | Key filter: any key | key code 0 |

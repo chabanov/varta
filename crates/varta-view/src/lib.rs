@@ -73,6 +73,8 @@ pub enum Violation {
     TrailingBytes,
     #[error("string exceeds its byte limit")]
     StringTooLong,
+    #[error("single-select work exceeds its transaction limit")]
+    SelectWorkLimit,
     #[error("string byte length is odd")]
     OddStringLength,
     #[error("string contains a lone surrogate")]

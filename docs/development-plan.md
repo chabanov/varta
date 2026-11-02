@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-11-02, against `main` at `870344d` plus the native field work below. Varta is an experimental
+Updated 2026-11-02, against `main` at `88ee4d6` plus the native/select increment below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -18,7 +18,7 @@ ECMAScript, Node or npm compatibility.
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU desktop preview has explicit text controls, font-independent checkbox/radio marks, multiline editing, caret/selection, Undo/IME preedit, scrolling, DPI/theme handling and guest layout commands. Textarea navigation/content sizing is committed in `870344d`; later password/search, checkbox/radio and single-select work adds shared control semantics and native/Wasm/browser checks. Select popup GUI acceptance and aggregate selection-scan budgeting remain open. [Field verification record](history.md#native-form-controls--2026-11-02). Full L0 styling, the console settings/list acceptance on macOS/Pi, metrics, accessibility and production shell packaging remain open |
+| Native renderer | Experimental CPU desktop preview has explicit text controls, font-independent checkbox/radio marks, multiline editing, caret/selection, Undo/IME preedit, scrolling, DPI/theme handling and guest layout commands. Textarea navigation/content sizing is committed in `870344d`; later password/search, checkbox/radio and single-select work adds shared control semantics and native/Wasm/browser checks. Shared selection-work accounting now covers native/browser transactions, including deferred Worker edits. Select popup keyboard/pointer/scroll/cancel and character input were observed on macOS Retina; other-platform acceptance remains open. [Field verification record](history.md#native-form-controls--2026-11-02). Full L0 styling, the console settings/list acceptance on macOS/Pi, metrics, accessibility and production shell packaging remain open |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
 
@@ -6196,7 +6196,15 @@ native/Wasm/browser and macOS observations. These additions after
 selectedness, duplicate-value identity and transactional updates across native and
 browser hosts. The native preview adds a scrolling popup, pointer/keyboard choice,
 cancel and character cycling; TSX initializes values after options while preserving
-getter evaluation and reactivity. Aggregate selection-scan budgeting, timed
-multi-character search, hover feedback, native GUI acceptance of the select popup,
+getter evaluation and reactivity. A shared transaction allowance now bounds owner
+walks, repeated option scans and final inventory in native/browser models, including
+detached options and UTF-8 sizes; excessive work rolls back the batch. Consecutive
+identical writes share a lookup, and admission is independent of deferred local
+edits. Logical-key typeahead also handles absent committed text. Native popup
+keyboard/pointer/scroll/cancel and character input were observed on macOS Retina.
+Timed multi-character search, hover feedback, other-platform select acceptance,
+broader radio/cascade work and aggregate retained-text budget audits,
 numeric/progress controls, full styling and focus-modality parity, console screens,
 Pi, performance, accessibility and production shell acceptance remain open.
+The independent prototype applier is outside the new official-host checks;
+remaining pilot use needs a migration/alignment audit before release acceptance.

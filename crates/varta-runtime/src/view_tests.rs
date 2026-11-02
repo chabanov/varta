@@ -357,6 +357,55 @@ fn invalid_guest_batches_end_the_instance_before_any_effect() {
 }
 
 #[test]
+fn select_work_exhaustion_is_fatal_and_keeps_the_previous_committed_view() {
+    let source = format!(
+        r#"
+export function main():void {{
+  const select=View.node();View.createElement(select,{select});
+  const value='X'.repeat(4096);
+  for(let i=0;i<20;i++){{
+    const option=View.node();View.createElement(option,{option});
+    View.setAttribute(option,{value_attr},value);View.insert(select,option,0);
+  }}
+  const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id_attr},'trigger');
+  View.on(button,{click},(event:ViewEvent):void=>{{
+    View.setTitle('must roll back');
+    for(let i=0;i<128;i++)View.setValue(select,`missing${{i}}`);
+    try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+  }},0,0,0,0);
+  View.insert({root},select,0);View.insert({root},button,0);View.setTitle('before');View.commit();
+}}
+"#,
+        select = view::Tag::Select.code(),
+        option = view::Tag::Option.code(),
+        value_attr = view::Attribute::Value.code(),
+        button = view::Tag::Button.code(),
+        id_attr = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code(),
+        root = view::ROOT_NODE,
+    );
+    let bytes = compile(&source);
+    let mut result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(result.report.failure.take().expect("fatal work limit")),
+        varta_view::Violation::SelectWorkLimit
+    );
+    assert!(
+        result.report.output.lines.is_empty(),
+        "{:?}",
+        result.report.output.lines
+    );
+    assert_eq!(result.commits, 1);
+    let snapshot = result.snapshot.expect("retained committed view");
+    assert_eq!(snapshot["title"], "before");
+    assert_eq!(snapshot["tree"]["children"][0]["value"], "X".repeat(4096));
+}
+
+#[test]
 fn a_turn_commits_at_most_one_batch() {
     let source = "export function main(): void { View.setTitle('a'); View.commit(); View.setTitle('b'); View.commit(); }";
     assert!(matches!(
@@ -738,6 +787,34 @@ export function main():void {
     let field = &snapshot["tree"]["children"][0];
     assert_eq!(field["children"][2]["selected"], true);
     assert_eq!(field["children"][1]["selected"], false);
+    // Non-text native controls may receive a logical character without any
+    // committed text. Typeahead still moves to the next enabled matching label.
+    app.view_input(&varta_view::Input::TextKey {
+        target: varta_view::Target::Node(select),
+        key: "a".into(),
+        text: String::new(),
+        shift: false,
+        ctrl: false,
+        alt: false,
+        meta: false,
+        select_all: false,
+        history: None,
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(
+        app.take_output(),
+        ["varta log: input same 2", "varta log: change same 2"]
+    );
+    let typed = app.view_snapshot();
+    assert_eq!(
+        typed["tree"]["children"][0]["children"][1]["selected"],
+        true
+    );
+    assert_eq!(
+        typed["tree"]["children"][0]["children"][2]["selected"],
+        false
+    );
     assert!(
         app.view_rasterize_scaled(200, 400, 2.0, Some((&mut font, 20.0)))
             .unwrap()

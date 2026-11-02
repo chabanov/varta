@@ -2,13 +2,13 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { checkStylesheet, checkStyleDeclaration, createValueMatcher } from "./view-css.mjs";
 
-import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue} from './view-select.mjs';
+import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork} from './view-select.mjs';
 
 const V = registry.view, W = V.wire;
 const named = (rows) => new Map(rows.map((row) => [row.name, row]));
 const tags = named(V.tags), attributes = named(V.attributes), commands = named(V.commands);
 const element = (tag) => ({ kind: "element", tag, parent: W.noNode, children: [], attributes: new Map(), style: new Map(), class: "", listeners: [], value: "", checked: false, seq: 0, open: false });
-const textNode = (text) => ({ kind: "text", text, parent: W.noNode, children: [], listeners: [] });
+const textNode = (text) => ({ kind: "text", text, textBytes:selectionTextBytes(text), parent: W.noNode, children: [], listeners: [] });
 const ident = (text) => text.length <= V.limits.identChars && /^[A-Za-z][A-Za-z0-9_-]*$/.test(text);
 const inputType = (node) => node.attributes.get("type") ?? "text";
 const checkable = (node) => node.tag === "input" && ["checkbox", "radio"].includes(inputType(node));
@@ -87,18 +87,29 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     const handlers = new Set([...nodes.values()].flatMap((node) => node.listeners.map((listener) => listener.handler)));
     let index, nextTitle = title, nextFocus = focus;
     const fail = (rule) => { throw new ViewProtocolError(rule, index); };
+    let selectionWork=0;
+    let lastSelectValue;
+    const skippedValues=new Set();
+    const chargeSelection=(work)=>{selectionWork+=work;if(selectionWork>V.limits.selectWork)fail('select work budget');};
     const live = (id) => { const node = next.get(id); if (!node) fail("unknown node"); return node; };
     const asElement = (id) => { const node = live(id); if (node.kind !== "element") fail("not an element"); return node; };
     const detach = (id) => { const node = live(id); if (node.parent !== W.noNode) { const siblings = live(node.parent).children; siblings.splice(siblings.indexOf(id), 1); node.parent = W.noNode; } };
     const attached = (id) => { for (let at = id; at !== W.noNode; at = live(at).parent) if (at === W.root) return true; return false; };
     for (index = 0; index < operations.length; index++) {
       const op = operations[index];
+      const selectValue=op.name==='set_value'&&next.get(op.node)?.tag==='select';
+      // Admission cannot depend on an edit still awaiting Worker delivery.
+      // Fold idempotent consecutive writes in both the model and DOM replay.
+      if(selectValue&&lastSelectValue?.node===op.node&&lastSelectValue.base_seq===op.base_seq&&lastSelectValue.text===op.text){skippedValues.add(index);continue;}
+      lastSelectValue=undefined;
+      chargeSelection(selectOperationWork(next,op));
+      if(selectValue)lastSelectValue=op;
       switch (op.name) {
         case "create_element": case "create_text":
           if (!op.node || next.has(op.node)) fail("duplicate node");
           if (next.size >= V.limits.nodes) fail("node budget");
           next.set(op.node, op.name === "create_element" ? element(op.tag) : textNode(op.text)); break;
-        case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; syncSelectFor(next,op.node); break; }
+        case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; node.textBytes=selectionTextBytes(op.text); syncSelectFor(next,op.node); break; }
         case "set_attribute": {
           const node = asElement(op.node), rule = attributes.get(op.attribute);
           if (!admitted(rule.tags, node)) fail("attribute not allowed");
@@ -175,10 +186,11 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
       }
     }
     index = undefined; const ids = new Set();
+    chargeSelection(selectInventoryWork(next));
     for (const node of next.values()) if (node.kind === "element" && node.attributes.has("id")) { const id = node.attributes.get("id"); if (ids.has(id)) fail("duplicate id attribute"); ids.add(id); }
     for(const [id,node] of next)if((node.tag==='select'&&node.value.length*2>V.limits.valueBytes)||(node.tag==='option'&&optionValue(next,id).length*2>V.limits.valueBytes))fail('select value budget');
     nodes = next; sheets = nextSheets; pending = copies; title = nextTitle; focus = nextFocus;
-    return { operations, effects };
+    return { operations, effects, skippedValues };
   };
   return { commit,
     // Clone inspection so an adapter cannot mutate the validation authority.

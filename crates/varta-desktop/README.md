@@ -78,6 +78,16 @@ a value: choosing between them still emits an edit, and a guest echo preserves
 the selected option. Timed multi-character search, hover highlighting and platform
 control themes remain open.
 
+On the development macOS Retina display, Tab/Space opened the popup, Down
+previewed a different option without changing the closed label, and Enter selected
+the duplicate value with one input/change pair. Escape cancelled a later preview;
+wheel scrolling and a pointer choice selected the expected row. An outside click
+dismissed the popup, and character input cycled to another matching label. Guest
+echoes kept the concrete option. Native API/CLI tests separately cover a logical
+character without committed text; text fields still wait for committed text.
+Other-platform select acceptance, full input-method behavior and accessibility
+remain open.
+
 The font arguments can be omitted for a view without text. This preview uses no
 package capability grants and has no permission prompts. It accepts only the
 current experimental `varta-view` CPU painting subset. Unsupported content

@@ -11103,6 +11103,8 @@ export const registry = freeze({
       "listeners": 8192,
       "nodes": 65536,
       "operations": 16384,
+      "selectNodeWork": 16,
+      "selectWork": 8388608,
       "stylesheetBytes": 262144,
       "valueBytes": 65536
     },

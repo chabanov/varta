@@ -210,7 +210,9 @@ pub enum Input {
         target: Target,
         text: String,
     },
-    /// A character keydown followed by its default text insertion, if allowed.
+    /// A character keydown followed by default insertion or select typeahead.
+    /// A select can use the logical key when no text was committed; text fields
+    /// still require `text` for insertion.
     TextKey {
         target: Target,
         key: String,
@@ -817,7 +819,8 @@ impl View {
                 if self.dispatch(occurrence, true)? {
                     return Ok(());
                 }
-                if (!*ctrl || *alt) && !*meta && self.select_text(node, text)? {
+                let select_prefix = if text.is_empty() { key } else { text };
+                if (!*ctrl || *alt) && !*meta && self.select_text(node, select_prefix)? {
                     return Ok(());
                 }
                 let history = history.or_else(|| {

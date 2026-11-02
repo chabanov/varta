@@ -271,11 +271,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             B::new().set_checked(7, 1, 0).remove(999).finish(),
         ],
     ));
+    for (name, value, fallback) in [
+        ("select-work-ascii", "X".repeat(4096), false),
+        ("select-work-unicode", "😀".repeat(1024), false),
+        ("select-work-mutated-text", "😀".repeat(1024), true),
+    ] {
+        let mut setup = B::new();
+        setup.create_element(2, Tag::Select).insert(1, 2, 0);
+        for id in 3..23 {
+            setup
+                .create_element(id, Tag::Option)
+                .create_text(id + 100, "A")
+                .insert(id, id + 100, 0)
+                .insert(2, id, 0);
+        }
+        let mut grow = B::new();
+        for id in 3..23 {
+            if fallback {
+                grow.set_text(id + 100, &value);
+            } else {
+                grow.set_attribute(id, A::Value, &value);
+            }
+        }
+        let mut reset = B::new();
+        reset.set_value(2, &value, 0);
+        let mut duplicates = B::new();
+        for _ in 0..256 {
+            duplicates.set_value(2, "missing", 0);
+        }
+        duplicates
+            .stylesheet(7, ".budget-probe { color:#123456; }")
+            .set_class(2, "budget-probe")
+            .set_value(2, "A", 0);
+        let scans = |count, rollback| {
+            let mut batch = B::new();
+            if rollback {
+                batch.set_title("must roll back");
+            }
+            for index in 0..count {
+                batch.set_value(2, &format!("missing{index}"), 0);
+            }
+            batch.finish()
+        };
+        let mut shrink = B::new();
+        for id in 3..23 {
+            if fallback {
+                shrink.set_text(id + 100, "A");
+            } else {
+                shrink.remove_attribute(id, A::Value);
+            }
+        }
+        cases.push((
+            name,
+            vec![
+                setup.finish(),
+                duplicates.finish(),
+                grow.finish(),
+                scans(100, false),
+                reset.finish(),
+                scans(101, true),
+                scans(128, true),
+                scans(100, false),
+                shrink.finish(),
+                scans(1000, false),
+            ],
+        ));
+    }
+    let mut deep = B::new();
+    deep.set_title("before");
+    for id in 2..402 {
+        deep.create_element(id, Tag::Div).insert(id - 1, id, 0);
+    }
+    deep.create_text(402, "A").insert(401, 402, 0);
+    let mut scans = B::new();
+    scans.set_title("must roll back");
+    for _ in 0..2000 {
+        scans.set_text(402, "B");
+    }
+    cases.push((
+        "select-work-deep-owner",
+        vec![
+            deep.finish(),
+            scans.finish(),
+            B::new().set_text(402, "C").finish(),
+        ],
+    ));
     let observations=cases.into_iter().map(|(name,batches)|{
         let mut view=View::default();let mut broker=Denied;
         let results=batches.iter().map(|batch|{
             let result=view.commit(batch,false,&mut broker);
-            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"snapshot":view.snapshot()})
+            let (budget, operation) = match result.as_ref().err() {
+                Some(varta_view::ViewError::Invalid {operation, violation:varta_view::Violation::SelectWorkLimit}) => (true, *operation),
+                _ => (false, None),
+            };
+            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"snapshot":view.snapshot()})
         }).collect::<Vec<_>>();
         serde_json::json!({"name":name,"batches":batches,"results":results})
     }).collect::<Vec<_>>();

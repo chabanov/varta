@@ -113,10 +113,11 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
       if (decoded[i].name === "stylesheet" && decoded[i].text) { const sheet = new Sheet(); sheet.replaceSync(rewriteRootSelector(decoded[i].text, D.rootSelector)); fonts.sheet(sheet.cssRules); preparedSheets.set(i, sheet); }
       if (decoded[i].name === "set_style" && decoded[i].property === "font-family") preparedFonts.set(i, fonts.value(decoded[i].text));
     }
-    const { operations, effects } = model.commit(bytes), current = snapshots();
+    const { operations, effects, skippedValues } = model.commit(bytes), current = snapshots();
     applying = true;
     try {
       for (let i = 0; i < operations.length; i++) {
+        if(skippedValues.has(i))continue;
         const op = operations[i], node = nodes.get(op.node);
         switch (op.name) {
           case "create_element": { const element = document.createElement(op.tag); nodes.set(op.node, element); ids.set(element, op.node); break; }

@@ -126,7 +126,35 @@ cargo test -p varta-runtime --lib tsx_select_values_follow_options_without_dupli
 
 The same browser contract oracle also compares select values, concrete selected
 options and event bytes across native, browser model, DOM and deferred Worker
-state. After building the `examples/select` fixture with `--target browser`, run
+state. Its select-work fixtures compare accepted/rejected batches and the exact
+failure position for ASCII/emoji values, mutated fallback text and deep owner
+searches; rejection must leave DOM/model state unchanged. The select unit suites
+also cover detached inventory, stale/equal no-ops and a fresh allowance after
+rejection. The Worker session regression requires identical admission while an
+edit is deferred, and duplicate-write fixtures keep original prepared stylesheet
+indices during DOM replay. The Wasm boundary check is:
+
+```sh
+cargo test -p varta-runtime --lib select_work_exhaustion_is_fatal_and_keeps_the_previous_committed_view --locked
+```
+
+It requires the typed fatal view failure before a guest catch/following log and
+retains the previous successful view commit. For portable and source-free native
+execution, build the user binaries once and run:
+
+```sh
+cargo build -p varta -p varta-launcher --locked
+node scripts/test-select-work-runtime.mjs
+```
+
+The probe deletes its source/config before execution and requires the exact work
+failure, retained earlier output and no catch/following effect from both the
+standalone runtime and the single binary. It moves the single binary into a fresh
+directory and deletes the portable bundle before executing it. The select unit/Wasm suites additionally
+cover logical character input without committed text and retain text-field insertion
+rules. The desktop fixture permits native keyboard/pointer observations.
+After building the `examples/select`
+fixture with `--target browser`, run
 `node scripts/test-browser-select-bundle.mjs <generated-web-directory>` to check
 trusted character input and duplicate-value echoes through the packaged Worker.
 

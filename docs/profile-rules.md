@@ -4133,6 +4133,17 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
 - The headless renderer (`varta-view`) stays free of Wasm, I/O and clocks;
   host decisions reach it through `Broker`. Production budgets never change
   for views; every view turn has its own per-turn allowance.
+- Single-select transaction work comes from `view::DRAFT_MAX_SELECT_WORK` and
+  `DRAFT_SELECT_NODE_WORK`. Charge ownership walks, affected option catalogs and
+  incoming sources before mutation, then all option inventory before final value
+  validation, using the embedding contract's UTF-8 accounting. Never reset within
+  a batch. Browser size caches are host-owned, updated with text/value changes
+  and copied/rolled back with the tree. New selection paths must preserve native
+  and browser admission, failure position, no-op handling and atomic rejection.
+  Admission must be independent of live field value/sequence that a Worker may
+  not have delivered yet. Consecutive identical select writes are idempotent;
+  clear that shortcut on any other operation, and preserve original wire indices
+  when skipping DOM replay (prepared fonts/assets/stylesheets use those indices).
 - Keep the guest encoder cheap: pack fixed operands with
   `varta.view.units`, append strings as themselves, never loop per code unit
   in guest code (`the_initial_render_of_the_example_app_stays_inside_production_fuel`).

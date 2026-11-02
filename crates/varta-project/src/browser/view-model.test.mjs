@@ -109,9 +109,10 @@ if (oraclePath) {
     for (const item of oracle.cases) {
       const m = createViewModel();
       for (let i = 0; i < item.batches.length; i++) {
-        const result = item.results[i]; let ok = true;
-        try { m.commit(Uint8Array.from(item.batches[i])); } catch { ok = false; }
+        const result = item.results[i]; let ok = true,error;
+        try { m.commit(Uint8Array.from(item.batches[i])); } catch (caught) { ok = false;error=caught; }
         assert.equal(ok, result.ok, `${item.name}/${i}: ${result.error}`);
+        if(result.budget){assert.equal(error.rule,'select work budget');assert.equal(error.operation??null,result.operation,`${item.name}/${i}: budget position`);}
         const expected = structuredClone(result.snapshot);
         if (expected.stylesheets.length) {
           const strip = (node) => { delete node.style; for (const child of node.children ?? []) strip(child); }; strip(expected.tree);

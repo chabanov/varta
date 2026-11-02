@@ -1,10 +1,49 @@
 // Host-owned selectedness for the protocol's single-select / text-only options.
+import {registry} from '../../../varta-common/browser/registry.mjs';
+const nodeWork=registry.view.limits.selectNodeWork,encoder=new TextEncoder();
+export const selectionTextBytes=text=>encoder.encode(text).byteLength;
 const options = (nodes,id) => (nodes.get(id)?.children ?? []).filter(id=>nodes.get(id)?.tag==='option');
-export function selectOwner(nodes,id) {
+function ownerWork(nodes,id) {
+  let work=0;
   for(let node=nodes.get(id);node;node=nodes.get(node.parent)) {
-    if(node.tag==='select')return id;
+    work+=nodeWork;
+    if(node.tag==='select')return [id,work];
     id=node.parent;
   }
+  return [undefined,work];
+}
+export const selectOwner=(nodes,id)=>ownerWork(nodes,id)[0];
+function optionWork(nodes,id){
+  const node=nodes.get(id);if(node?.tag!=='option')return 0;
+  let work=nodeWork+(node.optionValueBytes??0);
+  for(const id of node.children){const child=nodes.get(id);if(child?.kind==='text')work+=nodeWork+child.textBytes;}
+  return work;
+}
+const selectWork=(nodes,id)=>(nodes.get(id)?.children??[]).reduce((work,id)=>work+optionWork(nodes,id),0);
+export function selectInventoryWork(nodes){let work=0;for(const id of nodes.keys())work+=optionWork(nodes,id);return work;}
+export function selectOperationWork(nodes,op){
+  let first,second,incoming=0;
+  switch(op.name){
+    case 'set_text':case 'remove':first=op.node;break;
+    case 'insert':{
+      first=op.node;second=op.parent;const child=nodes.get(op.node);
+      incoming=child?.kind==='text'?nodeWork+child.textBytes:optionWork(nodes,op.node);break;
+    }
+    case 'set_attribute':case 'remove_attribute':{
+      const node=nodes.get(op.node);
+      if(node?.tag!=='option'||!['value','selected','disabled'].includes(op.attribute))return 0;
+      const changed=op.name==='set_attribute'?node.attributes.get(op.attribute)!==op.text:node.attributes.has(op.attribute);
+      if(!changed)return 0;first=op.node;break;
+    }
+    case 'set_value':{
+      const node=nodes.get(op.node);
+      if(node?.tag!=='select')return 0;
+      first=op.node;break;
+    }
+    default:return 0;
+  }
+  const [a,aw]=ownerWork(nodes,first),[b,bw]=ownerWork(nodes,second);
+  return aw+bw+incoming+(a===undefined?0:selectWork(nodes,a))+(b===undefined||b===a?0:selectWork(nodes,b))+selectionTextBytes(op.text??'');
 }
 export function optionText(nodes,id) {
   const stack=[id],parts=[];
@@ -44,6 +83,7 @@ export function normalizeSelect(nodes,id,preferred) {
 }
 export function optionAttribute(nodes,id,attribute,present) {
   const node=nodes.get(id);if(node.tag!=='option')return;
+  if(attribute==='value')node.optionValueBytes=present?selectionTextBytes(node.attributes.get('value')):0;
   const select=selectOwner(nodes,id);
   if(attribute==='selected'&&!node.optionDirty){
     node.optionSelected=present;

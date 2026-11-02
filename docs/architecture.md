@@ -11779,8 +11779,21 @@ preview/accept/cancel and character cycling use concrete option identities;
 disabled or hidden options are skipped. Focus loss dismisses the popup. Relevant
 guest mutations close it, and stale-frame input is discarded. Option styling is
 limited to display and foreground color; platform themes, hover highlighting and
-timed multi-character search remain open. Aggregate selection-scan budgeting for
-repeated mutations in one transaction remains a hardening task.
+timed multi-character search remain open. Native and browser transactions share
+the [single-select work admission rules](embedding.md#view-protocol-draft-v0-unstable):
+ownership walks, option source bytes and final inventory consume one allowance.
+Accounting precedes selection mutations/derived-value validation, includes detached options and
+rejects atomically. Admission is independent of locally edited value/sequence state
+that may still await Worker delivery. Consecutive identical select writes share a
+lookup; stale/equal patches retain their selection/value no-op semantics. DOM replay
+skips those duplicates while preserving original indices for prepared fonts,
+resources and stylesheets.
+For select typeahead, a character key with no committed text uses its logical key
+as the prefix after keydown prevention and modifier checks. Text-field insertion
+continues to require committed text. The preview's macOS keyboard, pointer,
+scrolling, cancellation and character-input observations are recorded in
+[history](history.md#native-form-controls--2026-11-02); other-platform and complete
+input-method acceptance remain open.
 TSX initializes a select's value after inserting its options. Dynamic value getters
 still execute once in attribute source order under the reactive runner, retain
 their subscriptions and precede refs; the final assignment reuses the cached value.

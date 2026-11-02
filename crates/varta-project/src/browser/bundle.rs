@@ -122,11 +122,11 @@ fn embedded_sources(dom: bool) -> String {
             "viewSelect",
             "",
             VIEW_SELECT,
-            "selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue",
+            "selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork",
         ),
         (
             "viewModel",
-            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher}=viewCss;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue}=viewSelect;",
+            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher}=viewCss;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
             VIEW_MODEL,
             "createViewModel",
         ),

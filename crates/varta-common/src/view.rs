@@ -48,6 +48,10 @@ pub const DRAFT_MAX_BATCH_OPERATIONS: usize = 16 * 1024;
 pub const DRAFT_MAX_LIVE_NODES: usize = 64 * 1024;
 pub const DRAFT_MAX_LIVE_LISTENERS: usize = 8 * 1024;
 pub const DRAFT_MAX_VALUE_BYTES: usize = 64 * 1024;
+/// Single-select work per transaction: source UTF-8 bytes plus node visit units.
+pub const DRAFT_MAX_SELECT_WORK: usize = 8 * 1024 * 1024;
+/// Work charged for each node visited while finding owners or reading options.
+pub const DRAFT_SELECT_NODE_WORK: usize = 16;
 pub const DRAFT_MAX_STYLESHEET_BYTES: usize = 256 * 1024;
 pub const DRAFT_MAX_PENDING_EVENTS: usize = 64;
 /// Placeholder: `copy_text` requests awaiting their `command_result` at once.

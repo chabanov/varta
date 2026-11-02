@@ -1446,3 +1446,54 @@ At the commit boundary, all 103 browser Node tests passed with a freshly generat
 native oracle. Real Chrome matched 11 select identity/event/mutation scenarios,
 35 radio ownership/rollback checks and six checkable activation/cancellation
 scenarios. The password/search probe passed 28 geometry/caret comparisons.
+
+
+### Single-select transaction work and native acceptance
+
+A shared draft allowance now meters ownership walks, affected option source bytes
+and final inventory in native/browser transactions. It includes detached/disabled
+options and deep walks without a select owner; existing wire/value budgets stay
+unchanged. UTF-8 byte sizes agree for ASCII and emoji. The JS model caches only
+host-owned source sizes, copying and rolling them back with the tree. Exceeding
+work is a typed fatal view failure that keeps the previous successful commit.
+
+A regression reproduced different admission in the main thread and Worker while
+an edit was awaiting delivery. Admission now ignores live field value/sequence;
+consecutive identical select writes share one lookup, including unmatched values,
+and any intervening operation clears that shortcut. DOM replay skips duplicate
+writes while keeping original indices for prepared fonts/resources/stylesheets.
+Another regression covers native logical character input without committed text;
+select typeahead uses that logical key, while text fields retain insertion rules.
+
+Scoped verification: **105 varta-view tests**, **42 Wasm/view application tests**,
+**108 browser Node tests** with a freshly generated native oracle, five browser
+registry checks and **14 documentation/registry checks** passed. Real Chrome
+matched **33 select-work batches**, including failure positions, rollback, mutated
+fallback text, deep owners and stylesheet preparation after duplicate writes;
+existing 35 radio ownership checks, six checkable activation scenarios and eleven
+select identity/event scenarios also passed. Strict affected all-target Clippy,
+formatting, CLI/companion/desktop builds and whitespace checks passed. These are
+scoped results, not a new full-workspace/release gate.
+
+A freshly packaged browser select passed trusted character input, duplicate
+identity, input/change and guest echo through its actual Worker. The new native
+artifact probe removes source/config before execution; both the portable runtime
+and the source-free single binary produced the exact work-limit failure, retained
+prior output and reached neither guest catch nor following logs. The single binary
+was moved alone into a new directory and the portable bundle removed before its
+run. A fresh CLI view
+script confirmed empty-text logical-key choice and guest echo.
+
+On macOS Retina the native fixture passed Tab/Space opening, Down preview without
+changing the closed label, Enter choosing between equal-valued options, Escape
+cancellation, wheel scrolling, pointer choice and outside-click dismissal. Guest
+logs reported `input/change same 1`, then scrolled-row value `4` at sequence `2`;
+character input also changed the selection and its label. Both test windows and
+processes closed cleanly. Empty-text logical-key behavior is separately verified
+through the native API, Wasm and CLI; GUI character input was observed directly.
+Timed multi-character search, hover feedback, complete input methods, native
+accessibility, Pi/other platforms, broader L0 controls/styling and release metrics
+remain open. Radio/cascade work and aggregate retained-text budgeting need their
+own audit; this allowance is specific to selection operations and option inventory.
+The independent prototype applier is outside these official-host checks; any
+remaining pilot use needs a migration/alignment audit before release acceptance.

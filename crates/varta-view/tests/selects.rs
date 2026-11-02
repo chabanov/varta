@@ -535,6 +535,51 @@ fn select_character_search_cycles_and_previews_without_editing_until_acceptance(
 }
 
 #[test]
+fn native_select_search_uses_the_logical_key_when_no_text_was_committed() {
+    let mut view = choices();
+    view.input(
+        &Input::TextKey {
+            target: Target::Node(2),
+            key: "a".into(),
+            text: String::new(),
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: false,
+            select_all: false,
+            history: None,
+        },
+        &mut Denied,
+    )
+    .unwrap();
+    assert_eq!(state(&view)["value"], "c");
+    // Text fields must still wait for committed text rather than insert a key name.
+    let mut text = View::default();
+    let mut setup = BatchWriter::new();
+    setup
+        .create_element(2, Tag::Input)
+        .set_value(2, "original", 0)
+        .insert(1, 2, 0);
+    commit(&mut text, &setup);
+    text.input(
+        &Input::TextKey {
+            target: Target::Node(2),
+            key: "a".into(),
+            text: String::new(),
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: false,
+            select_all: false,
+            history: None,
+        },
+        &mut Denied,
+    )
+    .unwrap();
+    assert_eq!(state(&text)["value"], "original");
+}
+
+#[test]
 fn derived_option_values_keep_the_existing_value_budget_atomically() {
     let mut view = field();
     let before = view.snapshot();
@@ -550,4 +595,165 @@ fn derived_option_values_keep_the_existing_value_budget_atomically() {
         })
     ));
     assert_eq!(view.snapshot(), before);
+}
+
+#[test]
+fn repeated_select_scans_share_a_transaction_budget_and_reject_atomically() {
+    // Equal UTF-8 sizes with different UTF-16 lengths must charge equally in
+    // native and browser hosts. Neither fixture exceeds a wire/value limit.
+    for value in ["X".repeat(4096), "😀".repeat(1024)] {
+        let mut view = field();
+        let mut setup = BatchWriter::new();
+        for id in 3..23 {
+            option(&mut setup, id, 2, Some(&value), "A", false);
+        }
+        commit(&mut view, &setup);
+        let mut ordinary = BatchWriter::new();
+        for index in 0..100 {
+            ordinary.set_value(2, &format!("missing{index}"), 0);
+        }
+        commit(&mut view, &ordinary);
+        assert_eq!(state(&view)["value"], "");
+        let mut noops = BatchWriter::new();
+        for _ in 0..512 {
+            noops.set_value(2, "missing", 99);
+        }
+        for _ in 0..512 {
+            noops.set_value(2, "", 0);
+        }
+        commit(&mut view, &noops);
+        let mut reset = BatchWriter::new();
+        reset.set_value(2, &value, 0);
+        commit(&mut view, &reset);
+        let before = view.snapshot();
+        let mut excessive = BatchWriter::new();
+        excessive.set_title("must roll back");
+        for index in 0..128 {
+            excessive.set_value(2, &format!("missing{index}"), 0);
+        }
+        let failure = view
+            .commit(&excessive.finish(), false, &mut Denied)
+            .unwrap_err();
+        assert!(matches!(
+            failure,
+            varta_view::ViewError::Invalid {
+                operation: Some(_),
+                violation: varta_view::Violation::SelectWorkLimit,
+            }
+        ));
+        assert_eq!(view.snapshot(), before);
+        view.input(
+            &Input::SelectOption {
+                target: Target::Node(2),
+                option: 4,
+            },
+            &mut Denied,
+        )
+        .unwrap();
+        let edited = view.snapshot();
+        assert_eq!(
+            view.commit(&excessive.finish(), false, &mut Denied)
+                .unwrap_err(),
+            failure
+        );
+        assert_eq!(view.snapshot(), edited);
+        // A rejected batch does not consume the next transaction's allowance.
+        commit(&mut view, &ordinary);
+    }
+}
+
+#[test]
+fn identical_select_writes_collapse_but_catalog_and_base_changes_do_not() {
+    let mut view = choices();
+    let mut repeated = BatchWriter::new();
+    for _ in 0..1024 {
+        repeated.set_value(2, "missing", 0);
+    }
+    commit(&mut view, &repeated);
+    assert_eq!(state(&view)["value"], "");
+    let mut changed = BatchWriter::new();
+    changed
+        .set_attribute(3, Attribute::Value, "missing")
+        .set_value(2, "missing", 0)
+        .set_value(2, "other", 99)
+        .set_value(2, "other", 0);
+    commit(&mut view, &changed);
+    assert_eq!(state(&view)["value"], "");
+    // A catalog mutation between identical writes must invalidate the shortcut.
+    let mut catalog = BatchWriter::new();
+    catalog
+        .set_value(2, "new", 0)
+        .set_attribute(3, Attribute::Value, "new")
+        .set_value(2, "new", 0);
+    commit(&mut view, &catalog);
+    assert_eq!(state(&view)["value"], "new");
+}
+
+#[test]
+fn detached_option_inventory_is_charged_before_final_value_validation() {
+    let mut view = View::default();
+    let value = "😀".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 4);
+    // Individually legal values, in legal batches, accumulate near the shared
+    // work ceiling. Detached nodes cannot bypass final inventory accounting.
+    for group in 0..41 {
+        let mut batch = BatchWriter::new();
+        for offset in 0..3 {
+            let id = 2 + group * 3 + offset;
+            batch
+                .create_element(id, Tag::Option)
+                .set_attribute(id, Attribute::Value, &value);
+        }
+        commit(&mut view, &batch);
+    }
+    let before = view.snapshot();
+    let mut batch = BatchWriter::new();
+    batch.set_title("must roll back");
+    for id in 125..128 {
+        batch
+            .create_element(id, Tag::Option)
+            .set_attribute(id, Attribute::Value, &value);
+    }
+    assert!(matches!(
+        view.commit(&batch.finish(), false, &mut Denied),
+        Err(varta_view::ViewError::Invalid {
+            operation: None,
+            violation: varta_view::Violation::SelectWorkLimit,
+        })
+    ));
+    assert_eq!(view.snapshot(), before);
+    let mut reuse = BatchWriter::new();
+    reuse
+        .create_element(125, Tag::Option)
+        .set_attribute(125, Attribute::Value, "small");
+    commit(&mut view, &reuse);
+}
+
+#[test]
+fn repeated_owner_searches_in_a_deep_tree_consume_the_same_work_allowance() {
+    let mut view = View::default();
+    let mut setup = BatchWriter::new();
+    setup.set_title("before");
+    for id in 2..402 {
+        setup.create_element(id, Tag::Div).insert(id - 1, id, 0);
+    }
+    setup.create_text(402, "A").insert(401, 402, 0);
+    commit(&mut view, &setup);
+    let commits = view.commits();
+    let mut excessive = BatchWriter::new();
+    excessive.set_title("must roll back");
+    for _ in 0..2000 {
+        excessive.set_text(402, "B");
+    }
+    assert!(matches!(
+        view.commit(&excessive.finish(), false, &mut Denied),
+        Err(varta_view::ViewError::Invalid {
+            operation: Some(_),
+            violation: varta_view::Violation::SelectWorkLimit,
+        })
+    ));
+    assert_eq!(view.title(), "before");
+    assert_eq!(view.commits(), commits);
+    let mut ordinary = BatchWriter::new();
+    ordinary.set_text(402, "C");
+    commit(&mut view, &ordinary);
 }

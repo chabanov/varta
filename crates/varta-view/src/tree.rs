@@ -280,6 +280,8 @@ struct Apply<'tree, 'context, 'input> {
     effects: Vec<Effect>,
     index: usize,
     layout_commands: usize,
+    select_work: usize,
+    last_select_value: Option<(u32, u32, String)>,
 }
 
 impl Tree {
@@ -509,6 +511,8 @@ impl Tree {
             effects: Vec::new(),
             index: 0,
             layout_commands: 0,
+            select_work: 0,
+            last_select_value: None,
         };
         for (index, operation) in operations.iter().enumerate() {
             apply.index = index;
@@ -550,8 +554,46 @@ impl Apply<'_, '_, '_> {
         Ok(self.element(id)?.tag)
     }
 
+    fn charge_select_work(
+        &mut self,
+        work: usize,
+        operation: Option<usize>,
+    ) -> Result<(), ViewError> {
+        self.select_work = self.select_work.saturating_add(work);
+        if self.select_work > varta_common::view::DRAFT_MAX_SELECT_WORK {
+            return Err(ViewError::Invalid {
+                operation,
+                violation: Violation::SelectWorkLimit,
+            });
+        }
+        Ok(())
+    }
+
     fn operation(&mut self, operation: &Operation) -> Result<(), ViewError> {
         let node = operation.id(0);
+        let select_value = operation.opcode == Opcode::SetValue
+            && self
+                .tree
+                .element(node)
+                .is_some_and(|element| element.tag == Tag::Select);
+        // The counter must not depend on locally edited value/seq: a browser
+        // Worker can still be waiting to deliver that edit. Consecutive identical
+        // writes are idempotent even when their unmatched value becomes "".
+        if select_value
+            && self
+                .last_select_value
+                .as_ref()
+                .is_some_and(|(id, seq, value)| {
+                    *id == node && *seq == operation.id(2) && value.as_str() == operation.text()
+                })
+        {
+            return Ok(());
+        }
+        self.last_select_value = None;
+        self.charge_select_work(self.tree.select_operation_work(operation), Some(self.index))?;
+        if select_value {
+            self.last_select_value = Some((node, operation.id(2), operation.text().to_owned()));
+        }
         match operation.opcode {
             Opcode::CreateElement => {
                 let Some(Value::Tag(tag)) = operation.operands.get(1) else {
@@ -1222,6 +1264,7 @@ impl Apply<'_, '_, '_> {
 
     /// Invariants of the whole batch: `id` values unique among live elements.
     fn finish(&mut self) -> Result<(), ViewError> {
+        self.charge_select_work(self.tree.select_inventory_work(), None)?;
         let mut seen = BTreeSet::new();
         for (id, node) in &self.tree.nodes {
             if self

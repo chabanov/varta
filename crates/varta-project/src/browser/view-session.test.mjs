@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { createWorkerView } from "./view-worker.mjs";
+import { createViewModel } from "./view-model.mjs";
 import { createViewQueue } from "./view-queue.mjs";
 import { encodeViewBatch, decodeViewEvent } from "./view-codec.mjs";
 import { encodeViewEvent } from "./view-dom.mjs";
@@ -38,6 +39,31 @@ test('select identity is deferred with its checked envelope and malformed metada
   view.receive({type:'view_event',id:2,bytes:input,gesture:false,selectedOption:NaN});
   await assert.rejects(view.flush(),/invalid select option envelope/);
   assert.deepEqual(view.model.snapshot(),before);
+});
+
+test('select work admission agrees while the local edit is deferred in the Worker',async()=>{
+  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
+  const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+  const commitWorker=operations=>{const bytes=encodeViewBatch(operations);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
+  const setup=[{name:'create_element',node:2,tag:'select'},{name:'insert',parent:1,node:2,before:0}],text='X'.repeat(4096);
+  for(let node=3;node<23;node++)setup.push({name:'create_element',node,tag:'option'},
+    {name:'set_attribute',node,attribute:'value',text},{name:'insert',parent:2,node,before:0});
+  main.commit(encodeViewBatch(setup));commitWorker(setup);worker.receive({type:'view_ack',id:1});await worker.flush();worker.begin();
+  main.input(2,text,false,true,4);
+  worker.receive({type:'view_event',id:1,bytes:encodeViewEvent('input',{handler:10,target:2,seq:1,value:text}),selectedOption:4,gesture:false});
+  assert.equal(main.snapshot().nodes.find(n=>n.id===2).seq,1);
+  assert.equal(worker.model.snapshot().nodes.find(n=>n.id===2).seq,0);
+  const outcome=run=>{try{run();return {ok:true};}catch(error){return {ok:false,rule:error.rule,operation:error.operation??null};}};
+  const excessive=Array.from({length:128},(_,i)=>({name:'set_value',node:2,text:`missing${i}`,base_seq:0}));
+  const pending=outcome(()=>commitWorker(excessive));
+  assert.equal(pending.rule,'select work budget');
+  assert.deepEqual(outcome(()=>main.commit(encodeViewBatch(excessive))),pending);
+  assert.equal(messages.length,1,'rejection must not send a partial batch');
+  assert.equal(worker.take().id,1,'rejection must retain the deferred event');
+  assert.deepEqual(worker.model.snapshot(),main.snapshot());
+  const ordinary=excessive.slice(0,100);
+  main.commit(encodeViewBatch(ordinary));commitWorker(ordinary);worker.receive({type:'view_ack',id:2});await worker.flush();
+  assert.deepEqual(worker.model.snapshot(),main.snapshot());worker.close();
 });
 test("Worker asset denial is checked before a commit or a parent effect", () => {
   const { commit, messages } = state();
