@@ -23,6 +23,8 @@ struct EditSnapshot {
     value: String,
     anchor: usize,
     focus: usize,
+    preferred_x: Option<f32>,
+    upstream: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +183,17 @@ pub enum Input {
         focus: usize,
         activate: bool,
     },
+    /// A frame-derived visual movement, applied only if keydown is not prevented.
+    TextNavigate {
+        target: Target,
+        key: String,
+        position: usize,
+        preferred_x: Option<f32>,
+        #[serde(default)]
+        upstream: bool,
+        #[serde(default)]
+        shift: bool,
+    },
     /// Replace the current transient IME preedit without changing field value.
     ImePreedit {
         target: Target,
@@ -242,6 +255,13 @@ pub enum Input {
     Scroll {
         target: Target,
         top: f64,
+    },
+    /// A scroll from measured host geometry, all values in CSS pixels.
+    ScrollMeasured {
+        target: Target,
+        top: f64,
+        scroll_height: f64,
+        client_height: f64,
     },
     /// Change how later prompts answer.
     Prompts {
@@ -591,11 +611,54 @@ impl View {
                 let element = self.tree.element_mut(node).expect("validated element");
                 element.editor.anchor = *anchor;
                 element.editor.focus = *focus;
+                element.editor.manual_text_scroll = false;
+                element.editor.reset_navigation();
                 element.editor.preedit = None;
                 if *activate {
                     self.click(node, broker)?;
                 } else {
                     self.focus_input(node)?;
+                }
+            }
+            Input::TextNavigate {
+                target,
+                key,
+                position,
+                preferred_x,
+                upstream,
+                shift,
+            } => {
+                let node = self.resolve(target)?;
+                if !matches!(key.as_str(), "ArrowUp" | "ArrowDown" | "Home" | "End") {
+                    return Err(InputError::Key(key.clone()));
+                }
+                let field = self.tree.element(node).ok_or(InputError::Selection)?;
+                if !field.text_field()
+                    || *position > field.value.len()
+                    || !field.value.is_char_boundary(*position)
+                    || preferred_x.is_some_and(|x| !x.is_finite() || x.abs() > 1_000_000.0)
+                {
+                    return Err(InputError::Selection);
+                }
+                self.focus_input(node)?;
+                let mut record = EventRecord::occurrence(EventKind::Keydown, node);
+                record.key = key.clone();
+                record.seq = self.tree.element(node).expect("validated field").seq;
+                if *shift {
+                    record.flags |= EventFlag::Shift as u32;
+                }
+                if !self.dispatch(record, true)? {
+                    let field = self.tree.element_mut(node).expect("validated field");
+                    if !field.disabled() {
+                        field.editor.focus = *position;
+                        if !shift {
+                            field.editor.anchor = *position;
+                        }
+                        field.editor.preferred_x = *preferred_x;
+                        field.editor.upstream = *upstream;
+                        field.editor.preedit = None;
+                        field.editor.manual_text_scroll = false;
+                    }
                 }
             }
             Input::ImePreedit {
@@ -645,6 +708,8 @@ impl View {
                         text: text.clone(),
                         cursor: *cursor,
                     });
+                    element.editor.manual_text_scroll = false;
+                    element.editor.reset_navigation();
                 }
             }
             Input::ImeCommit { target, text } => {
@@ -760,6 +825,8 @@ impl View {
                     {
                         element.editor.anchor = 0;
                         element.editor.focus = element.value.len();
+                        element.editor.manual_text_scroll = false;
+                        element.editor.reset_navigation();
                         element.editor.preedit = None;
                     }
                 } else if !text.is_empty() && (!*ctrl || *alt) && !*meta {
@@ -826,8 +893,40 @@ impl View {
                 let node = self.resolve(target)?;
                 if let Some(element) = self.tree.element_mut(node) {
                     element.scroll_top = top.max(0.0);
+                    if element.tag == Tag::Textarea {
+                        element.editor.manual_text_scroll = true;
+                    }
                 }
                 self.fire(node, EventKind::Scroll, true)?;
+            }
+            Input::ScrollMeasured {
+                target,
+                top,
+                scroll_height,
+                client_height,
+            } => {
+                let node = self.resolve(target)?;
+                if [*top, *scroll_height, *client_height]
+                    .into_iter()
+                    .any(|value| !value.is_finite() || value < 0.0)
+                    || scroll_height < client_height
+                    || *top > scroll_height - client_height
+                {
+                    return Err(InputError::ScrollGeometry);
+                }
+                let element = self
+                    .tree
+                    .element_mut(node)
+                    .ok_or(InputError::ScrollGeometry)?;
+                element.scroll_top = *top;
+                if element.tag == Tag::Textarea {
+                    element.editor.manual_text_scroll = true;
+                }
+                let mut record = EventRecord::occurrence(EventKind::Scroll, node);
+                record.scroll_top = *top;
+                record.scroll_height = *scroll_height;
+                record.client_height = *client_height;
+                self.dispatch(record, true)?;
             }
             Input::Prompts { answer } => self.platform.prompt = *answer,
         }
@@ -903,11 +1002,15 @@ impl View {
                     value: element.value.clone(),
                     anchor: element.editor.anchor,
                     focus: element.editor.focus,
+                    preferred_x: element.editor.preferred_x,
+                    upstream: element.editor.upstream,
                 },
                 after: EditSnapshot {
                     value: value.clone(),
                     anchor,
                     focus,
+                    preferred_x: None,
+                    upstream: false,
                 },
                 undone: false,
             });
@@ -925,6 +1028,8 @@ impl View {
         element.value = value;
         element.editor.anchor = anchor;
         element.editor.focus = focus;
+        element.editor.manual_text_scroll = false;
+        element.editor.reset_navigation();
         element.seq = element.seq.wrapping_add(1);
         self.fire(node, EventKind::Input, true)
     }
@@ -969,6 +1074,10 @@ impl View {
         element.editor.anchor = replacement.anchor;
         element.editor.focus = replacement.focus;
         element.editor.preedit = None;
+        element.editor.manual_text_scroll = false;
+        element.editor.reset_navigation();
+        element.editor.preferred_x = replacement.preferred_x;
+        element.editor.upstream = replacement.upstream;
         element.seq = element.seq.wrapping_add(1);
         self.fire(node, EventKind::Input, true)
     }
@@ -1200,6 +1309,8 @@ impl View {
                         _ => field.editor.focus,
                     };
                     field.editor.focus = next;
+                    field.editor.manual_text_scroll = false;
+                    field.editor.reset_navigation();
                     if !shift {
                         field.editor.anchor = next;
                     }

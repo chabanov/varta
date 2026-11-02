@@ -478,11 +478,17 @@ impl Preview {
         };
         let delta = std::mem::take(&mut self.pending_scroll);
         if let Some((node, top, remaining)) = frame.image.scroll_target(x, y, delta) {
+            let metrics = frame
+                .image
+                .scroll_metrics(node)
+                .ok_or("scroll target is missing frame metrics")?;
             self.sender
                 .try_send(WorkerMessage::Input {
-                    input: Input::Scroll {
+                    input: Input::ScrollMeasured {
                         target: Target::Node(node),
                         top,
+                        scroll_height: f64::from(metrics.viewport.height) + f64::from(metrics.max),
+                        client_height: f64::from(metrics.viewport.height),
                     },
                     revision: frame.revision,
                     dimensions: frame.dimensions,
@@ -534,14 +540,27 @@ impl Preview {
                     let Some(target) = target else {
                         continue;
                     };
-                    Input::Key {
-                        target: Target::Node(target),
-                        key: key.into(),
-                        shift: modifiers.shift_key(),
-                        ctrl: modifiers.control_key(),
-                        alt: modifiers.alt_key(),
-                        meta: modifiers.super_key(),
-                        composing: false,
+                    if let Some(movement) = frame.image.text_navigation(target, key).filter(|_| {
+                        !modifiers.control_key() && !modifiers.alt_key() && !modifiers.super_key()
+                    }) {
+                        Input::TextNavigate {
+                            target: Target::Node(target),
+                            key: key.into(),
+                            position: movement.position,
+                            preferred_x: movement.preferred_x,
+                            upstream: movement.upstream,
+                            shift: modifiers.shift_key(),
+                        }
+                    } else {
+                        Input::Key {
+                            target: Target::Node(target),
+                            key: key.into(),
+                            shift: modifiers.shift_key(),
+                            ctrl: modifiers.control_key(),
+                            alt: modifiers.alt_key(),
+                            meta: modifiers.super_key(),
+                            composing: false,
+                        }
                     }
                 }
                 PendingKey::ImePreedit {

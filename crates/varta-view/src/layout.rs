@@ -723,6 +723,10 @@ fn build(
         if matches!(element.tag, Tag::Button | Tag::Input | Tag::Textarea) {
             let properties = layout_properties(tree, env, id)?;
             let computed = tree.computed(id, env);
+            let content_sizing = element.tag == Tag::Textarea
+                && computed
+                    .get(&CssProperty::FieldSizing)
+                    .is_some_and(|value| value == "content");
             // UA control styles and intrinsic sizes vary across platforms. Only
             // accept controls whose box metrics are explicitly defined.
             if [
@@ -737,8 +741,10 @@ fn build(
                 CssProperty::PaddingLeft,
             ]
             .iter()
-            .any(|property| !properties.contains_key(property))
-                || !computed.contains_key(&CssProperty::Border)
+            .any(|property| {
+                !properties.contains_key(property)
+                    && !(*property == CssProperty::Height && content_sizing)
+            }) || !computed.contains_key(&CssProperty::Border)
                 || matches!(
                     properties.get(&CssProperty::Width).map(String::as_str),
                     Some("auto")
@@ -746,7 +752,7 @@ fn build(
                 || matches!(
                     properties.get(&CssProperty::Height).map(String::as_str),
                     Some("auto")
-                )
+                ) && !content_sizing
                 || matches!(
                     properties.get(&CssProperty::MinWidth).map(String::as_str),
                     Some("auto")
@@ -823,6 +829,10 @@ fn build(
                 | CssProperty::BorderWidth
                 | CssProperty::BorderStyle
                 | CssProperty::BorderColor => {}
+                CssProperty::FieldSizing
+                    if element.tag == Tag::Textarea
+                        && matches!(value.as_str(), "fixed" | "content") => {}
+                CssProperty::Resize if element.tag == Tag::Textarea && value == "none" => {}
                 CssProperty::FontSize
                 | CssProperty::LineHeight
                 | CssProperty::FontFamily
@@ -1030,9 +1040,18 @@ fn build(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let node_id = engine
-        .new_with_children(style, &children)
-        .map_err(|e| LayoutError::Engine(e.to_string()))?;
+    let node_id = if element.tag == Tag::Textarea
+        && tree
+            .computed(id, env)
+            .get(&CssProperty::FieldSizing)
+            .is_some_and(|value| value == "content")
+    {
+        let shape = text_metrics.get(&id).ok_or(LayoutError::Unsupported(id))?;
+        engine.new_leaf_with_context(style, shape.clone())
+    } else {
+        engine.new_with_children(style, &children)
+    }
+    .map_err(|e| LayoutError::Engine(e.to_string()))?;
     ids.insert(id, node_id);
     Ok(node_id)
 }
@@ -1126,6 +1145,57 @@ pub(crate) fn geometry_and_text(
                 .is_some_and(|value| value == "none")
         {
             continue;
+        }
+        if let Content::Element(element) = &node.content
+            && element.tag == Tag::Textarea
+            && tree
+                .computed(id, &layout_env)
+                .get(&CssProperty::FieldSizing)
+                .is_some_and(|value| value == "content")
+        {
+            let mut text = element.value.clone();
+            if let Some(preedit) = &element.editor.preedit {
+                let start = element.editor.anchor.min(element.editor.focus);
+                let end = element.editor.anchor.max(element.editor.focus);
+                text.replace_range(start..end, &preedit.text);
+            }
+            if text.is_empty() {
+                text = element
+                    .attributes
+                    .get(&varta_common::view::Attribute::Placeholder)
+                    .cloned()
+                    .unwrap_or_else(|| " ".into());
+                if text.is_empty() {
+                    text.push(' ');
+                }
+            }
+            if text
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
+            {
+                return Err(LayoutError::Unsupported(id));
+            }
+            text_bytes = text_bytes
+                .checked_add(text.len())
+                .ok_or(LayoutError::Limit)?;
+            if text_bytes > 256 * 1024 || metrics.len() >= 1024 {
+                return Err(LayoutError::Limit);
+            }
+            let (mut options, families) = text_style(tree, &layout_env, id, font_size, measurer)?;
+            options.white_space = WhiteSpaceMode::PreWrap;
+            options.break_anywhere = true;
+            let measured = measurer
+                .measure_styled(&text, None, &families, options)
+                .map_err(|error| LayoutError::Text(error.to_string()))?;
+            metrics.insert(
+                id,
+                TextShape {
+                    text,
+                    metrics: measured,
+                    options,
+                    families,
+                },
+            );
         }
         if let Content::Text(text) = &node.content {
             let parent = node.parent.ok_or(LayoutError::Unsupported(id))?;
@@ -1284,7 +1354,11 @@ fn boxes_inner(
                             AvailableSpace::MinContent => shape.metrics.min_width,
                             AvailableSpace::MaxContent => shape.metrics.width,
                             AvailableSpace::Definite(value) => {
-                                value.max(shape.metrics.min_width).min(shape.metrics.width)
+                                if shape.options.white_space == WhiteSpaceMode::PreWrap {
+                                    value.max(shape.metrics.min_width)
+                                } else {
+                                    value.max(shape.metrics.min_width).min(shape.metrics.width)
+                                }
                             }
                         });
                         measured_bytes = measured_bytes.saturating_add(shape.text.len());

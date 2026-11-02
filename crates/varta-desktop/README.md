@@ -22,15 +22,31 @@ logs `guest-scroll 100`. This fixture was observed on the development macOS
 machine; the window title changes to `Varta scroll — 100` after the guest scroll
 handler runs. Cross-platform acceptance remains open.
 
+The multiline editing fixture uses the deterministic test font:
+
+```sh
+cargo run -p varta -- build --config crates/varta-desktop/examples/text-editor/varta.config.json
+cargo run -p varta-desktop --bin varta-preview -- crates/varta-desktop/examples/text-editor/dist.wasm crates/varta-view/tests/fixtures/advance-400.ttf 'Varta Fixture 400'
+```
+
+Press Tab to focus. Home, Shift+End and Backspace remove the last row's text;
+Ctrl/Command+Z restores it. The guest logs the changed value as escaped JSON.
+Up twice from the initial caret position crosses the short middle row while
+preserving the desired column. These keyboard scenarios were observed on macOS;
+pointer, IME and other-platform textarea acceptance remain open.
+
 The font arguments can be omitted for a view without text. This preview uses no
 package capability grants and has no permission prompts. It accepts only the
 current experimental `varta-view` CPU painting subset. Unsupported content
 fails explicitly; explicitly styled buttons and text inputs are included, including
 disabled controls. Disabled platform-default styling is not supplied.
-Fixed-size, explicitly styled textareas also paint newlines and wrapped text;
-pointer selection resolves both coordinates and Enter inserts a newline. Vertical
-keyboard navigation, internal wheel scrolling, automatic sizing and resize handles
-remain open.
+Explicitly styled textareas also paint newlines and wrapped text;
+pointer selection resolves both coordinates and Enter inserts a newline. Wheel
+input scrolls the field and chains remaining movement to ancestors; a new edit
+brings the caret back into view. Up/Down and Home/End navigate rendered rows;
+Shift extends selection. With an explicit width, `field-sizing: content` grows and
+shrinks automatic height within explicit minimum/maximum heights. Use `resize: none`;
+resize handles, additional modifier shortcuts and complete bidi navigation remain open.
 Explicit solid rectangular outlines, including `:focus-visible` styles, are painted
 with their width, color and offset; platform-default focus styling remains open.
 Text inputs accept direct keyboard text, arrow/Home/End movement, Shift selection,

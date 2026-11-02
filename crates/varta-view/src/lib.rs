@@ -30,7 +30,7 @@ pub use events::{
     HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target,
 };
 pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
-pub use paint::{PaintError, RasterImage};
+pub use paint::{PaintError, RasterImage, TextNavigation};
 pub use snapshot::project_flex_blockification;
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment};
 pub use text::{TextFont, TextMeasureError, TextMeasurer, TextMetrics};
@@ -182,6 +182,8 @@ pub enum InputError {
     Key(String),
     #[error("view text selection is invalid for the current field value")]
     Selection,
+    #[error("view scroll geometry is invalid")]
+    ScrollGeometry,
     #[error(transparent)]
     View(#[from] ViewError),
 }

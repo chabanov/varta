@@ -975,6 +975,67 @@ fn select_command_replaces_full_value_and_invalid_batch_preserves_caret() {
 }
 
 #[test]
+fn cpu_textarea_content_sizing_grows_wraps_shrinks_and_caps_height() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup.create_element(2, Tag::Textarea).insert(1, 2, 0);
+    for (property, value) in [
+        (CssProperty::Display, "block"),
+        (CssProperty::Width, "60px"),
+        (CssProperty::Height, "auto"),
+        (CssProperty::MinWidth, "0"),
+        (CssProperty::MinHeight, "0"),
+        (CssProperty::MaxHeight, "60px"),
+        (CssProperty::FieldSizing, "content"),
+        (CssProperty::Resize, "none"),
+        (CssProperty::Padding, "4px"),
+        (CssProperty::Border, "2px solid #000"),
+        (CssProperty::BorderRadius, "0"),
+        (CssProperty::Outline, "none"),
+        (CssProperty::BackgroundColor, "#fff"),
+        (CssProperty::Color, "#00f"),
+        (CssProperty::FontFamily, "\"Varta Fixture 400\""),
+        (CssProperty::FontSize, "20px"),
+        (CssProperty::FontWeight, "normal"),
+        (CssProperty::FontStyle, "normal"),
+        (CssProperty::LineHeight, "20px"),
+    ] {
+        setup.set_style(2, property, value);
+    }
+    commit(&mut view, &setup).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    for (value, height) in [
+        ("", 32.0),
+        ("AA\nAA", 52.0),
+        ("AAAAAAA", 52.0),
+        ("AA\nAA\nAA", 60.0),
+        ("A", 32.0),
+    ] {
+        let mut update = BatchWriter::new();
+        update.set_value(2, value, 0);
+        commit(&mut view, &update).unwrap();
+        let boxes = view
+            .layout_boxes_with_text(100.0, 100.0, &mut font, 20.0)
+            .unwrap();
+        assert_eq!(boxes[&2].height, height, "{value:?}");
+        view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    }
+    let mut minimum = BatchWriter::new();
+    minimum.set_style(2, CssProperty::MinHeight, "40px");
+    commit(&mut view, &minimum).unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(100.0, 100.0, &mut font, 20.0)
+            .unwrap()[&2]
+            .height,
+        40.0
+    );
+}
+
+#[test]
 fn cpu_textarea_renders_multiple_lines_and_resolves_two_dimensional_caret_positions() {
     let mut view = view();
     let mut setup = BatchWriter::new();
@@ -1061,6 +1122,262 @@ fn cpu_textarea_renders_multiple_lines_and_resolves_two_dimensional_caret_positi
     assert_eq!(wrapped.text_position_at(2, 6.0, 30.0), Some(6));
     assert_eq!(wrapped.text_position_at(2, 99.0, 10.0), Some(6));
     assert_eq!(wrapped.text_position_at(2, 99.0, 30.0), Some(7));
+    let mut long = BatchWriter::new();
+    long.set_value(2, "AA\nAA\nAA\nAA\nAA", 1)
+        .listen(2, EventKind::Scroll, 90, Filter::default());
+    commit(&mut view, &long).unwrap();
+    let frame = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    assert_eq!(
+        frame.scroll_target(10.0, 10.0, -100.0),
+        Some((2, 0.0, -48.0))
+    );
+    let metrics = frame.scroll_metrics(2).unwrap();
+    assert_eq!((metrics.max, metrics.viewport.height), (52.0, 56.0));
+    view.input(
+        &Input::ScrollMeasured {
+            target: Target::Node(2),
+            top: 0.0,
+            scroll_height: 108.0,
+            client_height: 56.0,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let event = view.next_delivery().unwrap().record;
+    assert_eq!(
+        (
+            event.handler,
+            event.scroll_top,
+            event.scroll_height,
+            event.client_height
+        ),
+        (90, 0.0, 108.0, 56.0)
+    );
+    let before = view.snapshot();
+    assert!(
+        view.input(
+            &Input::ScrollMeasured {
+                target: Target::Node(2),
+                top: 53.0,
+                scroll_height: 108.0,
+                client_height: 56.0
+            },
+            &mut Fixed::default()
+        )
+        .is_err()
+    );
+    assert_eq!(view.snapshot(), before);
+    let frame = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    for (top, scroll_height, client_height) in [
+        (f64::NAN, 108.0, 56.0),
+        (0.0, f64::INFINITY, 56.0),
+        (-1.0, 108.0, 56.0),
+        (0.0, 40.0, 56.0),
+        (0.0, 108.0, -1.0),
+    ] {
+        assert!(
+            view.input(
+                &Input::ScrollMeasured {
+                    target: Target::Node(2),
+                    top,
+                    scroll_height,
+                    client_height
+                },
+                &mut Fixed::default()
+            )
+            .is_err()
+        );
+        assert_eq!(view.snapshot(), before);
+    }
+    assert_eq!(frame.text_position_at(2, 6.0, 10.0), Some(0));
+    assert!(frame.ime_cursor_area().is_none());
+    assert_eq!(
+        frame.scroll_target(10.0, 10.0, 999.0),
+        Some((2, 52.0, 947.0))
+    );
+    view.input(
+        &Input::Scroll {
+            target: Target::Node(2),
+            top: 999.0,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let frame = view
+        .rasterize_scaled(200, 200, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    assert_eq!(frame.scroll_target(20.0, 20.0, 10.0), None);
+    view.input(
+        &Input::Scroll {
+            target: Target::Node(2),
+            top: 0.0,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "A".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert!(
+        view.rasterize_with_text(100, 100, &mut font, 20.0)
+            .unwrap()
+            .ime_cursor_area()
+            .is_some()
+    );
+    let mut parent = BatchWriter::new();
+    parent
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "60px")
+        .set_style(3, CssProperty::Height, "40px")
+        .set_style(3, CssProperty::Overflow, "auto")
+        .insert(1, 3, 0)
+        .insert(3, 2, 0);
+    commit(&mut view, &parent).unwrap();
+    let nested = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    assert_eq!(nested.scroll_target(10.0, 10.0, 10.0), Some((3, 10.0, 0.0)));
+    fn navigate(
+        view: &mut View,
+        font: &mut varta_view::TextMeasurer,
+        key: &str,
+        shift: bool,
+    ) -> varta_view::TextNavigation {
+        let frame = view
+            .rasterize_scaled(200, 200, 2.0, Some((font, 20.0)))
+            .unwrap();
+        let movement = frame.text_navigation(2, key).unwrap();
+        view.input(
+            &Input::TextNavigate {
+                target: Target::Node(2),
+                key: key.into(),
+                position: movement.position,
+                preferred_x: movement.preferred_x,
+                upstream: movement.upstream,
+                shift,
+            },
+            &mut Fixed::default(),
+        )
+        .unwrap();
+        movement
+    }
+    let seq = view.snapshot()["tree"]["children"][0]["children"][0]["seq"]
+        .as_u64()
+        .unwrap() as u32;
+    let mut navigation = BatchWriter::new();
+    navigation
+        .insert(1, 2, 0)
+        .remove(3)
+        .set_value(2, "AAAA\nA\nAAAA", seq);
+    commit(&mut view, &navigation).unwrap();
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 3,
+            focus: 3,
+            activate: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        navigate(&mut view, &mut font, "ArrowDown", false).position,
+        6
+    );
+    assert_eq!(
+        navigate(&mut view, &mut font, "ArrowDown", false).position,
+        10
+    );
+    assert_eq!(navigate(&mut view, &mut font, "ArrowUp", false).position, 6);
+    assert_eq!(navigate(&mut view, &mut font, "ArrowUp", false).position, 3);
+    assert_eq!(navigate(&mut view, &mut font, "End", false).position, 4);
+    assert_eq!(
+        navigate(&mut view, &mut font, "ArrowDown", true).position,
+        6
+    );
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "Z".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        view.snapshot()["tree"]["children"][0]["value"],
+        "AAAAZ\nAAAA"
+    );
+    let seq = view.snapshot()["tree"]["children"][0]["seq"]
+        .as_u64()
+        .unwrap() as u32;
+    let mut soft = BatchWriter::new();
+    soft.set_value(2, "AAAAAAA", seq);
+    commit(&mut view, &soft).unwrap();
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: 0,
+            activate: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let end = navigate(&mut view, &mut font, "End", false);
+    assert_eq!(end.position, 6);
+    assert!(end.upstream);
+    assert_eq!(navigate(&mut view, &mut font, "Home", false).position, 0);
+    assert_eq!(
+        navigate(&mut view, &mut font, "ArrowDown", false).position,
+        6
+    );
+    let mut prevent = BatchWriter::new();
+    prevent.listen(
+        2,
+        EventKind::Keydown,
+        10,
+        Filter {
+            options: ListenOption::PreventDefault as u32,
+            ..Filter::default()
+        },
+    );
+    commit(&mut view, &prevent).unwrap();
+    navigate(&mut view, &mut font, "End", false);
+    let frame = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    assert_eq!(frame.text_navigation(2, "ArrowUp").unwrap().position, 0);
+    let mut allow = BatchWriter::new();
+    allow.unlisten(2, EventKind::Keydown, 10);
+    commit(&mut view, &allow).unwrap();
+    navigate(&mut view, &mut font, "ArrowUp", false);
+    navigate(&mut view, &mut font, "End", false);
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "X".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.input(
+        &Input::TextKey {
+            target: Target::Node(2),
+            key: "z".into(),
+            text: String::new(),
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+            select_all: false,
+            history: None,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let frame = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    assert_eq!(frame.text_navigation(2, "Home").unwrap().position, 0);
 }
 
 #[test]

@@ -11741,7 +11741,7 @@ sides use the CSS border cascade, including inherited `currentcolor` and
 shorthand resets. `rasterize_with_text` also paints the supported shaped text
 using the host's explicit fonts and bounded unhinted glyph outlines; it shares
 the text layout restrictions and rejects synthetic font styling and decoration.
-The box-only variant rejects text. A button, text input or fixed-size textarea is paintable
+The box-only variant rejects text. A button, text input or textarea is paintable
 with explicit box, font, foreground and background styles, zero radius and
 an explicit outline style; buttons also require explicit flex alignment. Text inputs paint
 their value, keyboard selection and a non-blinking caret; missing glyphs use the supplied font's
@@ -11764,8 +11764,19 @@ The experimental desktop preview uses these CPU images.
 Explicitly styled textareas preserve newlines, wrap long text to the content
 width, paint multiline selection/caret and keep the caret vertically visible.
 Physical two-dimensional text hit testing places and selects text across rows.
-Vertical keyboard navigation, user-controlled text scrolling, automatic field
-sizing and resize handles remain open.
+Wheel/trackpad input scrolls the text with bounded offsets and ancestor chaining.
+Editing or changing the selection restores caret-following; unchanged guest echoes
+preserve a manual scroll. Frame geometry clamps the requested offset, as for
+other scrollports. Unmodified Up/Down and Home/End use shaped visual lines;
+Shift extends the selection, and a preferred horizontal position survives short
+intermediate lines. Frame-derived moves validate UTF-8 boundaries and honor
+keydown prevention before applying selection changes. Undo preserves soft-wrap
+caret affinity. Explicit-width textareas also support `field-sizing: content`
+with absent or automatic height, wrapping within the content width and respecting
+explicit minimum/maximum heights. Empty fields reserve one text line; a placeholder
+or IME preedit contributes to measurement. Host-supplied fonts and the text shaping
+limits apply. `resize: none` is accepted; interactive resize handles, modifier
+shortcuts and full bidi navigation remain open.
 An experimental scaled raster API keeps geometry and font sizes in CSS pixels
 while drawing paths directly into a physical-resolution image. Hit regions,
 text hit positions and IME cursor areas use physical coordinates; scroll offsets
@@ -11773,6 +11784,10 @@ remain in CSS pixels. Pixel allocations retain the existing image bounds. The
 desktop preview uses the window scale factor at startup and after DPI changes,
 updates logical viewport conditions and rejects frames/inputs for obsolete
 scales. Pixel-based wheel deltas are converted to CSS pixels.
+Native wheel records carry the frame's CSS-pixel `scrollHeight` and `clientHeight`
+as well as its new offset. Textarea metrics include padding and exclude borders.
+Measured host inputs reject non-finite, negative or inconsistent geometry before
+mutating the view; basic unmeasured script scroll inputs retain their old behavior.
 An application host may request the current CPU frame between guest turns via
 `Application::view_rasterize`, with the same bounds and fail-closed subset.
 The frame carries bounded rectangular hit regions in paint order. The desktop

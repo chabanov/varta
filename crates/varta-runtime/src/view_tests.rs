@@ -628,7 +628,7 @@ export function main(): void {
   View.setStyle(root, 2, '100px');
   View.setStyle(root, 3, '50px');
   View.setStyle(root, 39, 'auto');
-  View.on(root, 8, (event: ViewEvent): void => console.log(`scroll ${event.scrollTop}`), 0, 0, 0, 0);
+  View.on(root, 8, (event: ViewEvent): void => console.log(`scroll ${event.scrollTop} ${event.scrollHeight} ${event.clientHeight}`), 0, 0, 0, 0);
   const spacer = View.node();
   View.createElement(spacer, 1);
   View.setStyle(spacer, 3, '120px');
@@ -652,7 +652,7 @@ export function main(): void {
     );
     assert!(app.take_output().is_empty());
     assert_eq!(app.run(), crate::Step::Idle);
-    assert_eq!(app.take_output(), vec!["varta log: scroll 80"]);
+    assert_eq!(app.take_output(), vec!["varta log: scroll 80 130 50"]);
     assert_eq!(
         app.view_scroll_into_view(target, 200.0, 100.0, None)
             .unwrap(),
@@ -660,6 +660,18 @@ export function main(): void {
     );
     assert_eq!(app.run(), crate::Step::Idle);
     assert!(app.take_output().is_empty());
+    let root = snapshot["tree"]["children"][0]["id"].as_u64().unwrap() as u32;
+    let frame = app.view_rasterize_scaled(400, 200, 2.0, None).unwrap();
+    let metrics = frame.scroll_metrics(root).unwrap();
+    app.view_input(&varta_view::Input::ScrollMeasured {
+        target: varta_view::Target::Node(root),
+        top: 0.0,
+        scroll_height: f64::from(metrics.viewport.height) + f64::from(metrics.max),
+        client_height: f64::from(metrics.viewport.height),
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), ["varta log: scroll 0 130 50"]);
 }
 
 #[test]

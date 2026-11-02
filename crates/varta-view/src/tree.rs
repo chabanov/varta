@@ -32,6 +32,15 @@ pub(crate) struct EditorState {
     pub focus: usize,
     pub preedit: Option<Preedit>,
     pub history_epoch: Arc<()>,
+    pub manual_text_scroll: bool,
+    pub preferred_x: Option<f32>,
+    pub upstream: bool,
+}
+impl EditorState {
+    pub fn reset_navigation(&mut self) {
+        self.preferred_x = None;
+        self.upstream = false;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -861,6 +870,8 @@ impl Apply<'_, '_, '_> {
                 element.editor.focus = value.len();
                 element.editor.preedit = None;
                 element.editor.history_epoch = Arc::new(());
+                element.editor.manual_text_scroll = false;
+                element.editor.reset_navigation();
             }
             element.value = value;
         }
@@ -938,6 +949,8 @@ impl Apply<'_, '_, '_> {
                     element.editor.anchor = 0;
                     element.editor.focus = element.value.len();
                     element.editor.preedit = None;
+                    element.editor.manual_text_scroll = false;
+                    element.editor.reset_navigation();
                 }
             }
             Command::ScrollIntoView => {

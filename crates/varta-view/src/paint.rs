@@ -37,6 +37,11 @@ struct TextHit {
     composing: bool,
     caret_area: Option<BoxRect>,
     lines: Vec<TextLineHit>,
+    scroll: Option<ScrollMetrics>,
+    caret_y: f32,
+    origin_x: f32,
+    preferred_x: f32,
+    multiline: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
 struct TextLineHit {
@@ -44,6 +49,14 @@ struct TextLineHit {
     bottom: f32,
     clusters: std::ops::Range<usize>,
     start: usize,
+    end: usize,
+}
+/// A visual caret movement computed from one rendered frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextNavigation {
+    pub position: usize,
+    pub preferred_x: Option<f32>,
+    pub upstream: bool,
 }
 impl RasterImage {
     /// Physical pixels per CSS pixel used for this frame.
@@ -118,6 +131,48 @@ impl RasterImage {
         }
         Some(last)
     }
+    /// Compute unmodified vertical/Home/End movement for a rendered textarea.
+    #[must_use]
+    pub fn text_navigation(&self, node: u32, key: &str) -> Option<TextNavigation> {
+        let hit = self.text_hits.get(&node)?;
+        if !hit.multiline || hit.composing {
+            return None;
+        }
+        let current = hit
+            .lines
+            .iter()
+            .position(|line| hit.caret_y < line.bottom)
+            .unwrap_or(hit.lines.len().checked_sub(1)?);
+        let (line, boundary, preferred_x) = match key {
+            "Home" => (current, Some(hit.lines[current].start), None),
+            "End" => (current, Some(hit.lines[current].end), None),
+            "ArrowUp" if current == 0 => (0, Some(0), Some(hit.preferred_x)),
+            "ArrowDown" if current + 1 == hit.lines.len() => {
+                (current, Some(hit.end), Some(hit.preferred_x))
+            }
+            "ArrowUp" => (current - 1, None, Some(hit.preferred_x)),
+            "ArrowDown" => (current + 1, None, Some(hit.preferred_x)),
+            _ => return None,
+        };
+        let destination = &hit.lines[line];
+        let position = boundary.or_else(|| {
+            self.text_position_at(
+                node,
+                hit.origin_x + hit.preferred_x * self.scale,
+                (destination.top + destination.bottom) / 2.0,
+            )
+        })?;
+        let upstream = position == destination.end
+            && hit
+                .lines
+                .get(line + 1)
+                .is_some_and(|next| next.start == position);
+        Some(TextNavigation {
+            position,
+            preferred_x,
+            upstream,
+        })
+    }
     /// Find the topmost supported element at a viewport-relative pixel coordinate.
     #[must_use]
     pub fn hit_test(&self, x: f32, y: f32) -> Option<u32> {
@@ -147,6 +202,11 @@ impl RasterImage {
             }
             node = self.ancestors.get(&node).copied().flatten()?;
         }
+    }
+    /// CSS-pixel scroll metrics from this frame, including textarea text.
+    #[must_use]
+    pub fn scroll_metrics(&self, node: u32) -> Option<ScrollMetrics> {
+        self.scrolls.get(&node).copied()
     }
 }
 
@@ -740,7 +800,15 @@ fn paint_input(
     } else {
         shaped.full_width()
     };
-    let caret = Cursor::from_byte_index(&shaped, selection.1, Affinity::Downstream);
+    let caret = Cursor::from_byte_index(
+        &shaped,
+        selection.1,
+        if element.editor.upstream && element.editor.preedit.is_none() {
+            Affinity::Upstream
+        } else {
+            Affinity::Downstream
+        },
+    );
     let caret_bounds = caret.geometry(&shaped, 1.0);
     let caret_x = caret_bounds.x0 as f32;
     let x = if multiline {
@@ -748,8 +816,14 @@ fn paint_input(
     } else {
         content.x - (caret_x - (content.width - 1.0).max(0.0)).max(0.0)
     };
+    let text_max_scroll = (metrics.height - content.height).max(0.0);
+    let text_scroll = if element.editor.manual_text_scroll {
+        (element.scroll_top as f32).clamp(0.0, text_max_scroll)
+    } else {
+        (caret_bounds.y1 as f32 - content.height).clamp(0.0, text_max_scroll)
+    };
     let y = if multiline {
-        content.y - (caret_bounds.y1 as f32 - content.height).max(0.0)
+        content.y - text_scroll
     } else {
         content.y + (content.height - metrics.height) / 2.0
     };
@@ -789,6 +863,14 @@ fn paint_input(
             bottom: y + line.metrics().block_max_coord,
             clusters: cluster_start..clusters.len(),
             start: line.text_range().start.min(display.len()),
+            end: {
+                let end = line.text_range().end.min(display.len());
+                if display[..end].ends_with('\n') {
+                    end - 1
+                } else {
+                    end
+                }
+            },
         });
     }
     let color = current_color(tree, env, id).ok_or(PaintError::Unsupported(id))?;
@@ -905,11 +987,31 @@ fn paint_input(
         paint.set_color(color);
         pixmap.fill_rect(rect, &paint, Transform::identity(), None);
     }
+    let scrollport = if multiline {
+        let widths = layout::border_widths(tree, env, id)?;
+        BoxRect {
+            x: bounds.rect.x + widths[3],
+            y: bounds.rect.y + widths[0],
+            width: (bounds.rect.width - widths[1] - widths[3]).max(0.0),
+            height: (bounds.rect.height - widths[0] - widths[2]).max(0.0),
+        }
+    } else {
+        content
+    };
     Ok(TextHit {
         clusters,
         end: display.len(),
         composing: element.editor.preedit.is_some(),
         lines,
+        caret_y: y + ((caret_bounds.y0 + caret_bounds.y1) / 2.0) as f32,
+        origin_x: x,
+        preferred_x: element.editor.preferred_x.unwrap_or(caret_x),
+        multiline,
+        scroll: multiline.then_some(ScrollMetrics {
+            top: text_scroll,
+            max: text_max_scroll,
+            viewport: scrollport,
+        }),
         caret_area: clipped(caret_rect, clip).map(|rect| BoxRect {
             x: rect.x(),
             y: rect.y(),
@@ -1159,6 +1261,9 @@ fn rasterize_inner(
                 (measurer, *font_size),
                 &mut text_work,
             )?;
+            if let Some(scroll) = hit.scroll {
+                scrolls.insert(id, scroll);
+            }
             text_hits.insert(id, hit);
         }
         pending.push((id, true));
@@ -1176,6 +1281,8 @@ fn rasterize_inner(
         *rect = scaled_rect(*rect, scale);
     }
     for hit in text_hits.values_mut() {
+        hit.caret_y *= scale;
+        hit.origin_x *= scale;
         for (midpoint, _, _) in &mut hit.clusters {
             *midpoint *= scale;
         }

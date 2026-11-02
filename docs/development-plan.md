@@ -6150,3 +6150,28 @@ preservation, long-text wrapping, caret visibility and two-dimensional pointer
 selection including device scaling. Focused checks cover rendered rows, Enter,
 soft wrap and scaled hit positions. Vertical keyboard movement, internal scrolling,
 auto-sizing, resize handles and platform textarea acceptance remain open.
+Textarea wheel/trackpad scrolling now uses the rendered text height, clamps its
+offset and participates in ancestor chaining. Manual scrolling is independent
+of the caret until a new edit or selection change restores caret-following.
+Focused checks cover top/bottom bounds, scaled wheel targets and a subsequent
+edit; vertical keyboard movement and platform acceptance remain open.
+Unmodified textarea Up/Down and Home/End now use shaped visual rows, preserve the
+desired horizontal position through short lines and extend selection with Shift.
+The host supplies a validated frame-derived destination; keydown prevention runs
+before selection changes. Focused checks cover soft-wrap affinity, Undo, scaled
+movement, Shift replacement and preventDefault. Modifier shortcuts, bidi parity
+and native platform acceptance remain open.
+The reusable native `text-editor` fixture has now been observed on macOS Retina:
+Up/Up preserved the column across the short middle line, typing changed the
+expected first-line position, and Home/Shift+End/Backspace removed the last row's
+text with Undo restoring it and its selection. Guest JSON logs confirmed the
+values. Pointer, IME and cross-platform textarea acceptance remain open.
+Native wheel input now delivers measured CSS-pixel scroll/client heights, including
+textarea padding. Focused checks cover complete record payloads and rejection of
+invalid geometry without state changes. The textarea fixture's 108/56 heights
+match Chrome and WebKit; an application test covers metric delivery to Wasm at 2x.
+Explicit-width textareas now support `field-sizing: content` and `resize: none`.
+Focused checks cover an empty line, newline growth, long-word wrapping, maximum
+height, shrinking after replacement and minimum height. The CPU renderer uses
+explicit-font shaping for intrinsic height; interactive resize and platform
+auto-sizing acceptance remain open.
