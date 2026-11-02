@@ -8,8 +8,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 use varta_compiler::{CompilerError, ModuleLoader, ModuleSource};
+mod watch;
 
-const MAX_SOURCE_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 const MAX_SPECIFIER_BYTES: usize = 1024;
 const TS_EXTENSION: &str = ".ts";
 const TSX_EXTENSION: &str = ".tsx";
@@ -32,6 +33,7 @@ pub(crate) struct SourceLoader {
     tsx_specifiers: bool,
     /// V38 (`text_imports()`): `with { type: "text" }` imports of any file.
     text_resources: bool,
+    watch: Option<watch::Observations>,
 }
 impl SourceLoader {
     pub(crate) fn new(
@@ -46,6 +48,7 @@ impl SourceLoader {
             js_specifiers: profile.named_types(),
             tsx_specifiers: profile.tsx(),
             text_resources: profile.text_imports(),
+            watch: None,
         })
     }
     pub(crate) fn entry(&self, path: &Path) -> Result<ModuleSource> {
@@ -54,7 +57,11 @@ impl SourceLoader {
         let text = if path.starts_with(&self.root) {
             self.load(path)?
         } else {
-            let bytes = crate::artifact::read_bounded(path, MAX_SOURCE_BYTES)?;
+            let bytes = if self.watch.is_some() {
+                self.read_external(path, MAX_SOURCE_BYTES)?
+            } else {
+                crate::artifact::read_bounded(path, MAX_SOURCE_BYTES)?
+            };
             String::from_utf8(bytes)
                 .map_err(|e| ProjectError::Compile(CompilerError::Module(e.to_string())))?
         };
@@ -64,6 +71,17 @@ impl SourceLoader {
         })
     }
     fn read(&self, path: &Path) -> std::io::Result<String> {
+        String::from_utf8(self.read_bytes(path, MAX_SOURCE_BYTES)?)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+    pub(crate) fn read_bytes(&self, path: &Path, maximum: usize) -> std::io::Result<Vec<u8>> {
+        let result = self.read_bytes_untracked(path, maximum);
+        if let Some(watch) = &self.watch {
+            watch.read(path, maximum, false, &result)?;
+        }
+        result
+    }
+    fn read_bytes_untracked(&self, path: &Path, maximum: usize) -> std::io::Result<Vec<u8>> {
         let relative = path.strip_prefix(&self.root).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -92,16 +110,14 @@ impl SourceLoader {
                     ));
                 }
                 let mut bytes = Vec::new();
-                file.take((MAX_SOURCE_BYTES + 1) as u64)
-                    .read_to_end(&mut bytes)?;
-                if bytes.len() > MAX_SOURCE_BYTES {
+                file.take((maximum + 1) as u64).read_to_end(&mut bytes)?;
+                if bytes.len() > maximum {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "module exceeds 1 MiB",
+                        "project file exceeds byte limit",
                     ));
                 }
-                return String::from_utf8(bytes)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e));
+                return Ok(bytes);
             }
         }
         Err(std::io::Error::new(
@@ -185,6 +201,13 @@ impl SourceLoader {
     /// counts as existing (loading it is then rejected); a missing directory
     /// on the way means the entry does not exist.
     fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        let result = self.exists_untracked(path);
+        if let Some(watch) = &self.watch {
+            watch.probe(path, &result)?;
+        }
+        result
+    }
+    fn exists_untracked(&self, path: &Path) -> std::io::Result<bool> {
         let not_found = |e: std::io::Error| match e.kind() {
             std::io::ErrorKind::NotFound => Ok(false),
             _ => Err(e),

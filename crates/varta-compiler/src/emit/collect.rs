@@ -208,11 +208,16 @@ impl<'a> Collected<'a> {
             E::ParseJson(text) => {
                 self.hosts.insert(self.types.profile.json_parse());
                 self.helpers.insert(strings::Helper::Allocate);
-                if super::decoders::enabled(self.types.profile) {
+                if super::decoders::enabled(self.types.profile)
+                    && (!self.types.direct_json_targets.contains(&expr.ty)
+                        || super::decoders::direct_enabled(self.types.profile))
+                {
                     self.decoders.insert(expr.ty);
                     self.helpers.insert(strings::Helper::RootPush);
                 }
-                self.schemas.entry(expr.ty).or_insert((expr.span, source));
+                if !self.types.direct_json_targets.contains(&expr.ty) {
+                    self.schemas.entry(expr.ty).or_insert((expr.span, source));
+                }
                 self.schema_type(expr.ty, (expr.span, source));
                 self.expression(text, source);
             }

@@ -23,9 +23,12 @@ use varta_common::collector::{self, IDLE_DONE, IDLE_EXPORT, IDLE_MORE, IDLE_NONE
 use wasmtime::{Instance, Store};
 
 /// Run one idle period's maintenance. An error terminates the instance.
+/// A scripted network wait may cap maintenance without changing the
+/// instance lifetime or the deadlines of transfers that survive the step.
 pub(crate) fn idle(
     instance: &Instance,
     store: &mut Store<RuntimeContext>,
+    until: Option<Instant>,
 ) -> Result<(), RuntimeError> {
     let budgets = store.data().budgets;
     if !store.data().turns.renew || budgets.maintenance_fuel == 0 {
@@ -48,6 +51,9 @@ pub(crate) fn idle(
     let mut deadline = started + budgets.maintenance_deadline;
     if let Some(lifetime) = context.lifetime {
         deadline = deadline.min(lifetime);
+    }
+    if let Some(until) = until {
+        deadline = deadline.min(until);
     }
     context.deadline = deadline;
     context.rearm_deadline();

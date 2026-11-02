@@ -2,48 +2,323 @@
 
 ## Status
 
-Updated 2026-10-29. Varta is an experimental research project: a compiler and
-capability-checked runtime core with K1–K3 implemented in their initial checked
-profiles and K4 language/value work in progress. It is not a production release
-and does not claim full ECMAScript, Node or npm compatibility.
+Updated 2026-11-02, against `main` at `abea3ac`. Varta is an experimental
+research project with a working typed TypeScript compiler, capability-checked
+runtime and application foundation. K1–K3 are implemented for their declared
+profiles; K4 and the platform work are integrated through v38 and remain in
+stabilization. Integration in `main` does not mean a production release or full
+ECMAScript, Node or npm compatibility.
 
 | Item | Current state |
 | --- | --- |
-| Profiles | Default `checked-i32-utf8-v1`; latest released opt-in `checked-f64-utf16-v31`; `checked-f64-utf16-v32` is the [pilot batch](#pilot-batch-v32-in-development), merged on the `v32-integration` branch and not released. Versions of every profile: [version matrix](architecture.md#version-matrix) |
-| Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. `v38-wave2-merge` with the seven wave-2 streams: code at commit `911e9ed` (2026-10-30), 2662 tests, 0 failures, 3 ignored, conformance 123 passed and 4 known gaps, baseline matched, including the `no_std` core check. `v38-wave3a-merge` with method subtyping, linked conversions and readers, linked JSON with fair host fuel, KV storage with its fair rates and the 8M v38 per-turn fuel: code at commit `f3649a7` (2026-10-30), 2737 tests, 0 failures, 12 ignored, conformance 123 passed and 4 known gaps, baseline matched, including the `no_std` core check. `v38-wave3b-merge` with exact fuel determinism, compiled JSON decoders, linked serialization and logged text, idle and incremental collection and declared response headers: code at commit `443e13a` (2026-10-31), 2800 tests, 0 failures, 16 ignored, conformance 123 passed and 4 known gaps, on macOS arm64 and, with the same commands (`cargo test --workspace --locked --no-fail-fast`), in a Linux aarch64 container (`rust:1.98.0-slim-bookworm`), identical golden fuel numbers on both. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
-| Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
-| Completion | Measured by the [core completion ledger](#core-completion-ledger); no work stream is closed by this snapshot |
-| Pilot | [uarp-sdk 0.13.2](#pilot-acceptance-package-uarp-sdk) (0.13.1 for the wave-2 integration and wave-3a streams, 0.13.0 for the wave-2 streams, 0.12.0 until the v38 integration); wave-3a integration probe under v38: **65 of 65** files check unmodified (0.13.1 with `typeof` of engine globals: 65 of 65; wave-2 integration: 7, stopped at the `typeof Blob` guard of `core/transport.ts`) ([probe](#pilot-acceptance-package-uarp-sdk)); earlier: M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](#pilot-acceptance-package-uarp-sdk)) |
-| Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](#platform-targets-and-application-model) (2026-10-29), not implemented yet |
+| Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
+| Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
+| Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
+| Last full gate | Consolidated browser dev/reload package on the working tree after `abea3ac` (2026-11-02): **2946 passed, 0 failed, 16 ignored**; all eight commands passed, including `no_std`, workspace Clippy/build/tests and conformance, with an unchanged source fingerprint. Report: `target/verification/20261102-093345-4pi5qr3n/report.json`. This includes preceding consent/event/navigation and the browser dev/reload implementation on macOS arm64. Separate evidence: 85 Node tests and the scoped 63-check Chrome/Firefox/Playwright-WebKit matrix below. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
+| Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
+| JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
+| Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
+| Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
 
-Next work, in order:
+### Stabilization batch 1 — verified 2026-11-01
 
-1. **Suspension foundation** ([K4.4](#k44--suspension-scheduling-and-async-planned)
-   block 1): expression normalization, continuation frames over closure cells,
-   exception and GC invariants and the closed resume dispatcher are implemented
-   compiler-internally and tested in Wasmtime
-   ([contract](architecture.md#suspension-foundation-k44-block-1)) and merged
-   on the v32 integration branch. Runtime admission under profile v33
-   (`resumable_frames`) is implemented; the runtime does not schedule frames
-   yet. Synchronous generators (K4.4 step 2, `generators`) are implemented in
-   v33 on the `v33-generators` branch
-   ([contract](architecture.md#synchronous-generators-generators)).
-2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch
-   (both waves are merged on the integration branch), then index signatures and
-   wider records, Web types (`Headers`, `AbortSignal`) and the 65-file module
-   graph budgets.
-3. Promise jobs, then async/await (K4.4 steps 3–4): implemented under v34
-   and merged with the records and unknown streams on `v34-integration-merge`
-   ([scheduler](architecture.md#microtask-scheduler-promises),
-   [async functions](architecture.md#async-functions-async_functions));
-   step 5's timers and step 6's async generators and `for await` are
-   implemented under v36 and integrated on `v36-merge`
-   ([timers](architecture.md#timers-timers),
-   [async generators](architecture.md#async-generators-async_generators));
-   I/O and async HTTP are next.
+Implemented on the working tree after `abea3ac`: JSON record property order in
+shared and compiled builders, and required-boolean property truth narrowing.
+The final full gate passed **2815 tests, 0 failures, 16 ignored**; all eight
+commands passed and the source fingerprint stayed unchanged. Conformance remains
+123 passed and 4 known unsupported, with no regressions. Node host: 117 passed;
+normal-stack UARP console: 107 passed in 28 groups and two headless view checks.
+The six new tests cover decoding/fallback/GC, recursive/wide records, safe
+boolean narrowing and source-free Wasm/native packaging. Deterministic fuel
+baselines remain unchanged. Two historical comparisons now acknowledge the
+explicit recursive-JSON ordering difference between v37 and v38; older profile
+bytes and their own expectations are preserved.
 
-Completed increment logs, earlier checkpoints and verification records are in
-[history.md](history.md).
+Evidence: `target/verification/20261101-174930-muu4a2lf/report.json` (local,
+ignored). Only documentation result records were updated after that gate; code
+and build inputs are unchanged. That batch was verified before direct-union implementation began and is not yet
+committed. No whole CORE work stream or broader platform acceptance is closed here.
+
+### Stabilization batch 2 — verified 2026-11-01
+
+Direct literal-constrained `JSON.parse(text) as T` decoding is implemented for
+eligible records, discriminated unions and arrays. It preserves literal constraints
+before erasure, probes required tags, validates the chosen record once, and builds
+without an intermediate guest unknown graph. Conservative misses run the original
+parse/assertion; the input is evaluated once. Public literal-bearing
+`varta.json.parse<T>` admission and host/schema/value ABIs are unchanged.
+
+Nine focused runtime tests and one CLI artifact test cover errors,
+recursive/nested values, async input, GC/tape growth, seeded mutations, imported
+types, non-schema target admission and source-free Wasm/native execution. Existing decoder, historical-profile,
+codegen and exact fuel baselines pass. Measured last-tag cases consume 69,707 vs
+102,176 fuel (2 variants/128 numbers), 71,660 vs 105,810 (32/128), 297,330 vs
+407,976 (32/512) and 81,307 vs 125,167 (200/128), compared with only direct
+assertion decoding disabled. Shared tag scanning meets the existing dispatch
+ceilings unchanged: 12 vs 7 fuel per preceding candidate at 24 vs 200 members.
+These measurements do not establish general throughput.
+
+Final local gate: **2825 passed, 0 failed, 16 ignored**; all eight commands passed
+and the source fingerprint stayed unchanged. Evidence:
+`target/verification/20261101-192403-a66359j5/report.json` (local, ignored).
+Conformance remains 123 passed and four known unsupported, without regressions.
+Fresh Node host: 117 passed; normal-stack UARP console: 107 passed in 28 groups
+and two view checks. The unchanged dispatch-cost regression now passes at both
+24 and 200 alternatives. Only result documentation was edited after the gate;
+code/build inputs are unchanged. This batch is verified and not yet committed.
+
+This batch also corrects the reproduced literal/unknown discriminant overlap:
+valid later record alternatives use strict matching, while multiple successful
+matches report ambiguity. Older profiles keep their behavior. Further narrowing
+inventory and the server/platform/release queue stay open.
+
+Next implementation focus: the server/asynchronous lifetime batch below. The
+wider compatibility inventory continues alongside it; no whole CORE stream is
+closed by these two stabilization batches.
+
+### Server batch — native acceptance verified 2026-11-01
+
+HTTP contract v2 now admits synchronous and async UTF-16/binary64 adapters in v38. The
+wire envelope remains bounded UTF-8 JSON; guest strings are transcoded explicitly,
+response status still requires a valid integer, and metadata/profile/value-layout
+checks reject v1/v2 substitution before execution. Each request still creates a
+fresh bounded Store; listener ownership, grants and shutdown remain independent.
+The launcher advertises the supported HTTP maximum while old contracts remain v1.
+
+Focused checks cover Unicode requests, thrown/fuel-failed handlers, invalid
+fractional statuses and later successful requests, version/profile mismatch and
+legacy HTTP paths. Async handlers reuse normal async lowering and the existing
+scheduler until their response Promise settles, with pure state/value exports
+checked before execution. Module values initialize once in each request Store;
+startup's main is not rerun and state is not shared between requests. Sync v2
+handlers also run their microtask checkpoint before replying. Required effects
+come from the emitted direct-call graph, including the closed resume dispatcher.
+
+Focused async cases pass with timers, a forced-collection decoder build, real
+outbound fetch/body completion, and denial without a socket. Rejections and idle
+pending responses fail only that request; background intervals are discarded at
+response completion. Tampered completion helpers and effect catalogs are rejected.
+Effective startup budgets/ceilings and headless permission inputs now carry into
+every request. Fresh counters do not renew across async tasks; the fixed HTTP
+handler deadline caps a larger application allowance. Listener consent is checked
+before bind as well as at guest operations. Optional/stored/artifact-scoped
+permissions and ceilings are tested before socket effects. Workers retain bounded
+v2 output before failure and deliver one diagnostic for each failed invocation.
+
+Focused server regressions and the sustained sample: 29 passed, including independent fuel, memory,
+host-call and output limits from package requests and host ceilings; aggregate
+async fuel/deadlines; the fixed contract deadline; optional listener consent;
+headless decisions; v2 failure output and unchanged legacy budget semantics;
+disconnect cleanup, active-response shutdown, idle-connection shutdown and real
+hostname resolution. V2 request owners now cancel guest loops and native
+timer/async-network waits. Graceful shutdown drains an active reply under its
+original deadlines, closes idle connections and never invokes a later handler.
+Process-owned bounded system DNS workers retain no Store and cannot delay request
+runtime destruction. Queue expiry/cancellation, late answers and oversized
+answers have focused verification. A running OS lookup may finish later within
+that fixed pool. Synchronous `net.get`/`net.fetch` inside v2 requests now use the
+same owned transport without running guest jobs or renewing allowances. Disconnect
+interrupts response-head and body waits, closes sockets and releases the worker;
+neither guest try/catch nor result capture can recover cancellation/deadline
+failure. Status-only fetch, raw bounded get bodies, redirects not followed,
+hostname resolution and denial before socket effects have focused verification.
+The previous synchronous transport remains in contexts without an owned token;
+frozen legacy/v36/v37 bytes/diagnostics and execution compatibility checks pass.
+Scheduler (9), timer (18), network (18), DNS (5) and execution cancellation (1)
+regressions also pass. V2 workers now close a usage record on success, failure and
+cancellation, then publish owned usage/audit evidence after resource release.
+`RunReport::http` keeps worker totals and a bounded prefix separate from startup;
+the observer receives every worker report independently of aggregate truncation.
+A real repeated-request case exceeds both retained-detail and aggregate-audit
+bounds while preserving totals. A source-free async HTTP case passes in dev,
+Wasm through CLI/companion, and native self-execution, including Unicode, failed
+request isolation and streaming `--budget-report` output. An isolated native
+resource sample passes: after eight warmup cancellations and forty measured
+cancellations, open descriptors remain 11 -> 11 and every cancelled request has
+the same 1,966,080-byte guest memory peak. Each holds a live string/frame across
+outbound I/O, closes the real upstream socket and permits a later healthy request.
+This verifies the sampled descriptor/guest-memory lifecycle, not native RSS or
+all-target leak behavior.
+
+Explicit `wait_network` view-script steps now wait under a validated wall-clock
+bound without advancing virtual timers, changing instance lifetime or shortening
+surviving response deadlines. Timeout also caps guest continuations and idle
+maintenance, terminates before later inputs and releases I/O. Focused runtime and
+CLI checks cover streamed Unicode bodies, policy denial, timeout, an infinite
+guest turn, later body reads and invalid direct/script inputs. Real completion
+order/content remain external; recorded or simulated network replay stays open.
+Hostile source-free artifacts also pass focused acceptance: wrong HTTP version,
+omitted effects, duplicate metadata, a missing completion export, substituted
+state signature and an unknown helper are rejected across CLI/companion/native
+validation, inspection and execution before startup effects or bind. The intrinsic
+library has been rebuilt and its source fingerprint is current. The final full
+gate passed **2871 tests, 0 failures, 16 ignored**, with all eight commands and an
+unchanged source fingerprint. Generated embedding/architecture checks pass for
+the new server registries; conformance remains 123/127 with four known gaps and
+no regressions. Evidence: `target/verification/20261101-215315-99yy5gon/report.json`
+(local, ignored). This closes the native server batch's stated acceptance, not
+the broader CORE, replay, native RSS or cross-target release work.
+
+Browser delivery now has two separate strands. The documentation-built prototype
+keeps its 117 passing Node cases and remains unmetered. The official registry
+foundation is generated directly from Rust by `varta_common::browser`: operation
+names/signatures, profile admission and entry-point versions, value/frame acceptance,
+fair host fuel rates and private meter names. Its checked-in frozen ES module has
+a regeneration drift test; the iterable operation inventory comes from the enum
+itself and is checked against every wire-name arm and the embedding tables.
+
+The compiler's private fuel transform now runs with the shared JS `FuelTank` in an
+explicit fixed-fixture probe. **25 native/Node and 25 native/Chrome observations
+match**, including both sides of call/byte-work payment boundaries, exact payment,
+remaining fuel, logging positions and Unicode output. Local engines: Node
+24.20.0 and headless Google Chrome 156.0.8078.74, macOS arm64. The one fixture's
+private image grows from 178,264 to 286,321 bytes; this is not a size/startup survey.
+The probe is verification tooling for trusted compiler output, not an application
+loader or permission validator.
+
+Focused evidence: common library 167 passing tests, 11 embedding table checks,
+4 Node tank/registry checks and 12 meter differential/rejection/resource tests; compiler
+all-target Clippy and the no-std common core check pass. The earlier compiler
+library checkpoint passed 161 tests with 2 ignored. New browser Rust work remains
+outside the historical native-server full gate.
+
+Trusted preparation is now implemented in
+`varta_project::browser::BrowserArtifact`: original manifest/code ABI and complete
+native module/catalog/helper-effect validation precede instrumentation. The owned
+result preserves original bytes, metadata, requested/ceiling policies and resolved
+budgets. Its private image applies memory/table maxima equivalent to native Store
+limits; smaller declared maxima remain smaller, and an initial allocation over
+the ceiling fails. Empty ceilings stay explicit. Preparation does not invoke guest
+code or mount native filesystem roots. Focused malformed-import/reserved-marker,
+policy ownership, legacy-budget and capped-resource cases pass. Project checks pass 19 library tests
+(including six browser-preparation cases) and two dependency-boundary checks;
+compiler/project all-target Clippy passes. An additional malformed-memory64 case
+pins rejection before byte-size arithmetic, without changing supported memory32
+execution. The bounded-image fixture still matches native under Node and Chrome.
+
+The console/microtask bundle now has a source-free library delivery
+path (`BrowserArtifact::bundle`/`BrowserBundle::write_new`), with original/private
+Wasm, manifest, self-contained Worker/loader and an SRI/CSP/Trusted Types page.
+Pinned SHA-256/length checks precede Worker creation; the parent watchdog and
+AbortSignal stop a running instance and retain prior logs. Host policies are
+never embedded: bundling a preparation with a host ceiling is rejected, while
+trusted runtime budget ceilings are separate execution inputs. Memory ceiling
+changes at JS loading currently reject rather than pretending to enforce them.
+Promise/async jobs now run through the bounded checkpoint; other unsupported
+effects fail at bundle construction. Timer support is added below.
+The shared workspace adds a pinned base64 declaration and project adds direct
+SHA-256/base64 dependencies for loader SRI; both versions were already locked,
+and no engine dependency direction changes.
+
+Local real Chrome acceptance now passes **34 bundle cases**: native output (including
+BOM/lone units and chunk-boundary surrogate pairs), guest exceptions, fuel/call/
+output limits, a deadline inside running Wasm, pre-start/active cancellation,
+four invalid budget ceilings, four same-length file substitutions and two
+length violations. Async/rejection cases additionally compare exact remaining fuel, host-call,
+microtask and output-byte counts with native. Evidence: `/tmp/varta-browser-scheduler-chrome-v3.log`; the
+reproducible commands are in [verification](verification.md#browser-registry-and-fuel-probe-development).
+These cases do not establish a complete official browser host or all-target pass.
+Project tests now pass 24 library cases and two dependency-boundary checks;
+Clippy is checked at this focused boundary. New browser/dependency work remains
+outside the historical native-server full gate.
+
+The console bundle is now exposed through `varta build --target browser`, using
+the checked source pipeline without mounting native execution roots. Output is
+`web` beside the configured `out` prefix; existing bundles are never overwritten.
+Explicit `--target wasm` and `--target native` retain the portable/verified-launcher
+paths. Six focused CLI tests pass, covering async checkpoint inclusion, original byte/manifest equivalence,
+source-free validation, refusal to overwrite, gap/type failures before output,
+unmounted roots, flag/policy rejection and native companion execution. The
+companion build and CLI all-target Clippy pass. This extends the focused browser
+checkpoint, not the historical native-server full gate.
+
+Browser Promise/async support is implemented through a closed resume dispatcher,
+FIFO reactions and a single shared allowance across `main` and the checkpoint.
+The bounded rejection reader snapshots primitive, Error, subclass and BigInt
+reasons; late handling, retained/not-retained reasons, decimal numeric diagnostics
+and large fields match native in the real-browser fixtures. A related native fix
+uses profile string limits for Error and subclass fields instead of reapplying the
+legacy limit in v38; field-prefix copying remains bounded. The older profiles'
+limits remain unchanged.
+
+Focused evidence for this increment: 34 real Chrome cases, eight Node scheduler/
+reader boundary tests, five registry/layout drift tests, 11 browser project tests,
+13 native Promise tests, two native exception-reader tests and six CLI cases.
+At that focused checkpoint the broader full gate was pending; the consolidated
+browser-core gate recorded at the end of this plan now covers the Rust batch. A separate local numeric
+probe matched 4096 seeded binary64 diagnostics against native Rust formatting;
+this was exploratory evidence, not a CI suite or exhaustive numeric proof.
+
+General browser artifact admission and permission/effect integration, layout/view code generation,
+other effect-specific fair charges, start-function charges, long-lived Worker
+turns, browser dev integration, Firefox/WebKit and full corpus/UARP acceptance
+remain open.
+
+The explicit text shaper now accepts a bounded collection of named fonts, rejects
+ambiguous aliases and resolves CSS family lists to that collection. Parley can
+fall back between supplied fonts for missing glyphs, without system discovery.
+The mixed Cyrillic/Latin advance and flex position agree with Firefox, WebKit and
+Chrome (`/tmp/varta-glyph-fallback-layout-matrix.log`). Broader script, real font,
+weight/style and platform fallback acceptance remain open.
+
+The explicit font collection now permits multiple verified faces of one family.
+Supported CSS font weights and normal/italic style inherit into shaping. Synthetic
+normal, bold and italic faces with different advances match Firefox, WebKit and
+Chrome (`/tmp/varta-font-faces-matrix.log`). The constructor rejects a face whose
+declared family does not match its bytes. Real-font matching, synthesis, variable
+fonts and broad platform typography acceptance remain open.
+The browser package is still in development; the focused Chrome result does not
+establish general browser budget conformance.
+
+Server acceptance ledger, in order:
+
+1. Implemented with focused verification: `Execution::request_setup` snapshots
+   effective budgets/caps and headless broker inputs; fresh request executions
+   inherit them without widening grants or renewing allowances. Bind authorization
+   also applies permission states. V1 keeps its legacy budget/consent semantics.
+2. Implemented with focused verification: v2 disconnect cancellation reaches guest
+   loops and native timer/async-network waits; shutdown drains the active response
+   under existing deadlines. Guest/network resources are released before output
+   callbacks; process-owned DNS cannot retain a Store or block its destruction.
+   Bounded request usage/audit now survives success, failure and disconnect in
+   `RunReport::http` and `RuntimeEvent::HttpRequest`; full observer reports and
+   bounded aggregate details have independent retention, with explicit omissions
+   and complete worker totals. Owned v2 requests also cancel synchronous legacy
+   network imports under the same deadline, without weakening their grants or
+   making cancellation recoverable. A warmed, isolated repeated-cancellation sample
+   verifies closed sockets, stable descriptor count and fixed per-request guest
+   memory; broader native RSS/target/lifetime acceptance stays open.
+   Bounded v2 output/diagnostics also survive
+   failed calls through worker-owned delivery, independent of transport delivery.
+3. Implemented with focused runtime/CLI verification: explicit bounded
+   `wait_network`, frozen virtual timers, preserved lower execution bounds and
+   surviving transfer deadlines, fatal timeout/late-input prevention, and owned
+   cleanup. Real I/O is explicitly outside deterministic replay guarantees.
+4. Source-free async CLI/native, hostile-contract artifacts and generated
+   embedding/architecture checks pass; the rebuilt intrinsic fingerprint is
+   current. Completed: all eight full-gate commands pass for the native batch,
+   with an unchanged source fingerprint. Next delivery focus: browser batch 3.
+
+### Next delivery batches
+
+This queue follows the accepted platform design and the recorded integration gaps.
+Each batch has a concrete exit criterion; benchmark and compatibility results
+remain evidence for the measured target only.
+
+| Order | Batch | Exit criterion |
+| --- | --- | --- |
+| 1 | V38 semantic stabilization (CORE-01/02/10/15): JSON property insertion order and boolean narrowing verified in batch 1; direct discriminated-union decoding and literal/unknown overlap verified in batch 2; wider narrowing inventory remains | Differential cases preserve observable ordering and errors across compiled/linked decoders, serialization and source-free artifacts; existing profile and fuel exceptions remain explicit |
+| 2 | V38 server and asynchronous lifetime integration (CORE-08/09/11/17): native acceptance verified; broader lifecycle/replay/target work stays in its ledgers | V38 server boundary and scripted network completion cases pass with declared permissions, queue/deadline limits, late-completion cleanup and trap behavior; covered again by the consolidated browser-core gate; request isolation explicit |
+| 3 | Official browser delivery (P1/P9): bundles/views/resources/permissions/events/navigation and local memory-only dev/reload verified by the consolidated gate; scoped three-engine matrix passes; next portable matrix driver, remaining effects and pilot acceptance | Same supported artifacts and UARP session agree in Node, Chromium, Firefox and WebKit; fuel and host work are enforced, permission denials tested, bundle/startup costs measured |
+| 4 | Native targets (P3/P10–P10d): renderer, shells, bundles and headless layout comparison | Same console artifact completes the accepted session visibly on macOS and an actual Pi 5, with layout/accessibility agreement and measured startup, memory and input latency; Windows and target metadata have independent checks |
+| 5 | Release acceptance (CORE-14/15/16): explicit v38 subset, package compatibility and sustained/security validation | Reproducible target matrix, documented unsupported inventory, package-own-test results, long-lived resource measurements and release/trust policy; no production or full-compatibility claim before these pass |
+
+Work on performance fast paths, wider standard APIs and KV async/watch/queues
+continues against measured blockers alongside these batches; it does not close
+unrelated acceptance. MCP, hooks, Svelte and general application-state/tool
+contracts retain their deferred scope. See the detailed [platform increments](#increments-and-acceptance)
+and [wave-3 open items](#wave-3b-integration-open-items).
 
 ## Review correction batch — 2026-11-01
 
@@ -85,8 +360,8 @@ invocation. Closed records, bounded resizable/sparse typed arrays in opt-in prof
 `JSON.stringify`, `varta.json.parse<T>` and the first HTTP/1 service profile are
 implemented. A shared-state application service, broader Application Contracts,
 MCP, package signatures,
-GUI/database/hardware adapters and full JS/npm compatibility are not implemented
-yet. HTTP listeners are independent of the existing outbound client.
+native GUI and hardware adapters and full JS/npm compatibility are not
+implemented yet. KV storage is implemented; broader database APIs remain open. HTTP listeners are independent of the existing outbound client.
 
 ### Research thesis
 
@@ -121,16 +396,16 @@ scenario, not the definition of a complete runtime.
 
 The complete core roadmap must cover:
 
-| Area | Target | Current gap |
+| Area | Target | Implemented scope and remaining gap |
 | --- | --- | --- |
-| Language semantics | ECMAScript values, numbers, strings, objects/arrays, functions/closures, errors and control flow | Default `number` is i32; opt-in binary64 supports closed aggregates and JSON. Opt-in UTF-16 supports lone units and character methods; closed primitive unions, typed functions and initialized lexical captures are implemented; dynamic objects/coercion and broader function semantics remain pending |
-| Memory | Bounded, correct ownership and tracing for full application value graphs | Collector traces closed records, resizable/sparse arrays, reference unions, Error/closure graphs and strings; general dynamic object graphs remain pending |
-| Scheduling | Event loop, promises, microtasks, async/await, timers, cancellation and shutdown | Synchronous bounded invocations only |
-| Standard APIs | JSON, URL, encodings/binary data, Request/Response/Headers, streams and abort signals | Most standard APIs are absent |
-| System APIs | Capability-checked filesystem, environment, processes and inbound/outbound networking | Existing bounded operations are a small partial API |
-| Modules/packages | ES module semantics, a documented resolution/loading policy and tested package compatibility | Explicit local named-function modules only |
-| Distribution | Independent runtime, portable guest artifacts and target-specific native packaging | Runtime-only companion implemented; cross-target packaging, signing and platform release distribution remain pending |
-| Verification | A pinned conformance target, public-API compatibility cases, negative/security tests and resource/performance measurements | Current regression tests prove the MVP contract, not Deno/Bun or ECMAScript completeness |
+| Language semantics | ECMAScript values, numbers, strings, objects/arrays, functions/closures, errors and control flow | Opt-in binary64/UTF-16, typed graphs, classes/generics, collections and structural views work. General prototypes/descriptors, coercion, symbols and full call semantics remain open |
+| Memory | Bounded ownership and exact tracing for application graphs | Exact roots and v38 incremental/idle GC cover admitted graphs and suspended frames. Sustained lifetime, cancellation, peak-memory and leak measurements remain acceptance work |
+| Scheduling | Event loop, Promise jobs, async/await, timers, cancellation and shutdown | Bounded microtasks, timers, network completions and application turns work. Unsupported structural thenables are rejected; generalized cancellation/shutdown, replay and async server integration remain open |
+| Standard APIs | JSON, URL, encoding/binary, Request/Response/Headers, streams and abort | Checked/unknown JSON, compiled decoders, linked serialization, fetch/Web bytes, URL, abort, selected collections/Date/RegExp work. Full standard-library and binary/crypto/Intl surfaces remain partial |
+| System APIs | Capability-checked files, environment, processes and networking | Files with v38 virtual roots, outbound async HTTP(S), initial inbound HTTP and KV work. Wider process/filesystem APIs, v38 HTTP adapters and browser effect coverage remain open |
+| Modules/packages | ES modules, explicit resolution/loading policy and tested packages | Local typed graphs, constants/live bindings, re-exports/defaults, named types and text resources work; pinned pilot checks. General module initialization/loading and package-own-test acceptance remain open |
+| Distribution | Independent runtime, portable Wasm and target-specific packaging | Source-free Wasm and single native executable work on the build target. Official browser bundles, native GUI shells, cross-target releases and authenticity remain open |
+| Verification | Conformance, boundary/security tests and resource/performance measurements | Workspace and partial checked conformance pass at the checkpoint above. Upstream Test262 execution, complete feature inventory, sustained target workloads and independent security review remain open |
 
 Do not treat unsupported JS as solved by providing an application-specific host
 wrapper, and do not claim full compatibility because a few server examples run.
@@ -159,32 +434,33 @@ documented compatibility bounds pass. A global 100% claim additionally requires
 the conformance, platform and independent security acceptance work; it cannot be
 inferred from the current regression suite.
 
-| ID | Work stream | Current state | Remaining acceptance work |
-| --- | --- | --- | --- |
-| CORE-01 | Number, String and primitive semantics | Partial | Remaining BigInt/object ToPrimitive and inferred storage generality (v28 scalars; v29 graphs, primitive-union arithmetic, throws and JSON integration), Symbol, Symbol/object comparison and remaining conversion operations, locale formatting and general object coercion (canonical logging v18; primitive conversions v19/v20; checked toString/radices v21; precision/valueOf v22; prefix parsers, Boolean/global predicates and guest truth/control flow v23; scoped truth guards v24), remaining operators and primitive built-ins against the pinned ECMAScript target |
-| CORE-02 | Objects, arrays and value graphs | Partial | Dynamic properties, property descriptors, prototypes, constructors/classes and their tracing/identity semantics |
-| CORE-03 | Functions and control flow | Partial | Complete call/receiver/binding behavior, remaining iteration and generator semantics; retain existing closure/exception guarantees |
-| CORE-04 | Exceptions | Partial | General thrown values and complete error families/propagation, with explicit roots and unwinding rules |
-| CORE-05 | Standard collections and binary values | Planned | Map/Set, typed arrays, ArrayBuffer/DataView and other target built-ins with ownership/resource contracts |
-| CORE-06 | Math and remaining language built-ins | Partial | Finish the explicit Math inventory; cover Date, RegExp and remaining selected standard objects |
-| CORE-07 | Garbage collection and resource lifecycle | Partial | Extend exact tracing to every admitted value kind; verify retained roots, cancellation and leak-free long-lived lifetimes |
-| CORE-08 | Event loop and promise jobs | Planned | Specify and implement bounded task/microtask queues, Promise resolution/rejection and ordering; agreed [suspension design](#k44--suspension-scheduling-and-async-planned) |
-| CORE-09 | Async language and cancellation | Planned | Async/await, timers, cancellation/abort and owned shutdown, integrated with scheduling and roots; agreed [suspension design](#k44--suspension-scheduling-and-async-planned) |
-| CORE-10 | JSON and Web APIs | Partial | General JSON parsing plus the target URL/encoding/Request/Response/Headers/stream APIs |
-| CORE-11 | System APIs | Partial | Complete the declared filesystem/process/network surface with exact permissions, portable errors and bounded I/O |
-| CORE-12 | ES modules and packages | Partial | Module initialization/linking/loading semantics, explicit package-resolution policy and tested package targets |
-| CORE-13 | ABI and capability enforcement | Implemented for current profiles | Retain fail-closed version/signature/resource checks for every newly admitted boundary |
-| CORE-14 | Distribution | Partial | Supported target matrix, Windows/cross-target validation, release delivery and package authenticity |
-| CORE-15 | Conformance | Partial | Pinned checked-case inventory and isolated runner are implemented; expand edition-wide cases, script/module/harness execution for upstream Test262, historical profiles and independent compatibility verification |
-| CORE-16 | Performance and production readiness | Partial | Reproducible startup/memory/throughput/leak measurements, sustained workloads, fuzzing and independent security review |
-| CORE-17 | Application lifecycle | Planned ([accepted design](#application-lifecycle-and-event-turns)) | Long-lived instances, event turns with per-turn budgets, host→guest task delivery, timers and I/O completions, no automatic restart after a trap |
-| CORE-18 | View output | Planned ([accepted design](#view-layer-l0l3)) | L0 protocol over the specified HTML/CSS subset, headless, browser and native renderers, cross-renderer layout and accessibility conformance |
+| ID | Work stream | Current state | Implemented through v38 | Remaining acceptance work |
+| --- | --- | --- | --- | --- |
+| CORE-01 | Number, String and primitive semantics | Partial | Binary64/UTF-16, BigInt graphs, primitive coercions and checked numeric/string methods | Symbol, object ToPrimitive, wrappers/prototypes/descriptors, locale/Intl and full operator/conversion inventory |
+| CORE-02 | Objects, arrays and value graphs | Partial | Sparse/resizable arrays, dynamic-key dictionaries, classes/generics/private fields, structural views and checked graph conversion | General dynamic properties/descriptors/prototypes and remaining identity/key-order semantics |
+| CORE-03 | Functions and control flow | Partial | Typed functions, closures, control flow, generators, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
+| CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
+| CORE-05 | Standard collections and binary values | Partial | Map/Set, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
+| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, UTC Date subset and ahead-of-time RegExp | General Math object/call semantics, wider Date/Intl and remaining RegExp features |
+| CORE-07 | Garbage collection and resource lifecycle | Partial | Exact tracing, liveness frames, incremental collection and idle maintenance under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence |
+| CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and deterministic replay acceptance |
+| CORE-09 | Async language and cancellation | Partial | Async/await, timers, abort listeners/timeout/any, async generators, for-await, cancellable fetch and focused v38 HTTP lifecycle checks including synchronous network waits | Top-level await, wider async iterable forms, broader host-call lifecycle and sustained owned shutdown acceptance |
+| CORE-10 | JSON and Web APIs | Partial | Typed/unknown JSON with verified record insertion order, compiled decoders and direct literal-constrained assertion attempts, linked serialization, URL/Headers/Request/Response, streamed bytes | Wider Web compatibility and remaining checked conversion/narrowing semantics |
+| CORE-11 | System APIs | Partial | Capability-gated files/env/time/process operations, virtual roots, verified native v38 sync/async HTTP v2 and artifacts, async HTTP(S) client and KV | Broader filesystem/process APIs, KV async/watch/queues, portable errors and target parity |
+| CORE-12 | ES modules and packages | Partial | Typed graphs, constants/live bindings, re-exports/defaults, class/generic linking and text imports; pinned SDK probe | Full module initialization/loading semantics, resolution policy expansion and SDK-own-test/package acceptance |
+| CORE-13 | ABI and capability enforcement | Implemented for admitted native profiles | Version/signature/layout/resource checks, host ceilings and permission broker | Retain fail-closed guarantees for new boundaries; official non-Wasmtime host parity remains unclosed |
+| CORE-14 | Distribution | Partial | Independent launcher, portable Wasm and source-free native executable | Official browser/native bundles, Windows/Pi/cross-target delivery, release policy and artifact authenticity |
+| CORE-15 | Conformance | Partial | Pinned ECMAScript 2025 checked-v37 inventory, isolated runner, negative/differential/artifact tests | Four known cases, eight untested feature rows, wider edition/history coverage, upstream harness and independent platform verification |
+| CORE-16 | Performance and production readiness | Partial | Fuel profiler, deterministic golden fuel, codegen/JSON/GC measurements and regression checks | Reproducible startup/throughput/leak/peak-memory benchmarks on supported targets, fuzzing and independent security review |
+| CORE-17 | Application lifecycle | Partial; native foundation implemented | Long-lived instances, host tasks, per-turn budgets, permission decisions, bounded scripted network waits, request cancellation and a sampled native resource lifecycle | Cross-host ordering, recorded network replay, complete owned shutdown and broader sustained lifetime/native RSS acceptance |
+| CORE-18 | View output | Partial; L0/TSX foundation implemented | L0 batch/event protocol, headless tree/cascade/accessibility, TSX templates and example L1; prototype browser applier | Headless layout, native renderer, official browser delivery, cross-renderer geometry/accessibility and real-target acceptance |
 
-The immediate implementation order remains CORE-01/02/03/06 foundation work,
-followed by CORE-07/08/09 scheduling and lifetime integration and CORE-10/11/12 API
-and package expansion. CORE-13/15/16 verification accompanies every increment.
-Application state, MCP and domain adapters remain separate deferred work streams;
-they do not substitute for missing engine semantics.
+“Partial” means that useful checked functionality exists while the full target's
+exit criteria remain open. In particular CORE-05/08/09/17/18 are no longer
+“Planned”. These rows have unequal scope and are not percentage points. The
+[next delivery batches](#next-delivery-batches) replace the earlier foundation-first
+queue; CORE-13/15/16 verification accompanies every batch. MCP and domain adapters
+do not substitute for missing engine semantics.
 
 CORE-06's Math inventory is pinned to the
 [ECMAScript 2025 Math object](https://tc39.es/ecma262/2025/multipage/numbers-and-dates.html#sec-math-object):
@@ -250,8 +526,9 @@ compatibility; all remaining rows and full conversion/equality/value targets sti
   require a trusted verifier. Credentials belong to trusted host-side providers.
 ### Current repository scope
 
-Core development comes first. The engine consists of `varta-common`,
-`varta-compiler` and `varta-runtime`. Project loading/configuration, scaffolding,
+Core development comes first. The engine consists of `varta-common`, `varta-bigint`, `varta-intrinsics`,
+`varta-view`, `varta-compiler` and `varta-runtime`; `varta-intrinsics-wasm` is the
+wasm32 shim of the shared intrinsic implementation. Project loading/configuration, scaffolding,
 packaging and CLI presentation are supporting development tools. They consume
 engine APIs and must not become engine dependencies.
 
@@ -267,8 +544,9 @@ compiler/runtime regression coverage.
 
 Engine capability comes first, not an editor example or MCP. K1–K3 are implemented
 in their initial checked profiles and K4 language/value work continues. The current
-order is the [status](#status) list: the suspension foundation and pilot steps
-M1–M3. A native TS/JS program serving a real JSON object remains the acceptance
+order is the [next delivery batches](#next-delivery-batches): v38 stabilization,
+async server/lifetime integration and measured cross-target acceptance. The
+suspension foundation and M1–M3 source features are already integrated. A native TS/JS program serving a real JSON object remains the acceptance
 scenario for the generic server capabilities. An external wrapper around
 `varta invoke`, or a guest returning a string that a separate host parses as JSON,
 does not satisfy it.
@@ -325,6 +603,10 @@ dependencies, and contains no explicit `any`, so it meets the
 [typed-only rule](#research-thesis). Its only library-level `any` entry point is
 `JSON.parse`. Counts below are regex-based over comment-free 0.12.0 sources and
 approximate.
+
+The dated probes below retain their original first diagnostics and measurements.
+They are historical snapshots, including uses of “today”, “not supported” and
+“pending”; the current source probe and acceptance boundary are in [Status](#status).
 
 **Program limits under v38 (2026-10-30).** The program-limits stream
 (`program_limits()`) on branch `v38-program-limits`, production budgets
@@ -588,7 +870,7 @@ interface whose field has a string-literal union type. A file containing only ty
 aliases passes when nothing uses them. No file of the package compiles as part of
 its module graph.
 
-| Requirement | Occurrences | Current Varta |
+| Requirement | Occurrences in the earlier pilot | Historical v30–v34 checkpoint |
 | --- | --- | --- |
 | Modules: `import type`, `export *`, `export default`, top-level `export const`, `.js` specifiers resolving to `.ts` | 65 files | v31: type-only imports/exports and `.js` specifiers; v32 (unreleased): `export const`, `export { … } from`, `export *` and `export default`; the 65-file graph exceeds the module and import-declaration limits |
 | Named interfaces/aliases; structural assignability; index signatures and `Record<string, …>` | 1917 interfaces / 38 | v31: named closed shapes; v32 (unreleased): `interface … extends` and merging, literal-keyed `Record`; no width subtyping, index signatures or `Record<string, …>` |
@@ -625,7 +907,7 @@ data limit before M3.
   Resources {}` with `class UarpClient` and `Object.assign(this, …)`. The shape is
   fully described by types, but this is the package's least conventional pattern.
 
-**Ladder.**
+**Ladder (scope retained; source admission integrated through v38).**
 
 | Step | Compiles | Requires | CORE |
 | --- | --- | --- | --- |
@@ -637,8 +919,10 @@ data limit before M3.
 | M6 | `sse.ts` | ReadableStream, TextDecoder, `Symbol.asyncIterator`, `new Promise` | 08, 09, 10 |
 | M7 | `index.ts` and the SDK's own tests | Declaration merging, `Object.assign(this, …)`, running the package tests under Varta | 02, 15 |
 
-M1–M3 do not depend on asynchronous execution and can proceed alongside the
-suspension foundation. A step closes only when its files compile from the pinned
+At the 2026-11-01 checkpoint, the recorded unmodified 65/65-file probe covers
+source admission for M1–M6 and `index.ts`; the console exercises selected runtime
+paths. M7 package-own-test and four-target acceptance remain open. A step closes
+only when its files compile from the pinned
 sources, emitted modules validate in Wasmtime and the behavior is covered by tests;
 unsupported constructs keep failing with clear diagnostics. Measurements for the
 research record: share of files and SDK tests passing, artifact size, startup time
@@ -734,6 +1018,17 @@ size and constants. All ceilings are global constants checked by the runtime for
 every profile today, so raising them must make them profile-dependent to keep
 v1–v35 artifacts frozen. Scripts and raw results are kept outside the repository.
 
+### Reading the profile and measurement history
+
+All v32–v38 implementation streams described below are integrated in `main`.
+The versioned tables describe what each profile admits: an earlier profile's
+limitations remain intentional even when a later profile removes them. Dated
+probes and named branches are historical evidence, not the current next-task
+queue. For current state use [Status](#status), the [CORE ledger](#core-completion-ledger),
+the [platform checkpoint](#platform-implementation-checkpoint) and the consolidated
+[integration backlog](#current-integration-backlog). No release status is inferred
+from a historical integration branch.
+
 ### Pilot batch v32 (in development)
 
 Profile `checked-f64-utf16-v32` collects pilot M1–M3 features developed in
@@ -746,8 +1041,8 @@ substitutions; class bodies reading constants; generic interfaces extending
 generic bases; Error-class instances through generic functions and suspension
 frames) and one conformance case per stream that a single-file case can test.
 The second wave also merges the compiler-internal K4.4 suspension foundation.
-V32 is not released: the integration branch awaits review and its merge into
-`main`.
+V32 is integrated in `main` and remains an unreleased development profile.
+The branch names in the table record where the streams first integrated.
 
 | Selector | Work stream | Pilot step | State |
 | --- | --- | --- | --- |
@@ -1025,7 +1320,7 @@ integrated.
 | (c) Web bytes | `ReadableStream<Uint8Array>`, `ArrayBuffer`, `Blob`, `FormData`, `response.blob()`, typed `globalThis` and `process.env`, and the structural-subtyping stream's pending items (`Promise.race` over differently typed promises, `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, unions mixing collections with other objects, JavaScript key order for spreads through views, checked conversions to unions of record shapes without a literal discriminant) | Implemented on `v38-web-bytes` under `web_bytes()` ([contract](architecture.md#web-bytes-web_bytes)): byte bodies (host ABI 34 `net_request_start_v2`, `net_body_read_bytes`), `ArrayBuffer`/`Blob`/`FormData` preludes with a deterministic multipart boundary, typed `globalThis` with `process.env` as an `env.get`-granted snapshot (`env_snapshot`), mixed `Promise.race`, strict record-union conversions (exactly one match, ambiguity a `TypeError`), union-to-union checked assertions, function adapters for `f as F`, `instanceof` narrowing of property paths in conditionals, records reaching a `Uint8Array` held by `unknown`, `process.env` by exact names with static-key reads, classes merged with an interface through `Object.assign(this, …)`. Pending: a `Uint8Array` (or a union that may hold one) held by `unknown` (a known gap, planned later), `A[] \| B[]` of records, `instanceof Map/Set/Uint8Array`, spread key order through views; `File`, `Blob.stream()`, `formData()`, `FormData` iterators |
 | (d) Codegen hotspots | From the profiler: keyed-list diff, per-push argument arrays, `number[]` index boxing, closure re-validation at call sites | Implemented on `v38-codegen-hotspots` ([contract](architecture.md#code-generation-v2-codegen_v2), [measurements](#code-generation-v2-measurements)): appended `push`, checked element reads without union cells, word-stored literal and grown backings, concatenation chains, quiet function-value calls, exact-size free lists. `charAt` of non-ASCII units in constant time; `--profile-fuel` of programs with checked JSON fixed. With (b) integrated the 100-row keyed diff takes 492,170 fuel (under the 1M target; [wave-2 integration measurement](#wave-2-integration-measurement-v38)). Pending: closure entry checks stay as decided; collection work per turn is wave 3 (f) |
 | (e) Strict members and wide unions | Undeclared member access as a compile error (owner decision, TS2339), per-union member limits in the limits registry, discriminant dispatch for wide record unions (uarp-sdk 0.13.0 `RunEventV1`, 24 members), exhaustive discriminant switches | Implemented on `v38-strict-members` ([contract](architecture.md#strict-members-and-wide-unions-strict_members)); `if`/`else if` chains stay non-exhaustive, as in TypeScript |
-| (f) Virtual file roots | Portable `fs.*` paths: roots declared by the configuration, mapped by the host policy, grants on virtual paths, absolute host paths denied under v38 (`file_roots()`) | Implemented on `v38-virtual-roots` ([contract](architecture.md#virtual-file-roots-file_roots)); the integration adds a CLI smoke test of a long-lived application instance reading through a root. V38 has no HTTP contract (binary64 profiles reject tool/HTTP adapters), so an HTTP service cannot read through a root yet |
+| (f) Virtual file roots | Portable `fs.*` paths: roots declared by the configuration, mapped by the host policy, grants on virtual paths, absolute host paths denied under v38 (`file_roots()`) | Implemented on `v38-virtual-roots` ([contract](architecture.md#virtual-file-roots-file_roots)); the integration adds a CLI smoke test of a long-lived application instance reading through a root. Native HTTP v2 was added later; see the [current native server contract](architecture.md#http-contract-v2--native-server). Browser filesystem effects remain unsupported |
 | (g) TSX fixes | Accessible names, `.js`/`.jsx` resolution, deterministic view scripts, text resources, closure narrowing | Implemented on `v38-tsx-fixes`: accname 1.2 names of the L0 subset, `./x.js` → `x.ts`/`x.tsx` (both is an error) and `./x.jsx` → `x.tsx`, `--view-script` on virtual time with `{"input":"wait","ms":N}`, text resources `with { type: "text" }` with the build-time stylesheet check (`varta_common::view::stylesheet`; ambient `*.css`/`*.txt`/`*.md` modules in `varta.d.ts` for editor typing only), narrowing kept inside closures created after the last assignment |
 
 **Wave 3 (recorded, owner decisions of the wave-2 linked-intrinsics review).**
@@ -1038,7 +1333,7 @@ integrated.
 | (d) ASCII case mapping inline | An inline ASCII fast path for `toUpperCase`/`toLowerCase` in front of the linked case mapping, which costs about 820 (upper) and 595 (lower) fuel per unit through the core Unicode tables | Open |
 | (e) Coalescing intrinsic arena | A merging (coalescing) arena for linked scratch, so linked BigInt work near a million bits fits the memory budget as the host import does (today its size-class free lists do not coalesce and such operands exhaust the 8 MiB budget) | Open |
 | (f) Collection work per turn | Owner decision: first idle collection between turns with a deterministic per-instance maintenance budget reported by `--budget-report`; then an incremental collector with bounded work per allocation (write barriers on every reference store, exact rooting kept provable). Motivated by a console turn costing about 910k fuel instead of about 430k when a collection fires inside it | Implemented on `v38-gc-turns` under `incremental_collection()` ([contract](architecture.md#idle-and-incremental-collection-incremental_collection), [measurement](#collection-between-and-within-turns-measurement-v38)): the host-free `varta.collector.idle` export run at idle points under `maintenanceFuel`/`maintenanceDeadlineMs`, a snapshot-at-the-beginning incremental collector with a deletion barrier on every reference store, side bitmaps and a lazy sweep, collector stress builds over every store kind and the case corpus. Open: below |
-| (g) Network wait in scripted sessions | A bounded, explicit network-wait step for `--view-script` sessions, so scripted views that await responses stay deterministic on virtual time | Open |
+| (g) Network wait in scripted sessions | Explicit bounded real-I/O waits with a frozen virtual timer clock and a declared replay boundary | Native `wait_network` implemented with focused runtime/CLI checks; recorded/simulated network replay remains open |
 | (h) Linked value18 readers | Link the value18 readers (`value_*_v11`, `value_is_error_class_v7`, `value_log_v12` as linked rendering plus the `log_string16` effect, `json_parse_v19`, `primitive_to_string_v6`/`primitive_to_number_v6` with (a)); `bigint_from_value_v5` is already linked at the integration, since it reads only primitive and BigInt cells | Implemented in part on `v38-p2-conversions`: the reference, vector, dictionary (with its full table validation), Error and closure-envelope readers are generic over `Memory` in the `no_std` core; `value_typeof_v11`, `value_truthy_v11`, `value_nullish_v11`, `value_is_array_v11`, `value_strict_equal_v11`, `value_nullish_equal_v11` and `value_is_error_class_v7` are `varta_intrinsics::value` (also the value8–value17 host readers), linked behind tag fast paths. `json_parse_v19` is linked by (b); since `v38-p2-finish` logging is the linked text `value_format_v12` (the JSON diagnostic renderer's notation) passed to the `log_string16` effect, and no profile admits `value_log_v12` |
 | (i) L0 open choices | The L0 view protocol's open choices, including `role="separator"` and `role="group"` | Open |
 | (j) Deno KV storage | Owner decision: a native KV host capability file-compatible with Deno KV, so the UARP API's Deno KV file (SQLite, `denokv_sqlite` schema 3) opens in Varta without a migration and Deno reads what Varta writes | Implemented on `v38-kv` under `kv()` ([contract](architecture.md#kv-storage-kv)): `kv.read`/`kv.write` path grants over virtual roots, nine host ABI 34 imports, pinned no-follow open verified against SQLite's descriptor, exact schema check, lock probe, a strict V8 serializer codec, Deno-shaped `Kv`/`AtomicOperation`/`KvListIterator`/`KvU64` with strict checked-JSON decoding; fair host fuel at the calibrated KV rates since the wave-3a integration ([KV fair fuel](#kv-fair-fuel-v38)). Open: below |
@@ -1931,7 +2226,9 @@ call sites of a target add no decoder function.
 
 #### Wave-3a integration open items
 
-Recorded, not implemented (owner decisions where stated):
+Historical checkpoint: some items below were completed by wave 3b. Current
+remaining work is consolidated in the [integration backlog](#current-integration-backlog).
+Owner decisions are retained where stated:
 
 - Compiled per-schema JSON decoders (owner decision: ahead-of-time decoders
   emitted by the compiler, no cross-call schema cache): implemented for
@@ -1942,12 +2239,14 @@ Recorded, not implemented (owner decisions where stated):
   decision; wave 3 (f)): implemented on `v38-gc-turns`
   ([measurement](#collection-between-and-within-turns-measurement-v38)).
 - HTTP adapters for v38 (owner decision).
-- A bounded network-wait step for scripted sessions (wave 3 (g)).
+- Recorded or simulated network replay for scripted sessions; the bounded native
+  `wait_network` step of wave 3 (g) has focused verification.
 - KV: the event-loop (async) completion model instead of the synchronous
   wait, `watch` and queues, and the guest mapping of `Date`, `Map`, `Set` and
   BigInt values; whether a per-open or per-durable-commit fuel rate should
   price SQLite's fixed I/O ([KV fair fuel](#kv-fair-fuel-v38)).
-- `if (res.ok)` narrowing on boolean-literal discriminants.
+- `if (res.ok)` narrowing on required boolean-literal discriminants: implemented
+  and verified in stabilization batch 1 (2026-11-01).
 - The L0 view protocol's open choices (wave 3 (i)).
 
 #### Wave-3b integration measurement (v38)
@@ -2079,12 +2378,12 @@ charges.
 
 #### Wave-3b integration open items
 
-Recorded, not implemented (owner decisions where stated):
+Recorded gaps carried into the 2026-11-01 checkpoint (owner decisions where
+stated); the review correction batch does not close these optimization items:
 
-- Checked `JSON.parse` builds records in sorted key order, so
-  `JSON.stringify(JSON.parse(t)) !== t` for a text whose keys are not
-  sorted; v38 should follow insertion order (the decoders and the linked
-  decoder share the shared builder's order).
+- Checked JSON record key order: implemented and verified in stabilization
+  batch 1 (2026-11-01): named keys in document order, array-index keys numeric.
+  Shared/compiled/host paths and the completed full gate pass.
 - The v1–v37 host serializers onto the shared `no_std` encoder.
 - A collector tuning pass (the per-allocation bookkeeping above, the
   scripted-session turn-9 atomic collection, the 2 to 5 times total cost of an
@@ -2102,21 +2401,42 @@ Recorded, not implemented (owner decisions where stated):
   the typed memory resource (owner decision: a consequence of the
   effects-only host).
 
+### Current integration backlog
+
+Current outstanding items, grouped by delivery boundary rather than old branches:
+
+- **Correctness/API integration:** wider checked conversion/narrowing semantics
+  remain open. JSON insertion order, required-boolean discriminants and direct
+  literal-constrained union decoding passed stabilization batch 1. V38 HTTP
+  adapters and bounded scripted network waits now have focused executable
+  acceptance; server final-gate and remaining malformed-artifact checks stay open.
+- **Runtime/storage:** collector cost and peak-memory tuning; async KV completion,
+  watch/queues and wider guest value mappings; explicit sustained shutdown and
+  late-completion ownership checks. Existing defaults stay accepted while measured.
+- **Performance:** older serializers onto the shared encoder; KV decoding path;
+  long-decimal fast paths; the recorded linked Number/BigInt cost regressions.
+  Keep measured costs and fuel goldens distinct from correctness acceptance.
+- **Platform delivery:** generated host, browser fuel, missing browser effects,
+  native renderer, headless geometry and supported-target bundles. Prototype host
+  success does not close official target acceptance.
+- **Compatibility/release:** remaining per-profile unsupported syntax/API cases,
+  package-own-test execution, conformance gaps and untested rows, target workload
+  evidence, fuzzing and independent security review.
+
+The four reproduced review defects are closed by `abea3ac`. Structural thenables
+are explicitly unsupported with static/runtime rejection; full adoption remains
+future compatibility work. The normal-stack compiler fix removes the former
+console-check crash without raising the process stack limit.
+
 ### Platform targets and application model
 
-**Status: design accepted by the owner on 2026-10-29
-([accepted decisions](#accepted-decisions-2026-10-29)). Implemented so far in
-profile v38: the runtime half of P5 (event turns with per-turn budgets,
-long-lived application instances, host event sources, permission broker v1 with
-`query`/`request`, stored decisions and a prompt seam;
-[contract](architecture.md#turn-budgets-and-application-instances-turn_budgets)),
-P7 (the L0 view protocol and the headless renderer, its records as host tasks
-of application instances and its capabilities decided by broker v1) and the
-start of P8 (TSX templates;
-[contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)); the
-rest of this section is not implemented yet.** The contract that exists today for third-party hosts is
-[embedding.md](embedding.md). This section is the agreed design for the owner's
-stated goal:
+**Checkpoint: 2026-11-01.** The design was accepted on 2026-10-29
+([decisions](#accepted-decisions-2026-10-29)); parts are implemented under v38.
+The [platform implementation checkpoint](#platform-implementation-checkpoint)
+distinguishes delivered foundations from outstanding target acceptance.
+[embedding.md](embedding.md) is the normative third-party host contract. The
+following text retains the accepted target design; examples of desired commands
+or proposed entry forms are not evidence that they are shipped. The owner's goal:
 
 > A developer writes an application that uses uarp-sdk (HTTP through `fetch` with
 > headers and body, `AbortSignal`, timers and backoff, SSE async generators,
@@ -2137,8 +2457,8 @@ code to do it. Their requests, by priority:
 | P1 | One async `fetch` capability (native and `window.fetch`), KV storage, binary/encoding/crypto | [Async fetch](#async-host-io-fetch-first), [later increments](#storage-binary-data-and-crypto) |
 | P2 | Source-mapped diagnostics, `varta dev --target browser`, size/startup budgets | [Increments](#increments-and-acceptance) |
 
-"No JS engine on the device" is met completely on desktop and Raspberry Pi 5 by
-the [native renderer](#native-renderer-for-desktop-and-raspberry-pi-5):
+The target "no JS engine on the device" is to be met on desktop and Raspberry
+Pi 5 by the planned [native renderer](#native-renderer-for-desktop-and-raspberry-pi-5):
 application logic, UI framework and rendering are compiled Wasm plus memory-safe
 Rust, with no JavaScript engine anywhere in the process. In the browser the
 engine is the platform itself; there, the generated applier is the only script
@@ -2181,7 +2501,7 @@ What a browser host needs beyond the probe, for the v35/v36 surface:
 | macOS arm64/x86-64, Linux x86-64 | Wasmtime launcher | `--single`: native launcher + portable Wasm + manifest (VARTA3) | Implemented for the build host's own OS/CPU |
 | Windows x86-64/arm64 | Wasmtime launcher | Same container | Unverified |
 | Linux aarch64 (Raspberry Pi 5) | Static musl Wasmtime launcher | Same container with a prebuilt aarch64 launcher | Launcher cross-builds and runs (probe); packaging needs offline launcher metadata |
-| Browser, Worker (recommended) | Generated JS host in a dedicated Worker; generated applier on the main thread | `dist/web/`: `app.wasm`, `app.manifest.json`, `varta-host.js`, `varta-applier.js`, `index.html` loader with CSP and SRI | Not implemented; T1/R2 subsets proven by probes |
+| Browser, Worker (recommended) | Generated JS host in a dedicated Worker; generated applier on the main thread | `dist/web/`: `app.wasm`, `app.private.wasm`, `app.manifest.json`, self-contained `varta-worker.js`/`varta-host.js` (applier embedded), `index.html` with CSP and SRI | Partial: R1 plus v38 view sessions through CLI/library; resource packaging, broader host/dev and multi-browser acceptance remain open |
 | Browser, main thread | Generated JS host | Same bundle with `mode: "main"` | Development only: no deadline enforcement |
 | Desktop/Pi5 with UI | `varta-desktop` shell: Wasmtime + [native renderer](#native-renderer-for-desktop-and-raspberry-pi-5) in one process (no webview) | Prebuilt shell + payload in an OS bundle ([desktop packaging](#desktop-packaging)) | Not implemented |
 
@@ -2202,9 +2522,12 @@ What a browser host needs beyond the probe, for the v35/v36 surface:
 
 #### Application lifecycle and event turns
 
-Today every entry point is one bounded execution: `main` with its microtask
-checkpoint, one tool call, or one HTTP request, each in a fresh store. Interactive
-applications need state that survives between events. Design:
+Current native v38 application mode keeps one long-lived instance and delivers
+events as budgeted turns. Bounded `main`/tool executions and the initial HTTP
+request model retain their own store lifetimes. The detailed implemented contract
+is [turn budgets](architecture.md#turn-budgets-and-application-instances-turn_budgets).
+The following bullets describe the accepted design, including proposed entry
+syntax; they do not replace the current source API:
 
 - **Application mode.** An entry module declares `varta.app({ ... })` (compile-time
   form like `varta.tool`) with an `init` function and typed event handlers. The host
@@ -2272,8 +2595,10 @@ end-to-end deadline per operation, all named constants.
 
 The owner's goal ("everything in Wasm") and cross-host conformance both favour a
 host that contains only **effects**: capability-checked I/O, the scheduler, view
-output and the clock. Today about half of the import surface is pure computation
-bound to value layouts. Options:
+output and the clock. Before v38, much of the import surface was pure computation
+bound to value layouts. V38 now links those pure intrinsics into the guest and
+imports effects only. The table preserves the design alternatives; target cold
+start and final artifact-size acceptance remain open:
 
 | Option | Semantics across hosts | Cost | Assessment |
 | --- | --- | --- | --- |
@@ -2392,14 +2717,14 @@ web-developer peer.
   Either needs a registry entry in `view::ROLES`, its accname step, the
   AccessKit mapping and a browser/native conformance page; until then the
   application uses `div` without a role.
-- **Headless scripts and network requests (open).** `varta dev --view-script`
+- **Headless scripts and network requests.** `varta dev --view-script`
   runs on virtual time ([contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx)):
   inputs wait for every runnable task, `{"input":"wait","ms":N}` fires delayed
-  timers, and network requests in flight are not waited for. An explicit
-  bounded step that waits for completions (for example
-  `{"input":"wait","network":true,"ms":N}` on the wall clock) is open: it
-  mixes the wall clock into a virtual-time session, so a scripted network
-  session stays nondeterministic until a recorded or simulated network
+  timers, and network requests in flight are not waited for implicitly. The
+  explicit `{"input":"wait_network","ms":N}` step now drives native I/O under
+  a validated wall-clock bound while virtual timer time stays fixed. Timeout
+  terminates the session before later inputs. This is bounded real I/O, so a
+  network session stays nondeterministic until a recorded or simulated network
   host exists.
 - **Window (native targets).** Title, initial and minimum size, DPI handled by the
   renderer, the OS colour scheme, system copy/paste shortcuts.
@@ -2629,9 +2954,15 @@ the same subset the browser maps one to one onto the DOM.
 
 Accepted stack: winit, taffy, parley/fontique, vello with a CPU fallback,
 AccessKit and resvg; each dependency is justified and pinned exactly (`=`) when it
-is adopted. Feasibility note: none of these crates is in `Cargo.lock` or in the
-local Cargo registry cache today, and none has been added; licenses above are as
-published by the projects and must be re-checked for the pinned versions.
+is adopted. `varta-view` now pins Taffy 0.15.1 (MIT) for an experimental,
+bounded box-only layout API and Parley 0.11.1 (Apache-2.0 OR MIT) for explicit-font
+text measurement. The CPU raster experiment also pins `tiny-skia = 0.11.4`
+(BSD-3-Clause), with default features disabled;
+it supplies a portable software fallback without a system GPU or PNG codec.
+The experimental desktop preview additionally pins `winit = 0.30.12`
+(Apache-2.0) and `softbuffer = 0.4.6` (MIT OR Apache-2.0) for native windows
+and CPU frame presentation. The remaining native renderer dependencies still
+need adoption and license checks.
 
 Process model: one native process. The renderer owns the main thread (required by
 `winit` on macOS) and the window; Wasmtime runs the guest on a worker thread with
@@ -2738,7 +3069,7 @@ normal artifact validation before replacing itself.
 | Memory isolation | **Strong** | Wasm linear memory; module-declared maximum checked before instantiation |
 | Capabilities and host calls | **Strong only while the generated host is intact** | Any other script in the page's realm (XSS, extensions, third-party scripts) shares trust and could call imports or read guest memory. Mitigate: the guest runs in a dedicated Worker created from the bundle, a strict CSP, Subresource Integrity on the loader, Trusted Types, no other scripts. The origin's own permissions are an outer ceiling the host cannot widen |
 | Deadline | **Coarse** | `Worker.terminate()` kills the whole instance; no per-turn graceful interruption. On the main thread there is none (development only) |
-| Fuel | **Through a deterministic metering transform** (accepted) | The browser packaging step applies a deterministic metering transform to the same validated Wasm: a fuel counter decremented at function entries and loop headers, trapping at zero. Native builds keep Wasmtime fuel, so browser fuel units are defined by the transform, not equal to Wasmtime's. Published gas-metering instrumentations report overheads on the order of 5–15 % time and a few percent size; to measure for Varta |
+| Fuel | **Partial; prototype not conforming** | The initial console bundle meters guest and logging work, with native/Node/Chrome observations and real Worker limit tests. Complete host/CLI integration and effect-wide fair charging remain open; the prototype remains unmetered. Native keeps Wasmtime fuel; broader cross-host equivalence and overhead measurement remain open |
 | Host calls, output, patch budgets | Strong | Counted by the host |
 | Stack | Engine-defined | Recursion depth differs from Wasmtime; conformance must not depend on exact overflow depth |
 
@@ -2768,15 +3099,13 @@ origin-private storage capability could map to OPFS); `net.listen` → denied;
 
 #### Structured entry points
 
-Tool and HTTP contracts are rejected in every binary64 profile today. Design: a
-**v2 adapter ABI** shared by tools, HTTP, application events and view events: the
-host passes one bounded JSON (or binary record) argument and receives one result,
-through a compiler-generated guest adapter that runs the profile's own checked JSON
-parsing, calls the typed handler and serializes the result, exactly as the HTTP
-adapter does in the i32 profile. Schemas come from the checked TS types (records,
-optional fields, unions, arrays, binary64, UTF-16 strings). Async handlers return a
-promise; the adapter's execution runs the request-scoped checkpoint. Tool ABI v1 and
-HTTP v1 keep their meaning; v2 is a new contract version under a new profile.
+V38 implements native HTTP contract v2 with checked UTF-16/binary64 adapters,
+fresh request stores and synchronous or asynchronous handlers; see the
+[native server contract](architecture.md#http-contract-v2--native-server).
+Earlier HTTP v1 and tool v1 retain their profile meanings. Typed binary64 tool
+adapters and a common adapter ABI across tools, application/view events remain
+planned. The prototype browser host rejects HTTP serving; official browser
+admission/effect coverage remains part of the platform batch.
 
 #### Storage, binary data and crypto
 
@@ -2814,10 +3143,13 @@ part lands in its profile and in [architecture.md](architecture.md#capabilities-
 until then this is the agreed target. Part 1 has landed in v37, and parts 2 to
 6 for headless and embedder hosts in v38
 ([broker v1](architecture.md#permission-broker-v1-turn_budgets): states, `query`, user-gesture `request`, `required`/`purpose`, decisions keyed by
-the artifact hash, the prompt seam, audit log); prompt UI per target
-(P9, P10b) and "allow for this session" remain. V1 narrows two points: a
+the artifact hash, the prompt seam, audit log). Browser prompt UI and the async
+answer path now have focused acceptance below; native target UI (P10b), broader P9
+effects and "allow for this session" remain. V1 narrows two points: a
 permission in `prompt` state is not asked at its first use (only through
-`request()`), and the headless decision file is the only persistent store.
+`request()`), and persistence is supplied by the host. Native hosts use decision
+files; the generated browser host now offers an explicit origin-local IndexedDB
+store, acknowledged live revocation and host-owned consent (focused evidence below).
 Requirement from the owner: permissions are
 handled professionally. A denial is never a fatal error, because a user will
 later be able to confirm a permission at the moment it is needed (a consent
@@ -2983,11 +3315,36 @@ types; applications on Varta model that with explicit index signatures and `stri
 discriminants. The existing strict contract in [architecture.md](architecture.md)
 already describes this behaviour; no new profile is needed for it.
 
+#### Platform implementation checkpoint
+
+Working tree after `abea3ac`, updated 2026-11-02 after the consolidated 2946-test
+gate: “implemented” below means the stated subset;
+full acceptance in the following design table remains required.
+
+| Increment | Delivered | Still needed for acceptance |
+| --- | --- | --- |
+| P0 | Published embedding contract, generated registry tables and drift checks | Maintain parity as boundaries change |
+| P1 | Prototype host: 117 shared Node cases; generated registry and official checked browser Worker/loader, metering parity observations | Official Node conformance selector, remaining entry-point surfaces and full browser matrix |
+| P2 | V38 effects-only host boundary: pure intrinsics, JSON and formatted values linked into guest Wasm | Browser/Pi cold start and module-size measurements on the final artifact |
+| P3 | Current-target source-free packaging | Cross-target launcher selection, Windows CI and real Pi 5 delivery |
+| P4 | Tool ABI v1 and v38 sync/async HTTP v2, with source-free acceptance | Structured tool entry-point v2 and Node parity |
+| P5 | Native instances/budgets/broker/profiling; checked browser instances, consent/revocation and named host turns | Wider cross-host ordering, target UI budget measurements and sustained shutdown/resource acceptance |
+| P6 | Native async HTTP(S), streaming/bytes/abort and bounded scripted waits; checked v38 browser Fetch adapter | Final native/browser pilot parity and recorded/simulated network replay |
+| P7 | L0 validation, headless tree/cascade/accessibility and official transactional browser DOM/event adapters | Headless geometry and cross-renderer layout/accessibility acceptance |
+| P8 | Compiler TSX/templates and example-local reactive L1/keyed lists | Reusable package delivery and complete cross-host example acceptance |
+| P9 | Official bundles/CSP/SRI/metering, views/resources/consent/events and local dev/reload covered by the consolidated gate; scoped Chrome/Firefox/WebKit matrix passes | Portable matrix driver, wider controls/effects/layout, three-browser pilot acceptance and measured target costs |
+| P10–P10d | Accepted native renderer/shell/bundle/startup design | Native implementation, signed/trusted delivery policy as applicable, macOS/Pi session, IME/accessibility and measurements |
+| P11 | Accepted later hooks-subset direction | Specification and implementation after L1 acceptance |
+| P12 | Native KV plus selected binary/encoding/Date/crypto APIs | KV async/watch/queues, wider values, remaining binary/crypto/Intl providers and cross-host parity |
+| Svelte | Deferred design direction | Only after P8 is stable |
+
 #### Increments and acceptance
 
-Each increment is a separate versioned contract with positive, negative and
-resource tests, Wasmtime validation and, where a JS host exists, the same cases
-under Node. Order (P1–P12):
+The following table preserves the accepted increment scope and exit criteria;
+its ordering is not a list of wholly unimplemented tasks. Current delivery is
+tracked in the checkpoint above and [next batches](#next-delivery-batches). Every
+increment keeps positive, negative and resource tests, Wasmtime validation and,
+where a JS host exists, differential cases under Node:
 
 | # | Increment | Acceptance | CORE | Pilot |
 | --- | --- | --- | --- | --- |
@@ -2996,7 +3353,7 @@ under Node. Order (P1–P12):
 | P2 | Thin host: Rust intrinsics linked into the guest under a new profile | Only the intrinsics an application uses are linked; JSON/Headers/value programs run identically in Node and Wasmtime; `app.wasm` growth, fuel deltas and cold start in the browser and on the Pi 5 recorded | 01, 10, 13, 16 | M1–M4 programs |
 | P3 | Cross-target native packaging (`--target`, offline launcher metadata, musl aarch64) | Same artifact runs on a real Pi 5 (16 KiB pages) and on macOS/Linux; Windows CI | 14 | — |
 | P4 | Structured entry points v2 (binary64/UTF-16 tools and HTTP) | A uarp-sdk-shaped typed tool with records/unions runs in native and Node hosts | 10, 13 | M2–M3 |
-| P5 | Application lifecycle: long-lived instance, event turns, per-turn budgets, timers delivered as tasks; [permission broker](#permission-model), states and `query` | Timer and event ordering tests against Node logs; trap kills the instance without automatic restart; per-turn budget values set from measurements. **Runtime half implemented under v38 (`turn_budgets()`)**; pending: Node-log ordering cases for host events, per-turn UI values from target measurements, per-function fuel profiling | 07, 08, 09, 17 | M4–M5 (timers, backoff) |
+| P5 | Application lifecycle: long-lived instance, event turns, per-turn budgets, timers delivered as tasks; [permission broker](#permission-model), states and `query` | Timer and event ordering tests against Node logs; trap kills the instance without automatic restart; per-turn budget values set from measurements. **Runtime half implemented under v38 (`turn_budgets()`)**; pending: cross-host ordering cases for host events and per-turn UI values from target measurements; per-function fuel profiling is implemented | 07, 08, 09, 17 | M4–M5 (timers, backoff) |
 | P6 | Async `fetch` (`net.request`, replacing `net.get`/`net.fetch` in the new profile), streaming bodies, `AbortSignal`, HTTPS through `rustls` | uarp-sdk `transport.ts`/`sse.ts` paths against a local test server, native and browser | 09, 10, 11 | M5–M6 |
 | P7 | L0 view protocol + headless renderer (tree + accessibility snapshot) | Patch/event conformance cases; malformed patches fail closed | 10, 15, 18 | — |
 | P8 | L1 reactive core package + `tsx` + template compilation (B) | TSX counter/list/form examples produce identical headless snapshots on every host | 02, 03, 18 | — |
@@ -3010,11 +3367,11 @@ under Node. Order (P1–P12):
 | P12 | KV storage, binary/encoding, crypto, Date/Intl provider (KV before P10d: the console keeps its API key there) | Per-capability denial and budget tests | 05, 06, 10, 11 | M4 |
 | — | `.svelte` front-end (D) | Last; only after P8 is stable | 18 | — |
 
-Interleaving with the pilot ladder: M1–M4 language work (the v36 streams) proceeds
-unchanged, P0–P4 have no language dependency and can run in parallel; P5–P6 are
-the runtime half of K4.4 step 5 and close M5–M6 together with async generators;
-P7–P10d turn the pilot into the cross-target acceptance scenario at M7: the UARP
-console below.
+Current interleaving: M1–M6 source admission and the native async/application
+foundations are integrated. Finish their runtime/package acceptance alongside
+P1/P9 browser delivery and P3/P10 native targets. M7 remains open until the SDK
+own tests and the same-artifact cross-target console session pass; it is not
+closed by a per-file compile probe.
 
 ##### UARP console (cross-target acceptance application)
 
@@ -3251,8 +3608,8 @@ project has been added.
   Tool invocation/inspection also work source-free through the independent launcher.
 
 This completes the first core HTTP/distribution acceptance path, not general
-JS/TS compatibility. The user's current priority remains the core; no separate
-application project has been added.
+JS/TS compatibility. The core remains the priority; the UARP console is a separate
+acceptance example and no engine crate depends on its domain types.
 ### K4 — ECMAScript value profile and language expansion
 #### K4.1 — Profile negotiation and migration contract (implemented)
 
@@ -3316,6 +3673,11 @@ the current closed-record/fixed-array restrictions are not the final JS model.
 The property-order reference is
 [OrdinaryOwnPropertyKeys](https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryownpropertykeys).
 #### K4.2 — Value/ABI design and implementation (in progress)
+
+Current checkpoint: implemented value/ABI foundations extend through v38's
+layout 18 and linked intrinsics; remaining work is summarized in CORE-01/02/05/07.
+The following increment records describe each older profile at introduction;
+words such as “current limit” are scoped to that profile, not the newest v38.
 
 The first scalar increment is implemented as **`checked-f64-utf8-v1` / host ABI v2**.
 Project `languageProfile` and explicit compiler profile APIs select it for a whole
@@ -3465,11 +3827,9 @@ Tests cover numeric edge cases, mixed values, optional bounds, GC, all ten helpe
 dependencies, public APIs, source-free artifacts and permission/status preservation.
 No capability, import or representation changed; earlier profiles are unchanged.
 
-Next specify and implement wider dynamic values and external adapters. Broader
-shape unions, sparse collections, further array operations, prototype values and
-general coercion still need explicit semantics and layouts. Tool/HTTP publication
-in the newer profiles remains pending;
-no legacy field/schema/handler is reinterpreted.
+Subsequent profiles implemented broader shape unions, sparse collections and
+further array operations. General prototype values/coercion and newer structured
+Tool/HTTP adapters remain open; no legacy field/schema/handler is reinterpreted.
 The remaining rollout must satisfy these rules:
 
 1. Existing host ABI v1, structured-value v1/v2, Tool Contract v1 and HTTP v1 stay
@@ -3497,6 +3857,11 @@ After that increment, expand closures/errors, scheduling, standard APIs and
 module/package compatibility from the roadmap above. Application-state/MCP work
 remains deferred behind core capabilities; no application project is required.
 #### K4.3 — Wider language and asynchronous runtime (in progress)
+
+The v32–v38 language and async streams described below are integrated in `main`.
+Per-profile descriptions retain their historical admission limits; later
+profiles may extend them. Use the CORE ledger and current integration backlog
+for outstanding work rather than treating the old increment order as a queue.
 
 The first explicit guest-exception increment is implemented in
 **`checked-f64-utf16-v7` / host ABI v10 / value ABI v9 / schema v9**. Primitive
@@ -4096,25 +4461,25 @@ queue and handle lifetime design.
   and handle lifetime with bounded queues and correct retained roots.
 - Expand standard JSON/Web/binary APIs on that foundation. The initial synchronous
   HTTP handler profile is a delivery increment, not the final language/API ceiling.
-#### K4.4 — Suspension, scheduling and async (planned)
+<a id="k44--suspension-scheduling-and-async-planned"></a>
 
-Status: design agreed with the project author on 2026-10-28. Block 1 (step 1
-below) is implemented as a compiler-internal foundation and merged on the v32
-integration branch, where frames also carry v32 class and Error-class instances;
-its contract is in
-[architecture.md](architecture.md#suspension-foundation-k44-block-1). Runtime
-preflight and artifact validation admit its frame surface (frame heap kind,
-frame catalog version 2 and the `varta_resume` export) only under profile v33
-([runtime admission](architecture.md#runtime-admission-resumable_frames)); no
-host import or value tag changes. Step 2 (synchronous generators) is the first
-source producer of frames; generator frames are resumed only by guest code, and
-the v33 runtime still does not call the dispatcher. Steps 3–4 (promises and
-async functions) are implemented under v34, where the runtime scheduler is the
-dispatcher's first caller. Step 5's timers are implemented under v36
-(`timers`); its asynchronous I/O and step 6 are not implemented.
-Each increment still needs its own versioned contract in
-[architecture.md](architecture.md), positive/negative and resource tests and the
-normal gates before source admission.
+#### K4.4 — Suspension, scheduling and async (implemented foundation; expansion open)
+
+Current status (2026-11-01): all six foundation steps below are implemented
+within their checked subsets and integrated in `main`: v33 frames/generators,
+v34 jobs/async functions, v35 liveness/tagged promises, v36 timers/abort/async
+generators, v37 async HTTP(S)/streams and v38 application turns. Their contracts
+remain profile-specific. The design and initial per-step notes below preserve
+the original decisions; historical “Open” lists must be read against later
+profiles and the [current ledger](#core-completion-ledger).
+
+Remaining expansion includes structural thenable adoption (explicitly rejected
+since the review fix), top-level await and general iterable/protocol forms,
+async inbound HTTP integration, deterministic replay and complete cross-host
+shutdown/cancellation acceptance. Outbound async I/O, abort listeners, Promise
+combinators/withResolvers and liveness frames are already implemented; they are
+not future foundation tasks. [Next batches](#next-delivery-batches) and the
+[integration backlog](#current-integration-backlog) own the current queue.
 
 **Profile v33 (in development).** Runtime admission of block 1 and step 2
 share profile `checked-f64-utf16-v33`, registered with its own host ABI so
@@ -4582,8 +4947,8 @@ inside the Wasm module. No remote listener is enabled by this local milestone.
   only after the required core mechanisms have been implemented.
 
 Desktop/server/robot support must not be claimed merely because Wasm and MCP run
-on a development host. Selecting or implementing a reference application is not
-part of current core development.
+on a development host. The selected UARP console is the separate product example
+used for acceptance; it does not add domain models to the engine.
 ### K5 — Modules, standard system APIs and package compatibility
 
 - Grow ES module resolution/loading under explicit host authority and resource
@@ -4607,8 +4972,9 @@ part of current core development.
   contracts. Full JS/npm compatibility remains a separate compatibility effort.
 - Preserve tracing for strings, records and arrays as richer value graphs are
   introduced; new value kinds need explicit collector and ownership contracts.
-- Async/events require cancellation, task/handle lifetime, retained roots, scheduling
-  and queue budgets before exposing promises or long-running guest operations.
+- Preserve the implemented async/event cancellation, task/handle lifetimes, retained
+  roots and queue/turn budgets as new long-running operations are admitted; expand
+  sustained lifetime and cross-host validation.
 - Continue model/differential tests, fuzzing and performance measurements of the
   compiler, collector, boundary schemas and artifact parser throughout these phases.
 
@@ -4623,8 +4989,9 @@ Choose and test exact compatibility targets when implementing C4; the catalog
 and application core remain independent of transport/protocol revisions.
 ## Later milestones
 
-- HTTPS deployment and asynchronous execution follow the C5 and supporting-work
-  contracts above; neither is supplied by the initial synchronous HTTP handler profile.
+- Outbound HTTPS and async execution are implemented in their checked profiles.
+  Production inbound HTTPS deployment and async server integration remain later
+  work; the initial synchronous HTTP handler profile does not supply them.
 - Authenticated AOT: define who trusts the signer, which bytes are authenticated,
   and how engine version, target and CPU requirements are pinned. Never restore
   arbitrary native deserialization behind a filename or format marker.
@@ -4633,3 +5000,1153 @@ and application core remain independent of transport/protocol revisions.
 - Production: fuzz schemas/containers/Wasm boundaries, expand platform coverage,
   isolate compilation and blocking host operations where hard OS-level resource
   isolation is required, and obtain an independent security review.
+
+### Browser timer increment — focused verification 2026-11-02
+
+The generated Worker now supports native-compatible timer queues, cancellation,
+intervals, unreferenced timers, V2 recoverable denial and v38 turn budget renewal.
+A separate runtime boolean permission ceiling intersects exact package requests;
+empty/false/unrelated grants deny. Optional permissions without a decision deny
+as in native headless operation. No host policy is embedded by build. Stored
+permission decisions, prompts, network/view adapters, browser dev and other
+browser engines remain open. The historical full gate does not cover this work.
+
+Focused verification passes: 13 Node scheduler/reader/timer tests, five generated
+registry/layout tests, 18 native timer tests, 11 browser project tests and seven
+CLI distribution tests. The expanded real-Chrome probe matches v36/v37/v38
+native timer observations, long callback errors and runtime permission denial;
+local evidence: `/tmp/varta-browser-timer-chrome-v3.log`, generated fixtures:
+`target/browser-timers-probe-20261102-v3`. Common/project/CLI all-target Clippy is
+checked at this boundary. Rebuilding linked intrinsics after the std-only common
+registry addition leaves Wasm bytes identical; only its source fingerprint changes.
+
+### Browser network increment — focused verification 2026-11-02
+
+The generated v38 Worker now integrates the bounded async network broker and
+Fetch transport with the Promise/timer loop. Exact package/runtime URL and method
+scopes precede deferred I/O; response-header visibility is intersected, empty
+ceilings deny, and optional requests deny headlessly. Network completion turns
+renew v38 fuel/call/job budgets, result buffers pay byte fuel, and cancellation
+replaces pending results and drops late completions. Deferred work/events are
+bounded by request slots. Original portable Wasm remains unchanged.
+
+Real Chrome cross-origin loopback acceptance matches native logs and exact usage
+for GET/POST, byte bodies, custom-header preflight, absent grants, pre-abort and
+active timer-driven cancellation. Runtime ceilings cover empty, method-mismatched,
+valid and malformed scopes. Browser cookies are omitted; a denied-target counter
+stays zero for refused requests and opaque redirects. Local evidence:
+`/tmp/varta-browser-network-chrome-v5.log`; fixtures:
+`target/browser-network-probe-20261102-v5`. Node scheduler/reader/timer/network/
+transport tests pass 26 cases; common registry tests pass five, project browser
+checks pass 13 and CLI browser distribution checks pass eight. Affected
+common/project/CLI all-target Clippy passes. These are focused results outside the
+historical native-server full gate.
+
+Transport boundaries remain explicit: CORS/exposed headers, manual opaque
+redirect failures, and rejection of exposed non-identity response encodings.
+Hidden wire headers/counts and compressed wire-byte equivalence cannot be proved
+through Fetch; v37 arrival-order network heads remain a build gap. A trusted
+transport bridge needs a separate design if that full wire equivalence is
+required. Browser view delivery, stored permission decisions/prompts, browser dev,
+Firefox/WebKit, native GUI targets and release verification remain open.
+
+CSP generation also rejects URL-valid origins that are not representable host
+source tokens (quotes, directive punctuation, underscore and IPv6 literals)
+before output. Dedicated regressions exercise the actual package/bundle boundary;
+no raw origin may terminate the generated HTML attribute or add a CSP directive.
+
+### Browser view foundation — focused verification 2026-11-02
+
+Added an engine-owned structured view registry, strict batch codec, transactional
+model and private DOM adapter. Native and generated hosts now share tag-content
+rules and CSS composite grammars. The model covers every opcode, final id
+uniqueness, fields/radio state, listeners/filters, command arguments and atomic
+rollback. The DOM adapter preserves node identities, respects local edit counters,
+uses a closed shadow root/CSSOM, encodes events and rejects ambient asset URLs.
+This replaces reliance on the prototype's weaker validation for the official path;
+the prototype is not an engine dependency and remains independently unchanged.
+
+The public native oracle emits 36 batch sequences, 2294 CSS value observations and
+all 11 event kinds. Browser model acceptance, structural state/rollback, property
+validation and event bytes agree for that corpus. These are finite observations,
+not a claim of complete layout or all-input equivalence. The Node browser suite
+passes 34 tests with the oracle enabled. Real Chrome verifies atomic rejection,
+UTF-16, CSSOM under CSP, event encoding, stale/fresh input updates, stable DOM
+identities and rejection of unpackaged resources; screenshot inspected locally:
+`target/browser-view-20261102-v2.png`. Evidence:
+`/tmp/varta-browser-view-node-final-v3.log`, `/tmp/varta-browser-view-chrome-v2.log`.
+Native view tests pass 18 cases. Common registry drift checks and affected Clippy
+are checked at this boundary; the historical full gate still does not cover the
+new browser code.
+
+**At the foundation checkpoint, before session integration below:** connect the shared model
+to `view_commit` in the Worker, preserve one commit per turn, bind validated bytes
+and events over bounded transport, support long-lived session/turn deadlines and
+cancellation, verify trusted gestures and clipboard/link decisions, complete
+resource packaging, and extend control/accessibility/layout acceptance. Keep
+`view_commit` unsupported until the connection is verified (now covered by the
+session increment below); resource packaging and broader acceptance remain open. Static/private DOM success does not close P9 or native GUI work.
+
+### Browser view sessions — focused verification 2026-11-02
+
+The generated bundle now admits v38 `view_commit`. Worker validation precedes the
+next guest effect, one turn commits once, and one bounded batch awaits parent
+acknowledgement before the next task. A parent queue bounds/coalesces pending view
+records with one event in transport. Event bytes reach only the synthesized closed
+export; no DOM callback reenters Wasm. Native due/arrival ordering and v38 turn
+renewal extend across UI, Promise jobs, timers and network work.
+
+Public `mount` supplies `ready`/`finished`/`close`; idle waits have no active-turn
+watchdog, new tasks renew it, transfers retain their operation deadline, and close
+cancels the Worker/I/O and freezes the checked UI. Container ownership is released
+for a fresh remount. Bounded `run` still renders without event delivery. Clipboard
+and links intersect exact package/runtime ceilings and trusted gestures; prompts
+without a seam deny. Anchors remain inert, speculative external targets never
+enter hrefs, and frozen views retain navigation guards. API imports are passive;
+only the generated matching bootstrap marker starts a package automatically. Parent
+event dispatch waits until the DOM callback completes, including brokered defaults,
+before sending a queued record to the Worker.
+
+Chrome acceptance matches native logs and exact usage for initial rendering,
+click/input state, Promise/timer updates and denied clipboard/link results.
+Additional checks cover valid platform calls through test-only spies (no OS
+clipboard write or external page), invalid/second commits before later logging,
+close/remount, idle versus callback deadlines, passive imports and frozen-view
+navigation prevention. Native exact-URL tests also pin empty query/fragment
+delimiters; browser policy suffix matching now preserves them.
+
+Evidence: `/tmp/varta-browser-view-session-chrome-final-v2.log`, fixtures
+`target/browser-view-session-20261102-v7`. The shared console/timer/network/integrity
+Chrome regression passes separately (`/tmp/varta-browser-view-session-regression.log`),
+as does the private DOM probe (screenshot inspected). Oracle-enabled Node tests pass 43;
+a subsequent deterministic transport test also covers deadlines before headers and
+during body reads, plus timer cleanup on completion/cancel. Common registry
+checks five, project browser checks 13, CLI distribution checks nine, and the new
+native scope regression one. Affected all-target Clippy passes. These are scoped
+results; no new full-workspace, Firefox/WebKit, Linux/Windows/Pi or release pass is
+claimed. At that checkpoint, packaged image/fonts remained open; PNG delivery is
+implemented in the following increment. Remaining: fonts, stored permission decisions/prompt/audit
+integration, broader control/accessibility/layout acceptance, browser dev and
+cross-browser/native targets. The complete goal remains open.
+
+
+### Browser packaged PNG inventory — focused verification 2026-11-02
+
+V38 browser builds accept an explicit `browser.resources` mapping from logical
+view names to project-relative files. The shared project loader now exposes bounded
+binary reads through the same pinned no-follow descriptors as module/text inputs.
+Names follow the common view grammar. Package count, individual/aggregate bytes,
+name lengths, PNG dimensions and chunks are bounded; animated PNG and duplicate
+headers fail admission. All validation precedes output-directory creation.
+
+`BrowserResource::png` and `bundle_with_resources` also expose this path to trusted
+embedders. The bundle retains the original Wasm/manifest bytes, emits generated
+flat resource file names and pins each resource's length/SHA-256 in the loader.
+Every resource is verified and completely decoded before a renderer or Worker is
+created. The Worker permits only package inventory names, while the DOM receives
+owned Blob URLs under Blob-only image CSP. Temporary bitmaps close immediately;
+resource URLs revoke on every terminal path. Logical `src` names never reach Fetch.
+
+Chrome evidence: `/tmp/varta-browser-image-chrome-v2.log`, fixtures
+`target/browser-image-resources-20261102-v2`. It checks real decoded PNG dimensions,
+native logs and exact accounting, resource/Worker URL cleanup, digest/length
+substitutions, invalid compressed contents before the first guest log, and an
+unpackaged resource failing before later guest effects. Session regression passes
+(`/tmp/varta-browser-image-view-regression.log`); the shared console/timer/network/
+CORS/permission/integrity regression passes separately
+(`/tmp/varta-browser-image-network-regression.log`). Project tests pass 28, CLI
+browser distribution tests 11, and existing text-resource regressions three. The
+follow-up limit check passes (`/tmp/varta-browser-image-resource-limits.log`), as
+does the legacy-profile CLI regression (`/tmp/varta-browser-image-cli-v2.log`). Affected
+all-target Clippy passes (`/tmp/varta-browser-image-clippy.log`). These remain scoped
+results; no new full-workspace or cross-platform release gate is claimed.
+
+Next: packaged fonts with per-session family isolation/cleanup, permission
+prompt/decision/audit integration and broader controls/layout/accessibility. Other
+image formats, browser dev and Firefox/WebKit remain open. Native GUI and platform
+acceptance/release work still belong to the full goal.
+
+
+### Browser packaged font sessions — focused verification 2026-11-02
+
+`browser.fonts` maps logical families to pinned project-relative font files;
+`BrowserResource::font` supplies the equivalent checked-byte API. The existing
+resource inventory now carries PNG and TrueType/OpenType/WOFF/WOFF2 descriptors,
+with shared raw/decoded-size limits. Font containers reject invalid table bounds,
+duplicates/overlap, collections and oversized decoded estimates. FontFace fully
+sanitizes verified binary bytes before registration, DOM creation or guest code.
+PNG dimensions also contribute their RGBA bytes to the decoded inventory bound.
+
+Each session owns private registered families. Checked inline font-family values,
+stylesheet/media declarations and quoted/case-folded names resolve to that session.
+Font-context copies of custom properties preserve nested variables/fallbacks while
+leaving original color/layout values unchanged. Unknown named fonts fall back;
+they cannot reach ambient host/session families. Namespace memory does not grow
+with changing unknown family or custom-property names across turns. All terminal
+paths unregister faces, including a load that completes after abort/deadline.
+Retained inert DOM may fall back after fonts are released. Normal-face registration
+is implemented; richer face collections and other image formats remain open.
+
+Evidence: `/tmp/varta-browser-fonts-chrome-v3.log`, fixtures
+`target/browser-fonts-20261102-v2`. All four font formats decode and render original
+known-advance glyphs; native logs/accounting match. Tests compare inline, quoted,
+variable and media paths, two sessions with different font bytes under `Brand`,
+and an ambient host `Brand` face. They verify isolation, unchanged color variables,
+terminal/late-load cleanup, content tampering and malformed fonts before the first
+guest log, and font-as-image rejection. Fixture outlines are repository-original,
+with a deterministic optional fontTools generator; tests need no font installation.
+
+Oracle-enabled Node tests pass 46, focused project browser tests 17, and CLI browser
+checks 12, including font-family validation and no-follow paths. PNG and view
+session Chrome regressions also pass (`/tmp/varta-browser-fonts-images-regression.log`
+and `/tmp/varta-browser-fonts-view-regression.log`). These are focused results.
+The consolidated browser-core gate now passes **2919 tests, 0 failures, 16 ignored**,
+all eight commands successful, source unchanged during verification. Evidence:
+`target/verification/20261102-031538-rh756ebf/report.json`; source SHA-256
+`17809511c875a150a6695cf3c6c1c0765174bae173c931b935308ba2ee632dbe`.
+Conformance remains 123/127, four known unsupported, zero regressions and eight
+untested feature rows. Immediately afterward only the checkpoint documentation changed; the permission-
+broker work below is a later increment outside that full result.
+This supersedes the earlier native-server gate for the current Rust implementation;
+Chrome acceptance still has the separate evidence above, and other browser/OS
+engines remain unverified.
+Remaining full-goal work includes permission decisions/prompts/audits, browser dev
+and broader controls/layout/accessibility, Firefox/WebKit, native platforms and
+release acceptance.
+
+
+### Browser permission broker — headless answer and audit increment 2026-11-02
+
+Runtime `decisions` use the native DecisionFile schema, are copied/validated before
+artifact fetch and selected only by original Wasm identity. Required stored denials
+fail before Worker creation; optional grants stay denied without a decision; a
+stored allow remains inside package/host resource scope. Query/request use existing
+v38 imports/preludes and bounded one-shot sources, with exact fair fuel and no
+ordinary host-call counts. Unsupported resource kinds and named event delivery
+remain explicit admission gaps. No decisions are embedded by builds.
+
+Parent/Worker broker states include additional exposed clipboard restrictions and
+live updates; startup updates coalesce before guest entry and listeners clean up.
+Owned bounded audit/decision reports and synchronous observers cover initial,
+operation and platform-state decisions. Every turn now has a checked parent
+acknowledgement, including R1 without renewing its root deadline, bounding queued
+turn/audit traffic. Invalid startup/ack messages stop before later guest effects.
+Active transfers are driven before overdue timers. Event/network watchers share
+the timer-serial ownership guard. Native source ids now stop at the shared exact-f64
+limit rather than rounding/reusing ids.
+
+Focused evidence: oracle-enabled Node tests 59; common browser registry tests five;
+project browser tests 17; CLI permission distribution check one; native source-id
+exhaustion one; generated embedding limits one. Real Chrome permission/native
+accounting/audit/platform probes and the view/font/network regressions pass against
+`target/browser-permissions-final-20261102`. Logs:
+`/tmp/varta-browser-permissions-final.log`,
+`/tmp/varta-browser-permissions-view-final.log`,
+`/tmp/varta-browser-permissions-fonts-final.log`,
+`/tmp/varta-browser-permissions-network-regression.log`.
+The lifecycle probes independently check pre-entry faults, early platform updates,
+checkpoint backpressure and transfer progress before overdue intervals. Intrinsic
+fingerprint remains current; no intrinsic binary rebuild is needed. The prototype
+contract receives the new source-id bound from the published embedding table.
+These are scoped results; consolidated Clippy/full-workspace verification remains
+at the end of this open permission batch. The prior full gate (2919/0, 16 ignored) covers the preceding
+browser-core batch, not these new changes. Next in this open permission batch:
+async prompt answers between turns and host-owned prompt UI. Durable per-identity
+choices and revocation have since landed in the following increment. The full
+browser/native/release goal remains open.
+
+### Browser permissions — durable choices and revocation increment 2026-11-02
+
+The generated loader exports `createDecisionStore`; an explicit runtime
+`decisionStore` replaces `decisions`, never the host ceiling. Real IndexedDB
+read/write transactions preserve other artifacts/capabilities under concurrent
+updates. Immutable snapshots use the native file schema and bounds. Corrupt,
+unavailable, aborted or full storage fails closed without evicting choices;
+connections close, and explicit whole-store clearing can recover corruption.
+Nothing opens storage automatically or embeds decisions at build time.
+
+`await app.revoke(id)` withholds new page/Worker operations and waits for a checked
+Worker acknowledgement plus persistence, when configured. Requested required
+grants can be revoked; their stored denial prevents the next startup. In-flight
+authorized operations continue. Concurrent same-capability controls coalesce,
+unknown requests return false, malformed/replayed controls fail, and terminal
+cleanup rejects pending controls. Other live sessions do not auto-synchronize.
+Worker audit observations preserve the original authorization decision even if
+page revocation/platform changes precede receipt; observations never grant page
+authority.
+
+Focused evidence: 66 oracle-enabled Node tests and 17 project browser tests pass.
+Real Chrome storage/revocation, native headless permissions/accounting, view session
+and console/network regressions pass against
+`target/browser-permission-storage-final-20261102`. Logs:
+`/tmp/varta-browser-permission-storage-node-final.log`,
+`/tmp/varta-browser-permission-storage-project-final.log`,
+`/tmp/varta-browser-permission-storage-chrome-final.log`,
+`/tmp/varta-browser-permission-storage-headless-final.log`,
+`/tmp/varta-browser-permission-storage-view-final.log`,
+`/tmp/varta-browser-permission-storage-network-final.log`.
+Tests cover atomic concurrent updates, capacity/abort/corruption recovery and
+connection cleanup; reload persistence, live clipboard denial, coalesced controls,
+unknown/replayed/malformed controls, original transfer continuation and fatal
+storage/observer failures. Formatting, diff whitespace and documentation links
+also pass. These are focused results, part of the open permission batch outside
+the preceding 2919-test full gate. The next consent/task work at this checkpoint
+has since landed in the following increment. Broader browser/native/release
+acceptance remains open.
+
+The layout path now prunes `display:none` subtrees before interpreting their
+contents, while still emitting zero rectangles and enforcing tree limits. Both
+box-only and text-enabled paths accept a hidden button containing otherwise
+unsupported text; revealing it fails closed. The hidden fixture matches Firefox,
+WebKit and Chrome (`/tmp/varta-hidden-content-matrix.log`).
+
+The box layout also supports automatic and negative pixel/percentage margins,
+explicit `auto` sizing and `none` maximums. Centering, a negative percentage
+margin, and constrained auto sizing fixtures match Firefox, WebKit and Chrome
+(`/tmp/varta-auto-sizing-margin-matrix.log`); broader margin-collapsing and
+intrinsic-sizing acceptance remains open.
+
+The experimental box path now maps static, relative, absolute and fixed
+positioning and signed pixel/percentage insets. Geometry extraction tracks the
+positioned containing ancestor for out-of-flow boxes and the viewport for fixed
+boxes. Nested containing-block, fixed viewport, relative-flow and percentage
+offset fixtures match Firefox, WebKit and Chrome
+(`/tmp/varta-positioned-layout-final.log`). Transform-created containing blocks,
+scrolling and broader positioning acceptance remain open.
+
+The experimental box path now maps CSS grid columns/rows and numeric line/span
+placement through Taffy. It bounds explicit tracks, children, numeric values and
+aggregate grid work. Fixtures for `1fr 128px`, explicit placement and
+`repeat(2, minmax(0, 1fr))` agree with Firefox, WebKit and Chrome
+(`/tmp/varta-grid-layout-matrix.log`). This is not full Grid or UARP geometry
+acceptance; direct grid text, other controls and broad combinations remain open.
+
+Isolated text can now be measured directly as a grid item. The layout path also
+inherits supported `font-size` and `line-height` values: unitless line height
+scales with the descendant font size, while percentages resolve before
+inheritance. Grid text and font inheritance fixtures match Firefox, WebKit and
+Chrome (`/tmp/varta-font-inheritance-matrix.log`). Full inline formatting, font
+selection/fallback and native rendering remain open.
+
+The experimental layout no longer rejects paint-only colors, outlines, opacity,
+border radius, text decoration, cursor or stacking order, while it still rejects
+transforms. An inherited single named `font-family` is accepted when it matches
+the explicitly supplied font and rejected otherwise. Paint-only geometry and the
+matching-family fixture pass in Firefox, WebKit and Chrome
+(`/tmp/varta-paint-font-family-matrix.log`). Generic families, font lists, visual
+rendering and full UI acceptance remain open.
+
+The explicit-font path now accepts a CSS family list, skipping unavailable named
+families and requiring an explicit host alias for a generic family that precedes
+the supplied font. A named fallback fixture matches Firefox, WebKit and Chrome
+(`/tmp/varta-font-family-list-matrix.log`); an explicit `system-ui` alias is
+covered natively, but parity depends on the host mapping it to the same font on
+each target. Multiple fonts, glyph-level fallback and real platform font selection
+remain open.
+
+Text layout now inherits `white-space: normal`, `nowrap`, and a subset of
+`pre-wrap`. Tests cover collapsed spaces, preserved internal spaces/newlines,
+and nowrap's flex intrinsic width against Firefox, WebKit and Chrome
+(`/tmp/varta-white-space-preserved-matrix.log`). `pre-wrap` tab stops and
+leading/trailing line spaces remain unsupported; general text layout remains open.
+
+Text layout now supports inherited `overflow-wrap: normal/anywhere`, including
+its effect on flex minimum-content sizing. The normal, anywhere and nowrap
+interaction fixture matches Firefox, WebKit and Chrome
+(`/tmp/varta-overflow-wrap-final.log`). Full Unicode line breaking, mixed inline
+content and general text layout acceptance remain open.
+
+### Browser consent — owned UI and asynchronous answers 2026-11-02
+
+`mount({onPrompt})` asks required missing choices sequentially before Worker
+creation and permits optional `request()` only in a trusted gesture turn. The
+callback runs after the completed turn checkpoint. One prompt is allowed; three
+dismissals become a stored denial. A checked answer queues a one-shot host task
+ordered with view/network/due timer work, so guest resumption starts a new turn.
+Waiting spends no fuel or turn deadline, including first-run approval. Headless
+and bounded runs keep their existing policies and never prompt.
+
+`createPermissionPrompt()` provides the host modal outside the guest's closed
+view: operation, artifact identity and exact scope are host-owned descriptions,
+package purpose is quoted plain text, synthetic clicks cannot grant, Escape
+dismisses and abort cleans up. Initial Deny focus preserves the heading/scroll.
+Generated v38 view pages with requested grants install the modal and default
+IndexedDB store; capability-free views avoid storage. API imports remain passive.
+User choices and revocations serialize through persistence. Revocation wins over
+stale Allow answers, including approval delayed in a storage callback; audit
+observation precedes the save, and guest acknowledgement waits for it. New page
+effects and view delivery are withheld while consent remains pending.
+
+Focused checks: 71 oracle-enabled Node tests, five common registry tests, 17 project
+browser tests and 13 CLI browser checks pass. Native scripted-view oracles cover
+required/optional/parallel requests with Allow/Deny/Dismiss; successful sessions
+match real Chrome logs, exact fuel/calls/jobs/turns and audit rows. Required refusal
+is checked before guest entry. Chrome tests wait beyond a narrowed 700ms deadline
+before first-run approval and between turns, verify no guest progress, one open
+prompt, bounded dismissals, abort/revocation/storage races, quoted markup, synthetic
+input rejection, trusted approval/Escape, generated bootstrap and persisted choices
+across reload. The owned modal is visually inspected from
+`target/browser-consent-verified-20261102/permission-dialog.png`.
+
+Current fixtures: `target/browser-consent-verified-20261102`. Evidence:
+`/tmp/varta-browser-consent-node.log`, `/tmp/varta-browser-consent-common.log`,
+`/tmp/varta-browser-consent-project.log`, `/tmp/varta-browser-consent-cli.log`,
+`/tmp/varta-browser-consent-chrome-verified.log`,
+`/tmp/varta-browser-consent-network-verified.log`,
+`/tmp/varta-browser-consent-storage-regression.log`,
+`/tmp/varta-browser-consent-headless-regression.log`,
+`/tmp/varta-browser-consent-view-regression.log`,
+`/tmp/varta-browser-consent-font-regression.log`,
+`/tmp/varta-browser-consent-image-regression.log`.
+The packaged font/image regressions pass; formatting, diff whitespace,
+documentation links and the existing intrinsic fingerprint also pass.
+These remain focused checks outside the prior 2919-test full gate; the broader
+browser host batch remains open. Named event delivery has since landed below; next: per-activation
+any-HTTPS link consent, browser dev/controls and cross-engine acceptance, then
+native platform/release acceptance. Implicit first-use prompting, session-only
+choices and automatic synchronization of other live sessions remain explicit gaps.
+
+### Browser named host events — generic instances 2026-11-02
+
+V38 event-source open/close imports now have browser adapters. A trusted embedder
+can `mount()` a non-view application and call `app.deliver({source,record,gesture,
+coalesce})`. Inputs snapshot immediately; UTF-8 record bounds/validity and source
+generation are checked before delivery. Bounded checkpoint catalogs avoid per-import
+open/close message floods. Reopened names cannot receive stale messages. The Worker
+queues one task per record, coalesces only marked pending records preserving first
+arrival/gesture, drops coalescible overflow and fails other queue overflow. Closing
+the last source can finish a non-view instance; source waiting also keeps unref
+timers eligible. Trusted host gestures integrate with consent, while ordinary
+records cannot prompt. Queuing never calls guest code directly.
+
+Browser acknowledgements are asynchronous and separately bounded to the generated
+task count; their backpressure is documented independently from native-equivalent
+Worker queue behavior. Admission promises report queued/coalesced/dropped rather
+than callback completion. Missing/stale listeners and invalid records reject
+recoverably; listener faults, malformed controls and non-coalescible overflow end
+the instance and release pending promises.
+
+Focused evidence: 77 oracle-enabled Node tests, five common registry tests, 17
+project browser tests and 13 CLI browser checks pass. Real Chrome/native fixtures
+match outputs and exact fuel/calls/jobs/turns for FIFO/coalescing, reopen/discard,
+listener faults and host gesture consent. Browser probes also cover ordinary
+background consent, pre-ready ownership, UTF-8 preservation, recoverable rejection,
+transport saturation and terminal delivery cleanup. Fixtures:
+`target/browser-host-events-verified-20261102`. Logs:
+`/tmp/varta-browser-host-events-node-final.log`,
+`/tmp/varta-browser-host-events-common.log`,
+`/tmp/varta-browser-host-events-project.log`,
+`/tmp/varta-browser-host-events-cli.log`,
+`/tmp/varta-browser-host-events-chrome-final.log`,
+`/tmp/varta-browser-host-events-network-verified.log`,
+`/tmp/varta-browser-host-events-consent-regression.log`,
+`/tmp/varta-browser-host-events-view-regression.log`.
+Formatting, diff whitespace, documentation links and the existing intrinsic
+fingerprint also pass.
+These are focused results outside the prior 2919-test full gate. The broad host
+batch's per-activation link consent has since landed below; consolidated
+verification follows that boundary. Browser dev/controls, cross-engine/native
+platform and release acceptance still belong to the unchanged full goal.
+
+### Browser navigation — per-address consent 2026-11-02
+
+Every trusted any-HTTPS activation now obtains fresh full-URL consent when either
+the request or runtime ceiling uses the broad form. Explicit patterns on both
+sides retain their direct policy path. A matching pause/resume handshake parks the
+Worker after the current turn/checkpoint and before selecting another task; the
+prompt never runs alongside guest code or spends a turn budget waiting. Inputs and
+new page effects remain withheld during this request. The dialog says “Open once”
+and explains that the choice is not saved. The captured original URL is rechecked
+against current grant state and opened with `noopener,noreferrer`; no href reread
+can replace the approved address.
+
+Each per-address answer is audited and produces a nongesture command-result task.
+Allow/Deny/Dismiss never change stored grant decisions or optional-grant dismissal
+counts. Revocation defeats stale Allow; overlap/headless/synthetic activation deny,
+abort/observer/protocol failures suppress late effects, and platform exceptions
+report refusal recoverably. Positive opening tests use spies, never OS windows;
+popup-blocker behavior/null handles and other browser engines remain separate
+platform acceptance.
+
+Focused evidence: 81 oracle-enabled Node tests pass. Chrome matches 15 native
+scripted-view scenarios for outputs, exact fuel/calls/jobs/turns and audit rows
+(wide/explicit requests, wide/explicit/empty ceilings, Allow/Deny/Dismiss), each
+with three activations. Extra checks cover uncharged human waits, owned full-URL
+display, stale approval, abort, observer/platform failure, headless/synthetic/overlap
+behavior and checked pause ordering without an extra turn. Fixtures:
+`target/browser-navigation-final-20261102`; logs include
+`/tmp/varta-browser-navigation-node.log`,
+`/tmp/varta-browser-navigation-chrome-final.log`,
+`/tmp/varta-browser-navigation-network-final.log`.
+The completed consent/event/navigation package now passes the consolidated full
+gate: **2921 passed, 0 failed, 16 ignored**, all eight commands successful and
+source unchanged during verification. Report:
+`target/verification/20261102-072941-39498ymp/report.json`; source SHA-256
+`52bcc1b91035af6a65a2d8688f43e22435df8e40c167ed0dff00618393dd19df`.
+Conformance remains 123/127 with four known unsupported, zero regressions and eight
+untested feature rows. This supersedes the earlier 2919-test browser-core checkpoint
+for current code. Chrome and 81 Node checks remain independent evidence. Only
+checkpoint documentation changed afterward; no code/build input changed. Remaining work is
+browser dev/controls/effects, cross-engine acceptance, native targets and release
+acceptance under the original goal.
+
+### Local browser dev — immutable snapshot host 2026-11-02
+
+`varta dev --target browser` now prepares the normal checked artifact/resources,
+then serves an immutable memory-only bundle on loopback. The CLI prints the URL;
+`--listen` can choose another loopback port, Ctrl-C closes active connections,
+`--app` enables generic v38 application mode and `--budget-report` displays page
+usage. Native/default dev behavior remains. Native fuel profiling/view scripts
+are rejected in browser mode. No guest runs natively, execution roots are not
+bound, and no production output/source/policy files are served or written.
+
+Runtime `--policy` ceilings derive the private memory maximum and trusted bootstrap
+inputs while preserving original Wasm/manifest. `--decisions` validates the full
+file but exposes only the current artifact's records. The loader gets a new SRI/
+CSP hash and separate dev opt-in; a format mismatch fails closed. Opt-in rewriting
+cannot change a requested origin that contains the marker text. Connections,
+headers/buffers and lifetimes are bounded; foreign hosts/origins, non-origin-form
+targets, body-bearing requests, unsupported methods and non-bundle paths reject.
+The host reuses locked Hyper/http-body/Tokio dependencies; signal support is local
+tooling, with no version changes or core→tooling dependency reversal.
+
+Focused evidence: 25 project browser tests (including eight new dev tests), 16 CLI
+browser checks (three new dev checks), two dependency-boundary checks and 81
+oracle-enabled Node tests pass. Project all-target checking and targeted project/
+CLI Clippy pass. Real Chrome exercises actual CLI console/view/application startup,
+CSP/SRI, policy denial, a lower private memory ceiling, scoped decisions, trusted
+input and graceful stop. Fresh distribution console/network, view and consent
+regressions also pass after the bootstrap refactor. Logs:
+`/tmp/varta-browser-dev-project-verified-v2.log`,
+`/tmp/varta-browser-dev-cli-final.log`, `/tmp/varta-browser-dev-cli-latest.log`,
+`/tmp/varta-browser-dev-boundaries.log`, `/tmp/varta-browser-dev-node.log`,
+`/tmp/varta-browser-dev-all-targets.log`, `/tmp/varta-browser-dev-clippy.log`,
+`/tmp/varta-browser-dev-clippy-final.log`,
+`/tmp/varta-browser-dev-chrome-final.log`,
+`/tmp/varta-browser-dev-network-regression.log`,
+`/tmp/varta-browser-dev-view-regression.log`,
+`/tmp/varta-browser-dev-consent-regression.log`.
+
+Both distribution and dev reject HTTP service contracts before output/listening;
+those contracts require the native target rather than a main-only browser run.
+This first increment serves a fixed snapshot; source edits require restart.
+Live rebuild/reload, diagnostics and their session lifecycle remain next in the
+open dev batch. The 2921-test full gate above covers the preceding consent/event/
+navigation package and does not cover this newer code. Consolidated verification
+remains at the broader dev/reload boundary. Firefox/WebKit, wider effects/layout,
+native platforms and release acceptance remain in the unchanged full objective.
+
+### Browser dev rebuild foundation — bounded input observations 2026-11-02
+
+The shared source loader now has opt-in content/probe observations. Browser-dev
+preparation enables them across configuration, entry/module/text reads and the
+packaged resource loader, then rejects observed drift before listening. Ordinary
+compilation keeps observation disabled. Hashes come from the actual bounded bytes;
+rechecks reuse pinned no-follow dependency descriptors and each original read
+limit. Missing `.ts`/`.tsx` candidates and failed reads participate. The 4096-key
+journal never evicts; contradictory repeated reads invalidate the attempt even
+if bytes are restored. Unrelated files do not trigger a change. This is drift
+detection rather than a claim of an atomic project snapshot.
+
+Six focused tests cover equal-length changes, repeated-read conflicts, unrelated
+files, missing candidates/parents, failure recovery, oversized reads, explicit
+configuration/external entry inputs, no-follow replacements, retained directory
+anchors, overflow and the actual compile/text/resource pipeline. Live rebuild,
+revision-pinned file delivery, error diagnostics and page/session reload remain
+the next implementation; this foundation does not claim those are delivered.
+All 44 project library tests, all 25 CLI module integration tests and targeted
+project/CLI all-target strict Clippy pass. Formatting and whitespace checks pass.
+Evidence: `/tmp/varta-input-watch-focused-final.log`,
+`/tmp/varta-input-watch-project-final.log`,
+`/tmp/varta-input-watch-cli-modules.log`,
+`/tmp/varta-input-watch-clippy-final.log`. These are focused checks after the
+historical 2921-test gate; no full-goal or browser-dev acceptance is closed.
+
+### Browser dev revision-pinned delivery — 2026-11-02
+
+Development pages now pin their loader and every transitive verified fetch to a
+content-derived `/__varta/<revision>/` directory. The revision covers length-framed
+sorted file names/contents including runtime bootstrap inputs; rewriting the page
+preserves loader CSP/SRI and rejects opt-in format drift. Mutable root asset
+aliases are unavailable. The shared delivery catalog retains at most two distinct
+revisions, treats identical publication as a no-op, deduplicates reverts and
+never substitutes current bytes for expired/unknown paths. Already owned response
+bytes survive eviction. The root page selects the current catalog entry.
+
+Four new focused tests cover framing, every file's contribution, pinned page/
+asset routes, root alias/path rejection, retention, reverts, immutable owned
+responses, no fallback and format drift. Existing HTTP/runtime-input checks now
+exercise revision URLs; the CLI smoke and real Chrome probe discover the pinned
+directory from the page rather than relying on root aliases.
+All 12 browser-dev tests (four new catalog cases), three CLI dev checks and
+targeted all-target strict Clippy pass. Real Chrome passes console/view/application
+startup, CSP/SRI, policy/memory ceilings, scoped decisions and graceful stop
+through the revision routes. Formatting and whitespace checks pass.
+
+At that checkpoint the server published only the startup snapshot; the live
+rebuild increment below adds polling, publication and page/session reload.
+This increment supplied the delivery boundary needed for them. Evidence:
+`/tmp/varta-browser-revisions-tests.log`, `/tmp/varta-browser-revisions-cli.log`,
+`/tmp/varta-browser-revisions-clippy.log`,
+`/tmp/varta-browser-revisions-chrome.log`. These focused checks do not replace the
+historical full gate or close cross-browser/native/release acceptance.
+
+### Browser dev live rebuild/reload — 2026-11-02
+
+After an initially valid startup, one serialized off-thread worker checks actual
+input observations every 500ms and recompiles only changed inputs. Missing-file
+and failed-read observations survive compile failures; creating a missing module
+recovers without editing its importer. Invalid configuration retains the prior
+watch set. Changes are baselined before attempts, avoiding repeated compilation
+of unchanged errors without swallowing changes during failure. Runtime policy
+and decision snapshots remain captured at startup.
+
+Only stable admitted bundles publish into the bounded revision catalog. Errors
+retain the preceding working version and at most 16KiB of UTF-8-safe diagnostic
+text. `/__varta/status` uses the same host/origin/method/body admission and no-store
+delivery, with 304 disabled. The dev-only SRI-covered client polls serially with
+deadlines, a bounded response and validated revision/error fields. It renders
+diagnostics as text outside the guest view; a new revision aborts the old owned
+session before root navigation. Pagehide or unavailable/invalid status also stops
+the session. Unchanged rebuilt bytes clear errors without reload.
+
+Focused evidence: all 52 project library tests, 25 CLI module tests, three CLI dev
+checks and project/CLI strict all-target Clippy pass. All 85 oracle-enabled Node
+tests pass, including four dev-client tests. Actual Chrome proves missing-dependency/config
+recovery, real realm replacement, old-generation retention/expiry, error clearing
+without redundant reload and exactly one old live view Worker termination before
+replacement, alongside previous mode/policy/decision/CSP/SRI/graceful-stop probes.
+Logs: `/tmp/varta-browser-reload-project.log`,
+`/tmp/varta-browser-reload-modules.log`, `/tmp/varta-browser-reload-cli.log`,
+`/tmp/varta-browser-reload-clippy.log`, `/tmp/varta-browser-reload-node.log`,
+`/tmp/varta-browser-reload-chrome-live-view-v2.log`.
+
+Initial-invalid projects still fail before listening; no initial error page,
+automatic reconnect or cross-browser acceptance is claimed. An in-flight
+synchronous compiler call can finish after shutdown, with future checks and
+publication cancelled; the CLI runtime does not wait for it. This does not claim
+interruptible compilation. The consolidated dev/reload full gate passes:
+**2946 passed, 0 failed, 16 ignored**, all eight commands, source unchanged.
+Report: `target/verification/20261102-093345-4pi5qr3n/report.json`;
+SHA-256 `ababac54e03c6070e9a05140d1d02fdfb6b1d312d607ec600067ef3b1d691a7b`.
+Only result documentation changed after the gate. P9, native platforms and
+release acceptance remain open.
+
+### Scoped Chrome/Firefox/WebKit acceptance — 2026-11-02
+
+An isolated Playwright 1.64.1 tool installation outside the repository runs the
+same 13 generated fixed fixtures on Chrome 156.0.8078.74, Firefox 157.0 and
+Playwright WebKit 27.2. Every case compares status, exact native logs and all
+resource counters: console/UTF-16, Promise FIFO/rejections, v36/v37/v38 timers,
+unreferenced/cancelled timers, live view startup, PNG and WOFF/WOFF2 fonts.
+Five tamper boundaries per engine reject before guest or Worker start: original
+Wasm, private image, manifest, Worker and loader SRI. Three live dev sequences per
+engine cover missing-dependency recovery, trusted view clicks/old Worker teardown
+on replacement, and server-loss teardown. The final matrix is **63 passed,
+0 failed**. Installed Chrome runs with its process sandbox enabled; no browser
+security settings or personal profiles are changed.
+
+Report, fixture SHA-256 inventory and local drivers are archived at
+`target/browser-matrix-20261102/report.json`. Firefox's initial launch attempts
+failed before Varta execution because the default app-data directory was not
+usable. Canonical paths alone did not fix it; explicitly isolated `MOZ_APP_DATA`
+and `MOZ_LOCAL_APP_DATA` roots did. The startup behavior is tracked in the
+[upstream Playwright issue](https://github.com/microsoft/playwright/issues/42768).
+Final Firefox cases run unchanged artifacts with owned data roots. Initial
+driver-selection mistakes and failed startup attempts retain their own logs;
+they are not counted as executed guest cases.
+
+This is a scoped local engine matrix, separate from Cargo's full gate and the
+85 Node checks. Playwright WebKit is not installed-Safari product acceptance.
+The 39 execution cases now have a portable repository driver,
+`scripts/test-browser-matrix.mjs`, verified on all three engines. The integrity
+driver now also runs from `scripts/test-browser-integrity-matrix.mjs` and passes
+15 checks across the three engines. `scripts/test-browser-dev-matrix.mjs` runs
+the nine live-dev scenarios across those engines; all pass locally.
+permission/network/event/layout coverage, the actual UARP session and native
+targets remain outstanding. These observations do not close P9 or M7.
+
+### UARP view browser admission probe — 2026-11-02
+
+The following paragraphs record sequential checkpoints; the most recent state is
+the enabled UTF-16 read/has increment at the end of this section.
+
+The real `examples/uarp-console/varta.view.json` project was submitted unchanged
+to `varta dev --target browser`. Compilation reached browser admission, which
+rejected the unsupported `env_get16` host effect before opening a listener:
+`browser host effects not implemented: env_get16`. The view test entry reads
+`TEST_VIEW` to select its scenario. This is evidence for the next host capability,
+not a successful UARP browser session; no browser execution was attempted. The
+existing browser admission tests cover explicit rejection of environment reads.
+Browser environment input must preserve typed UTF-16 behavior, exact requested
+names and host ceilings, deny-by-default policy, accounting, bounded snapshots,
+and isolation from ambient browser/OS environment. It requires native/browser
+differential and denied-access checks before rerunning the unchanged pilot.
+
+The first host-input component now snapshots explicit name/value pairs into a
+private bounded map and rejects duplicate names, invalid Unicode and oversized
+inputs. Two Node tests cover ownership, missing names and invalid input. This
+component is not yet connected to the loader, capability checks or Wasm imports;
+`env_get16` and the unchanged UARP view remain unsupported in the browser.
+An independent scope component now intersects requested and host patterns using
+bounded Unicode-scalar wildcard matching and native-style exact-name enumeration;
+an access adapter now asks the permission broker and audits before lookup,
+including revocation, missing reads and `env.has`. Four Node tests pass. The
+adapter is not yet wired into the Worker, loader or Wasm ABI.
+An independent UTF-16 ABI adapter now exercises bounds, strict text decoding,
+fuel hooks, result/status reset and denial/missing distinctions; six focused Node
+tests pass. Worker/loader wiring and actual native/browser differential execution
+remain required before enabling imports.
+The environment ABI limits, result-global names and status codes are now
+generated from the Rust browser registry; its drift tests and the six focused
+environment Node tests pass. Worker-side integration remains outstanding.
+This registry/code change is newer than the recorded 2946-test full gate.
+The loader now validates and snapshots explicit `environmentInputs` before any
+fetch and sends a copied input list in the Worker startup message. Chrome checks
+that invalid input fails before fetching; 14 project browser tests and the Node
+browser suite pass. Worker-side authorization and ABI imports are still disabled,
+so this does not enable guest environment access or the UARP browser session.
+The Worker now constructs its own validated snapshot, scopes and broker-bound
+UTF-16 handlers, with lazy access to globals after instantiation. Import admission
+remains closed pending end-to-end parity and host-ceiling delivery tests. The
+browser project tests and all 91 Node tests pass with the updated Worker fixture.
+Two additional isolated Worker tests now exercise allowed Unicode values, host
+ceiling denial and auditing with a test-only admission override, and confirm the
+production Worker still rejects the import before guest entry. These do not prove
+real Wasm execution or native accounting parity.
+The loader and local development bootstrap now preserve checked `env.get` and
+`env.has` host-ceiling patterns, while excluding filesystem scopes. Focused Rust
+and Chrome tests cover serialization and reject malformed ceilings. Wasm import
+admission remains closed and real environment access is not yet enabled.
+
+The `env_get16` and `env_has16` imports are now admitted and connected to the
+Worker adapter. A generated real Wasm program run in Chrome matches native
+Unicode values, denied/missing behavior, output, fuel, host calls and microtasks;
+an empty host ceiling also denies access. Evidence:
+`scripts/test-browser-environment.mjs`, `/tmp/varta-env-enabled-parity-final.log`,
+14 project browser tests, 17 browser-dev tests and 18 focused Node tests. These
+changes postdate the 2946-test full gate. The unchanged UARP view now passes
+browser admission and starts a loopback server; a headless probe waits at the
+required permission prompt, so no completed UARP session is claimed. Supplying
+environment inputs from the CLI, full permission/prompt and cross-browser tests,
+and broader result-buffer growth/failure parity remain open.
+
+The environment result writer now converts a failed memory growth into the
+native-style I/O status and clears result length instead of terminating the
+Worker. An isolated one-page Worker test covers this path; a native Wasmtime
+probe confirms the one-page growth diagnostic. The 20 focused Node cases and
+the real Chrome/native environment comparison pass. A full real-Wasm boundary
+comparison remains open.
+
+For local development, embedding `--env` values into the HTTP-delivered loader
+would let a guest with an allowed request to that server fetch values without an
+`env.get` grant. That approach was discarded; the bootstrap now explicitly rejects
+embedded `environmentInputs`, with a focused regression test. The programmatic
+host API can still pass a private copied snapshot directly to `mount`/`run`.
+Using that API, explicit test decisions and `TEST_VIEW=stream`, the unchanged UARP
+view reached ready in isolated Chrome with no logs after 14 turns; its rendered
+text contained the recorded permission/result stream. This is a startup/content
+observation, not a complete interactive or cross-browser acceptance. A secure CLI
+value channel remains to be designed and implemented.
+
+The application-owned `scripts/test-browser-chat.mjs` now replays the five
+recorded chat interactions in Chrome using trusted pointer and keyboard events.
+It checks the entered message and pending status against the native view
+expectation. This focused interactive probe passes; it compares selected text,
+not the full tree/accessibility snapshot or the cross-browser pilot session.
+The same interaction checks now pass in isolated Firefox 157,
+Playwright WebKit 27.2 and Chrome 156 through the application-owned
+`scripts/test-browser-chat-matrix.mjs`. All ordered element/text nodes and
+non-style attributes match the native final snapshot in each engine. This covers
+the chat fixture only and does not establish computed-style, accessibility,
+layout or complete pilot parity. Evidence: `/tmp/varta-uarp-attributes-matrix.log`.
+Eight selected computed style properties also match across all three engines.
+All three consistently report `display: block` for three nodes whose native
+snapshot records `inline`; the harness checks and reports these exact differences
+instead of claiming full style parity. Each affected `span` is a direct child of
+a `display:flex` container in both snapshots. This is consistent with CSS flex
+item blockification: browsers compute `block` while the headless snapshot retains
+the cascaded `inline` value. See the [CSS Flexbox specification](https://www.w3.org/TR/css-flexbox-1/#flex-items).
+The harness now verifies both parent displays as well as the exact differences.
+Reconciling the headless snapshot contract and downstream layout remains open;
+this observation alone does not establish geometry parity. Evidence:
+`/tmp/varta-uarp-flex-blockification.log`.
+The headless view now also offers an explicit `snapshot_flex_blockified()`
+projection for declared `inline` children of declared `flex` parents. It keeps
+the established cascade snapshot unchanged; absent defaults and all other layout
+rules remain unmodeled. Focused unit and public-API tests pass. This is newer than
+the last full gate and does not close layout or cross-target acceptance.
+The public projection helper is now applied to the real UARP chat snapshot by
+the application-owned three-engine harness. All nine selected style properties,
+including the three flex displays, match Chrome, Firefox and WebKit after this
+native projection; the original cascaded snapshot is unchanged. Evidence:
+`/tmp/varta-uarp-projected-matrix.log`. This remains a selected-property comparison,
+not complete computed style, accessibility or geometry acceptance.
+The engine-owned browser contract probe now emits a flex batch with both native
+cascade and the optional native projection. A real Chrome view applies the same
+batch and confirms its computed `display` matches the projected `block`, while
+the original native cascade remains `inline`. The shared native oracle tests pass
+with the extended fixture. This is a focused direct-child case, not the complete
+UARP projected snapshot or general layout parity.
+
+An unchanged UARP view was then launched in an isolated Chrome profile and its
+two required permission prompts were allowed by trusted input. This exposed a
+browser-only rejection of `translateY(1px)`: grammar parsing had discarded the
+registered function-name spelling. Preserving that spelling fixes the stylesheet
+without broadening native CSS acceptance. The UARP page reached `ready` in the
+corrected Chrome probe; `TEST_VIEW` was not supplied, so the host logged the
+missing-variable I/O error and selected the default scenario. The final matcher
+accepts the actual stylesheet and all 20 view tests, including the native CSS
+oracle, pass. This verifies startup only, not the complete interactive pilot or
+cross-browser parity. The fix is newer than the last full gate.
+
+The UARP three-engine comparison now checks 195 explicitly declared values across
+14 style properties against the flex-projected native snapshot. All match in
+Firefox 157, WebKit 27.2 and Chrome 156. The harness verifies the number of
+properties and declarations exercised; absent defaults, complete computed style,
+geometry and accessibility remain outside this check. Evidence:
+`/tmp/varta-uarp-styles-expanded-final.log`.
+
+The UARP matrix driver now resolves its default native projection tool relative
+to the repository and accepts explicit projection-tool and Chromium-channel
+overrides. It passed all three engines when launched from `/tmp`, both with
+defaults and with explicit tool/Chrome settings. The bundled Chromium option and
+other operating systems still need their own runs. Evidence:
+`/tmp/varta-uarp-portable-matrix.log` and `/tmp/varta-uarp-portable-override.log`.
+
+The same pilot matrix now compares selected accessible region, button, heading
+and textbox roles and names with the native snapshot, plus its recorded heading
+levels, expanded/disabled states, input value and focus. These checks pass on all
+three engines. The test initially opened shadow roots for Playwright's role selectors;
+it now retains a test-only reference to the actual closed root and all three engines
+pass again (`/tmp/varta-uarp-closed-accessibility.log`). This does not verify the platform accessibility tree or all roles,
+states and assistive technology behavior. Evidence:
+`/tmp/varta-uarp-accessibility-matrix.log`.
+
+The headless role mapping now recognizes `section` landmarks labeled via
+`aria-labelledby`, retaining explicit-role precedence and existing `aria-label`
+behavior. The scoped view suite passes; the matching fixture passes Playwright
+role selectors in Firefox, WebKit and Chrome (`/tmp/varta-section-landmark-matrix.log`).
+This checks selector behavior, not platform accessibility APIs or screen readers.
+
+The native geometry foundation now exposes an experimental headless box-only
+API using Taffy 0.15.1. It supports div block/flex trees, pixel dimensions, gap
+and flex direction; unsupported computed CSS, elements and text fail explicitly.
+It bounds nodes, nesting and viewport dimensions, and does not change the existing
+snapshot. One flex fixture matches Firefox, WebKit and Chrome
+(`/tmp/varta-flex-box-matrix.log`); this does not establish general layout parity,
+text shaping, native rendering or target acceptance.
+
+Box-only layout additionally maps flex wrapping, alignment, growth, shrinkage,
+pixel basis and individual gap properties. A shorthand combined with a gap
+longhand is rejected until cascade precedence is modeled. Growth/alignment and
+wrapping fixtures agree with Firefox, WebKit and Chrome
+(`/tmp/varta-flex-expanded-matrix.log`); other combinations remain to be tested.
+
+The box-only subset now supports pixel min/max dimensions and pixel margin/padding
+shorthands and longhands. Mixed shorthand and longhand declarations of the same
+kind fail closed until cascade precedence is implemented. A nested flex fixture
+with padding, margin and min-width agrees with Firefox, WebKit and Chrome
+(`/tmp/varta-flex-spacing-matrix.log`); general block margin behavior remains
+outside that observation.
+
+The experimental box layout now expands stylesheet `margin`, `padding` and `gap`
+shorthands in cascade order, including two-value gaps, before inline properties.
+The ordinary snapshot is unchanged. Mixed shorthand/longhand within the inline
+map is still rejected because it does not preserve operation order. A fixture
+covering stylesheet order and inline precedence, and an unresolved-variable
+fixture, agree with Firefox, WebKit and Chrome
+(`/tmp/varta-flex-cascade-variable-matrix.log`).
+
+The geometry path now records the most recent inline writer for each margin,
+padding and gap longhand, so shorthand and longhand updates and removals can be
+applied in operation order without changing the established style snapshot.
+A margin update/removal sequence agrees with Firefox, WebKit and Chrome
+(`/tmp/varta-inline-cascade-matrix.log`). Further CSSOM combinations remain
+subject to broader differential coverage.
+
+Box geometry now accepts nonnegative percentages as well as pixels for dimensions,
+min/max constraints, margin, padding, gaps and flex basis. Nested percentage sizing
+and a percentage gap/basis fixture agree with Firefox, WebKit and Chrome
+(`/tmp/varta-layout-percent-flex-matrix.log`). Intrinsic and indefinite sizing,
+negative margins, text and broader combinations remain open.
+
+Box geometry now handles uniform `border-width`, `border-style` (`solid` or
+`none`) and the non-geometric `border-color` longhands; an unspecified width
+uses the CSS medium default of 3px when the style is solid. A border toggle and
+default-width fixture agrees with Firefox, WebKit and Chrome
+(`/tmp/varta-layout-border-final.log`). Border shorthands and individual sides
+remain unsupported. The current view registry does not expose `box-sizing`;
+the experimental path uses the default content-box model.
+
+The box-only layout also accepts the `border` shorthand and independent
+`border-top/right/bottom/left` shorthands with supported pixel widths, `solid`
+and `none`. Overlapping shorthand and width/style forms are rejected until their
+cross-property cascade is implemented. The uniform and asymmetric examples
+match Firefox, WebKit and Chrome (`/tmp/varta-border-shorthand-matrix.log`).
+
+Border geometry now resolves shorthand, individual sides and uniform width/style
+in stylesheet order and tracks their inline updates and removals per side and
+component. Mixed cascade and inline update fixtures match Firefox, WebKit and
+Chrome (`/tmp/varta-border-cascade-final.log`); broader CSS and native renderer
+acceptance remain open.
+
+The headless crate has an explicit-font text measurement foundation using Parley
+0.11.1 with system font discovery disabled. Font bytes, family and input sizes are
+checked; the original synthetic font fixture measures `AAAA` at 32px for a 20px
+font size, matching Firefox, WebKit and Chrome (`/tmp/varta-explicit-font-matrix.log`).
+This is a single text-advance observation, not inline layout, font fallback,
+rendering, full text shaping acceptance or native target UI.
+
+`layout_boxes_with_text` now connects explicit-font Parley measurement to the
+Taffy tree for isolated ASCII alphanumeric text nodes in flex containers. It
+requires a caller-supplied covering font and size, bounds text work, and rejects
+adjacent text, whitespace, baseline alignment and general inline formatting.
+One text-plus-box fixture agrees with Firefox, WebKit and Chrome
+(`/tmp/varta-flex-text-matrix.log`); real paragraphs, font fallback and native
+rendering remain open.
+
+The experimental flex-text path now collapses ASCII whitespace and measures
+min-content and wrapped text at the width requested by Taffy. Total text and
+repeated shaping work are bounded. A two-line fixture agrees with Firefox,
+WebKit and Chrome (`/tmp/varta-wrapped-flex-text-matrix.log`). Adjacent nodes,
+non-ASCII layout text, rich inline content and baseline alignment remain open.
+
+The experimental flex-text path now also accepts Cyrillic alphanumeric scalars.
+A synthetic explicit font covering `А`, `а`, `і` and `ї` produces matching
+two-line geometry in Firefox, WebKit and Chrome
+(`/tmp/varta-ukrainian-flex-text-matrix.log`). This is not full Unicode, font
+fallback, punctuation, adjacent-node or general text-layout acceptance.
+
+Flex text additionally accepts ASCII graphic characters and selected Ukrainian
+punctuation; CSS whitespace is collapsed. A synthetic-font Ukrainian punctuation
+and wrapping case matches Firefox, WebKit and Chrome
+(`/tmp/varta-ukrainian-punctuation-matrix.log`). This does not establish general
+punctuation, font fallback or full Unicode acceptance.
+
+The experimental explicit-font layout now supports a single text child of a
+block as well as isolated flex text. Its anonymous text-box geometry gives the
+same container height for the tested Ukrainian wrapping fixture in Firefox,
+WebKit and Chrome (`/tmp/varta-block-text-matrix.log`). Mixed block children and
+general inline formatting remain unsupported and are rejected.
+
+The text-layout path now admits `p` with one text child, applying the default
+one-em vertical margins before author styles. A flex-column fixture with wrapped
+Ukrainian text, default margins and an override agrees with Firefox, WebKit and
+Chrome (`/tmp/varta-paragraph-layout-matrix.log`). General paragraph content and
+block-margin collapsing need broader acceptance.
+
+The experimental box path now accepts `main`, `header`, `nav`, `section`,
+`footer`, `aside` and `form` as block/flex containers, and models `display:none`
+as a zero-rectangle subtree. A semantic screen fragment and a hidden-subtree
+fixture match Firefox, WebKit and Chrome (`/tmp/varta-semantic-hidden-matrix.log`).
+Unsupported content in hidden subtrees still fails closed; full UI/layout
+acceptance remains open.
+
+The experimental geometry path now handles vertical scroll offsets for
+`overflow: auto` and `hidden`, including bounds and positioned descendants.
+Fixtures agree with Firefox, WebKit and Chrome (`/tmp/varta-scroll-layout-matrix.log`).
+Scrollbar gutters, clipping, horizontal scrolling and complete platform rendering
+remain open; this calculation does not alter the existing stored scroll state.
+
+Experimental geometry now exposes rectangular viewport and ancestor overflow
+clips separately from border-box rectangles, including nested padding-box clips
+and positioned descendants. Browser hit-testing fixtures agree across Firefox,
+WebKit and Chrome (`/tmp/varta-clip-layout-matrix.log`). Actual native painting,
+rounded clips, hit testing, platform scrollbar gutters and horizontal scrolling
+remain to be implemented.
+
+The experimental geometry path now admits explicitly styled, explicitly sized
+text inputs and single-text-child buttons, with border-box sizing. Their test
+fixture agrees with Firefox, WebKit and Chrome (`/tmp/varta-controls-layout-matrix.log`).
+Platform-default and intrinsic control sizing, control painting, text editing,
+IME and the native shell remain open.
+
+The first bounded CPU paint path draws supported box backgrounds with rectangular
+overflow clipping into premultiplied RGBA pixels. A compositing and clipping
+fixture matches browser screenshots in Firefox, WebKit and Chrome
+(`/tmp/varta-raster-layout-matrix.log`). The first increment rejected text, controls,
+borders, positioning and unsupported paint effects; window presentation,
+full painting and native platform acceptance remain open.
+
+The CPU path now paints solid rectangular borders with one color across visible
+sides, including alpha compositing and `currentcolor`/shorthand cascade. The
+fixture matches Firefox, WebKit and Chrome (`/tmp/varta-border-paint-matrix.log`).
+Differently colored border sides, rounded corners and full native painting remain
+open.
+
+The CPU renderer can now paint the existing bounded explicit-font text subset
+using Parley layout and `skrifa = 0.44.0` outlines (Apache-2.0 OR MIT; already a
+Parley dependency). A clipped glyph fixture matches sampled browser screenshots
+in Firefox, WebKit and Chrome (`/tmp/varta-glyph-paint-matrix.log`). Glyph
+hinting, synthetic styles, text decoration, control painting and native window
+presentation remain open.
+
+The application instance now exposes its current bounded CPU frame to an
+embedding host. An application-level test exercises a guest view commit, a
+trusted click, the resulting guest turn and the updated frame. This is an
+integration seam; native input and production window hosting remain open.
+
+An experimental `varta-preview` binary opens a native window and hosts an
+unprivileged, precompiled view application on a worker thread. Its main thread
+presents bounded CPU frames and the worker rerenders on commits and resize.
+On the development macOS machine, the test application reached successful
+first-frame presentation. This is a preview, not a packaged shell: keyboard input,
+IME, accessibility, logical-pixel scaling, permissions, target bundles and
+macOS/Pi session acceptance remain open. See `crates/varta-desktop/README.md`.
+
+The preview now maps left-button presses and releases through the displayed
+frame's clipped hit regions into guest view events, with bounded delivery and
+stale-frame rejection. On macOS, clicking a test guest changed its visible
+background and executed its Wasm handler; targeted runtime and renderer tests
+also pass. Keyboard, pointer movement/dragging, IME and broader CSS
+hit testing remain open.
+
+The desktop preview now handles vertical wheel/trackpad scrolling, including
+bounded offsets, nested ancestor chaining and guest `scroll` events. A macOS
+test view moved down and back up and logged the guest handler; the focused
+headless test covers scroll bounds and nested targets. Horizontal scrolling,
+scrollbars, touch gestures, full CSS and Pi acceptance remain open.
+
+The CPU path and preview can now paint and activate an explicitly styled,
+enabled button. Its background, border and explicit-font text matched sampled
+Firefox, WebKit and Chrome screenshots (`/tmp/varta-button-paint-matrix.log`);
+in macOS the test guest handled a click and changed the button's visible color.
+Default platform button styling, disabled-state rendering, text input and
+accessibility remain open.
+
+The preview now forwards supported keydown keys and modifiers, including Tab,
+Shift+Tab, Enter and Space, using the displayed frame's focus and a bounded
+queue. Tab skips `display: none` ancestors, and host viewport changes update
+the cascade used by input. On macOS, Tab visibly focused a test button and both
+Enter and Space invoked its Wasm handler. Full text editing, IME, native accessibility,
+full focus semantics and Pi acceptance remain open.
+
+Explicitly styled text inputs now paint their value and end caret and accept
+bounded direct keyboard text, Space and Backspace through the existing view
+event channel. A macOS test sent a Cyrillic character, a space and Backspace to
+a guest `input` handler; sampled input pixels match Firefox, WebKit and Chrome
+(`/tmp/varta-input-paint-matrix.log`). Missing glyphs use the supplied font's
+`.notdef` outline. Full editing, paste, blinking, IME, default
+control styling and native accessibility remain open.
+
+The input model now retains UTF-8 selection endpoints, supports arrow/Home/End
+movement, Shift selection, replacement and grapheme-aware Backspace/Delete, and
+uses `unicode-segmentation = 1.13.3` (MIT OR Apache-2.0). A stale guest value
+patch leaves the current selection intact. A macOS test replaced a selected
+Cyrillic character; focused browser fixtures agree for Cyrillic navigation,
+replacement and `maxlength` (`/tmp/varta-input-edit-matrix.log`). Firefox's
+Backspace removed only the last component of a tested family ZWJ emoji, while
+this implementation removes the complete grapheme; that parity issue, full pointer
+selection, clipboard, bidi visual navigation and IME remain open.
+
+The preview now resolves pointer clicks and same-window drag endpoints against
+the displayed input's shaped clusters, with bounded shaping work and validated
+UTF-8 offsets. The selection is applied on release; release outside the field
+does not synthesize a click. A macOS test placed the caret and replaced a dragged
+Cyrillic selection. Live drag feedback, cross-window dragging, double-click word
+selection, clipboard, full bidi editing and IME remain open.
+
+The experimental preview now receives bounded IME preedit and commit events,
+renders transient composition and positions the candidate window at the caret.
+Preedit leaves the guest value unchanged; commit replaces the selection and
+emits an input event. Focus changes and guest view commits cancel composition;
+composition events are not exposed to guests. A focused headless test covers
+the state transition and validation. Real platform IME acceptance, including
+CJK input, remains open, as do clipboard and full editing semantics.
+The native event adapter also ignores late IME text while the window is
+unfocused and cancels malformed preedit or commit data without leaving the
+keyboard in composition mode. Focused adapter tests cover both cases.
+At the shared view boundary, a preedit that would overflow the field or an invalid commit clears
+the previous transient composition without changing the value or edit sequence;
+a focused test covers the UTF-16 size boundary.
+The shared view now applies the guest `select` command to the complete text of
+a text, search or password input or textarea, including atomic rollback for invalid batches. A focused
+test verifies subsequent replacement and the absence of a spurious input event.
+Chrome and WebKit also focus an attached, enabled control on `select`; the shared
+view now matches that behavior, including focus records, readonly fields and
+number/checkable controls. Detached and disabled controls do not receive focus.
+Firefox acceptance remains open.
+Programmatic focus and selection, as well as native focus input, now skip nodes
+under `display: none`; Chrome and WebKit agree for selection under a hidden
+ancestor. Scroll-into-view still needs layout-aware application after a commit.
+The experimental geometry API now plans nearest-edge vertical scrolling from
+inner to outer scrollports, including `overflow: hidden`, without mutating the
+view. A nested fixture matches Chrome and WebKit. Positioned paths, horizontal
+scrolling and Firefox remain open.
+The view API can also apply the plan atomically, generating bounded scroll
+records without a user-gesture grant. Focused tests cover nested updates, event
+metrics, no-op repetition and unchanged state after unsupported geometry.
+An experimental application-host API now applies this scroll between turns and
+queues its records for later guest turns.
+The view now provides an opaque element identity for deferred scrolling, with
+tests for failed batches, ID reuse, separate views and divergent clones. This
+addresses target identity for host-deferred actions.
+An opt-in layout-aware view commit now executes scroll commands in batch order
+using the geometry at each operation, bounds the number of layout operations and
+rolls back the batch on a layout failure. The native preview supplies viewport and
+font resources before the first turn and updates geometry after resize. A runtime
+test covers guest commands at startup and after a media-query-changing resize;
+broader native platform acceptance remains open.
+On the development macOS machine, the bundled guest-scroll fixture also ran in
+the native window: the guest reported offset 100 and the scrolled target was
+visible in the first presented frame. The fixture and reproduction commands are
+in `crates/varta-desktop/examples/guest-scroll` and `crates/varta-desktop/README.md`.
+Scroll records created by layout-aware batches now retain the originating node's
+identity, so same-batch removal and ID reuse cannot deliver an old scroll event
+to the replacement. A focused batch test covers this case.
+Explicitly styled native text inputs now paint a plain, fixed-gray placeholder
+when empty. A focused renderer test covers its pixels, unchanged value and
+replacement by IME preedit; browser-specific placeholder styling remains open.
+Explicitly styled disabled buttons and text inputs now render without accepting
+activation or edits. Disabling a field or making it readonly clears transient IME
+composition. Focused renderer tests cover both controls; platform-default disabled
+appearance and broader accessibility acceptance remain open.
+For a focused field disabled afterward, keydown can still be delivered but Enter
+does not submit its form and Backspace does not edit. In the observed browser
+fixture Chrome did not submit, while WebKit did; this difference remains open.
+Character input now emits keydown before the edit and respects `preventDefault`;
+Ctrl/Command+A selects all, including with a non-Latin keyboard layout, and
+printable Ctrl+Alt text can pass through for AltGr. A focused model test covers
+these cases; a macOS window test confirmed Ukrainian input and Command+A replacement.
+Bounded undo/redo now restores text and selection, advances the edit sequence,
+clears redo after a new edit and respects guest value changes as history barriers.
+The shared view history has both byte and entry limits. Focused tests cover
+branching, barriers and eviction; a macOS window test confirmed Undo/Redo under
+the Ukrainian keyboard layout. Typing-run grouping and cross-target editing
+acceptance remain open.
+The native editing batch has also passed the complete `varta-view` component
+suite. Additional focused checks cover IME as a single undo step, readonly and
+preventDefault, equal/stale guest patches, and immediate release of obsolete
+history after successful commits while preserving it after rejected batches.
+The CPU renderer now paints solid rectangular focus outlines with explicit width,
+color and offset, respecting cascade and leaving layout/hit regions unchanged.
+A focused test covers focus-visible and shorthand ordering; sampled outline
+pixels match Chrome and WebKit. Existing raster/control tests pass; platform-default
+focus styling, rounded outlines and native accessibility acceptance remain open.
+The native preview now initializes CSS color-scheme conditions from the window's
+system theme and follows theme changes, rejecting input and frames for an obsolete
+scheme. A runtime test covers startup, resize preservation and light/dark media
+updates; direct OS theme-switch acceptance remains open.
+Guest view titles are now applied by the native preview with the accepted frame.
+An application-level test covers initial and event-driven title changes; the
+guest-scroll fixture also demonstrates this integration.
+On the development macOS machine its visible window title became
+`Varta scroll — 100` after the Wasm handler ran; other platforms remain unverified.
+The renderer now has a device-scale-aware raster API: geometry and text remain
+logical, paths paint at device resolution, and hit regions and IME cursor areas
+use physical coordinates. Focused checks cover 2x and fractional scaling,
+viewport media conditions, clipping and text hit positions. Native window DPI
+events and cross-display acceptance are the next integration work.
+The native preview now supplies its initial device scale to layout and painting,
+handles DPI changes, converts pixel wheel movement to CSS pixels and guards
+frames/input against stale scales. A runtime test covers scaled physical pixels
+and hit positions. Cross-display and multi-platform DPI acceptance remain open.
+On the development macOS Retina display, a 160-CSS-pixel input was observed at
+320 physical pixels with scaled glyph/caret painting and working character input.
+Changing displays or OS scale settings has not yet been accepted.
+Fixed-size explicit textareas now join the CPU/native painting path, with newline
+preservation, long-text wrapping, caret visibility and two-dimensional pointer
+selection including device scaling. Focused checks cover rendered rows, Enter,
+soft wrap and scaled hit positions. Vertical keyboard movement, internal scrolling,
+auto-sizing, resize handles and platform textarea acceptance remain open.

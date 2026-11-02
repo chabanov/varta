@@ -9,3 +9,11 @@ varta-common = { path = "../varta-common" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Bounded CPU raster fallback for native view painting; BSD-3-Clause.
+tiny-skia.workspace = true
+skrifa.workspace = true
+unicode-segmentation.workspace = true
+# CSS box layout shared by headless and future native rendering; MIT licensed.
+taffy = { version = "=0.15.1", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "grid", "parse", "content_size"] }
+# Explicit-font text shaping for the future shared native layout; Apache-2.0 OR MIT.
+parley = { version = "=0.11.1", default-features = false, features = ["std", "complex-scripts"] }

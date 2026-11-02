@@ -32,6 +32,7 @@ with the appropriate filters instead of widening a filter until it happens to pa
 | --- | --- | --- |
 | Isolated numeric algorithm | Local numeric crate and edge/error/resource cases | Relevant runtime conversion/operator tests once integrated; full before code commit |
 | Parsing, lowering, inference or emission | Compiler check/tests plus focused runtime execution tests | Public API/module diagnostics and CLI/source-free artifact cases; full |
+| Browser fuel transform | `cargo test -p varta-compiler --lib browser_meter` compares private images with locked native Wasmtime: results, remaining fuel, memory and selected fair host charges | Compiler suite/Clippy; after host integration, all shared charge families and Node/Chromium/Firefox/WebKit observations, permission denials, Worker termination and measured overhead; full before code commit |
 | Runtime semantics | Focused runtime tests with positive, error and resource cases | Affected public API and artifact paths; full |
 | ABI, value layout, GC, roots or exception channels | Common/ABI validation and affected runtime suites | Historical-profile rejection, canonical payloads, collections/roots, host-free helper checks, public API/packaged execution; full |
 | Permissions or host boundaries | Allowed/denied calls, exact grants and host ceilings | Malformed inputs, fatal limits, status and finalizer behavior through public API/CLI; full |
@@ -55,6 +56,7 @@ The helper and CI run these commands in order, stopping on failure:
 ```sh
 cargo fmt --all -- --check
 cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
+cargo check -p varta-common -p varta-intrinsics --no-default-features --lib --locked
 cargo build -p varta-launcher --bin varta-runtime --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --workspace --all-targets --locked
@@ -84,3 +86,332 @@ cannot prove those stayed unchanged. After a failure, rerun the affected selecti
 while fixing it, then run the final full gate once after the last code fix.
 Report exactly what ran and what remains unverified. Full core completion still
 requires the roadmap's acceptance criteria, independent of this faster workflow.
+
+## Browser registry and fuel probe (development)
+
+For the local browser-dev host increment:
+
+Input observation changes additionally need the project library tests (including
+`modules::watch`) and CLI module integration tests. Cover equal-size edits,
+conflicting repeated reads/restoration, missing `.ts`/`.tsx` candidates, failure
+recovery, pinned no-follow replacements, resource/text/config inputs and journal
+overflow. These checks establish rebuild input detection; they do not prove live
+reload or page-session shutdown.
+
+For the optional native flex-item projection:
+
+```sh
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-flex-oracle.json
+VARTA_VIEW_ORACLE=target/browser-view-flex-oracle.json node scripts/test-browser-view.mjs
+```
+This checks a native-projected result against real Chrome for one direct flex
+child; it does not establish general computed-style or layout equivalence.
+
+Live rebuild changes additionally need failed-source/config/import recovery,
+no repeated compilation of unchanged errors, captured authority and cancellation
+tests. Client tests cover serial bounded status reads, literal diagnostic text,
+abort-before-navigation, pagehide races and unavailable/malformed responses. Chrome
+must observe real page-realm replacement, missing-file creation without editing
+the importer, bounded revision retention, identical-output recovery without reload
+and termination of the preceding live view Worker.
+
+Revision delivery changes need `browser::dev` library tests, the `browser_dev`
+CLI smoke filter and the real browser-dev probe below. Check all file identities,
+unambiguous framing, preserved CSP/SRI, missing root aliases, bounded retention,
+reversion/deduplication, owned responses after eviction and rejection of expired
+revision paths without substituting current files. Discover the asset directory
+from the generated page; root asset URLs intentionally return missing.
+
+```bash
+cargo test -p varta-project browser::dev --lib --locked
+cargo test -p varta --test smoke browser_dev --locked
+cargo test -p varta-project --test boundaries --locked
+cargo build -p varta --locked
+node --test crates/varta-project/src/browser/dev-client.test.mjs
+node scripts/test-browser-dev.mjs
+```
+
+These exercise the real CLI/server and Chrome: memory-only delivery, CSP/SRI,
+runtime ceilings and scoped decisions, console/view/application modes, bounded
+HTTP inputs, source/path/foreign-origin rejection, native-only flag rejection,
+shutdown and no native root binding or production writes. Bootstrap drift and
+origin-name rewriting have separate regressions. The completed dev/reload package
+passes the consolidated **2946-test** full gate at
+`target/verification/20261102-093345-4pi5qr3n/report.json`: all eight commands,
+0 failures, 16 ignored and unchanged source hash
+`ababac54e03c6070e9a05140d1d02fdfb6b1d312d607ec600067ef3b1d691a7b`.
+Only checkpoint documentation changed afterward. The separate 85 Node tests and
+scoped three-engine 63-check matrix are outside Cargo; the latter's report and
+local drivers are archived at `target/browser-matrix-20261102/`. Its 13 executions
+per engine compare exact native logs/usage; five integrity boundaries per engine
+reject before guest/Worker start; three live dev sequences per engine cover
+rebuild/recovery, trusted view input/replacement and server-loss termination.
+This is neither complete browser coverage nor the cross-target UARP pilot.
+The 13 shared execution cases now have a portable driver:
+
+```sh
+node scripts/test-browser-matrix.mjs <generated-fixture-directory> <playwright-module-path>
+node scripts/test-browser-integrity-matrix.mjs <generated-fixture-directory> <playwright-module-path>
+node scripts/test-browser-dev-matrix.mjs <varta-executable> <playwright-module-path>
+```
+
+Use Playwright 1.64.1 and its matching Firefox/WebKit downloads; the Chrome
+channel uses an installed Chrome with its sandbox enabled. Generate fixtures
+with `node scripts/test-browser-bundle.mjs <new-directory> --generate-network`.
+On macOS, isolated `MOZ_APP_DATA` and `MOZ_LOCAL_APP_DATA` directories may be
+needed for Firefox. The driver compares 39 executions with native golden logs
+and usage. The integrity driver checks five tampered assets on each engine;
+the dev driver checks rebuild recovery, live Worker replacement and shutdown on
+each engine using isolated temporary projects and browser contexts.
+Source/config/resource edits now rebuild automatically after a
+successful initial startup; policy/decision-file edits still require restart.
+
+The official registry has a Rust regeneration drift test; it does not yet include
+all memory/view tables. Regenerate it explicitly after a registry change:
+
+```bash
+cargo run -p varta-common --example generate_browser_registry --locked -- crates/varta-common/browser/registry.mjs
+cargo test -p varta-common --lib browser::
+node --test crates/varta-common/browser/fuel.test.mjs
+```
+
+Check trusted preparation and private resource ceilings with:
+
+```bash
+cargo test -p varta-project --lib browser::
+cargo test -p varta-project --test boundaries
+cargo test -p varta-compiler --lib browser_meter
+```
+
+These checks include immutable original/policy ownership, malformed imports and
+reserved private markers, legacy budgets, requested/host budget resolution,
+initial allocations above the ceiling, and private growth matching native Store
+limits. Preparation never binds filesystem roots; it is not browser effect
+permission enforcement or an integrity-checked application loader.
+
+For a real JS-engine fuel comparison, generate the fixed trusted v38 program and
+its native golden observations, then run the shared observer under Node:
+
+```bash
+cargo run -p varta-compiler --example browser_meter_probe --locked -- target/browser-meter-probe
+node crates/varta-common/browser/probe.mjs target/browser-meter-probe
+```
+
+The probe derives additional budgets from native host-call/byte-work thresholds;
+compare outcomes, remaining fuel, call positions and Unicode output. Its files in
+`target/browser-meter-probe/` are ignored verification products, not distributable
+artifacts. For the browser check, serve the repository root on loopback and open
+`/crates/varta-common/browser/probe.html`; require `data-result="pass"` and the
+passing observation count, not just a browser exit code. Both JS runners share
+`probe-run.mjs` and `FuelTank`. They accept only these trusted fixtures and do not
+supply artifact admission or permission validation. The current local checkpoint
+has matching observations in Node and headless Chrome; Firefox/WebKit, the full
+corpus, other effects, Worker deadlines and official host packaging remain open.
+
+The initial Worker console bundle has a separate real-browser acceptance command.
+Use a new fixture directory (the builder refuses existing directories):
+
+```bash
+cargo run -p varta-project --example browser_bundle_probe --locked -- target/browser-bundle-probe
+node scripts/test-browser-bundle.mjs target/browser-bundle-probe
+cargo test -p varta-project --lib --test boundaries
+cargo clippy -p varta-project --all-targets --locked -- -D warnings
+```
+
+The Node script uses Chrome's debugging protocol and a loopback fixture server,
+with real wall-clock timers. It defaults to installed Chrome on macOS and
+`chromium` elsewhere; set `VARTA_CHROME_BIN` for a different installed executable.
+It launches a separate temporary profile, cleans up the browser/server/profile,
+and restores every substituted file in `finally`. No virtual-time acceleration
+is used for running-Worker deadline/cancellation evidence. The 34 fixed cases
+include native golden log/status observations, chunked UTF-16, fuel/call/output
+limits, active deadline/abort, invalid runtime ceilings, four integrity and two
+length failures. Native golden files live beside bundles as test products and
+are not distributed bundle files. Other engines/effects remain target gaps.
+
+The project now uses existing locked SHA-256/base64 dependencies directly to
+produce SRI of the exact generated loader bytes. The initial bundle rejects
+unsupported effects and supplied host policies before writing; runtime host
+ceilings remain separate inputs, preserving the existing policy boundary.
+
+For distribution CLI changes, build the independent companion before focused
+smoke tests (the native target alias is verified through that companion):
+
+```bash
+cargo build -p varta-launcher --bin varta-runtime --locked
+cargo test -p varta --test smoke browser_build --locked
+cargo clippy -p varta --all-targets --locked -- -D warnings
+```
+
+The CLI cases exercise original Wasm/manifest equivalence to the portable build,
+original/private source-free validation, no overwrite, gap/type failures before
+output, unmounted native roots, policy/selector rejection and native execution.
+They do not rerun the browser engine suite: reuse the recorded browser checkpoint
+only while loader/Worker/bundle-generation inputs remain unchanged.
+
+For Promise/async Worker changes, the bundle probe now also covers FIFO/nested
+jobs, await/finally, late handling, pending promises, bounded rejection retention,
+primitive/Error/subclass/BigInt diagnostics, long fields, and shared fuel/call
+allowances. Its async observations compare exact native remaining fuel,
+host-call counts, microtasks and output bytes in addition to logs/status.
+
+```bash
+node --test crates/varta-project/src/browser/scheduler.test.mjs crates/varta-project/src/browser/reasons.test.mjs crates/varta-project/src/browser/timers.test.mjs
+cargo test -p varta-common --lib browser:: --locked
+cargo test -p varta-runtime --lib promise_tests --locked
+cargo test -p varta-runtime --lib exceptions::tests --locked
+```
+
+The Node tests include malformed heap/descriptor ranges, slot indices before
+BigInt shifts, duplicate/full queues, invalid outcomes, serial/job limits and
+rejection bit-word boundaries. Regenerate the official registry before building
+fixtures after a layout/limit change. The native long-message regression verifies
+v38 Error/subclass rejection fields above the old string bound without increasing
+production budgets or copying the full reason into retained host state.
+
+The extended real-Chrome bundle probe also compares native timer ordering,
+cancellation, intervals, delay normalization, unref, callback exceptions, deadline
+rejection, optional/absent permissions and v38 renewed budgets. It exercises
+empty/false/unrelated/exact runtime permission ceilings and invalid ceiling input.
+Timer observations include total fuel/turns and final-turn remaining fuel.
+
+For browser network changes, generate fixtures while the real loopback servers are
+running (the destination is a new directory):
+
+```bash
+node --test crates/varta-project/src/browser/network.test.mjs crates/varta-project/src/browser/network-transport.test.mjs
+node scripts/test-browser-bundle.mjs target/browser-network-probe --generate-network
+```
+
+The latter generates native golden observations first, then runs the same bundles
+in Chrome against a different loopback origin with CORS/preflight. GET, POST, byte
+bodies, custom headers, denied requests and pre-start/active abort compare native
+logs and exact total/final-turn fuel, host calls, microtasks, output and turns.
+Runtime ceiling tests cover URL/method denials and malformed scopes. A browser-only
+redirect check and denied-target counter prove no followed unauthorized hop;
+setting a browser cookie before the requests proves credentials remain omitted.
+Transport unit cases cover bounded chunks/body size, exposed headers/encoding,
+BOM/UTF-8 carry, text-to-byte transitions and explicit browser-header failures.
+These checks do not establish Firefox/WebKit or arbitrary HTTP wire parity.
+
+CSP-origin packaging checks additionally reject URL-valid punctuation/underscores/
+IPv6 origins before HTML output; the runtime URL parser alone is insufficient for
+safe CSP generation. These tests exercise full preparation and bundle generation.
+
+For the browser view model/DOM foundation:
+
+```bash
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-contract.json
+VARTA_VIEW_ORACLE=target/browser-view-contract.json node --test crates/varta-project/src/browser/*.test.mjs
+node scripts/test-browser-view.mjs target/browser-view.png
+cargo test -p varta-view --locked
+cargo test -p varta-common --lib browser:: --locked
+cargo clippy -p varta-common -p varta-view -p varta-project --all-targets --locked -- -D warnings
+```
+
+The separate native process uses public `View`/`BatchWriter`/`EventRecord` and the
+common CSS validator. Oracle-enabled Node checks compare acceptance, rollback,
+structural state, CSS values and byte-exact records. Stylesheet cascade/layout and
+accessibility are not claimed by the structural projection. Without
+`VARTA_VIEW_ORACLE`, only the standalone browser-model boundary cases run.
+The Chrome probe is a private DOM test under CSP, not a Worker/application session;
+it checks atomic rejection, UTF-16, live node identity and field sequence handling,
+CSSOM, non-gesture events and no ambient resource URLs. Its optional PNG output is
+for local visual inspection. This private probe is complemented by the generated bundle/session acceptance below.
+
+For the generated view loader/Worker path (use a fresh fixture directory):
+
+```bash
+cargo run -p varta-project --example browser_bundle_probe --locked -- target/browser-view-sessions
+node scripts/test-browser-view-bundle.mjs target/browser-view-sessions
+node scripts/test-browser-resources.mjs target/browser-view-sessions
+node scripts/test-browser-fonts.mjs target/browser-view-sessions
+node scripts/test-browser-permissions.mjs target/browser-view-sessions
+node scripts/test-browser-permission-storage.mjs target/browser-view-sessions
+node scripts/test-browser-consent.mjs target/browser-view-sessions
+node scripts/test-browser-host-events.mjs target/browser-view-sessions
+node scripts/test-browser-navigation.mjs target/browser-view-sessions
+cargo test -p varta --test smoke browser_build --locked
+cargo test -p varta-runtime --lib exact_url_scope --locked
+```
+
+The session probe exercises trusted CDP click/input, persistent closure state,
+Promise/checkpoint/timer turns and exact native usage after events. It checks
+bounded rendering, close/remount, idle versus active deadlines, invalid/second
+commit traps before later logging, passive imports, denied link/clipboard calls
+with zero platform effects, allowed calls through test-only platform spies, and
+frozen-view navigation prevention. The spies never write the actual clipboard or
+open an external page. Re-run the normal console/timer/network/integrity bundle
+probe when changing the shared Worker/loader; its previous results do not cover
+new execution-loop code. The resource probe checks real PNG decoding and Blob
+URLs, exact native accounting, hash/length tampering, malformed compressed data,
+missing inventory entries before later guest effects, and URL cleanup on close.
+CLI checks cover project-relative inputs and leaf/directory symlink rejection.
+The font probe decodes original TTF/OTF/WOFF/WOFF2 fixtures, compares native
+accounting and actual glyph advances, exercises inline/quoted/variable/media
+families, and runs simultaneous sessions with different bytes under one logical
+family plus an ambient host face. It checks cleanup after close, aborted/deadline
+loads and late completion, malformed/tampered data before the first guest log, and
+rejection of a font name used as an image. Tests consume checked-in tiny fixtures;
+fontTools/Brotli is required only for optional fixture regeneration.
+Full browser-engine parity, richer font face collections and other image formats
+remain separate acceptance work.
+
+The permission probe compares native query/request logs, exact usage and audit
+rows (excluding timestamps), including optional/stored/required/identity/ceiling
+cases and malformed UTF-16/NUL/UTF-8-limit inputs. It also checks browser clipboard
+state narrowing and live updates, listener cleanup, zero clipboard writes under
+platform denial or observer failure, immutable snapshots and invalid decisions
+rejected before artifact fetch. Node lifecycle tests use a controlled Wasm boundary
+to verify startup-state coalescing, pre-entry faults, checkpoint backpressure and
+transfer progress ahead of overdue intervals. Those tests complement real Wasm in
+Chrome; they do not replace it. Native source-id exhaustion and generated embedding
+limits have separate focused checks. The storage probe uses real IndexedDB with
+concurrent connections, aborts, corrupt-file recovery, capacity failure without
+eviction and connection cleanup. Live sessions check acknowledged/coalesced
+revocation, zero subsequent clipboard calls, a persisted required denial across
+page reload and fatal store/observer failures. Worker lifecycle tests separately
+verify that revocation does not cancel an authorized transfer and blocks a new
+request in its completion turn; malformed controls fail. Delayed audit observations
+retain their original decision without restoring a grant.
+This increment remains outside the earlier
+consolidated browser-core gate until the broader permission batch is complete.
+
+The completed consent/event/navigation package additionally passes the full gate:
+**2921 passed, 0 failed, 16 ignored**, all eight commands, unchanged source hash
+`52bcc1b91035af6a65a2d8688f43e22435df8e40c167ed0dff00618393dd19df`.
+Report: `target/verification/20261102-072941-39498ymp/report.json`. Conformance is
+123/127, four known unsupported, zero regressions, eight untested feature rows.
+Only checkpoint documentation changed afterward. This is macOS arm64 evidence;
+the browser probes above/below remain separate from Cargo's full gate.
+
+The consent probe compares real generated Wasm against native scripted views for
+required/optional/parallel requests with Allow/Deny/Dismiss: logs, exact cumulative
+fuel/calls/jobs/turns and successful-session audit rows. It waits beyond a narrowed
+700ms turn deadline both before first-run approval and between turns, verifies no
+guest progress while waiting, and tests abort/revocation races including delayed
+storage. The owned modal is exercised under CSP with trusted clicks and Escape;
+synthetic approval is ignored, package markup stays text, and abort removes it.
+Generated page tests cover initial consent and persisted allow/deny across reload.
+The probe saves `permission-dialog.png` for visual inspection. Other browser engines
+and OS effects still need their own acceptance evidence.
+
+The named-event probe compares generic non-view applications with native instances:
+FIFO/coalescing, close/reopen generations, listener failure, exact fuel/calls/jobs/
+turns, and host gesture consent. Background records cannot prompt. It also checks
+record ownership before readiness, NUL/BOM/supplementary text, recoverable size/name/
+encoding rejection, terminal cleanup and acknowledgement backpressure. Node tests
+separately fill the Worker queue, preserve arrival/gesture through coalescing,
+reject stale source generations and malformed batch controls, and discard closed
+source tasks. Browser acknowledgement capacity and native-equivalent Worker queue
+capacity are distinct bounded surfaces; the probe does not claim synchronous
+native admission timing for arbitrary concurrent browser host calls.
+
+The navigation probe compares 15 native scripted-view scenarios (wide/explicit
+requests, wide/explicit/empty host ceilings, Allow/Deny/Dismiss) with Chrome logs,
+exact accounting and audit rows. Three repeated activations prove per-address
+answers are ephemeral. It also tests a checked pause without an extra turn,
+waiting beyond a narrowed deadline, revocation/abort/observer failures, platform
+exceptions, owned full-URL display, synthetic clicks, headless denial and overlapping
+activations. Opens are spies only. Worker lifecycle tests reject malformed pause/
+resume controls and prove queued tasks remain parked until matching resume.

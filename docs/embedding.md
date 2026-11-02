@@ -328,49 +328,49 @@ Each profile fixes one host ABI, one value ABI and the physical encodings below.
 profile may import.
 
 <!-- generated:embedding-profiles:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
-| Profile | Host ABI | Value ABI | Numbers | Strings | Tool/HTTP entry points | Exception channel | Frames | Scheduler | Admitted imports |
+| Profile | Host ABI | Value ABI | Numbers | Strings | Tool / HTTP entry points | Exception channel | Frames | Scheduler | Admitted imports |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `checked-i32-utf8-v1` | 1 | 2 | i32 | UTF-8 | yes | — | — | — | 15 |
-| `checked-f64-utf8-v1` | 2 | 3 | binary64 | UTF-8 | no | — | — | — | 17 |
-| `checked-f64-utf8-v2` | 3 | 4 | binary64 | UTF-8 | no | — | — | — | 18 |
-| `checked-f64-utf16-v1` | 4 | 5 | binary64 | UTF-16LE | no | — | — | — | 20 |
-| `checked-f64-utf16-v2` | 5 | 6 | binary64 | UTF-16LE | no | — | — | — | 26 |
-| `checked-f64-utf16-v3` | 6 | 7 | binary64 | UTF-16LE | no | — | — | — | 26 |
-| `checked-f64-utf16-v4` | 7 | 8 | binary64 | UTF-16LE | no | — | — | — | 27 |
-| `checked-f64-utf16-v5` | 8 | 8 | binary64 | UTF-16LE | no | — | — | — | 27 |
-| `checked-f64-utf16-v6` | 9 | 9 | binary64 | UTF-16LE | no | — | — | — | 27 |
-| `checked-f64-utf16-v7` | 10 | 9 | binary64 | UTF-16LE | no | pending/value only | — | — | 27 |
-| `checked-f64-utf16-v8` | 11 | 10 | binary64 | UTF-16LE | no | `varta.exception.version` = 2 | — | — | 28 |
-| `checked-f64-utf16-v9` | 12 | 11 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v10` | 13 | 11 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v11` | 14 | 11 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v12` | 15 | 11 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v13` | 16 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v14` | 17 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v15` | 18 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 29 |
-| `checked-f64-utf16-v16` | 19 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 49 |
-| `checked-f64-utf16-v17` | 20 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 50 |
-| `checked-f64-utf16-v18` | 21 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 50 |
-| `checked-f64-utf16-v19` | 22 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 51 |
-| `checked-f64-utf16-v20` | 23 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 52 |
-| `checked-f64-utf16-v21` | 24 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 53 |
-| `checked-f64-utf16-v22` | 25 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 56 |
-| `checked-f64-utf16-v23` | 26 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v24` | 26 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v25` | 26 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v26` | 26 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v27` | 26 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v28` | 27 | 12 | binary64 | UTF-16LE | no | `varta.exception.version_v3` = 3 | — | — | 68 |
-| `checked-f64-utf16-v29` | 28 | 13 | binary64 | UTF-16LE | no | `varta.exception.version_v4` = 4 | — | — | 75 |
-| `checked-f64-utf16-v30` | 28 | 13 | binary64 | UTF-16LE | no | `varta.exception.version_v4` = 4 | — | — | 75 |
-| `checked-f64-utf16-v31` | 28 | 13 | binary64 | UTF-16LE | no | `varta.exception.version_v4` = 4 | — | — | 75 |
-| `checked-f64-utf16-v32` | 28 | 13 | binary64 | UTF-16LE | no | `varta.exception.version_v5` = 5 | — | — | 75 |
-| `checked-f64-utf16-v33` | 29 | 13 | binary64 | UTF-16LE | no | `varta.exception.version_v5` = 5 | `varta_resume`, catalog 2 | — | 75 |
-| `checked-f64-utf16-v34` | 30 | 15 | binary64 | UTF-16LE | no | `varta.exception.version_v6` = 6 | `varta_resume`, catalog 2 | yes | 80 |
-| `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
-| `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
-| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 51 |
+| `checked-i32-utf8-v1` | 1 | 2 | i32 | UTF-8 | yes / v1 | — | — | — | 15 |
+| `checked-f64-utf8-v1` | 2 | 3 | binary64 | UTF-8 | no / no | — | — | — | 17 |
+| `checked-f64-utf8-v2` | 3 | 4 | binary64 | UTF-8 | no / no | — | — | — | 18 |
+| `checked-f64-utf16-v1` | 4 | 5 | binary64 | UTF-16LE | no / no | — | — | — | 20 |
+| `checked-f64-utf16-v2` | 5 | 6 | binary64 | UTF-16LE | no / no | — | — | — | 26 |
+| `checked-f64-utf16-v3` | 6 | 7 | binary64 | UTF-16LE | no / no | — | — | — | 26 |
+| `checked-f64-utf16-v4` | 7 | 8 | binary64 | UTF-16LE | no / no | — | — | — | 27 |
+| `checked-f64-utf16-v5` | 8 | 8 | binary64 | UTF-16LE | no / no | — | — | — | 27 |
+| `checked-f64-utf16-v6` | 9 | 9 | binary64 | UTF-16LE | no / no | — | — | — | 27 |
+| `checked-f64-utf16-v7` | 10 | 9 | binary64 | UTF-16LE | no / no | pending/value only | — | — | 27 |
+| `checked-f64-utf16-v8` | 11 | 10 | binary64 | UTF-16LE | no / no | `varta.exception.version` = 2 | — | — | 28 |
+| `checked-f64-utf16-v9` | 12 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
+| `checked-f64-utf16-v10` | 13 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
+| `checked-f64-utf16-v11` | 14 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
+| `checked-f64-utf16-v12` | 15 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
+| `checked-f64-utf16-v13` | 16 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
+| `checked-f64-utf16-v14` | 17 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
+| `checked-f64-utf16-v15` | 18 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 29 |
+| `checked-f64-utf16-v16` | 19 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 49 |
+| `checked-f64-utf16-v17` | 20 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 50 |
+| `checked-f64-utf16-v18` | 21 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 50 |
+| `checked-f64-utf16-v19` | 22 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 51 |
+| `checked-f64-utf16-v20` | 23 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 52 |
+| `checked-f64-utf16-v21` | 24 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 53 |
+| `checked-f64-utf16-v22` | 25 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 56 |
+| `checked-f64-utf16-v23` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
+| `checked-f64-utf16-v24` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
+| `checked-f64-utf16-v25` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
+| `checked-f64-utf16-v26` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
+| `checked-f64-utf16-v27` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
+| `checked-f64-utf16-v28` | 27 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 68 |
+| `checked-f64-utf16-v29` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | 75 |
+| `checked-f64-utf16-v30` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | 75 |
+| `checked-f64-utf16-v31` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | 75 |
+| `checked-f64-utf16-v32` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v5` = 5 | — | — | 75 |
+| `checked-f64-utf16-v33` | 29 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v5` = 5 | `varta_resume`, catalog 2 | — | 75 |
+| `checked-f64-utf16-v34` | 30 | 15 | binary64 | UTF-16LE | no / no | `varta.exception.version_v6` = 6 | `varta_resume`, catalog 2 | yes | 80 |
+| `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no / no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
+| `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
+| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 52 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -829,6 +829,9 @@ URL is bounded by the [limits table](#manifest-limits).
 | Limit | Value | Source constant |
 | --- | --- | --- |
 | Requests holding a runtime slot at once | 8 | `net::MAX_PENDING_REQUESTS` |
+| Native DNS workers per process | 4 | `net::MAX_DNS_WORKERS` |
+| Native queued DNS lookups per process | 64 | `net::MAX_DNS_QUEUED` |
+| Addresses in one native DNS answer | 64 | `net::MAX_DNS_ADDRESSES` |
 | Request descriptor, body included (UTF-16 bytes) | 262144 | `net::MAX_REQUEST_BYTES` |
 | Request header fields | 64 | `net::MAX_REQUEST_HEADERS` |
 | Request header name and value bytes | 16384 | `net::MAX_REQUEST_HEADER_BYTES` |
@@ -838,6 +841,23 @@ URL is bounded by the [limits table](#manifest-limits).
 | Body bytes of one response | 524288 | `net::MAX_RESPONSE_BODY_BYTES` |
 | First descriptor line: `net_request_start` / `net_request_start_v2` | `varta-net-request-1` / `varta-net-request-2` | `net::DESCRIPTOR_VERSION`, `net::DESCRIPTOR_VERSION_BYTES` |
 <!-- generated:embedding-net-limits:end -->
+
+The native asynchronous client uses a process-owned system DNS pool within these
+bounds. It preserves system address order, rejects oversized answers rather than
+truncating them, and reports a full queue as a recoverable connection failure.
+Cancelled or expired queued jobs do not start a lookup; an already running OS
+lookup may finish later, without retaining its request Store. Results that finish
+after the request deadline cannot start a connection. Browser hosts use their
+platform resolver. The native bounds also apply to earlier asynchronous fetch
+profiles; guest ABI bytes and grant checks are unchanged.
+
+The reference native HTTP v2 request context also uses this cancellable transport
+for synchronous `net.get`/`net.fetch`. Those calls retain their HTTP-only grants,
+raw get bodies and status-only fetch result; they run no guest jobs while waiting.
+They use the response header field limit below, `net::MAX_FETCH_HEADER_BYTES` for
+header bytes and `abi::MAX_RESULT_BYTES` for get bodies. Host cancellation and the
+absolute request deadline are fatal, even through result capture. Other contexts
+keep the previous synchronous transport; this is not a new guest ABI.
 
 ### Network requests (v37)
 
@@ -1261,6 +1281,7 @@ interfaces are [unstable](#what-is-unstable).
 | Host tasks queued at once per instance | 256 | `events::MAX_PENDING_HOST_TASKS` |
 | Event record (UTF-8 bytes) | 65536 | `events::MAX_EVENT_RECORD_BYTES` |
 | Source name (bytes) | 64 | `events::MAX_EVENT_NAME_BYTES` |
+| Largest exact source id | 9007199254740991 | `events::MAX_EVENT_SOURCE_ID` |
 <!-- generated:embedding-event-limits:end -->
 
 ### Host operation table
@@ -1279,7 +1300,7 @@ import the operation, as contiguous runs in registry order.
 | `env_print` | (i32, i32) → () | 1 | `env.print` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `fs_print` | (i32, i32) → () | 1 | `fs.print` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
 | `fs_read` | (i32, i32) → (i32) | 1 | `fs.read` | yes | yes | `checked-i32-utf8-v1` – `checked-f64-utf8-v2` |
-| `http_service` | () → () | 1 | none | — | — | `checked-i32-utf8-v1` |
+| `http_service` | () → () | 1 | none | — | — | `checked-i32-utf8-v1`, `checked-f64-utf16-v38` |
 | `http_stop` | () → () | 1 | `net.listen` | — | — | `checked-i32-utf8-v1` – `checked-f64-utf16-v38` |
 | `json_parse` | (i32, i32, i32, i32) → (i32) | 1 | none | yes | — | `checked-i32-utf8-v1` |
 | `json_stringify` | (i32, i32, i32) → (i32) | 1 | none | yes | yes | `checked-i32-utf8-v1` |
@@ -1570,6 +1591,8 @@ from any later pure operation.
 | `varta.http_abi.handle` | export, function | HTTP adapter | `http::HANDLER` |
 | `varta.http_abi.copy_string` | export, function | HTTP string transfer | `http::COPY` |
 | `varta.http_abi.retain_string` | export, function | HTTP string retention | `http::RETAIN` |
+| `varta.http_abi.state` | export, function | Async HTTP response Promise state (v2) | `http::STATE` |
+| `varta.http_abi.value` | export, function | Async HTTP fulfilled response string (v2) | `http::VALUE` |
 | `varta.value_abi.allocate` | export, function | Guest allocator called back by checked JSON parsing | `value::VALUE_ALLOCATE` |
 | `varta.value_abi.retain` | export, function | Guest root retention called back by checked JSON parsing | `value::VALUE_RETAIN` |
 | `varta.exception.pending` | export, mutable i32 global | Exception profiles: 1 while an exception is pending | `exceptions::PENDING` |
@@ -2911,15 +2934,24 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
 | Tool input / output JSON bytes | 65536 / 1048576 | `ToolLimits::default()` |
 | Tool string bytes / memory bytes | 1048576 / 8388608 | `ToolLimits::default()` |
 | Tool fuel / host calls / deadline | 1000000 / 1024 / 5000 ms | `ToolLimits::default()` |
-| HTTP contract version / metadata bytes | 1 / 8192 | `http::VERSION`, `http::MAX_METADATA_BYTES` |
+| HTTP legacy / maximum version / metadata bytes | 1 / 2 / 8192 | `http::VERSION`, `http::LATEST_VERSION`, `http::MAX_METADATA_BYTES` |
 | HTTP headers / header bytes / target bytes / body bytes | 32 / 4096 / 1024 / 8192 | `http::MAX_*` |
 | HTTP header / connection timeout | 2 s / 10 s | `http::HEADER_SECONDS`, `http::CONNECTION_SECONDS` |
+| Native HTTP retained request reports / total retained audit entries | 32 / 256 | `http::MAX_REPORTED_REQUESTS`, `permission::MAX_AUDIT_ENTRIES` |
 | Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |
 | Catalog types / bindings | 672 / 672 | `function::MAX_CAPTURE_TYPES` |
 | Catalog function signature index bound (exclusive) | 128 | `function::MAX_TYPES` |
 | Catalog captures per function | 32 | `function::MAX_CAPTURES` |
 | Frame slots per layout / suspension states per layout | 256 / 256 | `frame::MAX_FRAME_BINDINGS`, `frame::MAX_SUSPENSION_STATES` |
 <!-- generated:embedding-entry-limits:end -->
+
+The reference native v2 server emits owned `RuntimeEvent::HttpRequest` evidence
+after each request Store is released. `RunReport::http` retains the bounded detail
+and aggregate audit prefix above while totals continue across omitted records.
+Observers receive every worker's bounded usage/audit report, including failures
+and cancellations. Startup budget/audit fields keep their original meaning. A
+returned guest envelope does not prove successful transport framing or delivery;
+see [native HTTP v2](architecture.md#http-contract-v2--native-server).
 
 ## Security obligations
 
@@ -2971,7 +3003,7 @@ accepts that the format may change in a later profile:
   algorithms the profile sections cite;
 - the structural rules of `varta.functions` beyond the
   [normative minimum](#function-and-frame-catalogs);
-- HTTP service v1 for third-party hosts;
+- HTTP service v1/v2 and native request-report APIs for third-party hosts;
 - diagnostic and log text, and the order of validation failures;
 - the [view protocol draft v0](#view-protocol-draft-v0-unstable) and every other
   planned interface: browser capability mappings, and the v38 long-lived

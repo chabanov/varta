@@ -2,6 +2,74 @@
 
 ## Unreleased
 
+- Local `varta dev --target browser` serves checked in-memory revisions on
+  loopback, with runtime policy/decisions, optional application mode, page budget
+  reporting and graceful shutdown. Source/config/resource edits rebuild and
+  reload automatically after successful startup; errors preserve the working
+  version and appear as host diagnostics. Old sessions stop before reload.
+  Browser distribution and dev reject HTTP service contracts explicitly.
+  Dev pages now pin all assets under a content-derived revision address;
+  mutable root asset aliases are rejected.
+
+- Browser any-HTTPS link consent on every trusted activation: an owned full-URL
+  prompt after a checked Worker pause, ephemeral audited decisions, revocation
+  recheck and deferred command results. Explicit scope intersections keep their
+  direct path; denial, overlap, abort and platform failures do not open an address.
+
+- Browser named event delivery and non-view application sessions: bounded source
+  catalogs/generations, owned UTF-8 records, FIFO/coalescing host tasks and explicit
+  transport backpressure. Stale deliveries cannot target reopened names; closing
+  the last listener can finish a non-view instance. Trusted host gesture turns
+  integrate with consent without giving ordinary records gesture authority.
+
+- Browser permission broker inputs, headless query/request answers, bounded
+  one-shot sources and audit reports/observers, with native schema/scope/accounting
+  checks and additional live browser clipboard restrictions. Parent turn
+  acknowledgements bound audit/turn traffic; startup updates and failures are
+  checked before guest entry. Explicit origin-local IndexedDB stores atomically
+  preserve per-artifact choices; live session revocation is acknowledged by the
+  Worker and persists denials without cancelling already authorized transfers.
+  Required first-run and optional gesture consent now use a host callback or an
+  owned modal outside the guest view; answers resume as separate host tasks,
+  without spending turn budgets on human waits. Generated view pages opt into
+  the modal/store; imports and bounded executions remain passive/headless.
+- Event-source ids stop before f64 rounding; event/network watchers reject
+  continuations already owned by timers. Active browser transfers are driven
+  before choosing overdue timers.
+
+- Packaged browser fonts from verified TrueType/OpenType/WOFF/WOFF2 bytes, with
+  bounded container/decoded-size admission, complete pre-execution sanitization,
+  per-session families, stylesheet/variable rewriting and terminal cleanup.
+  Original fixtures verify real metrics and simultaneous/ambient-name isolation.
+  PNGs and fonts now share aggregate decoded-resource bounds.
+
+- Browser PNG resources: explicit project inventory, pinned no-follow inputs,
+  bounded static images, generated file names and SHA-256 identities, complete
+  decoding before guest execution, checked Worker/DOM names and owned Blob URL
+  cleanup. Other image formats remain in development; fonts are covered above.
+
+- Checked v38 browser view sessions through `mount`, with one commit per turn,
+  bounded acknowledged commit/event transport, trusted gesture decisions,
+  idle/active turn deadlines, close/remount and bounded `run` rendering. Native
+  event accounting and Chrome permission/lifecycle probes pass. Loader imports
+  are passive; inert anchors retain navigation prevention after Worker shutdown.
+- Preserve empty URL query/fragment delimiters in browser permission matching,
+  verified against native exact-scope rules.
+
+- Browser view foundation: structured common-registry metadata, shared native
+  child/CSS grammar rules, atomic browser model and private closed-shadow DOM
+  adapter. Native batch/CSS/event and real Chrome boundary probes pass.
+
+- V38 browser async network adapter: bounded request/completion slots, exact
+  URL/method/visible-header permission ceilings, deferred I/O, per-turn accounting,
+  byte/text bodies and cancellation. Fetch omits ambient credentials and never
+  follows opaque redirects; CORS/wire-header/encoding limits remain explicit.
+
+- Generated browser timer adapter with bounded stable due queues, cancellation,
+  interval/unref behavior, v38 turn budget renewal and exact package/runtime
+  `time.timer` permission checks. Real Chrome observations compare native usage;
+  permission ceilings remain runtime inputs and optional requests deny headlessly.
+
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 workspace uses package version `0.1.0`; these entries describe the development
 snapshot and do not announce a published release. Counts quoted in an entry
@@ -10,6 +78,19 @@ describe the state when it was written. Current status is in the
 in [conformance/README.md](conformance/README.md).
 
 ### Fixed
+
+- V38 exception/rejection readers apply the profile string limit to Error and
+  subclass messages while retaining bounded rejection snapshots; older profile
+  limits remain frozen.
+
+- V38 checked record-union conversion treats `unknown` discriminator fields as
+  overlapping literal fields. Valid alternatives survive strict matching and
+  ambiguous objects raise the existing `TypeError`; older profiles stay frozen.
+- V38 checked JSON parsing preserves document insertion order for named record
+  properties and numeric order for array-index keys across compiled, linked and
+  host builders, including escaped keys, missing optional fields and wide records.
+- V38 `if (result.ok)` and related boolean guards narrow discriminated record
+  unions, including nested paths; general boolean alternatives remain possible.
 
 - Emit generated conditional spines with an explicit work stack, preserving
   rooting and instruction order while avoiding native-stack exhaustion on large
@@ -22,6 +103,82 @@ in [conformance/README.md](conformance/README.md).
 - Truncate valid fractional timer delays consistently in native and JS hosts.
 
 ### Added
+
+- Browser Promise/async microtask checkpoints with bounded token/reaction state,
+  native dispatcher/ordering/budget semantics and bounded rejection snapshots.
+  Real Chrome fixtures compare logs, rejections and exact resource counters.
+  Timers, external event turns and privileged effects remain in development.
+
+- `build --target browser` for the initial checked console bundle, with validation
+  before output and no native-root binding or overwrite. Explicit `--target wasm`
+  and `--target native` select the existing portable and verified companion paths.
+  Broader browser effects and dev integration remain in development.
+
+- Compiler foundation for private browser fuel instrumentation, preserving native
+  artifact bytes and matching locked Wasmtime fuel in focused native/transformed
+  tests. A Rust-generated frozen ES registry and shared JS tank have matching
+  native/Node/Chrome observations on a fixed v38 fixture, including host charge
+  boundaries. Official host integration, complete charging and full browser
+  acceptance remain in development.
+- Initial browser R1 console bundle with SRI/CSP/Trusted Types bootstrap, pinned
+  original/image/manifest/Worker integrity, bounded loading and Worker deadline/
+  cancellation. Real Chrome cases cover native output, resource limits and file
+  substitution. Privileged effects, scheduled execution, broader browsers and
+  CLI integration remain in development; host policies are never embedded.
+- Trusted browser artifact preparation validates original code/contracts before
+  deriving a private image, retaining policies and resolved budgets. Private
+  memory/table maxima match native growth ceilings without rewriting portable
+  artifacts; preparation does not invoke guests or bind filesystem roots.
+
+- Explicit bounded `wait_network` steps for native headless view scripts. They
+  wait for armed network work without advancing virtual timers, cap guest turns
+  and maintenance, and terminate on timeout before later inputs. Existing
+  lifetime/resource limits and surviving response deadlines are preserved.
+  Script validation also covers directly constructed inputs before guest startup.
+  Real I/O order remains external; deterministic network replay is still open.
+
+- Verified native server integration: explicit HTTP contract v2 for sync/async v38
+  UTF-16/binary64 handlers, bounded wire transcoding, pure completion accessors,
+  isolated module initialization and response-owned event-loop work. Capabilities
+  are derived from emitted calls and independently validated; legacy v1 semantics
+  remain unchanged. Request budgets/ceilings and headless permissions now inherit
+  startup policy, listener consent is checked before bind, and v2 failure output
+  is delivered by its owning worker. V2 disconnects cancel guest loops and native
+  timer/async-network waits; shutdown drains the active response under its original
+  deadlines and closes idle connections. Native async DNS now uses a bounded
+  process-owned pool, so dropping a request does not wait for an OS lookup. Its
+  queue/address bounds also apply to earlier async fetch profiles. V2 workers now
+  preserve bounded usage/audit evidence in `RunReport::http` and stream completion
+  reports through `RuntimeEvent::HttpRequest` after resource release, including
+  failures and disconnects. CLI/companion `--budget-report` streams request usage.
+  Synchronous `net.get`/`net.fetch` within v2 requests now use the owned cancellable
+  transport and original deadline; cancellation/deadline failures cannot become
+  recoverable host results. Status-only fetch and bounded raw get bodies are
+  preserved; calls without an owned context retain the previous transport.
+  Bounded scripted waits and sampled native resource lifecycle have acceptance;
+  broader target/RSS/lifetime and replay work remain open.
+
+- Native server acceptance covers hostile HTTP v2 contracts in portable and
+  source-free native artifacts, rejecting metadata/helper/effect substitutions
+  before startup or bind. A warmed, isolated cancellation sample verifies closed
+  upstream sockets, stable descriptor count and fixed per-request guest memory;
+  broader native RSS, target and long-duration acceptance remain open.
+
+- Synchronize the prototype JS contract with distinct Tool/HTTP admission and
+  native HTTP v2 registries, with an extractor drift check and shared Node
+  differential acceptance. Official browser delivery and fuel remain open.
+
+- V38 directly decodes eligible literal-constrained `JSON.parse(text) as T`
+  records, discriminated unions and arrays. A required-tag probe selects one
+  record before full validation/build; scalar literal constraints remain checked.
+  Unsupported inputs use the original parse/assertion with identical diagnostics,
+  single input evaluation and rooted fallback; non-schema target fields retain
+  their prior conversion/diagnostic. Public JSON schema, host/value ABI,
+  old profiles and literal admission for `varta.json.parse<T>` stay unchanged.
+
+- Reconcile the development plan and CORE/platform ledgers with integrated v38,
+  the 2026-11-01 verification checkpoint and remaining acceptance batches;
+  distinguish historical probes from current blockers and refresh related overviews.
 
 - V38 compiled JSON decoders (`json_decoders`): every checked parse of a
   static target (`JSON.parse(text) as T`, `varta.json.parse<T>`, untyped

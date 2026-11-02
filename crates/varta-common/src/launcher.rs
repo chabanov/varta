@@ -43,7 +43,7 @@ impl LauncherInfo {
             // Advertised maxima; the profile and payload probe select the pair.
             host_abi: abi::PROGRAM_LIMITS_VERSION,
             value_abi: value::HASHED_DICTIONARY_VALUE_VERSION,
-            http_contract: http::VERSION,
+            http_contract: http::LATEST_VERSION,
             language_profiles: language::SUPPORTED_PROFILES.to_vec(),
         }
     }

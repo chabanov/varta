@@ -80,7 +80,7 @@ pub const MAX_DECISIONS_PER_APPLICATION: usize = 128;
 /// hexadecimal SHA-256 digest of the portable Wasm bytes.
 pub const ARTIFACT_PREFIX: &str = "sha256:";
 pub const ARTIFACT_DIGEST_HEX: usize = 64;
-const DECISION_SCHEMA_VERSION: u32 = 1;
+pub const DECISION_SCHEMA_VERSION: u32 = 1;
 
 /// Per-grant consent metadata from the package manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

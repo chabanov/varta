@@ -52,6 +52,57 @@ framing, header/body/connection bounds, host-policy conjunction before bind,
 request trap isolation and owned shutdown. HTTP registration does not publish AI
 tools. Stream runtime events through tooling rather than printing from libraries.
 
+V38 HTTP adapters use explicit contract v2 (`http::UTF16_VERSION`); legacy i32
+profiles retain v1 and intermediate binary64 profiles remain rejected. Match the
+contract version to the source profile and exact structured-value layout before
+execution. Wire envelopes stay UTF-8 JSON with existing byte limits; v2 transfer
+helpers copy UTF-16 guest bytes, and the host transcodes both boundaries without
+replacement characters. Preserve fresh-store request isolation, pending-exception
+checks, integer response-status validation, capability conjunction and owned
+listener shutdown. V2's optional `asynchronous` flag requires a Promise<string>
+result and pure `http::STATE`/`http::VALUE` accessors, each validated before execution.
+Use ordinary async lowering and frame normalization for the adapter. Root the
+response Promise, drain its microtasks, then drive the existing bounded loop only
+until it settles; an idle pending Promise fails the request. Do not renew request
+budgets per task. Drop background timers/I/O with the Store after settlement.
+Sync v2 handlers retain their response through one microtask checkpoint. Reject
+unhandled rejections before publishing either response. Compute v2 capabilities
+from emitted direct calls, including every body reached by the resume dispatcher.
+Module values initialize before each v2 adapter in its fresh Store, separately
+from startup; keep main's once-only startup behavior. Never reinterpret v1 helper
+encoding. Snapshot effective startup budgets/caps and artifact-scoped headless
+broker inputs into every request; create fresh counters without renewing them
+between tasks. Retain the fixed HTTP handler deadline even if a manifest/host
+allows a larger application deadline. Apply headless consents/stored decisions
+before bind as well as request effects; a stored allow cannot exceed the request
+or host ceiling. V2 workers deliver bounded output before failure and diagnostics
+once, independently of transport-result delivery. The v2 service future owns a
+cancellation guard for its blocking request worker; dropping it signals that
+execution, including epoch checks in guest loops and bounded native timer/network
+waits. A shared engine epoch must never cancel another Store. Wait slices must
+not fire timers early, deliver guest events or renew budgets. Drop guest/network
+resources before calling output observers. Graceful shutdown stops new requests,
+closes idle/partial-header connections, and drains an active response under its
+original deadlines. Native async DNS is process-owned and bounded by the shared
+net registry; cancelled/expired queued jobs and late results cannot start sockets,
+and OS lookup workers hold no guest references. Close one non-renewing usage
+entry for every v2 worker, including traps/cancellation, before dropping its Store.
+Deliver owned request usage/audit through `RuntimeEvent::HttpRequest` only after
+resource release; preserve startup fields and put bounded aggregate evidence in
+`RunReport::http`. Totals must include omitted details, with explicit drop counts.
+Observer reports retain their full per-request bounded audit independently of the
+aggregate audit cap. Do not equate a returned guest envelope with successful
+transport validation or client delivery. Legacy HTTP publishes no v2 reports.
+Inside v2 requests, synchronous `net.get`/`net.fetch` drive cancellable native I/O
+under the original absolute request deadline. Keep their exact HTTP-only grants,
+no redirects/proxies, status-only fetch completion and bounded raw get bodies.
+Apply the shared native response-header field limit and legacy header-byte bound.
+Poll no guest jobs and renew no budgets. Cancellation and an exhausted request
+deadline must escape fatally before a host status/result is published; neither
+guest try/catch nor result capture can recover them. Calls without an owned token
+retain their previous synchronous transport. Sustained shutdown acceptance remains
+open.
+
 ### Runtime-only packaging, language metadata and binary64
 
 Runtime-only packaging is implemented: `varta-launcher` builds the execution-only
@@ -1662,7 +1713,9 @@ re-export through the same rules as functions. `check` validates the whole modul
 imports, the pure initializer form, and temporal-dead-zone order), so chunking
 never changes diagnostics. Keep the initializer subset call-free: admitting calls,
 member reads with effects or anything that can observe capabilities needs a new
-evaluation-order design and initialization on tool/HTTP entries first.
+evaluation-order design and initialization on tool/HTTP entries first. V38 HTTP
+v2 initializes the existing checked subset in each fresh request Store; older
+HTTP/tool gates remain unchanged, and this does not widen initializer effects.
 
 Number/boolean/null/undefined constants fold to literals (`fold`); never put a
 non-handle value in a root slot, because the collector treats words at or above
@@ -3552,6 +3605,12 @@ lists what changes; these rules keep it sound.
 
 ### Structural subtyping (`structural_subtyping`)
 
+- Boolean data-property truth guards narrow the owning union through the existing
+  discriminant/path machinery, gated to v38. Require a boolean field in every
+  member; retain members with a general boolean on both branches. Do not treat
+  optional fields, getters or other truthy values as singleton booleans. Cover
+  positive/negative, nested, logical and source-free paths, and rejection cases.
+
 Contract: [architecture.md](architecture.md#structural-subtyping-structural_subtyping).
 
 - Gate every admission on `structural_subtyping()`; v37 keeps its bytes and
@@ -3947,15 +4006,47 @@ Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),
 
 ### JSON decoders (`json_decoders`)
 
+- Record enumeration order comes from the JSON tape, not schema slot order.
+  Write canonical slots without moving them; retain input order for named keys
+  and numeric order for array-index keys. Missing optional fields stay absent.
+  Both the shared `json::build` fallback and generated builders must agree under
+  forced collection, for nested/escaped/wide records and later delete/reinsert.
+
 Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
 
+- Under v38 `web_bytes`, a literal type overlaps `unknown` when proving
+  discriminants. Use strict matching for those record unions; preserve older
+  profiles. Cover valid later alternatives, boolean/number/string tags, ambiguity,
+  an already-parsed unknown value, generic/host paths, GC and source-free artifacts.
+- Direct literal-bearing `JSON.parse(text) as T` assertions keep semantic
+  child edges before literal erasure (`lower::json::preserve_direct_types`).
+  Require the existing `declared_fields::convertible` admission before attempting
+  a direct graph: object views, tuples and nominal collections retain their
+  established conversion/diagnostic path rather than reaching schema emission.
+  Never derive literal constraints from erased physical field types or export an
+  unconstrained public schema. Keep `varta.json.parse<T>` literal admission fixed.
+- A private structured attempt may return `ir::JSON_DECODE_MISS` only to its
+  caller-owned fallback. Save the input once; on a miss execute the original
+  unknown parse and assertion with the original diagnostic. Root-stack cleanup
+  precedes the miss; no sentinel may escape the generated value block. Keep this
+  path gated to v38 and retain nonzero allocated-reference success results.
+- Select among record alternatives only with a required literal field proven
+  disjoint against every other record, including `unknown` possibilities. Probe
+  tags without allocating values; scan each field/scalar kind once and reuse its
+  tape entry across candidate tests. Rewind tape offsets against the current base,
+  then check the selected record completely. Keep the existing 24/200-member
+  dispatch-cost ceiling, and compare direct/reference fuel at 200 alternatives. Preserve old first-kind dispatch for
+  ordinary schemas. Ambiguous choices, escaped/slow tags and conservative limits
+  fall back. Test with only this optimization disabled as well as generic/host
+  decoding, forced collection, errors, async input and source-free module graphs.
 - The decoders live in `emit::decoders` (`scan` the shared scanner, tape and
   block/cell/vector builders; `check` and `build` the record, array,
   dictionary and union nodes; `asm` named-label control flow). They are
   generated from `schemas::graph`, one node per value type of the module's
   `E::ParseJson` targets, and shared by every call site; KV decodes keep
   their host imports.
-- The linked `json_parse_v19` stays the one source of every failure: a
+- The linked `json_parse_v19` and the original checked assertion stay the
+  sources of failures (private attempts return to the assertion fallback): a
   checker returns 0 (fallback) on anything it does not accept, never an
   error of its own, and must accept only inputs on which it agrees with
   `varta_common::json::scan` and `build`. Before widening what a checker
@@ -4005,10 +4096,18 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
 - A scripted session (`run_view`) runs on virtual time
   (`Application::horizon`): an input waits until nothing is runnable (host
   tasks, due timers, timers while a minimum-delay timer is armed, arrived
-  completions), `wait` steps alone advance loop time, and nothing sleeps or
-  observes the wall clock. Keep Node's timer order: never let a zero-delay
+  completions), and `wait` steps alone advance loop time. An explicit
+  `wait_network` may wait for real I/O under `Script::MAX_NETWORK_WAIT_MS`,
+  freezing virtual time after ordinary settling. Validate all scripts before
+  guest startup, including programmatically supplied steps. Bound native waits,
+  guest continuations and idle maintenance without changing instance lifetime or
+  surviving transfer deadlines; retain smaller fuel/turn/lifetime bounds. Expiry
+  is `ApplicationError::NetworkWait` and ends the session before later inputs.
+  No other script step waits for real time. Keep Node's timer order: never let a zero-delay
   timer overtake an earlier (due, sequence) key, and never wait for network
   completions implicitly. Every step stays within `Script::MAX_STEP_TURNS`.
+  Real network waits do not imply deterministic replay; completion order/content
+  remain external until a recorded or simulated transport is implemented.
 - The event export is synthesized only when the view prelude is loaded; it
   copies the record with the snapshot helper before any other operation and
   calls the prelude dispatcher, a pruning root. Validation rejects the export
@@ -4096,3 +4195,238 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   existing range check, consistently in the native and JS hosts.
 - JavaScript hosts need declared table maxima within the element budget because
   they have no Store table-growth limiter. Test both absent and excessive maxima.
+
+## Browser execution metering (in development)
+
+- Keep `browser_meter` a trusted compiler-side derivative, never a change to
+  portable bytes or old profile semantics. Validate original artifacts and effects
+  before transformation and reject its reserved import/custom section on input.
+- Match the locked Wasmtime Cranelift fuel boundaries, including constants through
+  SSA locals/branches, loop phis, buffered trap costs and variable memory work.
+  Extend native/transformed differential tests for every newly supported family;
+  do not replace native golden costs with per-instruction browser estimates.
+- Reject unmodeled proposals and start-function instantiation charges explicitly.
+  Keep private image expansion within implementation limits. No new dependency,
+  production budget increase or exemption from helper purity is implied.
+- The private fuel global belongs to the trusted host. Host effects must deduct
+  the shared fair-work rates from that same counter before their effects. The
+  transform/probe covers logging call and byte-work charges under native, Node
+  and Chrome; other imports, the full corpus and remaining browser engines need
+  acceptance before claiming budget conformance.
+- Generate the official browser registry from `varta_common::browser`, not parsed
+  Markdown or example assets. `HostOperation::ALL` comes from the enum declaration;
+  check it against every wire-name arm. Regenerate `browser/registry.mjs` together
+  with registry changes. Respect the profile's `fairFuel` flag; the existence of
+  shared rate data must never silently add host charges to frozen profiles.
+
+- Browser packaging starts with `BrowserArtifact::prepare`, retaining its immutable
+  original/policy/image pairing. Do not derive images from unvalidated portable
+  inputs or treat a successful preparation as runtime permission approval.
+- Resolve v38 memory budgets against the same manifest/host ceiling rules as
+  native; older profiles keep their production budgets. Clamp only the private
+  image's memory/table maxima to the effective byte/element ceilings, never widen
+  a declared cap. Test growth success/failure against native Store limits.
+- Preparation never pins native filesystem roots or invokes guest entry points.
+  Reject initial allocations above the host ceiling and unmodeled proposals;
+  there is no unmetered fallback. Integrity, original artifact checks at loading,
+  concrete permissions and Worker interruption remain browser-delivery work.
+
+- The bundle path accepts only implemented effects and rejects other
+  host gaps before writing. Never treat an unsupported import or unrun job as a
+  successful execution. Broader effects require concrete permission checks.
+- Host policy is runtime input and never embedded in a bundle. Reject bundling a
+  preparation with a host ceiling; pass trusted runtime budget ceilings separately
+  to `run`. Reject a memory ceiling the private image cannot enforce.
+- Pin original/image/manifest/Worker bytes and lengths in the trusted loader; pin
+  that loader through the generated page's SRI/CSP boundary. Workers run from
+  verified owned Blob bytes with no transitive imports. Test same-length and
+  overlong/truncated substitutions before effects. Hashes are not publisher trust.
+- Parent cancellation/deadline must terminate the Worker, abort pending fetches,
+  release Blob URLs and retain emitted logs. Use real wall-clock browser tests for
+  a running guest; virtual-time completion alone cannot prove this guarantee.
+- Keep diagnostic decoding chunked and bounded by output retention, preserving
+  native BOM/replacement behavior and counting attempted UTF-8 output. A failed
+  output must not allocate a whole guest-sized host string merely to reject it.
+
+- `build --target browser` compiles through the shared source pipeline and performs
+  all original/image/effect checks before creating output. Do not mount native
+  execution roots while building a browser distribution. Keep its original Wasm
+  and manifest identical to the portable build and reject private images through
+  native artifact validation. Never embed `--policy` into this path.
+- Preserve the existing default build and verified `--single` companion path.
+  `--target native` uses that same verification; custom `--launcher` is native-only.
+  Browser output is a fresh `web` directory beside the configured output prefix,
+  and a repeated build must not alter existing files. Add CLI positive, gap/type,
+  policy/flag, root-binding and overwrite checks when changing this boundary.
+- `dev --target browser` is a local runtime host, not a distribution build. Keep
+  compilation/resources/admission in project tooling and serve only an immutable
+  in-memory bundle. Reject non-loopback binding and foreign authority/origin;
+  never map a request to the source filesystem. Bound connections, headers and
+  connection lifetime, and close active work on shutdown. Pass policy/budget/
+  current-artifact decision inputs through a trusted dev bootstrap, with renewed
+  loader SRI/CSP; fail closed on bootstrap format drift. A memory ceiling must
+  match the privately instrumented image. Never expose other applications' decisions
+  or native root mappings, and preserve portable bytes plus policy-free builds.
+  Imports remain passive; dev script opt-in rewriting must not alter CSP origins.
+- Reject HTTP service contracts in browser build/dev before output or listening;
+  require the native target instead of silently executing only the entry point.
+- Development input tracking must observe actual bounded bytes and failed reads,
+  plus missing resolution candidates. Recheck through the original pinned loader;
+  never introduce recursive ambient scans or timestamp-only invalidation. Bound
+  the journal without eviction; conflicting repeated reads invalidate preparation
+  even after restoration. Include config/text/resource inputs and reject observed
+  drift before binding. Keep ordinary compilation unobserved.
+- Dev page URLs must pin all assets to one content-derived revision. Hash framed,
+  sorted names/bytes, preserve loader SRI/CSP when rewriting the script URL and
+  fail closed on format drift. Never expose mutable bare-asset aliases or fall
+  back from an expired revision to current files. Bound retained generations and
+  keep in-flight response bytes owned across eviction.
+- Serialize dev input checks/rebuilds off the HTTP executor and capture policy/
+  decisions at startup. Preserve failed-attempt observations for recovery; baseline
+  changes before attempts, never after failures. Publish only admitted stable
+  bundles, retain the last working revision on errors and bound diagnostics.
+  Protect the status route with the same delivery checks and disable 304 answers.
+- Dev polling must be passive on imports, bounded/serial/abortable, and covered
+  by loader SRI. Render diagnostics as text outside the guest view; abort the old
+  session before reload or on pagehide/unavailable status. Identical output clears
+  errors without restarting. Do not restart a trapped guest without source change.
+
+- The Promise checkpoint holds only generation-bearing tokens and reaction ids;
+  dispatch through the closed resume export, validate outcomes and canonical
+  exception state, and share root fuel/deadline allowances with every job.
+  Scheduler imports pay call fuel but never ordinary host-call counts.
+- Snapshot rejection diagnostics at report time, including validation when the
+  retention set is full. Retain no guest handle; withdraw reports on handling and
+  apply the earliest-unhandled policy only after draining the queue. Generate
+  all layout/limit/error facts from Rust and guard slot indices before shifts.
+- Exception diagnostics read Error/subclass string fields within module-profile
+  limits; v38 does not reapply a legacy string bound. Rejection copies still use
+  bounded prefixes. Test long fields, late handling, not-retained reasons and
+  exact native/browser fuel, calls, job counts and output bytes.
+
+- Browser timers use indexed bounded due queues and native logical time/arm order.
+  Keep cancelled entries only until guest cleanup; no lazy heap zombies. Do not
+  let unreferenced timers keep the loop alive. Drain/check rejections before timers.
+- Check exact package/host timer authority before arming; snapshot the separate
+  boolean permission ceiling before loading. Empty ceilings deny, optional v38
+  requests deny without a decision, and V2 denial must wake only cleanup frames.
+  Never embed these ceilings in artifacts. Test denial and namespace confusion.
+- Renew v38 fuel/call/job budgets only at timer task boundaries, keeping global
+  output/memory and the R1 watchdog. Legacy profiles retain one allowance. Compare
+  native total/final-turn fuel and timer cleanup/callback counts in real Chrome.
+
+- Browser network starts admit only the canonical v38 descriptor/head. Generate
+  limits/completion/result ABI facts from common. Keep v37 arrival-order imports
+  unsupported until a transport can preserve them. Never reinterpret old heads.
+- Intersect exact package and separately snapshotted host URL/method scopes before
+  deferring any transport. Bound glob work and reject encoded paths/credentials/
+  fragments like native. Empty scopes deny; optional requests deny headlessly.
+  CSP origin extraction is package-only and is no substitute for request checks.
+- Bound deferred work and completions by request slots, not just active fetches.
+  Start I/O only in the loop; deliver one completion before renewing turn budgets
+  and draining jobs. Preserve due-timer priority, unref-with-network behavior,
+  raw/text carry, result fuel and late-abort cleanup. No async callback runs Wasm.
+- Fetch uses omitted credentials and manual redirects. Refuse browser-owned request
+  headers before effects and never follow opaque redirects. Document exposed-head,
+  CORS and encoding limits rather than claiming arbitrary native wire equivalence.
+  Use real cross-origin loopback tests, preflight, cookie omission, active abort,
+  exact permission ceilings and a denied-target hit counter.
+
+- Browser view metadata is structured registry data, not scraped prose or a
+  dependency on the example host. Share tag content rules and composite CSS
+  grammars with native. Decode every operand before applying semantics; copy all
+  mutable state and check final unique ids before swapping it.
+- Worker and DOM sides must use the same model, with no retained guest buffer or
+  mutable inspection alias. Validate before any visible change or subsequent
+  guest effect. DOM work uses a closed shadow root and checked methods, never
+  HTML parsing, ambient navigation or an arbitrary asset URL.
+- View import admission requires Worker lifecycle, bounded commit/event
+  transport and turn/gesture permissions. A private DOM probe alone does not
+  establish application delivery. Compare batch acceptance/state,
+  CSS and event bytes with the native public renderer, then real DOM behavior.
+
+- Browser view turns acknowledge one committed batch before another task runs;
+  parent events use a bounded queue and one in-flight record. Gesture flags are
+  host-owned and restricted to the generated gesture kinds. Turn deadlines renew
+  on tasks and clear during idle; I/O retains its operation deadline. Never count
+  an idle wait as active execution or renew a bounded R1 lifetime.
+- Freeze must retain navigation prevention: keep hrefs inert before broker checks,
+  prevent form submission and block speculative external targets. Closing releases
+  container ownership so remount creates a new Worker/instance. Importing a loader
+  is passive; only a matching trusted bootstrap script marker starts it by default.
+- Preserve empty query/fragment delimiters when matching normalized URL suffixes;
+  pathname/search/hash getters alone lose empty delimiters. Keep the native scope
+  regressions and browser namespace/ceiling/gesture checks together.
+
+- Browser resource names are package inventory keys, never URL authority. Read
+  configured bytes beneath the pinned project root without following any symlink;
+  validate the complete inventory before output creation. Keep browser-specific
+  inputs out of portable manifests and host policies. Bound count, bytes, PNG
+  dimensions/chunks and reject animation. Verify every digest and decode the PNGs
+  before creating a renderer or entering Wasm; a matching digest does not prove
+  valid image contents. Worker and parent must agree on admitted names. Revoke
+  owned image URLs on all terminal paths and close temporary decode bitmaps.
+  Cover CLI no-follow paths, tampering, malformed content, missing inventory
+  entries, real image decoding, exact native accounting and session cleanup.
+
+- Package font bytes through the same no-follow, count/byte/decoded-size inventory
+  as images. Check container/table bounds, then require complete FontFace loading
+  before registration or any guest effect. Pass binary bytes, never URL/local()
+  sources. Keep family names case-insensitively unique and session-private; named
+  fonts outside the inventory fall back without ambient lookup. Preserve generic
+  families and CSS-wide keywords. Rewrite inline, stylesheet/media and nested
+  variable paths while preserving original custom values in non-font properties.
+  Do not cache arbitrary per-turn font/property names. Unregister owned faces on
+  every terminal path and never register a late-completing load. Test original
+  tiny fixtures, real metrics, simultaneous/ambient-name isolation, variable/color
+  semantics, corrupt/tampered data, abort/deadline and font-as-image rejection.
+
+- Browser decisions are native-schema runtime inputs, snapshotted before loading;
+  validate all applications, then select only the original Wasm identity. Never
+  embed them or turn stored allows into broader scopes. Preserve headless optional
+  denial and required stored-denial startup failure. Instance bookkeeping pays fair
+  fuel without host-call counts; compare real query/request programs and malformed
+  descriptor traps against native accounting/audit rows. Keep unsupported resource
+  kinds explicit at admission, not silently successful.
+- Browser clipboard permission state is an additional restriction where exposed;
+  unsupported platform names retain broker-only state. Remove listeners on close,
+  keep startup updates bounded/coalesced and apply them before guest entry. Source
+  ids must stay within the shared exact-f64 bound and timer-owned continuations may
+  not be used by event/network watchers.
+- A Worker waits for a checked parent acknowledgement at every turn checkpoint,
+  including R1, so audit/turn traffic cannot grow across unchecked turns. R1's root
+  deadline never renews or clears there. Reject bad startup/ack messages before a
+  later guest effect, and drive active transfers before selecting overdue timers.
+  Observer errors terminate the instance; observers never confer permission.
+- Interactive browser consent runs before instantiation for required decisions
+  and at checked turn boundaries for optional gesture requests. Never await human
+  input inside a host import, spend turn fuel/deadlines waiting, or wake a guest
+  continuation directly from an answer callback. Queue the bounded one-shot answer
+  as a host task and compare its arrival with view/network/due timer tasks. Mirror
+  the native single-prompt/dismissal limits and exact accounting. Abort and runtime
+  revocation defeat stale answers; serialize storage writes so late approval cannot
+  overwrite a later revocation. Observe the prompt audit before saving, and await
+  persistence before acknowledging the guest turn.
+- Prompt UI belongs outside the guest's closed view. Render package purpose as
+  quoted text, show the operation/identity/scope, and require trusted input for
+  approval. Clean up on abort, including late answers. Generated view bootstraps
+  install the UI/store only when requested permissions exist; imports stay passive
+  and bounded/headless APIs never prompt. Keep direct first-use consent, session-
+  only choices explicit gaps.
+- Named browser sources publish only bounded checkpoint catalogs, never an
+  unbounded message for every open/close import. Pin host deliveries to the catalog
+  generation; stale deliveries cannot bind a reopened name. Validate records before
+  listener lookup, preserve valid UTF-8 exactly, coalesce marked records only, and
+  wake guest continuations only when selecting a task. Match native queue/source
+  bounds, close/take behavior and exact accounting. Document the additional browser
+  acknowledgement backpressure separately from Worker queue semantics. Host gesture
+  flags are trusted embedding input; ordinary records never acquire one implicitly.
+- Any-HTTPS link consent uses a checked pause/resume barrier before showing the
+  full captured URL, never a prompt while guest code is running. Reserve only one
+  navigation, withhold further input/effects until completion, and deny overlapping
+  activations. Recheck revocation after waiting, never reread the href, never store
+  per-address choices or renew a turn merely for the pause. Audit each answer and
+  deliver the status as a nongesture command result. Explicit scopes on both sides
+  retain synchronous policy behavior. A missing seam and synthetic activation
+  both deny broad links. Platform/observer/abort failures must precede later OS
+  effects; test with spies, not real external windows.

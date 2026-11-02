@@ -208,6 +208,8 @@ fn runtime_error(error: RuntimeError) -> Error {
         RuntimeError::Application(error) => Error::InvalidArtifact(error.to_string()),
         RuntimeError::View(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::ViewInput(error) => Error::ExecutionFailed(error.to_string()),
+        RuntimeError::ViewLayout(error) => Error::ExecutionFailed(error.to_string()),
+        RuntimeError::ViewScript(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Policy(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::FileRoot(error) => Error::InvalidPolicy(error.to_string()),
         RuntimeError::Execution(error) => execution_error(error),

@@ -212,6 +212,21 @@ fn net_limits() -> String {
             "net::MAX_PENDING_REQUESTS",
         ),
         row(
+            "Native DNS workers per process",
+            net::MAX_DNS_WORKERS,
+            "net::MAX_DNS_WORKERS",
+        ),
+        row(
+            "Native queued DNS lookups per process",
+            net::MAX_DNS_QUEUED,
+            "net::MAX_DNS_QUEUED",
+        ),
+        row(
+            "Addresses in one native DNS answer",
+            net::MAX_DNS_ADDRESSES,
+            "net::MAX_DNS_ADDRESSES",
+        ),
+        row(
             "Request descriptor, body included (UTF-16 bytes)",
             net::MAX_REQUEST_BYTES,
             "net::MAX_REQUEST_BYTES",
@@ -329,6 +344,11 @@ fn event_limits() -> String {
             "Source name (bytes)",
             events::MAX_EVENT_NAME_BYTES,
             "events::MAX_EVENT_NAME_BYTES",
+        ),
+        row(
+            "Largest exact source id",
+            events::MAX_EVENT_SOURCE_ID,
+            "events::MAX_EVENT_SOURCE_ID",
         ),
     ])
 }

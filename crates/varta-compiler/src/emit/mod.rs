@@ -17,6 +17,7 @@ mod frames;
 mod fuel_profile;
 mod function_catalog;
 mod functions;
+mod http;
 mod labels;
 mod math;
 mod math_f16;
@@ -97,6 +98,7 @@ struct Emitter<'a> {
     canonical_functions: &'a BTreeMap<usize, u32>,
     function_targets: &'a BTreeMap<u32, Vec<usize>>,
     function_types: &'a [ir::FunctionType],
+    direct_json_targets: &'a BTreeSet<Type>,
     reserved_roots: usize,
     /// Address of the first permanent module-constant root slot.
     constant_roots: u32,
@@ -984,6 +986,18 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             exports.export(name, wasm_encoder::ExportKind::Func, helpers[&helper]);
         }
     }
+    if let Some((state, value)) = program.http_async {
+        exports.export(
+            varta_common::http::STATE,
+            wasm_encoder::ExportKind::Func,
+            functions_begin + state as u32,
+        );
+        exports.export(
+            varta_common::http::VALUE,
+            wasm_encoder::ExportKind::Func,
+            functions_begin + value as u32,
+        );
+    }
     if tool_strings {
         for (name, helper) in [
             (varta_common::TOOL_COPY_STRING, strings::Helper::Snapshot),
@@ -1106,6 +1120,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             canonical_functions: &canonical_functions,
             function_targets: &function_targets,
             function_types: &program.types.functions,
+            direct_json_targets: &program.types.direct_json_targets,
             reserved_roots,
             constant_roots,
             cell_slots,
@@ -1394,7 +1409,12 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
                 .into(),
         });
     }
-    if let Some((_, contract)) = &program.http {
+    if let Some((_, original)) = &program.http {
+        let contract = if original.version == varta_common::http::UTF16_VERSION {
+            http::contract(module.as_slice(), original)?
+        } else {
+            original.clone()
+        };
         module.section(&wasm_encoder::CustomSection {
             name: varta_common::http::SECTION.into(),
             data: contract

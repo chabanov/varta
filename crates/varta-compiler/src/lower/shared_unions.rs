@@ -340,6 +340,15 @@ impl Lower<'_> {
             .collect();
         (kept.len() < members.len()).then_some(kept)
     }
+    /// A truth test may be treated as literal equality only when every
+    /// member declares a required boolean data field. Optional/other truthy
+    /// types and getters must keep their existing truthiness semantics.
+    pub(super) fn boolean_discriminant(&self, ty: Type, name: &str) -> bool {
+        unions::members(ty, self.types).iter().all(|member| {
+            self.member_field(*member, name)
+                .is_some_and(|field| field.erased() == Type::Boolean)
+        })
+    }
     /// Narrow the object of `member` (`obj.name` compared with a literal) by
     /// its discriminant: a binding through its refinement, a path through a
     /// path fact.

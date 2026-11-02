@@ -73,12 +73,24 @@ fn execute(args: Args) -> Result<i32, Error> {
                         .map_err(Error::from)
                 })
                 .transpose()?;
-            options.observer = Some(Arc::new(|event| match event {
+            let request_budgets = args.budget_report;
+            options.observer = Some(Arc::new(move |event| match event {
                 RuntimeEvent::Listening { address, .. } => {
                     eprintln!("varta listening: http://{address}")
                 }
                 RuntimeEvent::Output(line) => println!("{line}"),
                 RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
+                RuntimeEvent::HttpRequest(report) => {
+                    if request_budgets && let Some(budget) = &report.budget {
+                        eprintln!(
+                            "varta HTTP request {}: {:?}",
+                            report.sequence, report.outcome
+                        );
+                        for line in budget.lines() {
+                            eprintln!("{line}");
+                        }
+                    }
+                }
             }));
             let report = if args.app {
                 runtime.run_application(

@@ -22,6 +22,7 @@ impl Policy {
         Self::with_ceiling(grants, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_ceiling(
         requested: &[CapabilityGrant],
         ceiling: Option<&[CapabilityGrant]>,
@@ -457,6 +458,20 @@ mod request_tests {
         // A ceiling cannot add a header the package did not declare.
         assert!(names(&Policy::with_ceiling(&[], Some(&ceiling))).is_empty());
         assert!(names(&Policy::with_ceiling(&declared, Some(&[]))).is_empty());
+    }
+
+    #[test]
+    fn exact_url_scope_preserves_empty_query_and_fragment_delimiters() {
+        let policy = Policy::new(&[grant(&["https://api.test/v1/a"], Some(&["GET"]))]);
+        assert!(policy.request("https://api.test/v1/a", "GET").is_some());
+        assert!(policy.request("https://api.test/v1/a?", "GET").is_none());
+        let links = Policy::new(&[CapabilityGrant {
+            id: varta_common::view::OPEN_URL_CAPABILITY.into(),
+            value: CapabilityValue::UrlGlobs(vec!["https://api.test/v1/a".into()]),
+        }]);
+        assert!(links.link_requested("https://api.test/v1/a"));
+        assert!(!links.link_requested("https://api.test/v1/a?"));
+        assert!(!links.link_requested("https://api.test/v1/a#"));
     }
 
     #[test]

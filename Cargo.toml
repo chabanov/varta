@@ -13,6 +13,7 @@ members = [
   "crates/varta-intrinsics",
   "crates/varta-intrinsics-wasm",
   "crates/varta-view",
+  "crates/varta-desktop",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
 
@@ -27,6 +28,15 @@ clap = { version = "4.6", features = ["derive"] }
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
+# CPU fallback for native view rendering, with no PNG or SIMD dependencies.
+tiny-skia = { version = "=0.11.4", default-features = false, features = ["std"] }
+# Font outlines for the CPU text renderer; already used transitively by Parley.
+skrifa = "=0.44.0"
+# Unicode grapheme boundaries for safe native text editing.
+unicode-segmentation = "=1.13.3"
+# Native desktop window/input and CPU frame presentation.
+winit = "=0.30.12"
+softbuffer = { version = "=0.4.6", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 ryu-js = "=1.0.3"
 # OS entropy for bounded Math.random samples; no guest seed or ambient file access.
 getrandom = "=0.3.4"
@@ -44,6 +54,7 @@ url = "=2.5.8"
 # the portable Wasm keys stored decisions until C3 provenance. Already locked
 # through the conformance runner.
 sha2 = "=0.10.9"
+base64 = "=0.22.1"
 
 # Server framing/timers use maintained HTTP and async I/O implementations.
 hyper = { version = "=1.12.0", default-features = false, features = ["server", "client", "http1"] }

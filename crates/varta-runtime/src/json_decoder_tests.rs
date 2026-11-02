@@ -781,3 +781,105 @@ fn decoders_cost_less_fuel_than_the_linked_decoder() {
         );
     }
 }
+
+/// A record's canonical storage slots must not replace the input's own-key
+/// order. Exercise both builders, the host reference, fallback and forced GC.
+#[test]
+fn decoded_records_preserve_json_property_order() {
+    let source = r#"
+        type Item = { a: number; z?: number; "2"?: number; "10"?: number;
+                      "01"?: number; "4294967295"?: number };
+        export function main(): void {
+            const text = '{"z":1,"10":10,"a":2,"2":2,"01":1,"4294967295":5}';
+            const item = JSON.parse(text) as Item;
+            console.log(JSON.stringify(item));
+            console.log(Object.keys(item).join(","));
+            delete item.z;
+            item.z = 9;
+            console.log(Object.keys(item).join(","));
+            const escaped = JSON.parse('{"z":3,"\\u0061":4}') as Item;
+            console.log(JSON.stringify(escaped));
+            const absent = JSON.parse('{"z":5,"a":6}') as Item;
+            console.log(JSON.stringify(absent));
+            const nested = JSON.parse('{"z":{"z":1,"a":2},"a":[{"z":3,"a":4}]}') as { a: Item[]; z: Item };
+            console.log(JSON.stringify(nested));
+            const dict = JSON.parse('{"z":{"z":1,"a":2},"a":{"z":3,"a":4}}') as Record<string, Item>;
+            console.log(JSON.stringify(dict));
+            const dynamic: unknown = JSON.parse('{"z":1,"a":2,"2":3}');
+            console.log(JSON.stringify(dynamic));
+        }
+    "#;
+    let expected = [
+        "{\"2\":2,\"10\":10,\"z\":1,\"a\":2,\"01\":1,\"4294967295\":5}",
+        "2,10,z,a,01,4294967295",
+        "2,10,a,01,4294967295,z",
+        "{\"z\":3,\"a\":4}",
+        "{\"z\":5,\"a\":6}",
+        "{\"z\":{\"z\":1,\"a\":2},\"a\":[{\"z\":3,\"a\":4}]}",
+        "{\"z\":{\"z\":1,\"a\":2},\"a\":{\"z\":3,\"a\":4}}",
+        "{\"2\":3,\"z\":1,\"a\":2}",
+    ];
+    for bytes in [
+        compile(source, V38),
+        generic(source),
+        host(source),
+        collecting(source),
+    ] {
+        let run = run_test_budgets(&bytes, 100);
+        assert_eq!(run.error, None, "{source}");
+        assert_eq!(run.lines, expected.map(|line| format!("varta log: {line}")));
+    }
+}
+
+#[test]
+fn wide_decoded_records_keep_input_order_with_missing_fields() {
+    let fields: Vec<_> = (0..70).map(|i| format!("f{i}?:number")).collect();
+    let entries: Vec<_> = (0..70)
+        .rev()
+        .filter(|i| i % 3 != 0)
+        .map(|i| format!("\"f{i}\":{i}"))
+        .collect();
+    let text = format!("{{{}}}", entries.join(","));
+    let source = format!(
+        "type Wide={{{}}};export function main():void{{\
+         const value=JSON.parse('{text}') as Wide;console.log(JSON.stringify(value));}}",
+        fields.join(";")
+    );
+    for bytes in [
+        compile(&source, V38),
+        generic(&source),
+        host(&source),
+        collecting(&source),
+    ] {
+        let run = run_test_budgets(&bytes, 100);
+        assert_eq!(run.error, None);
+        assert_eq!(run.lines, [format!("varta log: {text}")]);
+    }
+}
+
+/// V37 retains schema-order serialization for this historical fixture. V38
+/// deliberately follows the document's order, including each recursive child.
+#[test]
+fn recursive_checked_json_uses_document_order_under_v38() {
+    let source = include_str!("value15_cases/dictionary_json.ts");
+    let expected = [
+        r#"{"2":3,"10":10,"b":2,"a":1} 4"#,
+        r#"{"limits":{"cpu":2,"mem":512,"disk":9},"name":"svc"} true"#,
+        r#"2 b {"name":"r","children":[{"name":"a","children":[]},{"name":"b","children":[{"name":"c","children":[]}]}]}"#,
+        r#"{"k":[1,"two",{"three":[null,true]}],"e":{},"s":"é"}"#,
+        r#"["k","e","s","added"] [false]"#,
+        "TypeError JSON value does not match the checked schema",
+        "TypeError JSON value does not match the checked schema",
+        "TypeError JSON value does not match the checked schema",
+    ];
+    for bytes in [
+        compile(source, V38),
+        generic(source),
+        host(source),
+        collecting(source),
+    ] {
+        let run = run_test_budgets(&bytes, 100);
+        assert_eq!(run.error, None);
+        assert_eq!(run.lines, expected.map(|line| format!("varta log: {line}")));
+    }
+}

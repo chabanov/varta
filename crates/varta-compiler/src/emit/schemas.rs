@@ -3,13 +3,17 @@ use varta_common::json::{JsonField, JsonSchema, JsonType, SCHEMA_VERSION};
 
 /// The schema nodes of several root types in one graph (v38 compiled
 /// decoders, [`super::decoders`]): one node per value type, shared by every
-/// root that reaches it, with the record shape behind each record node. Each
-/// root's own schema ([`build`]) holds the same nodes, numbered from its root.
+/// root that reaches it, with the record shape behind each record node. Ordinary
+/// roots have a public schema ([`build`]); private assertion attempts retain
+/// literal constraints here and leave fallback conversion to their caller.
 pub(super) struct Graph {
     pub nodes: Vec<JsonType>,
     /// The record shape of each record node.
     pub records: Vec<Option<u32>>,
     pub roots: BTreeMap<Type, u32>,
+    /// Compiler-only value constraints; public schema bytes never contain them.
+    pub literals: Vec<Option<Vec<crate::lower::literals::LiteralValue>>>,
+    pub attempts: BTreeSet<Type>,
 }
 
 struct Builder<'a> {
@@ -18,11 +22,14 @@ struct Builder<'a> {
     indices: BTreeMap<Type, u32>,
     nodes: Vec<JsonType>,
     records: Vec<Option<u32>>,
+    literals: Vec<Option<Vec<crate::lower::literals::LiteralValue>>>,
+    constrained: bool,
 }
 impl Builder<'_> {
     fn new<'a>(
         types: &'a ir::ValueTypes,
         layouts: &'a BTreeMap<records::LayoutKey, u32>,
+        constrained: bool,
     ) -> Builder<'a> {
         Builder {
             types,
@@ -30,12 +37,20 @@ impl Builder<'_> {
             indices: BTreeMap::new(),
             nodes: Vec::new(),
             records: Vec::new(),
+            literals: Vec::new(),
+            constrained,
         }
     }
     fn node(&mut self, ty: Type) -> Result<u32> {
         if let Some(index) = self.indices.get(&ty) {
             return Ok(*index);
         }
+        let literal = match ty {
+            Type::Literal(_, id) if self.constrained => {
+                Some(self.types.literals.values(id).iter().cloned().collect())
+            }
+            _ => None,
+        };
         let record = match ty {
             Type::Record(id) => Some(id),
             _ => None,
@@ -46,6 +61,7 @@ impl Builder<'_> {
             let index = self.nodes.len() as u32;
             self.nodes.push(JsonType::Null);
             self.records.push(record);
+            self.literals.push(literal);
             self.indices.insert(ty, index);
             let node = self.shape(ty)?;
             self.nodes[index as usize] = node;
@@ -55,16 +71,23 @@ impl Builder<'_> {
         let index = self.nodes.len() as u32;
         self.nodes.push(node);
         self.records.push(record);
+        self.literals.push(literal);
         self.indices.insert(ty, index);
         Ok(index)
     }
     fn shape(&mut self, ty: Type) -> Result<JsonType> {
         Ok(match ty {
+            Type::Literal(..) if self.constrained => self.shape(ty.erased())?,
             Type::BigInt => JsonType::BigInt,
             Type::Null => JsonType::Null,
             Type::Undefined => JsonType::Undefined,
             Type::Union(id) | Type::ReferenceUnion(id) => {
-                let members = self.types.unions[id as usize]
+                let semantic = self
+                    .constrained
+                    .then(|| self.types.direct_json_members.get(&ty))
+                    .flatten();
+                let members = semantic
+                    .unwrap_or(&self.types.unions[id as usize])
                     .iter()
                     .map(|ty| self.node(*ty))
                     .collect::<Result<Vec<_>>>()?;
@@ -82,11 +105,17 @@ impl Builder<'_> {
                 let fields = self.types.records[id as usize]
                     .fields
                     .iter()
-                    .map(|f| {
+                    .enumerate()
+                    .map(|(slot, f)| {
+                        let semantic = self
+                            .constrained
+                            .then(|| self.types.direct_json_members.get(&ty))
+                            .flatten();
+                        let field = semantic.map_or(f.ty, |children| children[slot]);
                         Ok(JsonField {
                             name: f.name.clone(),
                             optional: f.optional,
-                            ty: self.node(f.ty)?,
+                            ty: self.node(field)?,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -95,9 +124,17 @@ impl Builder<'_> {
                     descriptor: self.layouts[&records::canonical_layout(id, &self.types.records)],
                 }
             }
-            Type::Array(id) => JsonType::Array {
-                element: self.node(self.types.arrays[id as usize])?,
-            },
+            Type::Array(id) => {
+                let semantic = self
+                    .constrained
+                    .then(|| self.types.direct_json_members.get(&ty))
+                    .flatten();
+                let element =
+                    semantic.map_or(self.types.arrays[id as usize], |children| children[0]);
+                JsonType::Array {
+                    element: self.node(element)?,
+                }
+            }
             // The JSON value graph of `unknown` (v35 `unknown_json`):
             // primitives, `unknown[]` and `Record<string, unknown>`, plus
             // `undefined` for missing optional positions.
@@ -125,7 +162,12 @@ impl Builder<'_> {
                 JsonType::Dictionary {
                     descriptor: self.layouts
                         [&records::canonical_layout(dictionary.storage, &self.types.records)],
-                    value: self.node(dictionary.value)?,
+                    value: self.node(
+                        self.constrained
+                            .then(|| self.types.direct_json_members.get(&ty))
+                            .flatten()
+                            .map_or(dictionary.value, |children| children[0]),
+                    )?,
                 }
             }
             _ => return Err(CompilerError::Internal("invalid JSON schema type".into())),
@@ -139,7 +181,7 @@ pub(super) fn graph(
     types: &ir::ValueTypes,
     layouts: &BTreeMap<records::LayoutKey, u32>,
 ) -> Result<Graph> {
-    let mut builder = Builder::new(types, layouts);
+    let mut builder = Builder::new(types, layouts, true);
     let roots = roots
         .into_iter()
         .map(|root| Ok((root, builder.node(root)?)))
@@ -147,6 +189,12 @@ pub(super) fn graph(
     Ok(Graph {
         nodes: builder.nodes,
         records: builder.records,
+        literals: builder.literals,
+        attempts: roots
+            .keys()
+            .copied()
+            .filter(|ty| types.direct_json_targets.contains(ty))
+            .collect(),
         roots,
     })
 }
@@ -156,7 +204,7 @@ pub(super) fn build(
     types: &ir::ValueTypes,
     layouts: &BTreeMap<records::LayoutKey, u32>,
 ) -> Result<Vec<u8>> {
-    let mut builder = Builder::new(types, layouts);
+    let mut builder = Builder::new(types, layouts, false);
     let root = builder.node(root)?;
     JsonSchema {
         version: if types.profile.dictionary_hashing() {

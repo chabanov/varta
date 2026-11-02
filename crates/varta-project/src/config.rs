@@ -51,6 +51,20 @@ pub struct VartaConfig {
     /// `"fs": {"roots": {"project": "."}}`.
     #[serde(default)]
     pub fs: Option<FsConfig>,
+    /// Browser distribution inputs; these are package files, never host grants.
+    #[serde(default)]
+    pub browser: Option<BrowserConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserConfig {
+    /// Logical view `src` name -> no-follow project-relative PNG path.
+    #[serde(default)]
+    pub resources: std::collections::BTreeMap<String, String>,
+    /// Logical family -> no-follow project-relative OpenType/WOFF file.
+    #[serde(default)]
+    pub fonts: std::collections::BTreeMap<String, String>,
 }
 
 /// `"fs": {"roots": {...}}`: each root name mapped to a directory inside the
@@ -93,6 +107,32 @@ impl VartaConfig {
             ));
         }
         let grants = self.normalized_capabilities();
+        if let Some(browser) = &self.browser {
+            if !self.language_profile.tsx()
+                || browser.resources.len() + browser.fonts.len()
+                    > crate::browser::resources::MAX_RESOURCES
+            {
+                return Err(VartaError::InvalidManifest(
+                    "browser resources require v38 and a bounded inventory".into(),
+                ));
+            }
+            for (name, path) in &browser.resources {
+                crate::browser::resources::validate_name(name)
+                    .and_then(|()| crate::browser::resources::validate_name(path))
+                    .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
+            }
+            let mut families = std::collections::BTreeSet::new();
+            for (family, path) in &browser.fonts {
+                crate::browser::resources::validate_family(family)
+                    .and_then(|()| crate::browser::resources::validate_name(path))
+                    .map_err(|error| VartaError::InvalidManifest(error.to_string()))?;
+                if !families.insert(family.to_ascii_lowercase()) {
+                    return Err(VartaError::InvalidManifest(
+                        "duplicate browser font family".into(),
+                    ));
+                }
+            }
+        }
         varta_common::validate_grants(&grants)?;
         if let Some(fs) = &self.fs {
             if !self.language_profile.file_roots() {

@@ -16,6 +16,9 @@ extern crate alloc;
 
 pub mod abi;
 pub mod bigint;
+/// Generated browser-host registry, owned by the engine contracts.
+#[cfg(feature = "std")]
+pub mod browser;
 /// Per-turn and per-instance budgets (v38 `turn_budgets`).
 #[cfg(feature = "std")]
 pub mod budget;
@@ -113,13 +116,15 @@ pub type Result<T> = std::result::Result<T, VartaError>;
 /// which any function they reach through direct calls calls a host import;
 /// fuel profile builds leave that call graph uninstrumented.
 #[cfg(feature = "std")]
-pub const HOST_FREE_EXPORTS: [&str; 6] = [
+pub const HOST_FREE_EXPORTS: [&str; 8] = [
     TOOL_COPY_STRING,
     TOOL_RETAIN_STRING,
     value::VALUE_ALLOCATE,
     value::VALUE_RETAIN,
     http::COPY,
     http::RETAIN,
+    http::STATE,
+    http::VALUE,
 ];
 
 /// Host declarations for editors; semantic checking is implemented by the compiler.

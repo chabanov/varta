@@ -180,6 +180,20 @@ coded! {
     }
 }
 
+impl Tag {
+    /// Child-content rules shared by native and generated browser validation.
+    /// `None` denotes a text node.
+    #[must_use]
+    pub fn admits_child(self, child: Option<Self>) -> bool {
+        match self {
+            Self::Br | Self::Input | Self::Img | Self::Textarea | Self::Progress => false,
+            Self::Select => child == Some(Self::Option),
+            Self::Option => child.is_none(),
+            _ => true,
+        }
+    }
+}
+
 coded! {
     /// CSS properties of the L0 v1 subset; values follow the subset grammar.
     CssProperty: u16 {

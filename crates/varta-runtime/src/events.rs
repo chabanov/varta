@@ -139,6 +139,9 @@ impl HostEvents {
         if self.sources.len() >= MAX_EVENT_SOURCES {
             return Err(EventError::QueueFull);
         }
+        if self.next_id >= varta_common::events::MAX_EVENT_SOURCE_ID {
+            return Err(EventError::State);
+        }
         self.next_id += 1;
         let id = self.next_id;
         if let Some(name) = &name {
@@ -491,6 +494,21 @@ mod tests {
             gesture: false,
             coalesce,
         }
+    }
+
+    #[test]
+    fn source_ids_never_round_or_reuse_across_the_f64_abi() {
+        let mut events = HostEvents {
+            next_id: varta_common::events::MAX_EVENT_SOURCE_ID - 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            events.open("last").unwrap(),
+            varta_common::events::MAX_EVENT_SOURCE_ID as f64
+        );
+        assert!(matches!(events.open("overflow"), Err(EventError::State)));
+        assert_eq!(events.sources.len(), 1);
+        assert!(!events.by_name.contains_key("overflow"));
     }
 
     #[test]

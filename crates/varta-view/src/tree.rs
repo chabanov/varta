@@ -5,6 +5,7 @@ use crate::style::{self, Environment, Name, Rule, Subject};
 use crate::wire::{Operation, Value};
 use crate::{ViewError, Violation};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use varta_common::view::attributes as values;
 use varta_common::view::{
     ANY_KEY, Attribute, AttributeValue, Command, CssProperty, DRAFT_MAX_LIVE_LISTENERS,
@@ -21,14 +22,42 @@ pub(crate) struct Listener {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Preedit {
+    pub text: String,
+    pub cursor: Option<(usize, usize)>,
+}
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct EditorState {
+    pub anchor: usize,
+    pub focus: usize,
+    pub preedit: Option<Preedit>,
+    pub history_epoch: Arc<()>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct OutlineStyle {
+    pub values: BTreeMap<CssProperty, (CssProperty, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Element {
     pub tag: Tag,
     pub attributes: BTreeMap<Attribute, String>,
     pub class: String,
     pub style: BTreeMap<CssProperty, String>,
+    /// CSSOM-like last writer for each geometry longhand, kept separately so
+    /// shorthand updates and removals do not depend on enum sorting.
+    pub layout_inline: BTreeMap<CssProperty, (CssProperty, String, usize)>,
+    /// Last inline writer for each border side and component (width/style).
+    pub border_inline: BTreeMap<(u8, bool), (CssProperty, String)>,
+    /// Last inline writer for each border color, including shorthand resets.
+    pub border_color_inline: BTreeMap<u8, (CssProperty, String)>,
+    pub outline_inline: Box<OutlineStyle>,
     pub listeners: Vec<Listener>,
     /// The live value of `input`, `textarea` and `select` (`set_value`).
     pub value: String,
+    /// Selection endpoints are UTF-8 byte offsets in the current value.
+    pub editor: Box<EditorState>,
     pub checked: bool,
     /// The field edit counter (`seq`).
     pub seq: u32,
@@ -43,8 +72,13 @@ impl Element {
             attributes: BTreeMap::new(),
             class: String::new(),
             style: BTreeMap::new(),
+            layout_inline: BTreeMap::new(),
+            border_inline: BTreeMap::new(),
+            border_color_inline: BTreeMap::new(),
+            outline_inline: Box::default(),
             listeners: Vec::new(),
             value: String::new(),
+            editor: Box::default(),
             checked: false,
             seq: 0,
             scroll_top: 0.0,
@@ -80,6 +114,74 @@ impl Element {
     }
 }
 
+pub(crate) fn geometry_sides(property: CssProperty) -> Option<&'static [CssProperty]> {
+    use CssProperty as P;
+    Some(match property {
+        P::Margin => &[P::MarginTop, P::MarginRight, P::MarginBottom, P::MarginLeft],
+        P::Padding => &[
+            P::PaddingTop,
+            P::PaddingRight,
+            P::PaddingBottom,
+            P::PaddingLeft,
+        ],
+        P::Gap => &[P::RowGap, P::ColumnGap],
+        P::MarginTop => &[P::MarginTop],
+        P::MarginRight => &[P::MarginRight],
+        P::MarginBottom => &[P::MarginBottom],
+        P::MarginLeft => &[P::MarginLeft],
+        P::PaddingTop => &[P::PaddingTop],
+        P::PaddingRight => &[P::PaddingRight],
+        P::PaddingBottom => &[P::PaddingBottom],
+        P::PaddingLeft => &[P::PaddingLeft],
+        P::RowGap => &[P::RowGap],
+        P::ColumnGap => &[P::ColumnGap],
+        _ => return None,
+    })
+}
+
+pub(crate) fn border_components(property: CssProperty) -> Vec<(u8, bool)> {
+    use CssProperty as P;
+    let (sides, width, style): (&[u8], bool, bool) = match property {
+        P::Border => (&[0, 1, 2, 3], true, true),
+        P::BorderTop => (&[0], true, true),
+        P::BorderRight => (&[1], true, true),
+        P::BorderBottom => (&[2], true, true),
+        P::BorderLeft => (&[3], true, true),
+        P::BorderWidth => (&[0, 1, 2, 3], true, false),
+        P::BorderStyle => (&[0, 1, 2, 3], false, true),
+        _ => return Vec::new(),
+    };
+    sides
+        .iter()
+        .flat_map(|side| [(width, (*side, false)), (style, (*side, true))])
+        .filter_map(|(enabled, key)| enabled.then_some(key))
+        .collect()
+}
+
+pub(crate) fn border_color_sides(property: CssProperty) -> &'static [u8] {
+    use CssProperty as P;
+    match property {
+        P::Border | P::BorderColor => &[0, 1, 2, 3],
+        P::BorderTop => &[0],
+        P::BorderRight => &[1],
+        P::BorderBottom => &[2],
+        P::BorderLeft => &[3],
+        _ => &[],
+    }
+}
+
+pub(crate) fn outline_components(property: CssProperty) -> &'static [CssProperty] {
+    use CssProperty as P;
+    match property {
+        P::Outline => &[P::OutlineWidth, P::OutlineStyle, P::OutlineColor],
+        P::OutlineWidth => &[P::OutlineWidth],
+        P::OutlineStyle => &[P::OutlineStyle],
+        P::OutlineColor => &[P::OutlineColor],
+        P::OutlineOffset => &[P::OutlineOffset],
+        _ => &[],
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Content {
     Element(Element),
@@ -88,6 +190,7 @@ pub(crate) enum Content {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Node {
+    pub identity: Arc<()>,
     pub content: Content,
     pub parent: Option<u32>,
     pub children: Vec<u32>,
@@ -102,6 +205,11 @@ pub(crate) enum Effect {
     },
     /// A record caused by a guest command (`focusin`, `focusout`, `close`).
     Record(crate::EventRecord),
+    /// A queued scroll belongs to this particular element, even if its ID is reused.
+    ScrollRecord {
+        record: crate::EventRecord,
+        identity: Arc<()>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,6 +232,7 @@ pub(crate) struct Tree {
 impl Default for Tree {
     fn default() -> Self {
         let root = Node {
+            identity: Arc::new(()),
             content: Content::Element(Element::new(Tag::Div)),
             parent: None,
             children: Vec::new(),
@@ -144,13 +253,21 @@ impl Default for Tree {
 pub(crate) struct Context<'a> {
     pub link_requested: &'a dyn Fn(&str) -> bool,
     pub environment: Environment,
+    pub layout: Option<LayoutContext<'a>>,
 }
 
-struct Apply<'a> {
-    tree: &'a mut Tree,
-    context: &'a Context<'a>,
+pub(crate) struct LayoutContext<'a> {
+    pub width: f32,
+    pub height: f32,
+    pub font: Option<(&'a mut crate::TextMeasurer, f32)>,
+}
+
+struct Apply<'tree, 'context, 'input> {
+    tree: &'tree mut Tree,
+    context: &'context mut Context<'input>,
     effects: Vec<Effect>,
     index: usize,
+    layout_commands: usize,
 }
 
 impl Tree {
@@ -177,6 +294,14 @@ impl Tree {
                 None => return false,
             }
         }
+    }
+    pub(crate) fn displayed(&self, id: u32, environment: &Environment) -> bool {
+        self.attached(id)
+            && !self.path(id).into_iter().any(|ancestor| {
+                self.computed(ancestor, environment)
+                    .get(&CssProperty::Display)
+                    .is_some_and(|value| value == "none")
+            })
     }
     /// The node and its ancestors, target first.
     pub(crate) fn path(&self, id: u32) -> Vec<u32> {
@@ -314,13 +439,14 @@ impl Tree {
     pub(crate) fn apply(
         &mut self,
         operations: &[Operation],
-        context: &Context<'_>,
+        context: &mut Context<'_>,
     ) -> Result<Vec<Effect>, ViewError> {
         let mut apply = Apply {
             tree: self,
             context,
             effects: Vec::new(),
             index: 0,
+            layout_commands: 0,
         };
         for (index, operation) in operations.iter().enumerate() {
             apply.index = index;
@@ -331,7 +457,7 @@ impl Tree {
     }
 }
 
-impl Apply<'_> {
+impl Apply<'_, '_, '_> {
     fn fail(&self, violation: Violation) -> ViewError {
         ViewError::Invalid {
             operation: Some(self.index),
@@ -422,16 +548,53 @@ impl Apply<'_> {
                 if !varta_common::view::css::property_value(*property, operation.text()) {
                     return Err(self.fail(Violation::InvalidStyleValue));
                 }
-                self.element(node)?
-                    .style
-                    .insert(*property, operation.text().into());
+                let element = self.element(node)?;
+                element.style.insert(*property, operation.text().into());
+                if let Some(sides) = geometry_sides(*property) {
+                    for (index, side) in sides.iter().enumerate() {
+                        element
+                            .layout_inline
+                            .insert(*side, (*property, operation.text().into(), index));
+                    }
+                }
+                for component in border_components(*property) {
+                    element
+                        .border_inline
+                        .insert(component, (*property, operation.text().into()));
+                }
+                for side in border_color_sides(*property) {
+                    element
+                        .border_color_inline
+                        .insert(*side, (*property, operation.text().into()));
+                }
+                for component in outline_components(*property) {
+                    element
+                        .outline_inline
+                        .values
+                        .insert(*component, (*property, operation.text().into()));
+                }
                 Ok(())
             }
             Opcode::RemoveStyle => {
                 let Some(Value::Property(property)) = operation.operands.get(1) else {
                     return Err(self.fail(Violation::UnknownProperty));
                 };
-                self.element(node)?.style.remove(property);
+                let element = self.element(node)?;
+                element.style.remove(property);
+                if let Some(sides) = geometry_sides(*property) {
+                    for side in sides {
+                        element.layout_inline.remove(side);
+                    }
+                }
+                for component in border_components(*property) {
+                    element.border_inline.remove(&component);
+                }
+                for side in border_color_sides(*property) {
+                    element.border_color_inline.remove(side);
+                }
+                for component in outline_components(*property) {
+                    element.outline_inline.values.remove(component);
+                }
                 Ok(())
             }
             Opcode::Insert => self.insert(node, operation.id(1), operation.id(2)),
@@ -492,6 +655,7 @@ impl Apply<'_> {
         self.tree.nodes.insert(
             id,
             Node {
+                identity: Arc::new(()),
                 content,
                 parent: None,
                 children: Vec::new(),
@@ -530,9 +694,11 @@ impl Apply<'_> {
         if !valid {
             return Err(self.fail(Violation::InvalidAttributeValue(attribute.name())));
         }
-        self.element(node)?
-            .attributes
-            .insert(attribute, value.into());
+        let element = self.element(node)?;
+        element.attributes.insert(attribute, value.into());
+        if matches!(attribute, Attribute::Disabled | Attribute::Readonly) {
+            element.editor.preedit = None;
+        }
         Ok(())
     }
 
@@ -546,7 +712,7 @@ impl Apply<'_> {
             Content::Element(element) => Some(element.tag),
             Content::Text(_) => None,
         };
-        if !admits_child(parent_tag, child_tag) {
+        if !parent_tag.admits_child(child_tag) {
             return Err(self.fail(Violation::ChildNotAllowed));
         }
         if self.tree.path(parent).contains(&node) {
@@ -690,6 +856,12 @@ impl Apply<'_> {
         let element = self.element(node)?;
         // A stale patch (newer local edits exist) is dropped, not an error.
         if element.seq == base {
+            if element.value != value {
+                element.editor.anchor = value.len();
+                element.editor.focus = value.len();
+                element.editor.preedit = None;
+                element.editor.history_epoch = Arc::new(());
+            }
             element.value = value;
         }
         Ok(())
@@ -741,7 +913,7 @@ impl Apply<'_> {
         match command {
             Command::Focus => {
                 let element = self.element(node)?;
-                if !element.disabled() && self.tree.attached(node) {
+                if !element.disabled() && self.tree.displayed(node, &self.context.environment) {
                     let records = focus_records(self.tree, Some(node));
                     self.effects.extend(records.into_iter().map(Effect::Record));
                 }
@@ -752,8 +924,111 @@ impl Apply<'_> {
                     self.effects.extend(records.into_iter().map(Effect::Record));
                 }
             }
-            Command::Select | Command::ScrollIntoView => {}
+            Command::Select => {
+                let focus = !self.element(node)?.disabled()
+                    && self.tree.displayed(node, &self.context.environment);
+                if focus {
+                    let records = focus_records(self.tree, Some(node));
+                    self.effects.extend(records.into_iter().map(Effect::Record));
+                }
+                let element = self.element(node)?;
+                if element.text_field()
+                    && (element.tag == Tag::Textarea || element.input_type() != "number")
+                {
+                    element.editor.anchor = 0;
+                    element.editor.focus = element.value.len();
+                    element.editor.preedit = None;
+                }
+            }
+            Command::ScrollIntoView => {
+                if self.context.layout.is_some() {
+                    self.layout_commands += 1;
+                    if self.layout_commands > DRAFT_MAX_PENDING_COMMANDS {
+                        return Err(self.fail(Violation::TooManyPendingCommands));
+                    }
+                }
+                if let Some(layout) = self.context.layout.as_mut() {
+                    let geometry = match layout.font.as_mut() {
+                        Some((font, size)) => crate::layout::geometry_with_text(
+                            self.tree,
+                            &self.context.environment,
+                            layout.width,
+                            layout.height,
+                            font,
+                            *size,
+                        ),
+                        None => crate::layout::geometry(
+                            self.tree,
+                            &self.context.environment,
+                            layout.width,
+                            layout.height,
+                        ),
+                    }
+                    .map_err(|_| self.fail(Violation::ScrollLayout))?;
+                    let plan = crate::layout::scroll_into_view_plan(
+                        self.tree,
+                        &self.context.environment,
+                        &geometry,
+                        node,
+                    )
+                    .map_err(|_| self.fail(Violation::ScrollLayout))?;
+                    for (id, top) in plan {
+                        self.element(id)?.scroll_top = top;
+                        let scroll = geometry[&id]
+                            .programmatic_scroll
+                            .ok_or_else(|| self.fail(Violation::ScrollLayout))?;
+                        let mut record = crate::EventRecord::occurrence(EventKind::Scroll, id);
+                        record.scroll_top = top;
+                        record.client_height = f64::from(scroll.viewport.height);
+                        record.scroll_height = f64::from(scroll.viewport.height + scroll.max);
+                        let identity = self.tree.nodes[&id].identity.clone();
+                        self.effects.push(Effect::ScrollRecord { record, identity });
+                    }
+                }
+            }
             Command::ScrollTo => {
+                if self.context.layout.is_some() {
+                    self.layout_commands += 1;
+                    if self.layout_commands > DRAFT_MAX_PENDING_COMMANDS {
+                        return Err(self.fail(Violation::TooManyPendingCommands));
+                    }
+                }
+                if let Some(layout) = self.context.layout.as_mut() {
+                    let geometry = match layout.font.as_mut() {
+                        Some((font, size)) => crate::layout::geometry_with_text(
+                            self.tree,
+                            &self.context.environment,
+                            layout.width,
+                            layout.height,
+                            font,
+                            *size,
+                        ),
+                        None => crate::layout::geometry(
+                            self.tree,
+                            &self.context.environment,
+                            layout.width,
+                            layout.height,
+                        ),
+                    }
+                    .map_err(|_| self.fail(Violation::ScrollLayout))?;
+                    if let Some(scroll) = geometry
+                        .get(&node)
+                        .and_then(|item| item.programmatic_scroll)
+                    {
+                        let top = argument.clamp(0.0, f64::from(scroll.max));
+                        if top != f64::from(scroll.top) {
+                            self.element(node)?.scroll_top = top;
+                            let mut record =
+                                crate::EventRecord::occurrence(EventKind::Scroll, node);
+                            record.scroll_top = top;
+                            record.client_height = f64::from(scroll.viewport.height);
+                            record.scroll_height = f64::from(scroll.viewport.height + scroll.max);
+                            let identity = self.tree.nodes[&node].identity.clone();
+                            self.effects.push(Effect::ScrollRecord { record, identity });
+                        }
+                    }
+                    return Ok(());
+                }
                 let scrolls = self
                     .tree
                     .computed(node, &self.context.environment)
@@ -865,6 +1140,11 @@ pub(crate) fn focus_records(tree: &mut Tree, next: Option<u32>) -> Vec<crate::Ev
     if previous == next {
         return Vec::new();
     }
+    if let Some(previous) = previous
+        && let Some(element) = tree.element_mut(previous)
+    {
+        element.editor.preedit = None;
+    }
     tree.focus = next;
     let mut records = Vec::new();
     if let Some(previous) = previous {
@@ -877,15 +1157,4 @@ pub(crate) fn focus_records(tree: &mut Tree, next: Option<u32>) -> Vec<crate::Ev
         records.push(crate::EventRecord::occurrence(EventKind::Focusin, next));
     }
     records
-}
-
-/// The content model of the subset: void elements and text nodes take no
-/// children, `select` only `option`, `option` only text.
-fn admits_child(parent: Tag, child: Option<Tag>) -> bool {
-    match parent {
-        Tag::Br | Tag::Input | Tag::Img | Tag::Textarea | Tag::Progress => false,
-        Tag::Select => child == Some(Tag::Option),
-        Tag::Option => child.is_none(),
-        _ => true,
-    }
 }

@@ -47,6 +47,56 @@ pub struct ApplicationOptions {
     /// A simulated headless platform for the view (`varta dev
     /// --view-script`); `None` hosts the view without one.
     pub view: Option<ViewPlatform>,
+    /// Optional native geometry used by scroll commands from the first turn.
+    pub view_layout: Option<ViewLayout>,
+}
+
+/// Explicit host geometry and optional font for layout-dependent view commands.
+pub struct ViewLayout {
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+    pub(crate) font: Option<varta_view::TextMeasurer>,
+    pub(crate) font_size: f32,
+    pub(crate) dark: Option<bool>,
+}
+
+impl ViewLayout {
+    pub fn new(
+        width: f32,
+        height: f32,
+        font: Option<varta_view::TextMeasurer>,
+        font_size: f32,
+    ) -> Result<Self, varta_view::LayoutError> {
+        Self::validate(width, height, font_size)?;
+        Ok(Self {
+            width,
+            height,
+            font,
+            font_size,
+            dark: None,
+        })
+    }
+
+    /// Set the initial system color scheme before the first guest turn.
+    #[must_use]
+    pub fn with_dark_mode(mut self, dark: bool) -> Self {
+        self.dark = Some(dark);
+        self
+    }
+
+    pub(crate) fn validate(
+        width: f32,
+        height: f32,
+        font_size: f32,
+    ) -> Result<(), varta_view::LayoutError> {
+        if [width, height, font_size]
+            .into_iter()
+            .any(|value| !value.is_finite() || !(0.01..=1_000_000.0).contains(&value))
+        {
+            return Err(varta_view::LayoutError::Viewport);
+        }
+        Ok(())
+    }
 }
 
 /// The simulated headless platform of an instance's view (v38
@@ -89,8 +139,19 @@ pub enum ApplicationError {
     /// `step` is 1-based; the settling after the last step is the step
     /// after it.
     Unsettled { step: usize },
+    #[error("view script step {step} did not settle its network work within {timeout:?}")]
+    NetworkWait { step: usize, timeout: Duration },
     #[error("host event rejected: {0}")]
     Event(#[from] varta_common::events::EventError),
+}
+
+/// Failure of a host-requested, geometry-dependent view scroll.
+#[derive(Debug, thiserror::Error)]
+pub enum ApplicationViewScrollError {
+    #[error(transparent)]
+    Application(#[from] ApplicationError),
+    #[error(transparent)]
+    Scroll(#[from] varta_view::ScrollIntoViewError),
 }
 
 /// The state of an instance.
@@ -197,6 +258,24 @@ pub struct Application {
     /// The current idle period already ran its maintenance (v38
     /// `incremental_collection`); a turn starts the next period.
     maintained: bool,
+    /// Wall bound of an explicit scripted wait; it never changes the
+    /// instance lifetime or a transfer's original operation deadline.
+    network_wait: Option<NetworkWait>,
+}
+
+#[derive(Clone, Copy)]
+struct NetworkWait {
+    step: usize,
+    until: Instant,
+    timeout: Duration,
+}
+impl NetworkWait {
+    fn error(self) -> ApplicationError {
+        ApplicationError::NetworkWait {
+            step: self.step,
+            timeout: self.timeout,
+        }
+    }
 }
 
 /// When a timer is ready on the virtual clock of a scripted session; nothing
@@ -242,6 +321,9 @@ impl VartaRuntime {
             Some(view) => crate::view::Session::simulated(view.environment, view.platform),
             None => crate::view::Session::hosted(),
         };
+        if let Some(layout) = options.view_layout {
+            execution.store.data_mut().view.set_layout(layout)?;
+        }
         let instance = execution.instantiate_prepared(&module)?;
         let mut application = Application {
             execution,
@@ -253,6 +335,7 @@ impl VartaRuntime {
             max_turns: options.max_turns,
             horizon: None,
             maintained: false,
+            network_wait: None,
         };
         let result = (|| {
             let store = &mut application.execution.store;
@@ -306,7 +389,9 @@ impl VartaRuntime {
     /// timer delay of the last turn's loop time has fired (so zero-delay
     /// timers and their chains run first), each as its own turn. A `wait`
     /// step advances loop time by its milliseconds, firing every timer due by
-    /// then. Network requests in flight are not waited for. After the last
+    /// then. An explicit `wait_network` waits under its wall-clock bound for
+    /// armed I/O and reactions, keeping virtual timer time fixed. Other steps
+    /// never wait for requests implicitly. After the last
     /// step the session settles once more and reports the final tree and
     /// accessibility snapshot.
     #[must_use]
@@ -317,6 +402,14 @@ impl VartaRuntime {
         script: &varta_view::Script,
     ) -> ViewReport {
         let mut report = RunReport::new(crate::artifact_identity(bytes));
+        if let Err(error) = script.validate() {
+            report.failure = Some(error.into());
+            return ViewReport {
+                report,
+                snapshot: None,
+                commits: 0,
+            };
+        }
         options.view = Some(ViewPlatform {
             environment: script.environment(),
             platform: script.platform.clone(),
@@ -350,6 +443,11 @@ impl VartaRuntime {
                         break;
                     }
                     application.advance_loop_time(end);
+                }
+                varta_view::ScriptStep::WaitNetwork { ms } => {
+                    if !application.wait_network(number, Duration::from_secs_f64(ms / 1000.0)) {
+                        break;
+                    }
                 }
             }
         }
@@ -427,6 +525,26 @@ impl Application {
         }
         Ok(())
     }
+
+    /// Apply an experimental host scroll between turns and queue its view events.
+    pub fn view_scroll_into_view(
+        &mut self,
+        target: u32,
+        width: f32,
+        height: f32,
+        font: Option<(&mut varta_view::TextMeasurer, f32)>,
+    ) -> Result<usize, ApplicationViewScrollError> {
+        if self.state != InstanceState::Running {
+            return Err(ApplicationError::Terminated.into());
+        }
+        let context = self.execution.store.data_mut();
+        let count = context.view.scroll_into_view(target, width, height, font)?;
+        if let Err(error) = context.view.queue(&mut context.events) {
+            self.fail(RuntimeError::View(error));
+            return Err(ApplicationError::Terminated.into());
+        }
+        Ok(count)
+    }
     /// The loop time of the instance, in milliseconds since it started.
     fn loop_time(&self) -> f64 {
         self.execution.store.data().scheduler.loop_time()
@@ -456,15 +574,126 @@ impl Application {
         }
     }
 
+    /// Settle already runnable work normally, then hold virtual loop time
+    /// fixed while armed I/O and its reactions finish. There is no implicit
+    /// virtual timer advance and no promise of deterministic real I/O order.
+    fn wait_network(&mut self, step: usize, timeout: Duration) -> bool {
+        let first_turn = self.execution.store.data().turns.current();
+        let wait = NetworkWait {
+            step,
+            until: Instant::now() + timeout,
+            timeout,
+        };
+        self.network_wait = Some(wait);
+        if !self.settle_step(step, Horizon::Input) {
+            self.network_wait = None;
+            return false;
+        }
+        self.horizon = Some(Horizon::Until(self.loop_time()));
+        let running = loop {
+            let remaining = wait.until.saturating_duration_since(Instant::now());
+            match self.step(Some(remaining)) {
+                Step::Turn(_) => {
+                    let turns = self
+                        .execution
+                        .store
+                        .data()
+                        .turns
+                        .current()
+                        .saturating_sub(first_turn);
+                    if turns > varta_view::Script::MAX_STEP_TURNS {
+                        self.fail(ApplicationError::Unsettled { step }.into());
+                        break false;
+                    }
+                }
+                Step::Idle => {
+                    if self.execution.store.data().net.alive() {
+                        self.fail(wait.error().into());
+                        break false;
+                    }
+                    break true;
+                }
+                Step::Finished { .. } | Step::Failed => break false,
+            }
+        };
+        self.network_wait = None;
+        running
+    }
+
     /// The view's tree and accessibility snapshot.
     #[must_use]
     pub fn view_snapshot(&self) -> serde_json::Value {
         self.execution.store.data().view.snapshot()
     }
+    /// The title committed by the guest view.
+    #[must_use]
+    pub fn view_title(&self) -> &str {
+        self.execution.store.data().view.title()
+    }
     /// View batches applied so far.
     #[must_use]
     pub fn view_commits(&self) -> usize {
         self.execution.store.data().view.commits()
+    }
+
+    /// Update the viewport conditions used by view styles and platform input.
+    pub fn view_set_environment(
+        &mut self,
+        environment: varta_view::Environment,
+    ) -> Result<(), varta_view::LayoutError> {
+        self.execution
+            .store
+            .data_mut()
+            .view
+            .set_environment(environment)
+    }
+
+    /// Update the host geometry used by later layout-dependent commands.
+    pub fn view_set_layout_size(
+        &mut self,
+        width: f32,
+        height: f32,
+    ) -> Result<(), varta_view::LayoutError> {
+        self.execution
+            .store
+            .data_mut()
+            .view
+            .set_layout_size(width, height)
+    }
+
+    /// Cancel any transient IME preedit without committing field text.
+    pub fn view_cancel_preedit(&mut self) {
+        self.execution.store.data_mut().view.cancel_preedit();
+    }
+
+    /// Render the current view to a bounded CPU image using explicitly supplied fonts.
+    /// This is host-side work between guest turns; unsupported view content fails closed.
+    pub fn view_rasterize(
+        &self,
+        width: u32,
+        height: u32,
+        font: Option<(&mut varta_view::TextMeasurer, f32)>,
+    ) -> Result<varta_view::RasterImage, varta_view::PaintError> {
+        self.execution
+            .store
+            .data()
+            .view
+            .rasterize(width, height, font)
+    }
+
+    /// Render into physical pixels using CSS layout and font sizes at the given scale.
+    pub fn view_rasterize_scaled(
+        &self,
+        width: u32,
+        height: u32,
+        scale: f32,
+        font: Option<(&mut varta_view::TextMeasurer, f32)>,
+    ) -> Result<varta_view::RasterImage, varta_view::PaintError> {
+        self.execution
+            .store
+            .data()
+            .view
+            .rasterize_scaled(width, height, scale, font)
     }
 
     /// Queue a host event for its source. It runs in a later turn; nothing
@@ -526,9 +755,11 @@ impl Application {
             // once, under the maintenance budget, before the instance waits.
             if !self.maintained {
                 self.maintained = true;
-                if let Err(error) =
-                    crate::maintenance::idle(&self.instance, &mut self.execution.store)
-                {
+                if let Err(error) = crate::maintenance::idle(
+                    &self.instance,
+                    &mut self.execution.store,
+                    self.network_wait.map(|wait| wait.until),
+                ) {
                     self.fail(error);
                     return Step::Failed;
                 }
@@ -549,6 +780,11 @@ impl Application {
         let context = self.execution.store.data();
         if context.lifetime.is_some_and(|end| Instant::now() >= end) {
             return Some(ApplicationError::Lifetime.into());
+        }
+        if let Some(wait) = self.network_wait
+            && Instant::now() >= wait.until
+        {
+            return Some(wait.error().into());
         }
         if let Some(max) = self.max_turns
             && context.turns.current() >= max
@@ -675,6 +911,18 @@ impl Application {
             Ready::Timer => TurnKind::Timer,
             Ready::Network => TurnKind::Network,
         };
+        let until = self.network_wait.map(|wait| wait.until);
+        let begin = |store: &mut wasmtime::Store<crate::RuntimeContext>,
+                     kind|
+         -> Result<(), RuntimeError> {
+            turns::begin(store, kind)?;
+            if let Some(until) = until {
+                let context = store.data_mut();
+                context.deadline = context.deadline.min(until);
+                context.rearm_deadline();
+            }
+            Ok(())
+        };
         let result = (|| {
             let store = &mut self.execution.store;
             match ready {
@@ -687,7 +935,7 @@ impl Application {
                         TaskKind::Permission => TurnKind::Permission,
                         TaskKind::View => TurnKind::View,
                     };
-                    turns::begin(store, kind)?;
+                    begin(store, kind)?;
                     let context = store.data_mut();
                     // The task's gesture flag makes a user-gesture turn: the
                     // broker's prompts and the view's `copy_text` read it.
@@ -700,7 +948,7 @@ impl Application {
                     }
                 }
                 Ready::Timer => {
-                    turns::begin(store, kind)?;
+                    begin(store, kind)?;
                     store
                         .data_mut()
                         .scheduler
@@ -708,7 +956,7 @@ impl Application {
                         .map_err(wasmtime::Error::new)?;
                 }
                 Ready::Network => {
-                    turns::begin(store, kind)?;
+                    begin(store, kind)?;
                     if let Some(Arrival { event, .. }) = self.network.pop_front() {
                         let context = store.data_mut();
                         context.net.deliver(&mut context.scheduler, event)?;
@@ -768,6 +1016,24 @@ impl Application {
     }
 
     fn fail(&mut self, error: RuntimeError) {
+        let error = match (&error, self.network_wait) {
+            (RuntimeError::Budget(budget), Some(wait))
+                if matches!(
+                    budget.budget,
+                    varta_common::budget::BudgetKind::Deadline
+                        | varta_common::budget::BudgetKind::MaintenanceDeadline
+                ) && Instant::now() >= wait.until
+                    && self
+                        .execution
+                        .store
+                        .data()
+                        .lifetime
+                        .is_none_or(|end| end > wait.until) =>
+            {
+                wait.error().into()
+            }
+            _ => error,
+        };
         self.state = InstanceState::Failed;
         self.failure = Some(error);
     }

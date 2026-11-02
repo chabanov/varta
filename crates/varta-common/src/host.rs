@@ -1,6 +1,16 @@
 //! Canonical operation names and Wasm signatures shared by compiler and runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum HostOperation {
+// Keep the iterable inventory inseparable from the enum declaration: host
+// generators must include new operations even if no current profile imports them.
+macro_rules! operations {
+    ($( $(#[$attr:meta])* $operation:ident, )*) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum HostOperation { $( $(#[$attr])* $operation, )* }
+        impl HostOperation {
+            pub const ALL: &'static [Self] = &[$(Self::$operation,)*];
+        }
+    };
+}
+operations! {
     /// v38 (`view_protocol`): validate one L0 view batch (draft v0,
     /// `crate::view`) in guest memory as a whole and apply it atomically to
     /// the instance's view tree; at most one commit per turn. An invalid batch

@@ -12,19 +12,28 @@
 //! the embedding runtime owns the guest, the scheduler and the permission
 //! broker, and supplies broker decisions through [`Broker`].
 //!
-//! Layout rectangles are not computed: the Taffy/Parley stack of the freeze
-//! criterion is not a dependency yet, so snapshots carry the tree, the
-//! cascaded styles and the accessibility tree only.
+//! Snapshots carry the tree, cascaded styles and accessibility tree. The
+//! separate experimental layout and CPU raster methods support bounded box and
+//! explicit-font text subsets; full native rendering is not implemented yet.
 mod events;
+mod layout;
 mod name;
+mod paint;
 mod snapshot;
 mod style;
+mod text;
 mod tree;
 
 mod wire;
 
-pub use events::{Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target};
+pub use events::{
+    HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target,
+};
+pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
+pub use paint::{PaintError, RasterImage};
+pub use snapshot::project_flex_blockification;
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment};
+pub use text::{TextFont, TextMeasureError, TextMeasurer, TextMetrics};
 pub use wire::{BatchWriter, EventRecord};
 
 use std::collections::VecDeque;
@@ -125,6 +134,8 @@ pub enum Violation {
     NotListenable,
     #[error("too many live nodes")]
     TooManyNodes,
+    #[error("cannot compute geometry for scroll_into_view")]
+    ScrollLayout,
     #[error("too many live listeners")]
     TooManyListeners,
     #[error("checked must be 0 or 1")]
@@ -169,6 +180,17 @@ pub enum InputError {
     Target(String),
     #[error("view input key {0} is not in the key table")]
     Key(String),
+    #[error("view text selection is invalid for the current field value")]
+    Selection,
+    #[error(transparent)]
+    View(#[from] ViewError),
+}
+
+/// A failure while applying a layout-dependent scroll request.
+#[derive(Debug, thiserror::Error)]
+pub enum ScrollIntoViewError {
+    #[error(transparent)]
+    Layout(#[from] LayoutError),
     #[error(transparent)]
     View(#[from] ViewError),
 }
@@ -217,6 +239,19 @@ pub struct Delivery {
     pub gesture: bool,
 }
 
+/// Opaque identity of one attached element, distinct across ID reuse.
+#[derive(Debug, Clone)]
+pub struct NodeIdentity {
+    id: u32,
+    token: std::sync::Arc<()>,
+}
+impl PartialEq for NodeIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && std::sync::Arc::ptr_eq(&self.token, &other.token)
+    }
+}
+impl Eq for NodeIdentity {}
+
 /// One instance's view: the live tree, the pending-event queue and the
 /// simulated platform.
 #[derive(Debug, Clone, Default)]
@@ -228,6 +263,7 @@ pub struct View {
     environment: Environment,
     /// Batches applied so far (for diagnostics and snapshots).
     commits: usize,
+    history: VecDeque<events::HistoryEntry>,
 }
 
 impl View {
@@ -240,6 +276,49 @@ impl View {
         }
     }
 
+    /// Capture an attached element for a deferred host action.
+    #[must_use]
+    pub fn node_identity(&self, id: u32) -> Option<NodeIdentity> {
+        let node = self.tree.nodes.get(&id)?;
+        if self.tree.element(id).is_none() || !self.tree.attached(id) {
+            return None;
+        }
+        Some(NodeIdentity {
+            id,
+            token: node.identity.clone(),
+        })
+    }
+
+    /// Resolve a deferred identity only while that same element is attached.
+    #[must_use]
+    pub fn resolve_node_identity(&self, identity: &NodeIdentity) -> Option<u32> {
+        (self.node_identity(identity.id).as_ref() == Some(identity)).then_some(identity.id)
+    }
+
+    /// Update host viewport conditions used by the cascade and platform input.
+    pub fn set_environment(&mut self, environment: Environment) -> Result<(), LayoutError> {
+        if !environment.width.is_finite() || !(0.01..=1_000_000.0).contains(&environment.width) {
+            return Err(LayoutError::Viewport);
+        }
+        self.environment = environment;
+        Ok(())
+    }
+
+    /// The environment currently used for style evaluation.
+    #[must_use]
+    pub fn environment(&self) -> Environment {
+        self.environment
+    }
+
+    /// Cancel transient IME state on the currently focused field, if any.
+    pub fn cancel_preedit(&mut self) {
+        if let Some(id) = self.tree.focus
+            && let Some(element) = self.tree.element_mut(id)
+        {
+            element.editor.preedit = None;
+        }
+    }
+
     /// Validate `bytes` as one batch against the live tree and apply it, or
     /// leave the tree unchanged and fail. `gesture` is the scheduler's flag
     /// for the committing turn; it gates `copy_text`.
@@ -249,17 +328,59 @@ impl View {
         gesture: bool,
         broker: &mut dyn Broker,
     ) -> Result<(), ViewError> {
+        self.commit_impl(bytes, gesture, broker, None)
+    }
+
+    /// Apply a batch with geometry available to layout-dependent commands.
+    /// The geometry is evaluated at the command's position in the batch.
+    pub fn commit_with_layout(
+        &mut self,
+        bytes: &[u8],
+        gesture: bool,
+        broker: &mut dyn Broker,
+        width: f32,
+        height: f32,
+        font: Option<(&mut TextMeasurer, f32)>,
+    ) -> Result<(), ViewError> {
+        self.commit_impl(
+            bytes,
+            gesture,
+            broker,
+            Some(tree::LayoutContext {
+                width,
+                height,
+                font,
+            }),
+        )
+    }
+
+    fn commit_impl(
+        &mut self,
+        bytes: &[u8],
+        gesture: bool,
+        broker: &mut dyn Broker,
+        mut layout: Option<tree::LayoutContext<'_>>,
+    ) -> Result<(), ViewError> {
         let operations = wire::decode(bytes)?;
         let mut next = self.tree.clone();
         let effects = {
             let link = |url: &str| broker.link_requested(url);
-            let context = tree::Context {
+            let mut context = tree::Context {
                 link_requested: &link,
                 environment: self.environment,
+                layout: layout.as_mut().map(|layout| tree::LayoutContext {
+                    width: layout.width,
+                    height: layout.height,
+                    font: layout
+                        .font
+                        .as_mut()
+                        .map(|(font, size)| (&mut **font, *size)),
+                }),
             };
-            next.apply(&operations, &context)?
+            next.apply(&operations, &mut context)?
         };
         self.tree = next;
+        self.prune_history();
         self.commits += 1;
         for effect in effects {
             match effect {
@@ -273,6 +394,16 @@ impl View {
                 }
                 tree::Effect::Record(occurrence) => {
                     self.dispatch(occurrence, false)?;
+                }
+                tree::Effect::ScrollRecord { record, identity } => {
+                    if self
+                        .tree
+                        .nodes
+                        .get(&record.target)
+                        .is_some_and(|node| std::sync::Arc::ptr_eq(&node.identity, &identity))
+                    {
+                        self.dispatch(record, false)?;
+                    }
                 }
             }
         }
@@ -368,6 +499,182 @@ impl View {
     #[must_use]
     pub fn snapshot(&self) -> serde_json::Value {
         snapshot::snapshot(&self.tree, &self.environment, &self.effects)
+    }
+
+    /// Current guest title without constructing a complete view snapshot.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.tree.title
+    }
+
+    /// Compute experimental box-only geometry; unsupported content and CSS fail closed.
+    pub fn layout_boxes(
+        &self,
+        width: f32,
+        height: f32,
+    ) -> Result<std::collections::BTreeMap<u32, BoxRect>, LayoutError> {
+        layout::boxes(&self.tree, &self.environment, width, height)
+    }
+
+    /// Compute box rectangles and rectangular ancestor clips within the viewport.
+    /// Rounded clipping, transforms and actual painting are not implemented.
+    pub fn layout_geometry(
+        &self,
+        width: f32,
+        height: f32,
+    ) -> Result<std::collections::BTreeMap<u32, BoxGeometry>, LayoutError> {
+        layout::geometry(&self.tree, &self.environment, width, height)
+    }
+
+    /// Paint supported, unpositioned box backgrounds into a transparent CPU image.
+    /// Unsupported content or visual effects return an error instead of being omitted.
+    pub fn rasterize_boxes(&self, width: u32, height: u32) -> Result<RasterImage, PaintError> {
+        paint::rasterize(&self.tree, &self.environment, width, height)
+    }
+
+    /// Paint at physical resolution while measuring layout and fonts in CSS pixels.
+    pub fn rasterize_scaled(
+        &self,
+        width: u32,
+        height: u32,
+        scale: f32,
+        font: Option<(&mut TextMeasurer, f32)>,
+    ) -> Result<RasterImage, PaintError> {
+        paint::rasterize_scaled(&self.tree, &self.environment, width, height, scale, font)
+    }
+
+    /// Paint supported boxes and explicitly supplied-font text into a CPU image.
+    pub fn rasterize_with_text(
+        &self,
+        width: u32,
+        height: u32,
+        measurer: &mut TextMeasurer,
+        font_size: f32,
+    ) -> Result<RasterImage, PaintError> {
+        paint::rasterize_with_text(
+            &self.tree,
+            &self.environment,
+            width,
+            height,
+            measurer,
+            font_size,
+        )
+    }
+
+    /// Compute rectangular clips and boxes with the experimental text measurer.
+    pub fn layout_geometry_with_text(
+        &self,
+        width: f32,
+        height: f32,
+        measurer: &mut TextMeasurer,
+        font_size: f32,
+    ) -> Result<std::collections::BTreeMap<u32, BoxGeometry>, LayoutError> {
+        layout::geometry_with_text(
+            &self.tree,
+            &self.environment,
+            width,
+            height,
+            measurer,
+            font_size,
+        )
+    }
+
+    /// Plan nearest-edge vertical scrolling using the current experimental geometry.
+    /// Changes are ordered from inner to outer scrollports and are not applied.
+    /// Absolutely or fixed-positioned paths are rejected until supported.
+    pub fn scroll_into_view_plan(
+        &self,
+        target: u32,
+        width: f32,
+        height: f32,
+        font: Option<(&mut TextMeasurer, f32)>,
+    ) -> Result<Vec<(u32, f64)>, LayoutError> {
+        let geometry = match font {
+            Some((measurer, size)) => {
+                self.layout_geometry_with_text(width, height, measurer, size)?
+            }
+            None => self.layout_geometry(width, height)?,
+        };
+        layout::scroll_into_view_plan(&self.tree, &self.environment, &geometry, target)
+    }
+
+    /// Apply the current nearest-edge vertical scroll plan atomically.
+    /// Scroll records are delivered without a user-gesture grant.
+    pub fn scroll_into_view(
+        &mut self,
+        target: u32,
+        width: f32,
+        height: f32,
+        font: Option<(&mut TextMeasurer, f32)>,
+    ) -> Result<usize, ScrollIntoViewError> {
+        let geometry = match font {
+            Some((measurer, size)) => {
+                self.layout_geometry_with_text(width, height, measurer, size)?
+            }
+            None => self.layout_geometry(width, height)?,
+        };
+        let plan = layout::scroll_into_view_plan(&self.tree, &self.environment, &geometry, target)?;
+        let mut next = self.clone();
+        for &(id, top) in &plan {
+            let Some(element) = next.tree.element_mut(id) else {
+                return Err(LayoutError::Unsupported(id).into());
+            };
+            element.scroll_top = top;
+            let scroll = geometry[&id]
+                .programmatic_scroll
+                .ok_or(LayoutError::Unsupported(id))?;
+            let mut record = EventRecord::occurrence(EventKind::Scroll, id);
+            record.scroll_top = top;
+            record.client_height = f64::from(scroll.viewport.height);
+            record.scroll_height = f64::from(scroll.viewport.height + scroll.max);
+            next.dispatch(record, false)?;
+        }
+        *self = next;
+        Ok(plan.len())
+    }
+
+    /// Apply a deferred scroll only if its original target is still attached.
+    pub fn scroll_into_view_identity(
+        &mut self,
+        identity: &NodeIdentity,
+        width: f32,
+        height: f32,
+        font: Option<(&mut TextMeasurer, f32)>,
+    ) -> Result<usize, ScrollIntoViewError> {
+        match self.resolve_node_identity(identity) {
+            Some(target) => self.scroll_into_view(target, width, height, font),
+            None => Ok(0),
+        }
+    }
+
+    /// Experimental layout for isolated text in flex/grid or single-text-child blocks.
+    /// The caller supplies a covering font and base size; CSS font size and line height inherit.
+    /// General inline formatting is not supported.
+    pub fn layout_boxes_with_text(
+        &self,
+        width: f32,
+        height: f32,
+        measurer: &mut TextMeasurer,
+        font_size: f32,
+    ) -> Result<std::collections::BTreeMap<u32, BoxRect>, LayoutError> {
+        layout::boxes_with_text(
+            &self.tree,
+            &self.environment,
+            width,
+            height,
+            measurer,
+            font_size,
+        )
+    }
+
+    /// Project explicit flex-item `display` values for layout comparison.
+    /// Other computed-style and geometry rules are not modeled. The ordinary
+    /// cascade snapshot remains available unchanged via [`Self::snapshot`].
+    #[must_use]
+    pub fn snapshot_flex_blockified(&self) -> serde_json::Value {
+        let mut value = self.snapshot();
+        project_flex_blockification(&mut value);
+        value
     }
 
     /// The node an input target names, if it is an attached element.

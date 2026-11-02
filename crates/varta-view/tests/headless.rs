@@ -47,6 +47,32 @@ fn commit(view: &mut View, batch: &BatchWriter) -> Result<(), ViewError> {
     view.commit(&batch.finish(), false, &mut Fixed::default())
 }
 
+#[test]
+fn optional_flex_projection_preserves_the_original_cascade_snapshot() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .create_element(3, Tag::Span)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(3, CssProperty::Display, "inline")
+        .insert(1, 2, 0)
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let original = view.snapshot();
+    let projected = view.snapshot_flex_blockified();
+    assert_eq!(
+        original["tree"]["children"][0]["children"][0]["style"]["display"],
+        "inline"
+    );
+    assert_eq!(
+        projected["tree"]["children"][0]["children"][0]["style"]["display"],
+        "block"
+    );
+    assert_eq!(view.snapshot(), original);
+    assert_eq!(projected["accessibility"], original["accessibility"]);
+}
+
 fn violation(result: Result<(), ViewError>) -> Violation {
     match result {
         Err(ViewError::Invalid { violation, .. }) => violation,
@@ -99,6 +125,3184 @@ fn a_valid_batch_builds_the_tree_and_snapshot() {
     assert_eq!(a11y[0]["name"], "+");
     assert_eq!(a11y[1]["role"], "textbox");
     assert_eq!(a11y[1]["multiline"], true);
+}
+
+#[test]
+fn box_layout_computes_flex_geometry_and_rejects_unsupported_content() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "120px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::Gap, "10px")
+        .insert(1, 2, 0);
+    for id in [3, 4] {
+        batch
+            .create_element(id, Tag::Div)
+            .set_style(id, CssProperty::Width, "20px")
+            .set_style(id, CssProperty::Height, "10px")
+            .insert(2, id, 0);
+    }
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        rects[&2],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 120.0,
+            height: 40.0
+        }
+    );
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 20.0,
+            height: 10.0
+        }
+    );
+    assert_eq!(
+        rects[&4],
+        varta_view::BoxRect {
+            x: 30.0,
+            y: 0.0,
+            width: 20.0,
+            height: 10.0
+        }
+    );
+    assert!(view.layout_boxes(f32::NAN, 100.0).is_err());
+    let mut text = BatchWriter::new();
+    text.create_text(5, "unmeasured").insert(3, 5, 0);
+    commit(&mut view, &text).unwrap();
+    assert!(matches!(
+        view.layout_boxes(200.0, 100.0),
+        Err(varta_view::LayoutError::Unsupported(5))
+    ));
+}
+
+#[test]
+fn box_layout_flex_growth_and_alignment_match_expected_rectangles() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "160px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::AlignItems, "center")
+        .insert(1, 2, 0);
+    for (id, growth) in [(3, "1"), (4, "2")] {
+        batch
+            .create_element(id, Tag::Div)
+            .set_style(id, CssProperty::Width, "20px")
+            .set_style(id, CssProperty::Height, "10px")
+            .set_style(id, CssProperty::FlexGrow, growth)
+            .insert(2, id, 0);
+    }
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 15.0,
+            width: 60.0,
+            height: 10.0
+        }
+    );
+    assert_eq!(
+        rects[&4],
+        varta_view::BoxRect {
+            x: 60.0,
+            y: 15.0,
+            width: 100.0,
+            height: 10.0
+        }
+    );
+}
+
+#[test]
+fn box_layout_wraps_and_distributes_items() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "20px")
+        .set_style(2, CssProperty::FlexWrap, "wrap")
+        .set_style(2, CssProperty::JustifyContent, "space-between")
+        .set_style(2, CssProperty::ColumnGap, "10px")
+        .insert(1, 2, 0);
+    for id in [3, 4, 5] {
+        batch
+            .create_element(id, Tag::Div)
+            .set_style(id, CssProperty::Width, "40px")
+            .set_style(id, CssProperty::Height, "10px")
+            .insert(2, id, 0);
+    }
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 40.0,
+            height: 10.0
+        }
+    );
+    assert_eq!(
+        rects[&4],
+        varta_view::BoxRect {
+            x: 60.0,
+            y: 0.0,
+            width: 40.0,
+            height: 10.0
+        }
+    );
+    assert_eq!(
+        rects[&5],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 10.0,
+            width: 40.0,
+            height: 10.0
+        }
+    );
+}
+
+#[test]
+fn box_layout_nested_padding_margin_and_size_limits() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::Padding, "5px 10px")
+        .insert(1, 2, 0);
+    batch
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "20px")
+        .set_style(3, CssProperty::Height, "10px")
+        .set_style(3, CssProperty::MinWidth, "30px")
+        .set_style(3, CssProperty::Margin, "2px 3px 4px 6px")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        rects[&2],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 120.0,
+            height: 50.0
+        }
+    );
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 16.0,
+            y: 7.0,
+            width: 30.0,
+            height: 10.0
+        }
+    );
+    let mut conflicting = BatchWriter::new();
+    conflicting.set_style(3, CssProperty::MarginLeft, "1px");
+    commit(&mut view, &conflicting).unwrap();
+    assert_eq!(view.layout_boxes(200.0, 100.0).unwrap()[&3].x, 11.0);
+    let mut invalid = BatchWriter::new();
+    invalid
+        .set_style(3, CssProperty::MarginLeft, "9px")
+        .create_element(3, Tag::Div);
+    assert!(commit(&mut view, &invalid).is_err());
+    assert_eq!(view.layout_boxes(200.0, 100.0).unwrap()[&3].x, 11.0);
+    let mut reset = BatchWriter::new();
+    reset.set_style(3, CssProperty::Margin, "2px 3px 4px 6px");
+    commit(&mut view, &reset).unwrap();
+    assert_eq!(view.layout_boxes(200.0, 100.0).unwrap()[&3].x, 16.0);
+    let mut remove_left = BatchWriter::new();
+    remove_left.remove_style(3, CssProperty::MarginLeft);
+    commit(&mut view, &remove_left).unwrap();
+    assert_eq!(view.layout_boxes(200.0, 100.0).unwrap()[&3].x, 10.0);
+    let mut remove_all = BatchWriter::new();
+    remove_all.remove_style(3, CssProperty::Margin);
+    commit(&mut view, &remove_all).unwrap();
+    assert_eq!(view.layout_boxes(200.0, 100.0).unwrap()[&3].y, 5.0);
+}
+
+#[test]
+fn box_layout_auto_and_negative_percentage_margins() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "200px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "100px")
+        .set_style(3, CssProperty::Height, "10px")
+        .set_style(3, CssProperty::Margin, "0 auto")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Display, "flex")
+        .set_style(4, CssProperty::Width, "200px")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(2, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::Width, "50px")
+        .set_style(5, CssProperty::Height, "10px")
+        .set_style(5, CssProperty::MarginLeft, "-10%")
+        .insert(4, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(300.0, 100.0).unwrap();
+    assert_eq!((rects[&3].x, rects[&3].y), (50.0, 0.0));
+    assert_eq!((rects[&5].x, rects[&5].y), (-20.0, 10.0));
+}
+
+#[test]
+fn box_layout_explicit_auto_and_none_sizing() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "200px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "auto")
+        .set_style(3, CssProperty::Height, "auto")
+        .set_style(3, CssProperty::MinWidth, "auto")
+        .set_style(3, CssProperty::MinHeight, "auto")
+        .set_style(3, CssProperty::MaxHeight, "none")
+        .set_style(3, CssProperty::MaxWidth, "100px")
+        .set_style(3, CssProperty::Margin, "0 auto")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "10px")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(3, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(300.0, 100.0).unwrap();
+    assert_eq!(
+        (rects[&3].x, rects[&3].width, rects[&3].height),
+        (50.0, 100.0, 10.0)
+    );
+}
+
+#[test]
+fn grid_tracks_placement_and_limits() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "grid")
+        .set_style(2, CssProperty::Width, "500px")
+        .set_style(2, CssProperty::Height, "80px")
+        .set_style(2, CssProperty::GridTemplateColumns, "1fr 128px")
+        .set_style(2, CssProperty::GridTemplateRows, "30px 40px")
+        .set_style(2, CssProperty::Gap, "10px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .insert(2, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::GridColumn, "1 / 3")
+        .set_style(5, CssProperty::GridRow, "2")
+        .insert(2, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(600.0, 200.0).unwrap();
+    assert_eq!(
+        (rects[&3].x, rects[&3].y, rects[&3].width, rects[&3].height),
+        (0.0, 0.0, 362.0, 30.0)
+    );
+    assert_eq!((rects[&4].x, rects[&4].width), (372.0, 128.0));
+    assert_eq!(
+        (rects[&5].x, rects[&5].y, rects[&5].width, rects[&5].height),
+        (0.0, 40.0, 500.0, 40.0)
+    );
+    let mut repeat = BatchWriter::new();
+    repeat
+        .set_style(2, CssProperty::Width, "220px")
+        .set_style(
+            2,
+            CssProperty::GridTemplateColumns,
+            "repeat(2, minmax(0, 1fr))",
+        )
+        .set_style(2, CssProperty::Gap, "20px")
+        .remove_style(5, CssProperty::GridColumn)
+        .remove_style(5, CssProperty::GridRow);
+    commit(&mut view, &repeat).unwrap();
+    let rects = view.layout_boxes(600.0, 200.0).unwrap();
+    assert_eq!(
+        (rects[&3].width, rects[&4].x, rects[&4].width),
+        (100.0, 120.0, 100.0)
+    );
+    let mut excessive = BatchWriter::new();
+    excessive.set_style(2, CssProperty::GridTemplateColumns, "repeat(65, 1fr)");
+    commit(&mut view, &excessive).unwrap();
+    assert!(matches!(
+        view.layout_boxes(600.0, 200.0),
+        Err(varta_view::LayoutError::Unsupported(2))
+    ));
+}
+
+#[test]
+fn scroll_offsets_affect_descendants_and_clamp_to_content() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Position, "relative")
+        .set_style(2, CssProperty::Width, "120px")
+        .set_style(2, CssProperty::Height, "60px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Overflow, "auto")
+        .set_style(3, CssProperty::MarginLeft, "20px")
+        .set_style(3, CssProperty::Width, "100px")
+        .set_style(3, CssProperty::Height, "40px")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Height, "100px")
+        .insert(3, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::Position, "absolute")
+        .set_style(5, CssProperty::Top, "20px")
+        .set_style(5, CssProperty::Left, "10px")
+        .set_style(5, CssProperty::Width, "10px")
+        .set_style(5, CssProperty::Height, "10px")
+        .insert(4, 5, 0)
+        .create_element(6, Tag::Div)
+        .set_style(6, CssProperty::Position, "fixed")
+        .set_style(6, CssProperty::Top, "30px")
+        .set_style(6, CssProperty::Left, "0px")
+        .set_style(6, CssProperty::Width, "10px")
+        .set_style(6, CssProperty::Height, "10px")
+        .insert(4, 6, 0);
+    commit(&mut view, &batch).unwrap();
+    for (top, child_y) in [(15.0, -15.0), (999.0, -60.0)] {
+        view.input(
+            &Input::Scroll {
+                target: Target::Node(3),
+                top,
+            },
+            &mut Fixed::default(),
+        )
+        .unwrap();
+        let rects = view.layout_boxes(200.0, 100.0).unwrap();
+        assert_eq!(rects[&4].y, child_y);
+        assert_eq!((rects[&5].x, rects[&5].y), (10.0, 20.0));
+        assert_eq!(rects[&6].y, 30.0);
+    }
+    let geometry = view.layout_geometry(200.0, 100.0).unwrap();
+    let viewport = varta_view::BoxRect {
+        x: 0.0,
+        y: 0.0,
+        width: 200.0,
+        height: 100.0,
+    };
+    let scroll_clip = varta_view::BoxRect {
+        x: 20.0,
+        y: 0.0,
+        width: 100.0,
+        height: 40.0,
+    };
+    assert_eq!(geometry[&3].clip, viewport);
+    assert_eq!(geometry[&4].clip, scroll_clip);
+    assert_eq!(geometry[&5].clip, viewport);
+    assert_eq!(geometry[&6].clip, viewport);
+    let mut positioned = BatchWriter::new();
+    positioned.set_style(3, CssProperty::Position, "relative");
+    commit(&mut view, &positioned).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!((rects[&5].x, rects[&5].y), (30.0, -40.0));
+    assert_eq!(rects[&6].y, 30.0);
+    let geometry = view.layout_geometry(200.0, 100.0).unwrap();
+    assert_eq!(geometry[&5].clip, scroll_clip);
+    assert_eq!(geometry[&6].clip, viewport);
+}
+
+#[test]
+fn geometry_intersects_nested_padding_box_clips() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "60px")
+        .set_style(2, CssProperty::Border, "5px solid")
+        .set_style(2, CssProperty::Overflow, "hidden")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::MarginLeft, "80px")
+        .set_style(3, CssProperty::MarginTop, "10px")
+        .set_style(3, CssProperty::Width, "40px")
+        .set_style(3, CssProperty::Height, "40px")
+        .set_style(3, CssProperty::Border, "2px solid")
+        .set_style(3, CssProperty::Overflow, "hidden")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "80px")
+        .set_style(4, CssProperty::Height, "80px")
+        .insert(3, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let geometry = view.layout_geometry(200.0, 100.0).unwrap();
+    assert_eq!(
+        geometry[&3].clip,
+        varta_view::BoxRect {
+            x: 5.0,
+            y: 5.0,
+            width: 100.0,
+            height: 60.0
+        }
+    );
+    assert_eq!(
+        geometry[&4].clip,
+        varta_view::BoxRect {
+            x: 87.0,
+            y: 17.0,
+            width: 18.0,
+            height: 40.0
+        }
+    );
+}
+
+#[test]
+fn positioned_boxes_use_correct_containing_block_and_viewport() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Position, "relative")
+        .set_style(2, CssProperty::MarginLeft, "20px")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "80px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::MarginLeft, "25px")
+        .set_style(3, CssProperty::Width, "50px")
+        .set_style(3, CssProperty::Height, "30px")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Position, "absolute")
+        .set_style(4, CssProperty::Left, "10px")
+        .set_style(4, CssProperty::Top, "20px")
+        .set_style(4, CssProperty::Width, "10px")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(3, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::Position, "fixed")
+        .set_style(5, CssProperty::Right, "15px")
+        .set_style(5, CssProperty::Bottom, "10px")
+        .set_style(5, CssProperty::Width, "10px")
+        .set_style(5, CssProperty::Height, "10px")
+        .insert(3, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!((rects[&3].x, rects[&3].y), (45.0, 0.0));
+    assert_eq!((rects[&4].x, rects[&4].y), (30.0, 20.0));
+    assert_eq!((rects[&5].x, rects[&5].y), (175.0, 80.0));
+}
+
+#[test]
+fn relative_offsets_preserve_flow_and_absolute_percent_uses_ancestor() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Position, "relative")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "50px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Position, "relative")
+        .set_style(3, CssProperty::Left, "5px")
+        .set_style(3, CssProperty::Top, "-3px")
+        .set_style(3, CssProperty::Width, "10px")
+        .set_style(3, CssProperty::Height, "10px")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "10px")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(2, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::Position, "absolute")
+        .set_style(5, CssProperty::Left, "50%")
+        .set_style(5, CssProperty::Top, "20%")
+        .set_style(5, CssProperty::Width, "10px")
+        .set_style(5, CssProperty::Height, "10px")
+        .insert(2, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!((rects[&3].x, rects[&3].y), (5.0, -3.0));
+    assert_eq!((rects[&4].x, rects[&4].y), (0.0, 10.0));
+    assert_eq!((rects[&5].x, rects[&5].y), (50.0, 10.0));
+}
+
+#[test]
+fn box_layout_resolves_stylesheet_shorthands_before_inline_longhands() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch.stylesheet(1, ".box { padding: 2px 3px; padding-left: 7px; gap: 2px 6px; column-gap: 10px } .item { margin: 1px 2px; margin-left: 4px }")
+        .create_element(2, Tag::Div).set_class(2, "box").set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px").set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::PaddingRight, "11px").insert(1, 2, 0);
+    for id in [3, 4] {
+        batch
+            .create_element(id, Tag::Div)
+            .set_class(id, "item")
+            .set_style(id, CssProperty::Width, "20px")
+            .set_style(id, CssProperty::Height, "10px")
+            .insert(2, id, 0);
+    }
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        rects[&2],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 118.0,
+            height: 44.0
+        }
+    );
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 11.0,
+            y: 3.0,
+            width: 20.0,
+            height: 10.0
+        }
+    );
+    assert_eq!(
+        rects[&4],
+        varta_view::BoxRect {
+            x: 47.0,
+            y: 3.0,
+            width: 20.0,
+            height: 10.0
+        }
+    );
+}
+
+#[test]
+fn box_layout_unresolved_variable_does_not_restore_earlier_shorthand() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .stylesheet(1, ".box { padding: 9px; padding: var(--missing) }")
+        .create_element(2, Tag::Div)
+        .set_class(2, "box")
+        .set_style(2, CssProperty::Width, "30px")
+        .set_style(2, CssProperty::Height, "10px")
+        .insert(1, 2, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(rects[&2].width, 30.0);
+    assert_eq!(rects[&2].height, 10.0);
+}
+
+#[test]
+fn box_layout_percentage_dimensions_and_spacing() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "200px")
+        .set_style(2, CssProperty::Height, "100px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "50%")
+        .set_style(3, CssProperty::Height, "50%")
+        .set_style(3, CssProperty::Padding, "5%")
+        .set_style(3, CssProperty::MarginLeft, "10%")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "50%")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(3, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(300.0, 200.0).unwrap();
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 20.0,
+            y: 0.0,
+            width: 120.0,
+            height: 70.0
+        }
+    );
+    assert_eq!(
+        rects[&4],
+        varta_view::BoxRect {
+            x: 30.0,
+            y: 10.0,
+            width: 50.0,
+            height: 10.0
+        }
+    );
+}
+
+#[test]
+fn box_layout_percentage_gap_and_flex_basis() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "200px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::Gap, "10%")
+        .insert(1, 2, 0);
+    for id in [3, 4] {
+        batch
+            .create_element(id, Tag::Div)
+            .set_style(id, CssProperty::FlexBasis, "25%")
+            .set_style(id, CssProperty::Height, "10px")
+            .insert(2, id, 0);
+    }
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(300.0, 100.0).unwrap();
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 50.0,
+            height: 10.0
+        }
+    );
+    assert_eq!(
+        rects[&4],
+        varta_view::BoxRect {
+            x: 70.0,
+            y: 0.0,
+            width: 50.0,
+            height: 10.0
+        }
+    );
+}
+
+#[test]
+fn text_editing_moves_selects_and_deletes_graphemes() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Input)
+        .insert(1, 2, 0)
+        .set_value(2, "A👩‍👩‍👧‍👦B", 0);
+    commit(&mut view, &batch).unwrap();
+    let key = |name: &str, shift| Input::Key {
+        target: Target::Node(2),
+        key: name.into(),
+        shift,
+        ctrl: false,
+        alt: false,
+        meta: false,
+        composing: false,
+    };
+    view.input(&key("ArrowLeft", false), &mut Fixed::default())
+        .unwrap();
+    view.input(&key("Backspace", false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AB");
+    view.input(&key("ArrowLeft", true), &mut Fixed::default())
+        .unwrap();
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "Z".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "ZB");
+    view.input(&key("Delete", false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "Z");
+    view.input(&key("Home", false), &mut Fixed::default())
+        .unwrap();
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "A".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let mut maxlength = BatchWriter::new();
+    maxlength.set_attribute(2, Attribute::Maxlength, "3");
+    commit(&mut view, &maxlength).unwrap();
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "XY".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AXZ");
+    let mut stale = BatchWriter::new();
+    stale.set_value(2, "stale", 0);
+    commit(&mut view, &stale).unwrap();
+    view.input(&key("Backspace", false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AZ");
+}
+
+#[test]
+fn select_command_focuses_enabled_attached_controls() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Input)
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Textarea)
+        .set_value(3, "abc", 0)
+        .set_attribute(3, Attribute::Readonly, "")
+        .listen(3, EventKind::Focusin, 10, Filter::default())
+        .insert(1, 3, 0)
+        .create_element(4, Tag::Input)
+        .set_attribute(4, Attribute::Disabled, "")
+        .insert(1, 4, 0)
+        .create_element(5, Tag::Input)
+        .set_attribute(5, Attribute::Type, "checkbox")
+        .insert(1, 5, 0)
+        .create_element(6, Tag::Input)
+        .create_element(7, Tag::Div)
+        .set_style(7, CssProperty::Display, "none")
+        .insert(1, 7, 0)
+        .create_element(8, Tag::Input)
+        .insert(7, 8, 0)
+        .command(2, Command::Focus, 0.0);
+    commit(&mut view, &batch).unwrap();
+    deliveries(&mut view);
+
+    let mut select = BatchWriter::new();
+    select.command(3, Command::Select, 0.0);
+    commit(&mut view, &select).unwrap();
+    assert_eq!(view.snapshot()["focus"], 3);
+    assert!(
+        deliveries(&mut view)
+            .iter()
+            .any(|e| e.0 == EventKind::Focusin && e.1 == 10)
+    );
+    for node in [4, 6, 8] {
+        let mut select = BatchWriter::new();
+        select.command(node, Command::Select, 0.0);
+        commit(&mut view, &select).unwrap();
+        assert_eq!(view.snapshot()["focus"], 3);
+    }
+    let mut focus_hidden = BatchWriter::new();
+    focus_hidden.command(8, Command::Focus, 0.0);
+    commit(&mut view, &focus_hidden).unwrap();
+    assert_eq!(view.snapshot()["focus"], 3);
+    let mut select = BatchWriter::new();
+    select.command(5, Command::Select, 0.0);
+    commit(&mut view, &select).unwrap();
+    assert_eq!(view.snapshot()["focus"], 5);
+}
+
+#[test]
+fn select_command_replaces_full_value_and_invalid_batch_preserves_caret() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Input)
+        .insert(1, 2, 0)
+        .set_value(2, "abc", 0)
+        .listen(2, EventKind::Input, 10, Filter::default())
+        .command(2, Command::Focus, 0.0);
+    commit(&mut view, &batch).unwrap();
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: 0,
+            activate: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    deliveries(&mut view);
+
+    let mut invalid = BatchWriter::new();
+    invalid
+        .command(2, Command::Select, 0.0)
+        .command(2, Command::ShowModal, 0.0);
+    assert!(commit(&mut view, &invalid).is_err());
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "X".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "Xabc");
+    deliveries(&mut view);
+
+    let mut select = BatchWriter::new();
+    select.command(2, Command::Select, 0.0);
+    commit(&mut view, &select).unwrap();
+    assert!(deliveries(&mut view).is_empty());
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "Я".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "Я");
+    assert_eq!(
+        deliveries(&mut view)
+            .iter()
+            .filter(|e| e.0 == EventKind::Input)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn cpu_textarea_renders_multiple_lines_and_resolves_two_dimensional_caret_positions() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup
+        .create_element(2, Tag::Textarea)
+        .insert(1, 2, 0)
+        .set_value(2, "AA\nAA", 0);
+    for (property, value) in [
+        (CssProperty::Display, "block"),
+        (CssProperty::Width, "60px"),
+        (CssProperty::Height, "60px"),
+        (CssProperty::MinWidth, "0"),
+        (CssProperty::MinHeight, "0"),
+        (CssProperty::Padding, "4px"),
+        (CssProperty::Border, "2px solid #000"),
+        (CssProperty::BorderRadius, "0"),
+        (CssProperty::Outline, "none"),
+        (CssProperty::BackgroundColor, "#fff"),
+        (CssProperty::Color, "#00f"),
+        (CssProperty::FontFamily, "\"Varta Fixture 400\""),
+        (CssProperty::FontSize, "20px"),
+        (CssProperty::FontWeight, "normal"),
+        (CssProperty::FontStyle, "normal"),
+        (CssProperty::LineHeight, "20px"),
+    ] {
+        setup.set_style(2, property, value);
+    }
+    commit(&mut view, &setup).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let image = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    assert_eq!(
+        &image.pixels[(10 * 100 + 8) * 4..(10 * 100 + 9) * 4],
+        &[0, 0, 255, 255]
+    );
+    assert_eq!(
+        &image.pixels[(30 * 100 + 8) * 4..(30 * 100 + 9) * 4],
+        &[0, 0, 255, 255]
+    );
+    assert_eq!(image.text_position(2, 6.0), None);
+    assert_eq!(image.text_position_at(2, 6.0, 10.0), Some(0));
+    assert_eq!(image.text_position_at(2, 6.0, 30.0), Some(3));
+    let scaled = view
+        .rasterize_scaled(200, 200, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    assert_eq!(scaled.text_position_at(2, 12.0, 60.0), Some(3));
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 3,
+            focus: 3,
+            activate: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.input(
+        &Input::Key {
+            target: Target::Node(2),
+            key: "Enter".into(),
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: false,
+            composing: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AA\n\nAA");
+    assert!(
+        view.rasterize_with_text(100, 100, &mut font, 20.0)
+            .unwrap()
+            .ime_cursor_area()
+            .is_some()
+    );
+    let mut wrap = BatchWriter::new();
+    wrap.set_value(2, "AAAAAAA", 1);
+    commit(&mut view, &wrap).unwrap();
+    let wrapped = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+    assert_eq!(wrapped.text_position_at(2, 6.0, 30.0), Some(6));
+    assert_eq!(wrapped.text_position_at(2, 99.0, 10.0), Some(6));
+    assert_eq!(wrapped.text_position_at(2, 99.0, 30.0), Some(7));
+}
+
+#[test]
+fn cpu_text_input_renders_edits_caret_and_enforces_value_limit() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Input)
+        .set_style(2, CssProperty::Display, "block")
+        .set_style(2, CssProperty::Width, "80px")
+        .set_style(2, CssProperty::Height, "30px")
+        .set_style(2, CssProperty::MinWidth, "0")
+        .set_style(2, CssProperty::MinHeight, "0")
+        .set_style(2, CssProperty::Padding, "4px")
+        .set_style(2, CssProperty::Border, "2px solid #000")
+        .set_style(2, CssProperty::BorderRadius, "0")
+        .set_style(2, CssProperty::Outline, "none")
+        .set_style(2, CssProperty::BackgroundColor, "#fff")
+        .set_style(2, CssProperty::Color, "#00f")
+        .set_style(2, CssProperty::FontFamily, "\"Varta Fixture 400\"")
+        .set_style(2, CssProperty::FontSize, "20px")
+        .set_style(2, CssProperty::FontWeight, "normal")
+        .set_style(2, CssProperty::FontStyle, "normal")
+        .set_style(2, CssProperty::LineHeight, "20px")
+        .insert(1, 2, 0)
+        .set_value(2, "AA", 0)
+        .listen(2, EventKind::Input, 10, Filter::default());
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    let pixel = |x: usize, y: usize| &image.pixels[(y * 100 + x) * 4..(y * 100 + x + 1) * 4];
+    assert_eq!(pixel(0, 0), &[0, 0, 0, 255]);
+    assert_eq!(pixel(8, 10), &[0, 0, 255, 255]);
+    assert_eq!(pixel(22, 10), &[255, 255, 255, 255]);
+    assert_eq!(image.editable(), None);
+    assert_eq!(image.text_position(2, 8.0), Some(0));
+    assert_eq!(image.text_position(2, 12.0), Some(1));
+    assert_eq!(image.text_position(2, 24.0), Some(2));
+    view.input(
+        &Input::Click {
+            target: Target::Node(2),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(image.editable(), Some(2));
+    let scaled = view
+        .rasterize_scaled(200, 100, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    assert_eq!(
+        &scaled.pixels[(20 * 200 + 16) * 4..(20 * 200 + 17) * 4],
+        &[0, 0, 255, 255]
+    );
+    assert_eq!(scaled.text_position(2, 24.0), image.text_position(2, 12.0));
+    let caret = image.ime_cursor_area().unwrap();
+    let scaled_caret = scaled.ime_cursor_area().unwrap();
+    assert_eq!(
+        (
+            scaled_caret.x,
+            scaled_caret.y,
+            scaled_caret.width,
+            scaled_caret.height
+        ),
+        (
+            caret.x * 2.0,
+            caret.y * 2.0,
+            caret.width * 2.0,
+            caret.height * 2.0
+        )
+    );
+    assert_eq!(
+        &image.pixels[(10 * 100 + 22) * 4..(10 * 100 + 23) * 4],
+        &[0, 0, 255, 255]
+    );
+    let key = |name: &str, shift| Input::Key {
+        target: Target::Node(2),
+        key: name.into(),
+        shift,
+        ctrl: false,
+        alt: false,
+        meta: false,
+        composing: false,
+    };
+    view.input(&key("ArrowLeft", false), &mut Fixed::default())
+        .unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(
+        &image.pixels[(10 * 100 + 14) * 4..(10 * 100 + 15) * 4],
+        &[0, 0, 255, 255]
+    );
+    view.input(&key("ArrowLeft", true), &mut Fixed::default())
+        .unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(
+        &image.pixels[(10 * 100 + 13) * 4..(10 * 100 + 14) * 4],
+        &[160, 200, 255, 255]
+    );
+    view.input(&key("End", false), &mut Fixed::default())
+        .unwrap();
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "A".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AAA");
+    assert!(
+        deliveries(&mut view)
+            .iter()
+            .any(|item| item.0 == EventKind::Input && item.1 == 10)
+    );
+    let mut prevent = BatchWriter::new();
+    prevent.listen(
+        2,
+        EventKind::Keydown,
+        11,
+        Filter {
+            options: ListenOption::PreventDefault as u32,
+            key: Key::Space.code(),
+            ..Filter::default()
+        },
+    );
+    commit(&mut view, &prevent).unwrap();
+    let space = Input::Key {
+        target: Target::Node(2),
+        key: "Space".into(),
+        shift: false,
+        ctrl: false,
+        alt: false,
+        meta: false,
+        composing: false,
+    };
+    view.input(&space, &mut Fixed::default()).unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AAA");
+    let mut allow = BatchWriter::new();
+    allow.unlisten(2, EventKind::Keydown, 11);
+    commit(&mut view, &allow).unwrap();
+    view.input(&space, &mut Fixed::default()).unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AAA ");
+    view.input(
+        &Input::Key {
+            target: Target::Node(2),
+            key: "Backspace".into(),
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: false,
+            composing: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AAA");
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "A".repeat(32_766),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AAA");
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "A".repeat(32_769),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AAA");
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "Ф".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    // An uncovered character uses the explicitly supplied font's .notdef glyph.
+    assert!(view.rasterize_with_text(100, 50, &mut font, 20.0).is_ok());
+    let mut click_listener = BatchWriter::new();
+    click_listener.listen(2, EventKind::Click, 12, Filter::default());
+    commit(&mut view, &click_listener).unwrap();
+    deliveries(&mut view);
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: 1,
+            activate: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert!(
+        !deliveries(&mut view)
+            .iter()
+            .any(|item| item.0 == EventKind::Click)
+    );
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: 1,
+            activate: true,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "Ф".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "ФAAФ");
+    assert!(matches!(
+        view.input(
+            &Input::TextSelect {
+                target: Target::Node(2),
+                anchor: 1,
+                focus: 1,
+                activate: true,
+            },
+            &mut Fixed::default()
+        ),
+        Err(varta_view::InputError::Selection)
+    ));
+    view.input(&key("End", false), &mut Fixed::default())
+        .unwrap();
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "A".repeat(20),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert!(image.text_position(2, 6.0).unwrap() > 0);
+    deliveries(&mut view);
+    let before = view.snapshot()["tree"]["children"][0].clone();
+    view.input(
+        &Input::ImePreedit {
+            target: Target::Node(2),
+            text: "Ф".into(),
+            cursor: Some((2, 2)),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let during = view.snapshot()["tree"]["children"][0].clone();
+    assert_eq!(during["value"], before["value"]);
+    assert_eq!(during["seq"], before["seq"]);
+    assert!(deliveries(&mut view).is_empty());
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(image.text_position(2, 6.0), None);
+    assert!(image.ime_cursor_area().is_some());
+    assert!(matches!(
+        view.input(
+            &Input::ImePreedit {
+                target: Target::Node(2),
+                text: "Ф".into(),
+                cursor: Some((1, 1))
+            },
+            &mut Fixed::default()
+        ),
+        Err(varta_view::InputError::Selection)
+    ));
+    view.input(
+        &Input::ImePreedit {
+            target: Target::Node(2),
+            text: String::new(),
+            cursor: None,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.input(
+        &Input::ImeCommit {
+            target: Target::Node(2),
+            text: "Ф".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert!(
+        view.snapshot()["tree"]["children"][0]["value"]
+            .as_str()
+            .unwrap()
+            .ends_with('Ф')
+    );
+    assert_eq!(
+        deliveries(&mut view)
+            .iter()
+            .filter(|item| item.0 == EventKind::Input)
+            .count(),
+        1
+    );
+    view.input(
+        &Input::ImePreedit {
+            target: Target::Node(2),
+            text: "A".into(),
+            cursor: None,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.cancel_preedit();
+    assert!(
+        view.rasterize_with_text(100, 50, &mut font, 20.0)
+            .unwrap()
+            .text_position(2, 6.0)
+            .is_some()
+    );
+
+    // A composition replaces the selection only at commit, including when
+    // the selected and replacement strings have different UTF-8 lengths.
+    let original = view.snapshot()["tree"]["children"][0]["value"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let selected_end = original.chars().next().unwrap().len_utf8();
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: selected_end,
+            activate: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    deliveries(&mut view);
+    view.input(
+        &Input::ImePreedit {
+            target: Target::Node(2),
+            text: "A".into(),
+            cursor: Some((0, 1)),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], original);
+    assert!(deliveries(&mut view).is_empty());
+    view.input(
+        &Input::ImeCommit {
+            target: Target::Node(2),
+            text: "A".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        view.snapshot()["tree"]["children"][0]["value"],
+        format!("A{}", &original[selected_end..])
+    );
+    assert_eq!(
+        deliveries(&mut view)
+            .iter()
+            .filter(|item| item.0 == EventKind::Input)
+            .count(),
+        1
+    );
+
+    let seq = view.snapshot()["tree"]["children"][0]["seq"]
+        .as_u64()
+        .unwrap() as u32;
+    let mut placeholder = BatchWriter::new();
+    placeholder
+        .set_value(2, "", seq)
+        .set_attribute(2, Attribute::Placeholder, "A");
+    commit(&mut view, &placeholder).unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(
+        &image.pixels[(10 * 100 + 8) * 4..(10 * 100 + 9) * 4],
+        &[117, 117, 117, 255]
+    );
+    assert_eq!(image.text_position(2, 12.0), Some(0));
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "");
+    view.input(
+        &Input::ImePreedit {
+            target: Target::Node(2),
+            text: "A".into(),
+            cursor: Some((1, 1)),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(
+        &image.pixels[(10 * 100 + 8) * 4..(10 * 100 + 9) * 4],
+        &[0, 0, 255, 255]
+    );
+    let mut readonly = BatchWriter::new();
+    readonly.set_attribute(2, Attribute::Readonly, "");
+    commit(&mut view, &readonly).unwrap();
+    assert!(
+        view.rasterize_with_text(100, 50, &mut font, 20.0)
+            .unwrap()
+            .text_position(2, 8.0)
+            .is_some()
+    );
+    let mut writable = BatchWriter::new();
+    writable.remove_attribute(2, Attribute::Readonly);
+    commit(&mut view, &writable).unwrap();
+    view.input(
+        &Input::ImePreedit {
+            target: Target::Node(2),
+            text: "A".into(),
+            cursor: Some((1, 1)),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let mut disabled = BatchWriter::new();
+    disabled.set_attribute(2, Attribute::Disabled, "");
+    commit(&mut view, &disabled).unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(image.editable(), None);
+    assert_eq!(
+        &image.pixels[(10 * 100 + 8) * 4..(10 * 100 + 9) * 4],
+        &[117, 117, 117, 255]
+    );
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "A".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "");
+    assert!(deliveries(&mut view).is_empty());
+}
+
+#[test]
+fn ime_commit_is_one_undo_step_and_history_respects_readonly_prevention_and_echoes() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup
+        .create_element(2, Tag::Input)
+        .insert(1, 2, 0)
+        .set_value(2, "AB", 0);
+    commit(&mut view, &setup).unwrap();
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: 1,
+            activate: false,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    for text in ["я", "Я"] {
+        view.input(
+            &Input::ImePreedit {
+                target: Target::Node(2),
+                text: text.into(),
+                cursor: Some((2, 2)),
+            },
+            &mut Fixed::default(),
+        )
+        .unwrap();
+    }
+    view.input(
+        &Input::ImeCommit {
+            target: Target::Node(2),
+            text: "Я".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let undo = Input::TextKey {
+        target: Target::Node(2),
+        key: "z".into(),
+        text: String::new(),
+        shift: false,
+        ctrl: true,
+        alt: false,
+        meta: false,
+        select_all: false,
+        history: None,
+    };
+    let mut readonly = BatchWriter::new();
+    readonly.set_attribute(2, Attribute::Readonly, "");
+    commit(&mut view, &readonly).unwrap();
+    view.input(&undo, &mut Fixed::default()).unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "ЯB");
+    let mut prevent = BatchWriter::new();
+    prevent.remove_attribute(2, Attribute::Readonly).listen(
+        2,
+        EventKind::Keydown,
+        10,
+        Filter {
+            options: ListenOption::PreventDefault as u32,
+            ..Filter::default()
+        },
+    );
+    commit(&mut view, &prevent).unwrap();
+    view.input(&undo, &mut Fixed::default()).unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "ЯB");
+    let seq = view.snapshot()["tree"]["children"][0]["seq"]
+        .as_u64()
+        .unwrap() as u32;
+    let mut allow_and_echo = BatchWriter::new();
+    allow_and_echo
+        .unlisten(2, EventKind::Keydown, 10)
+        .set_value(2, "ЯB", seq)
+        .set_value(2, "stale", 0);
+    commit(&mut view, &allow_and_echo).unwrap();
+    view.input(&undo, &mut Fixed::default()).unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "AB");
+    view.input(
+        &Input::Type {
+            target: Target::Node(2),
+            text: "Z".into(),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "ZB");
+}
+
+#[test]
+fn undo_redo_restores_edits_and_stops_at_guest_value_changes_and_history_limit() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup
+        .create_element(2, Tag::Input)
+        .insert(1, 2, 0)
+        .set_value(2, "A", 0)
+        .listen(2, EventKind::Input, 10, Filter::default());
+    commit(&mut view, &setup).unwrap();
+    let edit = |text: &str| Input::Type {
+        target: Target::Node(2),
+        text: text.into(),
+    };
+    let history = |action| Input::TextKey {
+        target: Target::Node(2),
+        key: "я".into(),
+        text: String::new(),
+        shift: false,
+        ctrl: false,
+        alt: false,
+        meta: true,
+        select_all: false,
+        history: Some(action),
+    };
+    let value = |view: &View| {
+        view.snapshot()["tree"]["children"][0]["value"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    view.input(&edit("Б"), &mut Fixed::default()).unwrap();
+    view.input(
+        &history(varta_view::HistoryAction::Undo),
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(value(&view), "A");
+    assert_eq!(deliveries(&mut view).len(), 1);
+    view.input(
+        &history(varta_view::HistoryAction::Redo),
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(value(&view), "AБ");
+    view.input(
+        &history(varta_view::HistoryAction::Undo),
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.input(&edit("X"), &mut Fixed::default()).unwrap();
+    view.input(
+        &history(varta_view::HistoryAction::Redo),
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(value(&view), "AX");
+    let seq = view.snapshot()["tree"]["children"][0]["seq"]
+        .as_u64()
+        .unwrap() as u32;
+    let mut patch = BatchWriter::new();
+    patch.set_value(2, "server", seq);
+    commit(&mut view, &patch).unwrap();
+    view.input(
+        &history(varta_view::HistoryAction::Undo),
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(value(&view), "server");
+    for _ in 0..80 {
+        view.input(&edit("a"), &mut Fixed::default()).unwrap();
+    }
+    for _ in 0..80 {
+        view.input(
+            &history(varta_view::HistoryAction::Undo),
+            &mut Fixed::default(),
+        )
+        .unwrap();
+    }
+    assert_eq!(value(&view), format!("server{}", "a".repeat(16)));
+}
+
+#[test]
+fn character_keydown_can_prevent_typing_and_select_all_before_replacement() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup
+        .create_element(2, Tag::Input)
+        .set_value(2, "abc", 0)
+        .listen(
+            2,
+            EventKind::Keydown,
+            10,
+            Filter {
+                options: ListenOption::PreventDefault as u32,
+                ..Filter::default()
+            },
+        )
+        .listen(2, EventKind::Input, 11, Filter::default())
+        .insert(1, 2, 0)
+        .command(2, Command::Focus, 0.0);
+    commit(&mut view, &setup).unwrap();
+    let key = |name: &str, text: &str, ctrl, alt| Input::TextKey {
+        target: Target::Node(2),
+        key: name.into(),
+        text: text.into(),
+        shift: false,
+        ctrl,
+        alt,
+        meta: false,
+        select_all: false,
+        history: None,
+    };
+    view.input(&key("a", "a", false, false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "abc");
+    let events = deliveries(&mut view);
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (events[0].0, events[0].2.as_str(), events[0].3),
+        (EventKind::Keydown, "a", true)
+    );
+
+    let mut allow = BatchWriter::new();
+    allow
+        .unlisten(2, EventKind::Keydown, 10)
+        .listen(2, EventKind::Keydown, 12, Filter::default());
+    commit(&mut view, &allow).unwrap();
+    view.input(&key("a", "", true, false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "abc");
+    assert_eq!(deliveries(&mut view).len(), 1);
+    view.input(&key("Я", "Я", false, false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "Я");
+    assert_eq!(
+        deliveries(&mut view)
+            .iter()
+            .map(|e| e.0)
+            .collect::<Vec<_>>(),
+        [EventKind::Keydown, EventKind::Input]
+    );
+    view.input(&key("€", "€", true, true), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "Я€");
+    view.input(
+        &Input::TextKey {
+            target: Target::Node(2),
+            key: "ф".into(),
+            text: String::new(),
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: true,
+            select_all: true,
+            history: None,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    view.input(&key("z", "z", false, false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "z");
+}
+
+#[test]
+fn disabled_focused_input_keeps_keydown_but_cannot_submit_or_edit() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Form)
+        .listen(2, EventKind::Submit, 20, Filter::default())
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Input)
+        .set_value(3, "abc", 0)
+        .listen(3, EventKind::Keydown, 30, Filter::default())
+        .listen(3, EventKind::Input, 31, Filter::default())
+        .insert(2, 3, 0)
+        .command(3, Command::Focus, 0.0)
+        .set_attribute(3, Attribute::Disabled, "");
+    commit(&mut view, &batch).unwrap();
+    deliveries(&mut view);
+    for key in ["Enter", "Backspace"] {
+        view.input(
+            &Input::Key {
+                target: Target::Node(3),
+                key: key.into(),
+                shift: false,
+                ctrl: false,
+                alt: false,
+                meta: false,
+                composing: false,
+            },
+            &mut Fixed::default(),
+        )
+        .unwrap();
+    }
+    let events = deliveries(&mut view);
+    assert_eq!(
+        events.iter().map(|e| e.0).collect::<Vec<_>>(),
+        [EventKind::Keydown, EventKind::Keydown]
+    );
+    assert_eq!(
+        view.snapshot()["tree"]["children"][0]["children"][0]["value"],
+        "abc"
+    );
+}
+
+#[test]
+fn keyboard_tab_skips_hidden_ancestors_and_uses_updated_viewport() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .stylesheet(
+            1,
+            "@media (max-width: 400px) { .hidden-small { display: none } }",
+        )
+        .create_element(2, Tag::Div)
+        .set_class(2, "hidden-small")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Button)
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Button)
+        .insert(1, 4, 0)
+        .listen(4, EventKind::Click, 77, Filter::default());
+    commit(&mut view, &batch).unwrap();
+    view.set_environment(Environment {
+        width: 300.0,
+        dark: false,
+    })
+    .unwrap();
+    let key = |target, key: &str, shift| Input::Key {
+        target: Target::Node(target),
+        key: key.into(),
+        shift,
+        ctrl: false,
+        alt: false,
+        meta: false,
+        composing: false,
+    };
+    view.input(&key(View::root(), "Tab", false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["focus"], 4);
+    view.input(&key(4, "Enter", false), &mut Fixed::default())
+        .unwrap();
+    assert!(
+        deliveries(&mut view)
+            .iter()
+            .any(|record| record.0 == EventKind::Click && record.1 == 77)
+    );
+    view.set_environment(Environment {
+        width: 800.0,
+        dark: false,
+    })
+    .unwrap();
+    view.input(&key(4, "Tab", false), &mut Fixed::default())
+        .unwrap();
+    assert_eq!(view.snapshot()["focus"], 3);
+    assert!(
+        view.set_environment(Environment {
+            width: f64::NAN,
+            dark: false
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn device_scale_preserves_css_viewport_and_scales_clips_and_hit_regions() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup.stylesheet(1, ".box { background-color:#0f0 } @media (max-width:25px) { .box { background-color:#f00 } }")
+        .create_element(2, Tag::Div).set_style(2, CssProperty::Width, "10px")
+        .set_style(2, CssProperty::Height, "10px").set_style(2, CssProperty::Margin, "5px")
+        .set_style(2, CssProperty::Overflow, "hidden").insert(1, 2, 0)
+        .create_element(3, Tag::Div).set_class(3, "box")
+        .set_style(3, CssProperty::Width, "20px").set_style(3, CssProperty::Height, "20px")
+        .set_style(3, CssProperty::Border, "2px solid #00f").insert(2, 3, 0);
+    commit(&mut view, &setup).unwrap();
+    let frame = view.rasterize_scaled(40, 40, 2.0, None).unwrap();
+    assert_eq!(frame.scale(), 2.0);
+    let pixel = |x: usize, y: usize| &frame.pixels[(y * 40 + x) * 4..(y * 40 + x + 1) * 4];
+    assert_eq!(pixel(10, 12), &[0, 0, 255, 255]);
+    assert_eq!(pixel(28, 20), &[255, 0, 0, 255]);
+    assert_eq!(pixel(30, 20), &[0, 0, 0, 0]);
+    assert_eq!(frame.hit_test(29.0, 20.0), Some(3));
+    assert_eq!(frame.hit_test(30.0, 20.0), None);
+    let fractional = view.rasterize_scaled(30, 30, 1.5, None).unwrap();
+    assert_eq!(
+        &fractional.pixels[(15 * 30 + 21) * 4..(15 * 30 + 22) * 4],
+        &[255, 0, 0, 255]
+    );
+    assert_eq!(
+        &fractional.pixels[(15 * 30 + 23) * 4..(15 * 30 + 24) * 4],
+        &[0, 0, 0, 0]
+    );
+    assert_eq!(fractional.hit_test(22.0, 15.0), Some(3));
+    assert_eq!(fractional.hit_test(23.0, 15.0), None);
+    for scale in [0.0, f32::NAN, f32::INFINITY, 9.0] {
+        assert!(view.rasterize_scaled(40, 40, scale, None).is_err());
+    }
+}
+
+#[test]
+fn cpu_outline_tracks_focus_cascade_and_does_not_expand_hit_regions() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup
+        .stylesheet(
+            1,
+            ".box:focus-visible { outline: 2px solid #00f; outline-offset: 2px }",
+        )
+        .create_element(2, Tag::Div)
+        .set_class(2, "box")
+        .set_attribute(2, Attribute::Tabindex, "0")
+        .set_style(2, CssProperty::Width, "20px")
+        .set_style(2, CssProperty::Height, "20px")
+        .set_style(2, CssProperty::Margin, "10px")
+        .set_style(2, CssProperty::BackgroundColor, "#f00")
+        .insert(1, 2, 0);
+    commit(&mut view, &setup).unwrap();
+    let rects = view.layout_boxes(60.0, 60.0).unwrap();
+    let image = view.rasterize_boxes(60, 60).unwrap();
+    let pixel = |image: &varta_view::RasterImage, x: usize, y: usize| {
+        image.pixels[(y * 60 + x) * 4..(y * 60 + x + 1) * 4].to_vec()
+    };
+    assert_eq!(pixel(&image, 6, 12), [0, 0, 0, 0]);
+    view.input(
+        &Input::Focus {
+            target: Target::Node(2),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let image = view.rasterize_boxes(60, 60).unwrap();
+    assert_eq!(pixel(&image, 6, 12), [0, 0, 255, 255]);
+    assert_eq!(pixel(&image, 8, 12), [0, 0, 0, 0]);
+    assert_eq!(image.hit_test(6.0, 12.0), None);
+    assert_eq!(view.layout_boxes(60.0, 60.0).unwrap(), rects);
+    let mut override_style = BatchWriter::new();
+    override_style
+        .set_style(2, CssProperty::OutlineWidth, "4px")
+        .set_style(2, CssProperty::Outline, "1px solid #0f0");
+    commit(&mut view, &override_style).unwrap();
+    let image = view.rasterize_boxes(60, 60).unwrap();
+    assert_eq!(pixel(&image, 6, 12), [0, 0, 0, 0]);
+    assert_eq!(pixel(&image, 7, 12), [0, 255, 0, 255]);
+    let mut remove = BatchWriter::new();
+    remove.remove_style(2, CssProperty::Outline);
+    commit(&mut view, &remove).unwrap();
+    assert_eq!(
+        pixel(&view.rasterize_boxes(60, 60).unwrap(), 6, 12),
+        [0, 0, 255, 255]
+    );
+}
+
+#[test]
+fn cpu_raster_paints_explicit_button_and_dispatches_click() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Button)
+        .set_attribute(2, Attribute::Type, "button")
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "80px")
+        .set_style(2, CssProperty::Height, "30px")
+        .set_style(2, CssProperty::MinWidth, "0")
+        .set_style(2, CssProperty::MinHeight, "0")
+        .set_style(2, CssProperty::Padding, "4px")
+        .set_style(2, CssProperty::Border, "2px solid #00f")
+        .set_style(2, CssProperty::BorderRadius, "0")
+        .set_style(2, CssProperty::Outline, "none")
+        .set_style(2, CssProperty::BackgroundColor, "#f00")
+        .set_style(2, CssProperty::Color, "#000")
+        .set_style(2, CssProperty::JustifyContent, "center")
+        .set_style(2, CssProperty::AlignItems, "center")
+        .set_style(2, CssProperty::FontFamily, "\"Varta Fixture 400\"")
+        .set_style(2, CssProperty::FontSize, "20px")
+        .set_style(2, CssProperty::FontWeight, "normal")
+        .set_style(2, CssProperty::FontStyle, "normal")
+        .set_style(2, CssProperty::LineHeight, "20px")
+        .insert(1, 2, 0)
+        .create_text(3, "AAAA")
+        .insert(2, 3, 0)
+        .listen(2, EventKind::Click, 10, Filter::default());
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    let pixel = |x: usize, y: usize| &image.pixels[(y * 100 + x) * 4..(y * 100 + x + 1) * 4];
+    assert_eq!(pixel(0, 0), &[0, 0, 255, 255]);
+    assert_eq!(pixel(4, 4), &[255, 0, 0, 255]);
+    assert_eq!(pixel(26, 10), &[0, 0, 0, 255]);
+    let target = image.hit_test(26.0, 10.0).unwrap();
+    assert_eq!(target, 2);
+    view.input(
+        &Input::Click {
+            target: Target::Node(target),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["focus"], 2);
+    assert_eq!(deliveries(&mut view)[0].1, 10);
+    assert!(view.rasterize_with_text(100, 50, &mut font, 20.0).is_ok());
+    let mut disabled = BatchWriter::new();
+    disabled
+        .set_attribute(2, Attribute::Disabled, "")
+        .set_style(2, CssProperty::BackgroundColor, "#0f0");
+    commit(&mut view, &disabled).unwrap();
+    let image = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+    assert_eq!(
+        &image.pixels[(4 * 100 + 4) * 4..(4 * 100 + 5) * 4],
+        &[0, 255, 0, 255]
+    );
+    view.input(
+        &Input::Click {
+            target: Target::Node(2),
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    assert!(deliveries(&mut view).is_empty());
+}
+
+#[test]
+fn layout_commit_scrolls_in_batch_order_and_rolls_back_on_failure() {
+    let mut view = view();
+    let mut setup = BatchWriter::new();
+    setup
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "50px")
+        .set_style(2, CssProperty::Overflow, "auto")
+        .listen(2, EventKind::Scroll, 20, Filter::default())
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Height, "120px")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(2, 4, 0);
+    commit(&mut view, &setup).unwrap();
+
+    let mut batch = BatchWriter::new();
+    batch
+        .command(4, Command::ScrollIntoView, 0.0)
+        .set_style(3, CssProperty::Height, "160px");
+    view.commit_with_layout(
+        &batch.finish(),
+        false,
+        &mut Fixed::default(),
+        200.0,
+        100.0,
+        None,
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["scrollTop"], 80.0);
+    let event = view.next_delivery().unwrap();
+    assert_eq!((event.record.handler, event.record.scroll_top), (20, 80.0));
+    assert!(!event.gesture);
+    assert!(view.next_delivery().is_none());
+
+    let mut ordered = BatchWriter::new();
+    ordered
+        .command(4, Command::ScrollIntoView, 0.0)
+        .command(2, Command::ScrollTo, 10.0);
+    view.commit_with_layout(
+        &ordered.finish(),
+        false,
+        &mut Fixed::default(),
+        200.0,
+        100.0,
+        None,
+    )
+    .unwrap();
+    assert_eq!(view.snapshot()["tree"]["children"][0]["scrollTop"], 10.0);
+    let event = view.next_delivery().unwrap();
+    assert_eq!((event.record.handler, event.record.scroll_top), (20, 10.0));
+    assert!(view.next_delivery().is_none());
+
+    let before = view.snapshot();
+    let mut invalid = BatchWriter::new();
+    invalid
+        .set_style(4, CssProperty::Position, "absolute")
+        .command(4, Command::ScrollIntoView, 0.0);
+    assert!(
+        view.commit_with_layout(
+            &invalid.finish(),
+            false,
+            &mut Fixed::default(),
+            200.0,
+            100.0,
+            None
+        )
+        .is_err()
+    );
+    assert_eq!(view.snapshot(), before);
+    assert!(view.next_delivery().is_none());
+
+    let mut excessive = BatchWriter::new();
+    for _ in 0..=DRAFT_MAX_PENDING_COMMANDS {
+        excessive.command(4, Command::ScrollIntoView, 0.0);
+    }
+    assert_eq!(
+        violation(view.commit_with_layout(
+            &excessive.finish(),
+            false,
+            &mut Fixed::default(),
+            200.0,
+            100.0,
+            None
+        )),
+        Violation::TooManyPendingCommands
+    );
+    assert_eq!(view.snapshot(), before);
+
+    let mut replace = BatchWriter::new();
+    replace
+        .command(2, Command::ScrollTo, 30.0)
+        .remove(2)
+        .create_element(2, Tag::Div)
+        .listen(2, EventKind::Scroll, 20, Filter::default())
+        .insert(1, 2, 0);
+    view.commit_with_layout(
+        &replace.finish(),
+        false,
+        &mut Fixed::default(),
+        200.0,
+        100.0,
+        None,
+    )
+    .unwrap();
+    assert!(view.next_delivery().is_none());
+}
+
+#[test]
+fn scroll_into_view_plan_handles_nested_and_hidden_scrollports() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "50px")
+        .set_style(2, CssProperty::Overflow, "auto")
+        .listen(2, EventKind::Scroll, 20, Filter::default())
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Height, "80px")
+        .set_style(3, CssProperty::Overflow, "hidden")
+        .listen(3, EventKind::Scroll, 30, Filter::default())
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Height, "120px")
+        .insert(3, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::Height, "10px")
+        .insert(3, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let identity = view.node_identity(5).unwrap();
+    let mut invalid = BatchWriter::new();
+    invalid
+        .remove(5)
+        .create_element(5, Tag::Div)
+        .create_element(5, Tag::Div);
+    assert!(commit(&mut view, &invalid).is_err());
+    assert_eq!(view.resolve_node_identity(&identity), Some(5));
+    let mut other = View::default();
+    commit(&mut other, &batch).unwrap();
+    assert_eq!(other.resolve_node_identity(&identity), None);
+    let mut fork = view.clone();
+    let mut recreate = BatchWriter::new();
+    recreate
+        .remove(5)
+        .create_element(5, Tag::Div)
+        .insert(3, 5, 0);
+    commit(&mut fork, &recreate).unwrap();
+    assert_eq!(fork.resolve_node_identity(&identity), None);
+    assert_eq!(view.resolve_node_identity(&identity), Some(5));
+    let before = view.snapshot();
+    assert_eq!(
+        view.scroll_into_view_plan(5, 200.0, 100.0, None).unwrap(),
+        vec![(3, 50.0), (2, 30.0)]
+    );
+    assert_eq!(view.snapshot(), before);
+    assert_eq!(
+        view.scroll_into_view_identity(&identity, 200.0, 100.0, None)
+            .unwrap(),
+        2
+    );
+    let events: Vec<_> = std::iter::from_fn(|| view.next_delivery()).collect();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        (events[0].record.handler, events[0].record.scroll_top),
+        (30, 50.0)
+    );
+    assert_eq!(
+        (
+            events[0].record.client_height,
+            events[0].record.scroll_height
+        ),
+        (80.0, 130.0)
+    );
+    assert_eq!(
+        (events[1].record.handler, events[1].record.scroll_top),
+        (20, 30.0)
+    );
+    assert!(events.iter().all(|event| !event.gesture));
+    assert!(
+        view.scroll_into_view_plan(5, 200.0, 100.0, None)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(view.scroll_into_view(5, 200.0, 100.0, None).unwrap(), 0);
+    assert!(view.next_delivery().is_none());
+    let mut unsupported = BatchWriter::new();
+    unsupported.set_style(5, CssProperty::Position, "absolute");
+    commit(&mut view, &unsupported).unwrap();
+    let before = view.snapshot();
+    assert!(view.scroll_into_view(5, 200.0, 100.0, None).is_err());
+    assert_eq!(view.snapshot(), before);
+    let mut replace = BatchWriter::new();
+    replace
+        .remove(5)
+        .create_element(5, Tag::Div)
+        .insert(3, 5, 0);
+    commit(&mut view, &replace).unwrap();
+    assert_ne!(view.node_identity(5), Some(identity.clone()));
+    assert_eq!(view.resolve_node_identity(&identity), None);
+    let before = view.snapshot();
+    assert_eq!(
+        view.scroll_into_view_identity(&identity, 200.0, 100.0, None)
+            .unwrap(),
+        0
+    );
+    assert_eq!(view.snapshot(), before);
+    assert!(view.next_delivery().is_none());
+}
+
+#[test]
+fn cpu_scroll_targets_nearest_scrollable_ancestor_and_respects_bounds() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "50px")
+        .set_style(2, CssProperty::Overflow, "auto")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "100px")
+        .set_style(3, CssProperty::Height, "80px")
+        .set_style(3, CssProperty::Overflow, "auto")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Height, "160px")
+        .set_style(4, CssProperty::BackgroundColor, "#f00")
+        .insert(3, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::Height, "10px")
+        .set_style(5, CssProperty::BackgroundColor, "#00f")
+        .insert(4, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let image = view.rasterize_boxes(200, 100).unwrap();
+    assert_eq!(
+        &image.pixels[(5 * 200 + 5) * 4..(5 * 200 + 6) * 4],
+        &[0, 0, 255, 255]
+    );
+    assert_eq!(
+        image.scroll_target(10.0, 10.0, 999.0),
+        Some((3, 80.0, 919.0))
+    );
+    assert_eq!(image.scroll_target(150.0, 10.0, 10.0), None);
+    view.input(
+        &Input::Scroll {
+            target: Target::Node(3),
+            top: 80.0,
+        },
+        &mut Fixed::default(),
+    )
+    .unwrap();
+    let image = view.rasterize_boxes(200, 100).unwrap();
+    assert_eq!(
+        &image.pixels[(5 * 200 + 5) * 4..(5 * 200 + 6) * 4],
+        &[255, 0, 0, 255]
+    );
+    assert_eq!(
+        image.scroll_target(10.0, 10.0, 999.0),
+        Some((2, 30.0, 969.0))
+    );
+    assert_eq!(image.scroll_target(10.0, 10.0, -10.0), Some((3, 70.0, 0.0)));
+    let mut hidden = BatchWriter::new();
+    hidden.set_style(3, CssProperty::Overflow, "hidden");
+    commit(&mut view, &hidden).unwrap();
+    let image = view.rasterize_boxes(200, 100).unwrap();
+    assert_eq!(image.scroll_target(10.0, 10.0, 10.0), Some((2, 10.0, 0.0)));
+}
+
+#[test]
+fn cpu_raster_draws_explicit_font_text_and_clips_it() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "12px")
+        .set_style(2, CssProperty::Height, "20px")
+        .set_style(2, CssProperty::Overflow, "hidden")
+        .set_style(2, CssProperty::Color, "#00f")
+        .set_style(2, CssProperty::FontSize, "20px")
+        .set_style(2, CssProperty::LineHeight, "20px")
+        .insert(1, 2, 0)
+        .create_text(3, "AA")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let image = view.rasterize_with_text(40, 40, &mut font, 20.0).unwrap();
+    let pixel = |x: usize, y: usize| &image.pixels[(y * 40 + x) * 4..(y * 40 + x + 1) * 4];
+    assert_eq!(pixel(3, 5), &[0, 0, 255, 255]);
+    assert_eq!(pixel(10, 5), &[0, 0, 255, 255]);
+    assert_eq!(pixel(13, 5), &[0, 0, 0, 0]);
+    assert_eq!(pixel(3, 25), &[0, 0, 0, 0]);
+    let mut wrap = BatchWriter::new();
+    wrap.set_style(2, CssProperty::Width, "8px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_text(3, "A A");
+    commit(&mut view, &wrap).unwrap();
+    let image = view.rasterize_with_text(40, 40, &mut font, 20.0).unwrap();
+    assert_eq!(
+        &image.pixels[(5 * 40 + 3) * 4..(5 * 40 + 4) * 4],
+        &[0, 0, 255, 255]
+    );
+    assert_eq!(
+        &image.pixels[(25 * 40 + 3) * 4..(25 * 40 + 4) * 4],
+        &[0, 0, 255, 255]
+    );
+}
+
+#[test]
+fn cpu_raster_paints_uniform_borders_and_honors_color_cascade() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Color, "#00f")
+        .set_style(2, CssProperty::Width, "12px")
+        .set_style(2, CssProperty::Height, "12px")
+        .set_style(2, CssProperty::BackgroundColor, "#f00")
+        .set_style(2, CssProperty::Border, "4px solid rgba(0, 0, 255, 0.5)")
+        .insert(1, 2, 0);
+    commit(&mut view, &batch).unwrap();
+    let image = view.rasterize_boxes(40, 40).unwrap();
+    let pixel = |x: usize, y: usize| &image.pixels[(y * 40 + x) * 4..(y * 40 + x + 1) * 4];
+    assert_eq!(pixel(1, 1), &[127, 0, 128, 255]);
+    assert_eq!(pixel(5, 5), &[255, 0, 0, 255]);
+    assert_eq!(pixel(21, 1), &[0, 0, 0, 0]);
+    let mut update = BatchWriter::new();
+    update
+        .set_style(2, CssProperty::BorderColor, "#0f0")
+        .set_style(2, CssProperty::Border, "4px solid");
+    commit(&mut view, &update).unwrap();
+    let image = view.rasterize_boxes(40, 40).unwrap();
+    assert_eq!(&image.pixels[(40 + 1) * 4..(40 + 2) * 4], &[0, 0, 255, 255]);
+    let mut mismatch = BatchWriter::new();
+    mismatch.set_style(2, CssProperty::BorderTop, "4px solid #f00");
+    commit(&mut view, &mismatch).unwrap();
+    assert!(matches!(
+        view.rasterize_boxes(40, 40),
+        Err(varta_view::PaintError::Unsupported(2))
+    ));
+}
+
+#[test]
+fn cpu_raster_paints_backgrounds_and_clips_descendants() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "20px")
+        .set_style(2, CssProperty::Height, "20px")
+        .set_style(2, CssProperty::BackgroundColor, "#f00")
+        .set_style(2, CssProperty::Overflow, "hidden")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::MarginLeft, "10px")
+        .set_style(3, CssProperty::MarginTop, "10px")
+        .set_style(3, CssProperty::Width, "20px")
+        .set_style(3, CssProperty::Height, "20px")
+        .set_style(3, CssProperty::BackgroundColor, "#0000ff")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let image = view.rasterize_boxes(40, 40).unwrap();
+    let pixel = |x: usize, y: usize| &image.pixels[(y * 40 + x) * 4..(y * 40 + x + 1) * 4];
+    assert_eq!(pixel(5, 5), &[255, 0, 0, 255]);
+    assert_eq!(pixel(15, 15), &[0, 0, 255, 255]);
+    assert_eq!(pixel(25, 15), &[0, 0, 0, 0]);
+    assert_eq!(pixel(15, 25), &[0, 0, 0, 0]);
+    assert_eq!(image.hit_test(5.0, 5.0), Some(2));
+    assert_eq!(image.hit_test(15.0, 15.0), Some(3));
+    assert_eq!(image.hit_test(25.0, 15.0), None);
+    assert_eq!(image.hit_test(f32::NAN, 5.0), None);
+    assert!(matches!(
+        view.rasterize_boxes(0, 40),
+        Err(varta_view::PaintError::Dimensions)
+    ));
+    let mut translucent = BatchWriter::new();
+    translucent.set_style(3, CssProperty::BackgroundColor, "rgba(0, 0, 255, 0.5)");
+    commit(&mut view, &translucent).unwrap();
+    let image = view.rasterize_boxes(40, 40).unwrap();
+    assert_eq!(
+        &image.pixels[(15 * 40 + 15) * 4..(15 * 40 + 16) * 4],
+        &[127, 0, 128, 255]
+    );
+    let mut change = BatchWriter::new();
+    change.set_style(3, CssProperty::Opacity, "0.5");
+    commit(&mut view, &change).unwrap();
+    assert!(matches!(
+        view.rasterize_boxes(40, 40),
+        Err(varta_view::PaintError::Unsupported(3))
+    ));
+    let mut hidden = BatchWriter::new();
+    hidden.set_style(3, CssProperty::Display, "none");
+    commit(&mut view, &hidden).unwrap();
+    let image = view.rasterize_boxes(40, 40).unwrap();
+    assert_eq!(
+        &image.pixels[(15 * 40 + 15) * 4..(15 * 40 + 16) * 4],
+        &[255, 0, 0, 255]
+    );
+}
+
+#[test]
+fn explicitly_styled_button_and_text_input_layout() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "200px")
+        .set_style(2, CssProperty::Gap, "10px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Button)
+        .set_style(3, CssProperty::Display, "flex")
+        .set_style(3, CssProperty::Width, "80px")
+        .set_style(3, CssProperty::Height, "30px")
+        .set_style(3, CssProperty::MinWidth, "0")
+        .set_style(3, CssProperty::MinHeight, "0")
+        .set_style(3, CssProperty::Padding, "4px")
+        .set_style(3, CssProperty::Border, "2px solid")
+        .set_style(3, CssProperty::JustifyContent, "center")
+        .set_style(3, CssProperty::AlignItems, "center")
+        .set_style(3, CssProperty::FontFamily, "\"Varta Fixture 400\"")
+        .set_style(3, CssProperty::FontSize, "20px")
+        .set_style(3, CssProperty::FontWeight, "normal")
+        .set_style(3, CssProperty::FontStyle, "normal")
+        .set_style(3, CssProperty::LineHeight, "20px")
+        .insert(2, 3, 0)
+        .create_text(4, "AAAA")
+        .insert(3, 4, 0)
+        .create_element(5, Tag::Input)
+        .set_style(5, CssProperty::Display, "block")
+        .set_style(5, CssProperty::Width, "100px")
+        .set_style(5, CssProperty::Height, "30px")
+        .set_style(5, CssProperty::MinWidth, "0")
+        .set_style(5, CssProperty::MinHeight, "0")
+        .set_style(5, CssProperty::Padding, "4px")
+        .set_style(5, CssProperty::Border, "2px solid")
+        .insert(2, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let boxes = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(
+        (boxes[&3].x, boxes[&3].width, boxes[&3].height),
+        (0.0, 80.0, 30.0)
+    );
+    assert_eq!(
+        (boxes[&4].x, boxes[&4].y, boxes[&4].width, boxes[&4].height),
+        (24.0, 5.0, 32.0, 20.0)
+    );
+    assert_eq!(
+        (boxes[&5].x, boxes[&5].width, boxes[&5].height),
+        (90.0, 100.0, 30.0)
+    );
+    let mut missing = BatchWriter::new();
+    missing.remove_style(5, CssProperty::MinWidth);
+    commit(&mut view, &missing).unwrap();
+    assert!(matches!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),
+        Err(varta_view::LayoutError::Unsupported(5))
+    ));
+    let mut unsupported = BatchWriter::new();
+    unsupported.set_style(5, CssProperty::MinWidth, "0");
+    unsupported.set_attribute(5, Attribute::Type, "checkbox");
+    commit(&mut view, &unsupported).unwrap();
+    assert!(matches!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),
+        Err(varta_view::LayoutError::Unsupported(5))
+    ));
+}
+
+#[test]
+fn flex_layout_measures_isolated_text_with_an_explicit_font() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "20px")
+        .insert(1, 2, 0)
+        .create_text(3, "AAAA")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "10px")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(2, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    assert!(view.layout_boxes(200.0, 100.0).is_err());
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 32.0,
+            height: 20.0
+        }
+    );
+    assert_eq!(
+        rects[&4],
+        varta_view::BoxRect {
+            x: 32.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0
+        }
+    );
+    let mut clip = BatchWriter::new();
+    clip.set_style(2, CssProperty::Overflow, "hidden");
+    commit(&mut view, &clip).unwrap();
+    let geometry = view
+        .layout_geometry_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(geometry[&3].rect, rects[&3]);
+    assert_eq!(
+        geometry[&3].clip,
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 20.0
+        }
+    );
+    let mut invalid = BatchWriter::new();
+    invalid.create_text(5, "🙂").insert(2, 5, 0);
+    commit(&mut view, &invalid).unwrap();
+    assert!(matches!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),
+        Err(varta_view::LayoutError::Unsupported(5))
+    ));
+}
+
+#[test]
+fn flex_text_wraps_under_a_definite_width() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "20px")
+        .insert(1, 2, 0)
+        .create_text(3, "A  A")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!((rects[&2].width, rects[&2].height), (20.0, 40.0));
+}
+
+#[test]
+fn flex_text_wraps_cyrillic_with_explicit_font() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "28px")
+        .insert(1, 2, 0)
+        .create_text(3, "Аі,  їа!")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!((rects[&2].width, rects[&2].height), (28.0, 40.0));
+}
+
+#[test]
+fn grid_text_wraps_with_explicit_font() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "grid")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::GridTemplateColumns, "28px 1fr")
+        .set_style(2, CssProperty::Gap, "4px")
+        .insert(1, 2, 0)
+        .create_text(3, "Аі, їа!")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(2, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!((rects[&2].width, rects[&2].height), (100.0, 40.0));
+    assert_eq!(
+        (rects[&4].x, rects[&4].width, rects[&4].height),
+        (32.0, 68.0, 10.0)
+    );
+}
+
+#[test]
+fn flex_layout_uses_explicit_glyph_fallback() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "20px")
+        .set_style(
+            2,
+            CssProperty::FontFamily,
+            "\"Varta Fixture 900\", \"Varta Fixture 400\"",
+        )
+        .insert(1, 2, 0)
+        .create_text(3, "АA")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "10px")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(2, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut fonts = varta_view::TextMeasurer::new_with_fonts(vec![
+        varta_view::TextFont {
+            data: include_bytes!("fixtures/advance-900.ttf").to_vec(),
+            family: "Varta Fixture 900".into(),
+            aliases: vec![],
+        },
+        varta_view::TextFont {
+            data: include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+            family: "Varta Fixture 400".into(),
+            aliases: vec![],
+        },
+    ])
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 100.0, &mut fonts, 20.0)
+        .unwrap();
+    assert_eq!(rects[&4].x, 26.0);
+}
+
+#[test]
+fn font_weight_selects_a_supplied_face_and_inherits() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "20px")
+        .set_style(2, CssProperty::FontFamily, "\"Varta Fixture 400\"")
+        .set_style(2, CssProperty::FontWeight, "normal")
+        .insert(1, 2, 0)
+        .create_text(3, "A")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "10px")
+        .set_style(4, CssProperty::Height, "10px")
+        .insert(2, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut fonts = varta_view::TextMeasurer::new_with_fonts(vec![
+        varta_view::TextFont {
+            data: include_bytes!("fixtures/advance-400.ttf").to_vec(),
+            family: "Varta Fixture 400".into(),
+            aliases: vec![],
+        },
+        varta_view::TextFont {
+            data: include_bytes!("fixtures/bold-900.ttf").to_vec(),
+            family: "Varta Fixture 400".into(),
+            aliases: vec![],
+        },
+        varta_view::TextFont {
+            data: include_bytes!("fixtures/italic-900.ttf").to_vec(),
+            family: "Varta Fixture 400".into(),
+            aliases: vec![],
+        },
+    ])
+    .unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut fonts, 20.0)
+            .unwrap()[&4]
+            .x,
+        8.0
+    );
+    let mut change = BatchWriter::new();
+    change.set_style(2, CssProperty::FontWeight, "700");
+    commit(&mut view, &change).unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut fonts, 20.0)
+            .unwrap()[&4]
+            .x,
+        18.0
+    );
+    let mut italic = BatchWriter::new();
+    italic
+        .set_style(2, CssProperty::FontWeight, "normal")
+        .set_style(2, CssProperty::FontStyle, "italic");
+    commit(&mut view, &italic).unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut fonts, 20.0)
+            .unwrap()[&4]
+            .x,
+        18.0
+    );
+}
+
+#[test]
+fn inherited_font_size_and_line_height_follow_css_rules() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Main)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::FlexDirection, "column")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::FontSize, "16px")
+        .set_style(
+            2,
+            CssProperty::FontFamily,
+            "\"Varta Missing Fixture 832746\", \"Varta Fixture 400\", sans-serif",
+        )
+        .set_style(2, CssProperty::LineHeight, "1.5")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::P)
+        .set_style(3, CssProperty::Width, "28px")
+        .set_style(3, CssProperty::FontSize, "125%")
+        .insert(2, 3, 0)
+        .create_text(4, "Аі, їа!")
+        .insert(3, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 12.0)
+        .unwrap();
+    assert_eq!(
+        (rects[&2].height, rects[&3].height, rects[&3].y),
+        (100.0, 60.0, 20.0)
+    );
+    let mut change = BatchWriter::new();
+    change.set_style(2, CssProperty::LineHeight, "150%");
+    commit(&mut view, &change).unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 12.0)
+        .unwrap();
+    assert_eq!(
+        (rects[&2].height, rects[&3].height, rects[&3].y),
+        (88.0, 48.0, 20.0)
+    );
+    let mut mismatch = BatchWriter::new();
+    mismatch.set_style(2, CssProperty::FontFamily, "\"Other Font\"");
+    commit(&mut view, &mismatch).unwrap();
+    assert!(matches!(
+        view.layout_boxes_with_text(200.0, 200.0, &mut font, 12.0),
+        Err(varta_view::LayoutError::Unsupported(2))
+    ));
+    let mut generic = BatchWriter::new();
+    generic.set_style(
+        2,
+        CssProperty::FontFamily,
+        "system-ui, \"Varta Fixture 400\"",
+    );
+    commit(&mut view, &generic).unwrap();
+    assert!(matches!(
+        view.layout_boxes_with_text(200.0, 200.0, &mut font, 12.0),
+        Err(varta_view::LayoutError::Unsupported(2))
+    ));
+    let mut mapped = varta_view::TextMeasurer::new_with_aliases(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+        &["system-ui"],
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut mapped, 12.0)
+        .unwrap();
+    assert_eq!((rects[&2].height, rects[&3].height), (88.0, 48.0));
+}
+
+#[test]
+fn block_text_wraps_with_explicit_font() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "28px")
+        .insert(1, 2, 0)
+        .create_text(3, "Аі,  їа!")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!((rects[&2].width, rects[&2].height), (28.0, 40.0));
+    let mut mixed = BatchWriter::new();
+    mixed.create_element(4, Tag::Div).insert(2, 4, 0);
+    commit(&mut view, &mixed).unwrap();
+    assert!(matches!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),
+        Err(varta_view::LayoutError::Unsupported(3))
+    ));
+}
+
+#[test]
+fn white_space_modes_control_collapsing_and_line_breaks() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Width, "20px")
+        .insert(1, 2, 0)
+        .create_text(3, "A  A")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+            .unwrap()[&2]
+            .height,
+        40.0
+    );
+    let mut nowrap = BatchWriter::new();
+    nowrap.set_style(2, CssProperty::WhiteSpace, "nowrap");
+    commit(&mut view, &nowrap).unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+            .unwrap()[&2]
+            .height,
+        20.0
+    );
+    let mut pre = BatchWriter::new();
+    pre.set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::WhiteSpace, "pre-wrap")
+        .set_text(3, "A  A\nA");
+    commit(&mut view, &pre).unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+            .unwrap()[&2]
+            .height,
+        40.0
+    );
+    let mut preserved = BatchWriter::new();
+    preserved
+        .set_style(2, CssProperty::Width, "28px")
+        .set_text(3, "A  A");
+    commit(&mut view, &preserved).unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+            .unwrap()[&2]
+            .height,
+        40.0
+    );
+}
+
+#[test]
+fn nowrap_text_keeps_intrinsic_width_in_flex() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "20px")
+        .set_style(2, CssProperty::WhiteSpace, "nowrap")
+        .insert(1, 2, 0)
+        .create_text(3, "A A")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "4px")
+        .set_style(4, CssProperty::Height, "10px")
+        .set_style(4, CssProperty::FlexShrink, "0")
+        .insert(2, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(rects[&4].x, 24.0);
+}
+
+#[test]
+fn overflow_wrap_anywhere_changes_flex_min_content_and_lines() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "20px")
+        .set_style(2, CssProperty::OverflowWrap, "normal")
+        .insert(1, 2, 0)
+        .create_text(3, "AAAA")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Div)
+        .set_style(4, CssProperty::Width, "4px")
+        .set_style(4, CssProperty::Height, "10px")
+        .set_style(4, CssProperty::FlexShrink, "0")
+        .insert(2, 4, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!((rects[&2].height, rects[&4].x), (20.0, 32.0));
+    let mut change = BatchWriter::new();
+    change.set_style(2, CssProperty::OverflowWrap, "anywhere");
+    commit(&mut view, &change).unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!((rects[&2].height, rects[&4].x), (40.0, 16.0));
+    let mut nowrap = BatchWriter::new();
+    nowrap.set_style(2, CssProperty::WhiteSpace, "nowrap");
+    commit(&mut view, &nowrap).unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!((rects[&2].height, rects[&4].x), (20.0, 32.0));
+}
+
+#[test]
+fn paragraph_default_margins_and_overrides_affect_layout() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::FlexDirection, "column")
+        .set_style(2, CssProperty::Width, "100px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::P)
+        .set_style(3, CssProperty::Width, "28px")
+        .insert(2, 3, 0)
+        .create_text(4, "Аі, їа!")
+        .insert(3, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, CssProperty::Width, "10px")
+        .set_style(5, CssProperty::Height, "10px")
+        .insert(2, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(
+        (rects[&2].height, rects[&3].y, rects[&3].height, rects[&5].y),
+        (90.0, 20.0, 40.0, 80.0)
+    );
+    let mut change = BatchWriter::new();
+    change.set_style(3, CssProperty::MarginTop, "5px");
+    commit(&mut view, &change).unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(
+        (rects[&2].height, rects[&3].y, rects[&5].y),
+        (75.0, 5.0, 65.0)
+    );
+}
+
+#[test]
+fn semantic_block_containers_participate_in_text_layout() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Main)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::FlexDirection, "column")
+        .set_style(2, CssProperty::Width, "100px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Header)
+        .set_style(3, CssProperty::Height, "10px")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Section)
+        .set_style(4, CssProperty::Width, "28px")
+        .set_style(4, CssProperty::Padding, "5px")
+        .insert(2, 4, 0)
+        .create_text(5, "Аі, їа!")
+        .insert(4, 5, 0)
+        .create_element(6, Tag::Footer)
+        .set_style(6, CssProperty::Height, "10px")
+        .insert(2, 6, 0);
+    commit(&mut view, &batch).unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let rects = view
+        .layout_boxes_with_text(200.0, 200.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(
+        (rects[&2].height, rects[&4].y, rects[&4].height, rects[&6].y),
+        (70.0, 10.0, 50.0, 60.0)
+    );
+}
+
+#[test]
+fn paint_only_css_keeps_geometry_and_transforms_remain_unsupported() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "30px")
+        .set_style(2, CssProperty::BackgroundColor, "#eee")
+        .set_style(2, CssProperty::Color, "#123")
+        .set_style(2, CssProperty::BorderRadius, "8px")
+        .set_style(2, CssProperty::Opacity, "0.5")
+        .set_style(2, CssProperty::Outline, "2px solid #000")
+        .set_style(2, CssProperty::Cursor, "pointer")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "20px")
+        .set_style(3, CssProperty::Height, "10px")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        (
+            rects[&2].width,
+            rects[&2].height,
+            rects[&3].x,
+            rects[&3].width
+        ),
+        (100.0, 30.0, 0.0, 20.0)
+    );
+    assert_eq!(
+        view.snapshot()["tree"]["children"][0]["style"]["background-color"],
+        "#eee"
+    );
+    let mut transform = BatchWriter::new();
+    transform.set_style(2, CssProperty::Transform, "translateX(5px)");
+    commit(&mut view, &transform).unwrap();
+    assert!(matches!(
+        view.layout_boxes(200.0, 100.0),
+        Err(varta_view::LayoutError::Unsupported(2))
+    ));
+}
+
+#[test]
+fn hidden_box_subtree_has_zero_rectangles_and_does_not_take_space() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Padding, "5px")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Section)
+        .set_style(3, CssProperty::Display, "none")
+        .set_style(3, CssProperty::Width, "20px")
+        .insert(2, 3, 0)
+        .create_element(4, Tag::Button)
+        .set_style(4, CssProperty::Width, "10px")
+        .set_style(4, CssProperty::Height, "10px")
+        .set_style(4, CssProperty::Color, "#fff")
+        .insert(3, 4, 0)
+        .create_text(6, "Приховано 🙂")
+        .insert(4, 6, 0)
+        .create_element(5, Tag::Footer)
+        .set_style(5, CssProperty::Width, "10px")
+        .set_style(5, CssProperty::Height, "10px")
+        .insert(2, 5, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    let zero = varta_view::BoxRect {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+    };
+    assert_eq!(rects[&3], zero);
+    assert_eq!(rects[&4], zero);
+    assert_eq!(rects[&6], zero);
+    assert_eq!((rects[&5].x, rects[&5].y), (5.0, 5.0));
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("fixtures/cyrillic-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    assert_eq!(
+        view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+            .unwrap()[&6],
+        zero
+    );
+    let mut reveal = BatchWriter::new();
+    reveal.remove_style(3, CssProperty::Display);
+    commit(&mut view, &reveal).unwrap();
+    assert!(view.layout_boxes(200.0, 100.0).is_err());
+}
+
+#[test]
+fn box_layout_uniform_border_follows_style_and_default_width() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::Padding, "5px")
+        .set_style(2, CssProperty::BorderWidth, "4px")
+        .set_style(2, CssProperty::BorderStyle, "solid")
+        .set_style(2, CssProperty::BorderColor, "#f00")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "20px")
+        .set_style(3, CssProperty::Height, "10px")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        rects[&2],
+        varta_view::BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 118.0,
+            height: 58.0
+        }
+    );
+    assert_eq!(
+        rects[&3],
+        varta_view::BoxRect {
+            x: 9.0,
+            y: 9.0,
+            width: 20.0,
+            height: 10.0
+        }
+    );
+    let mut change = BatchWriter::new();
+    change.set_style(2, CssProperty::BorderStyle, "none");
+    commit(&mut view, &change).unwrap();
+    assert_eq!(view.layout_boxes(200.0, 100.0).unwrap()[&2].width, 110.0);
+    let mut change = BatchWriter::new();
+    change.remove_style(2, CssProperty::BorderWidth).set_style(
+        2,
+        CssProperty::BorderStyle,
+        "solid",
+    );
+    commit(&mut view, &change).unwrap();
+    assert_eq!(view.layout_boxes(200.0, 100.0).unwrap()[&2].width, 116.0);
+}
+
+#[test]
+fn box_layout_border_shorthands_and_sides() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::Border, "4px solid #f00")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "20px")
+        .set_style(3, CssProperty::Height, "10px")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(rects[&2].width, 108.0);
+    assert_eq!((rects[&3].x, rects[&3].y), (4.0, 4.0));
+    let mut change = BatchWriter::new();
+    change
+        .remove_style(2, CssProperty::Border)
+        .set_style(2, CssProperty::BorderTop, "2px solid #f00")
+        .set_style(2, CssProperty::BorderLeft, "6px solid #f00");
+    commit(&mut view, &change).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!((rects[&2].width, rects[&2].height), (106.0, 42.0));
+    assert_eq!((rects[&3].x, rects[&3].y), (6.0, 2.0));
+    let mut ambiguous = BatchWriter::new();
+    ambiguous.set_style(2, CssProperty::Border, "1px solid #000");
+    commit(&mut view, &ambiguous).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        (rects[&2].width, rects[&2].height, rects[&3].x, rects[&3].y),
+        (102.0, 42.0, 1.0, 1.0)
+    );
+    let mut override_sides = BatchWriter::new();
+    override_sides
+        .set_style(2, CssProperty::BorderTop, "4px solid #f00")
+        .set_style(2, CssProperty::BorderWidth, "2px");
+    commit(&mut view, &override_sides).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        (rects[&2].width, rects[&2].height, rects[&3].x, rects[&3].y),
+        (104.0, 44.0, 2.0, 2.0)
+    );
+    let mut remove = BatchWriter::new();
+    remove.remove_style(2, CssProperty::BorderWidth);
+    commit(&mut view, &remove).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        (rects[&2].width, rects[&2].height, rects[&3].x, rects[&3].y),
+        (106.0, 46.0, 3.0, 3.0)
+    );
+}
+
+#[test]
+fn box_layout_border_cascade_respects_stylesheet_and_inline_order() {
+    let mut view = view();
+    let mut batch = BatchWriter::new();
+    batch
+        .stylesheet(
+            1,
+            ".box { border: 1px solid #000; border-left: 6px solid #f00; border-width: 2px }",
+        )
+        .create_element(2, Tag::Div)
+        .set_class(2, "box")
+        .set_style(2, CssProperty::Display, "flex")
+        .set_style(2, CssProperty::Width, "100px")
+        .set_style(2, CssProperty::Height, "40px")
+        .set_style(2, CssProperty::BorderTop, "4px solid #f00")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Div)
+        .set_style(3, CssProperty::Width, "20px")
+        .set_style(3, CssProperty::Height, "10px")
+        .insert(2, 3, 0);
+    commit(&mut view, &batch).unwrap();
+    let rects = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        (rects[&2].width, rects[&2].height, rects[&3].x, rects[&3].y),
+        (104.0, 46.0, 2.0, 4.0)
+    );
 }
 
 #[test]
@@ -882,6 +4086,46 @@ fn accessible_names_exclude_hidden_descendants() {
     assert_eq!(nodes[0]["name"], "Open the file");
     assert_eq!(nodes[1]["role"], "button");
     assert!(nodes[1].get("name").is_none());
+}
+
+#[test]
+fn section_landmarks_include_labelledby() {
+    let nodes = accessible(|batch| {
+        batch
+            .create_element(2, Tag::Span)
+            .set_attribute(2, Attribute::Id, "label")
+            .create_text(3, "Settings")
+            .insert(2, 3, 0)
+            .insert(1, 2, 0);
+        batch
+            .create_element(10, Tag::Section)
+            .set_attribute(10, Attribute::AriaLabelledby, "label")
+            .insert(1, 10, 0);
+        batch
+            .create_element(20, Tag::Section)
+            .set_attribute(20, Attribute::AriaLabel, "  ")
+            .create_element(21, Tag::Button)
+            .create_text(22, "Inside")
+            .insert(21, 22, 0)
+            .insert(20, 21, 0)
+            .insert(1, 20, 0);
+        batch
+            .create_element(30, Tag::Section)
+            .set_attribute(30, Attribute::AriaLabelledby, "missing")
+            .insert(1, 30, 0);
+        batch
+            .create_element(40, Tag::Section)
+            .set_attribute(40, Attribute::AriaLabel, "Help")
+            .insert(1, 40, 0);
+    });
+    assert_eq!(nodes.len(), 4);
+    assert_eq!(nodes[0]["role"], "region");
+    assert_eq!(nodes[0]["name"], "Settings");
+    assert_eq!(nodes[1]["role"], "region");
+    assert_eq!(nodes[1]["children"][0]["name"], "Inside");
+    assert_eq!(nodes[2]["role"], "region");
+    assert!(nodes[2].get("name").is_none());
+    assert_eq!(nodes[3]["name"], "Help");
 }
 
 #[test]

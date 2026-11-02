@@ -14,3 +14,11 @@ thiserror.workspace = true
 serde.workspace = true
 cap-std.workspace = true
 cap-fs-ext.workspace = true
+# Existing locked primitives for SRI of the generated trusted browser loader.
+sha2.workspace = true
+base64.workspace = true
+# Reuse the locked HTTP stack for the local development host; no bespoke parser.
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+tokio = { workspace = true, features = ["signal"] }

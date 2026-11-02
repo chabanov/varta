@@ -58,6 +58,11 @@ fn registered_operations() -> Vec<HostOperation> {
         })
         .collect();
     assert!(!operations.is_empty(), "no host operations found");
+    assert_eq!(
+        seen,
+        HostOperation::ALL.iter().copied().collect(),
+        "iterable and wire registries differ"
+    );
     operations
 }
 
@@ -80,24 +85,28 @@ fn admitted(
     profile: LanguageProfile,
     json: &BTreeSet<HostOperation>,
 ) -> bool {
-    if profile.links(operation) {
-        return false;
-    }
-    if operation.minimum_abi() > profile.host_abi()
-        || profile.host_operation(operation) != operation
-    {
-        return false;
-    }
-    if json.contains(&operation) {
-        return operation == profile.json_parse() || operation == profile.json_stringify();
-    }
-    if operation == HostOperation::HttpService {
-        return entry_points(profile);
-    }
-    true
+    let admitted = (|| {
+        if profile.links(operation) {
+            return false;
+        }
+        if operation.minimum_abi() > profile.host_abi()
+            || profile.host_operation(operation) != operation
+        {
+            return false;
+        }
+        if json.contains(&operation) {
+            return operation == profile.json_parse() || operation == profile.json_stringify();
+        }
+        if operation == HostOperation::HttpService {
+            return http::version_for(profile).is_some();
+        }
+        true
+    })();
+    assert_eq!(admitted, varta_common::browser::admits(profile, operation));
+    admitted
 }
 
-/// Tool and HTTP contracts are rejected in every binary64 profile.
+/// Tool contracts retain their primitive legacy boundary.
 fn entry_points(profile: LanguageProfile) -> bool {
     !profile.binary64()
 }
@@ -192,7 +201,7 @@ fn profiles() -> String {
             "Value ABI",
             "Numbers",
             "Strings",
-            "Tool/HTTP entry points",
+            "Tool / HTTP entry points",
             "Exception channel",
             "Frames",
             "Scheduler",
@@ -232,7 +241,14 @@ fn profiles() -> String {
                 }
                 .to_owned(),
                 if profile.utf16() { "UTF-16LE" } else { "UTF-8" }.to_owned(),
-                if entry_points(profile) { "yes" } else { "no" }.to_owned(),
+                format!(
+                    "{} / {}",
+                    if entry_points(profile) { "yes" } else { "no" },
+                    match http::version_for(profile) {
+                        Some(version) => format!("v{version}"),
+                        None => "no".into(),
+                    }
+                ),
                 exceptions,
                 frames,
                 if profile.promises() { "yes" } else { "—" }.to_owned(),
@@ -623,6 +639,18 @@ fn names() -> String {
             "`http::RETAIN`",
         ),
         (
+            http::STATE.into(),
+            "export, function",
+            "Async HTTP response Promise state (v2)",
+            "`http::STATE`",
+        ),
+        (
+            http::VALUE.into(),
+            "export, function",
+            "Async HTTP fulfilled response string (v2)",
+            "`http::VALUE`",
+        ),
+        (
             value::VALUE_ALLOCATE.into(),
             "export, function",
             "Guest allocator called back by checked JSON parsing",
@@ -835,9 +863,14 @@ fn entry_limits() -> String {
             "`ToolLimits::default()`",
         ),
         (
-            "HTTP contract version / metadata bytes",
-            format!("{} / {}", http::VERSION, http::MAX_METADATA_BYTES),
-            "`http::VERSION`, `http::MAX_METADATA_BYTES`",
+            "HTTP legacy / maximum version / metadata bytes",
+            format!(
+                "{} / {} / {}",
+                http::VERSION,
+                http::LATEST_VERSION,
+                http::MAX_METADATA_BYTES
+            ),
+            "`http::VERSION`, `http::LATEST_VERSION`, `http::MAX_METADATA_BYTES`",
         ),
         (
             "HTTP headers / header bytes / target bytes / body bytes",
@@ -858,6 +891,15 @@ fn entry_limits() -> String {
                 http::CONNECTION_SECONDS
             ),
             "`http::HEADER_SECONDS`, `http::CONNECTION_SECONDS`",
+        ),
+        (
+            "Native HTTP retained request reports / total retained audit entries",
+            format!(
+                "{} / {}",
+                http::MAX_REPORTED_REQUESTS,
+                varta_common::permission::MAX_AUDIT_ENTRIES
+            ),
+            "`http::MAX_REPORTED_REQUESTS`, `permission::MAX_AUDIT_ENTRIES`",
         ),
         (
             "Live continuation frames",

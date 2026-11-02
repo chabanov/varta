@@ -68,6 +68,15 @@ fn limits(memory_bytes: usize) -> wasmtime::StoreLimits {
         .build()
 }
 
+/// Effective startup policy reused by fresh bounded HTTP executions. Every
+/// request receives its own broker, queues and counters; no allowance renews.
+#[derive(Clone)]
+pub(crate) struct RequestSetup {
+    pub budgets: Budgets,
+    pub capped: Vec<CappedBudget>,
+    pub broker: crate::permission::HeadlessBroker,
+}
+
 pub(crate) struct Execution {
     pub store: Store<RuntimeContext>,
     _deadline: Deadline,
@@ -76,6 +85,14 @@ pub(crate) struct Execution {
     rated: Option<bool>,
 }
 impl Execution {
+    pub fn request_setup(&self) -> RequestSetup {
+        let context = self.store.data();
+        RequestSetup {
+            budgets: context.budgets,
+            capped: context.turns.capped.clone(),
+            broker: context.broker.headless(),
+        }
+    }
     /// A test execution with host-path filesystem rules.
     #[cfg(test)]
     pub fn new(
@@ -128,6 +145,7 @@ impl Execution {
                 output_bytes: 0,
                 host_calls: 0,
                 http_control: None,
+                cancellation: None,
                 function_catalog: None,
                 fair_fuel: false,
                 module: varta_common::value::ModuleBounds::LEGACY,
@@ -151,6 +169,7 @@ impl Execution {
         store.set_fuel(budgets.fuel_per_turn)?;
         store.set_epoch_deadline(1);
         store.epoch_deadline_callback(|context| {
+            context.data().check_cancelled()?;
             Ok(if Instant::now() >= context.data().deadline {
                 wasmtime::UpdateDeadline::Interrupt
             } else {

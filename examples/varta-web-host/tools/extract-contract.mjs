@@ -41,6 +41,8 @@ function signature(cell) {
 }
 
 const profiles = rows(block(embedding, "embedding-profiles")).map((r) => {
+  const entries = /^(yes|no) \/ (?:v(\d+)|(no))$/.exec(r[5]);
+  if (!entries) throw new Error(`bad Tool / HTTP entry-point cell ${r[5]}`);
   const exception = r[6] === "—" ? null : r[6];
   const version = exception && /^`([^`]+)` = (\d+)$/.exec(exception);
   return {
@@ -49,7 +51,8 @@ const profiles = rows(block(embedding, "embedding-profiles")).map((r) => {
     valueAbi: Number(r[2]),
     numbers: r[3],
     strings: r[4],
-    toolHttp: r[5] === "yes",
+    toolEntries: entries[1] === "yes",
+    httpVersion: entries[2] ? Number(entries[2]) : null,
     exceptionChannel: exception !== null,
     exceptionVersion: version ? { global: version[1], value: Number(version[2]) } : null,
     frames: r[7] === "—" ? null : { catalog: Number(/catalog (\d+)/.exec(r[7])[1]) },

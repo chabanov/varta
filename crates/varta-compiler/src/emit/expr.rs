@@ -570,6 +570,11 @@ impl Emitter<'_> {
                 self.check_exception()?;
                 self.unpack_slot(expr.ty);
             }
+            // A disabled compiler-only attempt misses. Its value block owns
+            // the ordinary parse/conversion, including all error behavior.
+            E::ParseJson(_) if self.direct_json_targets.contains(&expr.ty) => {
+                self.code.push(I::I64Const(ir::JSON_DECODE_MISS));
+            }
             E::ParseJson(text) => {
                 self.expr(text)?;
                 let (ptr, len) = self.schemas[&expr.ty];

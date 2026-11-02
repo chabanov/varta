@@ -63,6 +63,16 @@ impl LiteralValue {
 
 type Set = BTreeSet<LiteralValue>;
 
+/// The singleton of a boolean truth test, used by v38 discriminant guards.
+pub(super) fn boolean(value: bool, types: &mut ir::ValueTypes) -> Option<Type> {
+    intern(
+        LiteralBase::Boolean,
+        Set::from([LiteralValue::Boolean(value)]),
+        types,
+    )
+    .ok()
+}
+
 #[derive(Default)]
 pub(crate) struct LiteralTypes {
     sets: Vec<(LiteralBase, Set)>,
@@ -72,6 +82,11 @@ pub(crate) struct LiteralTypes {
     erased_unions: BTreeMap<u32, Type>,
 }
 impl LiteralTypes {
+    /// Literal constraints used only by compiler-generated JSON checkers;
+    /// they are never erased into a public schema without their checks.
+    pub(crate) fn values(&self, id: u32) -> &BTreeSet<LiteralValue> {
+        &self.sets[id as usize].1
+    }
     fn set(&self, id: u32) -> &Set {
         &self.sets[id as usize].1
     }
@@ -90,6 +105,9 @@ pub(super) fn disjoint(literal: Type, other: Type, types: &ir::ValueTypes) -> bo
             Type::Literal(other_base, other_id) => {
                 other_base != base || values.is_disjoint(types.literals.set(other_id))
             }
+            // Unknown admits every scalar. V38 strict matching must retain
+            // all overlapping alternatives; older profiles keep their bytes.
+            Type::Unknown if types.profile.web_bytes() => false,
             member => member != base.erased() && member.erased() != base.erased(),
         })
 }

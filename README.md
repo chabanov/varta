@@ -13,6 +13,32 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
+Current development checkpoint (2026-11-02, working tree after `abea3ac`): v38
+is in stabilization and unreleased. Native async I/O, application turns, L0
+headless views/TSX and KV are working checked subsets. The consolidated local
+full gate passed **2946 tests, 0 failures, 16 ignored**, including the browser
+compiler/project Rust paths. Checked conformance remains 123/127 with four known
+unsupported cases and no regressions. This is macOS arm64 evidence; native GUI,
+other OS targets and full browser acceptance remain open. The consent, named-event,
+navigation and browser dev/reload packages are included in that gate. Browser
+probes and 85 oracle-enabled Node tests are separate evidence. A scoped three-engine
+matrix passes 63 checks across Chrome, Firefox and Playwright WebKit; this does
+not establish full pilot/browser acceptance. See the
+[current queue](docs/development-plan.md#next-delivery-batches) and
+[CORE ledger](docs/development-plan.md#core-completion-ledger).
+Subsequent browser environment-input work has focused verification and is newer
+than that full-gate report.
+
+Native HTTP v2 acceptance covers sync/async handlers, disconnect/shutdown,
+bounded request usage/audit, scripted network waits and source-free/hostile
+artifacts. `build --target browser` now delivers metered console and v38 view
+sessions, Promise/timer/network adapters, checked DOM events and packaged PNG/fonts.
+Separate Chrome probes verify native accounting, permissions, resource integrity,
+limits and lifecycle cleanup. Generated views now have consent dialogs and stored
+choices. Browser dev now rebuilds and reloads checked revisions. Broader host
+effects, complete browser-matrix and cross-target pilot acceptance remain open. The older
+prototype host retains its separate Node checks and remains unmetered.
+
 [Repository](https://github.com/chabanov/varta) · [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE.md)
 
@@ -142,12 +168,93 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage |
 <!-- generated:profile-index:end -->
 
+## Browser bundle (in development)
+
+Run a checked application locally with `varta dev --target browser`. The command
+prints its loopback URL; open it in a browser and use Ctrl-C to stop the server.
+`--listen 127.0.0.1:8080` chooses a port. `--policy` and `--decisions` remain runtime
+inputs, `--app` enables a non-view application instance, and `--budget-report`
+displays usage in the page. Native execution remains the default target.
+
+The dev server rebuilds changed source/configuration/resource inputs and reloads
+the page after a successful build. Compile errors appear on the page while the
+previous working version remains available. Each verified in-memory version pins
+its assets under a content-derived `/__varta/…/` address, with CSP/SRI and a file
+allowlist; bare asset paths at the root are unavailable. The server writes no
+`dist` output, mounts no native execution roots and serves no source or policy
+files. Host policy and decision-file changes require restart. The initial project
+must compile successfully before the server starts. Production
+`build --target browser` retains its separate policy-free distribution path.
+HTTP service contracts require the native target and are rejected by browser
+build/dev commands.
+
+For a supported console/Promise or v38 view program (for example an existing project
+using `checked-f64-utf16-v38`), build and serve the generated page over loopback:
+
+```bash
+varta build --target browser
+python3 -m http.server 8000 --bind 127.0.0.1 --directory dist/web
+```
+
+The browser directory is `web` beside the configured `out` prefix (`dist/web`
+for `out: "dist/app"`). It must not already exist. Checks and unsupported-effect
+errors occur before creating output directories. This is a distribution flag;
+the original artifact's manifest `target` remains `wasm` or `native` as configured.
+The host supports numeric/undefined/UTF-16 logging, Promise/async microtask
+checkpoints, bounded rejection snapshots, timers with exact `time.timer` permission
+checks, v38 asynchronous HTTP(S) requests with URL/method scopes, metered Wasm
+and Worker limits. The browser transport requires CORS and has explicit redirect/
+header/encoding limits documented in [architecture](docs/architecture.md#browser-fuel-transform-foundation-in-development).
+V38 views now run in long-lived Worker sessions, with checked DOM batches, events,
+turn budgets and link/clipboard permission checks. Unpackaged resources and other
+unsupported effects remain explicit gaps; broader browser delivery is in development. `--policy` is runtime input and is never embedded by build.
+
+The generated page mounts view programs automatically and uses its own consent
+dialog and IndexedDB decisions when the package requests permissions. A trusted embedder can
+import `mount` from `varta-host.js`, provide an attached `container`, runtime
+`budgetCeiling`/`permissionCeiling` and an optional abort signal, then await
+`app.ready` and call `app.close()` on disposal. `app.finished` reports termination;
+importing the module alone starts nothing. `run({container})` remains bounded and
+renders without delivering UI events. Package PNG images through
+`"browser": {"resources": {"icons/red.png": "images/red.png"}}` in the v38 config,
+then use `icons/red.png` as the view image's `src`. Paths stay inside the project
+without symlinks. Files are bounded, hashed and decoded before execution; arbitrary
+image URLs are rejected. Add `"fonts": {"Brand": "fonts/brand.woff2"}` inside the
+same `browser` section for TrueType/OpenType/WOFF/WOFF2 files, then use `Brand` in
+`font-family`. Fonts load from verified bytes before execution, have private names
+per session and release on termination. Quote family names containing spaces.
+Pass native-schema `decisions` and an optional synchronous `onAudit` observer to
+`run`/`mount` for stored choices, `varta.permissions.query/request` and an owned
+`permissions` report. Decisions are runtime inputs, never build inputs. Clipboard
+state also respects the browser's exposed permission. For origin-local persistence,
+pass `decisionStore: createDecisionStore()` instead of `decisions`; its atomic
+IndexedDB updates preserve other applications' choices. `await app.revoke(id)`
+withholds new operations in both the page and Worker and saves a denial when a
+store is supplied; operations already authorized keep running. Required stored
+denials prevent the next startup. For interactive consent, provide
+`onPrompt: createPermissionPrompt()` to `mount`, or your own callback returning
+`allow`, `deny` or `dismiss`. Required choices happen before execution; optional
+requests prompt only in a trusted gesture turn. Waiting consumes no turn budget;
+the answer resumes in a separate event. `run` and `mount` without a prompt callback
+retain headless policy behavior. Links covered only by the any-HTTPS form require
+fresh consent for each full address; that choice is never stored. The Worker pauses
+between turns while the dialog is open. Broader platform acceptance remains open.
+
+`mount()` also runs a non-view application without a container. The guest can use
+`varta.events.listen/close`; the trusted host calls
+`await app.deliver({source: 'ui', record: 'text'})`. Deliveries are queued for
+separate turns and report `queued`, `coalesced` or `dropped`. Records are copied at
+the call boundary and bounded as UTF-8; closing/reopening a name cannot retarget
+old deliveries. `gesture` and `coalesce` default to false; only a trusted host
+should mark a record as a user gesture. A non-view application finishes when its
+listeners, timers and active operations no longer keep it alive.
+
 ## Commands
 
 - `init <name>`: create a project without overwriting an existing directory
 - `check [--config] [--json]`: validate language, types, config and generated Wasm
-- `dev [--config] [--policy]`: check, compile and execute
-- `build [--config] [--single] [--launcher PATH]`: produce validated Wasm and an optional runtime-only executable; `--launcher` requires `--single`
+- `dev [--config] [--policy] [--target native|browser]`: execute natively or serve a local browser snapshot; `--listen` is browser-only
+- `build [--config] [--single | --target wasm|native|browser] [--launcher PATH]`: produce Wasm, a native executable or the checked browser bundle; `--launcher` requires `--single` or `--target native`
 - `run <path> [--policy]`: execute portable Wasm or a packaged artifact
 - `invoke <path> <name> [--params JSON] [--json] [--policy]`: call one published tool without running `main`
 - `inspect [path] [--json] [--policy]`: show validated code and full capability metadata

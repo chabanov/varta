@@ -6,7 +6,8 @@
       "valueAbi": 2,
       "numbers": "i32",
       "strings": "UTF-8",
-      "toolHttp": true,
+      "toolEntries": true,
+      "httpVersion": 1,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -19,7 +20,8 @@
       "valueAbi": 3,
       "numbers": "binary64",
       "strings": "UTF-8",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -32,7 +34,8 @@
       "valueAbi": 4,
       "numbers": "binary64",
       "strings": "UTF-8",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -45,7 +48,8 @@
       "valueAbi": 5,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -58,7 +62,8 @@
       "valueAbi": 6,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -71,7 +76,8 @@
       "valueAbi": 7,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -84,7 +90,8 @@
       "valueAbi": 8,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -97,7 +104,8 @@
       "valueAbi": 8,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -110,7 +118,8 @@
       "valueAbi": 9,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": false,
       "exceptionVersion": null,
       "frames": null,
@@ -123,7 +132,8 @@
       "valueAbi": 9,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": null,
       "frames": null,
@@ -136,7 +146,8 @@
       "valueAbi": 10,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version",
@@ -152,7 +163,8 @@
       "valueAbi": 11,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -168,7 +180,8 @@
       "valueAbi": 11,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -184,7 +197,8 @@
       "valueAbi": 11,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -200,7 +214,8 @@
       "valueAbi": 11,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -216,7 +231,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -232,7 +248,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -248,7 +265,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -264,7 +282,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -280,7 +299,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -296,7 +316,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -312,7 +333,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -328,7 +350,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -344,7 +367,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -360,7 +384,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -376,7 +401,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -392,7 +418,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -408,7 +435,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -424,7 +452,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -440,7 +469,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -456,7 +486,8 @@
       "valueAbi": 12,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v3",
@@ -472,7 +503,8 @@
       "valueAbi": 13,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v4",
@@ -488,7 +520,8 @@
       "valueAbi": 13,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v4",
@@ -504,7 +537,8 @@
       "valueAbi": 13,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v4",
@@ -520,7 +554,8 @@
       "valueAbi": 13,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v5",
@@ -536,7 +571,8 @@
       "valueAbi": 13,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v5",
@@ -554,7 +590,8 @@
       "valueAbi": 15,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v6",
@@ -572,7 +609,8 @@
       "valueAbi": 16,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v7",
@@ -590,7 +628,8 @@
       "valueAbi": 17,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v8",
@@ -608,7 +647,8 @@
       "valueAbi": 17,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": null,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v8",
@@ -626,7 +666,8 @@
       "valueAbi": 18,
       "numbers": "binary64",
       "strings": "UTF-16LE",
-      "toolHttp": false,
+      "toolEntries": false,
+      "httpVersion": 2,
       "exceptionChannel": true,
       "exceptionVersion": {
         "global": "varta.exception.version_v9",
@@ -636,7 +677,7 @@
         "catalog": 3
       },
       "scheduler": true,
-      "admittedImports": 51
+      "admittedImports": 52
     }
   ],
   "acceptance": {
@@ -1187,7 +1228,8 @@
       "resultGlobals": false,
       "stringResult": false,
       "admittedUnder": [
-        "checked-i32-utf8-v1"
+        "checked-i32-utf8-v1",
+        "checked-f64-utf16-v38"
       ]
     },
     {
@@ -7283,6 +7325,16 @@
       "constant": "http::RETAIN"
     },
     {
+      "name": "varta.http_abi.state",
+      "kind": "export, function",
+      "constant": "http::STATE"
+    },
+    {
+      "name": "varta.http_abi.value",
+      "kind": "export, function",
+      "constant": "http::VALUE"
+    },
+    {
       "name": "varta.value_abi.allocate",
       "kind": "export, function",
       "constant": "value::VALUE_ALLOCATE"
@@ -7587,12 +7639,13 @@
       ],
       "source": "`ToolLimits::default()`"
     },
-    "HTTP contract version / metadata bytes": {
+    "HTTP legacy / maximum version / metadata bytes": {
       "values": [
         1,
+        2,
         8192
       ],
-      "source": "`http::VERSION`, `http::MAX_METADATA_BYTES`"
+      "source": "`http::VERSION`, `http::LATEST_VERSION`, `http::MAX_METADATA_BYTES`"
     },
     "HTTP headers / header bytes / target bytes / body bytes": {
       "values": [
@@ -7609,6 +7662,13 @@
         10
       ],
       "source": "`http::HEADER_SECONDS`, `http::CONNECTION_SECONDS`"
+    },
+    "Native HTTP retained request reports / total retained audit entries": {
+      "values": [
+        32,
+        256
+      ],
+      "source": "`http::MAX_REPORTED_REQUESTS`, `permission::MAX_AUDIT_ENTRIES`"
     },
     "Live continuation frames": {
       "values": [
@@ -9403,12 +9463,48 @@
       ]
     },
     {
+      "table": "embedding-event-limits",
+      "limit": "Largest exact source id",
+      "profiles": null,
+      "value": 9007199254740991,
+      "sources": [
+        "events::MAX_EVENT_SOURCE_ID"
+      ]
+    },
+    {
       "table": "embedding-net-limits",
       "limit": "Requests holding a runtime slot at once",
       "profiles": null,
       "value": 8,
       "sources": [
         "net::MAX_PENDING_REQUESTS"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Native DNS workers per process",
+      "profiles": null,
+      "value": 4,
+      "sources": [
+        "net::MAX_DNS_WORKERS"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Native queued DNS lookups per process",
+      "profiles": null,
+      "value": 64,
+      "sources": [
+        "net::MAX_DNS_QUEUED"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Addresses in one native DNS answer",
+      "profiles": null,
+      "value": 64,
+      "sources": [
+        "net::MAX_DNS_ADDRESSES"
       ]
     },
     {

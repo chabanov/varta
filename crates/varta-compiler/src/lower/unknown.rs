@@ -371,7 +371,7 @@ impl Lower<'_> {
         }
         let name = self.quoted(annotation.span(), target);
         let operand = stmt::unparen(&assertion.expr);
-        if let Some(parsed) = self.asserted_parse_json(operand, target, assertion.span)? {
+        if let Some(parsed) = self.asserted_parse_json(operand, target, &name, assertion.span)? {
             return Ok(parsed);
         }
         // TypeScript types an object or array literal operand contextually.

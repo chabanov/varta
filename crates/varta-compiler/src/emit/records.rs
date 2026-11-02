@@ -15,7 +15,7 @@ pub(super) fn layout_key(id: u32, fields: &[(u32, Expr)], shapes: &[ir::RecordSh
     (id, order.into_iter().map(|(_, index)| index).collect())
 }
 
-fn enumeration_key(name: &str, position: usize) -> (bool, u32) {
+pub(super) fn enumeration_key(name: &str, position: usize) -> (bool, u32) {
     let integer = name
         .parse::<u32>()
         .ok()

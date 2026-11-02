@@ -11,7 +11,7 @@ const SCHEMA_MISMATCH: &str = "JSON value does not match the checked schema";
 /// may be missing, so `undefined` is admitted). Recursive types (v34) make the
 /// type graph cyclic, so each type is visited once.
 fn json_type(ty: Type, types: &ir::ValueTypes, optional: bool, nested: bool) -> bool {
-    json_visit(ty, types, optional, nested, &mut BTreeSet::new())
+    json_visit(ty, types, optional, nested, &mut BTreeSet::new(), false)
 }
 fn json_visit(
     ty: Type,
@@ -19,15 +19,16 @@ fn json_visit(
     optional: bool,
     nested: bool,
     seen: &mut BTreeSet<(Type, bool, bool)>,
+    constrained: bool,
 ) -> bool {
     // A type reached again nested is checked again: a mixed record is only
     // admitted at the root.
     if !seen.insert((ty, optional, nested)) {
         return true;
     }
-    let mut child = |ty, optional| json_visit(ty, types, optional, true, seen);
+    let mut child = |ty, optional| json_visit(ty, types, optional, true, seen, constrained);
     match ty {
-        Type::Literal(..) => false,
+        Type::Literal(..) => constrained,
         // `unknown` (v35 `unknown_json`) parses any JSON value into the
         // internal JSON value graph; v34 has no schema for it.
         Type::Unknown => types.profile.unknown_json(),
@@ -59,6 +60,63 @@ fn json_visit(
             declared && child(types.dictionaries[id as usize].value, true)
         }
         _ => ty.value_kind().is_some(),
+    }
+}
+
+/// Same-tag arrays or dictionary/record overlaps need strict matching, not
+/// the decoder's kind dispatch. Plain dictionaries only; mixed fields have a
+/// separate conversion contract and must not bypass its checks.
+fn direct_kinds(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool {
+    if !seen.insert(ty) {
+        return true;
+    }
+    match ty {
+        Type::Union(id) | Type::ReferenceUnion(id) => {
+            let members = &types.unions[id as usize];
+            let arrays = members
+                .iter()
+                .filter(|ty| matches!(ty, Type::Array(_)))
+                .count();
+            let records = members.iter().any(|ty| matches!(ty, Type::Record(_)));
+            let dictionaries = members.iter().any(|ty| matches!(ty, Type::Dictionary(_)));
+            arrays <= 1
+                && !(records && dictionaries)
+                && members.iter().all(|ty| direct_kinds(*ty, types, seen))
+        }
+        Type::Record(id) => types.records[id as usize]
+            .fields
+            .iter()
+            .all(|field| direct_kinds(field.ty, types, seen)),
+        Type::Array(id) => direct_kinds(types.arrays[id as usize], types, seen),
+        Type::Dictionary(id) => {
+            types.declared(ty).is_none()
+                && direct_kinds(types.dictionaries[id as usize].value, types, seen)
+        }
+        _ => true,
+    }
+}
+
+/// Keep only the semantic type edges needed by direct decoders. Erasure
+/// still owns all physical types; these edges retain the literal constraints.
+pub(super) fn preserve_direct_types(types: &mut ir::ValueTypes) {
+    let mut pending: Vec<_> = types.direct_json_targets.iter().copied().collect();
+    while let Some(ty) = pending.pop() {
+        if types.direct_json_members.contains_key(&ty) {
+            continue;
+        }
+        let children = match ty {
+            Type::Record(id) => types.records[id as usize]
+                .fields
+                .iter()
+                .map(|f| f.ty)
+                .collect(),
+            Type::Array(id) => vec![types.arrays[id as usize]],
+            Type::Dictionary(id) => vec![types.dictionaries[id as usize].value],
+            Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize].clone(),
+            _ => Vec::new(),
+        };
+        pending.extend(children.iter().copied());
+        types.direct_json_members.insert(ty, children);
     }
 }
 
@@ -186,6 +244,7 @@ impl Lower<'_> {
         &mut self,
         operand: &ast::Expr,
         target: Type,
+        name: &str,
         span: swc_common::Span,
     ) -> Result<Option<Expr>> {
         let ast::Expr::Call(call) = operand else {
@@ -198,7 +257,27 @@ impl Lower<'_> {
             || expr::callee_name(callee).as_deref() != Some("JSON.parse")
             || call.args.len() != 1
             || call.args[0].spread.is_some()
-            || literals::contains(target, self.types)
+        {
+            return Ok(None);
+        }
+        if self.types.profile.json_decoders()
+            && literals::contains(target, self.types)
+            // Only the original checked graph conversion may be accelerated.
+            // Views, tuples and nominal collections keep their existing path.
+            && declared_fields::convertible(target, self.types)
+            && matches!(
+                target,
+                Type::Record(_) | Type::ReferenceUnion(_) | Type::Array(_)
+            )
+            && json_visit(target, self.types, false, true, &mut BTreeSet::new(), true)
+            && !self.undiscriminated_unions(target)
+            && direct_kinds(target, self.types, &mut BTreeSet::new())
+        {
+            return self
+                .direct_json_assertion(&call.args[0].expr, target, name, span, call.span)
+                .map(Some);
+        }
+        if literals::contains(target, self.types)
             || !json_type(target, self.types, false, false)
             || self.undiscriminated_unions(target)
         {
@@ -206,6 +285,83 @@ impl Lower<'_> {
         }
         self.parse_json_at(&call.args[0].expr, target, span)
             .map(Some)
+    }
+    /// A compiler-private attempt with an allocated-reference result. Zero is
+    /// an internal miss, never a language value: identity inspects only its
+    /// address bits, and the normal conversion completes it before publication.
+    fn direct_json_assertion(
+        &mut self,
+        argument: &ast::Expr,
+        target: Type,
+        name: &str,
+        span: swc_common::Span,
+        call_span: swc_common::Span,
+    ) -> Result<Expr> {
+        let text = self.expr(argument)?;
+        if text.ty != Type::String {
+            return Err(self.source.locate(
+                type_error(format!(
+                    "JSON input type mismatch: expected string, found {}",
+                    text.ty
+                )),
+                text.span,
+            ));
+        }
+        unknown_graph(self.types)?;
+        let input = self.hidden(Type::String);
+        let output = self.hidden(target);
+        let local = |slot, ty| Expr {
+            span,
+            ty,
+            kind: E::Local(slot),
+        };
+        let ordinary = Expr {
+            span: call_span,
+            ty: Type::Unknown,
+            kind: E::ParseJson(Box::new(local(input, Type::String))),
+        };
+        let message = format!("type assertion to {name} failed");
+        // Build the real conversion before registering the optimization, so
+        // unsupported assertion targets keep their established diagnostics.
+        let fallback = self.assert_value(ordinary, target, name, &message, span)?;
+        self.types.direct_json_targets.insert(target);
+        let attempt = Expr {
+            span,
+            ty: target,
+            kind: E::ParseJson(Box::new(local(input, Type::String))),
+        };
+        let address = Expr {
+            span,
+            ty: Type::Float64,
+            kind: E::Intrinsic(ir::Intrinsic::Identity, vec![local(output, target)]),
+        };
+        let miss = Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::Binary(
+                ast::BinaryOp::EqEqEq,
+                Box::new(address),
+                Box::new(Expr {
+                    span,
+                    ty: Type::Float64,
+                    kind: E::Float64(ir::JSON_DECODE_MISS as f64),
+                }),
+            ),
+        };
+        Ok(Expr {
+            span,
+            ty: target,
+            kind: E::ValueBlock {
+                output,
+                marker: self.hidden(Type::Number),
+                roots: vec![input, output],
+                body: vec![
+                    S::Init(input, text),
+                    S::Init(output, attempt),
+                    S::If(miss, vec![S::Set(output, fallback)], vec![]),
+                ],
+            },
+        })
     }
     /// A KV key or value decode at `ty` (v38 `kv`): the targets, schema and
     /// declared-field checks of checked parsing, over the stored entry

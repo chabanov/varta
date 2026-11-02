@@ -665,6 +665,7 @@ fn case_corpus_behaves_identically_under_v38() {
         value: CapabilityValue::Boolean(true),
     }];
     let (mut compared, mut costlier) = (0, 0);
+    let mut differences = Vec::new();
     for path in &files {
         let source = std::fs::read_to_string(path).unwrap();
         let old = varta_compiler::compile_typescript_with_profile(&source, V37);
@@ -748,12 +749,23 @@ fn case_corpus_behaves_identically_under_v38() {
                 assert!(after.lines.starts_with(&before.lines), "{}", path.display());
             }
             _ => {
-                assert_eq!(before.lines, after.lines, "{}", path.display());
+                if before.lines != after.lines {
+                    differences.push(format!(
+                        "{}: v37 {:?}; v38 {:?}",
+                        path.display(),
+                        before.lines,
+                        after.lines
+                    ));
+                }
                 assert_eq!(before.error, after.error, "{}", path.display());
             }
         }
         compared += 1;
     }
+    assert!(
+        differences.is_empty(),
+        "behavior differences: {differences:#?}"
+    );
     assert!(compared >= 120, "only {compared} case programs compared");
     assert_eq!(costlier, COSTLIER_UNDER_V38.len());
 }

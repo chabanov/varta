@@ -1,5 +1,9 @@
 use swc_ecma_ast::BinaryOp;
 
+/// Private direct-JSON attempt miss: structured successes always allocate a
+/// nonzero reference. It is consumed before an application value is published.
+pub(crate) const JSON_DECODE_MISS: i64 = 0;
+
 pub(crate) fn is_number_bitwise(op: BinaryOp) -> bool {
     matches!(
         op,
@@ -235,6 +239,8 @@ pub(crate) struct Program {
     pub main: usize,
     pub tools: Vec<(usize, varta_common::ToolContract)>,
     pub http: Option<(usize, varta_common::http::HttpContract)>,
+    /// Pure state/value accessors of an async HTTP response promise.
+    pub http_async: Option<(usize, usize)>,
     /// V38 view protocol: the view prelude's event dispatcher, called by the
     /// synthesized `varta.view_abi.event` export with the copied record.
     pub view_event: Option<usize>,
@@ -291,6 +297,13 @@ pub(crate) struct ValueTypes {
     pub unions: Vec<Vec<Type>>,
     pub functions: Vec<FunctionType>,
     pub literals: crate::lower::literals::LiteralTypes,
+    /// V38 compiler-only checked-assertion decode attempts. Their entries
+    /// return a zero handle on a miss; the surrounding value block runs the
+    /// ordinary unknown parse/conversion. They have no exported schema.
+    pub direct_json_targets: std::collections::BTreeSet<Type>,
+    /// Semantic children of reachable direct-decode types, saved before
+    /// literal erasure. Physical record names/layouts keep their own registry.
+    pub direct_json_members: std::collections::BTreeMap<Type, Vec<Type>>,
     pub named: crate::lower::named::NamedTypes,
     pub classes: crate::lower::classes::Classes,
     pub generics: crate::lower::generics::Generics,

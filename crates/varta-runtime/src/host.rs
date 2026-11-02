@@ -367,7 +367,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                   len: i32|
                   -> Result<i32, wasmtime::Error> {
                 reset(&mut caller)?;
-                let value = (|| {
+                let value: Result<i32, crate::http::Failure> = (|| {
                     let target = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, utf16)?;
                     let bytes = if id == "fs.read" {
                         caller.data().policy.read(id, &target)?
@@ -377,25 +377,34 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                             .policy
                             .network(id, &target)
                             .ok_or_else(|| HostFailure::denied(id, &target))?;
-                        let remaining = caller
-                            .data()
-                            .deadline
-                            .saturating_duration_since(std::time::Instant::now());
-                        let (status, body) = crate::http::fetch(&url, remaining, id == "net.get")?;
+                        let (status, body) = crate::http::fetch(
+                            &url,
+                            caller.data().deadline,
+                            id == "net.get",
+                            caller.data().cancellation.as_ref(),
+                        )?;
                         if id == "net.fetch" {
                             return Ok(status);
                         }
                         body
                     };
                     if utf16 {
-                        result16(&mut caller, &bytes)
+                        result16(&mut caller, &bytes).map_err(crate::http::Failure::Host)
                     } else {
-                        result(&mut caller, &bytes)
+                        result(&mut caller, &bytes).map_err(crate::http::Failure::Host)
                     }
                 })();
+                // An owned HTTP request cannot observe cancellation or its
+                // exhausted execution deadline as a recoverable host result.
+                if caller.data().cancellation.is_some() {
+                    caller.data().check_deadline()?;
+                }
                 match value {
                     Ok(value) => Ok(value),
-                    Err(error) => {
+                    Err(crate::http::Failure::Cancelled) => {
+                        Err(wasmtime::Error::new(crate::cancellation::Cancelled))
+                    }
+                    Err(crate::http::Failure::Host(error)) => {
                         failure(&mut caller, error)?;
                         Ok(if id == "net.fetch" { -1 } else { 0 })
                     }

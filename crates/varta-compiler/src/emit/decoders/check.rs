@@ -6,6 +6,7 @@ use super::scan::{
     OPEN_OBJECT, QUOTE, UNIT_BYTES, digit, fill, offset, push, token,
 };
 use super::*;
+use crate::lower::literals::LiteralValue;
 use varta_common::json::JsonField;
 use wasm_encoder::Instruction as I;
 
@@ -26,7 +27,7 @@ pub(super) fn node(
         JsonType::Array { element } => array(plan, context.globals, *element),
         JsonType::Dictionary { value, .. } => dictionary(plan, context.globals, *value),
         JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } => {
-            union(plan, context.globals, members)
+            union(plan, context.globals, members)?
         }
         _ => {
             return Err(CompilerError::Internal(
@@ -34,6 +35,134 @@ pub(super) fn node(
             ));
         }
     })
+}
+
+/// A scalar checker with a compiler-only literal constraint. The ordinary
+/// scalar scanner owns grammar, bounds and tape representation. Escaped
+/// literal strings and slow-number entries miss instead of being reinterpreted.
+pub(super) fn literal(
+    plan: &Plan,
+    context: Context,
+    index: usize,
+) -> Result<wasm_encoder::Function> {
+    let values = plan.graph.literals[index]
+        .as_ref()
+        .ok_or_else(|| CompilerError::Internal("missing literal constraint".into()))?;
+    let kind = plan.graph.nodes[index].kind();
+    let shared = literal_scanner(kind)?;
+    let mut a = Asm::new(2);
+    let saved = a.local(ValType::I32);
+    let end = a.local(ValType::I32);
+    offset(&mut a, context.globals);
+    a.set(saved);
+    a.get(POS)
+        .get(DEPTH_PARAM)
+        .i(I::Call(plan.shared(shared)))
+        .tee(end)
+        .i(I::I32Eqz)
+        .if_()
+        .int(0)
+        .i(I::Return)
+        .end();
+    let input = literal_input(&mut a, context.globals, saved, kind);
+    literal_values(&mut a, values, input, |a| {
+        a.get(end).i(I::Return);
+    });
+    a.int(0);
+    Ok(a.finish())
+}
+
+fn literal_scanner(kind: ValueKind) -> Result<Shared> {
+    match kind {
+        ValueKind::String => Ok(Shared::CheckString),
+        ValueKind::Boolean => Ok(Shared::CheckBoolean),
+        ValueKind::Float64 => Ok(Shared::CheckNumber),
+        _ => Err(CompilerError::Internal(
+            "non-primitive literal decoder".into(),
+        )),
+    }
+}
+
+/// One already-scanned tag, reused across every alternative with that field.
+#[derive(Clone, Copy)]
+struct LiteralInput {
+    value: u32,
+    start: u32,
+    units: u32,
+}
+fn literal_input(a: &mut Asm, globals: Globals, saved: u32, kind: ValueKind) -> LiteralInput {
+    let value = a.local(ValType::I64);
+    let start = a.local(ValType::I32);
+    let units = a.local(ValType::I32);
+    a.i(I::GlobalGet(globals.base))
+        .get(saved)
+        .i(I::I32Add)
+        .i(I::I64Load(SLOT))
+        .set(value);
+    if kind == ValueKind::String {
+        a.get(value)
+            .long(0)
+            .i(I::I64LtS)
+            .if_()
+            .int(0)
+            .i(I::Return)
+            .end();
+        a.get(value).i(I::I32WrapI64).set(start);
+        a.get(value)
+            .long(strings::LENGTH_SHIFT as i64)
+            .i(I::I64ShrU)
+            .i(I::I32WrapI64)
+            .set(units);
+    }
+    LiteralInput {
+        value,
+        start,
+        units,
+    }
+}
+fn literal_values(
+    a: &mut Asm,
+    values: &[LiteralValue],
+    input: LiteralInput,
+    matched: impl Fn(&mut Asm),
+) {
+    let LiteralInput {
+        value,
+        start,
+        units,
+    } = input;
+    for literal in values {
+        match literal {
+            LiteralValue::Boolean(flag) => {
+                a.get(value).long(i64::from(*flag)).i(I::I64Eq);
+            }
+            LiteralValue::Number(bits) => {
+                // Slow numbers use a NaN sentinel, which cannot match a literal.
+                // Floating equality deliberately treats -0 as the literal 0.
+                a.get(value)
+                    .i(I::F64ReinterpretI64)
+                    .i(I::F64Const(f64::from_bits(*bits).into()))
+                    .i(I::F64Eq);
+            }
+            LiteralValue::String(bytes) => {
+                let name: Vec<u16> = bytes
+                    .as_chunks::<{ size_of::<u16>() }>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_le_bytes(*pair))
+                    .collect();
+                a.get(units).int(name.len() as i32).i(I::I32Eq).if_();
+                equal_units(a, start, &name);
+                a.if_();
+                matched(a);
+                a.end().end();
+                continue;
+            }
+        }
+        a.if_();
+        matched(a);
+        a.end();
+    }
 }
 
 /// Return 0 unless `depth < DEPTH` and the first unit at `pos` (past
@@ -391,19 +520,194 @@ fn dictionary(plan: &Plan, globals: Globals, value: u32) -> wasm_encoder::Functi
     a.finish()
 }
 
-/// A union: the member the value's first unit selects, as the shared
-/// decoder selects it (the first member of that value kind; an object also
-/// selects a dictionary member), on the tape, then that member's value at
-/// the same depth.
-fn union(plan: &Plan, globals: Globals, members: &[u32]) -> wasm_encoder::Function {
+/// A required literal field proving one record distinct from every other
+/// record of the union. The graph still carries semantic literals, including
+/// nullable sets; unknown is its complete graph, so it proves no disjointness.
+struct Selector {
+    member: usize,
+    name: Vec<u16>,
+    literal: u32,
+}
+fn selectors(plan: &Plan, members: &[u32]) -> Option<Vec<Selector>> {
+    fn disjoint(plan: &Plan, values: &[crate::lower::literals::LiteralValue], node: u32) -> bool {
+        if let Some(other) = &plan.graph.literals[node as usize] {
+            return values.iter().all(|value| !other.contains(value));
+        }
+        match &plan.graph.nodes[node as usize] {
+            JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } => {
+                members.iter().all(|member| disjoint(plan, values, *member))
+            }
+            other => values.iter().all(|value| {
+                use crate::lower::literals::LiteralValue;
+                let kind = match value {
+                    LiteralValue::String(_) => ValueKind::String,
+                    LiteralValue::Number(_) => ValueKind::Float64,
+                    LiteralValue::Boolean(_) => ValueKind::Boolean,
+                };
+                kind != other.kind()
+            }),
+        }
+    }
+    let records: Vec<_> = members
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| match &plan.graph.nodes[*node as usize] {
+            JsonType::Record { fields, .. } => Some((index, fields)),
+            _ => None,
+        })
+        .collect();
+    let mut result = Vec::new();
+    for (member, fields) in &records {
+        let field = fields.iter().find(|field| {
+            let Some(values) = &plan.graph.literals[field.ty as usize] else {
+                return false;
+            };
+            !field.optional
+                && records
+                    .iter()
+                    .filter(|(other, _)| other != member)
+                    .all(|(_, fields)| {
+                        fields
+                            .iter()
+                            .find(|candidate| candidate.name == field.name)
+                            .is_none_or(|other| disjoint(plan, values, other.ty))
+                    })
+        })?;
+        result.push(Selector {
+            member: *member,
+            name: field.name.encode_utf16().collect(),
+            literal: field.ty,
+        });
+    }
+    Some(result)
+}
+/// Rewind a logical tape offset, even if a probe grew and relocated its block.
+fn rewind(a: &mut Asm, globals: Globals, saved: u32) {
+    a.i(I::GlobalGet(globals.base))
+        .get(saved)
+        .i(I::I32Add)
+        .i(I::GlobalSet(globals.tape));
+}
+/// Probe field names and literal discriminants, skipping other values with the
+/// ordinary unknown checker (no value allocation). Then validate only the chosen
+/// record over the original input. Logical probe tape entries are discarded.
+fn object_choice(
+    a: &mut Asm,
+    plan: &Plan,
+    globals: Globals,
+    members: &[u32],
+    selectors: &[Selector],
+) -> Result<()> {
+    let any = plan
+        .graph
+        .roots
+        .get(&Type::Unknown)
+        .copied()
+        .ok_or_else(|| {
+            CompilerError::Internal("direct decoder without its unknown fallback".into())
+        })?;
+    let original = a.local(ValType::I32);
+    let saved = a.local(ValType::I32);
+    let u = a.local(ValType::I32);
+    let scanned = a.local(ValType::I64);
+    let start = a.local(ValType::I32);
+    let units = a.local(ValType::I32);
+    let chosen = a.local(ValType::I32);
+    a.get(POS).set(original);
+    offset(a, globals);
+    a.set(saved);
+    open(a, plan, globals, u, OPEN_OBJECT);
+    a.block("fail").block("selected").loop_("probe");
+    token(a, plan, globals, POS, u);
+    a.get(u).int(CLOSE_OBJECT).i(I::I32Eq).br_if("fail");
+    key(a, plan, globals, u, (scanned, start, units));
+    colon(a, plan, globals, u, scanned);
+    let mut names: BTreeMap<&[u16], Vec<&Selector>> = BTreeMap::new();
+    for selector in selectors {
+        names.entry(&selector.name).or_default().push(selector);
+    }
+    for (name, selectors) in names {
+        a.get(units).int(name.len() as i32).i(I::I32Eq).if_();
+        equal_units(a, start, name);
+        a.if_();
+        // Scan each admitted scalar kind once for this field. Candidate tests
+        // share the tape value instead of rescanning the tag for every member.
+        for kind in [ValueKind::String, ValueKind::Boolean, ValueKind::Float64] {
+            let candidates: Vec<_> = selectors
+                .iter()
+                .filter(|selector| plan.kind(selector.literal) == kind)
+                .collect();
+            if candidates.is_empty() {
+                continue;
+            }
+            rewind(a, globals, saved);
+            a.get(POS)
+                .get(DEPTH_PARAM)
+                .int(1)
+                .i(I::I32Add)
+                .i(I::Call(plan.shared(literal_scanner(kind)?)))
+                .if_();
+            let input = literal_input(a, globals, saved, kind);
+            for selector in candidates {
+                let values = plan.graph.literals[selector.literal as usize]
+                    .as_ref()
+                    .ok_or_else(|| CompilerError::Internal("missing selector literal".into()))?;
+                literal_values(a, values, input, |a| {
+                    a.int(selector.member as i32).set(chosen).br("selected");
+                });
+            }
+            a.end();
+        }
+        a.end().end();
+    }
+    rewind(a, globals, saved);
+    a.get(POS)
+        .get(DEPTH_PARAM)
+        .int(1)
+        .i(I::I32Add)
+        .i(I::Call(plan.check(any)))
+        .tee(POS)
+        .i(I::I32Eqz)
+        .br_if("fail");
+    token(a, plan, globals, POS, u);
+    a.get(u).int(COMMA).i(I::I32Eq).if_();
+    a.add(POS, UNIT_BYTES).br("probe").end();
+    a.br("fail").end().end();
+    rewind(a, globals, saved);
+    a.get(chosen).i(I::I64ExtendI32U);
+    push(a, plan);
+    let arms: Vec<_> = (0..members.len())
+        .map(|index| format!("chosen{index}"))
+        .collect();
+    for name in arms.iter().rev() {
+        a.block(name);
+    }
+    a.get(chosen).br_table(&arms, "fail");
+    for node in members {
+        a.end();
+        a.get(original)
+            .get(DEPTH_PARAM)
+            .i(I::Call(plan.check(*node)))
+            .i(I::Return);
+    }
+    a.end().int(0).i(I::Return);
+    Ok(())
+}
+
+/// Dispatch ordinary members by their first input unit. Multiple record
+/// alternatives use a proven literal selector; the tape holds the member
+/// index followed by its checked value at the same depth.
+fn union(plan: &Plan, globals: Globals, members: &[u32]) -> Result<wasm_encoder::Function> {
     let mut a = Asm::new(2);
     let u = a.local(ValType::I32);
     let kinds: Vec<ValueKind> = members.iter().map(|member| plan.kind(*member)).collect();
     let select = |wanted: &[ValueKind]| {
         kinds
             .iter()
-            .position(|kind| wanted.contains(kind))
-            .map(|index| (index, members[index]))
+            .enumerate()
+            .filter(|(_, kind)| wanted.contains(kind))
+            .map(|(index, _)| (index, members[index]))
+            .collect::<Vec<_>>()
     };
     let classes: [(&[i32], &[ValueKind]); 5] = [
         (&[LOWER_N], &[ValueKind::Null]),
@@ -413,7 +717,7 @@ fn union(plan: &Plan, globals: Globals, members: &[u32]) -> wasm_encoder::Functi
         (&[OPEN_ARRAY], &[ValueKind::Array]),
     ];
     token(&mut a, plan, globals, POS, u);
-    let take = |a: &mut Asm, member: Option<(usize, u32)>| match member {
+    let take = |a: &mut Asm, candidate: Option<(usize, u32)>| match candidate {
         Some((index, node)) => {
             a.long(index as i64);
             push(a, plan);
@@ -434,11 +738,23 @@ fn union(plan: &Plan, globals: Globals, members: &[u32]) -> wasm_encoder::Functi
             }
         }
         a.if_();
-        take(&mut a, select(wanted));
+        let candidates = select(wanted);
+        if candidates.len() > 1
+            && candidates
+                .iter()
+                .all(|(_, node)| plan.kind(*node) == ValueKind::Record)
+        {
+            if let Some(selectors) = selectors(plan, members) {
+                object_choice(&mut a, plan, globals, members, &selectors)?;
+            } else {
+                take(&mut a, None);
+            }
+        } else {
+            take(&mut a, candidates.first().copied());
+        }
         a.end();
     }
-    // Any other first unit reads as a number.
-    take(&mut a, select(&[ValueKind::Float64]));
+    take(&mut a, select(&[ValueKind::Float64]).first().copied());
     a.i(I::Unreachable);
-    a.finish()
+    Ok(a.finish())
 }

@@ -65,6 +65,7 @@ fn clipboard_grants_are_exact_booleans_of_both_parties() {
 }
 
 use crate::VartaRuntime;
+mod network;
 use varta_common::language::LanguageProfile as P;
 
 const V38: P = P::CheckedF64Utf16V38;
@@ -504,6 +505,220 @@ export function main(): void {
   View.mount(root);
 }
 "#;
+
+#[test]
+fn native_layout_applies_initial_theme_preserves_it_on_resize_and_updates_media() {
+    let bytes = compile(
+        r##"
+export function main(): void {
+  View.stylesheet(1, '.box { width:20px; height:20px; background-color:#f00 } @media (prefers-color-scheme: dark) { .box { background-color:#0f0 } }');
+  const root = View.node(); View.createElement(root, 1); View.setClass(root, 'box'); View.mount(root);
+}
+"##,
+    );
+    let mut app = VartaRuntime::new()
+        .start_application(
+            &bytes,
+            crate::ApplicationOptions {
+                view_layout: Some(
+                    crate::ViewLayout::new(100.0, 100.0, None, 16.0)
+                        .unwrap()
+                        .with_dark_mode(true),
+                ),
+                ..crate::ApplicationOptions::default()
+            },
+        )
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    assert_eq!(
+        &app.view_rasterize(100, 100, None).unwrap().pixels[..4],
+        &[0, 255, 0, 255]
+    );
+    app.view_set_layout_size(200.0, 100.0).unwrap();
+    assert_eq!(
+        &app.view_rasterize(200, 100, None).unwrap().pixels[..4],
+        &[0, 255, 0, 255]
+    );
+    app.view_set_environment(varta_view::Environment {
+        width: 200.0,
+        dark: false,
+    })
+    .unwrap();
+    assert_eq!(
+        &app.view_rasterize(200, 100, None).unwrap().pixels[..4],
+        &[255, 0, 0, 255]
+    );
+}
+
+#[test]
+fn native_layout_executes_guest_scroll_from_first_turn_and_after_resize() {
+    let source = r#"
+export function main(): void {
+  View.stylesheet(1, '.spacer { height: 120px } @media (max-width: 300px) { .spacer { height: 160px } }');
+  const root = View.node();
+  View.createElement(root, 1);
+  View.setStyle(root, 2, '100px');
+  View.setStyle(root, 3, '50px');
+  View.setStyle(root, 39, 'auto');
+  View.on(root, 8, (event: ViewEvent): void => console.log(`scroll ${event.scrollTop}`), 0, 0, 0, 0);
+  const spacer = View.node();
+  View.createElement(spacer, 1);
+  View.setClass(spacer, 'spacer');
+  const target = View.node();
+  View.createElement(target, 1);
+  View.setStyle(target, 3, '10px');
+  const label = View.node();
+  View.createText(label, 'A');
+  View.insert(target, label, 0);
+  View.insert(root, spacer, 0);
+  View.insert(root, target, 0);
+  View.on(root, 1, (event: ViewEvent): void => {
+    View.command(root, 5, 0);
+    View.command(target, 4, 0);
+  }, 0, 0, 0, 0);
+  View.insert(1, root, 0);
+  View.command(target, 4, 0);
+  View.commit();
+}
+"#;
+    let bytes = compile(source);
+    let font = varta_view::TextMeasurer::new(
+        include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let mut app = VartaRuntime::new()
+        .start_application(
+            &bytes,
+            crate::ApplicationOptions {
+                view_layout: Some(crate::ViewLayout::new(200.0, 100.0, Some(font), 16.0).unwrap()),
+                ..crate::ApplicationOptions::default()
+            },
+        )
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    assert_eq!(
+        app.view_snapshot()["tree"]["children"][0]["scrollTop"],
+        120.0
+    );
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), ["varta log: scroll 120"]);
+    app.view_set_layout_size(400.0, 100.0).unwrap();
+    let root = app.view_snapshot()["tree"]["children"][0]["id"]
+        .as_u64()
+        .unwrap() as u32;
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Node(root),
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), ["varta log: scroll 80"]);
+    assert_eq!(
+        app.view_snapshot()["tree"]["children"][0]["scrollTop"],
+        80.0
+    );
+}
+
+#[test]
+fn live_application_host_scroll_dispatches_guest_turn() {
+    let source = r#"
+export function main(): void {
+  const root = View.node();
+  View.createElement(root, 1);
+  View.setStyle(root, 2, '100px');
+  View.setStyle(root, 3, '50px');
+  View.setStyle(root, 39, 'auto');
+  View.on(root, 8, (event: ViewEvent): void => console.log(`scroll ${event.scrollTop}`), 0, 0, 0, 0);
+  const spacer = View.node();
+  View.createElement(spacer, 1);
+  View.setStyle(spacer, 3, '120px');
+  const target = View.node();
+  View.createElement(target, 1);
+  View.setStyle(target, 3, '10px');
+  View.insert(root, spacer, 0);
+  View.insert(root, target, 0);
+  View.mount(root);
+}
+"#;
+    let mut app = instance(source, vec![], None);
+    let snapshot = app.view_snapshot();
+    let target = snapshot["tree"]["children"][0]["children"][1]["id"]
+        .as_u64()
+        .unwrap() as u32;
+    assert_eq!(
+        app.view_scroll_into_view(target, 200.0, 100.0, None)
+            .unwrap(),
+        1
+    );
+    assert!(app.take_output().is_empty());
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), vec!["varta log: scroll 80"]);
+    assert_eq!(
+        app.view_scroll_into_view(target, 200.0, 100.0, None)
+            .unwrap(),
+        0
+    );
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert!(app.take_output().is_empty());
+}
+
+#[test]
+fn live_application_exposes_cpu_frames_between_view_turns() {
+    let source = r##"
+export function main(): void {
+  View.setTitle('Before click');
+  const root = View.node();
+  View.createElement(root, 1);
+  View.setAttribute(root, 1, 'frame');
+  View.setStyle(root, 2, '20px');
+  View.setStyle(root, 3, '20px');
+  View.setStyle(root, 45, '#f00');
+  View.setStyle(root, 54, '20px');
+  View.setStyle(root, 57, '20px');
+  const text = View.node();
+  View.createText(text, 'A');
+  View.insert(root, text, 0);
+  View.on(root, 1, (event: ViewEvent): void => { View.setStyle(root, 45, '#00f'); View.setTitle('After click'); }, 0, 0, 0, 0);
+  View.mount(root);
+}
+"##;
+    let mut app = instance(source, vec![], None);
+    assert_eq!(app.view_title(), "Before click");
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let frame = app.view_rasterize(40, 40, Some((&mut font, 20.0))).unwrap();
+    let scaled = app
+        .view_rasterize_scaled(80, 80, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    assert_eq!(scaled.scale(), 2.0);
+    assert_eq!(
+        &scaled.pixels[(36 * 80 + 36) * 4..(36 * 80 + 37) * 4],
+        &[255, 0, 0, 255]
+    );
+    let target = frame
+        .hit_test(18.0, 18.0)
+        .expect("visible root is clickable");
+    assert_eq!(scaled.hit_test(36.0, 36.0), Some(target));
+    assert_eq!(
+        &frame.pixels[(18 * 40 + 18) * 4..(18 * 40 + 19) * 4],
+        &[255, 0, 0, 255]
+    );
+    assert!(app.view_rasterize(40, 40, None).is_err());
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Node(target),
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.view_title(), "After click");
+    let frame = app.view_rasterize(40, 40, Some((&mut font, 20.0))).unwrap();
+    assert_eq!(
+        &frame.pixels[(18 * 40 + 18) * 4..(18 * 40 + 19) * 4],
+        &[0, 0, 255, 255]
+    );
+}
 
 fn instance(
     source: &str,

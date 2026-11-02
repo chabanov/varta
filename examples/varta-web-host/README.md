@@ -6,6 +6,13 @@ Platform code, not an application: a host for Varta portable Wasm in the browser
 check that the document is sufficient. It is a prototype: the official browser host
 will be generated from the `HostOperation` registry (platform increments P1 and P9).
 
+Checkpoint 2026-11-01 (native server batch after `abea3ac`): **117 shared differential cases pass under
+Node**. This is not a new real-browser result or official platform acceptance.
+The contract extractor now separates Tool admission from HTTP versions (v38 HTTP
+v2 does not admit typed tools); its regeneration/admission check passes. H1 stays
+unsupported in this prototype. Declared table maxima are required and bounded; fractional timer delays truncate
+as in the native host. Guest and fair host fuel remain unmetered in this prototype.
+
 | Level | State |
 | --- | --- |
 | T1 tool host | Implemented: catalog validation, strict argument parsing, string transfer, envelopes like `varta invoke --json` |
@@ -59,7 +66,8 @@ record `fields` sorted by name), `saved[]` elements are `{binding, shared}`, and
 `applier.js` applies the **L0 view protocol draft v0** to a closed shadow root:
 whole-batch validation before any change, no HTML parsing, URL and CSS checks,
 delegated events encoded as event records, and the seq rule for controlled fields.
-No compiler emits `view_commit` yet, so its tests encode batches themselves.
+V38 compiles view applications that emit `view_commit`; the protocol tests also
+encode batches directly to exercise malformed input and applier boundaries.
 
 **Budgets.** Memory: the module's declared maximum, checked before instantiation.
 Host calls and output: counted (v38: host calls and microtasks per turn). Deadline:
@@ -107,6 +115,7 @@ contract admits, so turns carry the full cost of garbage collection.
 
 ```bash
 node tools/extract-contract.mjs ../../docs/embedding.md ../../docs/architecture.md contract.json
+node --test tools/extract-contract.test.mjs
 VARTA_BIN=/path/to/varta node tests/compare.mjs
 python3 scripts/serve.py 8766
 ```

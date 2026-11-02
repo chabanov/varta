@@ -34,6 +34,15 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
         }
     }
     let http = crate::http_contract::read(bytes)?;
+    if let Some(contract) = &http {
+        let profile = crate::language::inspect(bytes)?.profile.unwrap_or_default();
+        if varta_common::http::version_for(profile) != Some(contract.version) {
+            return Err(varta_common::http::HttpError::Contract(
+                "HTTP contract version does not match the language profile".into(),
+            )
+            .into());
+        }
+    }
     let marker = module
         .imports()
         .any(|i| i.name() == varta_common::HostOperation::HttpService.name());
@@ -43,11 +52,15 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
         )
         .into());
     }
-    let http_names = [
+    let mut http_names = vec![
         varta_common::http::HANDLER,
         varta_common::http::COPY,
         varta_common::http::RETAIN,
     ];
+    if http.as_ref().is_some_and(|contract| contract.asynchronous) {
+        http_names.extend([varta_common::http::STATE, varta_common::http::VALUE]);
+    }
+
     if module.exports().any(|e| {
         e.name().starts_with(varta_common::http::ABI_PREFIX)
             && (http.is_none() || !http_names.contains(&e.name()))
@@ -72,6 +85,20 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
             &[ValType::I64],
         )?;
         signature(module, http_names[2], &[ValType::I64], &[ValType::I64])?;
+        if http.as_ref().is_some_and(|contract| contract.asynchronous) {
+            signature(
+                module,
+                varta_common::http::STATE,
+                &[ValType::I64],
+                &[ValType::F64],
+            )?;
+            signature(
+                module,
+                varta_common::http::VALUE,
+                &[ValType::I64],
+                &[ValType::I64],
+            )?;
+        }
         bounded_memory(module, true)?;
     }
     let parses = module.imports().any(|i| {

@@ -3,6 +3,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[path = "smoke/browser_build.rs"]
+mod browser_build;
+#[path = "smoke/browser_dev.rs"]
+mod browser_dev;
+#[path = "smoke/http_contract.rs"]
+mod http_contract;
 
 fn varta() -> Command {
     Command::new(env!("CARGO_BIN_EXE_varta"))
@@ -4339,13 +4345,13 @@ impl HttpChild {
             body.to_owned(),
         )
     }
-    fn finish(mut self) {
+    fn finish(mut self) -> String {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
                 let stderr = self.reader.take().unwrap().join().unwrap();
                 assert!(status.success(), "{stderr}");
-                return;
+                return stderr;
             }
             assert!(std::time::Instant::now() < until, "HTTP did not shut down");
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -4422,6 +4428,63 @@ varta.http.serve({hostname:"127.0.0.1",port:0},handle);
         );
         assert_eq!(server.request("/stop").0, 200);
         server.finish();
+    }
+}
+#[test]
+fn async_http_v2_streams_request_budget_reports_in_dev_wasm_and_native_artifacts() {
+    let project = RegressionProject::new(
+        r#"
+        async function handle(r:VartaHttpRequest):Promise<VartaHttpResponse>{
+            await new Promise<void>((resolve)=>{setTimeout(()=>{resolve();},1);});
+            if(r.target=="/fail")throw new TypeError("failed request");
+            if(r.target=="/stop")varta.http.stop();
+            return {status:200,body:"Привіт 🦀 "+r.target,headers:[]};
+        }
+        export function main():void{}
+        varta.http.serve({hostname:"127.0.0.1",port:0},handle);
+        "#,
+        serde_json::json!({"net":{"listen":["127.0.0.1:0"]},"time":{"timer":true}}),
+    );
+    project.language_profile(V38_PROFILE);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut dev = varta();
+    dev.current_dir(&project.0).args(["dev", "--budget-report"]);
+    let mut wasm = varta();
+    wasm.current_dir(&project.0)
+        .args(["run", "dist/app.wasm", "--budget-report"]);
+    let mut independent = Command::new(runtime_path());
+    independent
+        .current_dir(&project.0)
+        .args(["run", "dist/app.wasm", "--budget-report"]);
+    let deployment = project.0.join("deployed");
+    fs::create_dir(&deployment).unwrap();
+    let executable = deployment.join("server");
+    fs::rename(project.0.join("dist/app"), &executable).unwrap();
+    let mut native = Command::new(executable);
+    native.current_dir(&deployment).arg("--budget-report");
+    // Exercise dev first, then remove source/config for all artifact routes.
+    for (index, command) in [dev, wasm, independent, native].into_iter().enumerate() {
+        if index == 1 {
+            fs::remove_dir_all(project.0.join("src")).unwrap();
+            fs::remove_file(project.0.join("varta.config.json")).unwrap();
+        }
+        let server = HttpChild::start(command);
+        assert_eq!(server.request("/fail").0, 500);
+        assert_eq!(server.request("/ok"), (200, "Привіт 🦀 /ok".into()));
+        assert_eq!(server.request("/stop").0, 200);
+        let stderr = server.finish();
+        assert_eq!(stderr.matches("varta HTTP request ").count(), 3, "{stderr}");
+        assert!(stderr.contains("varta HTTP request 1: Failed"), "{stderr}");
+        assert!(
+            stderr.contains("varta HTTP request 2: Returned { status: 200 }"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("varta budget: execution: fuel "),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("varta budget: timer:"), "{stderr}");
     }
 }
 #[test]
@@ -16982,6 +17045,99 @@ fn view_snapshot(output: &std::process::Output) -> serde_json::Value {
     serde_json::from_str(&text[start..end]).unwrap()
 }
 
+#[test]
+fn a_view_script_waits_for_network_explicitly_and_rejects_invalid_wall_bounds() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        loop {
+            let mut line = String::new();
+            assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let body = "Привіт 🦀".as_bytes();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+    });
+    let source=r#"
+      async function load(label:number):Promise<void>{
+        try{const response=await fetch("__BASE__/hello");const text=await response.text();View.setText(label,text);View.commit();}
+        catch(error){console.log(error instanceof Error?error.name:"wrong");}
+      }
+      export function main():void{
+        const root=View.node();View.createElement(root,1);View.setAttribute(root,1,"app");
+        const label=View.node();View.createText(label,"pending");View.insert(root,label,0);
+        View.mount(root);load(label);
+      }
+    "#.replace("__BASE__",&base);
+    let project = RegressionProject::new(
+        &source,
+        serde_json::json!({"net":{"request":{"urls":[format!("{base}/**")],"methods":["GET"]}}}),
+    );
+    project.language_profile(V38_PROFILE);
+    fs::write(
+        project.0.join("script.json"),
+        r#"{"inputs":[{"input":"wait_network","ms":1000}]}"#,
+    )
+    .unwrap();
+    let output = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(output.status.success(), "{}", combined(&output));
+    assert_eq!(
+        view_text(view_node(&view_snapshot(&output), "app")),
+        "Привіт 🦀"
+    );
+    server.join().unwrap();
+    fs::write(
+        project.0.join("host.json"),
+        r#"{"schemaVersion":1,"abiVersion":34,"capabilities":[]}"#,
+    )
+    .unwrap();
+    let denied = project.command(&[
+        "dev",
+        "--view-script",
+        "script.json",
+        "--policy",
+        "host.json",
+    ]);
+    assert!(denied.status.success(), "{}", combined(&denied));
+    assert!(
+        combined(&denied).contains("NotAllowedError"),
+        "{}",
+        combined(&denied)
+    );
+    for ms in [0, 5001] {
+        fs::write(
+            project.0.join("script.json"),
+            format!(r#"{{"inputs":[{{"input":"wait_network","ms":{ms}}}]}}"#),
+        )
+        .unwrap();
+        let invalid = project.command(&["dev", "--view-script", "script.json"]);
+        assert!(!invalid.status.success(), "{}", combined(&invalid));
+        assert!(
+            combined(&invalid).contains("network wait"),
+            "{}",
+            combined(&invalid)
+        );
+    }
+}
+
 fn view_node<'a>(node: &'a serde_json::Value, ident: &str) -> &'a serde_json::Value {
     fn find<'a>(node: &'a serde_json::Value, ident: &str) -> Option<&'a serde_json::Value> {
         if node["attributes"]["id"] == ident {
@@ -17186,9 +17342,9 @@ fn compiled_json_decoders_run_in_dev_and_single_binaries() {
     let build = project.command(&["build", "--single"]);
     assert!(build.status.success(), "{}", combined(&build));
     let expected = [
-        r#"varta log: {"extra":[true,{"n":0}],"items":[{"id":1,"name":"aé\n","score":null,"tags":["x"]}],"meta":{"k":0.30000000000000004}}"#,
-        r#"varta log: {"extra":"😀","items":[],"meta":{}}"#,
-        r#"varta log: {"extra":null,"items":[],"meta":{"1":1}}"#,
+        r#"varta log: {"items":[{"id":1,"name":"aé\n","tags":["x"],"score":null}],"meta":{"k":0.30000000000000004},"extra":[true,{"n":0}]}"#,
+        r#"varta log: {"meta":{},"items":[],"extra":"😀"}"#,
+        r#"varta log: {"items":[],"meta":{"1":1},"extra":null}"#,
         "varta log: TypeError JSON value does not match the checked schema",
         "varta log: SyntaxError Invalid JSON syntax",
     ];

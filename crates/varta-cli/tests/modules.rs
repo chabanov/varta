@@ -1105,3 +1105,89 @@ fn thenable_resolution_is_checked_across_modules_in_source_free_artifacts() {
     fs::remove_dir_all(project.root.join("src")).unwrap();
     assert!(success(project.command(&["run", "dist/app.wasm"])).contains("varta log: blocked"));
 }
+
+#[test]
+fn v38_json_order_and_boolean_results_survive_source_free_packaging() {
+    let project = Project::new(
+        "import {decode,show} from './result.js';\
+         export function main():void{console.log(show(decode()));}",
+    );
+    project.write("varta.config.json", V38_CONFIG);
+    project.write(
+        "src/result.ts",
+        r#"type Result={ok:true;value:{a:number;z:number}}|{ok:false;error:string};
+        export function decode():Result{
+            const value=JSON.parse('{"z":1,"a":2}') as {a:number;z:number};
+            return {ok:true,value};
+        }
+        export function show(result:Result):string{
+            if(result.ok)return JSON.stringify(result.value);
+            return result.error;
+        }"#,
+    );
+    let expected = "varta log: {\"z\":1,\"a\":2}";
+    assert!(success(project.command(&["dev"])).contains(expected));
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains(expected));
+    let native = Command::new(project.root.join("dist/app"))
+        .current_dir(&project.root)
+        .output()
+        .unwrap();
+    assert!(success(native).contains(expected));
+}
+
+#[test]
+fn direct_union_json_decoders_link_and_run_without_sources() {
+    let project = Project::new(
+        r#"import {decode,decodeOverlap} from './decode.js';
+        export function main():void{
+            const good=decode('{"value":7,"ok":true}');
+            console.log(good.ok?String(good.value):good.message);
+            const escaped=decode('{"value":8,"\\u006fk":true}');
+            console.log(escaped.ok?String(escaped.value):escaped.message);
+            const bad=decode('{"message":"bad","ok":false}');
+            console.log(bad.ok?String(bad.value):bad.message);
+            try{decode('{"value":9,"ok":false}');console.log("wrong");}
+            catch(e){console.log(e instanceof TypeError?"blocked":"wrong");}
+            console.log(decodeOverlap('{"value":9,"other":"b","kind":"a"}'));
+        }"#,
+    );
+    project.write("varta.config.json", V38_CONFIG);
+    project.write(
+        "src/types.ts",
+        r#"export type Result={ok:true;value:number}|{ok:false;message:string};
+        export type Overlap={kind:"a";value:number}|{kind:unknown;other:"b";value:number};"#,
+    );
+    project.write(
+        "src/decode.ts",
+        r#"import type {Result,Overlap} from './types.js';
+        export function decode(text:string):Result{return JSON.parse(text) as Result;}
+        export function decodeOverlap(text:string):string{return JSON.stringify(JSON.parse(text) as Overlap);}"#,
+    );
+    let expected = [
+        "varta log: 7",
+        "varta log: 8",
+        "varta log: bad",
+        "varta log: blocked",
+        "varta log: {\"value\":9,\"other\":\"b\",\"kind\":\"a\"}",
+    ];
+    let assert_output = |output: Output| {
+        let output = success(output);
+        let lines = output
+            .lines()
+            .filter(|line| line.starts_with("varta log:"))
+            .collect::<Vec<_>>();
+        assert_eq!(lines, expected, "{output}");
+    };
+    assert_output(project.command(&["dev"]));
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("src")).unwrap();
+    assert_output(project.command(&["run", "dist/app.wasm"]));
+    assert_output(
+        Command::new(project.root.join("dist/app"))
+            .current_dir(&project.root)
+            .output()
+            .unwrap(),
+    );
+}

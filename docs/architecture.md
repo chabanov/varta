@@ -171,7 +171,7 @@ registries change, replace a block with the test's expected output.
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **34**, value ABI **18**, HTTP contract **1** and **41** language profiles (the rows above).
+Launcher protocol **2** advertises host ABI **34**, value ABI **18**, HTTP contract **2** and **41** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -5415,9 +5415,10 @@ top-level declaration`) and keep rejecting `as const`.
   Large modules are split into several bounded initializers; each counts toward
   the user function limit. Initializers are not exported, are not function-value
   dispatch targets and are omitted for modules whose constants all fold. Tool
-  and HTTP entry points do not run `main`: binary64 profiles already reject tool
-  and HTTP contracts, and a program combining stored constants with tool or HTTP
-  entry points is rejected explicitly.
+  and HTTP entry points do not run `main`. Tool contracts and pre-v38 HTTP reject
+  stored module constants explicitly. V38 HTTP v2 runs these initializers once in
+  each request's fresh Store before the adapter, independently of startup main;
+  see [HTTP contract v2](#http-contract-v2--native-server).
 - **`as const`.** `as const` is admitted around a whole `const` or `let`
   initializer, at module scope or inside a function. The value keeps its
   ordinary element and field types (literal and tuple types are not inferred) and
@@ -6593,10 +6594,11 @@ trap before any effect.
   (the same reports are made and withdrawn, and the same executions
   terminate), only the diagnostic text, so they apply to every scheduler
   profile (v34 to v38). Values are in the [limits table](#resource-limits).
-- **Entry points.** Only `main` gets a checkpoint. Tool and HTTP contracts are
-  rejected in every binary64 profile, so async tool handlers and HTTP adapters
-  cannot be declared; a request-scoped isolate with its own checkpoint is the
-  next step for HTTP.
+- **Entry points.** Main has its normal checkpoint. Tool contracts remain
+  primitive-only and intermediate binary64 profiles still reject HTTP contracts.
+  V38 [HTTP v2](#http-contract-v2--native-server) adds a fresh
+  request Store and checkpoint, including async response completion; it never
+  reruns startup main.
 
 #### Promise objects (`promises`)
 
@@ -9262,7 +9264,9 @@ record of the same source, so a burst costs one turn. At most
 coalescible record and fails the instance for any other. Records are at most
 `events::MAX_EVENT_RECORD_BYTES` bytes; at most `events::MAX_EVENT_SOURCES`
 sources (named and permission answers) are open at once. Every task carries its
-source id, which is never reused; a task for a closed source is discarded
+source id, which is never reused and cannot exceed `events::MAX_EVENT_SOURCE_ID`
+(the exact-integer range of the f64 boundary); exhaustion fails before assigning
+an ambiguous id. A task for a closed source is discarded
 before it reaches the guest. Open sources keep an application instance alive;
 they do not keep a bounded run alive (nothing can deliver to it).
 
@@ -10152,6 +10156,12 @@ such members.
   member provides come first in member order, the others follow in the order
   they become present (JavaScript orders by first definition).
 - `obj.m?.()` on a class method is the ordinary call.
+- V38 boolean discriminants: `if (result.ok)`, its negation, logical guards
+  and ternaries narrow the owning record/class union like an explicit comparison
+  with `true` or `false`, including nested property paths. Every member must
+  declare a required boolean data field; optional/non-boolean fields and getters
+  retain their existing truthiness rules. A member with a general `boolean`
+  field remains possible on either branch. V37 admission is unchanged.
 - Property-path facts survive calls, `new`, `await`, loops and getter paths,
   as TypeScript keeps them; a read of a fact that may be stale tests the value
   against the narrowed members and throws `TypeError` ("property … no longer
@@ -10748,7 +10758,12 @@ effects ([embedding contract](embedding.md#linked-intrinsics-v38)).
   its reachable parent slot, or retains it at the root, before allocating
   its children; a record's presence and order words and the `undefined`
   cells of missing optional union fields are written when the record is
-  complete; dictionary entries take their own-key positions (array-index
+  complete. Record storage slots remain canonical, but their enumeration trailer
+  follows input order for ordinary names, with array-index names first in numeric
+  order (`4294967295` and noncanonical numeric strings are ordinary names).
+  Missing optional fields do not acquire enumeration positions; deleting and
+  re-adding a field uses the ordinary record insertion rules. Dictionary entries
+  take their own-key positions (array-index
   keys ascending, then input order); value18 dictionaries are built
   unindexed (zero holes, zero table). A failed parse throws before the
   first value allocation, so no partial result exists.
@@ -10760,8 +10775,9 @@ static target type (`JSON.parse(text) as T`, `varta.json.parse<T>`, the
 untyped `JSON.parse(text)` at `unknown`, and the preludes' parses such as
 `Response.json()` and the network head) to a decoder the compiler emits for
 that type. It changes no host ABI, value layout, schema version or import:
-the module still links `json_parse_v19` and embeds each target's schema 18,
-which the decoder calls for every input it does not accept itself. KV
+ordinary targets still link `json_parse_v19` and embed schema 18 for their
+fallback. Literal-constrained assertions use the private attempt described
+below and retain their original checked conversion as fallback. KV
 decodes (`kv_key`, `kv_value`) stay host imports. Contract:
 
 - **Same outcome.** For every input the result is the one the shared
@@ -10788,6 +10804,33 @@ decodes (`kv_key`, `kv_value`) stay host imports. Contract:
   reset to its entry value and only a reference result is retained;
   `env_result_len` is zero. Before a fallback the entry resets the root
   stack too, so the linked decoder starts from the caller's state.
+- **Literal-constrained assertions.** Eligible `JSON.parse(text) as T` targets
+  containing literals (records, discriminated reference unions and their arrays)
+  keep a compiler-only semantic graph captured before literal erasure. Targets
+  must satisfy the existing checked-conversion admission; object views, tuples,
+  nominal collections and other non-schema types keep their original path. Scalar
+  checkers validate string, number and boolean literal sets. For unions with
+  multiple record members, a required literal field must prove each alternative
+  disjoint from every other alternative; a tag probe skips preceding values on
+  the tape, selects one member, then validates the complete record once. Tags
+  are scanned once per field/scalar kind and their decoded tape entry is reused
+  across the candidate tests. No intermediate guest `unknown` value graph is
+  built on success; fields declared `unknown` still build their required values. Escaped tags,
+  slow numeric tags, unproven/overlapping choices and all other misses retain the
+  original unknown parse followed by checked assertion, including its errors.
+  The input expression runs once, also across `await`. Private attempts return
+  zero only internally on a miss: roots are released first, the caller inspects
+  the address, and fallback completes before any language value is exposed.
+  Successful structured values always have nonzero allocated handles. No public
+  schema drops literal constraints; `varta.json.parse<T>` with literal-bearing
+  types remains unsupported. Host/schema/value ABIs and older profiles stay fixed.
+  Tape rewinds use offsets from the current block base after growth or collection.
+- **Record key order.** Each field slot is appended to the record's order words
+  as its tape entry is consumed. After building, present integer-named fields
+  move to the front in numeric order with stable rotations; named fields retain
+  document order. This changes no descriptor, physical field slot or ABI. The
+  shared fallback sorts its recorded input slots by the same own-key rule;
+  wide records and escaped input keys therefore preserve the same order.
 - **Schema at compile time.** The checkers and builders are generated from
   the target's schema nodes (one graph per module; every node is one value
   type, shared by all call sites and targets reaching it): field names as
@@ -10822,7 +10865,17 @@ decodes (`kv_key`, `kv_value`) stay host imports. Contract:
   wide records and the data-limit cases, and runs decoders that collect
   before every block they allocate (`compile_collecting`); the compiler's
   `emit::decoders::tests` validates the modules in Wasmtime and checks that
-  decoders are shared per type and absent before v38.
+  decoders are shared per type and absent before v38. `direct_json_tests`
+  compares private attempts with `compile_assertions_reference` (only direct
+  assertion decoding disabled), generic/host decoding and forced collection,
+  including recursive/array targets, literal failures, seeded mutations,
+  relocated tape blocks, single evaluation and default production budgets.
+  Source-free CLI cases include imported union types. Measured last-tag cases
+  use 69,707 vs 102,176 fuel (2 variants/128 numbers), 71,660 vs 105,810
+  (32/128), 297,330 vs 407,976 (32/512) and 81,307 vs 125,167 (200/128).
+  Existing dispatch ceilings pass unchanged (12 vs 7 fuel per preceding candidate
+  for 24 vs 200 members). These are selected regression measurements, not a
+  general throughput or allocation benchmark.
 
 #### Fair host fuel (`fair_fuel`)
 
@@ -11038,7 +11091,10 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   than one member")`. Member order never decides. `JSON.parse(text) as T`
   with such a union anywhere in `T` parses to `unknown` first, since the
   host's schema parser cannot select the member. Unions whose members all
-  have discriminants keep the v37 selection.
+  have discriminants keep the v37 selection. A literal field is never disjoint
+  from a corresponding `unknown` field: unknown admits every scalar. Such
+  overlapping alternatives require strict matching, retaining valid alternatives
+  and rejecting multiple successful matches rather than choosing by member order.
 - **Unions and `unknown` with bytes.** `x as U` from a union to a union of
   some of its members (a `BodyInit` to a `BlobPart`) tests the cell against
   `U`'s members, `TypeError` otherwise; `o.p instanceof C ? o.p : y` narrows
@@ -11535,6 +11591,18 @@ trusted platform inputs above, and `prompts`) or a wait,
   order, then sets loop time to V + N. A zero-delay timer armed during the
   wait fires within it when due by V + N, otherwise in the next step's
   settling.
+- **Explicit network wait.** `{"input":"wait_network","ms":N}` accepts a
+  positive finite wall-clock duration up to `Script::MAX_NETWORK_WAIT_MS`.
+  It first performs ordinary input settling, then holds virtual loop time fixed
+  while armed network operations and their reactions settle. Future virtual
+  timers do not become due through wall time. A response with no armed body read
+  is quiescent; its body can be read by a later input. The step caps native
+  waits, guest turns and idle maintenance, without changing the instance lifetime
+  or the original deadlines of surviving transfers. Existing smaller lifetime,
+  turn and resource limits still apply. Expiry terminates the instance with
+  `ApplicationError::NetworkWait` naming the step and duration, and no later
+  script input runs. Request resources close when the failed session is dropped.
+  Directly constructed scripts are validated before starting guest execution.
 - **End.** After the last step the session settles once more and reports.
   A timer that no wait reaches never fires; requests still in flight are not
   waited for.
@@ -11547,8 +11615,9 @@ trusted platform inputs above, and `prompts`) or a wait,
   completion that has arrived when the session settles runs in Node's order
   after timers, otherwise it runs at a later settling or not at all. Its
   arrival follows the wall clock, so only a script without network requests
-  in flight is deterministic; an explicit bounded network wait step is open
-  ([development plan](development-plan.md#view-layer-l0l3)).
+  in flight is deterministic. `wait_network` explicitly permits bounded real I/O;
+  it is not replay. A recorded or simulated transport remains necessary for
+  reproducible network completion order, response bytes and errors.
 - `Date.now()` and `performance.now()` keep reading the clock their
   `time.now` grant authorizes; virtual time governs timers only.
 
@@ -11616,14 +11685,190 @@ counters, listeners), the accessibility tree (roles, names, states), title,
 focus, stylesheets and the simulated clipboard, opened URLs and prompt count.
 The cascade orders sheets by id, then specificity, then source order; inline
 styles win; custom properties inherit and `var()` is substituted; other
-properties report their cascaded value. Layout rectangles are not computed:
-Taffy and Parley are not dependencies yet.
+properties report their cascaded value. Ordinary snapshots do not include layout
+rectangles. An experimental separate `layout_boxes` API uses pinned Taffy to
+compute a bounded subset of div and semantic block/flex/grid geometry and
+single-text-child paragraphs with pixel and percentage dimensions,
+min/max sizes, automatic and signed pixel/percentage margins, padding, border shorthands and uniform border width/style,
+gap, direction, wrapping, alignment, grow/shrink, static/relative/absolute/fixed
+positioning and pixel/percentage insets
+and pixel or percentage flex basis. Stylesheet shorthands are expanded in cascade order before
+inline properties. For these geometry properties the headless tree retains the
+last inline writer for each affected longhand, including shorthand updates and
+removals. Border width and style are likewise resolved per side through stylesheet
+and inline cascade. Unsupported content and computed CSS fail explicitly.
+Paint-only color, opacity, outline, border radius, text decoration, cursor and
+stacking-order properties do not affect these rectangles; this does not implement
+their rendering. Transforms and other unsupported geometry effects still fail.
+`TextMeasurer` separately shapes bounded text using explicitly supplied fonts
+and Parley; its font collection disables system-font discovery. It reports
+advance, height and line count. The separate experimental `layout_boxes_with_text`
+uses it for isolated ASCII graphic characters, Cyrillic alphanumeric text, selected
+punctuation and collapsed CSS whitespace in flex/grid containers and blocks with one
+text child, with a caller-supplied covering font and base size. Supported
+`white-space` modes include `normal`, `nowrap`, and a `pre-wrap` subset; tabs
+and leading/trailing line spaces in `pre-wrap` are rejected. Pixel/percentage
+font sizes, supported weights/styles, and normal, numeric, pixel or percentage line heights inherit along
+the element tree. A CSS family list resolves against the supplied fonts; an
+unmapped generic family before a match is rejected. The embedding host may
+explicitly map aliases, including generic families, to a supplied font and must ensure
+the same fonts and glyph coverage on comparison targets. Glyph fallback is limited
+to the explicit collection. A text node's rectangle
+is its anonymous layout box, not a glyph-ink bound. Adjacent text, mixed block
+children, baseline alignment and general inline formatting are rejected.
+Platform font selection and text rendering remain open.
+`overflow-wrap: normal` and `anywhere` inherit and participate in line breaking
+and flex/grid minimum-content sizing; `nowrap` still suppresses soft breaks.
+For a supported `p`, default vertical margins are one supplied-font em unless
+overridden by the cascade; the paragraph currently requires one text child.
+`display: none` subtrees produce zero rectangles without measuring or validating
+their hidden layout contents; visible unsupported content still fails closed.
+Vertical scroll offsets for `overflow: auto` and `hidden` affect descendant
+rectangles and are bounded by the computed scrollable content; fixed and
+absolute positioning use their respective viewport and containing block.
+The separate `layout_geometry` and `layout_geometry_with_text` APIs also expose
+the viewport and rectangular ancestor clipping bounds for each box. Nested
+overflow clips use padding boxes; fixed and absolute descendants follow their
+viewport and containing-block clip chains. These bounds are for a host renderer:
+they do not paint, model rounded clips, or implement hit testing. Geometry uses
+overlay scrollbars and does not implement horizontal scrolling; it does not
+change the stored scroll state or snapshots.
+The experimental `rasterize_boxes` API uses a bounded, transparent CPU image
+with premultiplied RGBA8 pixels. It paints solid CSS background colors for the
+supported unpositioned box tree in document order, respecting rectangular
+ancestor clips. Solid rectangular borders with a common color across visible
+sides use the CSS border cascade, including inherited `currentcolor` and
+shorthand resets. `rasterize_with_text` also paints the supported shaped text
+using the host's explicit fonts and bounded unhinted glyph outlines; it shares
+the text layout restrictions and rejects synthetic font styling and decoration.
+The box-only variant rejects text. A button, text input or fixed-size textarea is paintable
+with explicit box, font, foreground and background styles, zero radius and
+an explicit outline style; buttons also require explicit flex alignment. Text inputs paint
+their value, keyboard selection and a non-blinking caret; missing glyphs use the supplied font's
+`.notdef` outline. Other controls, differently colored border sides,
+positioned elements, stacking effects and rounded corners fail explicitly.
+Solid rectangular outlines support explicit pixel widths, colors and offsets,
+including focus-visible styles and shorthand/longhand cascade. They paint after
+the element's contents, clip to ancestor bounds, do not affect layout and do not
+extend hit regions. Platform-default focus styling and rounded outlines remain open.
+Empty text inputs display a plain fixed-gray placeholder without changing the
+field value or selection; IME preedit hides it. Placeholder pseudo-element
+styling and browser-specific colors remain open.
+Disabled buttons and text inputs paint their explicit styles but do not activate
+or accept edits. Setting `disabled` or `readonly` clears transient IME preedit;
+native platform-default disabled styling is not supplied.
+For a focused input that subsequently becomes disabled, Varta can still deliver
+keydown but Enter does not submit its form. In a focused test Chrome did not
+submit, whereas WebKit submitted; complete cross-browser parity remains open.
+The experimental desktop preview uses these CPU images.
+Explicitly styled textareas preserve newlines, wrap long text to the content
+width, paint multiline selection/caret and keep the caret vertically visible.
+Physical two-dimensional text hit testing places and selects text across rows.
+Vertical keyboard navigation, user-controlled text scrolling, automatic field
+sizing and resize handles remain open.
+An experimental scaled raster API keeps geometry and font sizes in CSS pixels
+while drawing paths directly into a physical-resolution image. Hit regions,
+text hit positions and IME cursor areas use physical coordinates; scroll offsets
+remain in CSS pixels. Pixel allocations retain the existing image bounds. The
+desktop preview uses the window scale factor at startup and after DPI changes,
+updates logical viewport conditions and rejects frames/inputs for obsolete
+scales. Pixel-based wheel deltas are converted to CSS pixels.
+An application host may request the current CPU frame between guest turns via
+`Application::view_rasterize`, with the same bounds and fail-closed subset.
+The frame carries bounded rectangular hit regions in paint order. The desktop
+preview uses those regions for left-button activation and discards events when
+the view state or viewport has changed since the displayed frame. For vertical
+wheel input it chooses the nearest `overflow: auto` ancestor with available
+scroll range, propagates remaining movement outward and sends `scroll` events;
+`overflow: hidden` remains programmatically scrollable but ignores the wheel.
+The experimental geometry API can plan nearest-edge vertical scrolling through
+nested auto and hidden scrollports without applying changes. Absolute and fixed
+positioned paths are rejected. A separate experimental view API applies the plan atomically and
+emits scroll records without a user-gesture grant. An application-host API
+queues those records as later guest turns.
+An opt-in layout-aware batch API executes `scroll_into_view` and `scroll_to`
+in batch order, computing geometry at each command and atomically rejecting the
+batch when layout is unsupported. Layout-dependent commands per batch are bounded
+by the pending-command limit. Application hosts opt into this mode by supplying
+an initial viewport and explicit font; the native preview does so before the
+first turn and updates its geometry after resize. Other hosts retain their
+existing behavior when they do not supply layout resources.
+Scroll records produced within a batch retain the originating element's identity;
+removing and recreating its numeric ID in that batch cannot redirect the record.
+The experimental view API can capture an opaque identity for an attached
+element and apply a deferred scroll only while that same element remains
+attached. Removal and reuse of its numeric ID, including in another view or
+divergent cloned tree, cannot redirect the action.
+The preview forwards admitted keydown keys and modifiers to the focused element;
+Tab uses the view's focus order and skips `display: none` subtrees. The host
+updates viewport conditions before processing inputs and rendering after resize.
+The native preview reads the window's system color scheme at startup and follows
+theme changes through `prefers-color-scheme`. Frame and input checks include the
+color scheme so events from a stale themed frame are discarded.
+Guest `set_title` updates the native window title when its current frame is
+presented. An empty guest title uses the preview's default title.
+The preview supports direct keyboard insertion, grapheme-aware deletion,
+arrow/Home/End navigation and Shift selection in focused text inputs. Space and
+Backspace follow the view's keydown rules. Host edits that would
+exceed the 64 KiB UTF-16 value limit are ignored without mutating the value.
+Character keys dispatch `keydown` before insertion so `preventDefault` can stop
+the edit. Ctrl/Command+A selects the input's text using the physical shortcut key;
+printable Ctrl+Alt input remains available for AltGr layouts. IME composition
+continues through the separate preedit/commit path.
+Native text editing supports per-edit undo and redo, restoring the selection and
+emitting an input record with a fresh edit sequence. History shares a one MiB
+UTF-8 text budget and a 64-edit cap across the view. A changed guest `set_value`
+starts a new history epoch; equal echoes and stale patches preserve history.
+Successful commits immediately release history for removed fields and replaced
+values; rejected batches leave history intact.
+Ctrl/Command+Z undoes; Shift+Ctrl/Command+Z or Ctrl/Command+Y redoes. The host maps
+physical shortcut keys for non-Latin layouts. Typing-run grouping and full browser
+undo parity remain open.
+The shared view's `select` command selects the complete text of a text, search or
+password input or textarea without changing its value or edit sequence; a
+later edit replaces that selection. It focuses an attached, enabled control and
+dispatches focus records; number and checkable inputs receive focus but no text
+selection. Detached and disabled controls do not receive focus. Chrome and WebKit
+were checked for these cases; controls under `display: none` also retain the
+previous focus. Firefox remains unverified.
+Pointer clicks and same-window drags resolve shaped cluster positions from the
+displayed frame; a drag applies its selection on release. The resulting offsets
+are validated against the current UTF-8 value. Experimental IME preedit is
+displayed without changing the field value; commit replaces the selection and
+dispatches an input event. The preview positions the system candidate window at
+the caret, bounds and validates incoming composition data, and cancels preedit
+on focus changes or a guest view commit. Composition events are not exposed to
+the guest and platform IME acceptance remains unverified. Clipboard, live drag
+highlighting, bidirectional visual navigation and native accessibility are not
+yet provided by this preview. Firefox can delete
+part of a ZWJ emoji sequence where this editor removes its whole grapheme;
+cross-renderer equivalence for those cases remains open.
+Explicitly sized text inputs and buttons with explicit display, minimum sizes,
+padding and border can participate in this experimental geometry. A button with
+text requires one text child, flex display and explicit font and alignment
+properties. Other control types and intrinsic or platform-default control sizing
+are rejected. The geometry path itself only calculates boxes. Full text editing,
+full IME support, CSS and general geometry remain open.
+Grid supports a subset of the validated track grammar, numeric line/span placement, and
+bounded explicit and implicit grid work; unsupported values and oversized
+track lists fail closed. General grid, typography and target parity remain open.
+
+For layout comparison, `View::snapshot_flex_blockified()` provides a separate
+projection of the existing snapshot. It changes an explicit cascaded `inline`
+display to `block` on direct children of an explicit `flex` parent. It leaves
+the ordinary snapshot and accessibility output unchanged, does not infer missing
+user-agent defaults, and is not a complete computed-style or geometry model.
+The same projection is available as `project_flex_blockification` for an already
+captured snapshot; its iterative walk does not alter non-tree fields.
 
 **Accessible names.** The accessibility tree names a node by the steps of
 [accname 1.2](https://www.w3.org/TR/accname-1.2/) that the L0 v1 subset
 admits (`varta-view/src/name.rs`). An element is *hidden* when it has
 `aria-hidden="true"`, a computed `display: none`, or is a `dialog` that is not
 open; a hidden element and its subtree are absent from the accessibility tree.
+In the headless role mapping, a `section` with an `aria-label` or
+`aria-labelledby` attribute has the implicit `region` role; an explicit role
+overrides it. An empty or unresolved name is omitted from the snapshot.
 The name of an element E with role R is computed by visiting nodes, starting
 at E (the root step):
 
@@ -12629,6 +12874,561 @@ instantiation leaves even one unit of guest fuel untouched, and the start
 function charge, on every CI host, and compiles the case corpus twice to
 compare bytes; a host-dependent engine setting or compiler output fails it.
 
+### Browser fuel transform foundation (in development)
+
+`varta_compiler::browser_meter::instrument` derives a private execution image
+from validated portable Wasm. It leaves the original artifact unchanged. The
+trusted host must first validate the original artifact, metadata, effects and
+permissions; the derivative is never a portable artifact or evidence of trust.
+The image imports the private mutable i64 global `varta_browser_meter.fuel` and
+carries `varta.browser.meter` version 1. Original global references are remapped;
+function indices are preserved. The host owns initialization to negative remaining
+fuel and fair host-work deductions. Reporting clamps exhausted fuel to zero.
+
+The implementation follows locked Wasmtime 48's default Cranelift model: entry
+cost, buffered operator costs, call save/reload, loop checks and variable memory
+work. A sealed-block SSA view preserves integer constant identities through locals
+and branches; checks for small constant bulk operations differ from dynamic sizes.
+Ordinary traps and statically impossible memory offsets preserve native fuel
+publication boundaries. Instrumentation instructions consume no modeled guest fuel.
+
+Supported operation families currently include core numeric/control, bulk memory,
+SIMD, sign extension, saturating conversion, multi-value and tail calls. Unmodeled
+proposals, variable table operations, shared/memory64/custom-page, non-function imports, Wasm
+start functions and already instrumented input are rejected. Input/output module,
+type and function-body sizes are checked against Wasm implementation limits.
+Start-function instantiation charges remain a host gap. An initial library-built
+console loader and build command are described below; a complete official host
+and browser dev delivery remain in development.
+`varta_common::browser` generates the frozen ES registry in
+`crates/varta-common/browser/registry.mjs` directly from Rust (profiles, exact
+operation signatures/admission, entry points, value/frame acceptance, fair-work
+rates and private meter identifiers). A drift test checks regeneration; the
+operation enum supplies its own complete iterable inventory. This predicate/data
+alone never replaces whole-module validation or permission enforcement.
+
+`varta_project::browser::BrowserArtifact::prepare` now supplies the trusted
+preparation boundary. It validates the original artifact manifest/code ABI, then
+uses the native runtime's complete module/catalog/helper-effect admission before
+instrumenting. The result owns an immutable pairing of original bytes/manifest,
+validated inspection, effective budgets, optional host ceiling and private image.
+It performs no guest invocation or filesystem-root binding. An explicit empty
+ceiling remains distinct from package-only mode; these retained policies are not
+permission decisions or grants for browser effects.
+
+For v38, preparation resolves requested budgets against the validated host ceiling
+(or production caps); older profiles retain frozen budgets. The private image
+clamps memory maxima to whole pages within that effective byte ceiling and table
+maxima to the native element ceiling, preserving any smaller declared maximum.
+An initial allocation above the ceiling fails preparation. This supplies the JS
+equivalent of native Store growth limits without changing portable bytes. Shared,
+64-bit and custom-page memories and shared/64-bit tables remain unsupported.
+`instrument` uses the production memory cap; `instrument_with_memory_limit` accepts
+the already resolved trusted cap. Unsupported input never falls back to an
+unmetered image. The initial console bundle supplies integrity binding to this prepared pair;
+general artifact loading and permission/effect enforcement remain open.
+
+`BrowserArtifact::bundle` builds a checked console/view bundle:
+`app.wasm`, `app.private.wasm`, `app.manifest.json`, `varta-worker.js`,
+`varta-host.js` and `index.html`. It currently accepts only the implemented
+logging, Promise scheduler, timer, v38 asynchronous network and view imports. Other missing effects
+fail before output files are produced; jobs are never silently
+skipped. `varta build --target browser` exposes this library path,
+writing `web` beside the configured output prefix (normally `dist/web`). It uses
+the same checked source compilation, then full original admission and bundle
+preparation before creating output directories. Unlike native execution loading,
+it does not pin configured native filesystem roots. Existing output directories
+are refused. The distribution flag does not reinterpret the original manifest
+`target` or Wasm bytes. `--target wasm` selects the existing portable build;
+`--target native` selects the existing verified companion packaging path, like
+`--single`. `--launcher` requires either native selector; `--single` and `--target`
+conflict. Host policies remain runtime inputs and cannot be passed to build.
+Browser dev and broader host effects remain in development; checked view sessions are described below.
+
+The browser checkpoint owns a bounded FIFO of resume tokens and pending reaction
+serials. It dispatches only through `varta_resume` with the normal/undefined
+completion contract, checking the dispatcher outcome and canonical empty
+exception channel after every job. Root execution and all jobs share fuel,
+host-call allowance and the parent watchdog; awaiting never renews budgets.
+Scheduler imports pay fair call fuel but do not increment the ordinary host-call
+counter, matching native. Profile continuation limits, serial/job limits,
+dispatch codes, errors and diagnostic layouts are generated from Rust.
+
+Rejections are rendered immediately into bounded owned diagnostics. The host
+keeps outstanding bits by tracking id and a bounded set of reason strings, never
+guest references. Adding a handler during the checkpoint withdraws the report;
+after the queue drains, the earliest outstanding report ends execution, including
+the native not-retained marker when its text was not kept. The diagnostic reader
+validates cells/heap envelopes, Error/BigInt/instance records and descriptor
+slots/presence/order before bounded copies. V38 Error and Error-instance messages
+use their profile's string limit, including messages above the frozen legacy
+limit; older profiles retain their limits. Only bounded field prefixes are copied
+for rejection diagnostics. Timer callbacks run after the checkpoint in stable
+(logical due time, arm sequence) order. Delays normalize like native; intervals
+rearm before callbacks and clearing releases pending cleanup frames. Unreferenced
+timers do not keep execution alive. A due time at or beyond the execution deadline
+fails immediately. The parent watchdog remains shared across all timer turns.
+V38 timer turns renew fuel, host-call and job allowances; output and memory remain
+instance-wide. Older profiles retain execution-wide allowances. Usage reports
+include total fuel/turns plus the final turn's remaining fuel.
+
+Arming requires the exact enabled package request `time.timer` and, when supplied,
+`run({permissionCeiling})`'s own `time.timer: true`. An empty ceiling denies;
+`time.now` cannot authorize it. The loader snapshots and validates this separate
+boolean-only ceiling before loading. It never grants authority absent from the
+package. V38 optional requests without a stored decision/prompt deny, matching
+native headless operation. The v38 broker and interactive prompt path are described
+below; legacy modes retain their policy behavior.
+V2 denial arms nothing, schedules frame cleanup and reports the recoverable
+permission error; legacy denial remains fatal. Timer bookkeeping pays fuel but
+never ordinary host-call counts. External host-event turns remain open.
+
+The v38 network adapter consumes only descriptor version 2, with generated ABI,
+completion, buffer and limit facts. Starts pay the ordinary host-call budget;
+watch/take/text/read/abort pay call fuel without that counter. The broker holds
+bounded slots, deferred starts and arrival completions, with one armed operation
+and watcher per request. Denials finish without calling Fetch. Transport events
+never invoke guest code: explicit delivery wakes the registered reaction, then
+v38 renews the turn allowances before the checkpoint. Due timers precede polling;
+network completions advance logical timer time to elapsed wall time. Abort replaces
+an armed completion, releases idle slots and discards late results.
+
+`run({permissionCeiling})` also accepts an exact `net.request` member shaped as
+`{patterns: [...], methods?: [...], responseHeaders?: [...]}`. Both package and
+ceiling URL/method scopes must match. Validation bounds and snapshots every list;
+empty/missing scopes deny and no other namespace grants requests. Matching uses
+exact normalized scheme/host/port and bounded path/query globs (`?` is literal),
+with native URL restrictions. Visible response headers are the two declared sets'
+intersection, defaulting independently to the native safelist. V38 optional
+requests without a decision remain denied. Generated CSP permits only package
+request origins in addition to bundle fetching. URL-valid origins that cannot
+be represented safely as CSP host tokens (punctuation, underscore or IPv6 literal)
+fail before output, preventing attribute/directive injection; runtime URL/method checks remain
+narrower and host ceilings are never embedded.
+
+The browser transport uses Fetch with omitted credentials, no referrer, no cache,
+CORS and manual redirects. Browser-owned request headers fail before Fetch instead
+of disappearing silently. Opaque redirects fail without following another hop;
+the prelude exposes its normal `TypeError: fetch failed` with the transport reason
+as the error cause. Fetch cannot reconstruct v37's arrival/repeated header form,
+so its network-start import remains an explicit bundle gap. CORS-hidden headers
+and raw header counts are unavailable; limits cover the exposed head. Exposed
+non-identity content encoding is rejected because Fetch already decoded its body;
+servers used for unchanged-body parity must return identity bytes and expose any
+relevant encoding/header metadata. This is a concrete browser transport boundary,
+not proof of native parity for arbitrary HTTP servers. Followed redirects, hidden
+wire metadata and compressed wire-byte parity require a separately designed
+trusted transport bridge. Native request behavior is unchanged.
+
+Response reads retain bounded input/chunks and enforce the shared body limit.
+UTF-8 carry follows native decoding, preserving BOMs and carrying raw bytes when
+a reader switches modes. Guest result publication uses the reserved UTF-16 result
+buffer, checks both UTF-8/UTF-16 limits, charges result bytes and writes the length
+only after checked memory growth/copy. Closing a run cancels all transfers.
+
+Browser view execution is engine-owned and admitted for v38 by the checked bundle path. `browser::registry().view` emits structured opcodes, operand
+kinds, tags/content models, attribute rules, CSS grammars/composites, event fields,
+flags, commands, defaults and limits directly from `varta_common::view`. Native
+and browser validation share `Tag::admits_child`; CSS composite grammars have one
+Rust owner. No engine code loads an example, scraped Markdown or the prototype's
+contract JSON.
+
+The shared view codec decodes the whole batch before semantics, validating every
+code, reserved byte, UTF-16 string and trailing byte. The pure model copies all
+mutable state, applies operations in order, checks final unique identifiers and
+swaps only after success. It includes field counters, radio groups, listener
+filters, child rules, command context/arguments, pending copy ids and stylesheet
+limits. Snapshots cannot mutate the authority. The Worker and parent DOM adapter use this model. Invalid batches trap in
+`view_commit` before any later guest effect, and the parent checks again before
+DOM application. One turn can commit once; it must receive the parent acknowledgement
+before taking another task. At most one bounded batch is in flight.
+
+The DOM adapter uses a closed shadow root and checked CSSOM/DOM methods,
+never HTML parsing. It preserves live node identities, drops stale field patches
+and encodes events from the generated layout. It blocks ambient asset URLs:
+resource paths require an already verified blob map. Browser events only emit
+records, never run guest code. Basic DOM/CSP/field/rollback behavior is verified in
+Chrome. A bounded `run({container})` renders and discards event records like native
+R1; omitting the container keeps its checked rendering headless.
+
+`mount({container, signal, budgetCeiling, permissionCeiling})` returns
+`{ready, finished, close, revoke, deliver}` for a long-lived application. A view
+application requires an attached container; non-view applications can omit it.
+`ready` resolves after
+main and its checkpoint/commit acknowledgement. Every event, timer and network
+completion starts a fresh v38 turn; memory/output remain instance-wide. The parent
+watchdog covers loading and active turns, clears while idle and rearms at the next
+turn. Network transfers also keep their own operation deadline. `close` terminates
+the Worker, cancels I/O, drops pending records and freezes the last safe DOM.
+The same container can then host a new instance; simultaneous ownership fails.
+The last reported usage of a forced close is a checkpoint, not a complete active-
+turn budget report. Exceptions and invalid transport acknowledgements terminate
+the instance. No callback calls guest code reentrantly.
+
+Parent-side pending events use the shared view limit, stable per-listener
+coalescing and overflow rules; one additional event is in transport at a time.
+The Worker accepts/validates that record and calls only the closed event export
+with owned binary bytes. Timers, network completions and view tasks are selected
+by due/arrival time. A committed view keeps unreferenced timers alive like native.
+Pending copy ids are released at delivery, and gestures come only from trusted
+click/keydown/submit records. Other event kinds cannot promote a gesture.
+
+The runtime ceiling accepts `clipboard.write: boolean` and
+`"ui.open_url": {patterns: [...]}` as exact view permissions. Both package requests
+and supplied ceilings must admit an operation. Optional requests and any-HTTPS
+prompt-only links deny without a prompt implementation. Clipboard calls require
+a gesture turn; links open only during trusted activation. Platform rejections
+remain recoverable command-result records. Actual anchor hrefs are inert, so
+hover/speculation cannot contact a denied origin. Persistent navigation guards
+survive freezing, and forms never submit ambient requests. The v38 broker, decisions,
+audit and owned consent UI are described below; broader control/accessibility/layout
+acceptance remains open. Unpackaged image
+paths fail in the Worker before a parent effect.
+
+A v38 configuration may specify browser distribution inputs as
+`"browser": {"resources": {"icons/red.png": "images/red.png"}}`. Names and paths
+use the common view resource grammar. These are build inputs under the config
+root, read through pinned no-follow descriptors, never execution filesystem roots
+or host grants. This section affects browser distribution only; portable/native
+Wasm and manifests retain their existing bytes. `bundle_with_resources` also accepts
+owned checked `BrowserResource` values without ambient file loading.
+
+Image resources currently use static PNG. Inventory count, per-file/total bytes,
+aggregate decoded RGBA/font bytes, name length and image dimensions are bounded by the packaging constants in
+`crates/varta-project/src/browser/resources.rs`. Admission checks the signature,
+first/unique IHDR, bounded chunk lengths and final IEND; animated PNG is rejected.
+Complete decoding is the browser's job and occurs before any renderer or Worker is
+created. A bad CRC or compressed stream therefore cannot reach guest execution.
+Every resource receives a generated flat file name and a pinned length/SHA-256
+entry in the trusted loader. Logical `src` names never become fetch URLs. The
+Worker admits only inventory names and the DOM receives only owned Blob URLs;
+CSP permits Blob images, without ambient image origins. Decode bitmaps close
+immediately; resource URLs revoke on failure, abort or session completion.
+Browser config also accepts `"fonts": {"Brand": "fonts/brand.woff2"}` inside the
+`browser` section. `BrowserResource::font` is the corresponding owned-byte API.
+Family names are bounded ASCII names, with case-insensitive uniqueness; generic
+and CSS-wide names cannot be package family names. TrueType/OpenType, WOFF and
+WOFF2 containers have bounded counts/offsets and decoded-size estimates. Duplicate
+or overlapping table spans and font collections are rejected. FontFace performs
+complete table/decompression sanitization before registration, renderer creation
+or guest execution. Fonts and images share the inventory/byte/decoded-size caps.
+
+FontFace receives verified binary bytes, never a URL or `local()` source. Each
+session registers a private family namespace; package names, including quoted and
+case-folded values, map to it. Only the common generic families pass through;
+unpackaged names become a private missing family and use normal fallback rather
+than ambient named-font lookup. The checked DOM rewrites inline `font-family`,
+stylesheet declarations and media rules. Each custom property also gets a parallel
+font-context value with renamed `var()` references/fallbacks; the original variable
+retains its meaning in color/layout declarations. Namespace state is bounded by
+package families; unknown names and per-turn custom-property names are not cached.
+
+Close, error, abort and deadline remove registered faces. A face whose asynchronous
+load completes after termination is never registered. Retained inert DOM may use
+fallback fonts after termination releases its faces. Current registration provides
+one normal face per logical family; additional weight/style face collections and
+other image formats remain open.
+
+The browser host now admits v38 permission query/request and the one-shot
+`event_watch`/`event_take`/`event_text` answer path. `run` and `mount` accept a
+runtime `decisions` object in the native `DecisionFile` schema; it is validated and
+snapshotted before any artifact fetch. Every record is checked, even for another
+identity, but only the portable Wasm identity's decisions are applied. Required
+stored denials inside the package/ceiling fail before Worker creation; optional
+grants without a decision remain denied in this headless broker mode. A stored
+allow never widens a resource or host ceiling.
+
+`query` never prompts. In headless mode `request` answers the same state through a bounded
+one-shot source and the guest's existing Promise prelude. These calls consume fair
+call/input/result fuel but no ordinary host-call allowance. Descriptor decoding is
+strict UTF-16, rejects NUL and bounds both UTF-16 and UTF-8 bytes, like native.
+Sources use exact, monotonic f64 ids and cannot borrow a continuation already owned
+by a timer; network watchers use that same scheduler guard. Resource queries over
+boolean grants, v38 request URLs and view links are supported. A package using
+these APIs with path/legacy-URL/listener grants fails bundle admission with an
+explicit scope gap. Named event-source delivery is described below.
+
+Where the browser exposes `clipboard-write` through `navigator.permissions`, its
+state can only narrow Varta's query answer. Unsupported permission names retain
+broker-only state. Reads occur only inside requested/host-allowed clipboard scope;
+live changes update the parent and Worker, including a coalesced latest state
+received during Worker compilation. Denial prevents clipboard calls. Status
+listeners are removed on every terminal path. Browser state never grants an
+unrequested, host-denied or internally withheld permission.
+
+Results, close reports and execution errors expose an owned `permissions` report
+with artifact identity, bounded audit entries/dropped count and stored decisions.
+`onAudit` is a synchronous observer of received entries, not an approval hook;
+querying itself does not append a decision, matching native. Initial decisions,
+operations and platform-state changes are audited. Timestamps are local monotonic
+milliseconds; comparisons across hosts exclude wall-clock values. Hard termination
+reports only the audit received so far, like its checkpoint-limited usage report.
+Worker operation records retain their decision at authorization time; a delayed
+record after a page revocation/platform change is not recomputed using newer
+state. Audit receipt order is not a cross-thread execution clock, and replaying
+an observation never grants authority for a page effect.
+Each completed turn, including bounded runs, waits for a parent acknowledgement
+before the next task. Together with the per-turn host-call quota and bounded view
+queue this bounds pending audit/turn messages. R1 retains its whole-execution
+watchdog; application idle time remains uncharged. Protocol faults fail before
+subsequent guest effects, and transfers are driven before selecting overdue timers.
+
+The loader also exports `createDecisionStore({name?})`. Pass its result as runtime
+`decisionStore` to `run`/`mount` instead of `decisions`; both together are rejected.
+The store reads and validates the entire native-schema file before artifact fetch.
+It exposes `read`, `set(artifact,id,decision)` and `clear(artifact?)`, with an optional
+`{signal}` on each operation. One IndexedDB read/write transaction owns each update,
+preserving other capabilities/artifacts under concurrent connections. All native
+file bounds still apply: exhausted identity capacity fails instead of evicting
+decisions. Results are immutable owned snapshots; abort, corrupt data, quota or
+unavailable storage fails closed. Connections close on all terminal paths, including
+late opens after abort. Explicit `clear()` can recover a corrupt store; clearing one
+identity still requires a valid file. These decisions are local to the page origin
+and browser profile, not publisher trust or an authorization ceiling. Importing the
+loader never opens storage or starts execution. The generated view bootstrap opts
+into the default store only for v38 packages with requested permissions.
+
+`mount` sessions expose `await app.revoke(capability)`: unknown/unrequested grants
+return false; v38 requested grants, including required ones, become stored denials
+in the current broker and audit. The page withholds effects immediately and a
+monotonic, checked control/acknowledgement updates the Worker without reentering
+Wasm. Concurrent revocations of one capability share the pending operation. The
+promise resolves after the Worker acknowledges and the configured store saves;
+storage/observer/protocol failure terminates the session. In-flight operations
+already authorized continue, while subsequent operations fail recoverably. A
+required denial prevents a later instance from starting. Revocation affects this
+live session and future reads of that store; other already-running sessions are
+not automatically synchronized. Closing a session rejects pending controls.
+
+Interactive hosts opt into `mount({onPrompt})`. The callback receives an immutable
+`{artifact,capability,scope,purpose,required}` and `{signal}`, and returns (or resolves
+to) `allow`, `deny` or `dismiss`. Required missing decisions are asked sequentially
+in capability order before Worker creation. Refusal prevents guest entry; denial
+is stored, dismissal is not. Optional unresolved grants start `prompt` and withhold
+every concrete effect. An explicit `request()` opens at most one prompt in a
+trusted user-gesture turn, after that turn reaches its parent checkpoint. Background
+requests and requests outside package/host coverage return the current state.
+Three dismissals become a stored denial. First-use implicit prompting and session-
+only choices are not part of broker v1.
+
+The Worker waits at its checked checkpoint while the callback runs; the parent
+pauses the startup watchdog or leaves the completed turn uncharged. Returning the
+answer never calls guest code directly. A checked acknowledgement queues one-shot
+source completion as a host task, ordered by arrival with view/network events and
+due timers; only selection of that task renews the turn and wakes its continuation.
+The page withholds privileged effects/input delivery while consent is pending.
+Callback/answer/storage/observer/protocol failures terminate the instance. Abort
+wins over late answers, and revocation while waiting cannot be undone by a stale
+Allow. Per-instance writes serialize prompt choices and revocations, so delayed
+storage cannot overwrite a later denial. Prompt audit observation occurs before
+the asynchronous save; guest resumption waits for the save.
+
+`createPermissionPrompt({document?})` supplies the built-in callback: an owned modal
+in a closed shadow outside the guest view, with the capability, original artifact
+identity and exact requested scope. Package purpose is quoted text, never HTML or
+the operation description. Allow/Deny/Dismiss require trusted input; synthetic
+clicks cannot approve. Escape dismisses, abort removes the dialog, and initial focus
+is Deny without scrolling away the heading. Generated v38 view pages with requested
+permissions use this callback and the default store; capability-free views avoid
+storage, and console `run` executions never prompt. API imports remain passive;
+explicit `mount` without the callback retains headless permission behavior.
+Any-HTTPS activation consent is described below.
+No build embeds host decisions.
+
+For a URL covered only by the any-HTTPS form on either side of request ∩ ceiling,
+each trusted activation obtains fresh consent with that full captured URL as its
+scope, with `activation: true` identifying the ephemeral callback. The dialog labels
+the action “Open once” and states that the choice is not saved. Explicit patterns
+on both sides continue to open by policy; optional or
+revoked grants still deny until granted through the ordinary broker. Without a
+prompt callback the broad form denies. The per-address choice is never stored,
+does not alter the grant state and does not count toward optional-grant dismissal
+limits. Repeated refusals therefore do not authorize or permanently deny a later
+address activation.
+
+The parent reserves one navigation request and sends a monotonic pause control.
+The Worker finishes the active turn/checkpoint and acknowledges only before
+selecting its next task. Inputs and new page effects remain withheld while this
+request is pending; an overlapping activation denies rather than opening another
+prompt. Human waiting consumes no turn deadline or fuel. Approval is rechecked
+against current broker state before any platform call, so revocation defeats a
+stale Allow. The original captured URL is opened with `noopener,noreferrer`;
+no guest-controlled href is reread after awaiting. Every answer has a prompt audit
+row with the full resource (subject to audit truncation) and returns its status
+as a nongesture command-result task. The Worker resumes through a checked matching
+control, without creating an extra guest turn merely for pausing.
+
+Abort/observer/protocol failures terminate the session and suppress late opens or
+results. A platform exception becomes `refused_by_platform`; a denied/dismissed
+choice becomes `not_allowed`. Synthetic link clicks do not activate navigation.
+The built-in dialog displays the full URL as text outside the guest view. Chrome
+acceptance uses platform spies; it does not prove actual OS browser opening or
+distinguish every popup-blocker result (a null handle can also be normal with
+`noopener`).
+
+The host now admits v38 `event_source_open`/`event_source_close` and exposes
+`app.deliver({source,record,gesture=false,coalesce=false})`. The returned promise
+reports admission as `queued`, `coalesced` or `dropped`, not callback completion.
+Inputs are owned snapshots at invocation, including calls awaiting initial
+readiness. Records must be well-formed UTF-8 text within the generated record
+bound; NUL/BOM/supplementary characters survive. Missing listeners and oversized
+or malformed records reject delivery without ending the instance. A listener
+exception or non-coalescible queue overflow ends the instance.
+
+The parent accepts a bounded named-source catalog at each completed checkpoint,
+validates unique names/ids and monotonic generations, and pins each delivery to
+that opening. A stale message cannot attach to a new listener with the same name.
+Incoming batches enqueue records only; one selected host task wakes a continuation
+in a fresh turn. Marked pending records coalesce per source while preserving their
+first arrival and combining the gesture flag. Other records remain FIFO. Closed
+source generations are discarded before guest delivery, and consumed one-shot
+sources are never reused. Host tasks and permission answers share the generated
+task bound in the Worker. Names/continuations/source capacity follow native rules.
+
+The browser transport separately bounds deliveries awaiting acknowledgement to
+the generated task count. Excess coalescible transport input drops; other transport
+overflow fails the instance. Await admission or use bounded bursts; this transport
+backpressure is additional to the native-equivalent Worker queue, not proof that
+arbitrary concurrent host calls have native synchronous admission timing. Delivery
+errors/termination release all pending acknowledgements. A host gesture flag is a
+trusted embedder assertion, never inferred from guest text. Without a view, named
+waiting frames keep an instance alive (and unreferenced timers eligible); the
+instance finishes when no listener, timer or active operation holds it. Bounded
+`run` never receives external deliveries and retains its existing root policy.
+
+The self-contained loader pins lengths and SHA-256 identities of the original,
+private image, manifest, Worker and packaged resources. Responses are streamed within those exact
+lengths and verified before Worker creation. The Worker runs from an owned Blob
+of verified bytes and follows no unverified module imports. The generated page
+pins the loader with SRI and a hash-only script CSP (plus Wasm compilation),
+permits same-origin bundle fetches, Blob images and Blob Workers, and requires a narrow
+Trusted Types policy that accepts only owned verified Worker URLs. This relies
+on the trusted page/loader delivery boundary; integrity is not publisher signing
+or admission for arbitrary unprepared browser artifacts. The generated script
+explicitly opts into bootstrap with `data-varta-bootstrap`; importing the loader
+as an API never starts a package or bypasses a caller's runtime ceiling.
+
+Host policies remain local runtime inputs: `bundle` rejects a preparation with
+any supplied host ceiling, including an empty one, rather than embedding it.
+`run({budgetCeiling, signal})` accepts a separately trusted runtime budget ceiling;
+values are validated and v38 requests resolve against it (or production caps).
+Legacy budgets remain frozen. A changed memory ceiling currently fails before
+loading, since the private image's maximum cannot be changed by a JS Store
+limiter. No capability permission is approved by this budget option. The timer and v38 `net.request`
+capabilities currently have browser effect adapters. The generator uses the existing locked
+SHA-256 and base64 primitives for SRI, without introducing new crate versions.
+
+The local `varta dev --target browser` host compiles, loads resources and performs
+the same admission before binding a loopback listener. Project tooling owns this
+server; CLI only selects options, prints the URL and waits for Ctrl-C. It never
+executes the guest natively, binds execution roots or writes a distribution.
+Requests select from immutable in-memory bundle files, never filesystem paths.
+The mutable `/` and `/index.html` pages pin the loader to a content-derived
+`/__varta/<revision>/` directory. Every loader fetch resolves relative to that
+directory, including the original/image/manifest/Worker and packaged resources.
+Bare asset names at the root are rejected. The revision digest uses a domain
+separator and length-framed sorted file names/contents before rewriting the page's
+single dev script URL. Rewriting preserves loader bytes and CSP/SRI hashes and
+fails closed on missing/duplicate opt-ins. The digest identifies prepared bytes,
+including local runtime inputs; it is not publisher authentication.
+
+The delivery catalog can retain the newest and preceding distinct revisions.
+Publishing an identical current revision is a no-op; reverting to the preceding
+one does not duplicate it. Expired/unknown revision paths return missing, never a
+file from the newest revision. Owned response bytes survive eviction. Root page
+selection switches with the catalog publication, so a previously obtained page
+keeps its asset identity. Rebuild completion publishes into this catalog under a
+short delivery lock, after compilation/admission has finished off-thread.
+Both distribution and dev reject HTTP service contracts before output/listening;
+HTTP service execution requires the native target.
+Foreign Host/Origin/fetch-site, absolute/non-origin targets, request bodies and
+methods outside GET/HEAD are rejected. Responses set no-store, nosniff, same-origin
+resource policy and frame-ancestor restrictions. HTTP parsing uses the existing
+locked Hyper stack; Tokio's signal feature provides shutdown without new crate
+versions. The transport caps active connections at 16, headers at 32, header
+buffer at 8192 bytes and connection lifetime at five seconds; these are dev-host
+limits, not changes to production guest budgets. Shutdown cancels/drains active
+connections and releases the listener.
+
+Development preparation opts into a bounded input journal on the same source
+loader used by ordinary compilation. It records SHA-256 of the bytes actually
+read, read failures and existence probes, including absent `.ts`/`.tsx` resolution
+candidates. Configuration, explicit external entries, imported text and packaged
+resource reads participate. The journal retains at most 4096 distinct input/probe
+keys and fails preparation on overflow. Rechecks use the original per-read size
+limit and pinned no-follow dependency root, rather than directory scans or mtimes.
+Unrelated files do not invalidate the attempt. Conflicting repeated observations
+invalidate it permanently, even if the first contents are later restored. A
+changed journal at the end of preparation rejects startup before listening; this
+is a drift check, not an atomic filesystem snapshot. Ordinary compilation does
+not enable the journal. Failed attempts retain their observations, including
+missing dependency reads and resolution probes, so creating the missing input can
+trigger recovery. Input changes are acknowledged before the next attempt; this
+prevents repeated compilation of unchanged errors without swallowing a fix made
+during an unsuccessful build. Parse-invalid configuration keeps the preceding
+watch set, including the configuration read.
+
+Host policy/decisions remain runtime inputs. A dev-only internal preparation can
+derive the private memory ceiling from that host; its original Wasm and manifest
+remain identical to portable output. The host constructs an ephemeral trusted
+bootstrap with supported capability ceilings, budgets and only this artifact's
+validated decision records. Native root mappings and other identities never reach
+that page. Loader bytes get a new SRI/CSP hash and a separate `data-varta-dev`
+opt-in. Format drift fails before listening; rewriting the opt-in cannot alter
+requested origins. API imports stay passive. Public distribution builders still
+reject every supplied host ceiling and have no dev-policy output path.
+
+`--app` selects a v38 non-view application instance; views already use application
+mode. `--budget-report` displays usage in the page. Native fuel profiling/view
+scripts are rejected in browser mode, and native dev remains the default. The
+initial program must compile/admit before listening. Thereafter a 500ms timer
+dispatches at most one off-thread input-check/rebuild job; ticks skip overlap.
+Successful admission publishes a new revision. Errors retain the preceding
+working revision and a UTF-8-boundary-truncated diagnostic of at most 16KiB.
+The same origin/authority/method/body checks protect `/__varta/status`; it returns
+the current revision and optional error with no-store and never a 304 response.
+Runtime policy and decisions are captured copies, not watched files.
+
+A dev-only SRI-covered bootstrap polls status serially every 750ms, with a 3s
+request deadline, 128KiB response ceiling and strict status validation. Diagnostics
+are text in an owned host element outside the guest view. Successful unchanged
+bytes clear errors without reload. A new revision aborts the owned run/application
+signal before navigating to the trusted origin root. Pagehide cancels polling and
+the owned session. An unavailable/invalid status stops the session and shows an
+owned error; detection is subject to browser timer throttling. API-only imports
+do not start this lifecycle. Distribution bootstrap behavior is unchanged.
+
+Shutdown closes/drains HTTP work and cancels future checks/publication. An already
+running synchronous compiler call may finish in its single background job; it
+cannot publish after shutdown. The CLI runtime does not wait for that blocking
+call on exit. This does not claim interruptible compiler execution. Broader
+cross-browser/reconnect/initial-error-page acceptance remains open.
+
+A parent-thread watchdog covers loading, verification, compilation and execution;
+its deadline or an AbortSignal terminates the entire Worker, aborts fetches and
+revokes the Blob URL. Already published log lines survive termination. Logging
+charges the shared fuel and enforces host-call/output limits; UTF-16 diagnostics
+are decoded in bounded chunks, preserving BOMs and replacing lone units like
+native, including surrogate pairs across chunks. The byte count includes the
+whole attempted UTF-8 line without allocating a guest-sized failed output.
+Initial/final exception-channel checks fail the run on pending guest exceptions.
+Full exception diagnostics and CPU-fuel trap classification remain acceptance
+work; this console path is not the complete official browser host.
+
+`browser/fuel.mjs` supplies the private mutable global and deducts shared host
+work from it. Insufficient work empties the tank before throwing `FuelExhausted`;
+exact payment succeeds, matching native. Counts/budgets are checked integers and
+bounded by the host ceiling. Resetting a turn and retaining the global are trusted
+host operations. Callers must respect each profile's generated `fairFuel` flag;
+legacy profiles retain their existing host-charge semantics.
+
+The explicit `browser_meter_probe`/`browser/probe.mjs` and `probe.html` verification
+tools compare one trusted v38 fixture with native under Node and Chrome, including
+host call/byte-charge boundaries. These are not general artifact loaders. The
+full cross-host corpus, other fair host charges, long-lived Worker turns, Firefox
+and WebKit, overhead and delivery acceptance remain open. The prototype remains
+unmetered; memory/view layouts and their encodings still need official generation.
+
 ## Artifact format and validation
 
 Standalone Wasm has a strict sidecar `*.manifest.json`. A missing sidecar means
@@ -12993,3 +13793,106 @@ baselines and fuel golden numbers remain unchanged. Existing portable artifacts,
 capability grants keep their ABI. Timer imports in both native and JavaScript
 hosts now implement the stated Node integer-delay normalization; the previous
 fraction-preserving description was erroneous.
+
+
+<a id="http-contract-v2--server-integration-in-progress"></a>
+
+### HTTP contract v2 — native server
+
+V38 synchronous and async HTTP adapters use `http::UTF16_VERSION` (2). Contract v1 remains
+unchanged for legacy i32 profiles; v2 is rejected outside v38 and v1 is rejected
+for v38. The host verifies contract/profile/value layout before starting a
+listener. Both versions use the same bounded UTF-8 JSON wire envelopes and fixed
+listener limits; v2 copy/retain/handler strings contain UTF-16LE guest bytes.
+The host checks input-copy identity after transcoding, roots it before calling,
+checks pending exceptions, validates the response range/even UTF-16 byte length,
+decodes without replacement and enforces the UTF-8 output limit and response
+schema. Binary64 statuses must still serialize as valid integer HTTP statuses.
+Each request owns a fresh bounded Store; a handler failure does not terminate the
+listener. In v2, module initializers run once per request Store before the adapter;
+main remains startup-only. Mutable module state is isolated between requests.
+
+An optional `asynchronous: true` field (v2 only) means `handle(i64)->i64` returns
+a Promise<string> handle. The host retains it, drains microtasks and drives the
+normal bounded timer/network loop until the response settles. The additional
+`varta.http_abi.state(i64)->f64` and `varta.http_abi.value(i64)->i64` exports read
+its state and fulfilled string. Both must be guest-defined and transitively
+host-free; unexpected exports and flag/version/signature mismatches are rejected.
+Pending with no runnable work fails the request, as does an unhandled rejection;
+a successful response drops its request Store, cancelling background timers and
+owned transfers. Sync v2 responses are rooted through their microtask checkpoint.
+Neither path renews request budgets. V2 effects are computed from the emitted
+closed direct-call graph and independently recomputed by validation. V1 omits the
+new flag and exports and retains its previous encoding and execution behavior.
+
+Timer/Unicode, mutable-state, forced-GC, outbound-body/denial and hostile metadata
+cases have focused verification. Every request now receives a shareable snapshot
+of startup's effective budgets/caps and artifact-scoped headless broker inputs,
+with fresh counters and no allowance renewal across tasks. The fixed HTTP deadline
+caps a larger application deadline. A fresh headless broker applies required and
+optional consents/stored decisions within the original grants/ceiling; its states
+also authorize bind before socket creation. V2 workers deliver bounded logs even
+before failure, and report errors once independently of transport-result delivery.
+Lower package/host fuel, memory, host-call/output budgets, aggregate async bounds,
+listener consent and artifact/ceiling decisions have focused server verification.
+V1 still ignores v38-only budget/consent requests.
+
+The v2 service future owns a cancellation guard for its blocking request worker.
+Disconnect or connection timeout drops that owner and signals its execution;
+epoch checks interrupt guest loops, while timer/network waits check the same token
+in bounded slices without advancing guest time or delivering extra guest events.
+Other Stores sharing the engine remain live. A completed worker disarms the guard
+and releases guest/network resources before invoking trusted output observers.
+Shutdown stops acceptance, immediately closes idle/partial-header connections and
+drains the active response under its original connection and request deadlines.
+These paths have real loopback/disconnect, guest-loop and timer verification.
+
+Native async name resolution uses a process-owned bounded system DNS pool, with
+limits in the [embedding registry](embedding.md#network-request-limits-v37).
+Only owned host names, deadlines and result channels cross into DNS workers;
+request runtime destruction never joins an OS lookup. Cancelled/expired queued
+jobs are skipped, late results cannot open sockets, and oversized answers fail
+explicitly. System address order remains unchanged. These native resource bounds
+also apply to earlier async fetch profiles without changing their guest ABI.
+Already running OS lookups may finish later within the fixed process pool.
+
+V2 workers close one non-renewing execution usage entry on both success and
+failure, including cancellation. After releasing their Store they emit
+`RuntimeEvent::HttpRequest(Box<HttpRequestReport>)`, with a server-local completion
+sequence, invocation outcome, effective budget/caps, actual fuel/host-call/
+microtask/wall/memory/output usage and their broker audit log. Setup failures have
+no budget record. `Returned { status }` describes a guest envelope returned to
+the transport; framing validation or delivery can still fail. Connections rejected
+before a worker starts have no request record. Audit entry sequences/timestamps
+remain local to each fresh request broker.
+
+`RunReport::http` holds HTTP worker totals and a bounded prefix of request details,
+separate from its original startup budget/audit fields. The shared
+[entry limits](embedding.md#entry-point-limits) bound retained request records and
+the aggregate audit prefix. Totals keep counting every worker; omitted detail and
+audit entries are counted explicitly. A trusted observer receives every completed
+worker's bounded report before aggregate truncation, without an unbounded native
+event queue. Evidence survives a failed server run and transport disconnect.
+Legacy HTTP publishes no v2 request reports. CLI and companion `--budget-report`
+stream each v2 worker's usage at completion; startup reporting remains separate.
+
+Inside an owned v2 request, the synchronous `net.get`/`net.fetch` imports drive
+the cancellable native transport under the same absolute request deadline.
+They remain synchronous guest calls: native polling runs no guest jobs and
+renews no allowance. Exact legacy HTTP-only package/host grants are checked before
+DNS or sockets. The transport never follows redirects or uses ambient proxies;
+`net.fetch` returns the received status without waiting for a body, while
+`net.get` collects raw body bytes under `abi::MAX_RESULT_BYTES` before the existing
+guest string conversion. Response headers use `net::MAX_RESPONSE_HEADERS` and
+`net::MAX_FETCH_HEADER_BYTES`; DNS uses the bounded process pool. Cancellation
+and the exhausted execution deadline escape as fatal execution failures before
+a host result is published, including through `try/catch` or result capture.
+The request closes its socket/runtime before reporting. Calls without an owned
+cancellation context retain the previous synchronous transport and behavior.
+
+Bounded `wait_network` steps now drive native scripted view I/O with explicit
+wall/virtual clock scope; their contract is in the
+[scripted session rules](#v38-view-protocol-and-tsx-view_protocol-tsx).
+Native server and source-free/hostile-artifact acceptance passed the full gate
+recorded in the [development plan](development-plan.md#status). Broader sustained
+native RSS, cross-host and release acceptance remain open.

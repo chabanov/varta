@@ -46,12 +46,15 @@ const CASE_DIRECTORIES: [&str; 20] = [
 /// bodies are `ReadableStream<Uint8Array>`, so v37 programs that read body
 /// chunks as strings are v37-only (`net_cases/streams.ts`,
 /// `v37_integration_cases/sse_lines.ts`; `web_bytes_cases/net_bytes.ts` is
-/// their v38 form).
-pub(crate) const V38_DEVIATIONS: [&str; 4] = [
+/// their v38 form). V38's corrected checked-JSON record builder preserves
+/// document order; v37 retains schema order in `value15_cases/dictionary_json.ts`.
+/// Its complete v38 output is pinned by `json_decoder_tests` in all four modes.
+pub(crate) const V38_DEVIATIONS: [&str; 5] = [
     "unknown_cases/flow.ts",
     "v35_cases/unknown_json.ts",
     "net_cases/streams.ts",
     "v37_integration_cases/sse_lines.ts",
+    "value15_cases/dictionary_json.ts",
 ];
 
 /// Whether `path` is one of [`V38_DEVIATIONS`].

@@ -477,3 +477,32 @@ fn promise_rejections_and_resolution_match_node() {
         ],
     );
 }
+
+#[test]
+fn v38_long_error_rejection_fields_use_profile_limits_and_bounded_snapshots() {
+    use varta_common::scheduler::{MAX_REJECTION_REASON_UNITS, RejectionReason, SchedulerError};
+    let profile = LanguageProfile::CheckedF64Utf16V38;
+    for source in [
+        "export function main():void{Promise.reject<number>(new Error(\"x\".repeat(600000)));}",
+        "class Failure extends Error{constructor(){super(\"x\".repeat(600000));this.name=\"Failure\";}}export function main():void{Promise.reject<number>(new Failure());}",
+    ] {
+        let error = VartaRuntime::new()
+            .run_wasm_bytes(&compile_with(source, profile), &[])
+            .unwrap_err();
+        let RuntimeError::Scheduler(SchedulerError::UnhandledRejection {
+            count: 1,
+            reason:
+                RejectionReason::Retained {
+                    text,
+                    truncated: true,
+                },
+        }) = error
+        else {
+            panic!("{error:?}");
+        };
+        assert_eq!(
+            text.chars().filter(|c| *c == 'x').count(),
+            MAX_REJECTION_REASON_UNITS
+        );
+    }
+}

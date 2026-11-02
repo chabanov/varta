@@ -117,6 +117,10 @@ fn record(
             .fold(0u32, |mask, (slot, _)| mask | 1 << slot)
     };
     record_block(&mut a, plan, ptr, (descriptor, count, len, link));
+    a.get(ptr)
+        .int(layout::order_offset(count) as i32)
+        .i(I::I32Add)
+        .set(order);
     next(&mut a, globals);
     a.i(I::I32WrapI64).set(remaining);
     a.block("fields").loop_("field");
@@ -124,6 +128,9 @@ fn record(
     a.add(remaining, -1);
     next(&mut a, globals);
     a.i(I::I32WrapI64).set(slot);
+    // The tape records document order, independently of canonical field slots.
+    a.get(order).get(slot).i(I::I32Store(WORD));
+    a.add(order, size_of::<u32>() as i32);
     a.get(present)
         .long(1)
         .get(slot)
@@ -175,29 +182,50 @@ fn record(
                 (layout::presence_offset(count) + word * size_of::<u32>()) as u64,
             )));
     }
-    // Order words: the canonical own-key order of the present fields; the
-    // remaining words stay zero.
+    // Keep named fields in document order. Move present integer-named fields
+    // to the front in numeric order, rotating the intervening words so the
+    // relative order of all other fields survives. No value slots move.
     let (_, canonical) = super::super::records::canonical_layout(shape, plan.shapes);
-    a.get(ptr)
-        .int(layout::order_offset(count) as i32)
-        .i(I::I32Add)
-        .set(order);
-    for slot in canonical {
-        let store = |a: &mut Asm| {
-            a.get(order).int(slot as i32).i(I::I32Store(WORD));
-            a.add(order, size_of::<u32>() as i32);
-        };
-        if fields[slot as usize].optional {
+    let numeric: Vec<_> = canonical
+        .into_iter()
+        .filter(|slot| !super::super::records::enumeration_key(&fields[*slot as usize].name, 0).0)
+        .collect();
+    if !numeric.is_empty() {
+        let found = a.local(ValType::I32);
+        a.get(ptr)
+            .int(layout::order_offset(count) as i32)
+            .i(I::I32Add)
+            .set(order);
+        for slot in numeric {
             a.get(present)
                 .long(1i64 << slot)
                 .i(I::I64And)
                 .i(I::I64Eqz)
                 .i(I::I32Eqz)
                 .if_();
-            store(&mut a);
+            a.get(order).set(found);
+            a.block("integer_found").loop_("find_integer");
+            a.get(found)
+                .i(I::I32Load(WORD))
+                .int(slot as i32)
+                .i(I::I32Eq)
+                .br_if("integer_found");
+            a.add(found, size_of::<u32>() as i32);
+            a.br("find_integer").end().end();
+            a.get(order)
+                .int(size_of::<u32>() as i32)
+                .i(I::I32Add)
+                .get(order)
+                .get(found)
+                .get(order)
+                .i(I::I32Sub)
+                .i(I::MemoryCopy {
+                    src_mem: strings::MEMORY,
+                    dst_mem: strings::MEMORY,
+                });
+            a.get(order).int(slot as i32).i(I::I32Store(WORD));
+            a.add(order, size_of::<u32>() as i32);
             a.end();
-        } else {
-            store(&mut a);
         }
     }
     sized(&mut a, len as i32, ptr);

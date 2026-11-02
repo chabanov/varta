@@ -18,11 +18,12 @@ mod bigint_values_tests;
 mod contract_tests;
 mod contracts;
 pub use application::{
-    Application, ApplicationError, ApplicationOptions, InstanceState, Step, ViewPlatform,
-    ViewReport,
+    Application, ApplicationError, ApplicationOptions, ApplicationViewScrollError, InstanceState,
+    Step, ViewLayout, ViewPlatform, ViewReport,
 };
 mod events;
 pub use events::{Delivery, HostEvent};
+mod cancellation;
 mod exceptions;
 mod execution;
 mod fair_fuel;
@@ -52,7 +53,9 @@ mod server;
 mod server_tests;
 mod unions;
 mod utf16;
-pub use server::{HttpShutdown, RuntimeEvent, RuntimeObserver};
+pub use server::{
+    HttpReport, HttpRequestOutcome, HttpRequestReport, HttpShutdown, RuntimeEvent, RuntimeObserver,
+};
 #[cfg(test)]
 mod array_inference_tests;
 #[cfg(test)]
@@ -268,6 +271,10 @@ pub enum RuntimeError {
     /// V38: a headless script input that names no attached element.
     #[error(transparent)]
     ViewInput(varta_view::InputError),
+    #[error(transparent)]
+    ViewLayout(#[from] varta_view::LayoutError),
+    #[error(transparent)]
+    ViewScript(#[from] varta_view::ScriptError),
     #[error("{0:#}")]
     Execution(#[from] wasmtime::Error),
 }
@@ -301,6 +308,7 @@ pub(crate) struct RuntimeContext {
     /// Rearms the store's epoch thread for the next turn's deadline.
     rearm: Option<std::sync::mpsc::Sender<Option<Instant>>>,
     http_control: Option<(String, HttpShutdown)>,
+    cancellation: Option<cancellation::Cancellation>,
     random: random::RandomSource,
     scheduler: scheduler::Scheduler,
     /// V37 network requests: ids, completions and transfer tasks.
@@ -351,13 +359,26 @@ impl RuntimeContext {
 
     /// The deadline of host bookkeeping: typed in a v38 turn, the frozen
     /// legacy text before.
+    pub(crate) fn check_cancelled(&self) -> Result<(), wasmtime::Error> {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.check()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn check_deadline(&self) -> Result<(), wasmtime::Error> {
+        self.check_cancelled()?;
         if Instant::now() >= self.deadline {
-            return Err(self.turns.exhausted(
-                BudgetKind::Deadline,
-                &self.budgets,
-                turns::HOST_BUDGET_EXHAUSTED,
-            ));
+            // HTTP v2 native waits report their execution deadline explicitly.
+            // Earlier call sites retain their frozen host-bookkeeping text.
+            let text = if self.cancellation.is_some() {
+                turns::DEADLINE_EXCEEDED
+            } else {
+                turns::HOST_BUDGET_EXHAUSTED
+            };
+            return Err(self
+                .turns
+                .exhausted(BudgetKind::Deadline, &self.budgets, text));
         }
         Ok(())
     }
@@ -688,26 +709,31 @@ impl VartaRuntime {
         }
         report.collect_profile(store);
         report.collect(store.data_mut());
+        let service = http_contract::read(bytes)
+            .map(|service| service.map(|contract| (contract, execution.request_setup())));
         drop(execution);
         // A profiled HTTP service's startup is profiled; its server is not
         // started.
         if exited || options.fuel_profile {
             return report;
         }
-        match http_contract::read(bytes) {
-            Ok(Some(contract)) => {
+        match service {
+            Ok(Some((contract, request_setup))) => {
                 let output = std::mem::take(&mut report.output);
                 let files = policy::FileMode::of(module.profile, &options.file_roots);
-                match server::run(server::Start {
+                let finished = server::run(server::Start {
                     engine: self.engine.clone(),
                     module,
                     contract,
+                    request_setup,
                     requested: &options.requested,
                     ceiling: options.ceiling.as_deref(),
                     files,
                     output,
                     observer: options.observer.clone(),
-                }) {
+                });
+                report.http = finished.requests;
+                match finished.result {
                     Ok(output) => report.output = output,
                     Err(error) => report.failure = Some(error),
                 }
@@ -879,6 +905,9 @@ pub struct RunReport {
     pub audit: Vec<AuditEntry>,
     /// Audit entries dropped beyond the bounded log.
     pub audit_dropped: u64,
+    /// V2 HTTP worker totals and bounded evidence, including failed and
+    /// cancelled requests. Startup remains in the original budget/audit fields.
+    pub http: Option<HttpReport>,
     /// Stored decisions after the run, including prompt answers (v38).
     pub decisions: BTreeMap<String, StoredDecision>,
     /// The application identity decisions are keyed by.
@@ -922,6 +951,8 @@ impl RunReport {
     }
 }
 
+#[cfg(test)]
+mod direct_json_tests;
 #[cfg(test)]
 mod json_decoder_tests;
 #[cfg(test)]

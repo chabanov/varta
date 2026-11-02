@@ -19,6 +19,42 @@ pub(crate) fn snapshot(tree: &Tree, environment: &Environment, platform: &Effect
     })
 }
 
+/// Project explicit cascaded `display` values through flex item blockification.
+/// This is deliberately separate from the established cascade snapshot: it is
+/// one layout rule, not a complete browser computed-style implementation.
+pub fn project_flex_blockification(snapshot: &mut Value) {
+    let Some(tree) = snapshot.get_mut("tree") else {
+        return;
+    };
+    let mut pending = vec![(tree, false)];
+    while let Some((node, parent_flex)) = pending.pop() {
+        let Some(object) = node.as_object_mut() else {
+            continue;
+        };
+        let style = object.get_mut("style").and_then(Value::as_object_mut);
+        let mut own_flex = false;
+        if let Some(style) = style
+            && let Some(display) = style.get_mut("display")
+        {
+            if parent_flex
+                && display
+                    .as_str()
+                    .is_some_and(|v| v.eq_ignore_ascii_case("inline"))
+            {
+                *display = Value::String("block".into());
+            }
+            own_flex = display
+                .as_str()
+                .is_some_and(|v| v.eq_ignore_ascii_case("flex"));
+        }
+        if let Some(children) = object.get_mut("children").and_then(Value::as_array_mut) {
+            for child in children {
+                pending.push((child, own_flex));
+            }
+        }
+    }
+}
+
 fn node(tree: &Tree, id: u32, environment: &Environment) -> Value {
     let Some(entry) = tree.nodes.get(&id) else {
         return Value::Null;
@@ -135,7 +171,12 @@ fn implicit_role(element: &Element) -> Option<&'static str> {
             "number" => "spinbutton",
             _ => "textbox",
         },
-        Tag::Section if element.attributes.contains_key(&Attribute::AriaLabel) => "region",
+        Tag::Section
+            if element.attributes.contains_key(&Attribute::AriaLabel)
+                || element.attributes.contains_key(&Attribute::AriaLabelledby) =>
+        {
+            "region"
+        }
         _ => return None,
     })
 }
@@ -246,4 +287,28 @@ fn accessible(tree: &Tree, id: u32, environment: &Environment) -> Vec<Value> {
         out.insert("children".into(), Value::Array(nested));
     }
     vec![Value::Object(out)]
+}
+
+#[cfg(test)]
+mod flex_tests {
+    use super::*;
+    #[test]
+    fn flex_projection_only_blockifies_explicit_inline_children() {
+        let mut snapshot = json!({"tree":{"tag":"root","children":[
+            {"tag":"div","style":{"display":"flex"},"children":[
+                {"tag":"span","style":{"display":"inline","color":"red"}},
+                {"tag":"span","style":{"display":"none"}},
+                {"tag":"span"},
+                {"tag":"div","style":{"display":"block"},"children":[{"tag":"span","style":{"display":"inline"}}]}
+            ]}
+        ]},"accessibility":{"unchanged":true}});
+        project_flex_blockification(&mut snapshot);
+        let children = &snapshot["tree"]["children"][0]["children"];
+        assert_eq!(children[0]["style"]["display"], "block");
+        assert_eq!(children[0]["style"]["color"], "red");
+        assert_eq!(children[1]["style"]["display"], "none");
+        assert!(children[2].get("style").is_none());
+        assert_eq!(children[3]["children"][0]["style"]["display"], "inline");
+        assert_eq!(snapshot["accessibility"]["unchanged"], true);
+    }
 }

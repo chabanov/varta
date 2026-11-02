@@ -28,8 +28,8 @@ pub enum TurnKind {
     Permission,
     /// A view event record (v38 `view_protocol`).
     View,
-    /// A whole execution of an earlier profile, whose budgets are not
-    /// renewed per turn.
+    /// A whole bounded execution whose budgets do not renew: an earlier
+    /// profile or one isolated HTTP request.
     Execution,
     /// Collection work between two turns of an application instance, under
     /// the maintenance budget (v38 `incremental_collection`); not a turn.

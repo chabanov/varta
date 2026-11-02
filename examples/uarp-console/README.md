@@ -62,15 +62,41 @@ repository.
 
 ## Status
 
+Checkpoint 2026-11-01 (`abea3ac`): the native Varta test workflow passes
+**107 tests in 28 groups and two headless view checks on the normal CLI stack**.
+An additional local Chrome probe, `node examples/uarp-console/scripts/test-browser-chat.mjs`,
+performs the chat view's thinking, approval, option, input and Enter actions with
+trusted browser events and checks selected final text against the native view
+expectation. It uses an isolated browser profile and explicit test-only decisions.
+The same focused interaction probe also runs in Firefox, WebKit and Chrome with
+`node examples/uarp-console/scripts/test-browser-chat-matrix.mjs <varta-executable> <playwright-module-path>`.
+First build the projection tool with
+`cargo build -p varta-view --example project_flex_snapshot --locked`.
+The probe locates that tool relative to the repository; set `VARTA_FLEX_PROJECTION`
+to its executable path when using a custom Cargo target directory. It defaults to
+the installed Chrome channel; set `VARTA_CHROMIUM_CHANNEL=chromium` to use
+Playwright's bundled Chromium, or name another installed Playwright channel.
+The probe compares the full ordered element/text tree and non-style attributes,
+plus 195 declarations across 14 style properties against the native flex-projected
+snapshot. It also compares the selected region, button, heading and textbox roles,
+names and recorded control states through Playwright accessibility selectors. The
+test retains a reference to the closed shadow root for those selectors. Full style,
+layout and accessibility parity remain open; the ordinary native snapshot retains
+its cascaded display values.
+The SDK stays pinned at 0.13.2. This checkpoint does not verify live-service
+credentials, SDK-own-test completeness, a real browser or native display targets.
+Earlier fuel/row figures below are dated development measurements, not current
+performance limits or production capacity.
+
 | Piece | State | Waits for |
 | --- | --- | --- |
 | L0 conformance | Every mockup rendered by the applier matches it in structure and boxes (±1 px) at three sizes | The headless and native renderers for the cross-renderer criterion |
 | Static mockups (Single Chat) | Five screens in `mockups/`; 0 subset violations per `mockups/lint.html` | Owner review |
 | Markdown subset | Compiled and tested by Varta (v38), including incremental parsing while streaming; a 99-character reply parses in about 59k fuel | — |
-| L1 reactive core and keyed lists | Compiled and tested by Varta (v38); a 1M-fuel turn fits 28 rows mounted, 16 updated | v38 wave 2 codegen hotspots |
+| L1 reactive core and keyed lists | Compiled and tested by Varta (v38); a 1M-fuel turn fits 28 rows mounted, 16 updated | Final target performance measurements |
 | Chat model | Every frame of the session stream dispatched and parsed strictly into the closed v1 types; the nine recorded scenarios replayed from their files match an independently derived timeline; resume and end rules, history and its merge with the live stream, the store, intents and the request layer | — |
-| Single Chat screen | Live timeline over the store with the stylesheet, checked headlessly and deterministically (tree with cascaded styles, accessibility snapshot): thinking toggle, tool lines, approval, question and failure cards with their actions, streaming Markdown, the composer | The browser host for v38 (this lane, next) |
-| Real requests to UARP | Blocked: the SDK client stops at `typeof Blob !== 'undefined'` in `core/transport.ts` | `typeof` of a known engine global folded to a constant (v38, in progress in the core) |
+| Single Chat screen | Live timeline over the store with the stylesheet, checked headlessly and deterministically (tree with cascaded styles, accessibility snapshot): thinking toggle, tool lines, approval, question and failure cards with their actions, streaming Markdown, the composer | Official browser bundle and cross-target acceptance; a v38 prototype host exists |
+| Real requests to UARP | The former `typeof Blob` compile blocker is fixed in v38; recorded SDK probe checks 65/65 files unmodified | Live-service validation remains separate from local recorded/mock tests and cross-target acceptance |
 
 ## Running the checks
 

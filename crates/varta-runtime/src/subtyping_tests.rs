@@ -794,3 +794,75 @@ fn v37_keeps_rejecting_extra_parameters() {
         assert!(error.contains(expected), "{error}\n{source}");
     }
 }
+
+#[test]
+fn boolean_property_truth_tests_narrow_discriminated_results() {
+    let source = r#"
+        type Result = { ok: true; value: string } | { ok: false; error: string };
+        function read(result: Result): string {
+            if (result.ok) return result.value;
+            return result.error;
+        }
+        function negative(result: Result): string {
+            if (!result.ok) return result.error;
+            return result.value;
+        }
+        function nested(box: { result: Result }): string {
+            return box.result.ok ? box.result.value : box.result.error;
+        }
+        function both(result: Result): string {
+            if (result.ok && result.value.length > 0) return result.value;
+            if (!result.ok) return result.error;
+            return "empty";
+        }
+        class Good { ok:true=true; value:string="class yes"; }
+        class Bad { ok:false=false; error:string="class no"; }
+        function classRead(result:Good|Bad):string {
+            if(result.ok)return result.value;
+            return result.error;
+        }
+        export function main(): void {
+            const good: Result = { ok: true, value: "yes" };
+            const bad: Result = { ok: false, error: "no" };
+            console.log(read(good)); console.log(read(bad));
+            console.log(negative(good)); console.log(negative(bad));
+            console.log(nested({result:good})); console.log(nested({result:bad}));
+            console.log(both(good)); console.log(both(bad));
+            console.log(classRead(new Good())); console.log(classRead(new Bad()));
+        }
+    "#;
+    run(
+        source,
+        &[
+            "yes",
+            "no",
+            "yes",
+            "no",
+            "yes",
+            "no",
+            "yes",
+            "no",
+            "class yes",
+            "class no",
+        ],
+    );
+    assert!(rejected(source, V37).contains("value"));
+}
+
+#[test]
+fn boolean_truth_guards_do_not_exclude_members_with_general_boolean_fields() {
+    for source in [
+        "type R={ok:true;value:string}|{ok:boolean;error:string};\
+         function f(r:R):string{if(r.ok)return r.value;return 'no';}\
+         export function main():void{}",
+        "type R={ok:false;error:string}|{ok:boolean;value:string};\
+         function f(r:R):string{if(!r.ok)return r.error;return 'yes';}\
+         export function main():void{}",
+        "type R={ok:1;value:string}|{ok:2;error:string};\
+         function f(r:R):string{if(r.ok)return r.value;return 'no';}\
+         export function main():void{}",
+    ] {
+        let error = rejected(source, V38);
+        assert!(error.contains("not declared"), "{error}\n{source}");
+    }
+}

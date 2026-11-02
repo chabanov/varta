@@ -312,7 +312,33 @@ impl Lower<'_> {
             return Ok(false);
         }
         let test = stmt::unparen(test);
-        if let ast::Expr::Member(_) = test {
+        if let ast::Expr::Member(member) = test {
+            // A boolean data-property truth test is an equality with the
+            // corresponding singleton. Narrow the owning record union too,
+            // as an explicit `result.ok === true/false` already does. Other
+            // truthy values (strings, numbers, optional fields) must not be
+            // mistaken for a boolean discriminant.
+            if self.types.profile.structural_subtyping()
+                && !self.core.impure_guard
+                && let ast::MemberProp::Ident(name) = &member.prop
+                && let Some((mut path, root)) = self.path(test)
+                && !self.guard_blocked.contains(&path.0)
+            {
+                path.1.pop();
+                let object = if path.1.is_empty() {
+                    Some(root)
+                } else {
+                    self.path_types(&path, root)
+                        .filter(|fact| !fact.checked)
+                        .map(|fact| fact.narrowed)
+                };
+                if object.is_some_and(|ty| self.boolean_discriminant(ty, name.sym.as_ref()))
+                    && let Some(single) = literals::boolean(yes, self.types)
+                {
+                    self.discriminant_guard(member, single, true)?;
+                    return self.refine_path(test, Guard::Literal(single), true);
+                }
+            }
             return self.refine_path(test, Guard::Truth(yes), true);
         }
         // `a.b?.c` truthy: every object of the chain is not nullish and

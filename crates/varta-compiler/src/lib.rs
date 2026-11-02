@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 //! Checked TypeScript subset -> typed IR -> validated portable WebAssembly.
+pub mod browser_meter;
 mod emit;
 mod error;
 mod ir;
@@ -126,6 +127,16 @@ pub mod json_decoder_test_hook {
         profile: varta_common::language::LanguageProfile,
     ) -> Result<Vec<u8>, crate::CompilerError> {
         with(Mode::Generic, || {
+            crate::compile_typescript_with_profile(source, profile)
+        })
+    }
+    /// Keep compiled ordinary JSON parsing, but run assertions through the
+    /// original unknown-graph conversion. Isolates direct-decoding savings.
+    pub fn compile_assertions_reference(
+        source: &str,
+        profile: varta_common::language::LanguageProfile,
+    ) -> Result<Vec<u8>, crate::CompilerError> {
+        with(Mode::AssertionsReference, || {
             crate::compile_typescript_with_profile(source, profile)
         })
     }

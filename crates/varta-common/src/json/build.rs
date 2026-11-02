@@ -62,6 +62,7 @@ enum Frame {
         remaining: u32,
         present: Slots,
         slot: usize,
+        order: Vec<u32>,
     },
     Dictionary {
         keys: usize,
@@ -88,7 +89,6 @@ pub fn build<H: Heap>(
         text,
         version: schema.value_version(),
         frames: Vec::new(),
-        orders: Vec::new(),
         root: 0,
     };
     builder.run(&tape.nodes)?;
@@ -101,9 +101,6 @@ struct Builder<'a, H> {
     text: &'a [u8],
     version: u32,
     frames: Vec<Frame>,
-    /// Record types' order words when every field is present (integer-named
-    /// fields first, ascending, then the others in slot order), by type.
-    orders: Vec<(u32, Vec<u32>)>,
     root: u64,
 }
 
@@ -132,11 +129,13 @@ impl<H: Heap> Builder<'_, H> {
                     if let Some(Frame::Record {
                         slot: next,
                         present,
+                        order,
                         ..
                     }) = self.frames.last_mut()
                     {
                         *next = slot as usize;
                         present.insert(slot as usize);
+                        order.push(slot);
                     }
                     continue;
                 }
@@ -207,7 +206,7 @@ impl<H: Heap> Builder<'_, H> {
                 Node::Record { ty, count } => {
                     let ptr = self.record(ty, destination)?;
                     if count == 0 {
-                        self.complete_record(ptr, ty, Slots::EMPTY)?;
+                        self.complete_record(ptr, ty, Slots::EMPTY, Vec::new())?;
                     } else {
                         self.frames.push(Frame::Record {
                             ptr,
@@ -215,6 +214,7 @@ impl<H: Heap> Builder<'_, H> {
                             remaining: count,
                             present: Slots::EMPTY,
                             slot: 0,
+                            order: Vec::with_capacity(count as usize),
                         });
                     }
                     count == 0
@@ -268,19 +268,24 @@ impl<H: Heap> Builder<'_, H> {
                         return Ok(());
                     }
                 }
-                Some(Frame::Record {
-                    ptr,
-                    ty,
-                    remaining,
-                    present,
-                    ..
-                }) => {
+                Some(Frame::Record { remaining, .. }) => {
                     *remaining -= 1;
                     if *remaining > 0 {
                         return Ok(());
                     }
-                    let (ptr, ty, present) = (*ptr, *ty, *present);
-                    self.complete_record(ptr, ty, present)?;
+                    // Own the completed order before borrowing the builder for
+                    // missing-field allocation and metadata publication.
+                    if let Some(Frame::Record {
+                        ptr,
+                        ty,
+                        present,
+                        order,
+                        ..
+                    }) = self.frames.pop()
+                    {
+                        self.complete_record(ptr, ty, present, order)?;
+                    }
+                    continue;
                 }
             }
             self.frames.pop();
@@ -427,7 +432,13 @@ impl<H: Heap> Builder<'_, H> {
     }
     /// Complete a record whose fields `present` were set: `undefined` cells
     /// for its missing union fields, then its presence and order words.
-    fn complete_record(&mut self, ptr: usize, ty: u32, present: Slots) -> Result<(), H::Error> {
+    fn complete_record(
+        &mut self,
+        ptr: usize,
+        ty: u32,
+        present: Slots,
+        mut order: Vec<u32>,
+    ) -> Result<(), H::Error> {
         let schema = self.schema;
         let JsonType::Record { fields, .. } = &schema.types[ty as usize] else {
             return Ok(());
@@ -458,31 +469,19 @@ impl<H: Heap> Builder<'_, H> {
                 present.word(word),
             )?;
         }
-        let order = self.order(ty, fields);
+        // Numeric property names enumerate first, in ascending order; stable
+        // sorting keeps all other fields in their original document order.
+        // Slots remain canonical: only the enumeration trailer changes.
+        order.sort_by_key(|slot| {
+            let integer = canonical_integer(&fields[*slot as usize].name);
+            (integer.is_none(), integer.unwrap_or(0))
+        });
         let at = ptr + order_offset(count);
-        let mut written = 0;
-        for &slot in &self.orders[order].1 {
-            if present.contains(slot as usize) {
-                self.heap.word(at + written * size_of::<u32>(), slot)?;
-                written += 1;
-            }
+        for (position, slot) in order.into_iter().enumerate() {
+            self.heap.word(at + position * size_of::<u32>(), slot)?;
         }
         // The remaining order words stay zero.
         Ok(())
-    }
-    /// The full order words of record type `ty`.
-    fn order(&mut self, ty: u32, fields: &[super::JsonField]) -> usize {
-        if let Some(index) = self.orders.iter().position(|(known, _)| *known == ty) {
-            return index;
-        }
-        let mut order: Vec<u32> = (0..fields.len() as u32).collect();
-        order.sort_by_key(|slot| {
-            let name = &fields[*slot as usize].name;
-            let integer = canonical_integer(name);
-            (integer.is_none(), integer.unwrap_or(*slot))
-        });
-        self.orders.push((ty, order));
-        self.orders.len() - 1
     }
     /// A dictionary of `count` entries at `destination`: its storage record,
     /// then its key and value vectors published into it.

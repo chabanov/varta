@@ -7,6 +7,182 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-02 — Browser dev/reload and scoped browser matrix verified
+
+Working tree after `abea3ac`: memory-only loopback browser development now includes
+bounded content/probe observations, revision-pinned asset delivery, serialized
+off-thread checks/rebuilds, failed-input recovery, bounded text diagnostics and
+owned page/Worker cleanup before reload or on server loss. Runtime ceilings and
+decisions remain captured inputs; no native guest execution or distribution writes.
+Initial-invalid projects still reject startup and synchronous compilation is not
+interruptible. Reconnect and full browser/pilot/platform acceptance remain open.
+
+The consolidated package passes **2946 tests, 0 failures, 16 ignored**, all eight
+commands with unchanged sources. Report:
+`target/verification/20261102-093345-4pi5qr3n/report.json`; source SHA-256
+`ababac54e03c6070e9a05140d1d02fdfb6b1d312d607ec600067ef3b1d691a7b`.
+Conformance remains 123/127, four known unsupported, zero regressions, matching
+baseline and eight untested feature rows. Only result documentation changed after
+the gate. Separate evidence includes 85 oracle-enabled Node tests, Chrome's
+expanded dev probe and the scoped **63-check** matrix on Chrome 156.0.8078.74,
+Firefox 157.0 and Playwright WebKit 27.2. Matrix report/drivers:
+`target/browser-matrix-20261102/`. Each engine passes 13 native-accounting fixture
+executions, five integrity boundaries and three live dev sequences. Firefox uses
+owned app/local-data directories to avoid personal profile state. These are local
+engine observations, not installed-Safari or complete pilot acceptance.
+
+## 2026-11-02 — Browser consent, events and navigation verified
+
+Working tree after `abea3ac`: the consolidated package adds native-schema decisions,
+bounded audits, platform restrictions, IndexedDB persistence, acknowledged runtime
+revocation, first-run/gesture consent, an owned modal, generic named event instances
+and per-activation any-HTTPS consent through a checked pause/resume barrier. It
+passes **2921 tests, 0 failures, 16 ignored**, all eight full-gate commands with
+unchanged sources. Report: `target/verification/20261102-072941-39498ymp/report.json`;
+source SHA-256 `52bcc1b91035af6a65a2d8688f43e22435df8e40c167ed0dff00618393dd19df`.
+Conformance remains 123/127, four known unsupported, zero regressions and eight
+untested feature rows. Only checkpoint documentation changed after the gate.
+
+Independent evidence: 81 oracle-enabled Node tests, real Chrome/native comparisons
+of output/accounting/audits, required/optional/parallel consent, persistence and
+revocation races, generic host records and generations, and 15 per-address consent
+scenarios. Console/network, view, storage, PNG and font regressions also pass.
+Navigation opens are spies, never external OS windows. Fixtures:
+`target/browser-navigation-final-20261102`; earlier permission/event fixtures retain
+their own focused reports in the development plan. This supersedes the prior
+2919-test core checkpoint for current implementation, without closing browser dev,
+broader control/layout/effects, Firefox/WebKit, native GUI or other OS acceptance.
+
+## 2026-11-02 — Consolidated browser-core verification
+
+Working tree after `abea3ac`: compiler fuel instrumentation and original admission,
+verified source-free browser bundles/CLI distribution, Promise/timer/network
+adapters, application/view turns, transactional DOM and verified PNG/font resources
+have completed their first consolidated workspace gate. It passes **2919 tests,
+0 failures, 16 ignored**, with all eight commands and identical before/after source
+fingerprints. Conformance remains 123/127, four known unsupported, no regressions,
+with eight feature rows still untested. Report:
+`target/verification/20261102-031538-rh756ebf/report.json` (local, ignored), source
+SHA-256 `17809511c875a150a6695cf3c6c1c0765174bae173c931b935308ba2ee632dbe`.
+The earlier attempt stopped at Clippy before workspace tests; the final run follows
+the alignment-check style repair and covers the final code. Checkpoint documentation
+was updated afterward.
+
+Separate oracle-enabled Node checks pass 46. Real Chrome probes cover console,
+async/timers/network/CORS and integrity/termination; view sessions, native accounting,
+permissions and cleanup; PNG decoding/pixels and tampering; and original
+TTF/OTF/WOFF/WOFF2 fixtures, real glyph metrics, variable/media declarations,
+simultaneous/ambient font isolation and abort/deadline/late-load cleanup. These
+results do not close Firefox/WebKit, browser dev, permission prompt/audit integration,
+full control/layout/accessibility acceptance, native GUI or Linux/Windows/Pi releases.
+
+## 2026-11-01 — Stabilization batch 2
+
+Working tree after `abea3ac`: direct literal-constrained JSON assertions keep
+semantic constraints before erasure, scan tags once per field/scalar kind,
+validate one selected record and build without an intermediate guest unknown
+graph. Conservative misses keep the original parse/assertion and diagnostics.
+Literal/unknown tag overlaps use strict matching, retaining valid alternatives
+and rejecting ambiguity. Non-schema target fields retain their prior conversion
+or diagnostic. Public schema/host/value ABIs and old profiles remain unchanged.
+
+Final full gate: **2825 passed, 0 failed, 16 ignored**, all eight commands passed,
+source unchanged during verification. Conformance remains 123 passed and four
+known unsupported, eight untested feature rows, baseline matched. Evidence:
+`target/verification/20261101-192403-a66359j5/report.json` (ignored, local macOS
+arm64). Fresh Node host: 117 passed; UARP console: 107 passed in 28 groups and
+two view checks. Nine new runtime tests plus one CLI test cover literals,
+fallback/errors, GC/tape relocation, async single evaluation, non-schema
+admission, unknown overlap and imported types in source-free Wasm/native files.
+The existing 24/200-member dispatch ceiling passes unchanged (12/7 fuel per
+preceding candidate). Selected last-tag cases save roughly 27–35% fuel against
+only direct assertion decoding disabled; no general throughput claim follows.
+Only result documentation followed the gate, with code/build inputs unchanged.
+Both stabilization batches remain local and uncommitted; server, platform and
+release acceptance remain open.
+
+## 2026-11-01 — Stabilization batch 1
+
+Working tree after `abea3ac`: checked JSON records now keep document order for
+ordinary names and numeric array-index order, across generated/shared/host
+builders and wide/escaped/recursive inputs. Required-boolean truth guards narrow
+record/class result unions under v38; general boolean alternatives remain on
+both branches. Source-free Wasm and single-native packaging are covered.
+
+Final local gate: **2815 passed, 0 failed, 16 ignored**, all eight commands
+passed, source unchanged during verification. Checked conformance: 123 passed,
+4 known unsupported, baseline matched and no regressions. Evidence:
+`target/verification/20261101-174930-muu4a2lf/report.json` (ignored, local macOS
+arm64). Node host: 117 passed; normal-stack UARP console: 107 passed in 28 groups
+and two view checks. Existing fuel goldens remain unchanged. Two older comparison
+expectations were corrected for the deliberately different v38 JSON order;
+old-profile bytes/behavior are retained. Result-only documentation edits followed
+the final gate with code/build inputs unchanged; this batch is not yet committed.
+Direct discriminated-union decoding and the rest of the plan remain open.
+
+## 2026-11-01 — V38 review and planning checkpoint
+
+The four-defect review correction batch was committed as `abea3ac`. Its final
+full local gate passed all eight commands on macOS arm64: 2809 tests passed,
+none failed and 16 were ignored. Checked-v37 conformance matched the baseline
+(123 passed, 4 known unsupported, 8 feature rows without cases). The verified
+source was committed without further code changes. Local evidence is under
+`target/verification/20261101-140907-oznfamiy/`; ignored reports are not shipped
+release evidence. Node differential checks passed 117 cases; the normal-stack
+UARP console run passed 107 tests in 28 groups and two headless view checks.
+No fresh Linux, Windows, real-browser or Pi result is claimed for this batch.
+
+The subsequent documentation-only reconciliation updates the CORE/platform
+ledgers and delivery queue; it does not add runtime functionality or close
+whole CORE work streams. The superseded dashboard follows to preserve earlier
+branch/test checkpoints. Its “next” statements are historical.
+
+### Superseded development-plan dashboard (recorded before reconciliation)
+
+Updated 2026-10-29. Varta is an experimental research project: a compiler and
+capability-checked runtime core with K1–K3 implemented in their initial checked
+profiles and K4 language/value work in progress. It is not a production release
+and does not claim full ECMAScript, Node or npm compatibility.
+
+| Item | Current state |
+| --- | --- |
+| Profiles | Default `checked-i32-utf8-v1`; latest released opt-in `checked-f64-utf16-v31`; `checked-f64-utf16-v32` is the [pilot batch](development-plan.md#pilot-batch-v32-in-development), merged on the `v32-integration` branch and not released. Versions of every profile: [version matrix](architecture.md#version-matrix) |
+| Last full gate | `main`: commit `bf8c6c2` (2026-10-28), 1750 tests. `v32-integration` with both pilot waves: commit `45a6af1` (2026-10-29), 1908 tests. `v34-integration-merge` with the records, unknown and async streams: commit `02d1a75` (2026-10-29), 2018 tests, 0 failures. `v36-merge` with the declared-fields, function-fields, timers and async-generator streams: commit `765743e` (2026-10-29), 2196 tests, 0 failures, conformance 101 passed and 9 known gaps. `v38-wave2-merge` with the seven wave-2 streams: code at commit `911e9ed` (2026-10-30), 2662 tests, 0 failures, 3 ignored, conformance 123 passed and 4 known gaps, baseline matched, including the `no_std` core check. `v38-wave3a-merge` with method subtyping, linked conversions and readers, linked JSON with fair host fuel, KV storage with its fair rates and the 8M v38 per-turn fuel: code at commit `f3649a7` (2026-10-30), 2737 tests, 0 failures, 12 ignored, conformance 123 passed and 4 known gaps, baseline matched, including the `no_std` core check. `v38-wave3b-merge` with exact fuel determinism, compiled JSON decoders, linked serialization and logged text, idle and incremental collection and declared response headers: code at commit `443e13a` (2026-10-31), 2800 tests, 0 failures, 16 ignored, conformance 123 passed and 4 known gaps, on macOS arm64 and, with the same commands (`cargo test --workspace --locked --no-fail-fast`), in a Linux aarch64 container (`rust:1.98.0-slim-bookworm`), identical golden fuel numbers on both. All are the seven-command gate in [verification.md](verification.md#full-gate) on a local host, not cross-platform CI results |
+| Compatibility inventory | Current counts and gaps: [conformance/README.md](../conformance/README.md) |
+| Completion | Measured by the [core completion ledger](development-plan.md#core-completion-ledger); no work stream is closed by this snapshot |
+| Pilot | [uarp-sdk 0.13.2](development-plan.md#pilot-acceptance-package-uarp-sdk) (0.13.1 for the wave-2 integration and wave-3a streams, 0.13.0 for the wave-2 streams, 0.12.0 until the v38 integration); wave-3a integration probe under v38: **65 of 65** files check unmodified (0.13.1 with `typeof` of engine globals: 65 of 65; wave-2 integration: 7, stopped at the `typeof Blob` guard of `core/transport.ts`) ([probe](development-plan.md#pilot-acceptance-package-uarp-sdk)); earlier: M1 in progress: on the `v36-merge` branch `generated/meta.ts`, `generated/models.ts`, `core/json.ts`, `core/pagination.ts` and `core/errors.ts` compile and validate; the other files stop at the Web streams of `core/sse.ts` or a closure capture before initialization in `core/util.ts` ([measurement](development-plan.md#pilot-acceptance-package-uarp-sdk)) |
+| Platform targets | Third-party embedding contract published in [embedding.md](embedding.md); browser, desktop and Raspberry Pi 5 targets, application lifecycle and view layer follow the [accepted design](development-plan.md#platform-targets-and-application-model) (2026-10-29), not implemented yet |
+
+Next work, in order:
+
+1. **Suspension foundation** ([K4.4](development-plan.md#k44--suspension-scheduling-and-async-planned)
+   block 1): expression normalization, continuation frames over closure cells,
+   exception and GC invariants and the closed resume dispatcher are implemented
+   compiler-internally and tested in Wasmtime
+   ([contract](architecture.md#suspension-foundation-k44-block-1)) and merged
+   on the v32 integration branch. Runtime admission under profile v33
+   (`resumable_frames`) is implemented; the runtime does not schedule frames
+   yet. Synchronous generators (K4.4 step 2, `generators`) are implemented in
+   v33 on the `v33-generators` branch
+   ([contract](architecture.md#synchronous-generators-generators)).
+2. **Pilot M1–M3**, alongside block 1: review and release the v32 pilot batch
+   (both waves are merged on the integration branch), then index signatures and
+   wider records, Web types (`Headers`, `AbortSignal`) and the 65-file module
+   graph budgets.
+3. Promise jobs, then async/await (K4.4 steps 3–4): implemented under v34
+   and merged with the records and unknown streams on `v34-integration-merge`
+   ([scheduler](architecture.md#microtask-scheduler-promises),
+   [async functions](architecture.md#async-functions-async_functions));
+   step 5's timers and step 6's async generators and `for await` are
+   implemented under v36 and integrated on `v36-merge`
+   ([timers](architecture.md#timers-timers),
+   [async generators](architecture.md#async-generators-async_generators));
+   I/O and async HTTP are next.
+
+Completed increment logs, earlier checkpoints and verification records are in
+[history.md](history.md).
+
+
 ## Superseded direction text (2026-10-28)
 
 The project direction was restated as a [research thesis](development-plan.md#research-thesis).

@@ -5,10 +5,30 @@ use std::net::SocketAddr;
 
 pub const SECTION: &str = "varta.http";
 pub const VERSION: u32 = 1;
+/// V38 synchronous adapters exchange UTF-16 guest strings and binary64 status.
+/// The wire envelope remains UTF-8 JSON; v1 keeps its UTF-8 guest strings.
+pub const UTF16_VERSION: u32 = 2;
+pub const LATEST_VERSION: u32 = UTF16_VERSION;
+
+/// The explicit HTTP contract admitted by a source profile.
+pub fn version_for(profile: crate::language::LanguageProfile) -> Option<u32> {
+    if profile.turn_budgets() {
+        Some(UTF16_VERSION)
+    } else if !profile.binary64() {
+        Some(VERSION)
+    } else {
+        None
+    }
+}
 pub const ABI_PREFIX: &str = "varta.http_abi.";
 pub const HANDLER: &str = "varta.http_abi.handle";
 pub const COPY: &str = "varta.http_abi.copy_string";
 pub const RETAIN: &str = "varta.http_abi.retain_string";
+pub const STATE: &str = "varta.http_abi.state";
+pub const VALUE: &str = "varta.http_abi.value";
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 pub const MAX_METADATA_BYTES: usize = 8192;
 pub const MAX_HEADERS: usize = 32;
 pub const MAX_HEADER_BYTES: usize = 4096;
@@ -19,6 +39,9 @@ pub const CONNECTION_SECONDS: u64 = 10;
 pub const HTTP_BUFFER_BYTES: usize = 8192;
 /// One bounded active connection and worker.
 pub const MAX_CONNECTIONS: usize = 1;
+/// Request details retained by a native server report. Totals keep counting
+/// after this bound; observers can receive every completed request instead.
+pub const MAX_REPORTED_REQUESTS: usize = 32;
 /// Effects one contract may list.
 pub const MAX_REQUIRED_EFFECTS: usize = 16;
 /// The capability every contract requires and `http_stop` checks.
@@ -71,6 +94,9 @@ impl Default for HttpLimits {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HttpContract {
     pub version: u32,
+    /// V2 only: handle returns a rooted Promise<string>; state/value are pure accessors.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub asynchronous: bool,
     pub bind: String,
     pub export: String,
     pub required_effects: Vec<String>,
@@ -82,7 +108,8 @@ impl HttpContract {
             .bind
             .parse::<SocketAddr>()
             .map_err(|_| HttpError::Contract("literal IP endpoint required".into()))?;
-        if self.version != VERSION
+        if !matches!(self.version, VERSION | UTF16_VERSION)
+            || self.asynchronous && self.version != UTF16_VERSION
             || self.export != HANDLER
             || addr.to_string() != self.bind
             || self.limits != HttpLimits::default()
@@ -144,6 +171,31 @@ mod tests {
     use super::*;
     use crate::{CapabilityGrant, CapabilityValue, Manifest};
     #[test]
+    fn service_versions_preserve_legacy_profiles_and_gate_utf16_to_v38() {
+        use crate::language::{LanguageProfile as P, SUPPORTED_PROFILES};
+        for profile in SUPPORTED_PROFILES {
+            let expected = if *profile == P::CheckedF64Utf16V38 {
+                Some(UTF16_VERSION)
+            } else if !profile.binary64() {
+                Some(VERSION)
+            } else {
+                None
+            };
+            assert_eq!(version_for(*profile), expected, "{profile:?}");
+        }
+        let mut contract = HttpContract {
+            version: UTF16_VERSION,
+            asynchronous: false,
+            bind: "127.0.0.1:0".into(),
+            export: HANDLER.into(),
+            required_effects: vec![LISTEN_CAPABILITY.into()],
+            limits: HttpLimits::default(),
+        };
+        HttpContract::parse(&contract.to_bytes().unwrap()).unwrap();
+        contract.version = LATEST_VERSION + 1;
+        assert!(contract.validate().is_err());
+    }
+    #[test]
     fn listener_grants_are_exact_endpoints_with_no_outbound_or_boolean_fallback() {
         for endpoint in ["127.0.0.1:0", "[::1]:8080", "0.0.0.0:8080"] {
             let grant = CapabilityGrant {
@@ -198,12 +250,22 @@ mod tests {
     fn service_metadata_is_strict_versioned_and_cannot_raise_limits() {
         let mut contract = HttpContract {
             version: VERSION,
+            asynchronous: false,
             bind: "127.0.0.1:0".into(),
             export: HANDLER.into(),
             required_effects: vec!["net.listen".into()],
             limits: HttpLimits::default(),
         };
-        HttpContract::parse(&contract.to_bytes().unwrap()).unwrap();
+        let legacy = contract.to_bytes().unwrap();
+        assert!(
+            !std::str::from_utf8(&legacy)
+                .unwrap()
+                .contains("asynchronous")
+        );
+        HttpContract::parse(&legacy).unwrap();
+        contract.asynchronous = true;
+        assert!(contract.validate().is_err());
+        contract.asynchronous = false;
         contract.limits.connections += 1;
         assert!(contract.validate().is_err());
         contract.limits = HttpLimits::default();

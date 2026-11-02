@@ -757,6 +757,25 @@ pub(crate) fn target(context: &RuntimeContext, due: f64) -> Instant {
 /// execution deadline.
 fn wait(context: &RuntimeContext, due: f64) -> Result<(), wasmtime::Error> {
     let target = target(context, due);
+    if let Some(cancellation) = &context.cancellation {
+        let until = target.min(context.deadline);
+        loop {
+            cancellation.check()?;
+            let now = Instant::now();
+            if now >= until {
+                break;
+            }
+            std::thread::sleep(
+                cancellation
+                    .wait_until(until)
+                    .saturating_duration_since(now),
+            );
+        }
+        if Instant::now() >= context.deadline {
+            return Err(context.deadline_error());
+        }
+        return Ok(());
+    }
     let now = Instant::now();
     if target > now {
         std::thread::sleep(target.min(context.deadline) - now);
@@ -833,10 +852,24 @@ pub(crate) fn checkpoint(
     instance: &Instance,
     store: &mut Store<RuntimeContext>,
 ) -> Result<(), RuntimeError> {
+    checkpoint_until(instance, store, |_, _| Ok(false)).map(|_| ())
+}
+
+/// A bounded request uses the same loop, but owns work only until its response
+/// settles. No budget renews; every exit drops its Store and outstanding I/O.
+/// `false` means the loop became idle before the response settled.
+pub(crate) fn checkpoint_until(
+    instance: &Instance,
+    store: &mut Store<RuntimeContext>,
+    mut complete: impl FnMut(&Instance, &mut Store<RuntimeContext>) -> Result<bool, RuntimeError>,
+) -> Result<bool, RuntimeError> {
     loop {
         drain(instance, store)?;
         if let Some(error) = store.data().scheduler.unhandled_rejection() {
             return Err(error.into());
+        }
+        if complete(instance, store)? {
+            return Ok(true);
         }
         let busy = store.data().net.alive();
         let due = store.data().scheduler.next_due(busy);
@@ -847,7 +880,7 @@ pub(crate) fn checkpoint(
             continue;
         }
         let Some(due) = due else {
-            return Ok(());
+            return Ok(false);
         };
         if let Some(error) = beyond_deadline(store.data(), due) {
             return Err(error.into());
@@ -1131,5 +1164,46 @@ mod tests {
         }
         assert_eq!(scheduler.unhandled_rejection(), None);
         assert!(scheduler.reasons.is_empty());
+    }
+
+    #[test]
+    fn a_cancelled_execution_wakes_from_a_native_timer_wait() {
+        use crate::{
+            cancellation::{Cancellation, Cancelled},
+            execution::Execution,
+        };
+        let runtime = crate::VartaRuntime::new();
+        let token = Cancellation::new(runtime.engine.clone());
+        let cancelled = token.clone();
+        let engine = runtime.engine.clone();
+        let (ready, started) = std::sync::mpsc::channel();
+        let (done, result) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut execution = Execution::new(&engine, &[], None).unwrap();
+            execution.store.data_mut().cancellation = Some(cancelled);
+            ready.send(()).unwrap();
+            done.send(wait(execution.store.data(), 3000.0)).unwrap();
+        });
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        token.cancel();
+        let error = result
+            .recv_timeout(Duration::from_secs(1))
+            .expect("timer wait ignored cancellation")
+            .unwrap_err();
+        assert!(error.downcast_ref::<Cancelled>().is_some(), "{error:#}");
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn a_cancellable_timer_wait_never_returns_before_its_due_time() {
+        let runtime = crate::VartaRuntime::new();
+        let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+        execution.store.data_mut().cancellation = Some(crate::cancellation::Cancellation::new(
+            runtime.engine.clone(),
+        ));
+        let started = execution.store.data().started;
+        wait(execution.store.data(), 50.0).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(50));
     }
 }

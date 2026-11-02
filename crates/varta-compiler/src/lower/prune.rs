@@ -47,6 +47,12 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     let mut stack = vec![program.main];
     stack.extend(program.tools.iter().map(|(index, _)| *index));
     stack.extend(program.http.iter().map(|(index, _)| *index));
+    stack.extend(
+        program
+            .http_async
+            .iter()
+            .flat_map(|(state, value)| [*state, *value]),
+    );
     stack.extend(program.view_event);
     stack.extend(program.initializers.iter().copied());
     // V37 keeps every suspendable function; v38 (`program_limits`) keeps only
@@ -139,6 +145,10 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
     if let Some((index, _)) = &mut program.http {
         *index = remap(*index)?;
     }
+    if let Some((state, value)) = &mut program.http_async {
+        *state = remap(*state)?;
+        *value = remap(*value)?;
+    }
     if let Some(index) = &mut program.view_event {
         *index = remap(*index)?;
     }
@@ -183,6 +193,12 @@ fn unread_constants(program: &mut ir::Program) -> Result<()> {
     let mut stack = vec![program.main];
     stack.extend(program.tools.iter().map(|(index, _)| *index));
     stack.extend(program.http.iter().map(|(index, _)| *index));
+    stack.extend(
+        program
+            .http_async
+            .iter()
+            .flat_map(|(state, value)| [*state, *value]),
+    );
     stack.extend(program.view_event);
     stack.extend(program.suspendable.keys().copied());
     let mut kept: BTreeMap<usize, Vec<bool>> = BTreeMap::new();
@@ -246,10 +262,12 @@ fn unread_constants(program: &mut ir::Program) -> Result<()> {
         .filter(|index| program.functions[*index].body.is_empty())
         .collect();
     program.initializers.retain(|index| !empty.contains(index));
-    program.functions[program.main].body.retain(|statement| {
-        !matches!(statement, S::Expr(Expr { kind: E::Call(index, args), .. })
-            if args.is_empty() && empty.contains(index))
-    });
+    for root in std::iter::once(program.main).chain(program.http.iter().map(|(index, _)| *index)) {
+        program.functions[root].body.retain(|statement| {
+            !matches!(statement, S::Expr(Expr { kind: E::Call(index, args), .. })
+                if args.is_empty() && empty.contains(index))
+        });
+    }
     renumber_constants(program);
     Ok(())
 }

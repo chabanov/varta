@@ -231,7 +231,7 @@ export function createValidator(ctx) {
     const sections = customSections(module, SECTION.tools);
     if (sections.length === 0) return null;
     if (sections.length > 1) throw new ValidationError("duplicate varta.tools section");
-    if (!profile?.toolHttp) throw new ValidationError("tool catalog outside a tool profile");
+    if (!profile?.toolEntries) throw new ValidationError("tool catalog outside a tool profile");
     if (customSections(module, SECTION.abi).length !== 1) throw new ValidationError("tool modules need exactly one varta.abi section");
     if (module.start !== null) throw new ValidationError("tool modules must not have a start section");
     if (sections[0].data.length > C.maxCatalogBytes) throw new ValidationError("tool catalog too large");

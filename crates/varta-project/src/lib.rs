@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Shared checked project pipeline, portable artifacts and reviewable policy metadata.
 mod artifact;
+pub mod browser;
 mod config;
 mod invoke;
 mod launcher;
@@ -20,7 +21,8 @@ pub use varta_common::permission::DecisionFile;
 pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
 pub use varta_runtime::{
-    FileRoots, RunOutput, RunReport, RuntimeEvent, RuntimeObserver, ViewReport, ViewScript,
+    FileRoots, HttpReport, HttpRequestOutcome, HttpRequestReport, RunOutput, RunReport,
+    RuntimeEvent, RuntimeObserver, ViewReport, ViewScript,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -160,24 +162,74 @@ fn compile(
     config_path: &Path,
     fuel_profile: bool,
 ) -> Result<(VartaConfig, PathBuf, varta_compiler::Compilation)> {
-    let source = artifact::read_bounded(config_path, artifact::MAX_MANIFEST_BYTES)?;
-    let config: VartaConfig = serde_json::from_slice(&source)
-        .map_err(|e| varta_common::VartaError::InvalidManifest(e.to_string()))?;
-    config.validate()?;
-    let base = config_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-        .to_owned();
-    let entry_path = base.join(&config.entry).canonicalize()?;
-    let loader = modules::SourceLoader::new(&base, config.language_profile)?;
-    let entry = loader.entry(&entry_path)?;
-    let compilation = if fuel_profile {
-        varta_compiler::compile_modules_for_fuel_profile(entry, &loader, config.language_profile)?
-    } else {
-        varta_compiler::compile_modules_with_profile(entry, &loader, config.language_profile)?
-    };
+    let (config, base, compilation, _) = compile_inputs(config_path, fuel_profile, false)?;
     Ok((config, base, compilation))
+}
+
+fn compile_inputs(
+    config_path: &Path,
+    fuel_profile: bool,
+    observe: bool,
+) -> Result<(
+    VartaConfig,
+    PathBuf,
+    varta_compiler::Compilation,
+    modules::SourceLoader,
+)> {
+    let (result, loader) = compile_attempt(config_path, fuel_profile, observe);
+    let (config, base, compilation) = result?;
+    Ok((
+        config,
+        base,
+        compilation,
+        loader.expect("successful compilation has a source loader"),
+    ))
+}
+
+fn compile_attempt(
+    config_path: &Path,
+    fuel_profile: bool,
+    observe: bool,
+) -> (
+    Result<(VartaConfig, PathBuf, varta_compiler::Compilation)>,
+    Option<modules::SourceLoader>,
+) {
+    let mut observed = None;
+    let result = (|| {
+        let source = artifact::read_bounded(config_path, artifact::MAX_MANIFEST_BYTES)?;
+        let config: VartaConfig = serde_json::from_slice(&source)
+            .map_err(|e| varta_common::VartaError::InvalidManifest(e.to_string()))?;
+        config.validate()?;
+        let base = config_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_owned();
+        let mut loader = modules::SourceLoader::new(&base, config.language_profile)?;
+        if observe {
+            loader.observe_inputs();
+            loader.observe_config(config_path, source)?;
+        }
+        observed = Some(loader);
+        let loader = observed.as_ref().expect("source loader was initialized");
+        let entry_path = base.join(&config.entry);
+        if observe {
+            loader.read_external(&entry_path, modules::MAX_SOURCE_BYTES)?;
+        }
+        let entry_path = entry_path.canonicalize()?;
+        let entry = loader.entry(&entry_path)?;
+        let compilation = if fuel_profile {
+            varta_compiler::compile_modules_for_fuel_profile(
+                entry,
+                loader,
+                config.language_profile,
+            )?
+        } else {
+            varta_compiler::compile_modules_with_profile(entry, loader, config.language_profile)?
+        };
+        Ok((config, base, compilation))
+    })();
+    (result, observed)
 }
 
 pub fn run(artifact: &Artifact) -> Result<RunOutput> {

@@ -27,6 +27,8 @@
 //! entry drops its scratch roots and calls the linked `json_parse_v19` with
 //! the target's static schema, which then decides the outcome alone: the
 //! same values, `SyntaxError`/`TypeError` and typed limits as before.
+//! Private literal-constrained assertions instead return `JSON_DECODE_MISS`
+//! to their caller, which owns the original unknown parse and checked cast.
 //! Nothing survives a call.
 mod asm;
 mod build;
@@ -89,6 +91,7 @@ pub(crate) mod hook {
     pub(crate) enum Mode {
         Production,
         Generic,
+        AssertionsReference,
         Collecting,
     }
     #[cfg(any(test, feature = "suspension-test-hook"))]
@@ -117,6 +120,12 @@ pub(super) fn enabled(profile: varta_common::language::LanguageProfile) -> bool 
     profile.json_decoders()
         && crate::link::links(profile, profile.json_parse())
         && hook::mode() != hook::Mode::Generic
+}
+
+/// Test reference leaves ordinary compiled decoders enabled while disabling
+/// only compiler-private assertion attempts.
+pub(super) fn direct_enabled(profile: varta_common::language::LanguageProfile) -> bool {
+    enabled(profile) && hook::mode() != hook::Mode::AssertionsReference
 }
 
 /// The shared functions, in index order.
@@ -224,6 +233,8 @@ enum Node {
     Own { check: u32, build: u32 },
     /// A primitive (or a node left to the fallback): shared functions.
     Shared { check: Shared, build: Shared },
+    /// A private literal checker and an ordinary scalar builder.
+    Literal { check: u32, build: Shared },
 }
 
 /// The decoder globals (after every other global of the module).
@@ -242,6 +253,14 @@ pub(super) struct Globals {
 }
 pub(super) const GLOBALS: u32 = 5;
 
+#[derive(Clone, Copy)]
+struct Entry {
+    target: Type,
+    node: u32,
+    /// None only for a compiler-private attempt with a caller-owned fallback.
+    schema: Option<(u32, u32)>,
+}
+
 /// The decoders of one module: function indices from `begin`.
 pub(super) struct Plan<'a> {
     graph: &'a schemas::Graph,
@@ -250,7 +269,7 @@ pub(super) struct Plan<'a> {
     nodes: Vec<Node>,
     shared: u32,
     /// The entry of each root type, with the root's static schema.
-    entries: Vec<(Type, u32, (u32, u32))>,
+    entries: Vec<Entry>,
     functions: u32,
 }
 
@@ -268,56 +287,77 @@ impl<'a> Plan<'a> {
         let nodes = graph
             .nodes
             .iter()
-            .map(|node| match node {
-                JsonType::Record { fields, .. } if fields.len() > MASK_FIELDS => Node::Shared {
-                    check: Shared::CheckFallback,
-                    build: Shared::BuildNull,
-                },
-                JsonType::Record { .. }
-                | JsonType::Array { .. }
-                | JsonType::Dictionary { .. }
-                | JsonType::PrimitiveUnion { .. }
-                | JsonType::ReferenceUnion { .. } => {
-                    let own = Node::Own {
-                        check: next,
-                        build: next + 1,
+            .enumerate()
+            .map(|(index, node)| {
+                if graph.literals[index].is_some() {
+                    let build = match node {
+                        JsonType::String => Shared::BuildString,
+                        JsonType::Float64 => Shared::BuildNumber,
+                        JsonType::Boolean => Shared::BuildBoolean,
+                        _ => unreachable!("literal constraints have primitive storage"),
                     };
-                    next += 2;
+                    let own = Node::Literal { check: next, build };
+                    next += 1;
                     own
+                } else {
+                    match node {
+                        JsonType::Record { fields, .. } if fields.len() > MASK_FIELDS => {
+                            Node::Shared {
+                                check: Shared::CheckFallback,
+                                build: Shared::BuildNull,
+                            }
+                        }
+                        JsonType::Record { .. }
+                        | JsonType::Array { .. }
+                        | JsonType::Dictionary { .. }
+                        | JsonType::PrimitiveUnion { .. }
+                        | JsonType::ReferenceUnion { .. } => {
+                            let own = Node::Own {
+                                check: next,
+                                build: next + 1,
+                            };
+                            next += 2;
+                            own
+                        }
+                        JsonType::String => Node::Shared {
+                            check: Shared::CheckString,
+                            build: Shared::BuildString,
+                        },
+                        JsonType::Float64 => Node::Shared {
+                            check: Shared::CheckNumber,
+                            build: Shared::BuildNumber,
+                        },
+                        JsonType::Boolean => Node::Shared {
+                            check: Shared::CheckBoolean,
+                            build: Shared::BuildBoolean,
+                        },
+                        JsonType::Null => Node::Shared {
+                            check: Shared::CheckNull,
+                            build: Shared::BuildNull,
+                        },
+                        // JSON never holds `undefined`, an i32 slot is never a v38
+                        // target and BigInt text is left to the fallback.
+                        JsonType::Undefined | JsonType::I32 | JsonType::BigInt => Node::Shared {
+                            check: Shared::CheckFallback,
+                            build: Shared::BuildNull,
+                        },
+                    }
                 }
-                JsonType::String => Node::Shared {
-                    check: Shared::CheckString,
-                    build: Shared::BuildString,
-                },
-                JsonType::Float64 => Node::Shared {
-                    check: Shared::CheckNumber,
-                    build: Shared::BuildNumber,
-                },
-                JsonType::Boolean => Node::Shared {
-                    check: Shared::CheckBoolean,
-                    build: Shared::BuildBoolean,
-                },
-                JsonType::Null => Node::Shared {
-                    check: Shared::CheckNull,
-                    build: Shared::BuildNull,
-                },
-                // JSON never holds `undefined`, an i32 slot is never a v38
-                // target and BigInt text is left to the fallback.
-                JsonType::Undefined | JsonType::I32 | JsonType::BigInt => Node::Shared {
-                    check: Shared::CheckFallback,
-                    build: Shared::BuildNull,
-                },
             })
             .collect();
         let entries = graph
             .roots
             .iter()
             .map(|(ty, node)| {
-                let schema = schemas
-                    .get(ty)
-                    .copied()
-                    .ok_or_else(|| CompilerError::Internal("missing decoder schema".into()))?;
-                Ok((*ty, *node, schema))
+                let schema = schemas.get(ty).copied();
+                if schema.is_none() && !graph.attempts.contains(ty) {
+                    return Err(CompilerError::Internal("missing decoder schema".into()));
+                }
+                Ok(Entry {
+                    target: *ty,
+                    node: *node,
+                    schema,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         let functions = next + entries.len() as u32 - begin;
@@ -335,7 +375,7 @@ impl<'a> Plan<'a> {
         let first = self.shared + self.functions - self.entries.len() as u32;
         self.entries
             .iter()
-            .position(|(root, _, _)| *root == ty)
+            .position(|entry| entry.target == ty)
             .map(|index| first + index as u32)
     }
     /// The signatures of every decoder function, in index order.
@@ -344,6 +384,8 @@ impl<'a> Plan<'a> {
         for node in &self.nodes {
             if matches!(node, Node::Own { .. }) {
                 signatures.extend([CHECK.clone(), BUILD.clone()]);
+            } else if matches!(node, Node::Literal { .. }) {
+                signatures.push(CHECK.clone());
             }
         }
         signatures.extend(self.entries.iter().map(|_| ENTRY_SIGNATURE.clone()));
@@ -366,14 +408,14 @@ impl<'a> Plan<'a> {
     }
     fn check(&self, node: u32) -> u32 {
         match self.nodes[node as usize] {
-            Node::Own { check, .. } => check,
+            Node::Own { check, .. } | Node::Literal { check, .. } => check,
             Node::Shared { check, .. } => self.shared(check),
         }
     }
     fn build(&self, node: u32) -> u32 {
         match self.nodes[node as usize] {
             Node::Own { build, .. } => build,
-            Node::Shared { build, .. } => self.shared(build),
+            Node::Shared { build, .. } | Node::Literal { build, .. } => self.shared(build),
         }
     }
     /// Whether node `node` builds a container its builder publishes itself
@@ -419,6 +461,13 @@ pub(super) fn bodies(
         ));
     }
     for (index, node) in plan.graph.nodes.iter().enumerate() {
+        if let Node::Literal { .. } = plan.nodes[index] {
+            bodies.push((
+                format!("<json literal {index}>"),
+                check::literal(plan, context, index)?,
+            ));
+            continue;
+        }
         if !matches!(plan.nodes[index], Node::Own { .. }) {
             continue;
         }
@@ -432,7 +481,7 @@ pub(super) fn bodies(
             build::node(plan, context, index, node)?,
         ));
     }
-    for &(_, node, schema) in &plan.entries {
+    for &Entry { node, schema, .. } in &plan.entries {
         bodies.push((
             format!("<json entry {node}>"),
             entry(plan, context, node, schema),
@@ -442,8 +491,14 @@ pub(super) fn bodies(
 }
 
 /// `(text) -> payload`: check, then build, the target `node`; any input the
-/// checkers do not accept goes to the linked parse with `schema`.
-fn entry(plan: &Plan, context: Context, node: u32, schema: (u32, u32)) -> wasm_encoder::Function {
+/// checkers do not accept goes to the linked parse with `schema`, or returns
+/// the private miss sentinel to the caller-owned checked conversion.
+fn entry(
+    plan: &Plan,
+    context: Context,
+    node: u32,
+    schema: Option<(u32, u32)>,
+) -> wasm_encoder::Function {
     use wasm_encoder::Instruction as I;
     let Globals {
         end,
@@ -535,11 +590,17 @@ fn entry(plan: &Plan, context: Context, node: u32, schema: (u32, u32)) -> wasm_e
     a.get(result).i(I::Return);
     a.end();
     a.get(mark).i(I::GlobalSet(roots));
-    a.get(ptr)
-        .get(len)
-        .int(schema.0 as i32)
-        .int(schema.1 as i32)
-        .i(I::Call(context.fallback));
+    if let Some(schema) = schema {
+        a.get(ptr)
+            .get(len)
+            .int(schema.0 as i32)
+            .int(schema.1 as i32)
+            .i(I::Call(context.fallback));
+    } else {
+        // A private attempt never substitutes an unconstrained schema. The
+        // caller's ordinary parse/assertion owns every failure and fallback.
+        a.long(ir::JSON_DECODE_MISS);
+    }
     a.finish()
 }
 

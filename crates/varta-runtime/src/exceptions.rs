@@ -295,7 +295,7 @@ fn thrown(
             )
         }
         ValueKind::Error if errors => {
-            let object = ErrorObject::read_with_version(data, cell.payload, version)?;
+            let object = ErrorObject::read_in(data, cell.payload, version, module)?;
             let start = object.message as u32 as usize;
             let len = (object.message >> i32::BITS) as usize;
             let message = limit
@@ -314,7 +314,9 @@ fn thrown(
                 }
             }
         }
-        ValueKind::Record if instances => error_instance(data, cell.payload, limit)?,
+        ValueKind::Record if instances => {
+            error_instance(data, cell.payload, limit, module.limits.data.string_bytes)?
+        }
         _ => return Err(invalid("unsupported thrown value kind")),
     };
     Ok(value)
@@ -332,6 +334,7 @@ fn error_instance(
     data: &[u8],
     record: u64,
     limit: &mut Limit,
+    string_bytes: usize,
 ) -> Result<varta_common::exceptions::ThrownValue, RuntimeError> {
     let word = |at: usize| {
         at.checked_add(size_of::<u32>())
@@ -371,7 +374,7 @@ fn error_instance(
         let handle = (u64::from(word(slot + 4)?) << i32::BITS) | u64::from(word(slot)?);
         let start = handle as u32 as usize;
         let len = (handle >> i32::BITS) as usize;
-        if len > varta_common::abi::MAX_STRING_BYTES || !len.is_multiple_of(2) {
+        if len > string_bytes || !len.is_multiple_of(2) {
             return Err(invalid("invalid thrown Error instance field"));
         }
         let bytes = start
@@ -444,7 +447,13 @@ mod tests {
     #[test]
     fn thrown_instances_copy_name_and_message_fields() {
         assert_eq!(
-            error_instance(&instance(), handle(), &mut Limit::default()).unwrap(),
+            error_instance(
+                &instance(),
+                handle(),
+                &mut Limit::default(),
+                varta_common::abi::MAX_STRING_BYTES
+            )
+            .unwrap(),
             ThrownValue::ErrorInstance {
                 name: "Ab".encode_utf16().collect(),
                 message: Vec::new(),
@@ -456,7 +465,13 @@ mod tests {
             truncated: false,
         };
         assert_eq!(
-            error_instance(&instance(), handle(), &mut limit).unwrap(),
+            error_instance(
+                &instance(),
+                handle(),
+                &mut limit,
+                varta_common::abi::MAX_STRING_BYTES
+            )
+            .unwrap(),
             ThrownValue::ErrorInstance {
                 name: "A".encode_utf16().collect(),
                 message: Vec::new(),
@@ -467,7 +482,13 @@ mod tests {
             units: Some(2),
             truncated: false,
         };
-        error_instance(&instance(), handle(), &mut exact).unwrap();
+        error_instance(
+            &instance(),
+            handle(),
+            &mut exact,
+            varta_common::abi::MAX_STRING_BYTES,
+        )
+        .unwrap();
         assert!(!exact.truncated);
     }
 
@@ -489,13 +510,27 @@ mod tests {
             let mut data = instance();
             put(&mut data, at, word);
             assert!(
-                error_instance(&data, handle(), &mut Limit::default()).is_err(),
+                error_instance(
+                    &data,
+                    handle(),
+                    &mut Limit::default(),
+                    varta_common::abi::MAX_STRING_BYTES
+                )
+                .is_err(),
                 "{at}"
             );
         }
         // Descriptor entries past the end of memory fail instead of panicking.
         let mut data = instance();
         put(&mut data, RECORD, u32::MAX - 8);
-        assert!(error_instance(&data, handle(), &mut Limit::default()).is_err());
+        assert!(
+            error_instance(
+                &data,
+                handle(),
+                &mut Limit::default(),
+                varta_common::abi::MAX_STRING_BYTES
+            )
+            .is_err()
+        );
     }
 }

@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use varta_project::{Artifact, CheckedProject, HostPolicy, ProjectError};
 
@@ -52,6 +52,12 @@ enum Commands {
         config: PathBuf,
         #[command(flatten)]
         execution: ExecutionFlags,
+        /// Execute natively (default) or serve a local browser app with rebuild/reload.
+        #[arg(long, value_enum)]
+        target: Option<DevTarget>,
+        /// Browser development listener; loopback only, default 127.0.0.1:0.
+        #[arg(long, value_name = "IP:PORT", requires = "target")]
+        listen: Option<std::net::SocketAddr>,
         /// Print per-function fuel (self, total, calls) of this run to stderr.
         #[arg(long)]
         profile_fuel: bool,
@@ -67,20 +73,27 @@ enum Commands {
         /// runnable (every record, arrived network completion and due timer
         /// has run, including zero-delay timers and their chains, each as its
         /// own turn); {"input":"wait","ms":N} advances virtual time by N
-        /// milliseconds and fires every timer due by then. Nothing waits for
-        /// the wall clock or for network requests in flight; a timer no wait
-        /// reaches never fires.
+        /// milliseconds and fires every timer due by then. An explicit
+        /// {"input":"wait_network","ms":N} waits for armed network work
+        /// under a bounded wall-clock deadline without advancing virtual
+        /// timers. Other steps never wait for requests implicitly.
         #[arg(long, value_name = "PATH", conflicts_with = "profile_fuel")]
         view_script: Option<PathBuf>,
     },
-    /// Build validated Wasm; --single embeds portable Wasm in a native launcher.
+    /// Build validated Wasm; --single embeds it in a native launcher.
+    /// --target browser writes a checked console/view bundle to dist/web
+    /// (web beside the configured output). Unsupported browser effects fail
+    /// before writing. An existing browser directory is never overwritten.
     Build {
         #[arg(long, default_value = "varta.config.json")]
         config: PathBuf,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "target")]
         single: bool,
+        /// Distribution target; omission preserves the existing Wasm/--single behavior.
+        #[arg(long, value_enum)]
+        target: Option<BuildTarget>,
         /// Use this trusted native runtime companion instead of the sibling varta-runtime.
-        #[arg(long, requires = "single", value_name = "PATH")]
+        #[arg(long, value_name = "PATH")]
         launcher: Option<PathBuf>,
     },
     /// Execute portable Wasm or a Varta container (native AOT is rejected).
@@ -119,9 +132,22 @@ enum Commands {
     },
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum BuildTarget {
+    Wasm,
+    Native,
+    Browser,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DevTarget {
+    Native,
+    Browser,
+}
+
 #[derive(clap::Args)]
 struct ExecutionFlags {
-    /// Print each turn's fuel, host calls, wall time and memory (and the totals) to stderr after the run.
+    /// Print execution budgets to stderr; browser dev displays them in the page.
     #[arg(long)]
     budget_report: bool,
     /// Run a checked-f64-utf16-v38 program as a long-lived application instance: the deadline renews per turn and output streams per turn.
@@ -180,6 +206,12 @@ fn execute(
         return Err(ProjectError::Usage("--policy applies to run, dev, invoke, inspect, validate, or a packaged app; it is never embedded in a build".into()));
     }
     let policy = policy_path.map(HostPolicy::read).transpose()?;
+    if matches!(&command,Some(Commands::Dev{listen:Some(_),target,..}) if *target!=Some(DevTarget::Browser))
+    {
+        return Err(ProjectError::Usage(
+            "--listen requires dev --target browser".into(),
+        ));
+    }
 
     match command {
         Some(Commands::Init { name }) => {
@@ -197,6 +229,38 @@ fn execute(
             } else {
                 println!("varta check: ok ({})", config.display());
             }
+        }
+        Some(Commands::Dev {
+            config,
+            execution,
+            target: Some(DevTarget::Browser),
+            listen,
+            profile_fuel,
+            view_script,
+            ..
+        }) => {
+            if profile_fuel || view_script.is_some() {
+                return Err(ProjectError::Usage(
+                    "browser dev does not accept native fuel profiling or view scripts".into(),
+                ));
+            }
+            let mut options = varta_project::browser::BrowserDevOptions {
+                application: execution.app,
+                report_budgets: execution.budget_report,
+                ..Default::default()
+            };
+            if let Some(address) = listen {
+                options.address = address;
+            }
+            let server = varta_project::browser::BrowserDevServer::bind(
+                &config,
+                policy.as_ref(),
+                decisions.as_ref(),
+                options,
+            )?;
+            println!("varta dev: browser {}", server.url());
+            server.run()?;
+            return Ok(0);
         }
         Some(Commands::Dev {
             config,
@@ -271,11 +335,26 @@ fn execute(
             config,
             single,
             launcher,
+            target,
         }) => {
+            if launcher.is_some() && !single && !matches!(target, Some(BuildTarget::Native)) {
+                return Err(ProjectError::Usage(
+                    "--launcher requires --single or --target native".into(),
+                ));
+            }
+            if matches!(target, Some(BuildTarget::Browser)) {
+                for path in varta_project::browser::build_browser(&config)? {
+                    println!("wrote artifact: {}", path.display());
+                }
+                return Ok(0);
+            }
             let project = CheckedProject::load(&config)?;
             let executable = std::env::current_exe()?;
             let launcher = launcher.unwrap_or_else(|| varta_project::runtime_launcher(&executable));
-            for path in project.build(single, &launcher)? {
+            for path in project.build(
+                single || matches!(target, Some(BuildTarget::Native)),
+                &launcher,
+            )? {
                 println!("wrote artifact: {}", path.display());
             }
         }
@@ -368,13 +447,24 @@ fn execute(
     Ok(0)
 }
 
-fn observer() -> varta_project::RuntimeObserver {
-    std::sync::Arc::new(|event| match event {
+fn observer(budget_report: bool) -> varta_project::RuntimeObserver {
+    std::sync::Arc::new(move |event| match event {
         varta_project::RuntimeEvent::Listening { address, .. } => {
             eprintln!("varta listening: http://{address}")
         }
         varta_project::RuntimeEvent::Output(line) => println!("{line}"),
         varta_project::RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
+        varta_project::RuntimeEvent::HttpRequest(report) => {
+            if budget_report && let Some(budget) = &report.budget {
+                eprintln!(
+                    "varta HTTP request {}: {:?}",
+                    report.sequence, report.outcome
+                );
+                for line in budget.lines() {
+                    eprintln!("{line}");
+                }
+            }
+        }
     })
 }
 
@@ -413,7 +503,7 @@ fn run(
     artifact: &Artifact,
     policy: Option<&HostPolicy>,
 ) -> Result<varta_project::RunOutput, ProjectError> {
-    varta_project::run_observed(artifact, policy, observer())
+    varta_project::run_observed(artifact, policy, observer(false))
 }
 
 fn run_report(
@@ -433,7 +523,7 @@ fn settings(
     varta_project::RunSettings {
         application: flags.app,
         decisions,
-        observer: Some(observer()),
+        observer: Some(observer(flags.budget_report)),
         file_roots: None,
     }
 }

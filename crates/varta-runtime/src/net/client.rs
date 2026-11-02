@@ -116,7 +116,90 @@ impl Drop for Connection {
 
 type Response = (hyper::http::response::Parts, Incoming, Connection);
 
+/// A legacy synchronous net.get/net.fetch inside an owned HTTP v2 request.
+/// Its guest call remains synchronous; only native I/O is driven here, under
+/// the same cancellation token and without guest jobs or allowance renewal.
+pub(crate) fn fetch_cancellable(
+    url: &url::Url,
+    deadline: Instant,
+    read_body: bool,
+    cancellation: &crate::cancellation::Cancellation,
+) -> Result<(i32, Vec<u8>), crate::http::Failure> {
+    use crate::{HostFailure, http::Failure};
+    use http_body_util::BodyExt;
+    let cancelled = || cancellation.check().map_err(|_| Failure::Cancelled);
+    cancelled()?;
+    // The caller authorizes a legacy http-only grant before entering here.
+    if url.scheme() != "http" {
+        return Err(HostFailure::io("synchronous network calls require http").into());
+    }
+    let plan = Plan {
+        url: url.clone(),
+        method: hyper::Method::GET,
+        headers: Vec::new(),
+        head: HeadForm::Arrival,
+        body: None,
+        deadline,
+        tls: None,
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(HostFailure::io)?;
+    let request = async {
+        let (parts, mut incoming, _connection) =
+            connect_and_send_with_limit(&plan, varta_common::net::MAX_FETCH_HEADER_BYTES)
+                .await
+                .map_err(HostFailure::io)?;
+        let status = i32::from(parts.status.as_u16());
+        let mut bytes = Vec::new();
+        if read_body {
+            while let Some(frame) = incoming.frame().await {
+                let frame = frame.map_err(HostFailure::io)?;
+                if let Ok(data) = frame.into_data() {
+                    if data.len() > varta_common::abi::MAX_RESULT_BYTES.saturating_sub(bytes.len())
+                    {
+                        return Err(HostFailure::too_large());
+                    }
+                    bytes.extend_from_slice(&data);
+                }
+            }
+        }
+        Ok((status, bytes))
+    };
+    let timeout = || {
+        HostFailure::io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "request timed out",
+        ))
+    };
+    runtime.block_on(async {
+        let request = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), request);
+        tokio::pin!(request);
+        loop {
+            cancelled()?;
+            if Instant::now() >= deadline { return Err(timeout().into()); }
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(cancellation.wait_until(deadline))) => {},
+                result = &mut request => {
+                    cancelled()?;
+                    if Instant::now() >= deadline { return Err(timeout().into()); }
+                    return result.map_err(|_| timeout())?.map_err(Failure::Host);
+                }
+            }
+        }
+    })
+}
+
 async fn connect_and_send(plan: &Plan) -> Result<Response, RequestFailure> {
+    connect_and_send_with_limit(plan, MAX_RESPONSE_HEADER_BYTES).await
+}
+
+async fn connect_and_send_with_limit(
+    plan: &Plan,
+    header_bytes: usize,
+) -> Result<Response, RequestFailure> {
     let host = plan.url.host_str().ok_or(RequestFailure::NoHost)?;
     let port = plan
         .url
@@ -124,7 +207,20 @@ async fn connect_and_send(plan: &Plan) -> Result<Response, RequestFailure> {
         .ok_or(RequestFailure::NoPort)?;
     // An IPv6 host keeps its brackets in the URL; the socket needs the bare address.
     let address = host.trim_start_matches('[').trim_end_matches(']');
-    let tcp = tokio::net::TcpStream::connect((address, port))
+    let addresses = super::dns::resolve(address, port, plan.deadline)
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                RequestFailure::Timeout
+            } else {
+                RequestFailure::Connect(error.to_string())
+            }
+        })?;
+    if Instant::now() >= plan.deadline {
+        return Err(RequestFailure::Timeout);
+    }
+    // A resolved slice never invokes Tokio's per-runtime blocking DNS pool.
+    let tcp = tokio::net::TcpStream::connect(addresses.as_slice())
         .await
         .map_err(|error| RequestFailure::Connect(error.to_string()))?;
     // Latency matters more than packet count for request/response traffic.
@@ -136,20 +232,20 @@ async fn connect_and_send(plan: &Plan) -> Result<Response, RequestFailure> {
             .connect(name, tcp)
             .await
             .map_err(|error| RequestFailure::TlsHandshake(error.to_string()))?;
-        exchange(plan, hyper_util::rt::TokioIo::new(tls)).await
+        exchange(plan, hyper_util::rt::TokioIo::new(tls), header_bytes).await
     } else {
-        exchange(plan, hyper_util::rt::TokioIo::new(tcp)).await
+        exchange(plan, hyper_util::rt::TokioIo::new(tcp), header_bytes).await
     }
 }
 
-async fn exchange<T>(plan: &Plan, io: T) -> Result<Response, RequestFailure>
+async fn exchange<T>(plan: &Plan, io: T, header_bytes: usize) -> Result<Response, RequestFailure>
 where
     T: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
 {
     let mut builder = hyper::client::conn::http1::Builder::new();
     builder
         .max_headers(MAX_RESPONSE_HEADERS)
-        .max_buf_size(MAX_RESPONSE_HEADER_BYTES);
+        .max_buf_size(header_bytes);
     let (mut sender, connection) = builder
         .handshake::<_, http_body_util::Full<Bytes>>(io)
         .await

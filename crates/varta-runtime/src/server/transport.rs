@@ -7,7 +7,11 @@ use hyper::{
     service::service_fn,
 };
 use hyper_util::rt::{TokioIo, TokioTimer};
-use std::{convert::Infallible, time::Duration};
+use std::{
+    convert::Infallible,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use varta_common::http::{self, HttpHeader, HttpRequest, HttpResponse};
 
 type Reply = Response<Full<Bytes>>;
@@ -136,30 +140,34 @@ async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> 
     Ok((json, head))
 }
 async fn handle(req: Request<Incoming>, shared: Arc<Shared>) -> Result<Reply, Infallible> {
-    let (request, head) =
-        match tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req)).await {
-            Ok(Ok(value)) => value,
-            Ok(Err(status)) => return Ok(failure(status)),
-            Err(_) => return Ok(failure(StatusCode::REQUEST_TIMEOUT)),
-        };
+    let (request, head) = tokio::select! {
+        _=shared.stop.cancelled()=>return Ok(failure(StatusCode::SERVICE_UNAVAILABLE)),
+        value=tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req))=> match value {
+            Ok(Ok(value))=>value,
+            Ok(Err(status))=>return Ok(failure(status)),
+            Err(_)=>return Ok(failure(StatusCode::REQUEST_TIMEOUT)),
+        }
+    };
+    if shared.stop.stopped() {
+        return Ok(failure(StatusCode::SERVICE_UNAVAILABLE));
+    }
     let Ok(permit) = shared.workers.clone().try_acquire_owned() else {
         return Ok(failure(StatusCode::SERVICE_UNAVAILABLE));
     };
+    let cancellation = (shared.contract.version == http::UTF16_VERSION)
+        .then(|| crate::cancellation::Cancellation::new(shared.engine.clone()));
+    let mut owner = crate::cancellation::CancelOnDrop(cancellation.clone());
     let worker = shared.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        handler::execute(&worker, request)
+        handler::execute(&worker, request, cancellation)
     })
     .await;
+    owner.disarm();
     let reply = match result {
-        Ok(Ok((value, logs))) => {
-            if let Err(error) = shared.sink.lines(logs) {
-                shared.sink.diagnostic(error.to_string());
-                shared.stop.shutdown();
-            }
-            response(value, head)
-        }
-        Ok(Err(error)) => Err(HttpError::Message(error.to_string())),
+        Ok(Ok(value)) => response(value, head),
+        // The owning worker has already delivered bounded output/diagnostics.
+        Ok(Err(_)) => return Ok(failure(StatusCode::INTERNAL_SERVER_ERROR)),
         Err(_) => Err(HttpError::Message("handler worker failed".into())),
     };
     Ok(match reply {
@@ -194,13 +202,33 @@ pub(super) async fn serve(
             .max_buf_size(http::HTTP_BUFFER_BYTES)
             .timer(TokioTimer::new())
             .header_read_timeout(Duration::from_secs(http::HEADER_SECONDS));
+        let entered = Arc::new(AtomicBool::new(false));
+        let request_entered = entered.clone();
         let connection = builder.serve_connection(
             TokioIo::new(stream),
-            service_fn(move |req| handle(req, service.clone())),
+            service_fn(move |req| {
+                request_entered.store(true, Ordering::Release);
+                handle(req, service.clone())
+            }),
         );
-        // Shutdown stops acceptance first; the current reply drains within this bound.
-        match tokio::time::timeout(Duration::from_secs(http::CONNECTION_SECONDS), connection).await
-        {
+        // Stop reading new requests on shutdown, without dropping an active
+        // response future. Its original connection/request deadlines still apply.
+        tokio::pin!(connection);
+        let until = tokio::time::Instant::now() + Duration::from_secs(http::CONNECTION_SECONDS);
+        let result = tokio::select! {
+            result=tokio::time::timeout_at(until,connection.as_mut())=>result,
+            _=shared.stop.cancelled()=>{
+                if entered.load(Ordering::Acquire) {
+                    connection.as_mut().graceful_shutdown();
+                    tokio::time::timeout_at(until,connection.as_mut()).await
+                } else {
+                    // No request exists to drain. Closing a partial header or
+                    // an idle accepted socket must not wait for its timeout.
+                    Ok(Ok(()))
+                }
+            }
+        };
+        match result {
             Ok(Ok(())) => {}
             Ok(Err(error)) => shared
                 .sink

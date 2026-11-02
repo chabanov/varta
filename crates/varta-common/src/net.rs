@@ -25,6 +25,11 @@ pub const REQUEST_CAPABILITY: &str = "net.request";
 /// Requests holding a runtime slot at once: started and not yet released
 /// (a terminal completion taken, or aborted while no operation was armed).
 pub const MAX_PENDING_REQUESTS: usize = 8;
+/// Native asynchronous DNS limits, shared by all executions in one process.
+/// A cancelled lookup may finish in the OS, without retaining its execution.
+pub const MAX_DNS_WORKERS: usize = 4;
+pub const MAX_DNS_QUEUED: usize = 64;
+pub const MAX_DNS_ADDRESSES: usize = 64;
 /// UTF-16 bytes of one request descriptor, request body included.
 pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
 /// Header fields of one request, and their total name and value bytes.

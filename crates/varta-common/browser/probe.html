@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Varta browser fuel verification</title>
+<pre id="result">RUNNING</pre>
+<script type="module">
+  // Serve the repository root on loopback after generating the fixed fixtures.
+  import { observe } from "./probe-run.mjs";
+  const result = document.querySelector("#result");
+  try {
+    const read = async (file) => {
+      const response = await fetch(`/target/browser-meter-probe/${file}`);
+      if (!response.ok) throw new Error(`fixture ${file}: ${response.status}`);
+      return response;
+    };
+    const budgets = (await (await read("budgets.txt")).text()).split("\n").map(Number);
+    const module = await WebAssembly.compile(await (await read("metered.wasm")).arrayBuffer());
+    for (const budget of budgets) {
+      const actual = await observe(module, budget);
+      const expected = await (await read(`${budget}.golden`)).text();
+      if (actual !== expected) throw new Error(`observation mismatch at budget ${budget}`);
+    }
+    result.textContent = `PASS: ${budgets.length} native/browser meter observations match`;
+    document.documentElement.dataset.result = "pass";
+  } catch (error) {
+    result.textContent = `FAIL: ${error}`;
+    document.documentElement.dataset.result = "fail";
+  }
+</script>

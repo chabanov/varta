@@ -21,6 +21,8 @@ pub const MAX_PENDING_HOST_TASKS: usize = 256;
 pub const MAX_EVENT_RECORD_BYTES: usize = 64 * 1024;
 /// Bytes of a source name.
 pub const MAX_EVENT_NAME_BYTES: usize = 64;
+/// Source ids cross the f64 host ABI and must remain exact integers.
+pub const MAX_EVENT_SOURCE_ID: u64 = (1u64 << 53) - 1;
 /// `event_source_open` answers this id for an invalid or duplicate name; the
 /// prelude throws `TypeError`.
 pub const INVALID_SOURCE: f64 = 0.0;

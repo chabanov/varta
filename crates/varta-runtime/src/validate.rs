@@ -421,7 +421,8 @@ fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
         || json_imports
             .iter()
             .any(|op| *op != profile.json_parse() && *op != profile.json_stringify())
-        || profile.binary64() && (http || tools);
+        || profile.binary64()
+            && (tools || http && varta_common::http::version_for(profile).is_none());
     if mismatch {
         let message = match profile {
             varta_common::language::LanguageProfile::CheckedF64Utf8V1 => {
@@ -434,8 +435,19 @@ fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
         };
         return Err(varta_common::language::LanguageError(message.into()).into());
     }
-    if http && value_version != Some(varta_common::value::VALUE_VERSION) {
-        return Err(error("HTTP requires structured value ABI v2"));
+    if http {
+        let expected = if profile.turn_budgets() {
+            profile.value_layout()
+        } else {
+            varta_common::value::VALUE_VERSION
+        };
+        if value_version != Some(expected) {
+            return Err(error(if profile.turn_budgets() {
+                "HTTP v2 requires its profile's structured value ABI"
+            } else {
+                "HTTP requires structured value ABI v2"
+            }));
+        }
     }
     if (!json_imports.is_empty() || union_imports || profile.exceptions()) && values != 1 {
         return Err(error("JSON import requires structured value ABI metadata"));

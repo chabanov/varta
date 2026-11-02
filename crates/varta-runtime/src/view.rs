@@ -27,6 +27,7 @@ pub(crate) use view::EVENT_EXPORT;
 #[derive(Default)]
 pub(crate) struct Session {
     view: View,
+    layout: Option<crate::ViewLayout>,
     /// A batch was committed in the current turn.
     committed: bool,
     /// The platform is simulated (a scripted headless session): it answers
@@ -64,8 +65,69 @@ impl Session {
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         self.view.snapshot()
     }
+    pub(crate) fn title(&self) -> &str {
+        self.view.title()
+    }
     pub(crate) fn commits(&self) -> usize {
         self.view.commits()
+    }
+    pub(crate) fn set_environment(
+        &mut self,
+        environment: Environment,
+    ) -> Result<(), varta_view::LayoutError> {
+        self.view.set_environment(environment)
+    }
+    pub(crate) fn set_layout(
+        &mut self,
+        layout: crate::ViewLayout,
+    ) -> Result<(), varta_view::LayoutError> {
+        let mut environment = self.view.environment();
+        environment.width = f64::from(layout.width);
+        if let Some(dark) = layout.dark {
+            environment.dark = dark;
+        }
+        self.view.set_environment(environment)?;
+        self.layout = Some(layout);
+        Ok(())
+    }
+    pub(crate) fn set_layout_size(
+        &mut self,
+        width: f32,
+        height: f32,
+    ) -> Result<(), varta_view::LayoutError> {
+        let Some(layout) = self.layout.as_mut() else {
+            return Err(varta_view::LayoutError::Viewport);
+        };
+        crate::ViewLayout::validate(width, height, layout.font_size)?;
+        let mut environment = self.view.environment();
+        environment.width = f64::from(width);
+        self.view.set_environment(environment)?;
+        layout.width = width;
+        layout.height = height;
+        Ok(())
+    }
+    pub(crate) fn cancel_preedit(&mut self) {
+        self.view.cancel_preedit();
+    }
+    pub(crate) fn rasterize(
+        &self,
+        width: u32,
+        height: u32,
+        font: Option<(&mut varta_view::TextMeasurer, f32)>,
+    ) -> Result<varta_view::RasterImage, varta_view::PaintError> {
+        match font {
+            Some((measurer, size)) => self.view.rasterize_with_text(width, height, measurer, size),
+            None => self.view.rasterize_boxes(width, height),
+        }
+    }
+    pub(crate) fn rasterize_scaled(
+        &self,
+        width: u32,
+        height: u32,
+        scale: f32,
+        font: Option<(&mut varta_view::TextMeasurer, f32)>,
+    ) -> Result<varta_view::RasterImage, varta_view::PaintError> {
+        self.view.rasterize_scaled(width, height, scale, font)
     }
     /// Whether a committed view can still receive platform inputs (and so
     /// records): it keeps an application instance alive like an open event
@@ -74,7 +136,7 @@ impl Session {
         self.view.commits() > 0
     }
     /// Move the renderer's records into the instance's task queue.
-    fn queue(&mut self, events: &mut HostEvents) -> Result<(), ViewError> {
+    pub(crate) fn queue(&mut self, events: &mut HostEvents) -> Result<(), ViewError> {
         for delivery in self.view.drain() {
             if self.hosted {
                 events.push_view(delivery)?;
@@ -84,6 +146,16 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn scroll_into_view(
+        &mut self,
+        target: u32,
+        width: f32,
+        height: f32,
+        font: Option<(&mut varta_view::TextMeasurer, f32)>,
+    ) -> Result<usize, varta_view::ScrollIntoViewError> {
+        self.view.scroll_into_view(target, width, height, font)
     }
 }
 
@@ -149,9 +221,18 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                     simulated,
                 },
             };
-            view.view
-                .commit(&bytes, gesture, &mut decisions)
-                .map_err(fatal)?;
+            match view.layout.as_mut() {
+                Some(layout) => view.view.commit_with_layout(
+                    &bytes,
+                    gesture,
+                    &mut decisions,
+                    layout.width,
+                    layout.height,
+                    layout.font.as_mut().map(|font| (font, layout.font_size)),
+                ),
+                None => view.view.commit(&bytes, gesture, &mut decisions),
+            }
+            .map_err(fatal)?;
             view.committed = true;
             view.queue(events).map_err(fatal)?;
             Ok(abi::HostStatus::Ok as i32)

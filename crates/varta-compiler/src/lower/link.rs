@@ -49,11 +49,11 @@ pub(crate) fn lower(
             type_exports.insert(path.clone(), exports);
         }
         if profile.binary64()
-            && let Some(item) = unit
-                .ast
-                .body
-                .iter()
-                .find(|item| tools::is_declaration(item) || http::is_declaration(item))
+            && let Some(item) = unit.ast.body.iter().find(|item| {
+                tools::is_declaration(item)
+                    || http::is_declaration(item)
+                        && varta_common::http::version_for(profile).is_none()
+            })
         {
             return Err(unit.source.locate(
                 unsupported(
@@ -199,18 +199,38 @@ pub(crate) fn lower(
         }),
     );
     let tools = super::tools::collect(graph, &scopes, &functions, main)?;
-    let http = http::collect(graph, &scopes, &mut functions, &mut types, main)?;
-    if constants.stored > 0 && (!tools.is_empty() || http.is_some()) {
+    let service = http::collect(graph, &scopes, &mut functions, &mut types, main)?;
+    let (http, http_async) = service.map(|s| (Some(s.entry), s.poll)).unwrap_or_default();
+    if constants.stored > 0 && (!tools.is_empty() || http.is_some() && !profile.turn_budgets()) {
         return Err(entry.source.locate(
             unsupported("module constants with tool/HTTP entry points; only main initializes them"),
             entry.ast.span(),
         ));
     }
-    if profile.binary64() && (!tools.is_empty() || http.is_some()) {
+    if profile.binary64()
+        && (!tools.is_empty()
+            || http.is_some() && varta_common::http::version_for(profile).is_none())
+    {
         return Err(entry.source.locate(
             unsupported("tool/HTTP contracts in binary64 profile; adapters are not implemented"),
             entry.ast.span(),
         ));
+    }
+    // A v2 request owns a fresh instance. Initialize its stored module values
+    // once before invoking its adapter, independently from startup's main Store.
+    if profile.turn_budgets()
+        && let Some((index, _)) = &http
+    {
+        functions[*index].body.splice(
+            0..0,
+            constants.initializers.iter().map(|index| {
+                S::Expr(Expr {
+                    span: entry.ast.span(),
+                    ty: Type::Void,
+                    kind: E::Call(*index, vec![]),
+                })
+            }),
+        );
     }
     let view_event = view::event_function(&types);
     let mut program = ir::Program {
@@ -218,6 +238,7 @@ pub(crate) fn lower(
         main,
         tools,
         http,
+        http_async,
         view_event,
         types,
         constants: constants.stored,
@@ -226,6 +247,7 @@ pub(crate) fn lower(
     };
     subtyping::resolve(&mut program)?;
     if profile.literal_types() {
+        json::preserve_direct_types(&mut program.types);
         literal_erasure::erase_program(&mut program);
         classes::hide_prelude_state(&mut program.types);
     }

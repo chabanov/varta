@@ -1,8 +1,8 @@
 //! Value layout 18 (v38 `dictionary_hashing`): every value-reading host
 //! operation, JSON schema 18 and exception channel v9 read value18 layouts
 //! with exactly the value17 behaviour, while v37 keeps value17, its readers
-//! and host ABI 33. Every v37 case compiled under v38 logs exactly what it
-//! logs under v37 (pinned against Node 24 in their own tests), and the two
+//! and host ABI 33. Apart from the documented v38 semantic deviations, each
+//! v37 case logs the same output under v38; the two
 //! layouts never read each other's modules.
 use super::*;
 use varta_common::{HostOperation as H, language::LanguageProfile as P, value};
@@ -53,20 +53,59 @@ fn rename(bytes: &[u8], from: &str, to: &str) -> Vec<u8> {
 /// `JSON.stringify` typed `string`) are left out of the corpus.
 #[test]
 fn value18_cases_match_value17() {
-    for source in [
-        include_str!("value15_cases/values.ts"),
-        include_str!("value15_cases/checked.ts"),
-        include_str!("value15_cases/dictionary.ts"),
-        include_str!("value15_cases/dictionary_json.ts"),
-        include_str!("value15_cases/recursive.ts"),
-        include_str!("value15_cases/wide_json.ts"),
-        include_str!("v34_cross_cases/caught_unknown.ts"),
-        include_str!("v34_cross_cases/json_tree.ts"),
-        include_str!("unknown_cases/assertions.ts"),
-        include_str!("unknown_cases/guards.ts"),
-        include_str!("promise_value_cases/containers.ts"),
-        include_str!("v35_cases/mixed.ts"),
+    for (path, source) in [
+        (
+            "value15_cases/values.ts",
+            include_str!("value15_cases/values.ts"),
+        ),
+        (
+            "value15_cases/checked.ts",
+            include_str!("value15_cases/checked.ts"),
+        ),
+        (
+            "value15_cases/dictionary.ts",
+            include_str!("value15_cases/dictionary.ts"),
+        ),
+        (
+            "value15_cases/dictionary_json.ts",
+            include_str!("value15_cases/dictionary_json.ts"),
+        ),
+        (
+            "value15_cases/recursive.ts",
+            include_str!("value15_cases/recursive.ts"),
+        ),
+        (
+            "value15_cases/wide_json.ts",
+            include_str!("value15_cases/wide_json.ts"),
+        ),
+        (
+            "v34_cross_cases/caught_unknown.ts",
+            include_str!("v34_cross_cases/caught_unknown.ts"),
+        ),
+        (
+            "v34_cross_cases/json_tree.ts",
+            include_str!("v34_cross_cases/json_tree.ts"),
+        ),
+        (
+            "unknown_cases/assertions.ts",
+            include_str!("unknown_cases/assertions.ts"),
+        ),
+        (
+            "unknown_cases/guards.ts",
+            include_str!("unknown_cases/guards.ts"),
+        ),
+        (
+            "promise_value_cases/containers.ts",
+            include_str!("promise_value_cases/containers.ts"),
+        ),
+        ("v35_cases/mixed.ts", include_str!("v35_cases/mixed.ts")),
     ] {
+        // Keep this list aligned with the shared corpus policy. Corrected
+        // recursive JSON order has its full v38 output pinned in all four
+        // decoder modes by json_decoder_tests.
+        if crate::frozen_profile_tests::deviates_under_v38(std::path::Path::new(path)) {
+            continue;
+        }
         let old = outcome(source, V37);
         assert!(!old.0.is_empty() || old.1.is_some(), "{source}");
         assert_eq!(outcome(source, V38), old, "{source}");

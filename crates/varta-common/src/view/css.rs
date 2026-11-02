@@ -252,7 +252,9 @@ fn unit(word: &str, units: &[&str]) -> bool {
 }
 
 /// Composite types are themselves grammars over the leaf types.
-fn composite(name: &str) -> Option<&'static str> {
+/// Generated hosts use these same definitions instead of duplicating grammars.
+#[must_use]
+pub fn composite(name: &str) -> Option<&'static str> {
     let value = CssValue::ALL.iter().find(|value| value.name() == name)?;
     match value {
         CssValue::LengthPercentage => Some("<length> | <percentage>"),

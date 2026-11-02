@@ -8,6 +8,8 @@
 //! completions and the promise serial each armed operation wakes, never a
 //! guest reference: the guest's waiting frame roots everything it needs.
 mod client;
+mod dns;
+pub(crate) use client::fetch_cancellable;
 
 use crate::scheduler::{self, Scheduler};
 use crate::{RuntimeContext, host};
@@ -544,8 +546,20 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
 /// The event loop's wait while requests are in flight: deliver the next
 /// completion, or report that `until` passed without one.
 pub(crate) fn wait(context: &mut RuntimeContext, until: Instant) -> Result<bool, wasmtime::Error> {
-    let Some(event) = context.net.wait(until) else {
-        return Ok(false);
+    let event = loop {
+        context.check_cancelled()?;
+        let slice = context
+            .cancellation
+            .as_ref()
+            .map_or(until, |c| c.wait_until(until));
+        let event = context.net.wait(slice);
+        context.check_cancelled()?;
+        if let Some(event) = event {
+            break event;
+        }
+        if slice == until || Instant::now() >= until {
+            return Ok(false);
+        }
     };
     context.net.deliver(&mut context.scheduler, event)?;
     scheduler::observed_wall_clock(context);

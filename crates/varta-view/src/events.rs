@@ -1,14 +1,42 @@
 //! The simulated platform side: trusted inputs, event dispatch (bubbling,
 //! key filters, `preventDefault`/`stopPropagation`), default actions, and
 //! the clipboard and system browser of the headless renderer.
-use crate::tree::{Element, focus_records, uncheck_group};
+use crate::tree::{Element, Preedit, focus_records, uncheck_group};
 use crate::{Access, Broker, EventRecord, InputError, View, ViewError};
 use serde::Deserialize;
+use unicode_segmentation::UnicodeSegmentation;
 use varta_common::scheduler::TIMER_MAX_DELAY_MS;
 use varta_common::view::{
-    ANY_KEY, Attribute, CommandStatus, EventFlag, EventKind, Key, ListenOption, MODIFIER_MASK,
-    ResultOperation, Tag,
+    ANY_KEY, Attribute, CommandStatus, DRAFT_MAX_VALUE_BYTES, EventFlag, EventKind, Key,
+    ListenOption, MODIFIER_MASK, ResultOperation, Tag,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryAction {
+    Undo,
+    Redo,
+}
+
+#[derive(Debug, Clone)]
+struct EditSnapshot {
+    value: String,
+    anchor: usize,
+    focus: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HistoryEntry {
+    target: crate::NodeIdentity,
+    epoch: std::sync::Arc<()>,
+    before: EditSnapshot,
+    after: EditSnapshot,
+    undone: bool,
+}
+
+// Shared by all fields in a view, including snapshots awaiting redo.
+const MAX_HISTORY_BYTES: usize = 1024 * 1024;
+const MAX_HISTORY_EDITS: usize = 64;
 
 /// How the simulated permission prompt answers (headless: scripted; with no
 /// answer configured an activation that needs a prompt is refused).
@@ -44,7 +72,64 @@ pub(crate) struct Effects {
     pub prompts: usize,
 }
 
+fn previous_grapheme(value: &str, offset: usize) -> usize {
+    value
+        .grapheme_indices(true)
+        .map(|(index, _)| index)
+        .take_while(|index| *index < offset)
+        .last()
+        .unwrap_or(0)
+}
+
+fn next_grapheme(value: &str, offset: usize) -> usize {
+    value
+        .grapheme_indices(true)
+        .map(|(index, _)| index)
+        .find(|index| *index > offset)
+        .unwrap_or(value.len())
+}
+
+fn insert_text(
+    value: &mut String,
+    anchor: &mut usize,
+    focus: &mut usize,
+    text: &str,
+    limit: Option<usize>,
+) {
+    let start = (*anchor).min(*focus);
+    let end = (*anchor).max(*focus);
+    let retained = value[..start].encode_utf16().count() + value[end..].encode_utf16().count();
+    let available = limit.unwrap_or(usize::MAX).saturating_sub(retained);
+    let mut units = 0usize;
+    let accepted: String = text
+        .chars()
+        .take_while(|ch| {
+            units = units.saturating_add(ch.len_utf16());
+            units <= available
+        })
+        .collect();
+    if accepted.is_empty() && !text.is_empty() {
+        return;
+    }
+    value.replace_range(start..end, &accepted);
+    *focus = start + accepted.len();
+    *anchor = *focus;
+}
+
 impl View {
+    /// Release history for removed fields and guest-replaced values after commit.
+    pub(crate) fn prune_history(&mut self) {
+        let tree = &self.tree;
+        self.history.retain(|entry| {
+            tree.nodes.get(&entry.target.id).is_some_and(|node| {
+                std::sync::Arc::ptr_eq(&node.identity, &entry.target.token)
+                    && tree.element(entry.target.id).is_some_and(|element| {
+                        std::sync::Arc::ptr_eq(&element.editor.history_epoch, &entry.epoch)
+                    })
+            })
+        });
+    }
+
     pub(crate) fn prompt_allows(&mut self) -> bool {
         self.effects.prompts += 1;
         self.platform.prompt == PromptAnswer::Allow
@@ -89,10 +174,47 @@ pub enum Input {
     Click {
         target: Target,
     },
-    /// One edit that inserts `text` at the end of a text field.
+    /// Activate a text field with a selection expressed as UTF-8 byte offsets.
+    TextSelect {
+        target: Target,
+        anchor: usize,
+        focus: usize,
+        activate: bool,
+    },
+    /// Replace the current transient IME preedit without changing field value.
+    ImePreedit {
+        target: Target,
+        text: String,
+        cursor: Option<(usize, usize)>,
+    },
+    /// Commit IME text into the current selection as one input edit.
+    ImeCommit {
+        target: Target,
+        text: String,
+    },
+    /// One edit that replaces the current selection with `text`.
     Type {
         target: Target,
         text: String,
+    },
+    /// A character keydown followed by its default text insertion, if allowed.
+    TextKey {
+        target: Target,
+        key: String,
+        text: String,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        ctrl: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        meta: bool,
+        /// Host shortcut mapping for the physical select-all key.
+        #[serde(default)]
+        select_all: bool,
+        #[serde(default)]
+        history: Option<HistoryAction>,
     },
     /// A key press on the element (focused first).
     Key {
@@ -137,6 +259,11 @@ pub enum ScriptStep {
     Wait {
         ms: f64,
     },
+    /// Wait at most `ms` wall-clock milliseconds for armed network work to
+    /// settle. Virtual loop time stays fixed during this explicit step.
+    WaitNetwork {
+        ms: f64,
+    },
 }
 
 /// The control steps that share the `input` tag with [`Input`].
@@ -144,17 +271,26 @@ pub enum ScriptStep {
 #[serde(tag = "input", rename_all = "snake_case", deny_unknown_fields)]
 enum Control {
     Wait { ms: f64 },
+    WaitNetwork { ms: f64 },
 }
 /// The `input` tag of a wait step.
 const WAIT_STEP: &str = "wait";
+const NETWORK_WAIT_STEP: &str = "wait_network";
 
 impl<'de> Deserialize<'de> for ScriptStep {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
         let value = serde_json::Value::deserialize(deserializer)?;
-        if value.get("input").and_then(serde_json::Value::as_str) == Some(WAIT_STEP) {
-            let Control::Wait { ms } = Control::deserialize(value).map_err(D::Error::custom)?;
-            return Ok(Self::Wait { ms });
+        if matches!(
+            value.get("input").and_then(serde_json::Value::as_str),
+            Some(WAIT_STEP | NETWORK_WAIT_STEP)
+        ) {
+            return Control::deserialize(value)
+                .map(|control| match control {
+                    Control::Wait { ms } => Self::Wait { ms },
+                    Control::WaitNetwork { ms } => Self::WaitNetwork { ms },
+                })
+                .map_err(D::Error::custom);
         }
         Input::deserialize(value)
             .map(Self::Input)
@@ -174,6 +310,11 @@ pub enum ScriptError {
         TIMER_MAX_DELAY_MS
     )]
     Wait { step: usize, ms: f64 },
+    #[error(
+        "view script step {step} network wait {ms} ms is outside 0 < ms <= {}",
+        Script::MAX_NETWORK_WAIT_MS
+    )]
+    NetworkWait { step: usize, ms: f64 },
     #[error("invalid view script: {0}")]
     Json(serde_json::Error),
 }
@@ -205,23 +346,37 @@ impl Script {
     /// an input, or the timers a wait reaches); more fails the session, so a
     /// timer that keeps re-arming with the minimum delay cannot hang it.
     pub const MAX_STEP_TURNS: u64 = 100_000;
+    /// A network wait's maximum wall-clock bound; virtual waits keep their
+    /// independent timer-delay bound. This does not raise execution budgets.
+    pub const MAX_NETWORK_WAIT_MS: f64 = 5_000.0;
     /// Parse a bounded script.
     pub fn parse(bytes: &[u8]) -> Result<Self, ScriptError> {
         if bytes.len() > Self::MAX_BYTES {
             return Err(ScriptError::TooLarge);
         }
         let script: Self = serde_json::from_slice(bytes).map_err(ScriptError::Json)?;
-        if script.inputs.len() > Self::MAX_INPUTS {
+        script.validate()?;
+        Ok(script)
+    }
+    /// Validate parsed or programmatically constructed control steps before
+    /// starting guest execution. Byte-size validation belongs to `parse`.
+    pub fn validate(&self) -> Result<(), ScriptError> {
+        if self.inputs.len() > Self::MAX_INPUTS {
             return Err(ScriptError::TooManyInputs);
         }
-        for (step, entry) in script.inputs.iter().enumerate() {
+        for (step, entry) in self.inputs.iter().enumerate() {
             if let ScriptStep::Wait { ms } = *entry
                 && !(0.0..=TIMER_MAX_DELAY_MS).contains(&ms)
             {
                 return Err(ScriptError::Wait { step: step + 1, ms });
             }
+            if let ScriptStep::WaitNetwork { ms } = *entry
+                && !(ms > 0.0 && ms <= Self::MAX_NETWORK_WAIT_MS)
+            {
+                return Err(ScriptError::NetworkWait { step: step + 1, ms });
+            }
         }
-        Ok(script)
+        Ok(())
     }
     #[must_use]
     pub fn environment(&self) -> crate::Environment {
@@ -230,6 +385,168 @@ impl Script {
                 width: v.width,
                 dark: v.dark,
             })
+    }
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::*;
+
+    struct Deny;
+    impl Broker for Deny {
+        fn link_requested(&self, _: &str) -> bool {
+            false
+        }
+        fn open_url(&mut self, _: &str) -> crate::Access {
+            crate::Access::Denied
+        }
+        fn clipboard_write(&mut self) -> crate::Access {
+            crate::Access::Denied
+        }
+    }
+
+    #[test]
+    fn committed_value_changes_and_removal_release_history_but_failed_batches_do_not() {
+        let mut view = View::default();
+        let mut setup = crate::BatchWriter::new();
+        setup.create_element(2, Tag::Input).insert(1, 2, 0);
+        view.commit(&setup.finish(), false, &mut Deny).unwrap();
+        let edit = Input::Type {
+            target: Target::Node(2),
+            text: "private".into(),
+        };
+        view.input(&edit, &mut Deny).unwrap();
+        assert_eq!(view.history.len(), 1);
+        let mut invalid = crate::BatchWriter::new();
+        invalid
+            .remove(2)
+            .command(2, varta_common::view::Command::Focus, 0.0);
+        assert!(view.commit(&invalid.finish(), false, &mut Deny).is_err());
+        assert_eq!(view.history.len(), 1);
+        let mut replace = crate::BatchWriter::new();
+        replace.set_value(2, "replacement", 1);
+        view.commit(&replace.finish(), false, &mut Deny).unwrap();
+        assert!(view.history.is_empty());
+        view.input(&edit, &mut Deny).unwrap();
+        assert_eq!(view.history.len(), 1);
+        let mut remove = crate::BatchWriter::new();
+        remove.remove(2);
+        view.commit(&remove.finish(), false, &mut Deny).unwrap();
+        assert!(view.history.is_empty());
+    }
+
+    #[test]
+    fn undo_history_evicts_large_old_edits_within_the_shared_byte_limit() {
+        let mut view = View::default();
+        let mut batch = crate::BatchWriter::new();
+        batch
+            .create_element(2, Tag::Input)
+            .insert(1, 2, 0)
+            .set_value(2, &"a".repeat(32_000), 0);
+        view.commit(&batch.finish(), false, &mut Deny).unwrap();
+        for _ in 0..32 {
+            view.input(
+                &Input::Type {
+                    target: Target::Node(2),
+                    text: "a".into(),
+                },
+                &mut Deny,
+            )
+            .unwrap();
+        }
+        for _ in 0..32 {
+            view.restore_history(2, HistoryAction::Undo).unwrap();
+        }
+        assert_eq!(view.tree.element(2).unwrap().value.len(), 32_016);
+    }
+
+    #[test]
+    fn ime_rejected_overflow_and_commit_clear_previous_preedit() {
+        let mut view = View::default();
+        let mut batch = crate::BatchWriter::new();
+        let value = "a".repeat(DRAFT_MAX_VALUE_BYTES / 2 - 1);
+        batch
+            .create_element(2, Tag::Input)
+            .insert(1, 2, 0)
+            .set_value(2, &value, 0);
+        view.commit(&batch.finish(), false, &mut Deny).unwrap();
+        let target = Target::Node(2);
+        view.input(
+            &Input::Click {
+                target: target.clone(),
+            },
+            &mut Deny,
+        )
+        .unwrap();
+        let preedit = |text: &str| Input::ImePreedit {
+            target: target.clone(),
+            text: text.into(),
+            cursor: None,
+        };
+        view.input(&preedit("a"), &mut Deny).unwrap();
+        assert!(view.tree.element(2).unwrap().editor.preedit.is_some());
+        view.input(&preedit("aa"), &mut Deny).unwrap();
+        assert!(view.tree.element(2).unwrap().editor.preedit.is_none());
+        assert_eq!(view.tree.element(2).unwrap().value, value);
+        view.input(&preedit("a"), &mut Deny).unwrap();
+        view.input(
+            &Input::ImeCommit {
+                target,
+                text: "\n".into(),
+            },
+            &mut Deny,
+        )
+        .unwrap();
+        let element = view.tree.element(2).unwrap();
+        assert!(element.editor.preedit.is_none());
+        assert_eq!(element.value, value);
+        assert_eq!(element.seq, 0);
+    }
+
+    #[test]
+    fn explicit_network_waits_are_strict_positive_and_bounded() {
+        let script = Script::parse(
+            br#"{"inputs":[{"input":"wait_network","ms":0.5},{"input":"wait","ms":0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            script.inputs,
+            [
+                ScriptStep::WaitNetwork { ms: 0.5 },
+                ScriptStep::Wait { ms: 0.0 }
+            ]
+        );
+        for input in [
+            r#"{"input":"wait_network"}"#,
+            r#"{"input":"wait_network","ms":0}"#,
+            r#"{"input":"wait_network","ms":-1}"#,
+            r#"{"input":"wait_network","ms":5001}"#,
+            r#"{"input":"wait_network","ms":"100"}"#,
+            r#"{"input":"wait_network","ms":100,"target":"x"}"#,
+            r#"{"input":"wait","ms":100,"network":true}"#,
+        ] {
+            assert!(
+                Script::parse(format!("{{\"inputs\":[{input}]}}").as_bytes()).is_err(),
+                "{input}"
+            );
+        }
+        for ms in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            -1.0,
+            Script::MAX_NETWORK_WAIT_MS + 1.0,
+        ] {
+            let script = Script {
+                inputs: vec![ScriptStep::WaitNetwork { ms }],
+                ..Script::default()
+            };
+            assert!(matches!(
+                script.validate(),
+                Err(ScriptError::NetworkWait { step: 1, .. })
+            ));
+        }
     }
 }
 
@@ -249,10 +566,210 @@ impl View {
                 let node = self.resolve(target)?;
                 self.click(node, broker)?;
             }
+            Input::TextSelect {
+                target,
+                anchor,
+                focus,
+                activate,
+            } => {
+                let node = self.resolve(target)?;
+                let element = self
+                    .tree
+                    .element(node)
+                    .ok_or_else(|| InputError::Target(target.to_string()))?;
+                if !element.text_field()
+                    || *anchor > element.value.len()
+                    || *focus > element.value.len()
+                    || !element.value.is_char_boundary(*anchor)
+                    || !element.value.is_char_boundary(*focus)
+                {
+                    return Err(InputError::Selection);
+                }
+                if element.disabled() {
+                    return Ok(());
+                }
+                let element = self.tree.element_mut(node).expect("validated element");
+                element.editor.anchor = *anchor;
+                element.editor.focus = *focus;
+                element.editor.preedit = None;
+                if *activate {
+                    self.click(node, broker)?;
+                } else {
+                    self.focus_input(node)?;
+                }
+            }
+            Input::ImePreedit {
+                target,
+                text,
+                cursor,
+            } => {
+                let node = self.resolve(target)?;
+                let Some(element) = self.tree.element(node) else {
+                    return Err(InputError::Selection);
+                };
+                if self.tree.focus != Some(node)
+                    || !element.text_field()
+                    || element.disabled()
+                    || element.readonly()
+                {
+                    return Ok(());
+                }
+                if text.chars().any(char::is_control)
+                    || text
+                        .encode_utf16()
+                        .take(DRAFT_MAX_VALUE_BYTES / 2 + 1)
+                        .count()
+                        > DRAFT_MAX_VALUE_BYTES / 2
+                    || cursor.is_some_and(|(start, end)| {
+                        start > end
+                            || end > text.len()
+                            || !text.is_char_boundary(start)
+                            || !text.is_char_boundary(end)
+                    })
+                {
+                    return Err(InputError::Selection);
+                }
+                let start = element.editor.anchor.min(element.editor.focus);
+                let end = element.editor.anchor.max(element.editor.focus);
+                let units = element.value[..start].encode_utf16().count()
+                    + text.encode_utf16().count()
+                    + element.value[end..].encode_utf16().count();
+                if units > DRAFT_MAX_VALUE_BYTES / 2 {
+                    // Do not leave an earlier, shorter preedit on screen when
+                    // the current composition no longer fits the value bound.
+                    self.cancel_preedit();
+                    return Ok(());
+                }
+                if let Some(element) = self.tree.element_mut(node) {
+                    element.editor.preedit = (!text.is_empty()).then(|| Preedit {
+                        text: text.clone(),
+                        cursor: *cursor,
+                    });
+                }
+            }
+            Input::ImeCommit { target, text } => {
+                let node = self.resolve(target)?;
+                let Some(element) = self.tree.element(node) else {
+                    return Err(InputError::Selection);
+                };
+                if self.tree.focus != Some(node)
+                    || !element.text_field()
+                    || element.disabled()
+                    || element.readonly()
+                {
+                    return Ok(());
+                }
+                if text.chars().any(char::is_control)
+                    || text
+                        .encode_utf16()
+                        .take(DRAFT_MAX_VALUE_BYTES / 2 + 1)
+                        .count()
+                        > DRAFT_MAX_VALUE_BYTES / 2
+                {
+                    self.cancel_preedit();
+                    return Ok(());
+                }
+                if let Some(element) = self.tree.element_mut(node) {
+                    element.editor.preedit = None;
+                }
+                if !text.is_empty() {
+                    self.edit(node, |value, anchor, focus, limit| {
+                        insert_text(value, anchor, focus, text, limit)
+                    })?;
+                }
+            }
             Input::Type { target, text } => {
                 let node = self.resolve(target)?;
+                if text
+                    .encode_utf16()
+                    .take(DRAFT_MAX_VALUE_BYTES / 2 + 1)
+                    .count()
+                    > DRAFT_MAX_VALUE_BYTES / 2
+                {
+                    return Ok(());
+                }
                 self.focus_input(node)?;
-                self.edit(node, |value| value.push_str(text))?;
+                if let Some(element) = self.tree.element_mut(node) {
+                    element.editor.preedit = None;
+                }
+                self.edit(node, |value, anchor, focus, limit| {
+                    insert_text(value, anchor, focus, text, limit)
+                })?;
+            }
+            Input::TextKey {
+                target,
+                key,
+                text,
+                shift,
+                ctrl,
+                alt,
+                meta,
+                select_all,
+                history,
+            } => {
+                let node = self.resolve(target)?;
+                if key.is_empty()
+                    || key.len() > 4096
+                    || text.len() > 4096
+                    || key.chars().any(char::is_control)
+                    || text.chars().any(char::is_control)
+                {
+                    return Err(InputError::Key(key.clone()));
+                }
+                self.focus_input(node)?;
+                let mut occurrence = EventRecord::occurrence(EventKind::Keydown, node);
+                occurrence.key = key.clone();
+                for (held, flag) in [
+                    (*shift, EventFlag::Shift),
+                    (*ctrl, EventFlag::Ctrl),
+                    (*alt, EventFlag::Alt),
+                    (*meta, EventFlag::Meta),
+                ] {
+                    if held {
+                        occurrence.flags |= flag as u32;
+                    }
+                }
+                if let Some(element) = self.tree.element(node) {
+                    occurrence.seq = element.seq;
+                }
+                if self.dispatch(occurrence, true)? {
+                    return Ok(());
+                }
+                let history = history.or_else(|| {
+                    if key.eq_ignore_ascii_case("z") {
+                        Some(if *shift {
+                            HistoryAction::Redo
+                        } else {
+                            HistoryAction::Undo
+                        })
+                    } else if key.eq_ignore_ascii_case("y") {
+                        Some(HistoryAction::Redo)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(action) = history.filter(|_| (*ctrl || *meta) && !*alt) {
+                    self.restore_history(node, action)?;
+                } else if (*ctrl || *meta)
+                    && !*alt
+                    && (*select_all || key.eq_ignore_ascii_case("a"))
+                {
+                    if let Some(element) = self.tree.element_mut(node)
+                        && element.text_field()
+                        && !element.disabled()
+                    {
+                        element.editor.anchor = 0;
+                        element.editor.focus = element.value.len();
+                        element.editor.preedit = None;
+                    }
+                } else if !text.is_empty() && (!*ctrl || *alt) && !*meta {
+                    if let Some(element) = self.tree.element_mut(node) {
+                        element.editor.preedit = None;
+                    }
+                    self.edit(node, |value, anchor, focus, limit| {
+                        insert_text(value, anchor, focus, text, limit)
+                    })?;
+                }
             }
             Input::Key {
                 target,
@@ -297,7 +814,11 @@ impl View {
                 {
                     self.focus_input(node)?;
                     let value = value.clone();
-                    self.edit(node, move |current| *current = value)?;
+                    self.edit(node, move |current, anchor, focus, _| {
+                        *current = value;
+                        *anchor = current.len();
+                        *focus = *anchor;
+                    })?;
                     self.fire(node, EventKind::Change, true)?;
                 }
             }
@@ -317,7 +838,8 @@ impl View {
         let focusable = self
             .tree
             .element(node)
-            .is_some_and(|element| element.focusable() && !element.disabled());
+            .is_some_and(|element| element.focusable() && !element.disabled())
+            && self.tree.displayed(node, &self.environment);
         if focusable {
             for record in focus_records(&mut self.tree, Some(node)) {
                 self.dispatch(record, true)?;
@@ -328,7 +850,12 @@ impl View {
 
     /// One local edit of a field: apply it, bump the edit counter and fire
     /// `input`. Disabled and read-only fields take no edits.
-    fn edit(&mut self, node: u32, change: impl FnOnce(&mut String)) -> Result<(), ViewError> {
+    fn edit(
+        &mut self,
+        node: u32,
+        change: impl FnOnce(&mut String, &mut usize, &mut usize, Option<usize>),
+    ) -> Result<(), ViewError> {
+        let identity = self.node_identity(node);
         let Some(element) = self.tree.element_mut(node) else {
             return Ok(());
         };
@@ -338,15 +865,110 @@ impl View {
         {
             return Ok(());
         }
-        change(&mut element.value);
-        if let Some(limit) = element
+        let mut value = element.value.clone();
+        let mut anchor = element.editor.anchor;
+        let mut focus = element.editor.focus;
+        let limit = element
             .attributes
             .get(&Attribute::Maxlength)
-            .and_then(|limit| limit.parse::<usize>().ok())
+            .and_then(|limit| limit.parse::<usize>().ok());
+        change(&mut value, &mut anchor, &mut focus, limit);
+        if value
+            .encode_utf16()
+            .take(DRAFT_MAX_VALUE_BYTES / 2 + 1)
+            .count()
+            > DRAFT_MAX_VALUE_BYTES / 2
         {
-            let units: Vec<u16> = element.value.encode_utf16().take(limit).collect();
-            element.value = String::from_utf16_lossy(&units);
+            return Ok(());
         }
+        if value == element.value
+            && anchor == element.editor.anchor
+            && focus == element.editor.focus
+        {
+            return Ok(());
+        }
+        if element.text_field()
+            && element.value != value
+            && let Some(target) = identity
+        {
+            self.history.retain(|entry| {
+                entry.target != target
+                    || (!entry.undone
+                        && std::sync::Arc::ptr_eq(&entry.epoch, &element.editor.history_epoch))
+            });
+            self.history.push_back(HistoryEntry {
+                target,
+                epoch: element.editor.history_epoch.clone(),
+                before: EditSnapshot {
+                    value: element.value.clone(),
+                    anchor: element.editor.anchor,
+                    focus: element.editor.focus,
+                },
+                after: EditSnapshot {
+                    value: value.clone(),
+                    anchor,
+                    focus,
+                },
+                undone: false,
+            });
+            while self.history.len() > MAX_HISTORY_EDITS
+                || self
+                    .history
+                    .iter()
+                    .map(|entry| entry.before.value.len() + entry.after.value.len())
+                    .sum::<usize>()
+                    > MAX_HISTORY_BYTES
+            {
+                self.history.pop_front();
+            }
+        }
+        element.value = value;
+        element.editor.anchor = anchor;
+        element.editor.focus = focus;
+        element.seq = element.seq.wrapping_add(1);
+        self.fire(node, EventKind::Input, true)
+    }
+
+    fn restore_history(&mut self, node: u32, action: HistoryAction) -> Result<(), ViewError> {
+        let Some(target) = self.node_identity(node) else {
+            return Ok(());
+        };
+        let Some(element) = self.tree.element(node) else {
+            return Ok(());
+        };
+        if !element.text_field() || element.disabled() || element.readonly() {
+            return Ok(());
+        }
+        let redo = action == HistoryAction::Redo;
+        let matches = |entry: &HistoryEntry| {
+            entry.target == target
+                && entry.undone == redo
+                && std::sync::Arc::ptr_eq(&entry.epoch, &element.editor.history_epoch)
+        };
+        let index = if redo {
+            self.history.iter().position(matches)
+        } else {
+            self.history.iter().rposition(matches)
+        };
+        let Some(index) = index else {
+            return Ok(());
+        };
+        let entry = &self.history[index];
+        let expected = if redo { &entry.before } else { &entry.after };
+        if element.value != expected.value {
+            return Ok(());
+        }
+        let replacement = if redo {
+            entry.after.clone()
+        } else {
+            entry.before.clone()
+        };
+        self.history[index].undone = !redo;
+        let element = self.tree.element_mut(node).expect("validated field");
+        element.value = replacement.value;
+        element.editor.anchor = replacement.anchor;
+        element.editor.focus = replacement.focus;
+        element.editor.preedit = None;
         element.seq = element.seq.wrapping_add(1);
         self.fire(node, EventKind::Input, true)
     }
@@ -513,17 +1135,77 @@ impl View {
             return Ok(());
         };
         match key {
-            Key::Enter if element.tag == Tag::Textarea => self.edit(node, |value| value.push('\n')),
-            Key::Enter if element.text_field() => match self.ancestor(node, Tag::Form) {
-                Some(form) => self.fire(form, EventKind::Submit, true),
-                None => Ok(()),
-            },
+            Key::Enter if element.tag == Tag::Textarea => self
+                .edit(node, |value, anchor, focus, limit| {
+                    insert_text(value, anchor, focus, "\n", limit)
+                }),
+            Key::Enter if element.text_field() && !element.disabled() => {
+                match self.ancestor(node, Tag::Form) {
+                    Some(form) => self.fire(form, EventKind::Submit, true),
+                    None => Ok(()),
+                }
+            }
+            Key::Space
+                if element.text_field()
+                    && modifiers.flags & (EventFlag::Ctrl as u32 | EventFlag::Meta as u32) == 0 =>
+            {
+                self.edit(node, |value, anchor, focus, limit| {
+                    insert_text(value, anchor, focus, " ", limit)
+                })
+            }
             Key::Enter | Key::Space if element.tag == Tag::Button => self.click(node, broker),
             Key::Enter if element.tag == Tag::A => self.click(node, broker),
             Key::Space if element.checkable() => self.click(node, broker),
-            Key::Backspace if element.text_field() => self.edit(node, |value| {
-                value.pop();
-            }),
+            Key::Backspace | Key::Delete
+                if element.text_field()
+                    && modifiers.flags
+                        & (EventFlag::Ctrl as u32
+                            | EventFlag::Alt as u32
+                            | EventFlag::Meta as u32)
+                        == 0 =>
+            {
+                self.edit(node, |value, anchor, focus, _| {
+                    if *anchor == *focus {
+                        if key == Key::Backspace {
+                            *anchor = previous_grapheme(value, *focus);
+                        } else {
+                            *focus = next_grapheme(value, *focus);
+                        }
+                    }
+                    insert_text(value, anchor, focus, "", None);
+                })
+            }
+            Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End
+                if element.text_field()
+                    && !element.disabled()
+                    && modifiers.flags
+                        & (EventFlag::Ctrl as u32
+                            | EventFlag::Alt as u32
+                            | EventFlag::Meta as u32)
+                        == 0 =>
+            {
+                if let Some(field) = self.tree.element_mut(node) {
+                    let shift = modifiers.flags & EventFlag::Shift as u32 != 0;
+                    let next = match key {
+                        Key::ArrowLeft if !shift && field.editor.anchor != field.editor.focus => {
+                            field.editor.anchor.min(field.editor.focus)
+                        }
+                        Key::ArrowRight if !shift && field.editor.anchor != field.editor.focus => {
+                            field.editor.anchor.max(field.editor.focus)
+                        }
+                        Key::ArrowLeft => previous_grapheme(&field.value, field.editor.focus),
+                        Key::ArrowRight => next_grapheme(&field.value, field.editor.focus),
+                        Key::Home if field.tag == Tag::Input => 0,
+                        Key::End if field.tag == Tag::Input => field.value.len(),
+                        _ => field.editor.focus,
+                    };
+                    field.editor.focus = next;
+                    if !shift {
+                        field.editor.anchor = next;
+                    }
+                }
+                Ok(())
+            }
             Key::Escape => self.escape(node),
             Key::Tab => self.tab(node, modifiers.flags & EventFlag::Shift as u32 != 0),
             _ => Ok(()),
@@ -565,6 +1247,7 @@ impl View {
                     e.focusable()
                         && !e.disabled()
                         && e.attributes.get(&Attribute::Tabindex).map(String::as_str) != Some("-1")
+                        && self.tree.displayed(*id, &self.environment)
                 })
             })
             .collect();

@@ -70,6 +70,27 @@ pub(crate) struct BrokerSetup {
     pub prompter: Option<Box<dyn PermissionPrompter>>,
 }
 
+/// Shareable headless policy inputs; never carries a prompt seam or live
+/// instance state into a request. Decisions remain scoped to this artifact.
+#[derive(Clone)]
+pub(crate) struct HeadlessBroker {
+    v1: bool,
+    artifact: String,
+    consents: BTreeMap<String, Consent>,
+    stored: BTreeMap<String, StoredDecision>,
+}
+impl HeadlessBroker {
+    pub fn setup(&self) -> BrokerSetup {
+        BrokerSetup {
+            v1: self.v1,
+            artifact: self.artifact.clone(),
+            consents: self.consents.clone(),
+            stored: self.stored.clone(),
+            prompter: None,
+        }
+    }
+}
+
 /// A prompt opened by `request()` in a user-gesture turn, answered between
 /// turns on the one-shot event source `source`.
 struct PendingPrompt {
@@ -97,6 +118,14 @@ pub(crate) struct Broker {
 }
 
 impl Broker {
+    pub fn headless(&self) -> HeadlessBroker {
+        HeadlessBroker {
+            v1: self.v1,
+            artifact: self.artifact.clone(),
+            consents: self.consents.clone(),
+            stored: self.stored.clone(),
+        }
+    }
     /// Decide the state of every requested grant before any guest code runs.
     /// A refused required grant means the application cannot run.
     pub fn new(
