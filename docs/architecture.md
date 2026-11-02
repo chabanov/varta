@@ -11741,12 +11741,49 @@ sides use the CSS border cascade, including inherited `currentcolor` and
 shorthand resets. `rasterize_with_text` also paints the supported shaped text
 using the host's explicit fonts and bounded unhinted glyph outlines; it shares
 the text layout restrictions and rejects synthetic font styling and decoration.
-The box-only variant rejects text. A button, text input or textarea is paintable
+The box-only variant rejects text. A button, text/search/password input or textarea is paintable
 with explicit box, font, foreground and background styles, zero radius and
 an explicit outline style; buttons also require explicit flex alignment. Text inputs paint
 their value, keyboard selection and a non-blinking caret; missing glyphs use the supplied font's
 `.notdef` outline. Other controls, differently colored border sides,
 positioned elements, stacking effects and rounded corners fail explicitly.
+Password painting shapes one `•` per extended grapheme, including transient
+preedit, with source-byte positions retained for hit testing and selection.
+Guest values and input events retain the original text. Selection, caret,
+horizontal clipping and Undo use the same editing model as text fields;
+placeholders remain unmasked. The supplied font provides the mask glyph or its
+`.notdef` outline, under the unchanged shaping bounds. This matches the sampled
+Chrome password caret behavior; sampled WebKit uses UTF-16-unit masks instead,
+so full cross-browser password editing parity remains open. Native search fields
+use plain text editing; a platform search-clear affordance is not supplied.
+Explicitly styled checkbox/radio inputs use the same rectangular box subset and
+paint a scalable check mark or circular checked dot in `currentcolor`, clipped
+to the content box and ancestor scrollports. They require explicit foreground,
+background, outline and geometry, with zero border radius, and need no font.
+Unchecked controls paint their specified box without a mark. Platform-native
+control themes and indeterminate checkbox state are not supplied.
+Radio groups follow the [shared ownership rules](embedding.md#view-protocol-draft-v0-unstable)
+in both native and browser models. Unmodified arrow keys move and activate within
+the visible, enabled group in document order, wrapping at either end; Left/Up
+move backward and Right/Down forward. Tab visits its checked eligible member,
+or the first eligible member in the traversal direction when none is checked.
+Leaving a radio skips its remaining group peers. Space activates either control.
+Keydown prevention stops the default action; click prevention restores the group
+after preactivation, without a field edit or counter increment. Checking a peer
+does not emit a second edit for the automatically unchecked radio.
+Explicitly styled single-select controls paint the selected label and an arrow.
+Their transient popup paints above the ordinary scene, stays inside the window
+and scrolls a bounded row viewport independently of ancestor scrollports. Option
+subtrees have no ordinary layout boxes. Pointer choice, wheel scrolling, keyboard
+preview/accept/cancel and character cycling use concrete option identities;
+disabled or hidden options are skipped. Focus loss dismisses the popup. Relevant
+guest mutations close it, and stale-frame input is discarded. Option styling is
+limited to display and foreground color; platform themes, hover highlighting and
+timed multi-character search remain open. Aggregate selection-scan budgeting for
+repeated mutations in one transaction remains a hardening task.
+TSX initializes a select's value after inserting its options. Dynamic value getters
+still execute once in attribute source order under the reactive runner, retain
+their subscriptions and precede refs; the final assignment reuses the cached value.
 Solid rectangular outlines support explicit pixel widths, colors and offsets,
 including focus-visible styles and shorthand/longhand cascade. They paint after
 the element's contents, clip to ancestor bounds, do not affect layout and do not
@@ -11861,8 +11898,10 @@ cross-renderer equivalence for those cases remains open.
 Explicitly sized text inputs and buttons with explicit display, minimum sizes,
 padding and border can participate in this experimental geometry. A button with
 text requires one text child, flex display and explicit font and alignment
-properties. Other control types and intrinsic or platform-default control sizing
-are rejected. The geometry path itself only calculates boxes. Full text editing,
+properties. The admitted inputs include text/search/password and checkbox/radio;
+explicit textareas also follow the rules above. Remaining control types and
+intrinsic or platform-default control sizing are rejected. The geometry path
+itself only calculates boxes. Full text editing,
 full IME support, CSS and general geometry remain open.
 Grid supports a subset of the validated track grammar, numeric line/span placement, and
 bounded explicit and implicit grid work; unsupported values and oversized

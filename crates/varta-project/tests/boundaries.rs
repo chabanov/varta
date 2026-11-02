@@ -58,6 +58,11 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
         ),
         // The headless view renderer (v38) is engine code without a VM.
         ("varta-view", ["varta-common"].as_slice()),
+        // The native preview is a host shell over the public engine APIs.
+        (
+            "varta-desktop",
+            ["varta-common", "varta-runtime", "varta-view"].as_slice(),
+        ),
         (
             "varta-project",
             [

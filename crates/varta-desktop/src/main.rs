@@ -11,7 +11,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use varta_runtime::{ApplicationOptions, Step, VartaRuntime};
-use varta_view::{Input, RasterImage, Target, TextMeasurer};
+use varta_view::{Input, RasterImage, SelectHit, Target, TextMeasurer};
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
@@ -36,7 +36,7 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 }
 
 enum GuiEvent {
-    Frame(PreviewFrame),
+    Frame(Box<PreviewFrame>),
     Error(String),
 }
 struct PreviewFrame {
@@ -59,6 +59,7 @@ enum WorkerMessage {
     },
 }
 enum PendingKey {
+    SelectClose(u32),
     Key(&'static str, ModifiersState),
     Character {
         key: String,
@@ -309,7 +310,7 @@ fn worker(
                 rendered_dimensions = dimensions;
                 sequence = sequence.checked_add(1).ok_or("frame sequence exhausted")?;
                 if proxy
-                    .send_event(GuiEvent::Frame(PreviewFrame {
+                    .send_event(GuiEvent::Frame(Box::new(PreviewFrame {
                         image: frame,
                         revision: rendered_revision,
                         dimensions,
@@ -318,7 +319,7 @@ fn worker(
                         dark: environment_dark,
                         title: app.view_title().into(),
                         scale: environment_scale,
-                    }))
+                    })))
                     .is_err()
                 {
                     return Ok(());
@@ -363,6 +364,7 @@ struct Pressed {
     dark: bool,
     scale: u64,
     text_anchor: Option<usize>,
+    select_hit: Option<SelectHit>,
 }
 impl Preview {
     fn size_changed(&self, window: &Window) {
@@ -455,7 +457,11 @@ impl Preview {
         let (x, y) = self.cursor?;
         let frame = self.frame.as_ref().filter(|_| self.frame_presented)?;
         Some((
-            frame.image.hit_test(x, y)?,
+            frame
+                .image
+                .select_hit(x, y)
+                .map(SelectHit::target)
+                .or_else(|| frame.image.hit_test(x, y))?,
             frame.revision,
             frame.dimensions,
         ))
@@ -477,6 +483,36 @@ impl Preview {
             return Ok(());
         };
         let delta = std::mem::take(&mut self.pending_scroll);
+        if let Some(menu) = frame.image.select_menu() {
+            let rect = menu.viewport;
+            if x < rect.x || y < rect.y || x >= rect.x + rect.width || y >= rect.y + rect.height {
+                return Ok(());
+            }
+            let rows = (delta.abs() / menu.row_height).ceil() as usize;
+            let first = if delta < 0.0 {
+                menu.first.saturating_sub(rows)
+            } else {
+                menu.first.saturating_add(rows).min(menu.max_first)
+            };
+            if first != menu.first {
+                self.sender
+                    .try_send(WorkerMessage::Input {
+                        input: Input::SelectScroll {
+                            target: Target::Node(menu.target),
+                            first,
+                        },
+                        revision: frame.revision,
+                        dimensions: frame.dimensions,
+                        dark: frame.dark,
+                        scale: frame.scale,
+                    })
+                    .map_err(|_| {
+                        "native input queue is full or the application stopped".to_owned()
+                    })?;
+                self.scroll_inflight = Some((frame.revision, frame.dimensions));
+            }
+            return Ok(());
+        }
         if let Some((node, top, remaining)) = frame.image.scroll_target(x, y, delta) {
             let metrics = frame
                 .image
@@ -510,6 +546,18 @@ impl Preview {
         };
         while let Some(pending) = self.pending_keys.pop_front() {
             let input = match pending {
+                PendingKey::SelectClose(node) => {
+                    if frame
+                        .image
+                        .select_menu()
+                        .is_none_or(|menu| menu.target != node)
+                    {
+                        continue;
+                    }
+                    Input::SelectClose {
+                        target: Target::Node(node),
+                    }
+                }
                 PendingKey::Character {
                     key,
                     text,
@@ -664,7 +712,7 @@ impl ApplicationHandler<GuiEvent> for Preview {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: GuiEvent) {
         match event {
             GuiEvent::Frame(frame) => {
-                self.frame = Some(frame);
+                self.frame = Some(*frame);
                 self.frame_presented = false;
                 if let Some(window) = &self.window {
                     window.request_redraw();
@@ -728,6 +776,18 @@ impl ApplicationHandler<GuiEvent> for Preview {
                     self.modifiers = ModifiersState::empty();
                     self.pending_keys.clear();
                     self.ime_composing = false;
+                    if let Some(menu) = self
+                        .frame
+                        .as_ref()
+                        .and_then(|frame| frame.image.select_menu())
+                    {
+                        self.pending_keys
+                            .push_back(PendingKey::SelectClose(menu.target));
+                        if let Err(error) = self.flush_keys() {
+                            self.error = Some(error);
+                            event_loop.exit();
+                        }
+                    }
                     // Some windowing backends do not report Ime::Disabled when
                     // focus moves away. Clear any displayed composition even then.
                     if let Some((node, commits)) = self.ime_binding {
@@ -856,6 +916,9 @@ impl ApplicationHandler<GuiEvent> for Preview {
                         revision,
                         dimensions,
                         text_anchor,
+                        select_hit: self
+                            .cursor
+                            .and_then(|(x, y)| self.frame.as_ref()?.image.select_hit(x, y)),
                         dark: self.dark.load(Ordering::Acquire),
                         scale: self.scale.load(Ordering::Acquire),
                     }
@@ -872,26 +935,56 @@ impl ApplicationHandler<GuiEvent> for Preview {
                             && frame.revision == pressed.revision
                             && frame.dimensions == pressed.dimensions
                     });
-                    let input = match (pressed.text_anchor, current, self.cursor) {
-                        (Some(anchor), Some(frame), Some((x, y))) => frame
-                            .image
-                            .text_position_at(pressed.node, x, y)
-                            .map(|focus| Input::TextSelect {
-                                target: Target::Node(pressed.node),
-                                anchor,
-                                focus,
-                                activate: self.hit()
-                                    == Some((pressed.node, pressed.revision, pressed.dimensions)),
-                            }),
-                        (None, Some(_), _)
-                            if self.hit()
-                                == Some((pressed.node, pressed.revision, pressed.dimensions)) =>
-                        {
-                            Some(Input::Click {
-                                target: Target::Node(pressed.node),
-                            })
+                    let input = if let Some(hit) = pressed.select_hit {
+                        match (current, self.cursor) {
+                            (Some(frame), Some((x, y)))
+                                if frame.image.select_hit(x, y) == Some(hit) =>
+                            {
+                                match hit {
+                                    SelectHit::Choice { select, option } => {
+                                        Some(Input::SelectOption {
+                                            target: Target::Node(select),
+                                            option,
+                                        })
+                                    }
+                                    SelectHit::Dismiss { select } => Some(Input::SelectClose {
+                                        target: Target::Node(select),
+                                    }),
+                                    SelectHit::Disabled { .. } => None,
+                                }
+                            }
+                            _ => None,
                         }
-                        _ => None,
+                    } else {
+                        match (pressed.text_anchor, current, self.cursor) {
+                            (Some(anchor), Some(frame), Some((x, y))) => frame
+                                .image
+                                .text_position_at(pressed.node, x, y)
+                                .map(|focus| Input::TextSelect {
+                                    target: Target::Node(pressed.node),
+                                    anchor,
+                                    focus,
+                                    activate: self.hit()
+                                        == Some((
+                                            pressed.node,
+                                            pressed.revision,
+                                            pressed.dimensions,
+                                        )),
+                                }),
+                            (None, Some(_), _)
+                                if self.hit()
+                                    == Some((
+                                        pressed.node,
+                                        pressed.revision,
+                                        pressed.dimensions,
+                                    )) =>
+                            {
+                                Some(Input::Click {
+                                    target: Target::Node(pressed.node),
+                                })
+                            }
+                            _ => None,
+                        }
                     };
                     if let Some(input) = input
                         && self

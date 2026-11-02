@@ -1372,3 +1372,77 @@ artifact test pass. Strict common/runtime all-target Clippy passed; final test
 fixture additions passed compilation and focused behavior checks. Formatting and
 whitespace checks pass. No new full-workspace gate or value14 source compatibility
 pass is claimed for this increment.
+
+## Native form controls — 2026-11-02
+
+Working-tree additions after `870344d` extend the experimental native CPU preview
+with password/search fields and font-independent checkbox/radio marks. The native
+contract remains an explicitly styled, bounded subset, with the production shell,
+full L0 styling and cross-platform acceptance still open.
+
+Password painting shapes one mask per extended grapheme, including transient IME
+preedit, with source UTF-8 offsets retained for selection and editing. Four public
+view tests cover distinct mask/plaintext glyph pixels, Cyrillic, combining marks,
+emoji/ZWJ, 2x coordinates, original input values, Undo, placeholders, type changes,
+composition joining the preceding grapheme and the existing shaping limit. A Wasm
+application test verifies original password/search values. The native field oracle
+matches real Chrome in 28 box/caret checks with the same original font. A separate
+WebKit sample uses UTF-16-unit masks, leaving full password parity open.
+On macOS Retina, `field-types` showed five masks, three after selection/deletion,
+then five after Undo. Search deletion/Undo restored its four plaintext glyphs.
+Guest logs confirmed two edits per field without logging the values.
+
+Checkbox/radio controls paint a check mark or circular checked dot inside their
+explicit rectangular boxes without a font. Marks scale with DPI and respect the
+content/ancestor clip. The shared model now groups radios by equal nonempty name,
+tree and closest form owner, including checked subtree insertion and type/name
+changes. Missing/empty names remain independent. Native and JS transactions roll
+back group changes on rejection; browser input and Worker event synchronization
+uncheck only the selected group. Native arrow navigation skips hidden/disabled
+peers, wraps and honors keydown/click prevention. Tab uses one eligible group stop.
+Click records observe preactivation; cancellation restores the previous group
+before any input/change or counter increment. Browser checkable field-change
+records now use the same empty value payload as native.
+
+Verification: all **91 varta-view tests** passed, including four new control tests;
+the focused Wasm checkable application test passed; all **97 browser Node tests**
+passed with the native oracle. Real Chrome matched **35 radio group/patch checks**
+and byte-identical click/keydown/input/change records plus state in **six activation
+and cancellation scenarios**. Strict view/desktop all-target Clippy, desktop build,
+formatting and whitespace checks passed. These are scoped results, not a new full
+workspace/release gate. The browser probe commands are in
+[verification.md](verification.md#browser-registry-and-fuel-probe-development).
+
+The font-free `checkables` fixture was observed on macOS Retina: Space checked the
+checkbox; Tab/Down moved the upper radio selection while the separate form stayed
+selected; Shift+Tab returned directly to the checkbox; Space cleared it; a pointer
+click selected the first upper radio. Guest logs confirmed the four edits and
+field counters. The test window/process closed cleanly. Full control theming,
+focus-modality matching, native accessibility, Pi and production packaging remain
+open; no P10 or whole-CORE completion is claimed.
+
+
+### Single-select state and native popup
+
+Single-select controls now share option selectedness, dirty attribute behavior,
+text-derived values, duplicate-value identity, reparenting and atomic rollback in
+native and browser models. Equal guest echoes keep the concrete option. Browser
+DOM/Worker envelopes retain a validated option ID with deferred events without
+changing the Wasm wire. Derived option values retain the existing value bound.
+
+The native CPU renderer adds a top-layer scrolling popup, physical hit targets,
+keyboard preview/accept/cancel, focus-loss dismissal and character cycling. Option
+subtrees have no ordinary layout boxes. The desktop fixture bundles its own font.
+TSX applies initial values after options, retaining one getter evaluation in source
+order, reactive subscriptions and ref ordering; a Wasm regression covers these.
+
+The generated browser select fixture passed trusted character input, duplicate
+identity, input/change delivery and guest echo through its packaged Worker. Native
+popup GUI acceptance, aggregate selection-scan budgeting, timed multi-character
+search, hover feedback and broader control styling remain open. These additions
+do not close P10 or claim cross-platform/release acceptance.
+
+At the commit boundary, all 103 browser Node tests passed with a freshly generated
+native oracle. Real Chrome matched 11 select identity/event/mutation scenarios,
+35 radio ownership/rollback checks and six checkable activation/cancellation
+scenarios. The password/search probe passed 28 geometry/caret comparisons.

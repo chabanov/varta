@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-11-02, against `main` at `abea3ac`. Varta is an experimental
+Updated 2026-11-02, against `main` at `870344d` plus the native field work below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -18,6 +18,7 @@ ECMAScript, Node or npm compatibility.
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
+| Native renderer | Experimental CPU desktop preview has explicit text controls, font-independent checkbox/radio marks, multiline editing, caret/selection, Undo/IME preedit, scrolling, DPI/theme handling and guest layout commands. Textarea navigation/content sizing is committed in `870344d`; later password/search, checkbox/radio and single-select work adds shared control semantics and native/Wasm/browser checks. Select popup GUI acceptance and aggregate selection-scan budgeting remain open. [Field verification record](history.md#native-form-controls--2026-11-02). Full L0 styling, the console settings/list acceptance on macOS/Pi, metrics, accessibility and production shell packaging remain open |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
 
@@ -37,8 +38,9 @@ bytes and their own expectations are preserved.
 
 Evidence: `target/verification/20261101-174930-muu4a2lf/report.json` (local,
 ignored). Only documentation result records were updated after that gate; code
-and build inputs are unchanged. That batch was verified before direct-union implementation began and is not yet
-committed. No whole CORE work stream or broader platform acceptance is closed here.
+and build inputs were unchanged at that record. That batch was verified before
+direct-union implementation began and is included in `f38413f`. No whole CORE
+work stream or broader platform acceptance is closed here.
 
 ### Stabilization batch 2 — verified 2026-11-01
 
@@ -66,16 +68,16 @@ Conformance remains 123 passed and four known unsupported, without regressions.
 Fresh Node host: 117 passed; normal-stack UARP console: 107 passed in 28 groups
 and two view checks. The unchanged dispatch-cost regression now passes at both
 24 and 200 alternatives. Only result documentation was edited after the gate;
-code/build inputs are unchanged. This batch is verified and not yet committed.
+code/build inputs were unchanged at that record. This batch is included in `f38413f`.
 
 This batch also corrects the reproduced literal/unknown discriminant overlap:
 valid later record alternatives use strict matching, while multiple successful
 matches report ambiguity. Older profiles keep their behavior. Further narrowing
 inventory and the server/platform/release queue stay open.
 
-Next implementation focus: the server/asynchronous lifetime batch below. The
-wider compatibility inventory continues alongside it; no whole CORE stream is
-closed by these two stabilization batches.
+The server/asynchronous lifetime batch follows below. The wider compatibility
+inventory and platform/release queue continue; no whole CORE stream is closed
+by these two stabilization batches.
 
 ### Server batch — native acceptance verified 2026-11-01
 
@@ -6175,3 +6177,26 @@ Focused checks cover an empty line, newline growth, long-word wrapping, maximum
 height, shrinking after replacement and minimum height. The CPU renderer uses
 explicit-font shaping for intrinsic height; interactive resize and platform
 auto-sizing acceptance remain open.
+
+Explicitly styled native `search` and `password` fields now join the text-control
+path. Password painting shapes only one mask per extended grapheme, including IME
+preedit, while hit testing maps back to source UTF-8 offsets. Selection, caret,
+replacement, grapheme deletion, Undo, placeholders and type changes retain the
+original guest values. The shaping/work bounds are unchanged; numeric controls,
+search-clear affordances and broader native controls remain open.
+
+Explicitly styled checkbox/radio controls now render without fonts, with checked
+marks, pointer/Space activation, radio-arrow movement and one Tab stop per group.
+Both host models now scope named radio groups by tree and closest form, reconcile
+checked membership during patches, and preserve rollback. Native click records
+observe preactivation and cancellation restores the previous group without an edit.
+The [verification record](history.md#native-form-controls--2026-11-02) covers
+native/Wasm/browser and macOS observations. These additions after
+`870344d` do not constitute P10 completion. Single-select controls now share live
+selectedness, duplicate-value identity and transactional updates across native and
+browser hosts. The native preview adds a scrolling popup, pointer/keyboard choice,
+cancel and character cycling; TSX initializes values after options while preserving
+getter evaluation and reactivity. Aggregate selection-scan budgeting, timed
+multi-character search, hover feedback, native GUI acceptance of the select popup,
+numeric/progress controls, full styling and focus-modality parity, console screens,
+Pi, performance, accessibility and production shell acceptance remain open.

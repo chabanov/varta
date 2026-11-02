@@ -2,6 +2,8 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { checkStylesheet, checkStyleDeclaration, createValueMatcher } from "./view-css.mjs";
 
+import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue} from './view-select.mjs';
+
 const V = registry.view, W = V.wire;
 const named = (rows) => new Map(rows.map((row) => [row.name, row]));
 const tags = named(V.tags), attributes = named(V.attributes), commands = named(V.commands);
@@ -10,6 +12,27 @@ const textNode = (text) => ({ kind: "text", text, parent: W.noNode, children: []
 const ident = (text) => text.length <= V.limits.identChars && /^[A-Za-z][A-Za-z0-9_-]*$/.test(text);
 const inputType = (node) => node.attributes.get("type") ?? "text";
 const checkable = (node) => node.tag === "input" && ["checkbox", "radio"].includes(inputType(node));
+function radioGroup(nodes, id) {
+  const node = nodes.get(id), name = node?.attributes?.get("name");
+  if (!node || !checkable(node) || inputType(node) !== "radio") return [];
+  if (!name) return [id];
+  let owner = id;
+  for (let at = id; at !== W.noNode; at = nodes.get(at).parent) {
+    owner = at;
+    if (nodes.get(at).tag === "form") break;
+  }
+  const group = [], stack = [owner];
+  while (stack.length) {
+    const current = stack.pop(), candidate = nodes.get(current);
+    if (current !== owner && candidate.tag === "form") continue;
+    if (candidate.kind === "element" && checkable(candidate) && inputType(candidate) === "radio" && candidate.attributes.get("name") === name) group.push(current);
+    stack.push(...candidate.children.toReversed());
+  }
+  return group;
+}
+function uncheckRadio(nodes, id) {
+  for (const other of radioGroup(nodes, id)) if (other !== id) nodes.get(other).checked = false;
+}
 const focusable = (node) => ["button", "input", "select", "textarea", "a"].includes(node.tag) || node.attributes.has("tabindex");
 const admitted = (rule, node) => rule === "all" || rule === "focusable" && focusable(node) || Array.isArray(rule) && rule.includes(node.tag);
 
@@ -50,6 +73,10 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
   const checkValue = createValueMatcher(Object.fromEntries(V.css.map((row) => [row.name, row.grammar])), Object.fromEntries(V.css.map((row) => [row.name, row.note ?? ""])));
   let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), pending = new Set(), title = "", focus = W.noNode;
   let closed = false;
+  const validateChoice = (record, choice) => {
+    const MAX_NODE_ID=0xffff_ffff;
+    if(choice!==undefined&&(!Number.isSafeInteger(choice)||choice<0||choice>MAX_NODE_ID||!['input','change'].includes(record.kind)))throw new ViewProtocolError('invalid select option envelope');
+  };
   const commit = (bytes) => {
     if (closed) throw new ViewProtocolError("closed view");
     const operations = decodeViewBatch(bytes);
@@ -64,7 +91,6 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     const asElement = (id) => { const node = live(id); if (node.kind !== "element") fail("not an element"); return node; };
     const detach = (id) => { const node = live(id); if (node.parent !== W.noNode) { const siblings = live(node.parent).children; siblings.splice(siblings.indexOf(id), 1); node.parent = W.noNode; } };
     const attached = (id) => { for (let at = id; at !== W.noNode; at = live(at).parent) if (at === W.root) return true; return false; };
-    const uncheck = (id, node) => { const name = node.attributes.get("name"); if (name === undefined) return; for (const [otherId, other] of next) if (otherId !== id && checkable(other) && inputType(other) === "radio" && other.attributes.get("name") === name) other.checked = false; };
     for (index = 0; index < operations.length; index++) {
       const op = operations[index];
       switch (op.name) {
@@ -72,15 +98,19 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (!op.node || next.has(op.node)) fail("duplicate node");
           if (next.size >= V.limits.nodes) fail("node budget");
           next.set(op.node, op.name === "create_element" ? element(op.tag) : textNode(op.text)); break;
-        case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; break; }
+        case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; syncSelectFor(next,op.node); break; }
         case "set_attribute": {
           const node = asElement(op.node), rule = attributes.get(op.attribute);
           if (!admitted(rule.tags, node)) fail("attribute not allowed");
           if (!attributeValue(rule.grammar, node.tag, op.text, linkRequested)) fail("attribute value");
           if (op.attribute === "src" && !assetRequested(op.text)) fail("unpackaged view asset");
-          node.attributes.set(op.attribute, op.text); break;
+          const changed=node.attributes.get(op.attribute)!==op.text;
+          node.attributes.set(op.attribute, op.text);
+          if(changed)optionAttribute(next,op.node,op.attribute,true);
+          if (["name", "type"].includes(op.attribute) && node.checked && checkable(node) && inputType(node) === "radio") uncheckRadio(next, op.node);
+          break;
         }
-        case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); node.attributes.delete(op.attribute); break; }
+        case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); if(node.attributes.delete(op.attribute))optionAttribute(next,op.node,op.attribute,false); break; }
         case "set_class": { const node = asElement(op.node); if (op.text.split(/[\t\n\f\r ]+/).filter(Boolean).some((value) => !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(value))) fail("class value"); node.class = op.text; break; }
         case "set_style": {
           const node = asElement(op.node); if (["field-sizing", "resize"].includes(op.property) && node.tag !== "textarea") fail("property not allowed");
@@ -93,11 +123,25 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (node.kind === "text" ? !rule.textChild : !rule.children.includes(node.tag)) fail("child not allowed");
           for (let at = op.parent; at !== W.noNode; at = live(at).parent) if (at === op.node) fail("cycle");
           if (op.before !== W.noNode && (op.before === op.node || live(op.before).parent !== op.parent)) fail("before is not a sibling");
-          detach(op.node); parent.children.splice(op.before === W.noNode ? parent.children.length : parent.children.indexOf(op.before), 0, op.node); node.parent = op.parent; break;
+          const oldSelect=selectOwner(next,op.node);
+          detach(op.node); parent.children.splice(op.before === W.noNode ? parent.children.length : parent.children.indexOf(op.before), 0, op.node); node.parent = op.parent;
+          if(oldSelect!==undefined){if(node.tag==='option')normalizeSelect(next,oldSelect);else syncSelect(next,oldSelect);}
+          const owner=selectOwner(next,op.node);
+          if(owner!==undefined){if(node.tag==='option')normalizeSelect(next,owner,node.optionSelected?op.node:undefined);else syncSelect(next,owner);}
+          const stack = [op.node];
+          while (stack.length) {
+            const id = stack.pop(), child = live(id);
+            if (child.checked && checkable(child) && inputType(child) === "radio") uncheckRadio(next, id);
+            stack.push(...child.children.toReversed());
+          }
+          break;
         }
         case "remove": {
-          if (op.node === W.root) fail("root not movable"); detach(op.node); const stack = [op.node];
-          while (stack.length) { const id = stack.pop(), node = live(id); for (const listener of node.listeners) handlers.delete(listener.handler); for (const child of node.children) stack.push(child); next.delete(id); if (nextFocus === id) nextFocus = W.noNode; } break;
+          if (op.node === W.root) fail("root not movable");
+          const owner=selectOwner(next,op.node),option=live(op.node).tag==='option';
+          detach(op.node); const stack = [op.node];
+          while (stack.length) { const id = stack.pop(), node = live(id); for (const listener of node.listeners) handlers.delete(listener.handler); for (const child of node.children) stack.push(child); next.delete(id); if (nextFocus === id) nextFocus = W.noNode; }
+          if(owner!==undefined){if(option)normalizeSelect(next,owner);else syncSelect(next,owner);}break;
         }
         case "listen": {
           const node = asElement(op.node), F = V.filters, mask = Object.values(F.options).reduce((a, b) => a | b, 0);
@@ -109,8 +153,8 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (node.listeners.some(same)) fail("duplicate filter"); node.listeners.push({ ...op }); handlers.add(op.handler); break;
         }
         case "unlisten": { const node = asElement(op.node), at = node.listeners.findIndex((listener) => listener.event === op.event && listener.handler === op.handler); if (at < 0) fail("not listening"); node.listeners.splice(at, 1); handlers.delete(op.handler); break; }
-        case "set_value": { const node = asElement(op.node); if (!(node.tag === "input" && !checkable(node) || ["textarea", "select"].includes(node.tag))) fail("not a value field"); if (node.seq === op.base_seq) node.value = op.text; break; }
-        case "set_checked": { if (op.checked > 1) fail("checked value"); const node = asElement(op.node); if (!checkable(node)) fail("not a checked field"); if (node.seq === op.base_seq) { node.checked = Boolean(op.checked); if (node.checked && inputType(node) === "radio") uncheck(op.node, node); } break; }
+        case "set_value": { const node = asElement(op.node); if (!(node.tag === "input" && !checkable(node) || ["textarea", "select"].includes(node.tag))) fail("not a value field"); if (node.seq === op.base_seq) {if(node.tag==='select'){if(node.value!==op.text)setSelectValue(next,op.node,op.text);}else node.value = op.text;} break; }
+        case "set_checked": { if (op.checked > 1) fail("checked value"); const node = asElement(op.node); if (!checkable(node)) fail("not a checked field"); if (node.seq === op.base_seq) { node.checked = Boolean(op.checked); if (node.checked && inputType(node) === "radio") uncheckRadio(next, op.node); } break; }
         case "command": {
           const node = asElement(op.node), rule = commands.get(op.command); if (!admitted(rule.tags, node)) fail("command not allowed");
           if (rule.argument ? !(Number.isFinite(op.argument) && op.argument >= 0) : !Object.is(op.argument, 0)) fail("command argument");
@@ -132,6 +176,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     }
     index = undefined; const ids = new Set();
     for (const node of next.values()) if (node.kind === "element" && node.attributes.has("id")) { const id = node.attributes.get("id"); if (ids.has(id)) fail("duplicate id attribute"); ids.add(id); }
+    for(const [id,node] of next)if((node.tag==='select'&&node.value.length*2>V.limits.valueBytes)||(node.tag==='option'&&optionValue(next,id).length*2>V.limits.valueBytes))fail('select value budget');
     nodes = next; sheets = nextSheets; pending = copies; title = nextTitle; focus = nextFocus;
     return { operations, effects };
   };
@@ -140,24 +185,32 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     snapshot() { return { nodes: [...nodes].map(([id, node]) => ({ id, ...node, children: [...node.children], listeners: node.listeners.map((listener) => ({ ...listener })), ...(node.kind === "element" ? { attributes: Object.fromEntries(node.attributes), style: Object.fromEntries(node.style) } : {}) })), sheets: Object.fromEntries(sheets), title, focus, pending: [...pending] }; },
     close() { closed = true; nodes.clear(); sheets.clear(); pending.clear(); title = ""; focus = W.noNode; },
     complete(request) { if (!pending.delete(request)) throw new ViewProtocolError("unknown command result"); },
-    syncEvent(record) {
+    validateChoice,
+    syncEvent(record, selectedOption) {
+      validateChoice(record, selectedOption);
       if (record.kind === "command_result" && record.key === "copy_text") { if (!pending.delete(record.seq)) throw new ViewProtocolError("unknown command result"); }
       const node = nodes.get(record.target);
       if(node){if(record.kind==="focusin")focus=record.target;if(record.kind==="focusout"&&focus===record.target)focus=W.noNode;if(record.kind==="close"&&node.tag==="dialog")node.open=false;}
       if (!node || node.kind !== "element" || !["input", "textarea", "select"].includes(node.tag) || !["input", "change"].includes(record.kind)) return;
       node.seq = record.seq;
-      if (checkable(node)) node.checked = Boolean(record.flags & V.filters.flags.checked); else node.value = record.value;
+      if (checkable(node)) node.checked = Boolean(record.flags & V.filters.flags.checked);
+      else if(node.tag==='select'){
+        syncSelectChoice(nodes,record.target,record.value,selectedOption);
+      }else node.value = record.value;
+      if (node.checked && inputType(node) === "radio") uncheckRadio(nodes, record.target);
     },
-    input(id, value, checked, advance = true) {
+    input(id, value, checked, advance = true, selectedOption) {
       const node = nodes.get(id);
       if (!node || node.kind !== "element" || !["input", "textarea", "select"].includes(node.tag)) throw new ViewProtocolError("input target");
       if (typeof value !== "string" || value.length * 2 > V.limits.valueBytes || value.includes("\0") || !value.isWellFormed()) throw new ViewProtocolError("input value");
+      validateChoice({kind:'input'},selectedOption);
+      if(selectedOption!==undefined&&node.tag!=='select')throw new ViewProtocolError('input select target');
       if (advance) node.seq = (node.seq + 1) >>> 0;
-      if (checkable(node)) node.checked = Boolean(checked); else node.value = value;
-      if (node.checked && inputType(node) === "radio") {
-        const name = node.attributes.get("name");
-        if (name !== undefined) for (const [otherId, other] of nodes) if (otherId !== id && checkable(other) && inputType(other) === "radio" && other.attributes.get("name") === name) other.checked = false;
-      }
+      if (checkable(node)) node.checked = Boolean(checked);
+      else if(node.tag==='select'){
+        syncSelectChoice(nodes,id,value,selectedOption);
+      }else node.value = value;
+      if (node.checked && inputType(node) === "radio") uncheckRadio(nodes, id);
       return node.seq;
     },
   };

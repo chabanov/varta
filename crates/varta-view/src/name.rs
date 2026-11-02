@@ -206,12 +206,10 @@ fn embedded_value(tree: &Tree, id: u32, element: &Element) -> Option<String> {
     if element.tag != Tag::Select {
         return None;
     }
-    let chosen = tree.nodes.get(&id)?.children.iter().find(|option| {
-        tree.element(**option)
-            .and_then(|option| option.attributes.get(&Attribute::Value))
-            == Some(&element.value)
-    });
-    Some(chosen.map_or_else(String::new, |option| tree.text_content(*option)))
+    Some(
+        tree.selected_option(id)
+            .map_or_else(String::new, |option| tree.option_label(option)),
+    )
 }
 
 /// 2E: `alt` of an image, or, for the root only, the labels of a labelable

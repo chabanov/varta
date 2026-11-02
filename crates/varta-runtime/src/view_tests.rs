@@ -551,6 +551,242 @@ export function main(): void {
 }
 
 #[test]
+fn native_password_and_search_frames_deliver_original_guest_values() {
+    let source = r#"
+export function main(): void {
+  View.stylesheet(1, '.field { display:block; width:80px; height:30px; min-width:0; min-height:0; padding:4px; border:2px solid #000; border-radius:0; outline:none; background-color:#fff; color:#00f; font-family:"Varta Password Fixture"; font-size:20px; font-weight:normal; font-style:normal; line-height:20px }');
+  const password = View.node();
+  View.createElement(password, 24);
+  View.setAttribute(password, 1, 'key');
+  View.setAttribute(password, 2, 'password');
+  View.setClass(password, 'field');
+  View.setValue(password, 'AФé😀B');
+  View.on(password, 2, (event: ViewEvent): void => console.log(`key ${event.value}`), 0, 0, 0, 0);
+  const search = View.node();
+  View.createElement(search, 24);
+  View.setAttribute(search, 1, 'search');
+  View.setAttribute(search, 2, 'search');
+  View.setClass(search, 'field');
+  View.setValue(search, 'AAAA');
+  View.on(search, 2, (event: ViewEvent): void => console.log(`search ${event.value}`), 0, 0, 0, 0);
+  View.insert(1, password, 0);
+  View.insert(1, search, 0);
+  View.commit();
+}
+"#;
+    let bytes = compile(source);
+    let mut app = VartaRuntime::new()
+        .start_application(&bytes, crate::ApplicationOptions::default())
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("../../varta-view/tests/fixtures/password.ttf").to_vec(),
+        "Varta Password Fixture",
+    )
+    .unwrap();
+    let frame = app
+        .view_rasterize_scaled(200, 150, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    let password = frame.hit_test(16.0, 30.0).unwrap();
+    let search = frame.hit_test(16.0, 90.0).unwrap();
+    assert_ne!(password, search);
+    assert_eq!(frame.text_position_at(password, 40.0, 30.0), Some(3));
+    assert_eq!(frame.text_position_at(password, 72.0, 30.0), Some(10));
+    for (target, anchor, focus, text) in [(password, 3, 10, "X"), (search, 1, 3, "Ф")] {
+        app.view_input(&varta_view::Input::TextSelect {
+            target: varta_view::Target::Node(target),
+            anchor,
+            focus,
+            activate: false,
+        })
+        .unwrap();
+        app.view_input(&varta_view::Input::Type {
+            target: varta_view::Target::Node(target),
+            text: text.into(),
+        })
+        .unwrap();
+        assert_eq!(app.run(), crate::Step::Idle);
+    }
+    assert_eq!(
+        app.take_output(),
+        ["varta log: key AФXB", "varta log: search AФA"]
+    );
+    let snapshot = app.view_snapshot();
+    assert_eq!(snapshot["tree"]["children"][0]["value"], "AФXB");
+    assert_eq!(snapshot["tree"]["children"][1]["value"], "AФA");
+    app.view_rasterize_scaled(200, 150, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+}
+
+#[test]
+fn native_checkable_frames_deliver_checked_events_and_isolate_radio_forms() {
+    let source = r#"
+function choice(kind: string, name: string): number {
+  const field = View.node(); View.createElement(field, 24);
+  View.setAttribute(field, 2, kind); View.setAttribute(field, 3, name);
+  View.setClass(field, 'switch'); return field;
+}
+export function main(): void {
+  View.stylesheet(1, '.switch { display:block; width:28px; height:28px; min-width:0; min-height:0; padding:4px; border:2px solid #000; border-radius:0; outline:none; background-color:#fff; color:#00f }');
+  const check = choice('checkbox','');
+  View.on(check, 1, (event: ViewEvent): void => console.log(`click ${event.checked()} ${event.seq}`), 0, 0, 0, 0);
+  View.on(check, 2, (event: ViewEvent): void => console.log(`input ${event.checked()} ${event.seq} [${event.value}]`), 0, 0, 0, 0);
+  View.on(check, 3, (event: ViewEvent): void => console.log(`change ${event.checked()} ${event.seq}`), 0, 0, 0, 0);
+  const a = choice('radio','g'); const b = choice('radio','g');
+  View.insert(1,check,0); View.insert(1,a,0); View.insert(1,b,0);
+  const form = View.node(); View.createElement(form,22); View.insert(1,form,0);
+  const other = choice('radio','g'); View.insert(form,other,0);
+  View.setChecked(a,true); View.setChecked(other,true); View.commit();
+}
+"#;
+    let bytes = compile(source);
+    let mut app = VartaRuntime::new()
+        .start_application(&bytes, crate::ApplicationOptions::default())
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    let frame = app.view_rasterize_scaled(160, 240, 2.0, None).unwrap();
+    let check = frame.hit_test(28.0, 28.0).unwrap();
+    let a = frame.hit_test(28.0, 84.0).unwrap();
+    let b = frame.hit_test(28.0, 140.0).unwrap();
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Node(check),
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(
+        app.take_output(),
+        [
+            "varta log: click true 0",
+            "varta log: input true 1 []",
+            "varta log: change true 1"
+        ]
+    );
+    app.view_input(&varta_view::Input::Key {
+        target: varta_view::Target::Node(a),
+        key: "ArrowRight".into(),
+        shift: false,
+        ctrl: false,
+        alt: false,
+        meta: false,
+        composing: false,
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    let snapshot = app.view_snapshot();
+    assert_eq!(snapshot["focus"], b);
+    assert_eq!(snapshot["tree"]["children"][1]["checked"], false);
+    assert_eq!(snapshot["tree"]["children"][2]["checked"], true);
+    assert_eq!(
+        snapshot["tree"]["children"][3]["children"][0]["checked"],
+        true
+    );
+    app.view_rasterize_scaled(160, 240, 2.0, None).unwrap();
+}
+
+#[test]
+fn native_select_popup_choice_and_equal_guest_echo_preserve_option_identity() {
+    let source = r#"
+export function main():void {
+  View.stylesheet(1,'.choice { display:block; width:80px; height:30px; min-width:0; min-height:0; padding:4px; border:2px solid #000; border-radius:0; outline:none; background-color:#fff; color:#00f; font-family:"Varta Fixture 400"; font-size:20px; font-weight:normal; font-style:normal; line-height:20px }');
+  const select=View.node();View.createElement(select,26);View.setClass(select,'choice');
+  for(let i=0;i<3;i++){
+    const option=View.node();View.createElement(option,27);View.setAttribute(option,4,i===0?'blocked':'same');
+    if(i===0)View.setAttribute(option,6,'');
+    const label=View.node();View.createText(label,'A'.repeat(i+1));View.insert(option,label,0);View.insert(select,option,0);
+  }
+  View.on(select,2,(event:ViewEvent):void=>{console.log(`input ${event.value} ${event.seq}`);View.setValue(select,event.value);},0,0,0,0);
+  View.on(select,3,(event:ViewEvent):void=>console.log(`change ${event.value} ${event.seq}`),0,0,0,0);
+  View.mount(select);
+}
+"#;
+    let bytes = compile(source);
+    let mut app = VartaRuntime::new()
+        .start_application(&bytes, crate::ApplicationOptions::default())
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf").to_vec(),
+        "Varta Fixture 400",
+    )
+    .unwrap();
+    let closed = app
+        .view_rasterize_scaled(200, 400, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    let select = closed.hit_test(20.0, 30.0).unwrap();
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Node(select),
+    })
+    .unwrap();
+    let open = app
+        .view_rasterize_scaled(200, 400, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    let choice = open.select_hit(20.0, 200.0).unwrap();
+    let varta_view::SelectHit::Choice { option, .. } = choice else {
+        panic!("enabled third option")
+    };
+    app.view_input(&varta_view::Input::SelectOption {
+        target: varta_view::Target::Node(select),
+        option,
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(
+        app.take_output(),
+        ["varta log: input same 1", "varta log: change same 1"]
+    );
+    let snapshot = app.view_snapshot();
+    let field = &snapshot["tree"]["children"][0];
+    assert_eq!(field["children"][2]["selected"], true);
+    assert_eq!(field["children"][1]["selected"], false);
+    assert!(
+        app.view_rasterize_scaled(200, 400, 2.0, Some((&mut font, 20.0)))
+            .unwrap()
+            .select_menu()
+            .is_none()
+    );
+}
+
+#[test]
+fn tsx_select_values_follow_options_without_duplicate_reads_or_lost_dependencies() {
+    let source = r#"
+import {TextSignal,effect} from './signals.ts';
+export function main():void {
+  View.setEffect(effect);const current=new TextSignal('b');let reads=0;
+  function read():string {reads++;console.log(`read ${reads}`);return current.get();}
+  function child():string {console.log('child');return 'A';}
+  const dynamic=<select id="dynamic" value={read()} ref={(node:number):void=>console.log('ref')}>
+    <option value="a">{child()}</option><option value="b">B</option>
+  </select>;
+  const fixed=<select id="fixed" value="b"><option value="a">A</option><option value="b">B</option></select>;
+  const button=<button id="change" onClick={():void=>current.set('a')}>Next</button>;
+  View.insert(1,dynamic,0);View.insert(1,fixed,0);View.insert(1,button,0);View.commit();
+}
+"#;
+    let bytes = compile_tsx(source, &[("signals.ts", SIGNALS)]);
+    let mut app = VartaRuntime::new()
+        .start_application(&bytes, crate::ApplicationOptions::default())
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    assert_eq!(
+        app.take_output(),
+        ["varta log: read 1", "varta log: child", "varta log: ref"]
+    );
+    let snapshot = app.view_snapshot();
+    assert_eq!(by_id(&snapshot["tree"], "dynamic").unwrap()["value"], "b");
+    assert_eq!(by_id(&snapshot["tree"], "fixed").unwrap()["value"], "b");
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Ident("#change".into()),
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), ["varta log: read 2"]);
+    assert_eq!(
+        by_id(&app.view_snapshot()["tree"], "dynamic").unwrap()["value"],
+        "a"
+    );
+}
+
+#[test]
 fn native_layout_executes_guest_scroll_from_first_turn_and_after_resize() {
     let source = r#"
 export function main(): void {

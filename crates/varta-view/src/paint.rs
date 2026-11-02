@@ -1,10 +1,12 @@
 //! Bounded CPU painting for an explicitly limited subset of the view tree.
+mod select;
 use crate::TextMeasurer;
 use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
 use crate::style::{self, Environment, Name};
 use crate::text::WhiteSpaceMode;
 use crate::tree::{Content, Tree, border_color_sides, outline_components};
 use parley::{Affinity, Cursor, PositionedLayoutItem, Selection};
+pub use select::{SelectHit, SelectMenuMetrics};
 use skrifa::{
     FontRef, GlyphId, MetadataProvider,
     instance::{LocationRef, NormalizedCoord, Size},
@@ -12,7 +14,10 @@ use skrifa::{
 };
 use std::collections::BTreeMap;
 use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Rect, Transform};
+use unicode_segmentation::UnicodeSegmentation;
 use varta_common::view::{Attribute, CssProperty, ROOT_NODE, Tag};
+
+const PASSWORD_MASK: &str = "•";
 
 /// A transparent, premultiplied RGBA8 image in row-major order.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +32,7 @@ pub struct RasterImage {
     focused: Option<u32>,
     editable: Option<u32>,
     text_hits: BTreeMap<u32, TextHit>,
+    select_menu: Option<Box<select::SelectMenu>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +65,15 @@ pub struct TextNavigation {
     pub upstream: bool,
 }
 impl RasterImage {
+    /// Native select-list hit testing consumes clicks even outside the list.
+    #[must_use]
+    pub fn select_hit(&self, x: f32, y: f32) -> Option<SelectHit> {
+        self.select_menu.as_ref()?.hit(x, y)
+    }
+    #[must_use]
+    pub fn select_menu(&self) -> Option<SelectMenuMetrics> {
+        self.select_menu.as_ref().map(|menu| menu.metrics)
+    }
     /// Physical pixels per CSS pixel used for this frame.
     #[must_use]
     pub fn scale(&self) -> f32 {
@@ -176,6 +191,11 @@ impl RasterImage {
     /// Find the topmost supported element at a viewport-relative pixel coordinate.
     #[must_use]
     pub fn hit_test(&self, x: f32, y: f32) -> Option<u32> {
+        if let Some(menu) = &self.select_menu
+            && select::contains(menu.metrics.viewport, x, y)
+        {
+            return Some(menu.metrics.target);
+        }
         if !x.is_finite() || !y.is_finite() {
             return None;
         }
@@ -724,6 +744,79 @@ fn paint_text(
     Ok(())
 }
 
+/// Font-independent checked marks, inside the explicitly styled control box.
+fn paint_checkable(
+    surface: &mut Surface,
+    bounds: layout::BoxGeometry,
+    color: Color,
+    radio: bool,
+) -> Result<(), PaintError> {
+    let size = bounds.content.width.min(bounds.content.height);
+    if size <= 0.0 {
+        return Ok(());
+    }
+    let x = bounds.content.x + (bounds.content.width - size) / 2.0;
+    let y = bounds.content.y + (bounds.content.height - size) / 2.0;
+    let mut path = PathBuilder::new();
+    if radio {
+        path.push_circle(x + size / 2.0, y + size / 2.0, size * 0.3);
+    } else {
+        // A filled check mark scales with the content box, without a font or
+        // device-pixel stroke-width assumption.
+        for (index, (px, py)) in [
+            (0.08, 0.5),
+            (0.36, 0.78),
+            (0.92, 0.18),
+            (0.8, 0.08),
+            (0.34, 0.58),
+            (0.2, 0.42),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if index == 0 {
+                path.move_to(x + size * px, y + size * py);
+            } else {
+                path.line_to(x + size * px, y + size * py);
+            }
+        }
+        path.close();
+    }
+    let Some(path) = path.finish() else {
+        return Ok(());
+    };
+    let Some(clip) = clipped(bounds.content, bounds.clip) else {
+        return Ok(());
+    };
+    let mask = if bounds.clip.x <= x
+        && bounds.clip.y <= y
+        && bounds.clip.x + bounds.clip.width >= x + size
+        && bounds.clip.y + bounds.clip.height >= y + size
+    {
+        None
+    } else {
+        let mut mask =
+            Mask::new(surface.width(), surface.height()).ok_or(PaintError::Dimensions)?;
+        mask.fill_path(
+            &PathBuilder::from_rect(clip),
+            FillRule::Winding,
+            true,
+            Transform::from_scale(surface.scale, surface.scale),
+        );
+        Some(mask)
+    };
+    let mut paint = Paint::default();
+    paint.set_color(color);
+    surface.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        mask.as_ref(),
+    );
+    Ok(())
+}
+
 fn paint_input(
     pixmap: &mut Surface,
     tree: &Tree,
@@ -775,6 +868,40 @@ fn paint_input(
             caret_visible = false;
         }
     }
+    let source_len = display.len();
+    // The password's shaped buffer contains only masks. Retain byte boundaries
+    // separately so hit testing still addresses the original UTF-8 value.
+    let password_positions = if element.input_type() == "password" {
+        let positions: Vec<_> = display
+            .grapheme_indices(true)
+            .map(|(offset, _)| offset)
+            .chain(std::iter::once(display.len()))
+            .collect();
+        let masked_position =
+            |offset| positions.partition_point(|position| *position < offset) * PASSWORD_MASK.len();
+        selection = (masked_position(selection.0), masked_position(selection.1));
+        preedit_range = preedit_range.map(|(start, end)| {
+            let start = positions
+                .partition_point(|position| *position <= start)
+                .saturating_sub(1)
+                * PASSWORD_MASK.len();
+            (start, masked_position(end))
+        });
+        display = PASSWORD_MASK.repeat(positions.len() - 1);
+        *work = work.saturating_add(display.len());
+        if *work > 1_000_000 {
+            return Err(PaintError::Unsupported(id));
+        }
+        Some(positions)
+    } else {
+        None
+    };
+    let source_position = |offset: usize| {
+        password_positions.as_ref().map_or_else(
+            || offset.min(source_len),
+            |positions| positions[(offset / PASSWORD_MASK.len()).min(positions.len() - 1)],
+        )
+    };
     let (mut options, families) = layout::text_style(tree, env, id, font_size, measurer)?;
     let multiline = element.tag == Tag::Textarea;
     options.white_space = if multiline {
@@ -839,18 +966,16 @@ fn paint_input(
                 if display.get(range.clone()) == Some("\n") {
                     continue;
                 }
-                let before = if cluster.is_rtl() {
+                let before = source_position(if cluster.is_rtl() {
                     range.end
                 } else {
                     range.start
-                }
-                .min(display.len());
-                let after = if cluster.is_rtl() {
+                });
+                let after = source_position(if cluster.is_rtl() {
                     range.start
                 } else {
                     range.end
-                }
-                .min(display.len());
+                });
                 clusters.push((position + advance / 2.0, before, after));
                 position += advance;
                 if clusters.len() > 65_536 {
@@ -862,14 +987,14 @@ fn paint_input(
             top: y + line.metrics().block_min_coord,
             bottom: y + line.metrics().block_max_coord,
             clusters: cluster_start..clusters.len(),
-            start: line.text_range().start.min(display.len()),
+            start: source_position(line.text_range().start),
             end: {
                 let end = line.text_range().end.min(display.len());
-                if display[..end].ends_with('\n') {
+                source_position(if display[..end].ends_with('\n') {
                     end - 1
                 } else {
                     end
-                }
+                })
             },
         });
     }
@@ -1000,7 +1125,7 @@ fn paint_input(
     };
     Ok(TextHit {
         clusters,
-        end: display.len(),
+        end: source_len,
         composing: element.editor.preedit.is_some(),
         lines,
         caret_y: y + ((caret_bounds.y0 + caret_bounds.y1) / 2.0) as f32,
@@ -1100,6 +1225,7 @@ fn rasterize_inner(
     let mut ancestors = BTreeMap::new();
     let mut scrolls = BTreeMap::new();
     let mut text_hits = BTreeMap::new();
+    let mut menu_control = None;
     while let Some((id, outline_phase)) = pending.pop() {
         if outline_phase {
             if let Some((width, offset, color)) = outline(tree, &env, id)? {
@@ -1176,18 +1302,20 @@ fn rasterize_inner(
                             .split_ascii_whitespace()
                             .all(|part| matches!(part, "0" | "0px"))
                     }));
-        let input_ready = !matches!(element.tag, Tag::Input | Tag::Textarea)
-            || ([
-                CssProperty::BackgroundColor,
-                CssProperty::Color,
-                CssProperty::FontFamily,
-                CssProperty::FontSize,
-                CssProperty::FontWeight,
-                CssProperty::FontStyle,
-                CssProperty::LineHeight,
-            ]
-            .iter()
-            .all(|property| properties.contains_key(property))
+        let input_ready = !matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
+            || ([CssProperty::BackgroundColor, CssProperty::Color]
+                .iter()
+                .all(|property| properties.contains_key(property))
+                && (!(element.text_field() || element.tag == Tag::Select)
+                    || [
+                        CssProperty::FontFamily,
+                        CssProperty::FontSize,
+                        CssProperty::FontWeight,
+                        CssProperty::FontStyle,
+                        CssProperty::LineHeight,
+                    ]
+                    .iter()
+                    .all(|property| properties.contains_key(property)))
                 && (properties.contains_key(&CssProperty::Outline)
                     || properties.contains_key(&CssProperty::OutlineStyle))
                 && properties
@@ -1250,7 +1378,34 @@ fn rasterize_inner(
             let bounds = geometry[&id];
             paint_border(&mut pixmap, bounds.rect, bounds.clip, widths, color)?;
         }
-        if matches!(element.tag, Tag::Input | Tag::Textarea) {
+        if element.tag == Tag::Select {
+            let (measurer, size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
+            select::paint_control(
+                &mut pixmap,
+                tree,
+                &env,
+                id,
+                geometry[&id],
+                (measurer, *size),
+                &mut text_work,
+            )?;
+            if tree.focus == Some(id)
+                && element.editor.select_popup.is_some()
+                && !element.disabled()
+            {
+                menu_control = Some((id, geometry[&id]));
+            }
+        } else if element.checkable() {
+            if element.checked {
+                let color = current_color(tree, &env, id).ok_or(PaintError::Unsupported(id))?;
+                paint_checkable(
+                    &mut pixmap,
+                    geometry[&id],
+                    color,
+                    element.input_type() == "radio",
+                )?;
+            }
+        } else if matches!(element.tag, Tag::Input | Tag::Textarea) {
             let (measurer, font_size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
             let hit = paint_input(
                 &mut pixmap,
@@ -1267,8 +1422,24 @@ fn rasterize_inner(
             text_hits.insert(id, hit);
         }
         pending.push((id, true));
-        pending.extend(node.children.iter().rev().map(|id| (*id, false)));
+        if element.tag != Tag::Select {
+            pending.extend(node.children.iter().rev().map(|id| (*id, false)));
+        }
     }
+    let select_menu = if let Some((id, bounds)) = menu_control {
+        let (measurer, size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
+        Some(Box::new(select::paint_menu(
+            &mut pixmap,
+            tree,
+            &env,
+            id,
+            bounds,
+            (measurer, *size),
+            &mut text_work,
+        )?))
+    } else {
+        None
+    };
     let focused = tree
         .focus
         .filter(|id| hit_regions.iter().any(|(node, _)| node == id));
@@ -1303,5 +1474,6 @@ fn rasterize_inner(
         focused,
         editable,
         text_hits,
+        select_menu,
     })
 }

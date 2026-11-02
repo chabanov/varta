@@ -195,6 +195,7 @@ struct Template {
     args: Vec<String>,
     holes: Vec<Option<Box<ast::Expr>>>,
     nodes: usize,
+    select_values: Vec<(String, String)>,
 }
 impl Template {
     fn node(&mut self) -> String {
@@ -401,6 +402,7 @@ impl Desugar<'_> {
             args: Vec::new(),
             holes: Vec::new(),
             nodes: 0,
+            select_values: Vec::new(),
         };
         let root = self.child(element, &mut template)?;
         let call = match root {
@@ -544,6 +546,14 @@ impl Desugar<'_> {
                     return Err(self.fail("spread children are not supported", spread.span));
                 }
             }
+        }
+        if let Some(index) = template
+            .select_values
+            .iter()
+            .position(|(select, _)| *select == node)
+        {
+            let (_, value) = template.select_values.remove(index);
+            template.line(format!("{VIEW}.setValue({node}, {value})"));
         }
         for param in refs {
             template.line(format!("{param}({node})"));
@@ -701,7 +711,28 @@ impl Desugar<'_> {
                 }
                 return Ok(None);
             }
-            VALUE if matches!(tag, Tag::Input | Tag::Textarea | Tag::Select) => {
+            VALUE if tag == Tag::Select => {
+                let value = if let Some(value) = fixed {
+                    literal(&value)
+                } else {
+                    let expr = attr
+                        .value
+                        .as_mut()
+                        .and_then(expression)
+                        .ok_or_else(|| self.fail("`value` needs a string expression", span))?;
+                    let expr = self.take(expr)?;
+                    let param = template.hole(expr, "() => string", "(): string => `${{}}`");
+                    let cached = format!("{node}InitialValue");
+                    template.line(format!("let {cached}: string = \"\""));
+                    // Read once in source order under the reactive runner. The
+                    // final assignment waits for the option subtree to exist.
+                    template.line(format!("{VIEW}.bindValue({node}, (): string => {{ {cached} = {param}(); return {cached}; }})"));
+                    cached
+                };
+                template.select_values.push((node.into(), value));
+                return Ok(None);
+            }
+            VALUE if matches!(tag, Tag::Input | Tag::Textarea) => {
                 return self
                     .dynamic_string(
                         attr,

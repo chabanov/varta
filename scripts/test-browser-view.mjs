@@ -55,6 +55,95 @@ try {
       const cascaded=oracle.flex.cascade.tree.children[0].children[0].style.display;
       const projected=oracle.flex.projected.tree.children[0].children[0].style.display;
       assert.equal(cascaded,'inline');assert.equal(projected,'block');assert.equal(comparison.result.value,projected);
+      const radioCases=oracle.cases.filter(item=>item.name.startsWith('radio-'));
+      assert(radioCases.length,'native radio group fixture missing');
+      const radios=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
+        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        let checks=0;const mismatches=[];
+        for(const fixture of ${JSON.stringify(radioCases)}){
+          const host=document.createElement('div');document.body.append(host);const app=createViewDom({container:host});
+          for(let i=0;i<fixture.batches.length;i++){
+            let ok=true;try{app.apply(Uint8Array.from(fixture.batches[i]));}catch{ok=false;}
+            if(ok!==fixture.results[i].ok)mismatches.push([fixture.name,i,'acceptance']);
+            for(const node of app.snapshot().nodes){
+              if(node.tag==='input'&&node.attributes.type==='radio'){
+                if(app.inspectNode(node.id).checked!==node.checked)mismatches.push([fixture.name,i,node.id]);
+                checks++;
+              }
+            }
+          }
+          app.close();host.remove();
+        }
+        return {checks,mismatches};
+      })()`});
+      assert(!radios.exceptionDetails,JSON.stringify(radios.exceptionDetails));
+      assert.deepEqual(radios.result.value.mismatches,[]);
+      console.log(`Native/model/Chrome radio ownership and patch rollback: ${radios.result.value.checks} checks passed`);
+      assert(oracle.checkables,'native checkbox/radio activation fixture missing');
+      const setup=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
+        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        const host=document.createElement('div');document.body.append(host);const events=[];
+        const app=createViewDom({container:host,onEvent:event=>events.push(Array.from(event.bytes))});
+        app.apply(Uint8Array.from(${JSON.stringify(oracle.checkables.batch)}));
+        window.__checkables={app,host,events};
+      })()`});
+      assert(!setup.exceptionDetails,JSON.stringify(setup.exceptionDetails));
+      try {
+        for(const step of oracle.checkables.steps){
+          const action=await call('Runtime.evaluate',{returnByValue:true,expression:`(()=>{
+            const {app,events}=window.__checkables;app.apply(Uint8Array.from(${JSON.stringify(step.patch)}));events.length=0;
+            const field=app.inspectNode(${step.node});${step.arrow?'field.focus();':'field.click();'}
+          })()`});
+          assert(!action.exceptionDetails,JSON.stringify(action.exceptionDetails));
+          if(step.arrow){
+            for(const type of ['keyDown','keyUp'])await call('Input.dispatchKeyEvent',{type,key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+          }
+          const observed=await call('Runtime.evaluate',{returnByValue:true,expression:`(()=>{
+            const {app,events}=window.__checkables;
+            return {events,fields:app.snapshot().nodes.filter(n=>n.tag==='input').map(n=>({id:n.id,checked:n.checked,seq:n.seq}))};
+          })()`});
+          assert(!observed.exceptionDetails,JSON.stringify(observed.exceptionDetails));
+          assert.deepEqual(observed.result.value,{events:step.events,fields:step.fields},`checkable ${step.node}, arrow=${step.arrow}`);
+        }
+        console.log(`Native/Chrome checkbox/radio event bytes and default prevention: ${oracle.checkables.steps.length} scenarios passed`);
+      } finally {
+        await call('Runtime.evaluate',{expression:'window.__checkables.app.close();window.__checkables.host.remove();delete window.__checkables;'});
+      }
+    }
+    if(process.env.VARTA_VIEW_ORACLE){
+      const oracle=JSON.parse(await readFile(resolve(process.env.VARTA_VIEW_ORACLE),'utf8'));assert(oracle.selects,'native select fixture missing');
+      const selected=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
+        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        const {createViewModel}=await import('/crates/varta-project/src/browser/view-model.mjs');
+        const {decodeViewEvent}=await import('/crates/varta-project/src/browser/view-codec.mjs');
+        const fixture=${JSON.stringify(oracle.selects)},mirror=createViewModel(),events=[],metadata=[];
+        mirror.commit(Uint8Array.from(fixture.batch));const host=document.createElement('div');document.body.append(host);
+        const app=createViewDom({container:host,onEvent:event=>{events.push(Array.from(event.bytes));metadata.push(event.selectedOption);mirror.syncEvent(decodeViewEvent(event.bytes),event.selectedOption);}});
+        const states=[];
+        try{app.apply(Uint8Array.from(fixture.batch));
+          for(const step of fixture.steps){events.length=0;metadata.length=0;
+            mirror.commit(Uint8Array.from(step.patch));app.apply(Uint8Array.from(step.patch));
+            const field=app.inspectNode(2),choices=app.snapshot().nodes.filter(n=>n.tag==='option');
+            const id=option=>choices.find(n=>app.inspectNode(n.id)===option)?.id;
+            if(step.choice!==null&&id(field.selectedOptions[0])!==step.choice){
+              field.selectedIndex=Array.from(field.options).indexOf(app.inspectNode(step.choice));
+              field.dispatchEvent(new Event('input',{bubbles:true,composed:true}));field.dispatchEvent(new Event('change',{bubbles:true,composed:true}));
+            }
+            const node=app.snapshot().nodes.find(n=>n.id===2),worker=mirror.snapshot().nodes.find(n=>n.id===2);
+            const workerSelected=mirror.snapshot().nodes.filter(n=>n.tag==='option'&&n.optionSelected).map(n=>n.id);
+            states.push({events:[...events],metadata:[...metadata],field:{value:node.value,seq:node.seq,selected:choices.filter(n=>app.snapshot().nodes.find(o=>o.id===n.id).optionSelected).map(n=>n.id)},
+              dom:{value:field.value,seq:node.seq,selected:Array.from(field.selectedOptions).map(id)},worker:{value:worker.value,seq:worker.seq,selected:workerSelected}});
+          }
+        }finally{app.close();host.remove();mirror.close();}
+        return states;
+      })()`});
+      assert(!selected.exceptionDetails,JSON.stringify(selected.exceptionDetails));
+      for(const [index,state]of selected.result.value.entries()){
+        const expected=oracle.selects.steps[index];assert.deepEqual(state.events,expected.events,`select events ${index}`);
+        for(const field of ['field','dom','worker'])assert.deepEqual(state[field],expected.field,`select ${field} ${index}`);
+        assert(state.metadata.every(id=>id===expected.choice),`select choice envelope ${index}`);
+      }
+      console.log(`Native/DOM/Worker select identity, events and mutation: ${oracle.selects.steps.length} scenarios passed`);
     }
     const input = new DataView(Uint8Array.from(value.events[1].bytes).buffer); assert.equal(input.getUint32(registry.view.wire.eventFields.find((field) => field.name === "seq").offset, true), 1);
     if (process.argv[2]) { const image = await call("Page.captureScreenshot", { format: "png" }); await writeFile(resolve(process.argv[2]), Buffer.from(image.data, "base64")); }

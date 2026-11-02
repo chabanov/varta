@@ -89,6 +89,54 @@ requires the roadmap's acceptance criteria, independent of this faster workflow.
 
 ## Browser registry and fuel probe (development)
 
+For the experimental native password/search fields, run the focused view tests
+and the Wasm application boundary, then compare the native oracle with real Chrome:
+
+```sh
+cargo test -p varta-view --test fields --locked
+cargo test -p varta-runtime --lib native_password_and_search_frames_deliver_original_guest_values --locked
+cargo run -p varta-view --example native_fields_probe --locked -- target/native-fields-oracle.json
+node scripts/test-native-fields.mjs target/native-fields-oracle.json
+```
+
+The oracle carries its original font bytes and compares fixed control boxes and
+UTF-8 caret offsets for password graphemes, emoji and search text. It suppresses
+Chrome's search-clear affordance to compare the admitted plain-field surface.
+This is a Chrome sample, not a full browser or platform acceptance gate. The
+`field-types` desktop fixture permits native keyboard/pointer observations;
+cross-platform IME, accessibility and production packaging remain open.
+
+For native checkbox/radio painting and the shared radio model:
+
+```sh
+cargo test -p varta-view --test checkables --locked
+cargo test -p varta-runtime --lib native_checkable_frames_deliver_checked_events_and_isolate_radio_forms --locked
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-oracle.json
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node --test crates/varta-project/src/browser/*.test.mjs
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node scripts/test-browser-view.mjs
+```
+
+For single-select state, popup geometry and TSX initialization:
+
+```sh
+cargo test -p varta-view --test selects --locked
+cargo test -p varta-runtime --lib native_select_popup_choice_and_equal_guest_echo_preserve_option_identity --locked
+cargo test -p varta-runtime --lib tsx_select_values_follow_options_without_duplicate_reads_or_lost_dependencies --locked
+```
+
+The same browser contract oracle also compares select values, concrete selected
+options and event bytes across native, browser model, DOM and deferred Worker
+state. After building the `examples/select` fixture with `--target browser`, run
+`node scripts/test-browser-select-bundle.mjs <generated-web-directory>` to check
+trusted character input and duplicate-value echoes through the packaged Worker.
+
+The native oracle covers equal-name radios in separate forms/trees, empty names,
+moving/renaming checked members and rollback. Real Chrome compares DOM checked
+state with the shared model and native click/keydown/input/change event bytes,
+including cancellation. The `checkables` desktop fixture uses no font and permits
+pointer, Space, Tab and radio-arrow observations. Its explicit rectangular paint
+subset does not establish platform-theme or whole-L0 visual parity.
+
 For the local browser-dev host increment:
 
 Input observation changes additionally need the project library tests (including

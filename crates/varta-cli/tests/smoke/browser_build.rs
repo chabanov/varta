@@ -50,7 +50,7 @@ fn browser_build_preserves_portable_artifact_and_refuses_overwrite() {
 #[test]
 fn browser_gaps_and_source_failures_leave_no_distribution_directory() {
     for source in [
-        "export function main():void{console.log(varta.env.get(\"TEST\"));}",
+        "export function main():void{console.log(varta.fs.read(\"/data/test.txt\"));}",
         "export function main():void{const value:any=1;console.log(value);}",
     ] {
         let project = project(source);

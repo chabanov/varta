@@ -37,12 +37,13 @@ export function createWorkerView({ send, memory, application, linkRequested = ()
         const bytes = message.bytes;
         const record = decodeViewEvent(bytes);
         if(typeof message.gesture!=="boolean" || message.arrived!==undefined&&(!Number.isFinite(message.arrived)||message.arrived<0))fail("invalid event envelope");
+        model.validateChoice(record,message.selectedOption);
         lastEvent=message.id;
-        event = { arrived:message.arrived??((globalThis.performance?.timeOrigin??0)+(globalThis.performance?.now()??0)), id: message.id, bytes, record, gesture: Boolean(message.gesture && registry.view.events.find((kind) => kind.name === record.kind).gesture) }; pulse();
+        event = { selectedOption:message.selectedOption, arrived:message.arrived??((globalThis.performance?.timeOrigin??0)+(globalThis.performance?.now()??0)), id: message.id, bytes, record, gesture: Boolean(message.gesture && registry.view.events.find((kind) => kind.name === record.kind).gesture) }; pulse();
       } catch (error) { fault = error; pending?.resolve(); pulse(); }
     },
     arrival() { return event?.arrived; },
-    take() { if (fault) throw fault; const next = event; event = undefined; if (next) model.syncEvent(next.record); return next; },
+    take() { if (fault) throw fault; const next = event; event = undefined; if (next) model.syncEvent(next.record,next.selectedOption); return next; },
     async flush() { if (pending) await pending.promise; if (fault) throw fault; },
     wait(milliseconds) {
       if (event || fault) return Promise.resolve();

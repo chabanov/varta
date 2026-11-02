@@ -691,6 +691,7 @@ fn build(
                 | Tag::Button
                 | Tag::Input
                 | Tag::Textarea
+                | Tag::Select
         )
     {
         return Err(LayoutError::Unsupported(id));
@@ -720,7 +721,10 @@ fn build(
             height: length(viewport.1),
         };
     } else {
-        if matches!(element.tag, Tag::Button | Tag::Input | Tag::Textarea) {
+        if matches!(
+            element.tag,
+            Tag::Button | Tag::Input | Tag::Textarea | Tag::Select
+        ) {
             let properties = layout_properties(tree, env, id)?;
             let computed = tree.computed(id, env);
             let content_sizing = element.tag == Tag::Textarea
@@ -762,7 +766,10 @@ fn build(
                     Some("auto")
                 )
                 || (element.tag == Tag::Input
-                    && (element.input_type() != "text" || !node.children.is_empty()))
+                    && (!matches!(
+                        element.input_type(),
+                        "text" | "search" | "password" | "checkbox" | "radio"
+                    ) || !node.children.is_empty()))
                 || (element.tag == Tag::Textarea && !node.children.is_empty())
             {
                 return Err(LayoutError::Unsupported(id));
@@ -1028,6 +1035,7 @@ fn build(
     let children = node
         .children
         .iter()
+        .filter(|_| element.tag != Tag::Select)
         .map(|child| {
             build(
                 tree,
@@ -1143,6 +1151,11 @@ pub(crate) fn geometry_and_text(
                 .computed(id, &layout_env)
                 .get(&CssProperty::Display)
                 .is_some_and(|value| value == "none")
+        {
+            continue;
+        }
+        if let Content::Element(element) = &node.content
+            && element.tag == Tag::Select
         {
             continue;
         }
@@ -1530,6 +1543,37 @@ fn boxes_inner(
                 programmatic_scroll,
             },
         );
+        if tree
+            .element(id)
+            .is_some_and(|element| element.tag == Tag::Select)
+        {
+            // Collapsed options have zero ordinary boxes; popup rows are
+            // frame-owned geometry exposed separately by the raster image.
+            let mut options = tree.nodes[&id].children.clone();
+            while let Some(option) = options.pop() {
+                if result.len() >= 4096 {
+                    return Err(LayoutError::Limit);
+                }
+                let zero = BoxRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 0.0,
+                    height: 0.0,
+                };
+                result.insert(
+                    option,
+                    BoxGeometry {
+                        rect: zero,
+                        clip: zero,
+                        content: zero,
+                        scroll: None,
+                        programmatic_scroll: None,
+                    },
+                );
+                options.extend(tree.nodes[&option].children.iter().copied());
+            }
+            continue;
+        }
         for child in &tree.nodes[&id].children {
             pending.push((
                 *child,

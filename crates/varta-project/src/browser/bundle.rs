@@ -23,6 +23,7 @@ const TIMERS: &str = include_str!("timers.js");
 const VIEW_CODEC: &str = include_str!("view-codec.mjs");
 const VIEW_CSS: &str = include_str!("view-css.mjs");
 const VIEW_MODEL: &str = include_str!("view-model.mjs");
+const VIEW_SELECT: &str = include_str!("view-select.mjs");
 const VIEW_DOM: &str = include_str!("view-dom.mjs");
 const VIEW_QUEUE: &str = include_str!("view-queue.mjs");
 const VIEW_WORKER: &str = include_str!("view-worker.mjs");
@@ -118,8 +119,14 @@ fn embedded_sources(dom: bool) -> String {
             "createValueMatcher,checkStyleDeclaration,checkStylesheet,rewriteRootSelector,tokenizeValue",
         ),
         (
+            "viewSelect",
+            "",
+            VIEW_SELECT,
+            "selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue",
+        ),
+        (
             "viewModel",
-            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher}=viewCss;",
+            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher}=viewCss;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue}=viewSelect;",
             VIEW_MODEL,
             "createViewModel",
         ),

@@ -35,11 +35,56 @@ Up twice from the initial caret position crosses the short middle row while
 preserving the desired column. These keyboard scenarios were observed on macOS;
 pointer, IME and other-platform textarea acceptance remain open.
 
+Password and search fields have a separate fixture using a font whose mask is a
+small square and whose plaintext glyphs are tall rectangles:
+
+```sh
+cargo run -p varta -- build --config crates/varta-desktop/examples/field-types/varta.config.json
+cargo run -p varta-desktop --bin varta-preview -- crates/varta-desktop/examples/field-types/dist.wasm crates/varta-view/tests/fixtures/password.ttf 'Varta Password Fixture'
+```
+
+Tab focuses the password field, then the search field. The first field paints one
+mask per grapheme; selection, replacement, IME preedit and Undo preserve original
+guest text. The fixture logs edit notifications without the field values. The
+search field uses plain text editing; a search-clear button is not supplied.
+On the development macOS Retina display, keyboard selection removed two password
+graphemes without revealing text, Undo restored the five masks, and deletion/Undo
+in the search field restored its four plaintext glyphs. Native CJK and other-platform
+password acceptance remain open.
+
+The checkbox/radio fixture needs no font:
+
+```sh
+cargo run -p varta -- build --config crates/varta-desktop/examples/checkables/varta.config.json
+cargo run -p varta-desktop --bin varta-preview -- crates/varta-desktop/examples/checkables/dist.wasm
+```
+
+Space toggles the checkbox. Tab visits a radio group once; arrow keys move its
+selection. The bottom radio belongs to a separate form and stays selected when
+the upper group changes. Checked marks use the supplied foreground color inside
+explicit rectangular control boxes; platform-native control themes are not supplied.
+
+The single-select fixture includes its own deterministic font:
+
+```sh
+cargo run -p varta -- build --config crates/varta-desktop/examples/select/varta.config.json
+cargo run -p varta-desktop --bin varta-preview -- crates/varta-desktop/examples/select/dist.wasm crates/varta-desktop/examples/select/font.ttf 'Varta Fixture 400'
+```
+
+Tab focuses the control. Space/Enter opens its popup; arrows preview a choice,
+Enter accepts and Escape cancels. The popup supports pointer selection and wheel
+scrolling. Character input cycles matching labels. Two options deliberately share
+a value: choosing between them still emits an edit, and a guest echo preserves
+the selected option. Timed multi-character search, hover highlighting and platform
+control themes remain open.
+
 The font arguments can be omitted for a view without text. This preview uses no
 package capability grants and has no permission prompts. It accepts only the
 current experimental `varta-view` CPU painting subset. Unsupported content
-fails explicitly; explicitly styled buttons and text inputs are included, including
+fails explicitly; explicitly styled buttons and text/search/password inputs are included, including
 disabled controls. Disabled platform-default styling is not supplied.
+Explicitly styled checkbox/radio inputs also paint their checked marks without
+fonts, with pointer/Space activation and scoped radio keyboard navigation.
 Explicitly styled textareas also paint newlines and wrapped text;
 pointer selection resolves both coordinates and Enter inserts a newline. Wheel
 input scrolls the field and chains remaining movement to ancestors; a new edit

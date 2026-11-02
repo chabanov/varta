@@ -12,6 +12,7 @@ const rootAttribute = /^\[([a-z0-9-]+)\]$/.exec(V.defaults.rootSelector)[1];
 const composingKeyCode = 229;
 const mountedContainers=new WeakMap();
 const fieldTag = (node) => ["input", "textarea", "select"].includes(node?.localName);
+const checkableField = (node) => node?.localName === "input" && ["checkbox", "radio"].includes(node.type);
 
 // Keep this guard after freezing: an inert view must never turn raw anchors
 // or form submission into ambient navigation. Hrefs below are inert as well,
@@ -56,7 +57,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
   let applying = false, closed = false;
   const adopt = () => { shadow.adoptedStyleSheets = [base, ...[...sheets].sort(([a], [b]) => a - b).map(([, sheet]) => sheet)]; }; adopt();
   const snapshots = () => new Map(model.snapshot().nodes.map((node) => [node.id, node]));
-  const publish = (kind, values, trusted) => onEvent({ bytes: encodeViewEvent(kind, values), gesture: Boolean(trusted && eventKinds.get(kind).gesture), coalescible: eventKinds.get(kind).coalescible, handler: values.handler });
+  const publish = (kind, values, trusted, selectedOption) => onEvent({ ...(selectedOption===undefined?{}:{selectedOption}), bytes: encodeViewEvent(kind, values), gesture: Boolean(trusted && eventKinds.get(kind).gesture), coalescible: eventKinds.get(kind).coalescible, handler: values.handler });
 
   function dispatch(kind, event) {
     if (closed || applying || !interactive) return;
@@ -67,7 +68,8 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
     const anchor = kind === "click" ? target.closest?.("a") : null;
     if (kind === "submit" || anchor) event.preventDefault();
     let seq = all.get(id)?.seq ?? 0;
-    if ((kind === "input" || kind === "change") && fieldTag(target)) seq = model.input(id, target.value, target.checked, kind === "input");
+    const selectedOption=target.localName==='select'&&['input','change'].includes(kind)?ids.get(target.selectedOptions[0])??0:undefined;
+    if ((kind === "input" || kind === "change") && fieldTag(target)) seq = model.input(id, target.value, target.checked, kind === "input",selectedOption);
     const flags = (event.shiftKey ? F.flags.shiftKey : 0) | (event.ctrlKey ? F.flags.ctrlKey : 0) | (event.altKey ? F.flags.altKey : 0) | (event.metaKey ? F.flags.metaKey : 0) | (event.isComposing ? F.flags.isComposing : 0) | (target.checked ? F.flags.checked : 0);
     const held = flags & F.modifierMask;
     let stopped = false;
@@ -75,7 +77,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
       for (const listener of all.get(at)?.listeners ?? []) {
         if (listener.event !== kind || listener.key !== F.anyKey && keyNames.get(listener.key) !== event.key || (held & listener.required_modifiers) !== listener.required_modifiers || held & listener.forbidden_modifiers || listener.options & F.options.notComposing && (event.isComposing || event.keyCode === composingKeyCode)) continue;
         if (listener.options & F.options.preventDefault) event.preventDefault();
-        publish(kind, { handler: listener.handler, target: id, flags, seq, key: kind === "keydown" ? event.key : "", value: (kind === "input" || kind === "change") && fieldTag(target) ? target.value : "", scroll_top: kind === "scroll" ? target.scrollTop : 0, scroll_height: kind === "scroll" ? target.scrollHeight : 0, client_height: kind === "scroll" ? target.clientHeight : 0 }, event.isTrusted);
+        publish(kind, { handler: listener.handler, target: id, flags, seq, key: kind === "keydown" ? event.key : "", value: (kind === "input" || kind === "change") && fieldTag(target) && !checkableField(target) ? target.value : "", scroll_top: kind === "scroll" ? target.scrollTop : 0, scroll_height: kind === "scroll" ? target.scrollHeight : 0, client_height: kind === "scroll" ? target.clientHeight : 0 }, event.isTrusted, selectedOption);
         if (listener.options & F.options.stopPropagation) { stopped = true; break; }
       }
     }
@@ -127,7 +129,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
           case "remove_style": node.style.removeProperty(op.property); break;
           case "insert": nodes.get(op.parent).insertBefore(node, op.before === W.noNode ? null : nodes.get(op.before)); break;
           case "remove": { const stack = [node]; while (stack.length) { const removed = stack.pop(); for (const child of removed.childNodes) stack.push(child); nodes.delete(ids.get(removed)); ids.delete(removed); } node.remove(); break; }
-          case "set_value": if (current.get(op.node)?.seq === op.base_seq) node.value = op.text; break;
+          case "set_value": if (current.get(op.node)?.seq === op.base_seq && node.value!==op.text) node.value = op.text; break;
           case "set_checked": if (current.get(op.node)?.seq === op.base_seq) node.checked = Boolean(op.checked); break;
           case "stylesheet": if (op.text) sheets.set(op.sheet, preparedSheets.get(i)); else sheets.delete(op.sheet); adopt(); break;
           case "set_title": onTitle(op.text); break;

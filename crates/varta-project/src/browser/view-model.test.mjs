@@ -54,6 +54,35 @@ test("command completion and close release retained host model state",()=>{
   assert.throws(()=>m.commit(batch(create(3))),/closed view/);
 });
 
+test('radio groups follow form owners, disconnected trees and nonempty names', () => {
+  const m = createViewModel();
+  const attr = (node, attribute, text) => ({name:'set_attribute',node,attribute,text});
+  const insert = (parent,node) => ({name:'insert',parent,node,before:0});
+  const checked = (node) => ({name:'set_checked',node,checked:1,base_seq:0});
+  const ops = [create(2,'form'),insert(1,2),create(3,'form'),insert(1,3)];
+  for(const [id,parent,name] of [[4,2,'g'],[5,2,'g'],[6,3,'g'],[7,1,'g'],[9,1,''],[10,1,''],[11,2,'other']]) {
+    ops.push(create(id,'input'),attr(id,'type','radio'),attr(id,'name',name),insert(parent,id),checked(id));
+  }
+  ops.push(create(8,'input'),attr(8,'type','radio'),attr(8,'name','g'),checked(8));
+  m.commit(batch(...ops));
+  const state = () => new Map(m.snapshot().nodes.map(n=>[n.id,n]));
+  assert.equal(state().get(4).checked,false);
+  for(const id of [5,6,7,8,9,10,11])assert.equal(state().get(id).checked,true,`${id}`);
+  m.commit(batch(insert(3,5)));
+  assert.equal(state().get(5).checked,true);assert.equal(state().get(6).checked,false);
+  m.commit(batch(attr(11,'name','g'),checked(4)));
+  assert.equal(state().get(11).checked,false);
+  m.commit(batch(attr(4,'name',''),checked(11)));
+  assert.equal(state().get(4).checked,true);assert.equal(state().get(11).checked,true);
+  const before=m.snapshot();
+  assert.throws(()=>m.commit(batch(checked(6),attr(11,'name',''),{name:'remove',node:999})),/unknown node/);
+  assert.deepEqual(m.snapshot(),before);
+  m.input(6,'',true);assert.equal(state().get(5).checked,false);assert.equal(state().get(7).checked,true);
+  assert.equal(state().get(5).seq,0);
+  m.syncEvent({kind:'input',target:5,seq:1,flags:V.filters.flags.checked,value:''});
+  assert.equal(state().get(6).checked,false);assert.equal(state().get(7).checked,true);
+});
+
 // A separate native process emits this file from varta-view's public API. No
 // engine/test dependency on the prototype or on a hand-written expected tree.
 const oraclePath = process.env.VARTA_VIEW_ORACLE;
@@ -69,6 +98,7 @@ if (oraclePath) {
       const checked = n.tag === "input" && ["checkbox", "radio"].includes(n.attributes.type ?? "text");
       if (n.tag === "input" && !checked || ["textarea", "select"].includes(n.tag)) { out.value = n.value; out.seq = n.seq; }
       if (checked) { out.checked = n.checked; out.seq = n.seq; }
+      if (n.tag === 'option') out.selected = Boolean(n.optionSelected);
       if (n.tag === "dialog") out.open = n.open;
       if (n.listeners.length) out.listeners = n.listeners.map((listener) => listener.event);
       if (n.children.length) out.children = n.children.map(visit); return out;

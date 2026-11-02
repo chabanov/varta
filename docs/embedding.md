@@ -2262,6 +2262,30 @@ draft.
   when their base equals the current counter, otherwise drops them as stale; an
   equal value is a no-op that keeps the caret. A `select` takes its value through
   `set_value` (an option's `value`).
+- **Single-select state.** Each option has live selectedness separate from its
+  `selected` attribute. Insertion reconciles a unique selection, falling back to
+  the first enabled option when necessary. An option without a `value` uses its
+  ASCII-whitespace-normalized text. Programmatic `set_value` selects the first
+  matching option, or clears selection when unmatched; an equal-value echo keeps
+  the concrete selected option, including duplicate values. Local choice of a
+  different option increments `seq` and emits `input`/`change`, even if its value
+  matches the previous option. Local choices dirty the selectedness; later
+  attribute updates respect that state, and unchanged attributes are no-ops.
+  Derived values obey the existing field-value bound, including unselected and
+  disabled options, and rejected transactions roll back selection changes.
+  The official browser host carries an optional concrete option ID in its private
+  event envelope without changing the Wasm event wire. It validates that metadata
+  before mutation and retains it with deferred Worker events; a removed/stale
+  option falls back to the event's recorded value.
+- **Radio groups.** Radios group by an equal nonempty `name`, a common tree and
+  the closest enclosing `form` (or no form). Missing/empty names are independent.
+  Checking a radio, changing a checked radio's type/name or inserting its subtree
+  unchecks the peers in that group. Only the locally edited target advances `seq`;
+  automatic peer changes keep their counters. Invalid batches roll back all group
+  changes. Checkbox/radio `click` records carry the preactivation checked state;
+  a prevented click restores the previous group before `input`/`change` or an
+  edit-counter increment. Those field-change records have an empty `value` and
+  carry checked state in the flags.
 - **Attributes.** The [attribute table](#view-protocol-draft-v0-unstable) lists
   the elements and value grammar of each attribute; any other element or value
   invalidates the batch. Boolean attributes are true when present, with an empty

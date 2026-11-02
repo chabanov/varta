@@ -2816,7 +2816,7 @@ fn explicitly_styled_button_and_text_input_layout() {
     ));
     let mut unsupported = BatchWriter::new();
     unsupported.set_style(5, CssProperty::MinWidth, "0");
-    unsupported.set_attribute(5, Attribute::Type, "checkbox");
+    unsupported.set_attribute(5, Attribute::Type, "number");
     commit(&mut view, &unsupported).unwrap();
     assert!(matches!(
         view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),

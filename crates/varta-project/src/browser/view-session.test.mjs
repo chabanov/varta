@@ -22,6 +22,23 @@ test("Worker rejects a bad batch before sending it and requires one commit per t
   view.receive({ type: "view_ack", id: messages[0].id }); await flush; assert.equal(done, true);
   view.begin(); commit([]); view.receive({ type: "view_ack", id: messages[1].id }); await view.flush(); view.close();
 });
+
+test('select identity is deferred with its checked envelope and malformed metadata has no effect',async()=>{
+  const {view,commit,messages}=state();
+  const operations=[{name:'create_element',node:2,tag:'select'},{name:'insert',parent:1,node:2,before:0}];
+  for(const id of [3,4])operations.push({name:'create_element',node:id,tag:'option'},
+    {name:'set_attribute',node:id,attribute:'value',text:'same'},
+    {name:'insert',parent:2,node:id,before:0});
+  commit(operations);view.receive({type:'view_ack',id:messages[0].id});await view.flush();
+  const input=encodeViewEvent('input',{handler:10,target:2,seq:1,value:'same'});
+  view.receive({type:'view_event',id:1,bytes:input,gesture:false,selectedOption:4});
+  assert.equal(view.model.snapshot().nodes.find(n=>n.id===3).optionSelected,true);
+  view.take();assert.equal(view.model.snapshot().nodes.find(n=>n.id===4).optionSelected,true);
+  const before=view.model.snapshot();
+  view.receive({type:'view_event',id:2,bytes:input,gesture:false,selectedOption:NaN});
+  await assert.rejects(view.flush(),/invalid select option envelope/);
+  assert.deepEqual(view.model.snapshot(),before);
+});
 test("Worker asset denial is checked before a commit or a parent effect", () => {
   const { commit, messages } = state();
   assert.throws(() => commit([{ name: "create_element", node: 2, tag: "img" }, { name: "set_attribute", node: 2, attribute: "src", text: "image.png" }]), /unpackaged view asset/);

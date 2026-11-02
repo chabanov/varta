@@ -110,6 +110,9 @@ fn node(tree: &Tree, id: u32, environment: &Environment) -> Value {
             if element.tag == Tag::Dialog {
                 out.insert("open".into(), json!(element.open));
             }
+            if element.tag == Tag::Option {
+                out.insert("selected".into(), json!(element.editor.option_selected));
+            }
             if element.scroll_top != 0.0 {
                 out.insert("scrollTop".into(), json!(element.scroll_top));
             }
@@ -258,6 +261,9 @@ fn accessible(tree: &Tree, id: u32, environment: &Environment) -> Vec<Value> {
     }
     if element.disabled() {
         out.insert("disabled".into(), json!(true));
+    }
+    if element.tag == Tag::Option {
+        out.insert("selected".into(), json!(element.editor.option_selected));
     }
     if tree.focus == Some(id) {
         out.insert("focused".into(), json!(true));

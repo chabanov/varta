@@ -149,7 +149,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       const event=queue.shift(),record=viewCodec.decodeViewEvent(event.bytes);
       if(record.kind==="command_result"&&record.key==="copy_text")renderer.complete(record.seq);
       inFlight=++eventId;
-      worker.postMessage({type:"view_event",id:inFlight,bytes:event.bytes,gesture:event.gesture,arrived:event.arrived},[event.bytes.buffer]);
+      worker.postMessage({type:"view_event",id:inFlight,bytes:event.bytes,gesture:event.gesture,arrived:event.arrived,selectedOption:event.selectedOption},[event.bytes.buffer]);
     };
     let pumpPending=false;
     const schedulePump=()=>{

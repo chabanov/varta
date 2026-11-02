@@ -19,6 +19,7 @@ mod events;
 mod layout;
 mod name;
 mod paint;
+mod select;
 mod snapshot;
 mod style;
 mod text;
@@ -30,7 +31,7 @@ pub use events::{
     HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target,
 };
 pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
-pub use paint::{PaintError, RasterImage, TextNavigation};
+pub use paint::{PaintError, RasterImage, SelectHit, SelectMenuMetrics, TextNavigation};
 pub use snapshot::project_flex_blockification;
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment};
 pub use text::{TextFont, TextMeasureError, TextMeasurer, TextMetrics};
@@ -184,6 +185,8 @@ pub enum InputError {
     Selection,
     #[error("view scroll geometry is invalid")]
     ScrollGeometry,
+    #[error("view select choice is invalid")]
+    Choice,
     #[error(transparent)]
     View(#[from] ViewError),
 }

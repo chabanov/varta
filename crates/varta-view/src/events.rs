@@ -252,6 +252,20 @@ pub enum Input {
         target: Target,
         value: String,
     },
+    /// Pick a concrete option, including when several options have equal values.
+    SelectOption {
+        target: Target,
+        option: u32,
+    },
+    /// Dismiss the native list without changing the committed selection.
+    SelectClose {
+        target: Target,
+    },
+    /// Native list scrolling does not generate a guest scroll event.
+    SelectScroll {
+        target: Target,
+        first: usize,
+    },
     Scroll {
         target: Target,
         top: f64,
@@ -796,8 +810,14 @@ impl View {
                 }
                 if let Some(element) = self.tree.element(node) {
                     occurrence.seq = element.seq;
+                    if element.checked {
+                        occurrence.flags |= EventFlag::Checked as u32;
+                    }
                 }
                 if self.dispatch(occurrence, true)? {
+                    return Ok(());
+                }
+                if (!*ctrl || *alt) && !*meta && self.select_text(node, text)? {
                     return Ok(());
                 }
                 let history = history.or_else(|| {
@@ -874,20 +894,40 @@ impl View {
             }
             Input::Select { target, value } => {
                 let node = self.resolve(target)?;
-                if self
+                let option = self
                     .tree
-                    .element(node)
-                    .is_some_and(|e| e.tag == Tag::Select)
-                {
-                    self.focus_input(node)?;
-                    let value = value.clone();
-                    self.edit(node, move |current, anchor, focus, _| {
-                        *current = value;
-                        *anchor = current.len();
-                        *focus = *anchor;
-                    })?;
-                    self.fire(node, EventKind::Change, true)?;
+                    .select_options(node)
+                    .into_iter()
+                    .find(|option| {
+                        self.tree.option_value(*option) == *value
+                            && self
+                                .tree
+                                .element(*option)
+                                .is_some_and(|element| !element.disabled())
+                    })
+                    .ok_or(InputError::Choice)?;
+                self.choose_option(node, option)?;
+            }
+            Input::SelectOption { target, option } => {
+                let node = self.resolve(target)?;
+                self.choose_option(node, *option)?;
+            }
+            Input::SelectClose { target } => {
+                let node = self.resolve(target)?;
+                self.close_select(node);
+            }
+            Input::SelectScroll { target, first } => {
+                let node = self.resolve(target)?;
+                if *first > self.tree.select_options(node).len() {
+                    return Err(InputError::Choice);
                 }
+                let popup = self
+                    .tree
+                    .element_mut(node)
+                    .and_then(|element| element.editor.select_popup.as_mut())
+                    .ok_or(InputError::Choice)?;
+                popup.first = *first;
+                popup.manual_scroll = true;
             }
             Input::Scroll { target, top } => {
                 let node = self.resolve(target)?;
@@ -933,7 +973,7 @@ impl View {
         Ok(())
     }
 
-    fn focus_input(&mut self, node: u32) -> Result<(), ViewError> {
+    pub(crate) fn focus_input(&mut self, node: u32) -> Result<(), ViewError> {
         let focusable = self
             .tree
             .element(node)
@@ -958,10 +998,7 @@ impl View {
         let Some(element) = self.tree.element_mut(node) else {
             return Ok(());
         };
-        if !(element.text_field() || element.tag == Tag::Select)
-            || element.disabled()
-            || element.readonly()
-        {
+        if !element.text_field() || element.disabled() || element.readonly() {
             return Ok(());
         }
         let mut value = element.value.clone();
@@ -1142,6 +1179,9 @@ impl View {
             return Ok(());
         }
         self.focus_input(node)?;
+        if self.tree.element(node).is_some_and(Element::checkable) {
+            return self.click_checkable(node);
+        }
         let prevented = self.dispatch(EventRecord::occurrence(EventKind::Click, node), true)?;
         if prevented {
             return Ok(());
@@ -1149,28 +1189,60 @@ impl View {
         self.activate(node, broker)
     }
 
-    /// The default action of an activation: toggle a checkable input, submit
-    /// the enclosing form from a submit button, open an external link, or
+    fn click_checkable(&mut self, node: u32) -> Result<(), ViewError> {
+        let element = self.tree.element(node).expect("validated checkable");
+        let radio = element.input_type() == "radio";
+        let changed = !radio || !element.checked;
+        let old: Vec<_> = if radio {
+            self.tree.radio_group(node)
+        } else {
+            vec![node]
+        }
+        .into_iter()
+        .map(|id| (id, self.tree.element(id).expect("radio group").checked))
+        .collect();
+        if changed {
+            let field = self.tree.element_mut(node).expect("validated checkable");
+            field.checked = !field.checked;
+            if radio {
+                uncheck_group(&mut self.tree, node);
+            }
+        }
+        let field = self.tree.element(node).expect("validated checkable");
+        let mut record = EventRecord::occurrence(EventKind::Click, node);
+        record.seq = field.seq;
+        if field.checked {
+            record.flags |= EventFlag::Checked as u32;
+        }
+        // Click listeners observe preactivation. Cancellation restores the entire
+        // group before any input/change event or edit-counter increment.
+        if self.dispatch(record, true)? {
+            for (id, checked) in old {
+                self.tree.element_mut(id).expect("retained group").checked = checked;
+            }
+        } else if changed {
+            let field = self.tree.element_mut(node).expect("validated checkable");
+            field.seq = field.seq.wrapping_add(1);
+            self.fire(node, EventKind::Input, true)?;
+            self.fire(node, EventKind::Change, true)?;
+        }
+        Ok(())
+    }
+
+    /// The default action of an activation: submit the enclosing form from
+    /// a submit button, open an external link, or
     /// forward a label's activation to its control.
     fn activate(&mut self, node: u32, broker: &mut dyn Broker) -> Result<(), ViewError> {
         let Some(element) = self.tree.element(node).cloned() else {
             return Ok(());
         };
-        if element.checkable() {
-            let radio = element.input_type() == "radio";
-            if radio && element.checked {
-                return Ok(());
+        if element.tag == Tag::Select {
+            if element.editor.select_popup.is_some() {
+                self.close_select(node);
+            } else {
+                self.open_select(node);
             }
-            if let Some(target) = self.tree.element_mut(node) {
-                target.checked = !target.checked;
-                target.seq = target.seq.wrapping_add(1);
-            }
-            if radio {
-                let name = element.attributes.get(&Attribute::Name).cloned();
-                uncheck_group(&mut self.tree, node, name.as_deref());
-            }
-            self.fire(node, EventKind::Input, true)?;
-            return self.fire(node, EventKind::Change, true);
+            return Ok(());
         }
         if element.tag == Tag::Button
             && element.attributes.get(&Attribute::Type).map(String::as_str) != Some("button")
@@ -1229,12 +1301,15 @@ impl View {
         key: Key,
         modifiers: Modifiers,
         broker: &mut dyn Broker,
-    ) -> Result<(), ViewError> {
+    ) -> Result<(), InputError> {
         let mut occurrence = EventRecord::occurrence(EventKind::Keydown, node);
         occurrence.flags = modifiers.flags;
         occurrence.key = key.dom_key().into();
         if let Some(element) = self.tree.element(node) {
             occurrence.seq = element.seq;
+            if element.checked {
+                occurrence.flags |= EventFlag::Checked as u32;
+            }
         }
         let prevented = self.dispatch(occurrence, true)?;
         if prevented || modifiers.flags & EventFlag::Composing as u32 != 0 {
@@ -1243,7 +1318,22 @@ impl View {
         let Some(element) = self.tree.element(node).cloned() else {
             return Ok(());
         };
-        match key {
+        if element.tag == Tag::Select && !element.disabled() {
+            if modifiers.flags & EventFlag::Alt as u32 != 0
+                && matches!(key, Key::ArrowDown | Key::ArrowUp)
+            {
+                self.open_select(node);
+                return Ok(());
+            }
+            if modifiers.flags
+                & (EventFlag::Ctrl as u32 | EventFlag::Alt as u32 | EventFlag::Meta as u32)
+                == 0
+                && self.select_key(node, key)?
+            {
+                return Ok(());
+            }
+        }
+        let result = match key {
             Key::Enter if element.tag == Tag::Textarea => self
                 .edit(node, |value, anchor, focus, limit| {
                     insert_text(value, anchor, focus, "\n", limit)
@@ -1265,6 +1355,37 @@ impl View {
             Key::Enter | Key::Space if element.tag == Tag::Button => self.click(node, broker),
             Key::Enter if element.tag == Tag::A => self.click(node, broker),
             Key::Space if element.checkable() => self.click(node, broker),
+            Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown
+                if element.checkable()
+                    && element.input_type() == "radio"
+                    && !element.disabled()
+                    && modifiers.flags
+                        & (EventFlag::Ctrl as u32
+                            | EventFlag::Alt as u32
+                            | EventFlag::Meta as u32)
+                        == 0 =>
+            {
+                let group: Vec<_> = self
+                    .tree
+                    .radio_group(node)
+                    .into_iter()
+                    .filter(|id| {
+                        self.tree
+                            .element(*id)
+                            .is_some_and(|field| !field.disabled())
+                            && self.tree.displayed(*id, &self.environment)
+                    })
+                    .collect();
+                if let Some(at) = group.iter().position(|id| *id == node) {
+                    let next = if matches!(key, Key::ArrowLeft | Key::ArrowUp) {
+                        (at + group.len() - 1) % group.len()
+                    } else {
+                        (at + 1) % group.len()
+                    };
+                    self.click(group[next], broker)?;
+                }
+                Ok(())
+            }
             Key::Backspace | Key::Delete
                 if element.text_field()
                     && modifiers.flags
@@ -1320,7 +1441,8 @@ impl View {
             Key::Escape => self.escape(node),
             Key::Tab => self.tab(node, modifiers.flags & EventFlag::Shift as u32 != 0),
             _ => Ok(()),
-        }
+        };
+        result.map_err(Into::into)
     }
 
     /// Esc in an open modal dialog: `cancel`, then close unless prevented.
@@ -1365,11 +1487,39 @@ impl View {
         if backwards {
             order.reverse();
         }
-        let next = order
+        let eligible: std::collections::BTreeSet<_> = order.iter().copied().collect();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut stops = std::collections::BTreeSet::new();
+        for id in &order {
+            if !seen.insert(*id) {
+                continue;
+            }
+            let group = self.tree.radio_group(*id);
+            seen.extend(group.iter().copied());
+            let chosen = group
+                .into_iter()
+                .find(|member| {
+                    eligible.contains(member)
+                        && self
+                            .tree
+                            .element(*member)
+                            .is_some_and(|field| field.checked)
+                })
+                .unwrap_or(*id);
+            stops.insert(chosen);
+        }
+        let current_group = self.tree.radio_group(node);
+        let start = order
             .iter()
             .position(|id| *id == node)
-            .and_then(|at| order.get(at + 1))
-            .or_else(|| order.first())
+            .map_or(0, |at| at + 1);
+        let next = order
+            .iter()
+            .cycle()
+            .skip(start)
+            .take(order.len())
+            .find(|id| stops.contains(id) && !current_group.contains(id))
+            .or_else(|| order.iter().find(|id| stops.contains(id)))
             .copied();
         if let Some(next) = next {
             self.focus_input(next)?;

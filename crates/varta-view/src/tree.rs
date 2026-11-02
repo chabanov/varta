@@ -35,6 +35,9 @@ pub(crate) struct EditorState {
     pub manual_text_scroll: bool,
     pub preferred_x: Option<f32>,
     pub upstream: bool,
+    pub option_selected: bool,
+    pub option_dirty: bool,
+    pub select_popup: Option<crate::select::SelectPopup>,
 }
 impl EditorState {
     pub fn reset_navigation(&mut self) {
@@ -343,8 +346,11 @@ impl Tree {
     }
     /// Live attached elements in document order.
     pub(crate) fn document_order(&self) -> Vec<u32> {
+        self.subtree_order(ROOT_NODE)
+    }
+    fn subtree_order(&self, root: u32) -> Vec<u32> {
         let mut out = Vec::new();
-        let mut stack = vec![ROOT_NODE];
+        let mut stack = vec![root];
         while let Some(id) = stack.pop() {
             out.push(id);
             if let Some(node) = self.nodes.get(&id) {
@@ -352,6 +358,53 @@ impl Tree {
             }
         }
         out
+    }
+    /// A nonempty-name radio group shares its tree and closest form owner.
+    /// Walk once from that owner, skipping nested forms, rather than resolving
+    /// every candidate's ancestor path separately.
+    pub(crate) fn radio_group(&self, id: u32) -> Vec<u32> {
+        let Some(element) = self.element(id) else {
+            return Vec::new();
+        };
+        if !element.checkable() || element.input_type() != "radio" {
+            return Vec::new();
+        }
+        let Some(name) = element
+            .attributes
+            .get(&Attribute::Name)
+            .filter(|name| !name.is_empty())
+        else {
+            return vec![id];
+        };
+        let path = self.path(id);
+        let owner = path
+            .iter()
+            .copied()
+            .find(|ancestor| {
+                self.element(*ancestor)
+                    .is_some_and(|element| element.tag == Tag::Form)
+            })
+            .unwrap_or_else(|| *path.last().expect("path contains the radio"));
+        let mut group = Vec::new();
+        let mut stack = vec![owner];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.nodes.get(&current) else {
+                continue;
+            };
+            if let Content::Element(candidate) = &node.content {
+                if current != owner && candidate.tag == Tag::Form {
+                    continue;
+                }
+                if candidate.checkable()
+                    && candidate.input_type() == "radio"
+                    && candidate.attributes.get(&Attribute::Name) == Some(name)
+                {
+                    group.push(current);
+                }
+            }
+            stack.extend(node.children.iter().rev());
+        }
+        group
     }
     pub(crate) fn by_ident(&self, ident: &str) -> Option<u32> {
         self.nodes
@@ -512,6 +565,7 @@ impl Apply<'_, '_, '_> {
                 match self.tree.nodes.get_mut(&node).map(|node| &mut node.content) {
                     Some(Content::Text(current)) => {
                         *current = text;
+                        self.tree.sync_select_for(node);
                         Ok(())
                     }
                     Some(Content::Element(_)) => Err(self.fail(Violation::NotAText(node))),
@@ -530,7 +584,9 @@ impl Apply<'_, '_, '_> {
                 };
                 let tag = self.tag(node)?;
                 self.attribute_admitted(*attribute, tag)?;
-                self.element(node)?.attributes.remove(attribute);
+                if self.element(node)?.attributes.remove(attribute).is_some() {
+                    self.tree.select_attribute(node, *attribute, false);
+                }
                 Ok(())
             }
             Opcode::SetClass => {
@@ -704,9 +760,21 @@ impl Apply<'_, '_, '_> {
             return Err(self.fail(Violation::InvalidAttributeValue(attribute.name())));
         }
         let element = self.element(node)?;
+        let changed = element.attributes.get(&attribute).map(String::as_str) != Some(value);
         element.attributes.insert(attribute, value.into());
         if matches!(attribute, Attribute::Disabled | Attribute::Readonly) {
             element.editor.preedit = None;
+            element.editor.select_popup = None;
+        }
+        if matches!(attribute, Attribute::Name | Attribute::Type)
+            && element.checked
+            && element.checkable()
+            && element.input_type() == "radio"
+        {
+            uncheck_group(self.tree, node);
+        }
+        if changed {
+            self.tree.select_attribute(node, attribute, true);
         }
         Ok(())
     }
@@ -733,6 +801,11 @@ impl Apply<'_, '_, '_> {
         {
             return Err(self.fail(Violation::InvalidBefore(before)));
         }
+        let old_select = self.tree.select_owner(node);
+        let moved_option = self
+            .tree
+            .element(node)
+            .is_some_and(|element| element.tag == Tag::Option);
         self.detach(node);
         let children = &mut self
             .tree
@@ -755,6 +828,36 @@ impl Apply<'_, '_, '_> {
         if let Some(child) = self.tree.nodes.get_mut(&node) {
             child.parent = Some(parent);
         }
+        for radio in self.tree.subtree_order(node) {
+            if self.tree.element(radio).is_some_and(|element| {
+                element.checked && element.checkable() && element.input_type() == "radio"
+            }) {
+                uncheck_group(self.tree, radio);
+            }
+        }
+        if let Some(select) = old_select {
+            if moved_option {
+                self.tree.normalize_select(select, None);
+            } else {
+                self.tree.sync_select_value(select);
+            }
+        }
+        if let Some(select) = self.tree.select_owner(node) {
+            let preferred = self
+                .tree
+                .element(node)
+                .filter(|element| element.tag == Tag::Option && element.editor.option_selected)
+                .map(|_| node);
+            if self
+                .tree
+                .element(node)
+                .is_some_and(|element| element.tag == Tag::Option)
+            {
+                self.tree.normalize_select(select, preferred);
+            } else {
+                self.tree.sync_select_for(node);
+            }
+        }
         Ok(())
     }
 
@@ -775,6 +878,11 @@ impl Apply<'_, '_, '_> {
             return Err(self.fail(Violation::RootNotMovable));
         }
         self.live(node)?;
+        let select = self.tree.select_owner(node);
+        let option = self
+            .tree
+            .element(node)
+            .is_some_and(|element| element.tag == Tag::Option);
         self.detach(node);
         let mut stack = vec![node];
         while let Some(id) = stack.pop() {
@@ -790,6 +898,13 @@ impl Apply<'_, '_, '_> {
                 self.tree.focus = None;
             }
             stack.extend(removed.children);
+        }
+        if let Some(select) = select {
+            if option {
+                self.tree.normalize_select(select, None);
+            } else {
+                self.tree.sync_select_value(select);
+            }
         }
         Ok(())
     }
@@ -865,6 +980,12 @@ impl Apply<'_, '_, '_> {
         let element = self.element(node)?;
         // A stale patch (newer local edits exist) is dropped, not an error.
         if element.seq == base {
+            if element.tag == Tag::Select {
+                if element.value != value {
+                    self.tree.set_select_value(node, &value);
+                }
+                return Ok(());
+            }
             if element.value != value {
                 element.editor.anchor = value.len();
                 element.editor.focus = value.len();
@@ -890,8 +1011,7 @@ impl Apply<'_, '_, '_> {
         if element.seq == base {
             element.checked = checked == 1;
             if element.checked && element.input_type() == "radio" {
-                let name = element.attributes.get(&Attribute::Name).cloned();
-                uncheck_group(self.tree, node, name.as_deref());
+                uncheck_group(self.tree, node);
             }
         }
         Ok(())
@@ -1103,7 +1223,38 @@ impl Apply<'_, '_, '_> {
     /// Invariants of the whole batch: `id` values unique among live elements.
     fn finish(&mut self) -> Result<(), ViewError> {
         let mut seen = BTreeSet::new();
-        for node in self.tree.nodes.values() {
+        for (id, node) in &self.tree.nodes {
+            if self
+                .tree
+                .element(*id)
+                .is_some_and(|element| element.tag == Tag::Option)
+                && self
+                    .tree
+                    .option_value(*id)
+                    .encode_utf16()
+                    .take(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2 + 1)
+                    .count()
+                    > varta_common::view::DRAFT_MAX_VALUE_BYTES / 2
+            {
+                return Err(ViewError::Invalid {
+                    operation: None,
+                    violation: Violation::StringTooLong,
+                });
+            }
+            if let Content::Element(element) = &node.content
+                && element.tag == Tag::Select
+                && element
+                    .value
+                    .encode_utf16()
+                    .take(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2 + 1)
+                    .count()
+                    > varta_common::view::DRAFT_MAX_VALUE_BYTES / 2
+            {
+                return Err(ViewError::Invalid {
+                    operation: None,
+                    violation: Violation::StringTooLong,
+                });
+            }
             if let Content::Element(element) = &node.content
                 && let Some(ident) = element.attributes.get(&Attribute::Id)
                 && !seen.insert(ident.as_str())
@@ -1118,28 +1269,9 @@ impl Apply<'_, '_, '_> {
     }
 }
 
-/// Uncheck every other radio of the group `name` (no group without a name).
-pub(crate) fn uncheck_group(tree: &mut Tree, keep: u32, name: Option<&str>) {
-    let Some(name) = name else {
-        return;
-    };
-    let others: Vec<u32> = tree
-        .nodes
-        .iter()
-        .filter_map(|(id, node)| match &node.content {
-            Content::Element(element)
-                if *id != keep
-                    && element.checkable()
-                    && element.input_type() == "radio"
-                    && element.attributes.get(&Attribute::Name).map(String::as_str)
-                        == Some(name) =>
-            {
-                Some(*id)
-            }
-            _ => None,
-        })
-        .collect();
-    for id in others {
+/// Unchecking a peer is not a user edit and does not advance its field counter.
+pub(crate) fn uncheck_group(tree: &mut Tree, keep: u32) {
+    for id in tree.radio_group(keep).into_iter().filter(|id| *id != keep) {
         if let Some(element) = tree.element_mut(id) {
             element.checked = false;
         }
@@ -1157,6 +1289,7 @@ pub(crate) fn focus_records(tree: &mut Tree, next: Option<u32>) -> Vec<crate::Ev
         && let Some(element) = tree.element_mut(previous)
     {
         element.editor.preedit = None;
+        element.editor.select_popup = None;
     }
     tree.focus = next;
     let mut records = Vec::new();
