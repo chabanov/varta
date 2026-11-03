@@ -491,3 +491,104 @@ waiting beyond a narrowed deadline, revocation/abort/observer failures, platform
 exceptions, owned full-URL display, synthetic clicks, headless denial and overlapping
 activations. Opens are spies only. Worker lifecycle tests reject malformed pause/
 resume controls and prove queued tasks remain parked until matching resume.
+
+## Radio reconciliation transaction work
+
+The radio allowance is independent of select work and guest fuel. For this
+increment, check owner/form semantics, repeated checked/type/name writes, stale
+edits, unchecked moved subtrees, UTF-8 name sizes, exact allowance boundaries and
+fatal guest behavior. Rebuild the native oracle after changing its fixtures:
+
+```sh
+cargo test -p varta-view --test checkables --locked
+cargo test -p varta-runtime --lib radio_work_exhaustion_is_fatal_and_retains_the_committed_group --locked
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-oracle.json
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node --test crates/varta-project/src/browser/*.test.mjs
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node scripts/test-browser-view.mjs
+cargo test -p varta-common --lib browser::tests --locked
+cargo test -p varta-common --test embedding_documentation --locked
+```
+
+The Chrome probe compares native admission, failure operation and DOM rollback;
+the Worker test compares admission before/after a deferred local radio edit. The
+application-owned mockup driver also exercises radio work refusal and a later
+successful patch on each selected engine:
+
+```sh
+node --test examples/uarp-console/scripts/serve-mockups.test.mjs
+node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs chrome
+node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs webkit
+```
+
+Use `firefox` or omit the final selector for the complete three-engine attempt.
+A browser launch failure is an unverified engine, not a passing matrix. These
+focused checks do not establish local-input radio work limits, aggregate
+retained-text/cascade limits, complete
+cross-target radio behavior, compiled pilot acceptance or release readiness.
+
+## Retained view text and native radio navigation
+
+This scope covers source-byte accounting, sticky live-value capacity, exact
+acceptance/rejection, deferred parent edits, and native focus order across many
+radio names and membership changes:
+
+```sh
+cargo test -p varta-view --test retained_text --test checkables --locked
+cargo test -p varta-runtime --lib retained_view_text_exhaustion_is_fatal_and_keeps_the_prior_payload --locked
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-oracle.json
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node --test crates/varta-project/src/browser/*.test.mjs
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node scripts/test-browser-view.mjs
+cargo test -p varta-common --lib browser::tests --locked
+cargo test -p varta-common --test embedding_documentation --locked
+cargo check -p varta-common --no-default-features --lib --locked
+cargo clippy -p varta-common -p varta-view -p varta-project -p varta-runtime --all-targets --locked -- -D warnings
+```
+
+The retained-text fixtures cover every canonical source slot, detached nodes,
+accumulation across batches, replacement/deletion, UTF-8 capacity, stale writes
+and same-batch type transitions. Empty commits after rejected JS transactions
+also check that hidden source-size caches cannot poison future admission.
+Native and browser payload accounting excludes actual live values already
+covered by sticky reservations, preserving admission while their event is queued.
+This is a payload contract, not a measurement of process RSS or complete CSS work.
+
+For normal-stack application acceptance after rebuilding the CLI/companion and
+projection example, run from the repository root:
+
+```sh
+cargo build -p varta -p varta-launcher --locked
+cargo build -p varta-view --example project_flex_snapshot --locked
+VARTA_BIN="$PWD/target/debug/varta" examples/uarp-console/scripts/test.sh
+node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs chrome
+node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs webkit
+```
+
+The optional engine selector keeps a focused run local; omit it for all three
+engines. A selected engine pass does not establish Firefox or the full matrix.
+The mockup driver separately checks retained-capacity refusal, unchanged DOM and
+successful reclamation; the live chat probe checks trusted interactions, the
+native ordered tree, selected accessibility and sampled style declarations.
+
+
+## Stylesheet expansion and packaged resource failures
+
+Use a fresh native oracle for work-unit, grammar, operation-position and rollback
+parity. The generated-bundle probe builds a real browser artifact, removes its
+sources/configuration, delivers a trusted event and checks fatal CSS admission
+through the Worker while the prior DOM/title remain intact:
+
+```sh
+cargo test -p varta-common --lib view:: --locked
+cargo test -p varta-view --test style_work --locked
+cargo test -p varta-runtime --lib stylesheet_expansion_work_is_fatal_before_effects_and_keeps_the_previous_view --locked
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-oracle.json
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node --test crates/varta-project/src/browser/*.test.mjs
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node scripts/test-browser-view.mjs
+cargo build -p varta -p varta-launcher --locked
+node scripts/test-browser-style-work-bundle.mjs target/debug/varta
+```
+
+The source/parsed-work ceiling and selector indexing do not establish a complete
+bound for per-frame cascade, derived output or accessibility work. Reuse the
+selected-engine mockup/live-chat checks above for application coverage; a
+Chrome/WebKit pass does not establish the full three-engine matrix.

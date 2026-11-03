@@ -8,6 +8,9 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 // grammar. Runs in Node and in browsers.
 
 export class CssError extends Error {}
+export class StylesheetWorkError extends CssError {}
+const cssEncoder=new TextEncoder();
+const cssBytes=text=>cssEncoder.encode(text).byteLength;
 
 // ----------------------------------------------------------------- value tokens
 
@@ -202,79 +205,62 @@ export function createValueMatcher(grammars, notes = {}) {
     return rest.length === 0 || (rest.length === 2 && rest[0].kind === "comma" && !["comma", "function"].includes(rest[1].kind));
   }
 
-  function full(ast, tokens, locals) {
-    for (const end of match(ast, tokens, 0, locals)) if (end === tokens.length) return true;
+  function full(ast, tokens, locals, memo = new WeakMap()) {
+    for (const end of match(ast, tokens, 0, locals, memo)) if (end === tokens.length) return true;
     return false;
   }
 
-  // Generator of every end index the node can reach from `i` (backtracking).
-  function* match(node, tokens, i, locals) {
+  // A node/start pair has a set of possible ends, not one result per path.
+  // Keep the cache local to this validation, including nested function tokens.
+  function* match(node, tokens, i, locals, memo) {
+    let nodes=memo.get(tokens);if(!nodes){nodes=new WeakMap();memo.set(tokens,nodes);}
+    let starts=nodes.get(node);if(!starts){starts=new Map();nodes.set(node,starts);}
+    if(!starts.has(i))starts.set(i,[...new Set(matchUncached(node,tokens,i,locals,memo))]);
+    yield* starts.get(i);
+  }
+  function* matchUncached(node, tokens, i, locals, memo) {
     const t = tokens[i];
     switch (node.type) {
       case "keyword":
+        if(t?.kind==='function'&&t.name==='var'&&isVar(t))yield i+1;
         if (t && t.kind === "ident" && t.value.toLowerCase() === node.value.toLowerCase()) yield i + 1;
         else if (t && t.kind === "number" && t.raw === node.value) yield i + 1;
         return;
-      case "comma":
-        if (t?.kind === "comma") yield i + 1;
-        return;
-      case "slash":
-        if (t?.kind === "slash") yield i + 1;
-        return;
+      case "comma": if(t?.kind==='comma')yield i+1;return;
+      case "slash": if(t?.kind==='slash')yield i+1;return;
       case "ref":
-        if (locals[node.name]) {
-          yield* match(locals[node.name], tokens, i, locals);
-          return;
-        }
-        if (t && single(node.name, t, locals)) yield i + 1;
-        return;
+        if(locals[node.name]){yield* match(locals[node.name],tokens,i,locals,memo);return;}
+        if(t&&single(node.name,t,locals))yield i+1;return;
       case "function":
-        if (t?.kind === "function" && t.name === node.name && full(node.args, t.args, locals)) yield i + 1;
-        return;
-      case "seq":
-        yield* sequence(node.items, 0, tokens, i, locals);
-        return;
-      case "alt":
-        for (const option of node.options) yield* match(option, tokens, i, locals);
-        return;
-      case "any":
-        yield* anyOrder(node.items, new Set(), tokens, i, locals, false);
-        return;
-      case "repeat":
-        yield* repeat(node, tokens, i, locals, 0);
-        return;
+        if(t?.kind==='function'&&t.name===node.name&&full(node.args,t.args,locals,memo))yield i+1;return;
+      case "seq": yield* sequence(node.items,0,tokens,i,locals,memo);return;
+      case "alt": for(const option of node.options)yield* match(option,tokens,i,locals,memo);return;
+      case "any": yield* anyOrder(node.items,new Set(),tokens,i,locals,false,memo);return;
+      case "repeat": yield* repeat(node,tokens,i,locals,0,memo);return;
       case "list":
-        for (const end of match(node.node, tokens, i, locals)) {
-          yield end;
-          if (tokens[end]?.kind === "comma") yield* match(node, tokens, end + 1, locals);
+        for(const end of match(node.node,tokens,i,locals,memo)){
+          yield end;if(tokens[end]?.kind==='comma')yield* match(node,tokens,end+1,locals,memo);
         }
         return;
     }
   }
-  function* sequence(items, k, tokens, i, locals) {
-    if (k === items.length) {
-      yield i;
-      return;
-    }
-    for (const end of match(items[k], tokens, i, locals)) yield* sequence(items, k + 1, tokens, end, locals);
+  function* sequence(items,k,tokens,i,locals,memo){
+    if(k===items.length){yield i;return;}
+    for(const end of match(items[k],tokens,i,locals,memo))yield* sequence(items,k+1,tokens,end,locals,memo);
   }
-  function* anyOrder(items, used, tokens, i, locals, matchedOne) {
-    if (matchedOne) yield i;
-    for (let k = 0; k < items.length; k += 1) {
-      if (used.has(k)) continue;
-      for (const end of match(items[k], tokens, i, locals)) {
-        if (end === i) continue;
-        yield* anyOrder(items, new Set([...used, k]), tokens, end, locals, true);
+  function* anyOrder(items,used,tokens,i,locals,matchedOne,memo){
+    if(matchedOne)yield i;
+    for(let k=0;k<items.length;k++){
+      if(used.has(k))continue;
+      for(const end of match(items[k],tokens,i,locals,memo)){
+        if(end!==i)yield* anyOrder(items,new Set([...used,k]),tokens,end,locals,true,memo);
       }
     }
   }
-  function* repeat(node, tokens, i, locals, count) {
-    if (count >= node.min) yield i;
-    if (count >= node.max) return;
-    for (const end of match(node.node, tokens, i, locals)) {
-      if (end === i) continue;
-      yield* repeat(node, tokens, end, locals, count + 1);
-    }
+  function* repeat(node,tokens,i,locals,count,memo){
+    if(count>=node.min)yield i;
+    if(count>=node.max)return;
+    for(const end of match(node.node,tokens,i,locals,memo))if(end!==i)yield* repeat(node,tokens,end,locals,count+1,memo);
   }
 
   function words(tokens) {
@@ -301,7 +287,12 @@ const CONDITION = /^\(\s*(prefers-color-scheme\s*:\s*(light|dark)|(min-width|max
  * Checks stylesheet text against the published grammar; returns the rules found
  * ({selectors, declarations}) for reporting.
  */
-export function checkStylesheet(text, view) {
+export function checkStylesheet(text, view, {workLimit=view.limits.stylesheetWork}={}) {
+  const limit=Math.min(workLimit,view.limits.stylesheetWork),weight=view.limits.stylesheetNodeWork;
+  let work=0;
+  const charge=amount=>{work+=amount;if(work>limit)throw new StylesheetWorkError('stylesheet work budget');};
+  if(text.length>limit)throw new StylesheetWorkError('stylesheet work budget');
+  charge(cssBytes(text));
   const checkValue = createValueMatcher(Object.fromEntries(view.css.map((row) => [row.name, row.grammar])), Object.fromEntries(view.css.map((row) => [row.name, row.note ?? ""])));
   const forbidden = view.stylesheet.forbidden;
   const pseudo = new Set(view.stylesheet.pseudo);
@@ -312,19 +303,26 @@ export function checkStylesheet(text, view) {
   const skip = () => {
     while (/\s/.test(text[at] ?? "")) at += 1;
   };
-  function readRule(where) {
+  function readRule(where,mediaCount=0) {
+    charge(weight*(1+mediaCount));
     const open = text.indexOf("{", at);
     const close = text.indexOf("}", open);
     if (open < 0 || close < 0) throw new CssError(`${where}: unterminated rule`);
     const selectors = text.slice(at, open).split(",").map((s) => s.trim());
     for (const selector of selectors) {
+      charge(weight);
+      for(const match of selector.matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)/g))charge(weight+match[1].length);
+      charge(weight*(selector.match(/:[a-z-]+/g)??[]).filter(p=>p!==':root').length);
       if (!CLASS_SELECTOR.test(selector)) errors.push(`${where}: selector ${JSON.stringify(selector)} is outside the subset`);
       for (const p of selector.match(/:[a-z-]+/g) ?? []) if (p !== ":root" && !pseudo.has(p)) errors.push(`${where}: pseudo-class ${p} is outside the subset`);
     }
     const body = text.slice(open + 1, close);
     at = close + 1;
-    const declarations = body.split(";").map((d) => d.trim()).filter(Boolean);
+    const parts=body.split(';');
+    for(let index=0;index<parts.length;index++)if(!parts[index].trim()&&index!==parts.length-1)errors.push(`${where}: empty declaration`);
+    const declarations = parts.map((d) => d.trim()).filter(Boolean);
     for (const declaration of declarations) {
+      const errorsBefore=errors.length;
       const colon = declaration.indexOf(":");
       const property = declaration.slice(0, colon).trim();
       const value = declaration.slice(colon + 1).trim();
@@ -343,6 +341,7 @@ export function checkStylesheet(text, view) {
           errors.push(`${where}: ${error.message}`);
         }
       }
+      if(errors.length===errorsBefore)charge(weight+cssBytes(value)+(property.startsWith('--')?cssBytes(property.slice(2)):0));
     }
     rules.push({ selectors, declarations: declarations.length });
   }
@@ -353,6 +352,7 @@ export function checkStylesheet(text, view) {
       const open = text.indexOf("{", at);
       const conditions = text.slice(at + "@media".length, open).trim().split(/\s+and\s+/);
       for (const condition of conditions) {
+        charge(weight);
         const match = CONDITION.exec(condition);
         if (!match) errors.push(`@media condition ${JSON.stringify(condition)} is outside the subset`);
         else if (match[4] && !BUILTIN["<length>"](tokenizeValue(match[4])[0] ?? {})) errors.push(`@media length ${match[4]} is outside the subset`);
@@ -364,11 +364,11 @@ export function checkStylesheet(text, view) {
           at += 1;
           break;
         }
-        readRule("@media");
+        readRule("@media",conditions.length);
       }
     } else readRule("rule");
   }
-  return { rules, errors };
+  return { rules, errors, work };
 }
 
 /** Checks one `set_style` value: forbidden tokens, no custom properties, grammar. */

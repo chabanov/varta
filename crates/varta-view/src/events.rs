@@ -1,7 +1,7 @@
 //! The simulated platform side: trusted inputs, event dispatch (bubbling,
 //! key filters, `preventDefault`/`stopPropagation`), default actions, and
 //! the clipboard and system browser of the headless renderer.
-use crate::tree::{Element, Preedit, focus_records, uncheck_group};
+use crate::tree::{Element, Preedit, focus_records};
 use crate::{Access, Broker, EventRecord, InputError, View, ViewError};
 use serde::Deserialize;
 use unicode_segmentation::UnicodeSegmentation;
@@ -1208,7 +1208,11 @@ impl View {
             let field = self.tree.element_mut(node).expect("validated checkable");
             field.checked = !field.checked;
             if radio {
-                uncheck_group(&mut self.tree, node);
+                for (peer, _) in &old {
+                    if *peer != node {
+                        self.tree.element_mut(*peer).expect("radio peer").checked = false;
+                    }
+                }
             }
         }
         let field = self.tree.element(node).expect("validated checkable");
@@ -1476,20 +1480,20 @@ impl View {
     fn tab(&mut self, node: u32, backwards: bool) -> Result<(), ViewError> {
         let mut order: Vec<u32> = self
             .tree
-            .document_order()
+            .displayed_order(&self.environment)
             .into_iter()
             .filter(|id| {
                 self.tree.element(*id).is_some_and(|e| {
                     e.focusable()
                         && !e.disabled()
                         && e.attributes.get(&Attribute::Tabindex).map(String::as_str) != Some("-1")
-                        && self.tree.displayed(*id, &self.environment)
                 })
             })
             .collect();
         if backwards {
             order.reverse();
         }
+        let groups = self.tree.radio_groups();
         let eligible: std::collections::BTreeSet<_> = order.iter().copied().collect();
         let mut seen = std::collections::BTreeSet::new();
         let mut stops = std::collections::BTreeSet::new();
@@ -1497,10 +1501,11 @@ impl View {
             if !seen.insert(*id) {
                 continue;
             }
-            let group = self.tree.radio_group(*id);
+            let group = groups.group(*id);
             seen.extend(group.iter().copied());
             let chosen = group
-                .into_iter()
+                .iter()
+                .copied()
                 .find(|member| {
                     eligible.contains(member)
                         && self
@@ -1511,7 +1516,8 @@ impl View {
                 .unwrap_or(*id);
             stops.insert(chosen);
         }
-        let current_group = self.tree.radio_group(node);
+        let current_group: std::collections::BTreeSet<_> =
+            groups.group(node).iter().copied().collect();
         let start = order
             .iter()
             .position(|id| *id == node)

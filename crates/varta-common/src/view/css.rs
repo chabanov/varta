@@ -337,10 +337,13 @@ fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
                 vec![]
             }
         }
-        G::Keyword(word) => match tokens.get(at) {
-            Some(V::Word(found)) if found.eq_ignore_ascii_case(word) => vec![at + 1],
-            _ => vec![],
-        },
+        G::Keyword(word) => {
+            let mut out = var(tokens, at);
+            if matches!(tokens.get(at),Some(V::Word(found)) if found.eq_ignore_ascii_case(word)) {
+                out.push(at + 1);
+            }
+            out
+        }
         G::Type(name) => {
             let mut out = var(tokens, at);
             if let Some(definition) = composite(name) {
@@ -510,6 +513,9 @@ mod tests {
         assert!(matches("<length>+", &"1px ".repeat(MAX_VALUE_TOKENS)));
         assert!(!property_value(CssProperty::Padding, "-1px"));
         assert!(property_value(CssProperty::Padding, "var(--gap)"));
+        assert!(property_value(CssProperty::Display, "var(--mode)"));
+        assert!(property_value(CssProperty::Display, "var(--mode, none)"));
+        assert!(!property_value(CssProperty::Display, "var(--mode,)"));
         assert!(!property_value(CssProperty::Opacity, "1.5"));
         assert!(property_value(CssProperty::Opacity, "0.5"));
         assert!(!property_value(CssProperty::Color, "#fff;"));

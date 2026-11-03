@@ -48,11 +48,21 @@ pub const DRAFT_MAX_BATCH_OPERATIONS: usize = 16 * 1024;
 pub const DRAFT_MAX_LIVE_NODES: usize = 64 * 1024;
 pub const DRAFT_MAX_LIVE_LISTENERS: usize = 8 * 1024;
 pub const DRAFT_MAX_VALUE_BYTES: usize = 64 * 1024;
+/// Guest text payload plus live-value reservations, independent of local edits.
+pub const DRAFT_MAX_RETAINED_TEXT_BYTES: usize = 8 * 1024 * 1024;
+/// A validated UTF-16 code unit needs at most three UTF-8 bytes.
+pub const DRAFT_FIELD_VALUE_RESERVATION_BYTES: usize = 3 * (DRAFT_MAX_VALUE_BYTES / 2);
 /// Single-select work per transaction: source UTF-8 bytes plus node visit units.
 pub const DRAFT_MAX_SELECT_WORK: usize = 8 * 1024 * 1024;
 /// Work charged for each node visited while finding owners or reading options.
 pub const DRAFT_SELECT_NODE_WORK: usize = 16;
+/// Radio reconciliation per transaction: UTF-8 name bytes plus visited nodes.
+pub const DRAFT_MAX_RADIO_WORK: usize = 8 * 1024 * 1024;
+pub const DRAFT_RADIO_NODE_WORK: usize = 16;
 pub const DRAFT_MAX_STYLESHEET_BYTES: usize = 256 * 1024;
+/// Parsed stylesheet work, per transaction and installed view inventory.
+pub const DRAFT_MAX_STYLESHEET_WORK: usize = 8 * 1024 * 1024;
+pub const DRAFT_STYLESHEET_NODE_WORK: usize = 16;
 pub const DRAFT_MAX_PENDING_EVENTS: usize = 64;
 /// Placeholder: `copy_text` requests awaiting their `command_result` at once.
 pub const DRAFT_MAX_PENDING_COMMANDS: usize = 16;

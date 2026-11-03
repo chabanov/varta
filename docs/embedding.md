@@ -2309,6 +2309,73 @@ draft.
   a prevented click restores the previous group before `input`/`change` or an
   edit-counter increment. Those field-change records have an empty `value` and
   carry checked state in the flags.
+- **Radio reconciliation work.** Each transaction has a separate allowance and
+  node-visit weight in the limits table. Charge one node weight for every ancestor
+  visited while finding a radio's closest form or tree root, and for every node
+  visited by the group scan (including a nested form before skipping its subtree).
+  Before comparing a candidate radio's name, charge that name's UTF-8 byte length.
+  An unnamed radio costs one node weight and has no group scan. Charge this scan
+  for every `set_checked(true)` on a radio, including stale or equal writes, and
+  after every `name`/`type` write whose resulting type is radio, regardless of
+  checked state. After insertion, additionally charge one node weight per node
+  in the moved subtree and the group scan for every radio in it, even unchecked
+  ones. Charges do not depend on live `checked`/`seq`: parent edits may still be
+  awaiting Worker delivery. Unlike consecutive select value writes, radio writes
+  do not collapse. The JS model retains name byte lengths on attribute mutation;
+  estimating cost must not rescan entire name strings. One counter spans the
+  batch; exceeding it rejects the transaction atomically before external effects.
+  This admission allowance does not change checked state, edit counters or peer
+  ordering for accepted batches, and is separate from guest fuel and select work.
+- **Parsed stylesheet work.** The limits table gives a work allowance and one
+  syntax-node weight. One parse charges the input UTF-8 byte length; one node
+  weight per media-header condition; one node weight per rule plus each media
+  condition copied into that rule; one weight per selector, class and pseudo;
+  UTF-8 bytes of class names; and one weight per declaration plus its raw trimmed
+  value bytes and custom-property name bytes (without `--`). A `:root` selector
+  has the selector charge only. Check before cloning media conditions into a new
+  rule, so a short source cannot expand into an unchecked condition matrix.
+
+  One counter spans all nonempty `stylesheet` operations in a transaction, even
+  replacements of the same ID/text. Independently, the sum of parsed-work charges
+  for installed sheets must fit the same allowance after each stylesheet
+  operation. Replacement/delete reclaims the previous installed charge; deleting
+  a sheet does not refund parsing already performed in the transaction. The
+  existing aggregate UTF-16 stylesheet-byte ceiling also remains in force.
+  Inventory counters follow atomic copy/rollback and use cached per-sheet sizes,
+  without rescanning every installed sheet/string at each operation. Exceeding
+  work rejects the whole transaction before guest effects or DOM mutation. The
+  browser preflight checks each parse against the remaining transaction allowance
+  before constructing/parsing its CSSOM sheet, then the authoritative shared
+  model validates the installed inventory.
+- **Retained text and field capacity.** The limits table gives one per-view
+  retained-text allowance and one live-value reservation. At the end of each
+  batch, charge UTF-8 source bytes for every text node, attribute value, inline
+  style value, class string, title and raw stylesheet. Count each stored slot,
+  including detached nodes and repeated strings. Additionally reserve the table's
+  full value capacity for every `select`, `textarea` and non-checkable `input`.
+  A valid UTF-16 value can require three UTF-8 bytes per code unit, so that
+  reservation is `3 * (valueBytes / 2)`. Current live values are covered by the
+  reservation and do not add a state-dependent charge.
+
+  Reservations are sticky on a surviving node, including after a type change
+  to checkbox/radio. A `set_value` also reserves its target, even if stale or
+  followed by a checkable type change in the same batch. Deleting the node frees
+  its reservation. This keeps admission independent of local text/sequence still
+  awaiting Worker delivery, and covers hidden former text values. Readonly and
+  disabled fields retain capacity for later updates. With no other payload the
+  current draft allowance admits at most 85 value-capacity reservations; source
+  text reduces the available remainder. This is an explicit draft resource bound,
+  not a new language or wire restriction.
+
+  Check the final state so replacement/removal can reclaim space within a batch.
+  Exceeding the allowance rejects the entire batch, with no effects or cache
+  changes. The official JS model caches source byte sizes at bounded string
+  mutation, copies those caches with transactions and keeps mutable caches out
+  of inspection snapshots. It must not re-encode the whole stored text to decide
+  admission. Host event values still require the ordinary per-value bound before
+  changing a value or edit counter. Payload accounting does not claim an absolute
+  process-memory ceiling: node metadata, parsed CSS, packaged resources, bounded
+  editing history/preedit and host buffers have their separate contracts/audits.
 - **Attributes.** The [attribute table](#view-protocol-draft-v0-unstable) lists
   the elements and value grammar of each attribute; any other element or value
   invalidates the batch. Boolean attributes are true when present, with an empty
@@ -2417,8 +2484,11 @@ values:
 | Placeholder: batch bytes / operations | 262144 / 16384 |
 | Placeholder: live nodes / listeners | 65536 / 8192 |
 | Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
+| Placeholder: retained text bytes / live field reservation bytes | 8388608 / 98304 |
 | Placeholder: pending `copy_text` requests | 16 |
 | Placeholder: single-select work / node visit units | 8388608 / 16 |
+| Placeholder: radio reconciliation work / node visit units | 8388608 / 16 |
+| Placeholder: parsed stylesheet work / syntax node units | 8388608 / 16 |
 | Placeholder: tokens of one CSS property value | 128 |
 | `id` / `for` ident characters | 64 |
 | Key filter: any key | key code 0 |

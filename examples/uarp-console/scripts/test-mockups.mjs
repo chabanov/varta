@@ -101,6 +101,44 @@ try{
           check(failure?.rule==='select work budget','official DOM work refusal');
           check(JSON.stringify(budget.app.snapshot())===before&&select.selectedIndex===index,'official DOM work rollback');
         }finally{budget.app.close();budget.container.remove();}
+        const radio=project(Array.from({length:100},()=>`<input type="radio" name="${'界'.repeat(341)}">`).join(''));
+        try{
+          const before=JSON.stringify(radio.app.snapshot()),fields=radio.root.querySelectorAll('input');
+          const id=radio.app.snapshot().nodes.find(node=>node.tag==='input').id;
+          let failure;try{radio.app.apply(encodeViewBatch([{name:'set_title',text:'must roll back'},
+            ...Array.from({length:128},()=>({name:'set_checked',node:id,checked:1,base_seq:0}))]));}catch(error){failure=error;}
+          check(failure?.rule==='radio work budget','official DOM radio work refusal');
+          check(JSON.stringify(radio.app.snapshot())===before&&[...fields].every(field=>!field.checked),'official DOM radio work rollback');
+          radio.app.apply(encodeViewBatch([{name:'set_checked',node:id,checked:1,base_seq:0}]));
+          check(fields[0].checked&&[...fields].slice(1).every(field=>!field.checked),'small radio transaction after refusal');
+        }finally{radio.app.close();radio.container.remove();}
+        const fields=Math.floor(view.limits.retainedTextBytes/view.limits.fieldValueReservationBytes);
+        const remaining=view.limits.retainedTextBytes-fields*view.limits.fieldValueReservationBytes;
+        const retained=project('<input>'.repeat(fields)+'X'.repeat(remaining));
+        try{
+          const before=JSON.stringify(retained.app.snapshot()),data=retained.app.snapshot().nodes.find(node=>node.kind==='text');
+          let failure;try{retained.app.apply(encodeViewBatch([{name:'set_title',text:'x'}]));}catch(error){failure=error;}
+          check(failure?.rule==='retained text budget','official DOM retained text refusal');
+          check(JSON.stringify(retained.app.snapshot())===before&&retained.root.textContent==='X'.repeat(remaining),'official DOM retained text rollback');
+          retained.app.apply(encodeViewBatch([{name:'set_text',node:data.id,text:'X'.repeat(remaining-1)},{name:'set_title',text:'x'}]));
+          check(retained.app.snapshot().title==='x'&&retained.root.textContent==='X'.repeat(remaining-1),'retained space reclamation');
+        }finally{retained.app.close();retained.container.remove();}
+        const cssGuard=project('<span>A</span>');
+        try{
+          const before=JSON.stringify(cssGuard.app.snapshot());
+          const css='@media '+Array(500).fill('(min-width:0px)').join(' and ')+'{'+'.a{}'.repeat(1100)+'}';
+          const original=CSSStyleSheet.prototype.replaceSync;let replacements=0,failure;
+          try{
+            CSSStyleSheet.prototype.replaceSync=function(text){replacements++;return original.call(this,text);};
+            try{cssGuard.app.apply(encodeViewBatch([{name:'set_title',text:'after'},{name:'stylesheet',sheet:1,text:css}]));}catch(error){failure=error;}
+          }finally{CSSStyleSheet.prototype.replaceSync=original;}
+          check(failure?.rule==='stylesheet work budget'&&failure.operation===1,'stylesheet work refusal position');
+          check(replacements===0,'stylesheet work checked before CSSOM parsing');
+          check(JSON.stringify(cssGuard.app.snapshot())===before&&cssGuard.root.textContent==='A','stylesheet work rollback');
+          const span=cssGuard.app.snapshot().nodes.find(node=>node.tag==='span').id;
+          cssGuard.app.apply(encodeViewBatch([{name:'stylesheet',sheet:1,text:'.a { color:#abc }'},{name:'set_class',node:span,text:'a'}]));
+          check(getComputedStyle(cssGuard.app.inspectNode(span)).color==='rgb(170, 187, 204)','small stylesheet succeeds after work refusal');
+        }finally{cssGuard.app.close();cssGuard.container.remove();}
         return checks;
       });
       await page.goto(base+'/uarp-console/mockups/conformance/conformance.html');

@@ -116,7 +116,7 @@ fn embedded_sources(dom: bool) -> String {
             "viewCss",
             "",
             VIEW_CSS,
-            "createValueMatcher,checkStyleDeclaration,checkStylesheet,rewriteRootSelector,tokenizeValue",
+            "createValueMatcher,checkStyleDeclaration,checkStylesheet,rewriteRootSelector,tokenizeValue,StylesheetWorkError",
         ),
         (
             "viewSelect",
@@ -126,7 +126,7 @@ fn embedded_sources(dom: bool) -> String {
         ),
         (
             "viewModel",
-            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher}=viewCss;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
+            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher,StylesheetWorkError}=viewCss;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
             VIEW_MODEL,
             "createViewModel",
         ),
@@ -176,7 +176,7 @@ fn embedded_sources(dom: bool) -> String {
             VIEW_FONTS,
             "createFontNamespace",
         ));
-        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector}=viewCss;const {createFontNamespace}=viewFonts;", VIEW_DOM, "createViewDom,encodeViewEvent"));
+        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;", VIEW_DOM, "createViewDom,encodeViewEvent"));
     }
     source
 }

@@ -401,9 +401,9 @@ fn border_color(
         return Ok(None);
     }
     let mut values = std::array::from_fn::<_, 4, _>(|_| "currentcolor".to_owned());
-    let custom = tree.custom_properties(id, env);
+    let variables = style::Variables::new(tree, id, env);
     let set = |values: &mut [String; 4], property, raw: &str, sides: &[u8]| {
-        let substituted = style::substitute(raw, &custom);
+        let substituted = variables.substitute(raw);
         let value = substituted.as_deref().map_or("currentcolor", |v| {
             if property == CssProperty::BorderColor {
                 v
@@ -415,9 +415,10 @@ fn border_color(
             values[usize::from(*side)] = value.to_owned();
         }
     };
-    for (name, value) in tree.cascade(id, env) {
+    for (name, value) in tree.cascade_refs(id, env) {
         if let Name::Property(property) = name {
-            set(&mut values, property, &value, border_color_sides(property));
+            let property = *property;
+            set(&mut values, property, value, border_color_sides(property));
         }
     }
     for (&side, (property, raw)) in &tree
@@ -451,12 +452,13 @@ fn outline(
     env: &Environment,
     id: u32,
 ) -> Result<Option<(f32, f32, Color)>, PaintError> {
-    let custom = tree.custom_properties(id, env);
+    let variables = style::Variables::new(tree, id, env);
     let mut values = BTreeMap::new();
-    for (name, raw) in tree.cascade(id, env) {
+    for (name, raw) in tree.cascade_refs(id, env) {
         if let Name::Property(property) = name {
+            let property = *property;
             for component in outline_components(property) {
-                values.insert(*component, (property, style::substitute(&raw, &custom)));
+                values.insert(*component, (property, variables.substitute(raw)));
             }
         }
     }
@@ -467,7 +469,7 @@ fn outline(
         .values
         .iter()
     {
-        values.insert(*component, (*property, style::substitute(raw, &custom)));
+        values.insert(*component, (*property, variables.substitute(raw)));
     }
     let get = |component| {
         values

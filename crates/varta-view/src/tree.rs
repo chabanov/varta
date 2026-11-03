@@ -38,6 +38,8 @@ pub(crate) struct EditorState {
     pub option_selected: bool,
     pub option_dirty: bool,
     pub select_popup: Option<crate::select::SelectPopup>,
+    /// Sticky across type changes: a local/deferred edit must not alter capacity.
+    pub value_reserved: bool,
 }
 impl EditorState {
     pub fn reset_navigation(&mut self) {
@@ -120,9 +122,6 @@ impl Element {
             self.tag,
             Tag::Button | Tag::Input | Tag::Select | Tag::Textarea | Tag::A
         ) || self.attributes.contains_key(&Attribute::Tabindex)
-    }
-    pub(crate) fn classes(&self) -> Vec<&str> {
-        self.class.split_ascii_whitespace().collect()
     }
 }
 
@@ -228,6 +227,9 @@ pub(crate) enum Effect {
 pub(crate) struct Sheet {
     pub text: String,
     pub rules: Vec<Rule>,
+    pub index: style::RuleIndex,
+    pub work: usize,
+    pub text_units: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +238,9 @@ pub(crate) struct Tree {
     /// Live handler ids and the node holding each.
     pub handlers: BTreeMap<u32, u32>,
     pub sheets: BTreeMap<u32, Sheet>,
+    pub stylesheet_bytes: usize,
+    pub stylesheet_work: usize,
+    pub rule_index: style::CascadeIndex,
     pub title: String,
     pub focus: Option<u32>,
     /// `copy_text` requests whose `command_result` is not yet delivered.
@@ -253,6 +258,9 @@ impl Default for Tree {
             nodes: BTreeMap::from([(ROOT_NODE, root)]),
             handlers: BTreeMap::new(),
             sheets: BTreeMap::new(),
+            stylesheet_bytes: 0,
+            stylesheet_work: 0,
+            rule_index: style::CascadeIndex::default(),
             title: String::new(),
             focus: None,
             pending_requests: BTreeSet::new(),
@@ -281,10 +289,103 @@ struct Apply<'tree, 'context, 'input> {
     index: usize,
     layout_commands: usize,
     select_work: usize,
+    radio_work: usize,
+    stylesheet_work: usize,
     last_select_value: Option<(u32, u32, String)>,
 }
 
+/// A per-navigation partition; group members retain document order. Building it
+/// once avoids one complete tree scan per distinct radio name during Tab.
+#[derive(Default)]
+pub(crate) struct RadioGroups {
+    by_node: BTreeMap<u32, usize>,
+    members: Vec<Vec<u32>>,
+}
+impl RadioGroups {
+    pub(crate) fn group(&self, id: u32) -> &[u32] {
+        self.by_node
+            .get(&id)
+            .map_or(&[], |index| self.members[*index].as_slice())
+    }
+}
+
 impl Tree {
+    fn validate_retained_text(&mut self) -> Result<(), Violation> {
+        use varta_common::view::{
+            DRAFT_FIELD_VALUE_RESERVATION_BYTES, DRAFT_MAX_RETAINED_TEXT_BYTES,
+        };
+        let mut total = 0usize;
+        let mut charge = |bytes: usize| {
+            total = total.saturating_add(bytes);
+            if total > DRAFT_MAX_RETAINED_TEXT_BYTES {
+                Err(Violation::RetainedTextLimit)
+            } else {
+                Ok(())
+            }
+        };
+        charge(self.title.len())?;
+        for sheet in self.sheets.values() {
+            charge(sheet.text.len())?;
+        }
+        for node in self.nodes.values_mut() {
+            match &mut node.content {
+                Content::Text(text) => charge(text.len())?,
+                Content::Element(element) => {
+                    let value_field = element.text_field() || element.tag == Tag::Select;
+                    element.editor.value_reserved |= value_field;
+                    charge(element.class.len())?;
+                    for text in element.attributes.values().chain(element.style.values()) {
+                        charge(text.len())?;
+                    }
+                    if element.editor.value_reserved {
+                        charge(DRAFT_FIELD_VALUE_RESERVATION_BYTES)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn radio_groups(&self) -> RadioGroups {
+        let mut groups = RadioGroups::default();
+        let mut named = BTreeMap::new();
+        let mut stack = vec![(ROOT_NODE, ROOT_NODE)];
+        while let Some((id, inherited_owner)) = stack.pop() {
+            let node = &self.nodes[&id];
+            let owner = if self
+                .element(id)
+                .is_some_and(|element| element.tag == Tag::Form)
+            {
+                id
+            } else {
+                inherited_owner
+            };
+            if let Some(element) = self.element(id)
+                && element.checkable()
+                && element.input_type() == "radio"
+            {
+                let name = element
+                    .attributes
+                    .get(&Attribute::Name)
+                    .filter(|name| !name.is_empty());
+                let index = match name {
+                    Some(name) => *named.entry((owner, name.as_str())).or_insert_with(|| {
+                        groups.members.push(Vec::new());
+                        groups.members.len() - 1
+                    }),
+                    None => {
+                        groups.members.push(Vec::new());
+                        groups.members.len() - 1
+                    }
+                };
+                groups.members[index].push(id);
+                groups.by_node.insert(id, index);
+            }
+            stack.extend(node.children.iter().rev().map(|child| (*child, owner)));
+        }
+        groups
+    }
+
     pub(crate) fn element(&self, id: u32) -> Option<&Element> {
         match self.nodes.get(&id).map(|node| &node.content) {
             Some(Content::Element(element)) => Some(element),
@@ -312,8 +413,7 @@ impl Tree {
     pub(crate) fn displayed(&self, id: u32, environment: &Environment) -> bool {
         self.attached(id)
             && !self.path(id).into_iter().any(|ancestor| {
-                self.computed(ancestor, environment)
-                    .get(&CssProperty::Display)
+                self.computed_property(ancestor, environment, CssProperty::Display)
                     .is_some_and(|value| value == "none")
             })
     }
@@ -365,48 +465,72 @@ impl Tree {
     /// Walk once from that owner, skipping nested forms, rather than resolving
     /// every candidate's ancestor path separately.
     pub(crate) fn radio_group(&self, id: u32) -> Vec<u32> {
+        self.radio_group_with_work(id, usize::MAX)
+            .expect("one group cannot overflow usize")
+            .0
+    }
+    fn radio_group_with_work(
+        &self,
+        id: u32,
+        allowance: usize,
+    ) -> Result<(Vec<u32>, usize), Violation> {
+        let mut work = 0usize;
+        let mut charge = |amount: usize| {
+            work = work.saturating_add(amount);
+            if work > allowance {
+                Err(Violation::RadioWorkLimit)
+            } else {
+                Ok(())
+            }
+        };
         let Some(element) = self.element(id) else {
-            return Vec::new();
+            return Ok((Vec::new(), 0));
         };
         if !element.checkable() || element.input_type() != "radio" {
-            return Vec::new();
+            return Ok((Vec::new(), 0));
         }
         let Some(name) = element
             .attributes
             .get(&Attribute::Name)
             .filter(|name| !name.is_empty())
         else {
-            return vec![id];
+            charge(varta_common::view::DRAFT_RADIO_NODE_WORK)?;
+            return Ok((vec![id], work));
         };
-        let path = self.path(id);
-        let owner = path
-            .iter()
-            .copied()
-            .find(|ancestor| {
-                self.element(*ancestor)
-                    .is_some_and(|element| element.tag == Tag::Form)
-            })
-            .unwrap_or_else(|| *path.last().expect("path contains the radio"));
+        let mut owner = id;
+        let mut at = Some(id);
+        while let Some(current) = at {
+            charge(varta_common::view::DRAFT_RADIO_NODE_WORK)?;
+            owner = current;
+            let node = &self.nodes[&current];
+            if self
+                .element(current)
+                .is_some_and(|element| element.tag == Tag::Form)
+            {
+                break;
+            }
+            at = node.parent;
+        }
         let mut group = Vec::new();
         let mut stack = vec![owner];
         while let Some(current) = stack.pop() {
-            let Some(node) = self.nodes.get(&current) else {
-                continue;
-            };
+            charge(varta_common::view::DRAFT_RADIO_NODE_WORK)?;
+            let node = &self.nodes[&current];
             if let Content::Element(candidate) = &node.content {
                 if current != owner && candidate.tag == Tag::Form {
                     continue;
                 }
-                if candidate.checkable()
-                    && candidate.input_type() == "radio"
-                    && candidate.attributes.get(&Attribute::Name) == Some(name)
-                {
-                    group.push(current);
+                if candidate.checkable() && candidate.input_type() == "radio" {
+                    let candidate_name = candidate.attributes.get(&Attribute::Name);
+                    charge(candidate_name.map_or(0, String::len))?;
+                    if candidate_name == Some(name) {
+                        group.push(current);
+                    }
                 }
             }
             stack.extend(node.children.iter().rev());
         }
-        group
+        Ok((group, work))
     }
     pub(crate) fn by_ident(&self, ident: &str) -> Option<u32> {
         self.nodes
@@ -421,82 +545,120 @@ impl Tree {
                 _ => None,
             })
     }
-    /// The custom properties in scope at `id` (they inherit), cascaded.
+    /// Resolve inherited custom properties, copying only the winning bindings.
     pub(crate) fn custom_properties(
         &self,
         id: u32,
         environment: &Environment,
     ) -> BTreeMap<String, String> {
-        let mut custom = BTreeMap::new();
+        if !self.rule_index.has_custom() {
+            return BTreeMap::new();
+        }
+        let mut raw = BTreeMap::new();
         for ancestor in self.path(id).into_iter().rev() {
-            for (name, value) in self.cascade(ancestor, environment) {
+            for (name, value) in self.cascade_refs(ancestor, environment) {
                 if let Name::Custom(name) = name {
-                    custom.insert(name, value);
+                    raw.insert(name.as_str(), value);
                 }
             }
         }
-        custom
+        raw.into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect()
     }
-    /// The declarations that apply to `id` in cascade order (later wins):
-    /// sheets by ascending id, then specificity, then source order.
-    pub(crate) fn cascade(&self, id: u32, environment: &Environment) -> Vec<(Name, String)> {
+    pub(crate) fn cascade_refs(&self, id: u32, environment: &Environment) -> Vec<(&Name, &str)> {
         let Some(element) = self.element(id) else {
             return Vec::new();
         };
-        let classes = element.classes();
+        let classes: BTreeSet<_> = element.class.split_ascii_whitespace().collect();
+        let class_list: Vec<_> = classes.iter().copied().collect();
         let subject = Subject {
             root: id == ROOT_NODE,
-            classes: &classes,
+            classes: &class_list,
             focused: self.focus == Some(id),
             disabled: element.disabled(),
             checked: element.checked,
         };
         let mut matched = Vec::new();
-        for (order, rule) in self
-            .sheets
-            .values()
-            .flat_map(|sheet| sheet.rules.iter())
-            .enumerate()
-        {
-            if !style::applies(rule, environment) {
-                continue;
-            }
-            if let Some(specificity) = rule.matching(&subject) {
-                matched.push((specificity, order, rule));
+        for (sheet, index) in self.rule_index.candidates(subject.root, &classes) {
+            let rule = &self.sheets[&sheet].rules[index];
+            if style::applies(rule, environment)
+                && let Some(specificity) =
+                    rule.matching_with_classes(&subject, |class| classes.contains(class))
+            {
+                matched.push((specificity, sheet, index, rule));
             }
         }
-        matched.sort_by_key(|(specificity, order, _)| (*specificity, *order));
+        matched.sort_by_key(|(specificity, sheet, index, _)| (*specificity, *sheet, *index));
         matched
             .into_iter()
-            .flat_map(|(_, _, rule)| rule.declarations.iter().cloned())
+            .flat_map(|(_, _, _, rule)| {
+                rule.declarations
+                    .iter()
+                    .map(|(name, value)| (name, value.as_str()))
+            })
             .collect()
     }
-    /// The computed value of each property set on `id`: the cascade, then
-    /// inline styles, with `var()` substituted; an unresolvable `var()`
-    /// leaves the property unset.
+    /// Select one winning property without resolving unrelated values/variables.
+    pub(crate) fn computed_property(
+        &self,
+        id: u32,
+        environment: &Environment,
+        property: CssProperty,
+    ) -> Option<String> {
+        let inline = self
+            .element(id)
+            .and_then(|element| element.style.get(&property));
+        let raw = inline.map(String::as_str).or_else(|| {
+            self.cascade_refs(id, environment)
+                .into_iter()
+                .rev()
+                .find_map(|(name, value)| {
+                    matches!(name,Name::Property(p) if *p==property).then_some(value)
+                })
+        })?;
+        style::Variables::new(self, id, environment).substitute(raw)
+    }
     pub(crate) fn computed(
         &self,
         id: u32,
         environment: &Environment,
     ) -> BTreeMap<CssProperty, String> {
         let mut declared = BTreeMap::new();
-        for (name, value) in self.cascade(id, environment) {
+        for (name, value) in self.cascade_refs(id, environment) {
             if let Name::Property(property) = name {
-                declared.insert(property, value);
+                declared.insert(*property, value);
             }
         }
         if let Some(element) = self.element(id) {
             for (property, value) in &element.style {
-                declared.insert(*property, value.clone());
+                declared.insert(*property, value.as_str());
             }
         }
-        let custom = self.custom_properties(id, environment);
+        let variables = style::Variables::new(self, id, environment);
         declared
             .into_iter()
             .filter_map(|(property, value)| {
-                style::substitute(&value, &custom).map(|value| (property, value))
+                variables.substitute(value).map(|value| (property, value))
             })
             .collect()
+    }
+    /// Document order with hidden subtrees skipped once, rather than checking
+    /// the complete ancestor path for every prospective focus stop.
+    pub(crate) fn displayed_order(&self, environment: &Environment) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut stack = vec![ROOT_NODE];
+        while let Some(id) = stack.pop() {
+            if self
+                .computed_property(id, environment, CssProperty::Display)
+                .is_some_and(|display| display == "none")
+            {
+                continue;
+            }
+            out.push(id);
+            stack.extend(self.nodes[&id].children.iter().rev());
+        }
+        out
     }
 
     /// Apply a decoded batch to this (copied) tree.
@@ -512,6 +674,8 @@ impl Tree {
             index: 0,
             layout_commands: 0,
             select_work: 0,
+            radio_work: 0,
+            stylesheet_work: 0,
             last_select_value: None,
         };
         for (index, operation) in operations.iter().enumerate() {
@@ -565,6 +729,35 @@ impl Apply<'_, '_, '_> {
                 operation,
                 violation: Violation::SelectWorkLimit,
             });
+        }
+        Ok(())
+    }
+
+    fn charge_radio_work(&mut self, work: usize) -> Result<(), ViewError> {
+        self.radio_work = self.radio_work.saturating_add(work);
+        if self.radio_work > varta_common::view::DRAFT_MAX_RADIO_WORK {
+            return Err(self.fail(Violation::RadioWorkLimit));
+        }
+        Ok(())
+    }
+
+    // Meter independently of checked/seq: a browser edit can still be queued
+    // for Worker delivery. Group membership is authoritative in either state.
+    fn reconcile_radio(&mut self, id: u32, apply: bool) -> Result<(), ViewError> {
+        let (group, work) = self
+            .tree
+            .radio_group_with_work(
+                id,
+                varta_common::view::DRAFT_MAX_RADIO_WORK.saturating_sub(self.radio_work),
+            )
+            .map_err(|violation| self.fail(violation))?;
+        self.charge_radio_work(work)?;
+        if apply {
+            for peer in group.into_iter().filter(|peer| *peer != id) {
+                if let Some(element) = self.tree.element_mut(peer) {
+                    element.checked = false;
+                }
+            }
         }
         Ok(())
     }
@@ -808,12 +1001,12 @@ impl Apply<'_, '_, '_> {
             element.editor.preedit = None;
             element.editor.select_popup = None;
         }
-        if matches!(attribute, Attribute::Name | Attribute::Type)
-            && element.checked
+        let reconcile = matches!(attribute, Attribute::Name | Attribute::Type)
             && element.checkable()
-            && element.input_type() == "radio"
-        {
-            uncheck_group(self.tree, node);
+            && element.input_type() == "radio";
+        let checked = element.checked;
+        if reconcile {
+            self.reconcile_radio(node, checked)?;
         }
         if changed {
             self.tree.select_attribute(node, attribute, true);
@@ -870,12 +1063,17 @@ impl Apply<'_, '_, '_> {
         if let Some(child) = self.tree.nodes.get_mut(&node) {
             child.parent = Some(parent);
         }
-        for radio in self.tree.subtree_order(node) {
-            if self.tree.element(radio).is_some_and(|element| {
-                element.checked && element.checkable() && element.input_type() == "radio"
-            }) {
-                uncheck_group(self.tree, radio);
+        let mut stack = vec![node];
+        while let Some(radio) = stack.pop() {
+            self.charge_radio_work(varta_common::view::DRAFT_RADIO_NODE_WORK)?;
+            if let Some(element) = self.tree.element(radio)
+                && element.checkable()
+                && element.input_type() == "radio"
+            {
+                let checked = element.checked;
+                self.reconcile_radio(radio, checked)?;
             }
+            stack.extend(self.tree.nodes[&radio].children.iter().rev());
         }
         if let Some(select) = old_select {
             if moved_option {
@@ -1020,6 +1218,7 @@ impl Apply<'_, '_, '_> {
             return Err(self.fail(Violation::NotAField(node)));
         }
         let element = self.element(node)?;
+        element.editor.value_reserved = true;
         // A stale patch (newer local edits exist) is dropped, not an error.
         if element.seq == base {
             if element.tag == Tag::Select {
@@ -1050,11 +1249,13 @@ impl Apply<'_, '_, '_> {
         if !element.checkable() {
             return Err(self.fail(Violation::NotAField(node)));
         }
-        if element.seq == base {
+        let accepted = element.seq == base;
+        let radio = element.input_type() == "radio";
+        if accepted {
             element.checked = checked == 1;
-            if element.checked && element.input_type() == "radio" {
-                uncheck_group(self.tree, node);
-            }
+        }
+        if checked == 1 && radio {
+            self.reconcile_radio(node, accepted)?;
         }
         Ok(())
     }
@@ -1239,32 +1440,67 @@ impl Apply<'_, '_, '_> {
             return Err(self.fail(Violation::InvalidSheet));
         }
         if text.is_empty() {
-            self.tree.sheets.remove(&sheet);
+            if let Some(old) = self.tree.sheets.remove(&sheet) {
+                self.tree.rule_index.remove(sheet, &old.index);
+                self.tree.stylesheet_bytes -= old.text_units;
+                self.tree.stylesheet_work -= old.work;
+            }
             return Ok(());
         }
-        let rules = style::parse(text).ok_or_else(|| self.fail(Violation::InvalidStylesheet))?;
+        let parsed = style::parse(
+            text,
+            varta_common::view::DRAFT_MAX_STYLESHEET_WORK.saturating_sub(self.stylesheet_work),
+        )
+        .map_err(|error| {
+            self.fail(
+                if error.violation == varta_common::view::stylesheet::Violation::WorkLimit {
+                    Violation::StylesheetWorkLimit
+                } else {
+                    Violation::InvalidStylesheet
+                },
+            )
+        })?;
+        self.stylesheet_work = self.stylesheet_work.saturating_add(parsed.work);
+        let text_units = text.encode_utf16().count() * 2;
+        let old = self.tree.sheets.get(&sheet);
+        let bytes =
+            self.tree.stylesheet_bytes - old.map_or(0, |sheet| sheet.text_units) + text_units;
+        if bytes > DRAFT_MAX_STYLESHEET_BYTES {
+            return Err(self.fail(Violation::StylesheetsTooLarge));
+        }
+        let work = self.tree.stylesheet_work - old.map_or(0, |sheet| sheet.work) + parsed.work;
+        if work > varta_common::view::DRAFT_MAX_STYLESHEET_WORK {
+            return Err(self.fail(Violation::StylesheetWorkLimit));
+        }
+        let index = style::RuleIndex::new(&parsed.rules);
+        if let Some(old) = self.tree.sheets.get(&sheet) {
+            self.tree.rule_index.remove(sheet, &old.index);
+        }
+        self.tree.rule_index.insert(sheet, &index);
         self.tree.sheets.insert(
             sheet,
             Sheet {
                 text: text.into(),
-                rules,
+                rules: parsed.rules,
+                index,
+                work: parsed.work,
+                text_units,
             },
         );
-        let bytes: usize = self
-            .tree
-            .sheets
-            .values()
-            .map(|sheet| sheet.text.encode_utf16().count() * 2)
-            .sum();
-        if bytes > DRAFT_MAX_STYLESHEET_BYTES {
-            return Err(self.fail(Violation::StylesheetsTooLarge));
-        }
+        self.tree.stylesheet_bytes = bytes;
+        self.tree.stylesheet_work = work;
         Ok(())
     }
 
     /// Invariants of the whole batch: `id` values unique among live elements.
     fn finish(&mut self) -> Result<(), ViewError> {
         self.charge_select_work(self.tree.select_inventory_work(), None)?;
+        self.tree
+            .validate_retained_text()
+            .map_err(|violation| ViewError::Invalid {
+                operation: None,
+                violation,
+            })?;
         let mut seen = BTreeSet::new();
         for (id, node) in &self.tree.nodes {
             if self
@@ -1309,15 +1545,6 @@ impl Apply<'_, '_, '_> {
             }
         }
         Ok(())
-    }
-}
-
-/// Unchecking a peer is not a user edit and does not advance its field counter.
-pub(crate) fn uncheck_group(tree: &mut Tree, keep: u32) {
-    for id in tree.radio_group(keep).into_iter().filter(|id| *id != keep) {
-        if let Some(element) = tree.element_mut(id) {
-            element.checked = false;
-        }
     }
 }
 

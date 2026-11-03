@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-11-02, against `main` at `88ee4d6` plus the native/select increment below. Varta is an experimental
+Updated 2026-11-02, against `main` at `a71d281` plus the radio/navigation/text and stylesheet increments below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -14,7 +14,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Consolidated browser dev/reload package on the working tree after `abea3ac` (2026-11-02): **2946 passed, 0 failed, 16 ignored**; all eight commands passed, including `no_std`, workspace Clippy/build/tests and conformance, with an unchanged source fingerprint. Report: `target/verification/20261102-093345-4pi5qr3n/report.json`. This includes preceding consent/event/navigation and the browser dev/reload implementation on macOS arm64. Separate evidence: 85 Node tests and the scoped 63-check Chrome/Firefox/Playwright-WebKit matrix below. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Commit-boundary radio/navigation/text/stylesheet package after `a71d281` (2026-11-02): **3066 passed**, all eight commands passed with unchanged sources. Report: `target/verification/20261102-215501-s16w2dmu/report.json`. This covers the current package on macOS arm64. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -455,7 +455,7 @@ inferred from the current regression suite.
 | CORE-15 | Conformance | Partial | Pinned ECMAScript 2025 checked-v37 inventory, isolated runner, negative/differential/artifact tests | Four known cases, eight untested feature rows, wider edition/history coverage, upstream harness and independent platform verification |
 | CORE-16 | Performance and production readiness | Partial | Fuel profiler, deterministic golden fuel, codegen/JSON/GC measurements and regression checks | Reproducible startup/throughput/leak/peak-memory benchmarks on supported targets, fuzzing and independent security review |
 | CORE-17 | Application lifecycle | Partial; native foundation implemented | Long-lived instances, host tasks, per-turn budgets, permission decisions, bounded scripted network waits, request cancellation and a sampled native resource lifecycle | Cross-host ordering, recorded network replay, complete owned shutdown and broader sustained lifetime/native RSS acceptance |
-| CORE-18 | View output | Partial; L0/TSX foundation implemented | L0 batch/event protocol, headless tree/cascade/accessibility, TSX templates and example L1; prototype browser applier | Headless layout, native renderer, official browser delivery, cross-renderer geometry/accessibility and real-target acceptance |
+| CORE-18 | View output | Partial; L0/TSX and official browser sessions implemented | L0 batch/event protocol, headless tree/cascade/accessibility, TSX, official browser model/DOM/Worker, packaged resources, local dev/reload and experimental CPU native controls/layout | Full native L0 styling/layout, cross-renderer geometry/accessibility, pilot screens, actual Pi/other-target acceptance and measurements |
 
 “Partial” means that useful checked functionality exists while the full target's
 exit criteria remain open. In particular CORE-05/08/09/17/18 are no longer
@@ -6203,8 +6203,119 @@ identical writes share a lookup, and admission is independent of deferred local
 edits. Logical-key typeahead also handles absent committed text. Native popup
 keyboard/pointer/scroll/cancel and character input were observed on macOS Retina.
 Timed multi-character search, hover feedback, other-platform select acceptance,
-broader radio/cascade work and aggregate retained-text budget audits,
+broader focus/cascade work and host-buffer/memory audits,
 numeric/progress controls, full styling and focus-modality parity, console screens,
 Pi, performance, accessibility and production shell acceptance remain open.
-The independent prototype applier is outside the new official-host checks;
-remaining pilot use needs a migration/alignment audit before release acceptance.
+The UARP console's live browser and mockup tooling now use official modules;
+`a71d281` removes mockup dependence on the independent prototype. Chrome and
+WebKit each pass five screens at three sizes and 41 regression checks. Firefox
+could not start in that local run; the earlier scoped matrix is historical
+and does not verify this newer package. Full pilot/cross-renderer acceptance
+remains open.
+
+### Radio transaction work — implementation 2026-11-02
+
+Radio reconciliation now has an independent shared-registry transaction allowance
+for owner walks, group node visits, compared UTF-8 name bytes and moved-subtree
+visits. Native and browser models account for checked/type/name writes and
+insertion independently of live checked state and edit counters, including stale
+patches and unchecked radios. This preserves admission while local edits await
+Worker delivery. Excessive work rejects the copied transaction before DOM or
+other effects; accepted batches keep existing peer and sequence semantics.
+
+Acceptance: repeated checked/type/name writes, stale patches, wide UTF-8 names
+and subtree moves must agree between native and browser on acceptance, failure
+position and rollback; a smaller subsequent transaction must still succeed.
+A real Wasm handler must fail fatally without reaching catch/later logging and
+retain its previous view. Component, registry/documentation, affected Clippy and
+browser/Worker checks provide scoped evidence. Local-input radio navigation scans, aggregate retained text, cascade
+work, complete platform/pilot acceptance and the release gate remain separate.
+
+Scoped acceptance passed: 109 view tests, 43 runtime/view tests, 113 Node tests
+with a fresh native oracle, 55 native/Chrome work batches and 1839 radio DOM/state
+observations. Chrome and WebKit each pass the five-screen/15-projection pilot
+mockup sample and 44 regressions. Registry/documentation, no-std, affected
+all-target Clippy, formatting and whitespace checks pass. The detailed
+[verification record](history.md#radio-transaction-work--scoped-verification-2026-11-02)
+keeps this separate from the last full gate and remaining acceptance.
+
+### Native radio navigation and retained view payload — implementation 2026-11-02
+
+Tab now builds a transient document/form/name partition once and uses node-set
+membership instead of repeated whole-tree group scans. Activation reuses the
+captured group to uncheck peers. Navigation keeps document order, checked stops,
+backwards movement, disabled/hidden filtering and event/cancellation behavior;
+renaming/reparenting cannot leave a persistent index stale.
+
+The common registry now bounds retained view text and field capacity. Source
+slots (text, attributes, class, inline style, title, raw sheets) charge UTF-8 bytes,
+including detached nodes. Every value-bearing field reserves its full existing
+UTF-16 bound's worst-case UTF-8 size; that reservation survives type changes and
+frees only on node removal. It therefore does not depend on undelivered local
+values or stale counters. The explicit draft default admits at most 85 reserved
+value fields without other payload. Final-state validation allows reclamation
+within the same batch and rejects excess atomically. JS size caches are copied
+with transactions and hidden from snapshots; synchronized field records cannot
+bypass the per-value bound.
+
+Acceptance: many distinct radio names and subsequent membership changes preserve
+focus order; native/model/DOM agree on every retained source category, exact
+capacity, UTF-8 sizes, detached state, replacement/deletion and sticky field
+capacity. Pending Worker edits must preserve both accepted and rejected
+admission. A Wasm resource failure must retain the prior view and stop before
+catch/later effects. These are payload limits, not a full process-memory claim;
+CSS/cascade work, other host buffers, sustained resource measurements, complete
+controls/pilot and cross-platform/release acceptance remain open.
+
+Scoped acceptance passed: 114 native view tests, 44 runtime/view checks and 119
+oracle-enabled Node tests; Chrome matches 68 work/payload batches. Each selected
+Chrome/WebKit engine passes 15 mockup projections and 47 regressions. Fresh
+CLI/companion/projection builds, the normal UARP 107-test/28-group/two-view check,
+and live chat tree/accessibility/style/interaction probes pass in Chrome/WebKit.
+Registry/documentation, no-std, affected strict Clippy and the intrinsic fingerprint
+pass. The [verification record](history.md#native-radio-navigation-and-retained-text--scoped-verification-2026-11-02)
+keeps these scoped results separate from the last full gate and remaining target
+acceptance. Next resource work: cascade/display costs and other host buffers;
+numeric/progress controls, full L0 styling, actual Pi/native shells, metrics and
+release acceptance continue in the platform queue.
+
+### Stylesheet expansion and indexed cascade — implementation 2026-11-02
+
+A small media header was copied into every parsed rule without an expansion
+ceiling. The common parser and browser checker now share parsed-work units and
+limits for one transaction and the installed sheet inventory. Checks precede
+condition copying and DOM CSSOM preparation. Replacements/removals update cached
+inventory totals atomically. The renderer incrementally indexes root/class
+anchors across sheets, so unrelated and empty sheets do not require a full scan
+for each node. Class-set lookup and deduplicated anchors preserve the common
+matcher, comma specificity, media and source order. Raw declarations are borrowed;
+only winning values are cloned. Custom maps are lazy, and Tab/display work skips
+hidden subtrees and unrelated properties.
+
+The package also corrects two grammar differences: whole `var()` components now
+work in keyword-only properties as the contract already specifies; JS no longer
+admits leading/repeated empty declarations rejected by native. A bounded child
+reproduced exponential JS matching of repeated ambiguous variable tracks with an
+invalid tail. Per-validation memoized sets of possible end positions remove
+repeated equivalent paths while retaining positive admission.
+
+Acceptance: exact parsed-work limit and one-extra-unit rejection; condition
+amplification; aggregate installed state; repeated replacement within one batch;
+rollback of counters, indices and effects; later reclamation; native/browser work
+units and original failing operation; rejection before CSSOM parsing and before
+Wasm catch/later effects. Sparse/duplicate selectors, sheet replacement/removal,
+media changes and inherited variables must retain snapshots and focus order.
+Complete cascade/derived-output/accessibility work bounds, grammar edge-case
+inventory, host-buffer lifetime, native controls/platforms, metrics and release
+acceptance remain open; this closes neither full CSS nor overall host budgeting.
+
+
+Scoped acceptance passed: 119 native view tests, 45 filtered runtime/view checks,
+127 oracle-enabled Node tests and 88 native/Chrome work/payload batches. Selected
+Chrome/WebKit engines each pass 15 mockup projections and 51 regressions, plus
+compiled live chat interactions/tree/accessibility/style. The normal UARP check
+passes 107 tests in 28 groups and two views. A source-free generated browser
+artifact verifies the typed stylesheet failure across Worker/DOM bundle bindings.
+The [verification record](history.md#stylesheet-expansion-and-indexed-cascade--scoped-verification-2026-11-02)
+records the repaired packaging failure and the final successful retries. Full
+cascade/derived-output/accessibility budgeting remains the next resource package.

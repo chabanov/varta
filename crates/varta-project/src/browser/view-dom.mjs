@@ -2,7 +2,7 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 import { createFontNamespace } from './view-fonts.mjs';
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { createViewModel } from "./view-model.mjs";
-import { rewriteRootSelector } from "./view-css.mjs";
+import { rewriteRootSelector, checkStylesheet, StylesheetWorkError } from "./view-css.mjs";
 
 const V = registry.view, W = V.wire, F = V.filters;
 const field = Object.fromEntries(W.eventFields.map((entry) => [entry.name, entry]));
@@ -109,8 +109,15 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
     // Parsing sheets before commit catches platform allocation/parse failures
     // without advancing either validation state or visible DOM.
     const preparedSheets = new Map(), preparedFonts = new Map();
+    let stylesheetWork=0;
     for (let i = 0; i < decoded.length; i++) {
-      if (decoded[i].name === "stylesheet" && decoded[i].text) { const sheet = new Sheet(); sheet.replaceSync(rewriteRootSelector(decoded[i].text, D.rootSelector)); fonts.sheet(sheet.cssRules); preparedSheets.set(i, sheet); }
+      if (decoded[i].name === "stylesheet" && decoded[i].text) {
+        let checked;try{checked=checkStylesheet(decoded[i].text,V,{workLimit:V.limits.stylesheetWork-stylesheetWork});}
+        catch(error){throw new ViewProtocolError(error instanceof StylesheetWorkError?'stylesheet work budget':'stylesheet value',i);}
+        if(checked.errors.length)throw new ViewProtocolError('stylesheet value',i);
+        stylesheetWork+=checked.work;
+        const sheet=new Sheet();sheet.replaceSync(rewriteRootSelector(decoded[i].text,D.rootSelector));fonts.sheet(sheet.cssRules);preparedSheets.set(i,sheet);
+      }
       if (decoded[i].name === "set_style" && decoded[i].property === "font-family") preparedFonts.set(i, fonts.value(decoded[i].text));
     }
     const { operations, effects, skippedValues } = model.commit(bytes), current = snapshots();

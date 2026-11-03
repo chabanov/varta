@@ -3,8 +3,11 @@
 Platform code, not an application: a host for Varta portable Wasm in the browser
 (module Worker) and Node, and the browser applier of the L0 view protocol, written
 **only** from the published embedding contract (`docs/embedding.md`) as an external
-check that the document is sufficient. It is a prototype: the official browser host
-will be generated from the `HostOperation` registry (platform increments P1 and P9).
+check that the document is sufficient. It remains an independent historical prototype. The official host now lives in
+`crates/varta-project/src/browser/`, uses the common Rust registry and is emitted
+by `varta build/dev --target browser`. The UARP console and its mockup tools use
+that official host. This prototype is not their backend and does not implement
+subsequent official-host selection/radio work allowances.
 
 Checkpoint 2026-11-01 (native server batch after `abea3ac`): **117 shared differential cases pass under
 Node**. This is not a new real-browser result or official platform acceptance.

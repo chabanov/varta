@@ -316,3 +316,166 @@ fn checkable_marks_clip_to_ancestor_scrollports() {
     assert_eq!(image.hit_test(14.0, 20.0), None);
     assert!(image.pixels[14 * 40 * 4..].iter().all(|byte| *byte == 0));
 }
+
+fn radio_work_view() -> View {
+    let mut view = View::default();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(2, Tag::Div)
+        .insert(1, 2, 0)
+        .create_element(1000, Tag::Div)
+        .insert(1, 1000, 0)
+        .set_title("before");
+    let name = "Ж".repeat(512);
+    for id in 3..103 {
+        batch
+            .create_element(id, Tag::Input)
+            .set_attribute(id, Attribute::Type, "radio")
+            .set_attribute(id, Attribute::Name, &name)
+            .insert(2, id, 0);
+    }
+    batch.set_checked(3, 1, 0);
+    commit(&mut view, &batch);
+    view
+}
+
+#[test]
+fn radio_work_limits_repeated_checked_type_and_name_writes_atomically() {
+    use varta_view::{ViewError, Violation};
+    for kind in ["checked", "type", "name", "stale"] {
+        let mut view = radio_work_view();
+        let before = view.snapshot();
+        let mut excessive = BatchWriter::new();
+        excessive.set_title("must roll back");
+        for i in 0..128 {
+            let id = 3 + i % 2;
+            match kind {
+                "type" => {
+                    excessive.set_attribute(id, Attribute::Type, "radio");
+                }
+                "name" => {
+                    excessive.set_attribute(id, Attribute::Name, &"Ж".repeat(512));
+                }
+                _ => {
+                    excessive.set_checked(id, 1, if kind == "stale" { 1 } else { 0 });
+                }
+            }
+        }
+        assert!(
+            matches!(
+                view.commit(&excessive.finish(), false, &mut Denied),
+                Err(ViewError::Invalid {
+                    operation: Some(_),
+                    violation: Violation::RadioWorkLimit
+                })
+            ),
+            "{kind}"
+        );
+        assert_eq!(view.snapshot(), before, "{kind}: rollback");
+        assert!(view.next_delivery().is_none());
+        let mut small = BatchWriter::new();
+        for i in 0..60 {
+            small.set_checked(3 + i % 2, 1, 0);
+        }
+        commit(&mut view, &small);
+        assert!(!checked(&view, 3));
+        assert!(checked(&view, 4));
+        assert_eq!(node(&view, 4)["seq"], 0);
+    }
+}
+
+#[test]
+fn radio_work_accounts_unchecked_moved_subtrees_and_retains_parent_on_rejection() {
+    use varta_view::{ViewError, Violation};
+    let mut view = radio_work_view();
+    let mut clear = BatchWriter::new();
+    clear.set_checked(3, 0, 0);
+    commit(&mut view, &clear);
+    let before = view.snapshot();
+    let mut move_all = BatchWriter::new();
+    move_all.set_title("must roll back").insert(1000, 2, 0);
+    assert!(matches!(
+        view.commit(&move_all.finish(), false, &mut Denied),
+        Err(ViewError::Invalid {
+            operation: Some(1),
+            violation: Violation::RadioWorkLimit
+        })
+    ));
+    assert_eq!(view.snapshot(), before);
+    let mut move_one = BatchWriter::new();
+    move_one.insert(1000, 3, 0);
+    commit(&mut view, &move_one);
+    assert_eq!(node(&view, 1000)["children"][0]["id"], 3);
+}
+
+#[test]
+fn radio_work_accepts_the_exact_allowance_and_rejects_the_next_scan() {
+    use varta_common::view::{DRAFT_MAX_RADIO_WORK, DRAFT_RADIO_NODE_WORK};
+    use varta_view::{ViewError, Violation};
+    let mut view = View::default();
+    let mut setup = BatchWriter::new();
+    // Two ancestor visits, two group visits and 960 UTF-8 name bytes per scan.
+    setup
+        .create_element(2, Tag::Input)
+        .set_attribute(2, Attribute::Type, "radio")
+        .set_attribute(
+            2,
+            Attribute::Name,
+            &"X".repeat(1024 - 4 * DRAFT_RADIO_NODE_WORK),
+        )
+        .insert(1, 2, 0);
+    commit(&mut view, &setup);
+    let count = DRAFT_MAX_RADIO_WORK / 1024;
+    let mut exact = BatchWriter::new();
+    for _ in 0..count {
+        exact.set_checked(2, 1, 0);
+    }
+    commit(&mut view, &exact);
+    assert!(checked(&view, 2));
+    let before = view.snapshot();
+    exact.set_checked(2, 1, 0);
+    assert!(matches!(view.commit(&exact.finish(), false, &mut Denied),
+        Err(ViewError::Invalid { operation: Some(index), violation: Violation::RadioWorkLimit }) if index == count));
+    assert_eq!(view.snapshot(), before);
+}
+
+#[test]
+fn tab_partitions_many_distinct_radio_groups_once_and_rebuilds_after_name_changes() {
+    let mut view = View::default();
+    let mut batch = BatchWriter::new();
+    batch.create_element(2, Tag::Button).insert(1, 2, 0);
+    for group in 0..64 {
+        for offset in 0..2 {
+            let id = 10 + group * 2 + offset;
+            batch
+                .create_element(id, Tag::Input)
+                .set_attribute(id, Attribute::Type, "radio")
+                .set_attribute(id, Attribute::Name, &format!("g{group}"))
+                .insert(1, id, 0);
+        }
+        batch.set_checked(11 + group * 2, 1, 0);
+    }
+    batch.create_element(1000, Tag::Button).insert(1, 1000, 0);
+    commit(&mut view, &batch);
+    let mut current = 2;
+    for group in 0..64 {
+        key(&mut view, current, "Tab", false);
+        current = 11 + group * 2;
+        assert_eq!(view.snapshot()["focus"], current);
+    }
+    key(&mut view, current, "Tab", false);
+    assert_eq!(view.snapshot()["focus"], 1000);
+    key(&mut view, 1000, "Tab", true);
+    assert_eq!(view.snapshot()["focus"], 137);
+    // Changing membership invalidates no persistent cache: the next Tab sees
+    // the new partition and the existing checked-peer reconciliation.
+    let mut rename = BatchWriter::new();
+    rename.set_attribute(13, Attribute::Name, "g0");
+    commit(&mut view, &rename);
+    key(&mut view, 2, "Tab", false);
+    assert_eq!(view.snapshot()["focus"], 12);
+    key(&mut view, 12, "Tab", false);
+    assert_eq!(view.snapshot()["focus"], 13);
+    key(&mut view, 13, "Tab", true);
+    assert_eq!(view.snapshot()["focus"], 12);
+}

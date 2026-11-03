@@ -385,6 +385,193 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             B::new().set_text(402, "C").finish(),
         ],
     ));
+    for kind in ["checked", "stale", "type", "name", "subtree", "wide-name"] {
+        let mut setup = B::new();
+        setup
+            .create_element(2, Tag::Div)
+            .insert(1, 2, 0)
+            .create_element(1000, Tag::Div)
+            .insert(1, 1000, 0)
+            .set_title("before");
+        let name = if kind == "wide-name" {
+            "界".repeat(341)
+        } else {
+            "Ж".repeat(512)
+        };
+        for id in 3..103 {
+            setup
+                .create_element(id, Tag::Input)
+                .set_attribute(id, A::Type, "radio")
+                .set_attribute(id, A::Name, &name)
+                .insert(2, id, 0);
+        }
+        setup.set_checked(3, 1, 0);
+        let mut scans = B::new();
+        scans.set_title("must roll back");
+        if kind == "subtree" {
+            scans.insert(1000, 2, 0);
+        } else {
+            for i in 0..128 {
+                let id = 3 + i % 2;
+                match kind {
+                    "type" => {
+                        scans.set_attribute(id, A::Type, "radio");
+                    }
+                    "name" => {
+                        scans.set_attribute(id, A::Name, &name);
+                    }
+                    _ => {
+                        scans.set_checked(id, 1, if kind == "stale" { 1 } else { 0 });
+                    }
+                }
+            }
+        }
+        let label = match kind {
+            "checked" => "radio-work-checked",
+            "wide-name" => "radio-work-wide-name",
+            "stale" => "radio-work-stale",
+            "type" => "radio-work-type",
+            "name" => "radio-work-name",
+            _ => "radio-work-subtree",
+        };
+        cases.push((
+            label,
+            vec![
+                setup.finish(),
+                scans.finish(),
+                B::new().set_checked(4, 1, 0).finish(),
+            ],
+        ));
+    }
+    let mut exact_setup = B::new();
+    exact_setup
+        .create_element(2, Tag::Input)
+        .set_attribute(2, A::Type, "radio")
+        .set_attribute(2, A::Name, &"X".repeat(960))
+        .insert(1, 2, 0);
+    let mut exact = B::new();
+    for _ in 0..varta_common::view::DRAFT_MAX_RADIO_WORK / 1024 {
+        exact.set_checked(2, 1, 0);
+    }
+    let accepted = exact.finish();
+    exact.set_checked(2, 1, 0);
+    cases.push((
+        "radio-work-exact",
+        vec![
+            exact_setup.finish(),
+            accepted,
+            exact.finish(),
+            B::new().finish(),
+        ],
+    ));
+    let mut retained = B::new();
+    let fields = varta_common::view::DRAFT_MAX_RETAINED_TEXT_BYTES
+        / varta_common::view::DRAFT_FIELD_VALUE_RESERVATION_BYTES;
+    let remaining = varta_common::view::DRAFT_MAX_RETAINED_TEXT_BYTES
+        - fields * varta_common::view::DRAFT_FIELD_VALUE_RESERVATION_BYTES;
+    for id in 2..2 + fields as u32 {
+        retained.create_element(id, Tag::Input).insert(1, id, 0);
+    }
+    retained
+        .create_text(1000, &"X".repeat(remaining))
+        .insert(1, 1000, 0);
+    cases.push((
+        "retained-text-slots",
+        vec![
+            retained.finish(),
+            B::new().set_title("x").finish(),
+            B::new().set_class(2, "x").finish(),
+            B::new().set_attribute(2, A::Placeholder, "界").finish(),
+            B::new().set_style(2, CssProperty::Color, "#abc").finish(),
+            B::new().stylesheet(7, ".x { color:#abc; }").finish(),
+            B::new().create_text(1001, "x").finish(),
+            B::new()
+                .set_text(1000, &"X".repeat(remaining - 8))
+                .set_class(2, "x")
+                .set_attribute(2, A::Placeholder, "界")
+                .set_style(2, CssProperty::Color, "#abc")
+                .finish(),
+            B::new()
+                .remove_attribute(2, A::Placeholder)
+                .set_title("界")
+                .finish(),
+            B::new().set_title("界x").finish(),
+            B::new()
+                .remove_style(2, CssProperty::Color)
+                .set_title("界1234")
+                .finish(),
+            B::new().create_element(1001, Tag::Input).finish(),
+            B::new().remove(2).create_element(1001, Tag::Input).finish(),
+        ],
+    ));
+    let media_source = |conditions, rules| {
+        format!(
+            "@media {}{{{}}}",
+            vec!["(min-width:0px)"; conditions].join(" and "),
+            ".a{}".repeat(rules)
+        )
+    };
+    let medium = media_source(500, 200);
+    let huge = media_source(500, 1100);
+    cases.push((
+        "css-work-single",
+        vec![
+            B::new().set_title("before").finish(),
+            B::new().set_title("after").stylesheet(1, &huge).finish(),
+            B::new().stylesheet(1, ".a { color:#abc }").finish(),
+        ],
+    ));
+    let mut inventory = vec![B::new().set_title("before").finish()];
+    for id in 1..=5 {
+        inventory.push(B::new().stylesheet(id, &medium).finish());
+    }
+    inventory.push(B::new().set_title("after").stylesheet(6, &medium).finish());
+    inventory.push(B::new().stylesheet(1, "").stylesheet(6, &medium).finish());
+    inventory.push(B::new().stylesheet(6, ".a { color:#abc }").finish());
+    inventory.push(B::new().stylesheet(7, &medium).finish());
+    inventory.push(B::new().stylesheet(8, &medium).finish());
+    cases.push(("css-work-inventory", inventory));
+    let mut repeated = B::new();
+    for _ in 0..6 {
+        repeated.stylesheet(1, &medium);
+    }
+    cases.push((
+        "css-work-transaction",
+        vec![
+            B::new().stylesheet(1, &medium).finish(),
+            repeated.finish(),
+            B::new().stylesheet(1, "").finish(),
+        ],
+    ));
+    let mut exact = media_source(500, 1039);
+    let parsed = varta_common::view::stylesheet::parse_with_work_limit(&exact, usize::MAX)?;
+    exact.push_str(&" ".repeat(varta_common::view::DRAFT_MAX_STYLESHEET_WORK - parsed.work));
+    cases.push((
+        "css-work-exact",
+        vec![
+            B::new().stylesheet(1, &exact).finish(),
+            B::new().stylesheet(1, &format!("{exact} ")).finish(),
+            B::new().stylesheet(1, "").finish(),
+        ],
+    ));
+    let stylesheet_sources = vec![
+        ".a{}".to_owned(),
+        ":root { --c: \"界\" } .a.a:checked, .b { color:#abc }".to_owned(),
+        "@media (min-width:0px) and (prefers-color-scheme:dark){.a{padding:var(--size, 0)}}"
+            .to_owned(),
+        ".a{;}".to_owned(),
+        ".a{;color:#abc}".to_owned(),
+        ".a{color:#abc;;}".to_owned(),
+        ".a{color:#abc;}".to_owned(),
+        medium,
+        huge,
+        exact,
+    ];
+    let stylesheet_checks=stylesheet_sources.into_iter().map(|source|{
+        let parsed=varta_common::view::stylesheet::parse_with_work_limit(&source,usize::MAX);
+        serde_json::json!({"source":source,"valid":parsed.is_ok(),"work":parsed.as_ref().ok().map(|sheet|sheet.work),
+            "limit":matches!(parsed.as_ref().err(),Some(error) if error.violation==varta_common::view::stylesheet::Violation::WorkLimit)})
+    }).collect::<Vec<_>>();
     let observations=cases.into_iter().map(|(name,batches)|{
         let mut view=View::default();let mut broker=Denied;
         let results=batches.iter().map(|batch|{
@@ -393,7 +580,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(varta_view::ViewError::Invalid {operation, violation:varta_view::Violation::SelectWorkLimit}) => (true, *operation),
                 _ => (false, None),
             };
-            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"snapshot":view.snapshot()})
+            let (radio_budget, radio_operation) = match result.as_ref().err() {
+                Some(varta_view::ViewError::Invalid {operation, violation:varta_view::Violation::RadioWorkLimit}) => (true, *operation),
+                _ => (false, None),
+            };
+            let retained_budget = matches!(result.as_ref().err(), Some(varta_view::ViewError::Invalid {violation:varta_view::Violation::RetainedTextLimit,..}));
+            let (stylesheet_budget,stylesheet_operation)=match result.as_ref().err(){
+                Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::StylesheetWorkLimit})=>(true,*operation),_ =>(false,None)};
+            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"radioBudget":radio_budget,"radioOperation":radio_operation,"retainedBudget":retained_budget,"stylesheetBudget":stylesheet_budget,"stylesheetOperation":stylesheet_operation,"snapshot":view.snapshot()})
         }).collect::<Vec<_>>();
         serde_json::json!({"name":name,"batches":batches,"results":results})
     }).collect::<Vec<_>>();
@@ -611,7 +805,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let selects = serde_json::json!({"batch":choice_batch,"steps":steps});
     let output = serde_json::to_vec(
-        &serde_json::json!({"cases":observations,"css":css,"events":events,"flex":flex,"checkables":checkables,"selects":selects}),
+        &serde_json::json!({"cases":observations,"stylesheetChecks":stylesheet_checks,"css":css,"events":events,"flex":flex,"checkables":checkables,"selects":selects}),
     )?;
     if let Some(path) = std::env::args_os().nth(1) {
         std::fs::write(path, output)?;

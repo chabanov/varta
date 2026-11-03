@@ -406,6 +406,163 @@ export function main():void {{
 }
 
 #[test]
+fn radio_work_exhaustion_is_fatal_and_retains_the_committed_group() {
+    let source = format!(
+        r#"
+export function main():void {{
+  const name='Ж'.repeat(512);
+  let first=0;
+  for(let i=0;i<100;i++){{
+    const radio=View.node();if(i===0)first=radio;
+    View.createElement(radio,{input});View.setAttribute(radio,{type_attr},'radio');
+    View.setAttribute(radio,{name_attr},name);View.insert({root},radio,0);
+  }}
+  View.setChecked(first,true);
+  const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id_attr},'trigger');
+  View.on(button,{click},(event:ViewEvent):void=>{{
+    View.setTitle('must roll back');
+    for(let i=0;i<128;i++)View.setChecked(first,true);
+    try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+  }},0,0,0,0);
+  View.insert({root},button,0);View.setTitle('before');View.commit();
+}}
+"#,
+        input = view::Tag::Input.code(),
+        type_attr = view::Attribute::Type.code(),
+        name_attr = view::Attribute::Name.code(),
+        button = view::Tag::Button.code(),
+        id_attr = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code(),
+        root = view::ROOT_NODE,
+    );
+    let bytes = compile(&source);
+    let mut result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(
+            result
+                .report
+                .failure
+                .take()
+                .expect("fatal radio work limit")
+        ),
+        varta_view::Violation::RadioWorkLimit
+    );
+    assert!(
+        result.report.output.lines.is_empty(),
+        "{:?}",
+        result.report.output.lines
+    );
+    assert_eq!(result.commits, 1);
+    let snapshot = result.snapshot.expect("retained committed view");
+    assert_eq!(snapshot["title"], "before");
+    assert_eq!(snapshot["tree"]["children"][0]["checked"], true);
+    assert_eq!(snapshot["tree"]["children"][1]["checked"], false);
+}
+
+#[test]
+fn retained_view_text_exhaustion_is_fatal_and_keeps_the_prior_payload() {
+    let fields = view::DRAFT_MAX_RETAINED_TEXT_BYTES / view::DRAFT_FIELD_VALUE_RESERVATION_BYTES;
+    let filler = view::DRAFT_MAX_RETAINED_TEXT_BYTES
+        - fields * view::DRAFT_FIELD_VALUE_RESERVATION_BYTES
+        - "before".len()
+        - "trigger".len();
+    let source = format!(
+        r#"
+export function main():void {{
+  for(let i=0;i<{fields};i++){{ const field=View.node();View.createElement(field,{input});View.insert({root},field,0); }}
+  const text=View.node();View.createText(text,'X'.repeat({filler}));View.insert({root},text,0);
+  const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id_attr},'trigger');
+  View.on(button,{click},(event:ViewEvent):void=>{{
+    View.setTitle('before!');
+    try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+  }},0,0,0,0);
+  View.insert({root},button,0);View.setTitle('before');View.commit();
+}}
+"#,
+        input = view::Tag::Input.code(),
+        root = view::ROOT_NODE,
+        button = view::Tag::Button.code(),
+        id_attr = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code()
+    );
+    let bytes = compile(&source);
+    let mut result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(
+            result
+                .report
+                .failure
+                .take()
+                .expect("fatal retained text limit")
+        ),
+        varta_view::Violation::RetainedTextLimit
+    );
+    assert!(
+        result.report.output.lines.is_empty(),
+        "{:?}",
+        result.report.output.lines
+    );
+    assert_eq!(result.commits, 1);
+    assert_eq!(result.snapshot.expect("retained view")["title"], "before");
+}
+
+#[test]
+fn stylesheet_expansion_work_is_fatal_before_effects_and_keeps_the_previous_view() {
+    let source = format!(
+        r#"
+export function main():void {{
+  const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id_attr},'trigger');
+  View.on(button,{click},(event:ViewEvent):void=>{{
+    const count=event.seq===0?1100:1101;
+    const conditions='(min-width:0px) and '.repeat(499)+'(min-width:0px)';
+    View.stylesheet(1,'@media '+conditions+'{{'+'.a{{}}'.repeat(count)+'}}');
+    View.setTitle('after');
+    try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+  }},0,0,0,0);
+  View.insert({root},button,0);View.setTitle('before');View.commit();
+}}
+"#,
+        root = view::ROOT_NODE,
+        button = view::Tag::Button.code(),
+        id_attr = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code()
+    );
+    let bytes = compile(&source);
+    let mut result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(
+            result
+                .report
+                .failure
+                .take()
+                .expect("fatal stylesheet work limit")
+        ),
+        varta_view::Violation::StylesheetWorkLimit
+    );
+    assert!(
+        result.report.output.lines.is_empty(),
+        "{:?}",
+        result.report.output.lines
+    );
+    assert_eq!(result.commits, 1);
+    let snapshot = result.snapshot.expect("prior view");
+    assert_eq!(snapshot["title"], "before");
+    assert!(snapshot["stylesheets"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn a_turn_commits_at_most_one_batch() {
     let source = "export function main(): void { View.setTitle('a'); View.commit(); View.setTitle('b'); View.commit(); }";
     assert!(matches!(

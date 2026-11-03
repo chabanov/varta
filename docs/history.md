@@ -1497,3 +1497,183 @@ remain open. Radio/cascade work and aggregate retained-text budgeting need their
 own audit; this allowance is specific to selection operations and option inventory.
 The independent prototype applier is outside these official-host checks; any
 remaining pilot use needs a migration/alignment audit before release acceptance.
+
+## Official-host pilot mockups — 2026-11-02
+
+Committed as `a71d281`: UARP console mockup encoding, linting and projection now
+consume the common registry and official browser host modules, replacing their
+prototype dependency. Lint checks real attribute/style semantics and complete
+transactions, including packaged-resource denial and aggregate select work.
+Projection checks live values, checked state, duplicate selection identity and
+open dialogs in addition to structure and the existing bounded geometry sample.
+A loopback-only named-asset server and its allowlist/Host/path/resource tests
+replace serving the repository tree for these pages.
+
+The real WebKit probe exposed automatic selection of the first disabled option.
+DOM replay now reconciles selected indices against the shared model, retaining
+explicit no-selection through reinsertion and dirty attributes. Equal/no-op
+commits avoid a setter write and reconciliation creates no field edits. A native
+oracle supplies the disabled/select-state expectations independently.
+
+Focused evidence: 15 native select tests, 109 oracle-enabled Node browser tests,
+one server test, eight new native/Chrome select-state batches and the existing
+select/radio/work/event probes passed. Chrome and WebKit each passed five mockups,
+15 projections and 41 regression checks. Firefox failed at launch in that run
+(timeout with local process/graphics diagnostics), so the newer package has no
+passing complete three-engine matrix. The final full gate passed all eight
+commands and 3048 tests with unchanged sources, report
+`target/verification/20261102-192654-7q8tkmi1/report.json`. This is macOS arm64
+package evidence, not complete pilot/native-platform or release acceptance.
+
+## Radio transaction work — scoped verification 2026-11-02
+
+Working tree after `a71d281`: the shared view registry now declares a separate
+8,388,608-unit radio-reconciliation allowance and 16 units per visited node.
+Transactions charge owner/group walks, compared UTF-8 name bytes and insertion
+subtrees. Checked/type/name writes, stale patches and unchecked moved radios
+have the same admission regardless of deferred parent edits. The JS model caches
+host-owned name byte sizes; native insertion visits stop incrementally at the
+limit. Rejection retains the previous tree, checked membership, sequence counters,
+title and effects. Local input/navigation scans are outside this transaction
+allowance and remain an explicit follow-up, with aggregate retained text/cascade.
+
+Final scoped evidence: **109 varta-view tests**, **43 runtime/view tests** and
+**113 oracle-enabled Node browser tests** passed. The native test admits exactly
+8192 scans at the allowance and rejects the next scan at its original operation
+index. The real Wasm case terminates before guest catch/later logging and keeps
+its prior view. A queued Worker edit cannot change work admission or be lost on
+rejection. Registry drift (five tests), embedding documentation (eleven tests),
+the no-std common-core check and strict all-target Clippy for common/view/project/
+runtime passed; formatting and whitespace checks passed.
+
+Real Chrome matches the fresh native oracle on **55 select/radio work batches**,
+including exact failure positions and rollback, plus **1839 radio DOM/state
+observations**, the eight disabled-select state batches, six checkable activation
+scenarios and eleven select identity/event scenarios. Chrome and WebKit each pass
+five pilot mockups at three sizes and **44 regression checks**, including radio
+work refusal, unchanged DOM/model and a later successful small transaction. The
+named-asset mockup server test passes. This is scoped macOS/engine evidence,
+not a full-workspace gate or complete Firefox/pilot/native-platform acceptance.
+
+Local logs: `target/radio-view-component-final.log`,
+`target/radio-runtime-view-final.log`, `target/radio-oracle-node-final.log`,
+`target/radio-chrome-final.log`, `target/radio-clippy-final.log`,
+`target/radio-pilot-chrome.log` and `target/radio-pilot-webkit.log`. Regenerate the
+native oracle with the verification recipe; these ignored files are development
+evidence, not distributed artifacts.
+
+## Native radio navigation and retained text — scoped verification 2026-11-02
+
+Working tree after `a71d281`, following the radio-transaction batch: native Tab
+builds one transient document/form/name partition instead of scanning the full
+tree per distinct radio name. Current-group membership uses a node set and click
+preactivation reuses its captured peers. Many-group forward/backward order,
+checked stops and a later membership rename pass without a persistent index.
+CSS/display work remains a separate audit.
+
+The registry declares 8,388,608 bytes of canonical retained text/capacity and
+98,304 bytes per live-value reservation. Source bytes cover text, attributes,
+classes, inline styles, title and raw stylesheets, including detached nodes.
+Reservations cover worst-case UTF-8 values under the existing UTF-16 bound and
+remain sticky across type changes, including stale set-value operations. Removal
+reclaims them. With no other payload this draft admits at most 85 reserved value
+fields. This deliberately counts capacity instead of current editable lengths,
+so both accepted and rejected admission agree while a parent edit awaits Worker
+delivery. The native flag fits the existing boxed editing state; JS size maps
+are copied with transactions and omitted from inspection snapshots. Synchronized
+field records are validated before value/counter changes.
+
+Final scoped evidence: **114 varta-view tests**, **44 filtered runtime/view
+checks**, **119 oracle-enabled Node tests**, five registry checks, eleven
+embedding documentation checks and the no-std common-core check pass. Strict
+all-target Clippy for common/view/project/runtime, formatting and whitespace
+checks pass. The intrinsic-library fingerprint is current. Tests cover exact
+capacity, every source slot, hidden/detached state, inter-batch accumulation,
+replacement/deletion, type transitions and cache poisoning after rejected
+transactions. A real Wasm failure retains the previous view and reaches neither
+guest catch nor subsequent logging.
+
+Real Chrome matches **68 selection-work/retained-text batches** from a fresh
+native oracle, including admission, final-inventory failure and DOM rollback.
+The existing 1839 radio observations, eight disabled-select batches, six
+checkable activation and eleven select identity/event scenarios pass. The oracle
+is byte-identical before/after moving the private native capacity flag, so those
+browser comparisons still cover the final native observations. Chrome and
+WebKit each pass five mockups at three sizes and **47 regression checks**,
+including retained-payload refusal and successful reclamation.
+
+Fresh CLI/companion and projection builds pass. The UARP application passes
+**107 tests in 28 groups and two expected native views**. Selected live chat
+probes pass in Chrome 156.0.8078.80 and Playwright WebKit 26.5, including trusted
+thinking/approval/option/input/Enter, the native ordered tree, selected
+accessibility and 195 declarations across 14 properties. An optional engine
+selector now supports these focused runs; the default still attempts all three.
+Firefox and the complete matrix, live-service acceptance, other native targets,
+process RSS/cascade/other-host-buffer measurements and release readiness remain
+open. No new full-workspace pass is claimed.
+
+Local evidence: `target/view-text-component-final.log`,
+`target/view-text-runtime-final.log`, `target/view-text-oracle-node-final.log`,
+`target/view-text-chrome.log`, `target/view-text-clippy-final.log`,
+`target/view-text-pilot-native.log`, `target/view-text-live-chrome.log`,
+`target/view-text-live-webkit.log`, `target/view-text-pilot-chrome.log` and
+`target/view-text-pilot-webkit.log`. These are ignored development results.
+
+
+## Stylesheet expansion and indexed cascade — scoped verification 2026-11-02
+
+Working tree after `a71d281`, including the radio/navigation/retained-text batches:
+shared parsed-work accounting checks source bytes, syntax nodes and copied media
+conditions before expansion. Per-transaction and installed-inventory ceilings
+reject atomically; replacement/removal reclaim installed capacity. Native root
+and class indices avoid scanning unrelated sheets, borrow matched declarations
+and resolve custom maps lazily. Display-only traversal skips hidden subtrees.
+Keyword `var()` admission and empty-declaration placement now agree in the sampled
+native/JS grammar. Memoized JS grammar paths remove the reproduced exponential
+invalid-tail case without rejecting its valid repeated-variable counterpart.
+
+Scoped checks pass: **119 native view tests**, **45 filtered runtime/view checks**,
+**127 oracle-enabled Node tests**, 18 common view tests, five registry checks,
+eleven embedding documentation checks and the no-std common check. Strict
+all-target Clippy passes for common/view/project/runtime; project Clippy also
+passes after the bundle repair. Real Chrome matches **88 work/payload batches**,
+1839 radio observations, eight disabled-select batches, six checkable activation
+and eleven select identity/event scenarios. Chrome and WebKit each pass 15
+mockup projections and **51 regressions**.
+
+Fresh CLI/companion builds and the normal UARP check pass: **107 tests in 28
+groups and two expected native views**. The first compiled WebKit run exposed
+missing checker/error bindings in manual browser bundle assembly. The bindings
+were repaired, binaries rebuilt, and the final live Chrome/WebKit runs both pass
+trusted interactions, ordered tree, selected accessibility and 195 declarations
+across 14 properties. A separate source-free generated-artifact regression passes
+initial CSS and a trusted event whose excessive stylesheet fails through the
+Worker before guest catch/logging, retaining its prior DOM and title.
+
+Evidence: `target/style-work-component.log`, `target/style-work-runtime.log`,
+`target/style-work-oracle-node-final.log`, `target/style-work-chrome-final.log`,
+`target/style-work-pilot-chrome.log`, `target/style-work-pilot-webkit.log`,
+`target/style-work-pilot-native.log`, `target/style-work-live-chrome-final.log`,
+`target/style-work-live-webkit-final.log` and
+`target/style-work-generated-bundle.log`. The earlier
+`target/style-work-live-webkit.log` records the repaired failure, not a pass.
+These scoped results do not establish full cascade/output/accessibility budgets,
+Firefox, other native platforms, sustained resource measurements or release
+readiness. The commit-boundary full gate is recorded separately.
+
+
+## View resource package — full gate 2026-11-02
+
+The radio/navigation/retained-text/stylesheet package after `a71d281` passed
+**3066 tests, 0 failures, 16 ignored**. All eight full-gate commands passed with
+an unchanged before/after source fingerprint. Report:
+`target/verification/20261102-215501-s16w2dmu/report.json` (local, ignored).
+The conformance baseline remains 123 passing and four known unsupported cases.
+Only documentation result records were edited after this gate; engine and build
+inputs remained unchanged. Scoped browser, Worker, generated-bundle and UARP
+results are recorded above. Full CSS/resource, browser/platform and release
+acceptance remain open.
+
+The additional packaging-boundary CLI smoke repeat also passed **350 tests**;
+evidence: `target/view-resource-commit-cli-repeat.log`. No engine/build inputs
+changed between the full gate, this repeat and the commit.

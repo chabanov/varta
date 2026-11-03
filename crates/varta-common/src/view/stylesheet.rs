@@ -74,15 +74,21 @@ impl Rule {
     /// The highest specificity among the selectors that match `subject`.
     #[must_use]
     pub fn matching(&self, subject: &Subject<'_>) -> Option<usize> {
+        self.matching_with_classes(subject, |class| subject.classes.contains(&class))
+    }
+    /// The same matcher with a caller-owned class membership index.
+    #[must_use]
+    pub fn matching_with_classes(
+        &self,
+        subject: &Subject<'_>,
+        contains: impl Fn(&str) -> bool,
+    ) -> Option<usize> {
         self.selectors
             .iter()
             .filter(|selector| {
                 selector.root == subject.root
                     && (selector.root || !selector.classes.is_empty())
-                    && selector
-                        .classes
-                        .iter()
-                        .all(|class| subject.classes.contains(&class.as_str()))
+                    && selector.classes.iter().all(|class| contains(class))
                     && selector.pseudo.iter().all(|pseudo| match pseudo {
                         Pseudo::Hover | Pseudo::Active => false,
                         Pseudo::FocusVisible => subject.focused,
@@ -110,6 +116,8 @@ pub enum Violation {
     Declaration,
     #[error("empty declaration")]
     EmptyDeclaration,
+    #[error("stylesheet work limit exceeded")]
+    WorkLimit,
     #[error("unterminated rule")]
     Unterminated,
 }
@@ -130,9 +138,28 @@ struct Parser {
     /// The byte offset of every char index, plus the end.
     offsets: Vec<usize>,
     at: usize,
+    work: usize,
+    allowance: usize,
+}
+
+/// Checked rules and their canonical parsed-work charge.
+#[derive(Debug, Clone)]
+pub struct ParsedStylesheet {
+    pub rules: Vec<Rule>,
+    pub work: usize,
 }
 
 impl Parser {
+    fn charge(&mut self, work: usize) -> Parsed<()> {
+        self.work = self.work.saturating_add(work);
+        if self.work > self.allowance {
+            return self.fail(Violation::WorkLimit);
+        }
+        Ok(())
+    }
+    fn node(&mut self) -> Parsed<()> {
+        self.charge(super::DRAFT_STYLESHEET_NODE_WORK)
+    }
     fn fail<T>(&self, violation: Violation) -> Parsed<T> {
         self.fail_at(self.at, violation)
     }
@@ -215,20 +242,22 @@ impl Parser {
                     if self.peek().is_none() {
                         return self.fail(Violation::Unterminated);
                     }
-                    rules.push(self.rule(media.clone())?);
+                    rules.push(self.rule(&media)?);
                 }
             } else {
-                rules.push(self.rule(Vec::new())?);
+                rules.push(self.rule(&[])?);
             }
         }
     }
     fn conditions(&mut self) -> Parsed<Vec<Condition>> {
+        self.node()?;
         let mut conditions = vec![self.condition()?];
         loop {
             self.skip();
             if !self.eat("and") {
                 return Ok(conditions);
             }
+            self.node()?;
             conditions.push(self.condition()?);
         }
     }
@@ -253,7 +282,10 @@ impl Parser {
         };
         condition.map_or_else(|| self.fail_at(start, Violation::Media), Ok)
     }
-    fn rule(&mut self, media: Vec<Condition>) -> Parsed<Rule> {
+    fn rule(&mut self, media: &[Condition]) -> Parsed<Rule> {
+        self.charge(
+            super::DRAFT_STYLESHEET_NODE_WORK.saturating_mul(media.len().saturating_add(1)),
+        )?;
         let mut selectors = vec![self.selector()?];
         loop {
             self.skip();
@@ -283,18 +315,28 @@ impl Parser {
                     offset: start,
                 });
             }
-            declarations.push(declaration(part).ok_or(StylesheetError {
+            let entry = declaration(part).ok_or(StylesheetError {
                 violation: Violation::Declaration,
                 offset: start,
-            })?);
+            })?;
+            self.node()?;
+            self.charge(
+                entry.1.len()
+                    + match &entry.0 {
+                        Name::Custom(name) => name.len(),
+                        Name::Property(_) => 0,
+                    },
+            )?;
+            declarations.push(entry);
         }
         Ok(Rule {
             selectors,
             declarations,
-            media,
+            media: media.to_vec(),
         })
     }
     fn selector(&mut self) -> Parsed<Selector> {
+        self.node()?;
         self.skip();
         let start = self.at;
         if self.eat(":root") {
@@ -309,13 +351,17 @@ impl Parser {
         }
         let mut classes = Vec::new();
         while self.eat(".") {
-            classes.push(self.ident()?);
+            self.node()?;
+            let class = self.ident()?;
+            self.charge(class.len())?;
+            classes.push(class);
         }
         if classes.is_empty() {
             return self.fail_at(start, Violation::Selector);
         }
         let mut pseudo = Vec::new();
         while self.peek() == Some(':') {
+            self.node()?;
             let Some(found) = PSEUDO_CLASSES.iter().position(|name| self.starts(name)) else {
                 return self.fail(Violation::Selector);
             };
@@ -388,6 +434,22 @@ fn forbidden(text: &str) -> Option<usize> {
 /// # Errors
 /// The first violation, with its byte offset.
 pub fn parse(text: &str) -> Result<Vec<Rule>, StylesheetError> {
+    parse_with_work_limit(text, super::DRAFT_MAX_STYLESHEET_WORK).map(|parsed| parsed.rules)
+}
+
+/// Parse within a remaining transaction allowance, capped by the shared limit.
+/// The counter is checked before copying media conditions into another rule.
+pub fn parse_with_work_limit(
+    text: &str,
+    allowance: usize,
+) -> Result<ParsedStylesheet, StylesheetError> {
+    let allowance = allowance.min(super::DRAFT_MAX_STYLESHEET_WORK);
+    if text.len() > allowance {
+        return Err(StylesheetError {
+            violation: Violation::WorkLimit,
+            offset: 0,
+        });
+    }
     if let Some(offset) = forbidden(text) {
         return Err(StylesheetError {
             violation: Violation::Forbidden,
@@ -400,17 +462,69 @@ pub fn parse(text: &str) -> Result<Vec<Rule>, StylesheetError> {
         .map(|(offset, _)| offset)
         .chain(std::iter::once(text.len()))
         .collect();
-    Parser {
+    let mut parser = Parser {
         chars,
         offsets,
         at: 0,
-    }
-    .sheet()
+        work: text.len(),
+        allowance,
+    };
+    let rules = parser.sheet()?;
+    Ok(ParsedStylesheet {
+        rules,
+        work: parser.work,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_expansion_is_charged_before_cloning_and_exact_work_is_admitted() {
+        let source = ".a{}";
+        let parsed =
+            parse_with_work_limit(source, super::super::DRAFT_MAX_STYLESHEET_WORK).unwrap();
+        assert_eq!(
+            parsed.work,
+            source.len() + 3 * super::super::DRAFT_STYLESHEET_NODE_WORK + 1
+        );
+        assert!(parse_with_work_limit(source, parsed.work).is_ok());
+        assert_eq!(
+            parse_with_work_limit(source, parsed.work - 1)
+                .unwrap_err()
+                .violation,
+            Violation::WorkLimit
+        );
+        let media = format!(
+            "@media {}{{{}}}",
+            vec!["(min-width:0px)"; 500].join(" and "),
+            ".a{}".repeat(1100)
+        );
+        assert!(media.len() < super::super::DRAFT_MAX_VALUE_BYTES / 2);
+        assert_eq!(parse(&media).unwrap_err().violation, Violation::WorkLimit);
+    }
+
+    #[test]
+    fn indexed_class_membership_keeps_comma_and_duplicate_specificity() {
+        let rules = parse(".a.a:checked, .a.b { color:#abc }").unwrap();
+        for classes in [vec!["a", "a"], vec!["a", "b"], vec!["b"], vec![]] {
+            let index: std::collections::BTreeSet<_> = classes.iter().copied().collect();
+            for checked in [false, true] {
+                let subject = Subject {
+                    root: false,
+                    classes: &classes,
+                    focused: false,
+                    disabled: false,
+                    checked,
+                };
+                assert_eq!(
+                    rules[0].matching(&subject),
+                    rules[0].matching_with_classes(&subject, |name| index.contains(name))
+                );
+            }
+        }
+    }
 
     #[test]
     fn the_stylesheet_grammar_is_checked() {

@@ -11094,6 +11094,7 @@ export const registry = freeze({
       "commands": 16,
       "cssTokens": 128,
       "events": 64,
+      "fieldValueReservationBytes": 98304,
       "hexDigits": [
         3,
         6,
@@ -11103,9 +11104,14 @@ export const registry = freeze({
       "listeners": 8192,
       "nodes": 65536,
       "operations": 16384,
+      "radioNodeWork": 16,
+      "radioWork": 8388608,
+      "retainedTextBytes": 8388608,
       "selectNodeWork": 16,
       "selectWork": 8388608,
       "stylesheetBytes": 262144,
+      "stylesheetNodeWork": 16,
+      "stylesheetWork": 8388608,
       "valueBytes": 65536
     },
     "opcodes": [

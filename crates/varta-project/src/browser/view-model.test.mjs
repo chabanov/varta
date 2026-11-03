@@ -5,7 +5,7 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 import { encodeViewBatch, decodeViewBatch } from "./view-codec.mjs";
 import { createViewModel } from "./view-model.mjs";
 import { encodeViewEvent } from "./view-dom.mjs";
-import { checkStyleDeclaration } from "./view-css.mjs";
+import { checkStyleDeclaration, checkStylesheet, StylesheetWorkError } from "./view-css.mjs";
 
 const V = registry.view;
 const batch = (...ops) => encodeViewBatch(ops);
@@ -113,6 +113,9 @@ if (oraclePath) {
         try { m.commit(Uint8Array.from(item.batches[i])); } catch (caught) { ok = false;error=caught; }
         assert.equal(ok, result.ok, `${item.name}/${i}: ${result.error}`);
         if(result.budget){assert.equal(error.rule,'select work budget');assert.equal(error.operation??null,result.operation,`${item.name}/${i}: budget position`);}
+        if(result.radioBudget){assert.equal(error.rule,'radio work budget');assert.equal(error.operation??null,result.radioOperation,`${item.name}/${i}: radio budget position`);}
+        if(result.retainedBudget){assert.equal(error.rule,'retained text budget');assert.equal(error.operation,undefined,`${item.name}/${i}: final inventory`);}
+        if(result.stylesheetBudget){assert.equal(error.rule,'stylesheet work budget');assert.equal(error.operation??null,result.stylesheetOperation,`${item.name}/${i}: stylesheet work`);}
         const expected = structuredClone(result.snapshot);
         if (expected.stylesheets.length) {
           const strip = (node) => { delete node.style; for (const child of node.children ?? []) strip(child); }; strip(expected.tree);
@@ -120,6 +123,15 @@ if (oraclePath) {
         const { tree, title, focus, stylesheets } = expected;
         assert.deepEqual(project(m.snapshot()), { tree, title, focus, stylesheets }, `${item.name}/${i}`);
       }
+    }
+  });
+  test('native stylesheet grammar and parsed-work units agree with the browser checker',()=>{
+    assert(oracle.stylesheetChecks?.length,'native stylesheet observations missing');
+    for(const item of oracle.stylesheetChecks){
+      let parsed,error;try{parsed=checkStylesheet(item.source,V);}catch(caught){error=caught;}
+      assert.equal(Boolean(parsed&&!parsed.errors.length),item.valid);
+      assert.equal(error instanceof StylesheetWorkError,item.limit);
+      if(item.valid)assert.equal(parsed.work,item.work);
     }
   });
   test("all native event record kinds encode byte-identically",()=>{

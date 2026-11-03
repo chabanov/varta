@@ -79,8 +79,7 @@ pub(crate) fn hidden_element(
         .map(String::as_str)
         == Some("true")
         || tree
-            .computed(id, environment)
-            .get(&CssProperty::Display)
+            .computed_property(id, environment, CssProperty::Display)
             .is_some_and(|display| display == "none")
         || (element.tag == Tag::Dialog && !element.open)
 }

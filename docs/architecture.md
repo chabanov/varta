@@ -11756,6 +11756,14 @@ placeholders remain unmasked. The supplied font provides the mask glyph or its
 Chrome password caret behavior; sampled WebKit uses UTF-16-unit masks instead,
 so full cross-browser password editing parity remains open. Native search fields
 use plain text editing; a platform search-clear affordance is not supplied.
+Native Tab builds one document/form/name partition for all radio groups and
+reuses it through the navigation step, including checked/disabled/hidden members.
+It does not scan the complete tree for each distinct name. The partition is
+transient, so a later name/form mutation is reflected on the next key. Membership
+checks use node sets; activation reuses its captured peer states for unchecking
+and cancellation. CSS/display work and all-target input performance remain
+separate acceptance work.
+
 Explicitly styled checkbox/radio inputs use the same rectangular box subset and
 paint a scalable check mark or circular checked dot in `currentcolor`, clipped
 to the content box and ancestor scrollports. They require explicit foreground,
@@ -13105,14 +13113,27 @@ code, reserved byte, UTF-16 string and trailing byte. The pure model copies all
 mutable state, applies operations in order, checks final unique identifiers and
 swaps only after success. It includes field counters, radio groups, listener
 filters, child rules, command context/arguments, pending copy ids and stylesheet
-limits. Snapshots cannot mutate the authority. The Worker and parent DOM adapter use this model. Invalid batches trap in
+limits. Transactions also meter radio owner/group scans, compared UTF-8 name
+bytes and insertion-subtree visits through the shared registry. The scan charges
+ignore local checked state and stale edit counters so an undelivered edit cannot
+change Worker/DOM admission. Failure discards the copied tree and any effects.
+Snapshots cannot mutate the authority. Final retained-text accounting covers
+UTF-8 source slots plus sticky worst-case UTF-8 reservations for live field values.
+Capacity follows surviving nodes across type changes, so deferred edits and stale
+patches cannot produce different parent/Worker admission. Deletion reclaims it.
+Browser source-size maps are transaction-owned and omitted from snapshots; local
+and synchronized values are checked before advancing sequence/state. The Worker
+and parent DOM adapter use this model. Invalid batches trap in
 `view_commit` before any later guest effect, and the parent checks again before
 DOM application. One turn can commit once; it must receive the parent acknowledgement
 before taking another task. At most one bounded batch is in flight.
 
 The DOM adapter uses a closed shadow root and checked CSSOM/DOM methods,
 never HTML parsing. It preserves live node identities, drops stale field patches
-and encodes events from the generated layout. It blocks ambient asset URLs:
+and encodes events from the generated layout. After replay it reconciles select
+indices against the model, including explicit no-selection and duplicate identity;
+equal indices avoid a setter write, and reconciliation emits no field edits.
+It blocks ambient asset URLs:
 resource paths require an already verified blob map. Browser events only emit
 records, never run guest code. Basic DOM/CSP/field/rollback behavior is verified in
 Chrome. A bounded `run({container})` renders and discards event records like native

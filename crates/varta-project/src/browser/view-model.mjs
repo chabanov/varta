@@ -1,31 +1,37 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
-import { checkStylesheet, checkStyleDeclaration, createValueMatcher } from "./view-css.mjs";
+import { checkStylesheet, checkStyleDeclaration, createValueMatcher, StylesheetWorkError } from "./view-css.mjs";
 
 import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork} from './view-select.mjs';
 
 const V = registry.view, W = V.wire;
 const named = (rows) => new Map(rows.map((row) => [row.name, row]));
 const tags = named(V.tags), attributes = named(V.attributes), commands = named(V.commands);
-const element = (tag) => ({ kind: "element", tag, parent: W.noNode, children: [], attributes: new Map(), style: new Map(), class: "", listeners: [], value: "", checked: false, seq: 0, open: false });
+const element = (tag) => ({ kind: "element", tag, parent: W.noNode, children: [], attributes: new Map(), style: new Map(), attributeBytes: new Map(), styleBytes: new Map(), class: "", classBytes: 0, valueReserved: false, listeners: [], value: "", checked: false, seq: 0, open: false });
 const textNode = (text) => ({ kind: "text", text, textBytes:selectionTextBytes(text), parent: W.noNode, children: [], listeners: [] });
 const ident = (text) => text.length <= V.limits.identChars && /^[A-Za-z][A-Za-z0-9_-]*$/.test(text);
 const inputType = (node) => node.attributes.get("type") ?? "text";
 const checkable = (node) => node.tag === "input" && ["checkbox", "radio"].includes(inputType(node));
-function radioGroup(nodes, id) {
+const inputValue=value=>typeof value==='string'&&value.length*2<=V.limits.valueBytes&&!value.includes('\0')&&value.isWellFormed();
+function radioGroup(nodes, id, charge = () => {}) {
   const node = nodes.get(id), name = node?.attributes?.get("name");
   if (!node || !checkable(node) || inputType(node) !== "radio") return [];
-  if (!name) return [id];
+  if (!name) { charge(V.limits.radioNodeWork); return [id]; }
   let owner = id;
   for (let at = id; at !== W.noNode; at = nodes.get(at).parent) {
+    charge(V.limits.radioNodeWork);
     owner = at;
     if (nodes.get(at).tag === "form") break;
   }
   const group = [], stack = [owner];
   while (stack.length) {
+    charge(V.limits.radioNodeWork);
     const current = stack.pop(), candidate = nodes.get(current);
     if (current !== owner && candidate.tag === "form") continue;
-    if (candidate.kind === "element" && checkable(candidate) && inputType(candidate) === "radio" && candidate.attributes.get("name") === name) group.push(current);
+    if (candidate.kind === "element" && checkable(candidate) && inputType(candidate) === "radio") {
+      charge(candidate.attributes.has("name") ? candidate.radioNameBytes : 0);
+      if (candidate.attributes.get("name") === name) group.push(current);
+    }
     stack.push(...candidate.children.toReversed());
   }
   return group;
@@ -71,7 +77,7 @@ function attributeValue(rule, tag, text, linkRequested) {
 /** Pure transaction validator shared by the Worker and DOM adapter. */
 export function createViewModel({ linkRequested = () => false, assetRequested = () => true } = {}) {
   const checkValue = createValueMatcher(Object.fromEntries(V.css.map((row) => [row.name, row.grammar])), Object.fromEntries(V.css.map((row) => [row.name, row.note ?? ""])));
-  let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), pending = new Set(), title = "", focus = W.noNode;
+  let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), sheetBytes = new Map(), sheetWork = new Map(), stylesheetBytes=0, installedStylesheetWork=0, pending = new Set(), title = "", titleBytes = 0, focus = W.noNode;
   let closed = false;
   const validateChoice = (record, choice) => {
     const MAX_NODE_ID=0xffff_ffff;
@@ -82,15 +88,22 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     const operations = decodeViewBatch(bytes);
     // Copy every mutable container. A failed last operation cannot affect a
     // previously committed tree, listener, field, stylesheet or command request.
-    const next = new Map([...nodes].map(([id, node]) => [id, { ...node, children: [...node.children], listeners: [...node.listeners], ...(node.kind === "element" ? { attributes: new Map(node.attributes), style: new Map(node.style) } : {}) }]));
-    const nextSheets = new Map(sheets), copies = new Set(pending), effects = [];
+    const next = new Map([...nodes].map(([id, node]) => [id, { ...node, children: [...node.children], listeners: [...node.listeners], ...(node.kind === "element" ? { attributes: new Map(node.attributes), style: new Map(node.style), attributeBytes: new Map(node.attributeBytes), styleBytes: new Map(node.styleBytes) } : {}) }]));
+    const nextSheets = new Map(sheets), nextSheetBytes = new Map(sheetBytes), nextSheetWork=new Map(sheetWork), copies = new Set(pending), effects = [];
     const handlers = new Set([...nodes.values()].flatMap((node) => node.listeners.map((listener) => listener.handler)));
-    let index, nextTitle = title, nextFocus = focus;
+    let index, nextTitle = title, nextTitleBytes = titleBytes, nextFocus = focus;
+    let parsedStylesheetWork=0,nextStylesheetBytes=stylesheetBytes,nextInstalledStylesheetWork=installedStylesheetWork;
     const fail = (rule) => { throw new ViewProtocolError(rule, index); };
     let selectionWork=0;
     let lastSelectValue;
     const skippedValues=new Set();
     const chargeSelection=(work)=>{selectionWork+=work;if(selectionWork>V.limits.selectWork)fail('select work budget');};
+    let radioWork=0;
+    const chargeRadio=work=>{radioWork+=work;if(radioWork>V.limits.radioWork)fail('radio work budget');};
+    const reconcileRadio=(id,apply)=>{
+      const group=radioGroup(next,id,chargeRadio);
+      if(apply)for(const peer of group)if(peer!==id)next.get(peer).checked=false;
+    };
     const live = (id) => { const node = next.get(id); if (!node) fail("unknown node"); return node; };
     const asElement = (id) => { const node = live(id); if (node.kind !== "element") fail("not an element"); return node; };
     const detach = (id) => { const node = live(id); if (node.parent !== W.noNode) { const siblings = live(node.parent).children; siblings.splice(siblings.indexOf(id), 1); node.parent = W.noNode; } };
@@ -117,17 +130,19 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (op.attribute === "src" && !assetRequested(op.text)) fail("unpackaged view asset");
           const changed=node.attributes.get(op.attribute)!==op.text;
           node.attributes.set(op.attribute, op.text);
+          node.attributeBytes.set(op.attribute,selectionTextBytes(op.text));
+          if(op.attribute === "name")node.radioNameBytes=node.attributeBytes.get(op.attribute);
           if(changed)optionAttribute(next,op.node,op.attribute,true);
-          if (["name", "type"].includes(op.attribute) && node.checked && checkable(node) && inputType(node) === "radio") uncheckRadio(next, op.node);
+          if (["name", "type"].includes(op.attribute) && checkable(node) && inputType(node) === "radio") reconcileRadio(op.node,node.checked);
           break;
         }
-        case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); if(node.attributes.delete(op.attribute))optionAttribute(next,op.node,op.attribute,false); break; }
-        case "set_class": { const node = asElement(op.node); if (op.text.split(/[\t\n\f\r ]+/).filter(Boolean).some((value) => !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(value))) fail("class value"); node.class = op.text; break; }
+        case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); if(node.attributes.delete(op.attribute)){node.attributeBytes.delete(op.attribute);optionAttribute(next,op.node,op.attribute,false);} break; }
+        case "set_class": { const node = asElement(op.node); if (op.text.split(/[\t\n\f\r ]+/).filter(Boolean).some((value) => !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(value))) fail("class value"); node.class = op.text; node.classBytes=selectionTextBytes(op.text); break; }
         case "set_style": {
           const node = asElement(op.node); if (["field-sizing", "resize"].includes(op.property) && node.tag !== "textarea") fail("property not allowed");
-          try { checkStyleDeclaration(V, op.property, op.text, checkValue); } catch { fail("style value"); } node.style.set(op.property, op.text); break;
+          try { checkStyleDeclaration(V, op.property, op.text, checkValue); } catch { fail("style value"); } node.style.set(op.property, op.text); node.styleBytes.set(op.property,selectionTextBytes(op.text)); break;
         }
-        case "remove_style": asElement(op.node).style.delete(op.property); break;
+        case "remove_style": {const node=asElement(op.node);node.style.delete(op.property);node.styleBytes.delete(op.property);break;}
         case "insert": {
           if (op.node === W.root) fail("root not movable");
           const parent = asElement(op.parent), node = live(op.node), rule = tags.get(parent.tag);
@@ -141,8 +156,9 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if(owner!==undefined){if(node.tag==='option')normalizeSelect(next,owner,node.optionSelected?op.node:undefined);else syncSelect(next,owner);}
           const stack = [op.node];
           while (stack.length) {
+            chargeRadio(V.limits.radioNodeWork);
             const id = stack.pop(), child = live(id);
-            if (child.checked && checkable(child) && inputType(child) === "radio") uncheckRadio(next, id);
+            if (checkable(child) && inputType(child) === "radio") reconcileRadio(id,child.checked);
             stack.push(...child.children.toReversed());
           }
           break;
@@ -164,8 +180,15 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (node.listeners.some(same)) fail("duplicate filter"); node.listeners.push({ ...op }); handlers.add(op.handler); break;
         }
         case "unlisten": { const node = asElement(op.node), at = node.listeners.findIndex((listener) => listener.event === op.event && listener.handler === op.handler); if (at < 0) fail("not listening"); node.listeners.splice(at, 1); handlers.delete(op.handler); break; }
-        case "set_value": { const node = asElement(op.node); if (!(node.tag === "input" && !checkable(node) || ["textarea", "select"].includes(node.tag))) fail("not a value field"); if (node.seq === op.base_seq) {if(node.tag==='select'){if(node.value!==op.text)setSelectValue(next,op.node,op.text);}else node.value = op.text;} break; }
-        case "set_checked": { if (op.checked > 1) fail("checked value"); const node = asElement(op.node); if (!checkable(node)) fail("not a checked field"); if (node.seq === op.base_seq) { node.checked = Boolean(op.checked); if (node.checked && inputType(node) === "radio") uncheckRadio(next, op.node); } break; }
+        case "set_value": { const node = asElement(op.node); if (!(node.tag === "input" && !checkable(node) || ["textarea", "select"].includes(node.tag))) fail("not a value field"); node.valueReserved=true; if (node.seq === op.base_seq) {if(node.tag==='select'){if(node.value!==op.text)setSelectValue(next,op.node,op.text);}else node.value = op.text;} break; }
+        case "set_checked": {
+          if (op.checked > 1) fail("checked value"); const node = asElement(op.node); if (!checkable(node)) fail("not a checked field");
+          const accepted=node.seq===op.base_seq;
+          if(accepted)node.checked=Boolean(op.checked);
+          // Meter stale writes too, independently of deferred parent edits.
+          if(op.checked&&inputType(node)==="radio")reconcileRadio(op.node,accepted);
+          break;
+        }
         case "command": {
           const node = asElement(op.node), rule = commands.get(op.command); if (!admitted(rule.tags, node)) fail("command not allowed");
           if (rule.argument ? !(Number.isFinite(op.argument) && op.argument >= 0) : !Object.is(op.argument, 0)) fail("command argument");
@@ -176,26 +199,54 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           effects.push({ ...op }); break;
         }
         case "stylesheet": {
-          if (!op.sheet) fail("stylesheet id");
-          if (op.text) { let checked; try { checked = checkStylesheet(op.text, V); } catch { fail("stylesheet value"); } if (checked.errors.length) fail("stylesheet value"); nextSheets.set(op.sheet, op.text); } else nextSheets.delete(op.sheet);
-          let size = 0; for (const text of nextSheets.values()) size += text.length * 2; if (size > V.limits.stylesheetBytes) fail("stylesheet budget"); break;
+          if(!op.sheet)fail('stylesheet id');
+          let work=0;
+          if(op.text){
+            let checked;try{checked=checkStylesheet(op.text,V,{workLimit:V.limits.stylesheetWork-parsedStylesheetWork});}
+            catch(error){fail(error instanceof StylesheetWorkError?'stylesheet work budget':'stylesheet value');}
+            if(checked.errors.length)fail('stylesheet value');work=checked.work;parsedStylesheetWork+=work;
+          }
+          nextStylesheetBytes=nextStylesheetBytes-(nextSheets.get(op.sheet)?.length??0)*2+op.text.length*2;
+          nextInstalledStylesheetWork=nextInstalledStylesheetWork-(nextSheetWork.get(op.sheet)??0)+work;
+          if(nextStylesheetBytes>V.limits.stylesheetBytes)fail('stylesheet budget');
+          if(nextInstalledStylesheetWork>V.limits.stylesheetWork)fail('stylesheet work budget');
+          if(op.text){nextSheets.set(op.sheet,op.text);nextSheetBytes.set(op.sheet,selectionTextBytes(op.text));nextSheetWork.set(op.sheet,work);}
+          else{nextSheets.delete(op.sheet);nextSheetBytes.delete(op.sheet);nextSheetWork.delete(op.sheet);}
+          break;
         }
-        case "set_title": nextTitle = op.text; break;
+        case "set_title": nextTitle = op.text; nextTitleBytes=selectionTextBytes(op.text); break;
         case "copy_text": if (!op.request || copies.has(op.request)) fail("duplicate copy request"); if (copies.size >= V.limits.commands) fail("copy budget"); copies.add(op.request); effects.push({ ...op }); break;
         default: fail("unimplemented operation");
       }
     }
     index = undefined; const ids = new Set();
     chargeSelection(selectInventoryWork(next));
+    let retained=nextTitleBytes;
+    const retain=bytes=>{retained+=bytes;if(retained>V.limits.retainedTextBytes)fail('retained text budget');};
+    retain(0);
+    for(const size of nextSheetBytes.values())retain(size);
+    for(const node of next.values()){
+      if(node.kind==='text')retain(node.textBytes);
+      else{
+        node.valueReserved ||= node.tag==='select'||node.tag==='textarea'||node.tag==='input'&&!checkable(node);
+        retain(node.classBytes);
+        for(const size of node.attributeBytes.values())retain(size);
+        for(const size of node.styleBytes.values())retain(size);
+        if(node.valueReserved)retain(V.limits.fieldValueReservationBytes);
+      }
+    }
     for (const node of next.values()) if (node.kind === "element" && node.attributes.has("id")) { const id = node.attributes.get("id"); if (ids.has(id)) fail("duplicate id attribute"); ids.add(id); }
     for(const [id,node] of next)if((node.tag==='select'&&node.value.length*2>V.limits.valueBytes)||(node.tag==='option'&&optionValue(next,id).length*2>V.limits.valueBytes))fail('select value budget');
-    nodes = next; sheets = nextSheets; pending = copies; title = nextTitle; focus = nextFocus;
+    nodes = next; sheets = nextSheets; sheetBytes=nextSheetBytes; sheetWork=nextSheetWork; stylesheetBytes=nextStylesheetBytes; installedStylesheetWork=nextInstalledStylesheetWork; pending = copies; title = nextTitle; titleBytes=nextTitleBytes; focus = nextFocus;
     return { operations, effects, skippedValues };
   };
   return { commit,
     // Clone inspection so an adapter cannot mutate the validation authority.
-    snapshot() { return { nodes: [...nodes].map(([id, node]) => ({ id, ...node, children: [...node.children], listeners: node.listeners.map((listener) => ({ ...listener })), ...(node.kind === "element" ? { attributes: Object.fromEntries(node.attributes), style: Object.fromEntries(node.style) } : {}) })), sheets: Object.fromEntries(sheets), title, focus, pending: [...pending] }; },
-    close() { closed = true; nodes.clear(); sheets.clear(); pending.clear(); title = ""; focus = W.noNode; },
+    snapshot() { return { nodes: [...nodes].map(([id, node]) => {
+      const {attributeBytes,styleBytes,...state}=node;
+      return { id, ...state, children: [...node.children], listeners: node.listeners.map((listener) => ({ ...listener })), ...(node.kind === "element" ? { attributes: Object.fromEntries(node.attributes), style: Object.fromEntries(node.style) } : {}) };
+    }), sheets: Object.fromEntries(sheets), title, focus, pending: [...pending] }; },
+    close() { closed = true; nodes.clear(); sheets.clear(); sheetBytes.clear(); sheetWork.clear(); stylesheetBytes=0; installedStylesheetWork=0; pending.clear(); title = ""; titleBytes=0; focus = W.noNode; },
     complete(request) { if (!pending.delete(request)) throw new ViewProtocolError("unknown command result"); },
     validateChoice,
     syncEvent(record, selectedOption) {
@@ -204,6 +255,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
       const node = nodes.get(record.target);
       if(node){if(record.kind==="focusin")focus=record.target;if(record.kind==="focusout"&&focus===record.target)focus=W.noNode;if(record.kind==="close"&&node.tag==="dialog")node.open=false;}
       if (!node || node.kind !== "element" || !["input", "textarea", "select"].includes(node.tag) || !["input", "change"].includes(record.kind)) return;
+      if(!inputValue(record.value))throw new ViewProtocolError("input value");
       node.seq = record.seq;
       if (checkable(node)) node.checked = Boolean(record.flags & V.filters.flags.checked);
       else if(node.tag==='select'){
@@ -214,7 +266,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     input(id, value, checked, advance = true, selectedOption) {
       const node = nodes.get(id);
       if (!node || node.kind !== "element" || !["input", "textarea", "select"].includes(node.tag)) throw new ViewProtocolError("input target");
-      if (typeof value !== "string" || value.length * 2 > V.limits.valueBytes || value.includes("\0") || !value.isWellFormed()) throw new ViewProtocolError("input value");
+      if (!inputValue(value)) throw new ViewProtocolError("input value");
       validateChoice({kind:'input'},selectedOption);
       if(selectedOption!==undefined&&node.tag!=='select')throw new ViewProtocolError('input select target');
       if (advance) node.seq = (node.seq + 1) >>> 0;

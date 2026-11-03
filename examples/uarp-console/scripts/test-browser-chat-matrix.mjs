@@ -4,7 +4,8 @@ import {resolve,dirname,join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
-if(process.argv.length!==4)throw Error('Usage: node examples/uarp-console/scripts/test-browser-chat-matrix.mjs <varta-executable> <playwright-module>');
+if(process.argv.length<4||process.argv.length>5)throw Error('Usage: node examples/uarp-console/scripts/test-browser-chat-matrix.mjs <varta-executable> <playwright-module> [all|chrome|firefox|webkit]');
+const selected=process.argv[4]??'all';assert(['all','chrome','firefox','webkit'].includes(selected),'unknown browser selection');
 const {firefox,webkit,chromium,selectors}=await import(pathToFileURL(resolve(process.argv[3])).href);
 // Let role selectors start inside the captured closed root without changing the
 // production host's shadow-root mode.
@@ -28,6 +29,7 @@ try{
  const chromiumChannel=process.env.VARTA_CHROMIUM_CHANNEL ?? 'chrome';
  const chromiumOptions=chromiumChannel==='chromium'?{chromiumSandbox:true}:{channel:chromiumChannel,chromiumSandbox:true};
  for(const [name,type,options] of [['firefox',firefox,{}],['webkit',webkit,{}],[chromiumChannel,chromium,chromiumOptions]]){
+  if(selected!=='all'&&selected!==(type===chromium?'chrome':name))continue;
   const browser=await type.launch({headless:true,timeout:45000,...options});try{const context=await browser.newContext();await context.addInitScript(()=>{const attach=Element.prototype.attachShadow;globalThis.pilotRoots=[];Element.prototype.attachShadow=function(options){const root=attach.call(this,options);pilotRoots.push(root);return root;};});const page=await context.newPage();
    const textWidth=await page.evaluate(async bytes=>{const font=new FontFace('varta-fixture',new Uint8Array(bytes).buffer);await font.load();document.fonts.add(font);const ctx=document.createElement('canvas').getContext('2d');ctx.font='20px varta-fixture';return ctx.measureText('AAAA').width;},fontFixture);
    assert(Math.abs(textWidth-32)<0.01,`${name}: explicit font text advance ${textWidth}`);

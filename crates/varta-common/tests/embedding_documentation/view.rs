@@ -108,6 +108,14 @@ fn layout() -> String {
             ),
         ),
         (
+            "Placeholder: retained text bytes / live field reservation bytes".into(),
+            format!(
+                "{} / {}",
+                view::DRAFT_MAX_RETAINED_TEXT_BYTES,
+                view::DRAFT_FIELD_VALUE_RESERVATION_BYTES
+            ),
+        ),
+        (
             "Placeholder: pending `copy_text` requests".into(),
             view::DRAFT_MAX_PENDING_COMMANDS.to_string(),
         ),
@@ -117,6 +125,22 @@ fn layout() -> String {
                 "{} / {}",
                 view::DRAFT_MAX_SELECT_WORK,
                 view::DRAFT_SELECT_NODE_WORK
+            ),
+        ),
+        (
+            "Placeholder: radio reconciliation work / node visit units".into(),
+            format!(
+                "{} / {}",
+                view::DRAFT_MAX_RADIO_WORK,
+                view::DRAFT_RADIO_NODE_WORK
+            ),
+        ),
+        (
+            "Placeholder: parsed stylesheet work / syntax node units".into(),
+            format!(
+                "{} / {}",
+                view::DRAFT_MAX_STYLESHEET_WORK,
+                view::DRAFT_STYLESHEET_NODE_WORK
             ),
         ),
         (

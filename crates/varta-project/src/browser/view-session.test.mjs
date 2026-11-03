@@ -96,3 +96,62 @@ test("invalid arrival clocks and duplicate transport ids fail closed",async()=>{
   const next=state().view;next.receive({type:"view_event",id:1,bytes,gesture:false,arrived:1});next.take();
   next.receive({type:"view_event",id:1,bytes,gesture:false,arrived:2});await assert.rejects(next.flush(),/unexpected view event/);
 });
+
+test('radio work admission is independent of deferred checked state and edit counters',async()=>{
+  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
+  const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+  const commitWorker=ops=>{const bytes=encodeViewBatch(ops);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
+  const setup=[],name='Ж'.repeat(512);
+  for(let node=2;node<102;node++)setup.push({name:'create_element',node,tag:'input'},
+    {name:'set_attribute',node,attribute:'type',text:'radio'},{name:'set_attribute',node,attribute:'name',text:name},
+    {name:'insert',parent:1,node,before:0});
+  main.commit(encodeViewBatch(setup));commitWorker(setup);worker.receive({type:'view_ack',id:1});await worker.flush();worker.begin();
+  main.input(2,'',true);
+  worker.receive({type:'view_event',id:1,bytes:encodeViewEvent('input',{handler:10,target:2,seq:1,flags:registry.view.filters.flags.checked}),gesture:false});
+  assert.equal(main.snapshot().nodes.find(n=>n.id===2).seq,1);
+  assert.equal(worker.model.snapshot().nodes.find(n=>n.id===2).seq,0);
+  const outcome=run=>{try{run();return {ok:true};}catch(error){return {ok:false,rule:error.rule,operation:error.operation};}};
+  for(const kind of ['set_checked','set_attribute']){
+    const excessive=Array.from({length:128},()=>kind==='set_checked'?{name:kind,node:2,checked:1,base_seq:0}:{name:kind,node:2,attribute:'type',text:'radio'});
+    const pending=outcome(()=>commitWorker(excessive));assert.equal(pending.rule,'radio work budget');
+    assert.deepEqual(outcome(()=>main.commit(encodeViewBatch(excessive))),pending);
+  }
+  assert.equal(messages.length,1,'no rejected batch reaches the parent');
+  assert.equal(worker.take().id,1,'deferred edit is retained after rejection');
+  assert.deepEqual(worker.model.snapshot(),main.snapshot());
+  const ordinary=[{name:'set_checked',node:3,checked:1,base_seq:0}];main.commit(encodeViewBatch(ordinary));commitWorker(ordinary);
+  worker.receive({type:'view_ack',id:2});await worker.flush();assert.deepEqual(worker.model.snapshot(),main.snapshot());worker.close();
+});
+
+test('retained text admission and field capacity agree across a deferred local edit',async()=>{
+  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
+  const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+  const commitWorker=ops=>{const bytes=encodeViewBatch(ops);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
+  const {retainedTextBytes,fieldValueReservationBytes,valueBytes}=registry.view.limits;
+  const fields=Math.floor(retainedTextBytes/fieldValueReservationBytes),remaining=retainedTextBytes-fields*fieldValueReservationBytes,setup=[];
+  for(let node=2;node<2+fields;node++)setup.push({name:'create_element',node,tag:'input'},{name:'insert',parent:1,node,before:0});
+  setup.push({name:'create_text',node:1000,text:'X'.repeat(remaining)},{name:'insert',parent:1,node:1000,before:0});
+  main.commit(encodeViewBatch(setup));commitWorker(setup);worker.receive({type:'view_ack',id:1});await worker.flush();worker.begin();
+  const value='界'.repeat(valueBytes/2);main.input(2,value,false);
+  worker.receive({type:'view_event',id:1,bytes:encodeViewEvent('input',{handler:10,target:2,seq:1,value}),gesture:false});
+  const outcome=run=>{try{run();return {ok:true};}catch(error){return {ok:false,rule:error.rule,operation:error.operation};}};
+  const excessive=[{name:'set_text',node:1000,text:'X'.repeat(remaining-1)},{name:'set_title',text:'界'}];
+  const pending=outcome(()=>commitWorker(excessive));assert.equal(pending.rule,'retained text budget');
+  assert.deepEqual(outcome(()=>main.commit(encodeViewBatch(excessive))),pending);assert.equal(messages.length,1);
+  const ordinary=[{name:'set_value',node:2,text:'guest',base_seq:0},{name:'set_text',node:1000,text:'X'.repeat(remaining-1)},{name:'set_title',text:'x'}];
+  main.commit(encodeViewBatch(ordinary));commitWorker(ordinary);
+  assert.equal(worker.model.snapshot().nodes.find(n=>n.id===2).value,'guest');
+  assert.equal(main.snapshot().nodes.find(n=>n.id===2).value,value);
+  worker.receive({type:'view_ack',id:2});await worker.flush();assert.equal(worker.take().id,1);
+  assert.deepEqual(worker.model.snapshot(),main.snapshot());worker.close();
+});
+
+test('Worker rejects excessive stylesheet expansion before sending any batch',async()=>{
+  const {view,commit,messages}=state();
+  const css='@media '+Array(500).fill('(min-width:0px)').join(' and ')+'{'+'.a{}'.repeat(1100)+'}';
+  const before=view.model.snapshot();
+  assert.throws(()=>commit([{name:'set_title',text:'after'},{name:'stylesheet',sheet:1,text:css}]),error=>error.rule==='stylesheet work budget'&&error.operation===1);
+  assert.equal(messages.length,0);assert.deepEqual(view.model.snapshot(),before);
+  commit([{name:'stylesheet',sheet:1,text:'.a { color:#abc }'}]);
+  view.receive({type:'view_ack',id:1});await view.flush();assert.equal(messages.length,1);view.close();
+});

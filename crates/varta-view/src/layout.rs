@@ -323,18 +323,19 @@ pub(crate) fn border_widths(
     id: u32,
 ) -> Result<[f32; 4], LayoutError> {
     let element = tree.element(id).ok_or(LayoutError::Unsupported(id))?;
-    let custom = tree.custom_properties(id, env);
+    let variables = style::Variables::new(tree, id, env);
     let mut widths = [3.0; 4];
     let mut solid = [false; 4];
-    for (name, raw) in tree.cascade(id, env) {
+    for (name, raw) in tree.cascade_refs(id, env) {
         let Name::Property(property) = name else {
             continue;
         };
+        let property = *property;
         let components = border_components(property);
         if components.is_empty() {
             continue;
         }
-        let value = style::substitute(&raw, &custom);
+        let value = variables.substitute(raw);
         for (side, is_style) in components {
             let (width, present) = match &value {
                 Some(value) => {
@@ -350,7 +351,7 @@ pub(crate) fn border_widths(
         }
     }
     for (&(side, is_style), (property, raw)) in &element.border_inline {
-        let (width, present) = match style::substitute(raw, &custom) {
+        let (width, present) = match variables.substitute(raw) {
             Some(value) => {
                 border_component(*property, &value).ok_or(LayoutError::Unsupported(id))?
             }
@@ -388,12 +389,12 @@ fn layout_properties(
     id: u32,
 ) -> Result<BTreeMap<CssProperty, String>, LayoutError> {
     let element = tree.element(id).ok_or(LayoutError::Unsupported(id))?;
-    let custom = tree.custom_properties(id, env);
+    let variables = style::Variables::new(tree, id, env);
     let declarations = tree
-        .cascade(id, env)
+        .cascade_refs(id, env)
         .into_iter()
         .filter_map(|(name, value)| match name {
-            Name::Property(property) => Some((property, value)),
+            Name::Property(property) => Some((*property, value)),
             Name::Custom(_) => None,
         })
         .chain(
@@ -401,11 +402,11 @@ fn layout_properties(
                 .style
                 .iter()
                 .filter(|(property, _)| geometry_sides(**property).is_none())
-                .map(|(property, value)| (*property, value.clone())),
+                .map(|(property, value)| (*property, value.as_str())),
         );
     let mut result = BTreeMap::new();
     for (property, value) in declarations {
-        let Some(value) = style::substitute(&value, &custom) else {
+        let Some(value) = variables.substitute(value) else {
             let affected: &[CssProperty] = match property {
                 CssProperty::Margin => &[
                     CssProperty::MarginTop,
@@ -461,7 +462,7 @@ fn layout_properties(
         }
     }
     for (side, (source, raw, index)) in &element.layout_inline {
-        let Some(value) = style::substitute(raw, &custom) else {
+        let Some(value) = variables.substitute(raw) else {
             result.remove(side);
             continue;
         };

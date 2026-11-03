@@ -75,6 +75,10 @@ pub enum Violation {
     StringTooLong,
     #[error("single-select work exceeds its transaction limit")]
     SelectWorkLimit,
+    #[error("radio reconciliation work exceeds its transaction limit")]
+    RadioWorkLimit,
+    #[error("retained text and field reservations exceed the view limit")]
+    RetainedTextLimit,
     #[error("string byte length is odd")]
     OddStringLength,
     #[error("string contains a lone surrogate")]
@@ -153,6 +157,8 @@ pub enum Violation {
     InvalidStylesheet,
     #[error("stylesheets exceed the stylesheet byte limit")]
     StylesheetsTooLarge,
+    #[error("stylesheet parsing or inventory work exceeds its limit")]
+    StylesheetWorkLimit,
     #[error("request id {0} is zero or already pending")]
     DuplicateRequest(u32),
     #[error("too many pending commands")]

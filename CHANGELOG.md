@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Stylesheet admission now bounds parsed expansion work per transaction and
+  installed inventory before media-condition copies and browser CSSOM parsing.
+  Native cascade uses incremental selector indices, borrowed declarations and
+  lazy variable maps; display checks avoid resolving unrelated properties.
+  JS grammar matching memoizes equivalent paths, admits keyword `var()` values
+  and rejects empty declarations consistently with native. Generated browser
+  bundles include the checker and typed limit error in DOM/Worker bindings.
+
+- Shared view resource admission now bounds radio reconciliation work and retained
+  UTF-8 source payload with sticky live-field reservations. Detached nodes, stale
+  writes and deferred parent edits are covered; excess batches roll back before
+  effects. The draft field capacity and payload limits are explicit in the
+  embedding contract. JS source-size caches are transaction-owned and private.
+
+- Native radio Tab navigation builds one transient document/form/name partition;
+  activation reuses captured peer states for unchecking and cancellation. Checked
+  stops, backwards movement, hidden/disabled filtering and later membership
+  changes retain their behavior.
+
+- UARP mockup tooling now uses the official registry/model/DOM host, with live
+  control-state checks and a named-asset loopback server. Browser select replay
+  reconciles explicit no-selection, disabled options and duplicate identity
+  without setter writes on equal/no-op commits. Pilot browser probes accept an
+  optional engine selector for focused development checks.
+
 - Local `varta dev --target browser` serves checked in-memory revisions on
   loopback, with runtime policy/decisions, optional application mode, page budget
   reporting and graceful shutdown. Source/config/resource edits rebuild and

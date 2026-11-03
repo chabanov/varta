@@ -72,6 +72,9 @@ trusted browser events and checks selected final text against the native view
 expectation. It uses an isolated browser profile and explicit test-only decisions.
 The same focused interaction probe also runs in Firefox, WebKit and Chrome with
 `node examples/uarp-console/scripts/test-browser-chat-matrix.mjs <varta-executable> <playwright-module-path>`.
+Append `chrome`, `firefox` or `webkit` to run one engine during development;
+omitting the selector still attempts the full three-engine sequence. A selected
+engine pass does not establish a full matrix.
 First build the projection tool with
 `cargo build -p varta-view --example project_flex_snapshot --locked`.
 The probe locates that tool relative to the repository; set `VARTA_FLEX_PROJECTION`
