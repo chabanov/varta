@@ -367,16 +367,30 @@ impl View {
         height: f32,
         font: Option<(&mut TextMeasurer, f32)>,
     ) -> Result<(), ViewError> {
-        self.commit_impl(
-            bytes,
-            gesture,
-            broker,
-            Some(tree::LayoutContext {
-                width,
-                height,
-                font,
+        match font {
+            Some((measurer, size)) => measurer.with_view_shaping(|measurer| {
+                self.commit_impl(
+                    bytes,
+                    gesture,
+                    broker,
+                    Some(tree::LayoutContext {
+                        width,
+                        height,
+                        font: Some((measurer, size)),
+                    }),
+                )
             }),
-        )
+            None => self.commit_impl(
+                bytes,
+                gesture,
+                broker,
+                Some(tree::LayoutContext {
+                    width,
+                    height,
+                    font: None,
+                }),
+            ),
+        }
     }
 
     fn commit_impl(

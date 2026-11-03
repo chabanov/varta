@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- Native view requests share one charged-shaping allowance across intrinsic/
+  repeated measurement and painting, including scaled frames and multiple
+  layout commands in a batch. Nested calls preserve accounting; scope cleanup
+  permits independent retries. A diagnostic reports the last outer request's
+  charged operations without treating them as total CPU or memory usage.
+
+- Native charged shaping operations are reserved before buffer changes,
+  recursive lookups and AAT transitions/insertions. Unaffordable batches refuse
+  without overspending or forced advancement; exact budgets remain usable.
+  Original AAT fixtures cover insertion, kern/kerx and nonadvancing-state refusal.
+
+- Native text shaping uses bounded intermediate arrays and shared per-layout
+  output/operation budgets, checks completion before layout publication and
+  releases refused or oversized reusable buffers. Maximum ordinary/Unicode
+  input remains supported; local pinned HarfRust/Parley patches carry request
+  limits, explicit status and capacity statistics.
+
+- Large native combining clusters retain all glyphs, use complete font coverage
+  for fallback selection and avoid narrow counter/sentinel overflow. Synthetic
+  OpenType fixtures check the unchanged 65536-glyph paint boundary and recovery
+  after refusal; coverage mapping no longer needs a fixed-size scratch buffer.
+
+- Maximum-size Unicode field values, password masks, IME replacements and
+  placeholders use the existing UTF-16 field allowance throughout native
+  shaping and textarea measurement. A local Parley 0.11.1 patch widens
+  cluster byte offsets to prevent overflow in long UTF-8 runs. Public text and
+  guest/work limits are preserved; whole-text context and source hits survive.
+
+- Native fields reuse their shaped caret/selection layout for glyph painting,
+  avoiding a second layout and display-text copy per nonempty field. Plain
+  values and placeholders are borrowed; composition and password display
+  buffers remain separate from guest values.
+
 - Native preview input now shares one checked keyboard/IME backlog with an
   aggregate owned-text limit. Admission compacts spare platform buffers,
   preserves FIFO and commits, and atomically replaces matching preedit updates.

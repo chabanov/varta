@@ -2269,3 +2269,335 @@ The last full gate remains `01acc09`; no unchanged engine/browser/CLI suites wer
 repeated for this desktop-only increment. Other backend buffers/caches, native
 rendering/platform acceptance, late-value CSS parity and release criteria remain
 open.
+
+
+## Consolidated commit gate — 2026-11-03 (`ab045dc`)
+
+The accessible-name admission/indexing, bounded native JSON/export diagnostics
+and native GUI input-backlog packages were committed together after one full
+`python3 scripts/verify.py full` run. All eight commands passed: formatting, core
+checks, no-default-features checks, companion build, strict workspace/all-target
+Clippy, workspace/all-target build, workspace tests and conformance. **3133 tests
+passed, 16 were ignored**. Conformance retained **123 passed / four known
+unsupported / 127 total**, matched the baseline and reported no regressions,
+unexpected support or infrastructure failures. The source fingerprint remained
+unchanged. The separate browser naming/session selection passed **19 tests**.
+No push was performed; `.claude/` was excluded from the commit.
+
+Evidence (local, ignored):
+`target/verification/20261103-064728-vqi3ny2f/report.json`,
+`target/commit-verification.log` and `target/commit-browser-check.log`.
+This gate covers `ab045dc`; it does not cover subsequent renderer changes.
+
+## Native field layout reuse — scoped verification 2026-11-03
+
+Native nonempty fields now pass the layout already used for caret, selection,
+composition underline and hit positions directly to glyph painting. Previously,
+painting cloned the complete display into a temporary `TextShape` and built a
+second Parley layout while the first was live. The shared glyph painter now
+accepts an existing layout; paragraph painting still shapes its own text once.
+Ordinary field values are borrowed through `Cow`; only composition replacement
+or password masking needs an owned display. Placeholders are shaped from their
+borrowed attribute string without a temporary text copy. No persistent layout
+cache, shaper/paint allowance increase, or source truncation was introduced.
+
+**166 native view tests pass**, including password/plain display comparisons,
+UTF-8 editing/hits, combining preedit, selection/undo, multiline caret/scroll,
+select popup/control rendering, text shaping and existing work-limit boundaries.
+Strict all-target view Clippy, a freshly built `varta-preview`, formatting and
+whitespace checks pass. No unrelated engine/Node/CLI or full workspace repeat was
+performed for this private native-painting change. These checks verify the
+existing observable rendering/editing contract; the reduction from two
+simultaneously retained field layouts to one is source evidence, not a measured
+RSS/cache-byte/performance result or a new OS/window/platform matrix.
+
+Evidence (local, ignored): `target/render-reuse-view.log`,
+`target/render-reuse-clippy.log` and `target/render-reuse-preview.log`.
+The preceding complete gate is recorded separately at `ab045dc`.
+
+The public shaper still limits input to 65536 UTF-8 bytes. A valid 32768-unit
+UTF-16 field or a 32768-grapheme password mask can occupy 98304 UTF-8 bytes;
+IME replacement is independently checked against the combined value bound. At
+this checkpoint the existing maximum-password test still recorded a rendering
+refusal under the byte limit. That mismatch is addressed by the subsequent
+Unicode-field package below; complete backend acceptance is broader than its
+maximum-size fixtures. Other
+backend-buffer/cache/RSS, native/browser platform, late-value CSS and release
+acceptance also remain open.
+
+
+## Maximum Unicode native field display — scoped verification 2026-11-03
+
+Private native shaping options now carry the text source. General/public
+measurement retains its 65536-byte UTF-8 allowance. Fields recheck the existing
+32768-UTF-16-unit semantic bound and its derived 98304-byte UTF-8 reservation
+before layout construction. This supports the already-admitted Unicode value,
+mask or placeholder without widening general text admission or leaving mutable
+budget state in the reused shaper. Content-sized textarea options retain this
+classification through intrinsic and width-constrained remeasurement. The
+existing glyph, outline, aggregate layout/paint, guest, image and font limits
+are unchanged. A whole field remains one contextual shaping input.
+
+The first focused run (without a dependency correction) passed four prior field
+tests but failed all three initial maximum-field regressions: Parley 0.11.1
+stores run-local cluster byte offsets as `u16`, so long UTF-8 runs wrapped those
+offsets and caused invalid UTF-8 slicing in line-hit extraction. Merely accepting
+more bytes in the view shaper did not fix this. The pinned crate is now supplied
+through `[patch.crates-io]` from `vendor/parley`, excluded from workspace members.
+Only its private offset field and one construction cast change to `u32`; the
+rest of its source and manifest are identical to the release. Both upstream
+licenses, patch diff, original package/data hashes and removal criteria are
+included. The lockfile changes source selection only, without version updates.
+A check of the cached original release archive against the preceding lockfile
+SHA-256 and all **45 copied files** confirms this provenance and exact patch.
+
+**181 native tests pass: 170 view and 11 desktop**. The focused field/text
+selection passed **11 tests**; all **eight field tests** were repeated after
+Clippy replaced a test's forward `.last()` scan with `.next_back()`. Coverage
+includes maximum BMP/astral/combining values and password masks; first/last source
+positions, end caret and subsequent grapheme deletion; one-unit excess rollback;
+full IME selection replacement, unchanged value before commit and later combined-
+value overflow cancellation; Unicode placeholders and content-sized textarea
+wrap/measure/paint. Large mixed-direction suffix pixels, caret geometry and
+shifted source hits match a short reference. A subsequent public call on that
+same shaper still refuses the large text under the general byte limit.
+
+Strict all-target view/desktop Clippy passes, as do a fresh `varta-preview`
+build, formatting and whitespace checks. The local dependency emits its unchanged
+upstream ICU `to_icu4c_value` deprecation warning; it was not suppressed or changed
+as part of this two-line patch. No browser/Node/CLI/full-workspace repeat or
+real-window/OS/platform result is inferred from these native checks. The last
+complete workspace gate remains `ab045dc`; this package is newer scoped work.
+
+Evidence (local, ignored): `target/field-unicode-focused.log` (initial failure),
+`target/field-parley-lock.log`, `target/field-parley-source-diff.log`,
+`target/field-parley-release-check.log`, `target/field-unicode-patched.log`,
+`target/field-unicode-native.log`, `target/field-unicode-clippy.log` (initial test
+lint), `target/field-unicode-clippy-final.log`,
+`target/field-unicode-fields-final.log`, `target/field-unicode-preview.log` and
+`target/field-unicode-format.log`.
+
+The previous note suggesting a larger IME overlay was corrected after inspecting
+the existing combined prefix/replacement/suffix UTF-16 guard; this package adds
+no larger transient allowance. Font-specific glyph/outline expansion, complete
+bidi navigation, aggregate graph/cache/backend/RSS bounds, real-window IME and
+native/browser matrices, late-value CSS and release acceptance remain open.
+
+
+## Large native glyph clusters — scoped verification 2026-11-03
+
+Complex-font probes exposed three additional Parley 0.11.1 assumptions: the
+`u8` glyph count collided with the inline marker (the first regression observed
+one glyph instead of 255), a contributing-character `u8` panicked on a long
+grapheme, and source inspection found font coverage zipped into only 32 scratch
+slots. The private glyph count is now `u32` with a separate `u32::MAX` inline
+marker; contributing/coverage counts use `usize`. Coverage visits the full
+cluster. A second pure nominal-mapping pass updates IDs only for a better font,
+preserving losing-candidate state without a dynamically enlarged scratch buffer.
+Pairwise normalization's independently bounded two-character form is unchanged.
+
+Two original synthetic OpenType fonts, regenerated byte-for-byte with fontTools
+4.60.2, provide zero-advance combining glyphs, known three-glyph `ccmp` expansion
+and a partial first font missing the last character of a long cluster. Two
+focused shaping checks verify actual counts 254/255/256/257 and 901, and fallback
+coverage after 31/32/64/253/256/1024 prefix marks. A focused field test accepts
+65536 painted glyphs, refuses 65539 and then renders a smaller value. Every render
+attempt preserves the guest value. Existing glyph, outline, input/font and
+aggregate work budgets are unchanged; no text or glyphs are silently truncated.
+
+**184 native tests pass (173 view, 11 desktop)**. Strict all-target view/desktop
+Clippy, a fresh preview binary, formatting/whitespace checks and deterministic
+font regeneration pass. The same unchanged upstream ICU deprecation warning is
+visible in the vendored dependency. Archive SHA-256 and file comparison confirm
+only four changed upstream source files; the rest of the copied source, manifest
+and licenses match the release. `VARTA-PATCH.md` and the current full diff record
+the expanded patch. No dependency versions changed. No unrelated browser/Node/
+CLI/full-workspace or real-window/platform coverage is claimed; the last full
+workspace gate remains `ab045dc`.
+
+Evidence (local, ignored): `target/cluster-glyph-before.log`,
+`target/cluster-budget-before.log` and `target/cluster-budget-bypass-before.log`
+(counter panic; no release-mode budget bypass was claimed),
+`target/cluster-glyph-fixed.log`, `target/cluster-text-final.log`,
+`target/cluster-budget-fixed.log`, `target/cluster-fixture-reproducibility.log`,
+`target/cluster-vendor-diff.log`, `target/cluster-native.log`,
+`target/cluster-clippy.log`, `target/cluster-preview.log` and
+`target/cluster-format.log`.
+
+Pre-paint allocation/CPU and retained shaping buffers after a refused frame still
+need separate accounting/measurements. These count/mapping fixes do not establish
+a complete cache/backend/RSS quota, full bidi navigation, OS IME/native/browser
+platform matrices, late-value CSS parity or release acceptance.
+
+
+## Bounded native shaping requests — scoped verification 2026-11-03
+
+Native shaping now checks explicit completion before copying glyphs into layout
+or calculating metrics. The pinned HarfRust 0.12.0 local patch adds optional
+intermediate-array/charged-operation allowances, result status/statistics and
+bounded fallible capacity growth. Existing spare capacity is reused. Parley's
+request controller reserves Unicode scalars rather than UTF-8 byte slots,
+accounts completed glyphs/charged operations across runs, clears incomplete
+layout contents and releases refused or oversized reusable glyph arrays.
+Context cloning preserves configured resource policy while dropping scratch.
+Varta refuses before rendering any partial result.
+
+Draft request settings: 65536 completed glyphs across a layout (the existing
+paint allowance, now checked before layout copying), 262144 slots per
+intermediate glyph-info/position array, an initial one-million charged-operation
+allowance and 65536 retained slots per array. Intermediate expansion and final
+output are distinct bounds. Source/font/image/guest allowances are unchanged;
+normal maximum ASCII and Unicode/password/IME/textarea fixtures remain accepted.
+
+**188 native tests pass (177 view, 11 desktop)**. The focused lib/field/text
+selection passed **42 tests**; **three policy checks** were repeated after
+preserving limits in context clone. Final strict all-target view/desktop Clippy,
+fresh preview, workspace and modified-vendor formatting, whitespace and all
+three deterministic synthetic-font regenerations pass. No unchanged browser/
+Node/CLI/full-workspace or real-window/platform repeat is inferred. The last
+complete workspace gate remains `ab045dc`.
+
+Actual dependency probes verify a 64-slot array boundary and overflow, aggregate
+129/128-glyph script-run boundary, operation exhaustion/recovery and cache release.
+A 16× expansion refusal reaches **10485760 array-capacity bytes**, retains no
+glyph-array slots and permits a later small request. Valid 65536-glyph output
+uses **21846 charged operations** and **3495360 capacity bytes**, with oversized
+scratch dropped; a small retry uses **800 capacity bytes**, retaining 20 slots
+per array. Measurements caught unnecessary geometric reservation within already
+available capacity during development; it was corrected before final checks.
+
+The new HarfRust vendor contains **80** release files and changes only two source
+files. Parley's **45** copied files change only six source files including the
+previous cluster fixes. Archive hashes, untouched manifests/licenses and all
+source differences agree with the documented patches. Dependency versions are
+unchanged. Both upstream license sets/provenance and full current diffs are kept.
+Unmodified upstream warnings (HarfRust's unused legacy function and Parley's ICU
+deprecation) remain visible, without suppression.
+
+Evidence (local, ignored): `target/shaping-budget-lock.log`,
+`target/shaping-budget-focused-all.log`, `target/shaping-budget-policy-final.log`,
+`target/shaping-budget-native.log`, `target/shaping-budget-clippy-final.log`,
+`target/shaping-budget-preview-final.log`, `target/shaping-budget-format.log`,
+`target/shaping-budget-vendor-final.log` and
+`target/shaping-budget-fixture-reproducibility.log`.
+
+Array capacities exclude allocator metadata, overlap during reallocation and
+other font/analysis/plan/layout/cache buffers; they are not total RSS. Operation
+allowances are exhaustion thresholds: upstream batch debits can report more than
+the configured allowance on a failed request (44 charged units versus an
+allowance of 43 in the multi-run probe). Partial output is rejected, but strict
+pre-charge accounting remains open. The meter also omits some parser/Unicode/
+plan work and is per layout, not a complete frame CPU/deadline boundary. Complete
+backend/cache/RSS, real-window/native/browser matrices, late-value CSS and release
+acceptance remain open.
+
+
+## Strict native shaping pre-charge — scoped verification 2026-11-03
+
+HarfRust's existing operation debits now route through one checked helper.
+Conversion/affordability are checked before subtraction; refusal is sticky,
+leaves unused allowance unchanged and executes no unfunded corresponding batch.
+Buffer mask/cluster writes return before their charged work on refusal. Forward
+shifts reserve work before capacity growth. Contextual lookup recursion charges
+before cursor movement. Kern/kerx/morx state drivers charge transitions before
+flags/actions, never force advancement on exhaustion, and use the same helper
+for current/marked insertion counts. Exact zero remaining is accepted when no
+further charged work is requested. All configured resource allowances remain
+unchanged. This fixes the preceding 44-unit/43-allowance overspending behavior.
+
+The multi-script probe now completes with exactly 44 units and refuses at 43
+without spending beyond 43. Five original AAT fixtures use real state tables:
+current insertion yields four glyphs with six units; marked+current insertion
+yields seven with eight; legacy kern and extended kerx yield one with three
+units each. Every lower budget refuses without overspending, clears reusable
+glyph arrays, and the exact budget reproduces completed metrics. A nonadvancing
+morx loop refuses exactly at budgets 1/2/8/64; a normal space request then works.
+All five font files regenerate identically with fixed timestamps and original
+outlines, without copied platform font data.
+
+Focused OpenType/resource (**6**) and AAT (**2**) tests pass. **190 native tests
+pass (179 view, 11 desktop)**, with strict all-target view/desktop Clippy, a fresh
+preview, workspace and modified-vendor formatting/whitespace checks. Source
+inspection finds one direct counter subtraction inside the checked helper, no
+remaining counter-driven forced advancement, and no direct debits elsewhere.
+Archive/source/manifest/license comparison matches the current six-file
+HarfRust and six-file Parley patches; dependency versions are unchanged.
+Unmodified upstream dead-code/deprecation warnings remain visible. The last
+full workspace gate remains `ab045dc`; no unrelated browser/Node/CLI or full
+platform/window matrix is inferred from this scoped native package.
+
+Evidence (local, ignored): `target/shaping-charge-focused.log`,
+`target/shaping-charge-aat.log`, `target/shaping-charge-aat-complete.log`,
+`target/shaping-charge-fixtures.log`, `target/shaping-charge-vendor.log`,
+`target/shaping-charge-native.log`, `target/shaping-charge-clippy.log`,
+`target/shaping-charge-preview.log` and `target/shaping-charge-format.log`.
+
+The exact bound concerns the existing charged meter, including newly charged
+state transitions. Nominal coverage, parser/analysis/plan work, some range
+extension/outline loops and frame-wide repeated work still need separate
+accounting; this is not a complete CPU/deadline guarantee. Complete cache/
+backend/RSS, native/browser platform matrices, late-value CSS and release
+acceptance remain open.
+
+
+## Shared native view shaping scope — scoped verification 2026-11-03
+
+Native rasterization, geometry queries and layout-bearing commits now establish
+one outer charged-shaping scope per text measurer. Intrinsic measurement, Taffy
+remeasurement, painting, scaled frames and multiple layout commands share its
+16777216-operation allowance. Nested calls and handled refusals do not replenish
+it. Each build additionally respects the existing per-layout limits through a
+temporary operation ceiling. Charged failed work is deducted before returning.
+An owned guard clears request state on ordinary/error/unwind exit, with
+pointer-sized atomics preserving the existing thread traits. The diagnostic
+`last_view_shaping_operations()` reports the last outer request using the
+measurer; standalone measurement has its own profile and leaves that diagnostic
+unchanged. Budget-state cleanup does not establish general font-cache unwind
+safety.
+
+Four focused checks pass through actual view APIs and AAT/Taffy shaping:
+geometry costs 16 charged units, a frame 24 and two layout commands 32. Exact
+allowances succeed, insufficient ones refuse across geometry/paint and scaled/
+box paths, snapshots stay unchanged, and deferred clipboard writes occur only
+once after a funded complete commit. Nested/caught failures cannot reset quota;
+independent retries work. A deliberate caught panic after completed shaping
+verifies guard cleanup. Initial fixture compilation used a nonexistent batch
+URL helper; it was corrected to the supported deferred clipboard operation.
+Pointer-width type mismatches during the atomic adjustment were corrected before
+final checks.
+
+**194 native tests pass (183 view, 11 desktop)**. Strict all-target view/desktop
+Clippy, a fresh preview, workspace and modified-vendor formatting, whitespace and
+archive/source/manifest/license checks pass. Dependency versions remain unchanged;
+only the recorded six Parley and six HarfRust source files differ from their
+checksum-pinned releases. Existing upstream warnings remain unsuppressed.
+Evidence (local, ignored): `target/frame-shaping-focused-pointer-atomic.log`,
+`target/frame-shaping-native.log`, `target/frame-shaping-clippy.log`,
+`target/frame-shaping-preview.log`, `target/frame-shaping-format.log` and
+`target/frame-shaping-vendor.log`.
+
+The last full gate at this scoped checkpoint remains `ab045dc`. This counter
+adapter does not claim browser/Node/ABI changes, total CPU/RSS, full font-cache
+accounting, real-window/platform or release acceptance. Unmetered parser/plan/
+Unicode/coverage/outline work and known-failed measurement retries remain separate
+work. Development was paused after these checks; only result documentation and
+commit-boundary verification were requested next.
+
+## Native text/shaping checkpoint — full verification 2026-11-03
+
+The consolidated commit gate passes on macOS arm64: **3150 tests passed,
+0 failed, 16 ignored**, with all eight verification commands successful and an
+unchanged source fingerprint throughout. This includes the native text/shaping
+and shared view-request accounting increments recorded above. The compatibility
+inventory remains **123 passed and 4 known unsupported out of 127**; the baseline
+matches, with no regressions or infrastructure failures. Existing upstream
+HarfRust/Parley warnings remain visible.
+
+Evidence (local, ignored):
+`target/verification/20261103-092401-wtk_ap8t/report.json` and
+`target/native-shaping-commit-verification.log`. Only result documentation was
+updated after this successful gate; code and build inputs stayed unchanged.
+Development remains paused. This commit checkpoint does not close the remaining
+unmetered shaping work, total memory/CPU accounting, browser/pilot or native
+platform matrices, full L0 styling/accessibility, distribution and release
+acceptance.

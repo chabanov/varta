@@ -3,16 +3,16 @@ mod select;
 use crate::TextMeasurer;
 use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
 use crate::style::{self, Environment, Name};
-use crate::text::WhiteSpaceMode;
+use crate::text::{TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_color_sides, outline_components};
-use parley::{Affinity, Cursor, PositionedLayoutItem, Selection};
+use parley::{Affinity, Cursor, Layout, PositionedLayoutItem, Selection};
 pub use select::{SelectHit, SelectMenuMetrics};
 use skrifa::{
     FontRef, GlyphId, MetadataProvider,
     instance::{LocationRef, NormalizedCoord, Size},
     outline::{DrawSettings, OutlinePen},
 };
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Rect, Transform};
 use unicode_segmentation::UnicodeSegmentation;
 use varta_common::view::{Attribute, CssProperty, ROOT_NODE, Tag};
@@ -662,6 +662,20 @@ fn paint_text(
             shape.options,
         )
         .map_err(|error| PaintError::Layout(LayoutError::Text(error.to_string())))?;
+    paint_shaped(pixmap, &layout, bounds, color, id, work)
+}
+
+// Field caret/selection/hit geometry and glyph painting must use the same
+// shaping result. Keep this separate from paragraph shaping so a field never
+// needs a second layout or a cloned display buffer just to paint its glyphs.
+fn paint_shaped(
+    pixmap: &mut Surface,
+    layout: &Layout<()>,
+    bounds: layout::BoxGeometry,
+    color: Color,
+    id: u32,
+    work: &mut usize,
+) -> Result<(), PaintError> {
     let Some(clip) = Rect::from_xywh(
         bounds.clip.x,
         bounds.clip.y,
@@ -853,12 +867,14 @@ fn paint_input(
     }
     let base_start = element.editor.anchor.min(element.editor.focus);
     let base_end = element.editor.anchor.max(element.editor.focus);
-    let mut display = element.value.clone();
+    let mut display = Cow::Borrowed(element.value.as_str());
     let mut selection = (element.editor.anchor, element.editor.focus);
     let mut caret_visible = true;
     let mut preedit_range = None;
     if let Some(preedit) = &element.editor.preedit {
-        display.replace_range(base_start..base_end, &preedit.text);
+        display
+            .to_mut()
+            .replace_range(base_start..base_end, &preedit.text);
         preedit_range = Some((base_start, base_start + preedit.text.len()));
         if let Some((start, end)) = preedit.cursor {
             selection = (base_start + start, base_start + end);
@@ -889,7 +905,7 @@ fn paint_input(
                 * PASSWORD_MASK.len();
             (start, masked_position(end))
         });
-        display = PASSWORD_MASK.repeat(positions.len() - 1);
+        display = Cow::Owned(PASSWORD_MASK.repeat(positions.len() - 1));
         *work = work.saturating_add(display.len());
         if *work > 1_000_000 {
             return Err(PaintError::Unsupported(id));
@@ -906,6 +922,7 @@ fn paint_input(
     };
     let (mut options, families) = layout::text_style(tree, env, id, font_size, measurer)?;
     let multiline = element.tag == Tag::Textarea;
+    options.source = TextSource::Field;
     options.white_space = if multiline {
         WhiteSpaceMode::PreWrap
     } else {
@@ -1019,12 +1036,6 @@ fn paint_input(
         }
     }
     if !display.is_empty() {
-        let shape = TextShape {
-            text: display.clone(),
-            metrics,
-            options,
-            families,
-        };
         let glyph_bounds = layout::BoxGeometry {
             rect: BoxRect {
                 x,
@@ -1041,7 +1052,7 @@ fn paint_input(
             scroll: None,
             programmatic_scroll: None,
         };
-        paint_text(pixmap, measurer, &shape, glyph_bounds, color, id, work)?;
+        paint_shaped(pixmap, &shaped, glyph_bounds, color, id, work)?;
     } else if let Some(placeholder) = element.attributes.get(&Attribute::Placeholder)
         && !placeholder.is_empty()
     {
@@ -1052,12 +1063,14 @@ fn paint_input(
         if *work > 1_000_000 {
             return Err(PaintError::Unsupported(id));
         }
-        let shape = TextShape {
-            text: placeholder.clone(),
-            metrics,
-            options,
-            families,
-        };
+        let (_, placeholder_layout) = measurer
+            .shape_styled(
+                placeholder,
+                Some(content.width.clamp(0.01, 1_000_000.0)),
+                &families,
+                options,
+            )
+            .map_err(|error| PaintError::Layout(LayoutError::Text(error.to_string())))?;
         let glyph_bounds = layout::BoxGeometry {
             rect: BoxRect {
                 x: content.x,
@@ -1070,10 +1083,9 @@ fn paint_input(
             scroll: None,
             programmatic_scroll: None,
         };
-        paint_text(
+        paint_shaped(
             pixmap,
-            measurer,
-            &shape,
+            &placeholder_layout,
             glyph_bounds,
             Color::from_rgba8(117, 117, 117, 255),
             id,
@@ -1180,6 +1192,22 @@ pub(crate) fn rasterize_scaled(
 }
 
 fn rasterize_inner(
+    tree: &Tree,
+    env: &Environment,
+    width: u32,
+    height: u32,
+    text_input: Option<(&mut TextMeasurer, f32)>,
+    scale: f32,
+) -> Result<RasterImage, PaintError> {
+    match text_input {
+        Some((measurer, size)) => measurer.with_view_shaping(|measurer| {
+            rasterize_inner_scoped(tree, env, width, height, Some((measurer, size)), scale)
+        }),
+        None => rasterize_inner_scoped(tree, env, width, height, None, scale),
+    }
+}
+
+fn rasterize_inner_scoped(
     tree: &Tree,
     env: &Environment,
     width: u32,

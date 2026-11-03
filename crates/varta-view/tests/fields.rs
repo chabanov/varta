@@ -305,7 +305,7 @@ fn password_masks_preedit_and_preserves_placeholder_and_type_changes() {
 }
 
 #[test]
-fn password_preedit_can_join_an_existing_grapheme_and_retains_shaping_limits() {
+fn password_preedit_can_join_an_existing_grapheme() {
     let mut password = field("password", "e");
     let mut reference = field("text", "");
     let mut font = font();
@@ -344,16 +344,218 @@ fn password_preedit_can_join_an_existing_grapheme_and_retains_shaping_limits() {
     assert_eq!(password.next_delivery().unwrap().record.value, "e\u{0301}");
     key(&mut password, "Backspace");
     assert_eq!(password.next_delivery().unwrap().record.value, "");
-    let large_value = "A".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2);
-    let large = field("password", &large_value);
-    assert!(matches!(
-        large.rasterize_with_text(100, 50, &mut font, 20.0),
-        Err(varta_view::PaintError::Layout(
-            varta_view::LayoutError::Text(_)
-        ))
-    ));
+}
+
+#[test]
+fn full_size_unicode_values_and_password_masks_render_without_losing_source_positions() {
+    let units = varta_common::view::DRAFT_MAX_VALUE_BYTES / 2;
+    let mut font = font();
+    for (kind, value) in [
+        ("password", "A".repeat(units)),
+        ("text", "界".repeat(units)),
+        ("search", "界".repeat(units)),
+        ("text", "😀".repeat(units / 2)),
+        ("text", "界\u{0301}".repeat(units / 2)),
+    ] {
+        let mut view = field(kind, &value);
+        select(&mut view, 0, 0);
+        let start = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+        assert_eq!(start.text_position(2, -1_000_000.0), Some(0));
+        assert_eq!(start.text_position(2, 1_000_000.0), Some(value.len()));
+        select(&mut view, value.len(), value.len());
+        let end = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+        assert_eq!(end.text_position(2, 1_000_000.0), Some(value.len()));
+        assert!(end.ime_cursor_area().is_some());
+        assert_eq!(view.snapshot()["tree"]["children"][0]["value"], value);
+        let before = view.snapshot();
+        let mut excessive = BatchWriter::new();
+        excessive.set_value(2, &format!("{value}A"), 0);
+        assert!(
+            view.commit(&excessive.finish(), false, &mut Denied)
+                .is_err()
+        );
+        assert_eq!(view.snapshot(), before);
+        key(&mut view, "Backspace");
+        let edited = view.next_delivery().unwrap().record.value;
+        let expected = match kind {
+            "password" => "A".repeat(units - 1),
+            _ => {
+                use unicode_segmentation::UnicodeSegmentation;
+                let last = value.grapheme_indices(true).next_back().unwrap().0;
+                value[..last].into()
+            }
+        };
+        assert_eq!(edited, expected);
+    }
+}
+
+#[test]
+fn full_size_preedit_replacement_and_overflow_keep_the_existing_value_boundary() {
+    let units = varta_common::view::DRAFT_MAX_VALUE_BYTES / 2;
+    let initial = "A".repeat(units);
+    let replacement = "界".repeat(units);
+    let mut font = font();
+    for kind in ["text", "password"] {
+        let mut view = field(kind, &initial);
+        select(&mut view, 0, initial.len());
+        view.input(
+            &Input::ImePreedit {
+                target: Target::Node(2),
+                text: replacement.clone(),
+                cursor: Some((replacement.len(), replacement.len())),
+            },
+            &mut Denied,
+        )
+        .unwrap();
+        let frame = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+        assert!(frame.ime_cursor_area().is_some());
+        assert_eq!(frame.text_position(2, 1_000_000.0), None);
+        assert_eq!(view.snapshot()["tree"]["children"][0]["value"], initial);
+        view.input(
+            &Input::ImeCommit {
+                target: Target::Node(2),
+                text: replacement.clone(),
+            },
+            &mut Denied,
+        )
+        .unwrap();
+        assert_eq!(view.next_delivery().unwrap().record.value, replacement);
+        select(&mut view, replacement.len(), replacement.len());
+        view.input(
+            &Input::ImePreedit {
+                target: Target::Node(2),
+                text: "A".into(),
+                cursor: Some((1, 1)),
+            },
+            &mut Denied,
+        )
+        .unwrap();
+        let frame = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+        assert_eq!(frame.text_position(2, 1_000_000.0), Some(replacement.len()));
+        assert_eq!(view.snapshot()["tree"]["children"][0]["value"], replacement);
+    }
+}
+
+#[test]
+fn full_size_field_placeholder_and_content_sized_textarea_use_the_field_bound() {
+    let value = "界".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2);
+    let mut font = font();
+    for kind in ["text", "password", "search"] {
+        let mut view = field(kind, "");
+        let mut batch = BatchWriter::new();
+        batch.set_attribute(2, Attribute::Placeholder, &value);
+        commit(&mut view, &batch);
+        let frame = view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap();
+        assert_eq!(frame.text_position(2, 1_000_000.0), Some(0));
+        assert_eq!(view.snapshot()["tree"]["children"][0]["value"], "");
+    }
+    let mut view = field("text", "");
+    let mut batch = BatchWriter::new();
+    batch
+        .remove(2)
+        .create_element(3, Tag::Textarea)
+        .insert(1, 3, 0);
+    // Reuse the explicitly supported field styles rather than a platform default.
+    for (property, text) in [
+        (CssProperty::Display, "block"),
+        (CssProperty::Width, "80px"),
+        (CssProperty::Height, "auto"),
+        (CssProperty::MaxHeight, "60px"),
+        (CssProperty::MinWidth, "0"),
+        (CssProperty::MinHeight, "0"),
+        (CssProperty::FieldSizing, "content"),
+        (CssProperty::Resize, "none"),
+        (CssProperty::Padding, "4px"),
+        (CssProperty::Border, "2px solid #000"),
+        (CssProperty::BorderRadius, "0"),
+        (CssProperty::Outline, "none"),
+        (CssProperty::BackgroundColor, "#fff"),
+        (CssProperty::Color, "#00f"),
+        (CssProperty::FontFamily, "\"Varta Password Fixture\""),
+        (CssProperty::FontSize, "20px"),
+        (CssProperty::FontWeight, "normal"),
+        (CssProperty::FontStyle, "normal"),
+        (CssProperty::LineHeight, "20px"),
+    ] {
+        batch.set_style(3, property, text);
+    }
+    batch.set_value(3, &value, 0);
+    commit(&mut view, &batch);
+    let frame = view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
     assert_eq!(
-        large.snapshot()["tree"]["children"][0]["value"],
-        large_value
+        frame.text_position_at(3, 1_000_000.0, 1_000_000.0),
+        Some(value.len())
     );
+    assert_eq!(view.snapshot()["tree"]["children"][0]["value"], value);
+    let mut batch = BatchWriter::new();
+    batch
+        .set_value(3, "", 0)
+        .set_attribute(3, Attribute::Placeholder, &value);
+    commit(&mut view, &batch);
+    view.rasterize_with_text(100, 100, &mut font, 20.0).unwrap();
+}
+
+#[test]
+fn large_mixed_direction_context_matches_its_visible_suffix() {
+    let units = varta_common::view::DRAFT_MAX_VALUE_BYTES / 2;
+    let suffix = "אבג ABC e\u{0301}";
+    let long = format!(
+        "{}{}",
+        "界".repeat(units - suffix.encode_utf16().count()),
+        suffix
+    );
+    let short = format!("{}{}", "界".repeat(16), suffix);
+    let mut font = font();
+    let mut frames = Vec::new();
+    for value in [&long, &short] {
+        let mut view = field("text", value);
+        select(&mut view, value.len(), value.len());
+        frames.push(view.rasterize_with_text(100, 50, &mut font, 20.0).unwrap());
+    }
+    assert_eq!(frames[0].pixels, frames[1].pixels);
+    assert_eq!(frames[0].ime_cursor_area(), frames[1].ime_cursor_area());
+    let prefix_bytes = long.len() - short.len();
+    for x in (6..78).step_by(4) {
+        let a = frames[0].text_position(2, x as f32).unwrap();
+        let b = frames[1].text_position(2, x as f32).unwrap();
+        assert_eq!(a, b + prefix_bytes, "x={x}");
+        assert!(long.is_char_boundary(a));
+    }
+    // A field render must not leave an enlarged allowance in the reused shaper.
+    assert!(matches!(
+        font.measure(&long, 20.0, None),
+        Err(varta_view::TextMeasureError::Limit)
+    ));
+}
+
+#[test]
+fn expanded_combining_cluster_respects_the_existing_paint_glyph_limit() {
+    let mut font = TextMeasurer::new(
+        include_bytes!("fixtures/clusters.ttf").to_vec(),
+        "Varta Cluster Fixture",
+    )
+    .unwrap();
+    let mut view = field("text", "");
+    let mut batch = BatchWriter::new();
+    batch.set_style(2, CssProperty::FontFamily, "\"Varta Cluster Fixture\"");
+    commit(&mut view, &batch);
+    for (count, accepted) in [(21_846, false), (21_845, true), (4, true)] {
+        let value = format!("A{}", "\u{035c}".repeat(count));
+        let mut batch = BatchWriter::new();
+        batch.set_value(2, &value, 0);
+        commit(&mut view, &batch);
+        let frame = view.rasterize_with_text(100, 50, &mut font, 20.0);
+        if accepted {
+            let frame = frame.unwrap();
+            assert_eq!(frame.text_position(2, 1_000_000.0), Some(value.len()));
+        } else {
+            assert!(matches!(
+                frame,
+                Err(varta_view::PaintError::Layout(
+                    varta_view::LayoutError::Text(_)
+                ))
+            ));
+        }
+        assert_eq!(view.snapshot()["tree"]["children"][0]["value"], value);
+    }
 }

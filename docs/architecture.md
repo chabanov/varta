@@ -11763,8 +11763,52 @@ The box-only variant rejects text. A button, text/search/password input or texta
 with explicit box, font, foreground and background styles, zero radius and
 an explicit outline style; buttons also require explicit flex alignment. Text inputs paint
 their value, keyboard selection and a non-blinking caret; missing glyphs use the supplied font's
-`.notdef` outline. Other controls, differently colored border sides,
-positioned elements, stacking effects and rounded corners fail explicitly.
+`.notdef` outline. Each nonempty field reuses one shaped layout for glyph painting,
+caret/selection geometry and source-position hit testing, rather than retaining a
+second layout for painting. Ordinary values and placeholders are borrowed;
+composition overlays and password masks own only their required display buffer.
+The public shaper and general text path keep their 64 KiB UTF-8 allowance.
+Private field display requests instead validate the existing 32768-UTF-16-unit
+value bound and its derived 98304-byte UTF-8 reservation, including placeholders
+and the combined IME replacement. This permits fewer scalar inputs than the
+public path's ASCII maximum; aggregate layout/paint and glyph limits still apply.
+The pinned Parley 0.11.1 dependency is locally patched to use wide cluster text
+byte offsets and glyph/coverage counts, preserving whole-run contextual shaping,
+bidi and source indices without count wrapping or inline-sentinel collisions.
+Font coverage scans the complete grapheme without a fixed scratch prefix; only
+a better candidate updates nominal glyph IDs in a second allocation-free pass.
+See `vendor/parley/VARTA-PATCH.md` and its diff for provenance and exact changes. The text host additionally requests at most 65536 completed glyphs across a
+layout, 262144 intermediate slots in each HarfRust glyph-info/position array and
+an initial allowance of one million upstream-charged operations across its runs. Successful reusable
+arrays retain at most 65536 slots each; refusal discards them. Source reservation
+uses scalars, not encoded bytes. Incomplete shaping is detected before copying
+glyphs into layout or calculating text metrics. The pinned HarfRust 0.12.0 local
+patch supplies limits/status/accounting; context cloning preserves the limits.
+The Varta adapter also shares 16777216 charged operations across an outer native
+view request: intrinsic measurement, Taffy remeasurement and painting for one
+raster; one geometry/box query; or all layout commands in one `commit_with_layout`
+batch. Nested calls reuse the active scope and cannot reset it. A temporary
+Parley operation ceiling uses the lesser of that remaining allowance and the
+per-layout limit. Both successful and refused charged work is accounted before
+returning; a guard releases the scope on normal/error/unwind exit. Standalone
+measurements retain their independent per-layout profile. The diagnostic
+`TextMeasurer::last_view_shaping_operations()` reports the most recent outer view
+request using that measurer, including failed work; it is not a CPU/RSS metric.
+The scope uses pointer-sized atomics without changing the measurer's thread
+traits. Budget-state unwind cleanup does not prove arbitrary dependency-cache
+unwind safety.
+
+These are draft native-host request bounds. Array capacity totals are at most
+10 MiB (2.5 MiB retained), excluding allocator/reallocation overlap and other
+buffers. All upstream debit sites now reserve their full amount before the corresponding
+mutation/allocation/transition; unaffordable work refuses without overspending.
+An exactly consumed budget remains successful when no more charged work is
+needed. The charged meter still excludes some parser/Unicode-analysis/plan work;
+no complete RSS or wall-clock deadline guarantee follows. Fonts with excessive
+glyph/outline expansion can still hit the resource budgets; complete backend
+memory/platform acceptance remains open.
+Other controls, differently colored border sides, positioned elements, stacking
+effects and rounded corners fail explicitly.
 Password painting shapes one `•` per extended grapheme, including transient
 preedit, with source-byte positions retained for hit testing and selection.
 Guest values and input events retain the original text. Selection, caret,

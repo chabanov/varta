@@ -13,21 +13,16 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
-Current development checkpoint (2026-11-02, working tree after `abea3ac`): v38
-is in stabilization and unreleased. Native async I/O, application turns, L0
-headless views/TSX and KV are working checked subsets. The consolidated local
-full gate passed **2946 tests, 0 failures, 16 ignored**, including the browser
-compiler/project Rust paths. Checked conformance remains 123/127 with four known
-unsupported cases and no regressions. This is macOS arm64 evidence; native GUI,
-other OS targets and full browser acceptance remain open. The consent, named-event,
-navigation and browser dev/reload packages are included in that gate. Browser
-probes and 85 oracle-enabled Node tests are separate evidence. A scoped three-engine
-matrix passes 63 checks across Chrome, Firefox and Playwright WebKit; this does
-not establish full pilot/browser acceptance. See the
+Current development checkpoint (2026-11-03): v38 is in stabilization and
+unreleased. Native async I/O, application turns, L0 headless views/TSX and KV are
+working checked subsets. The official browser host delivers metered applications
+and view sessions; the experimental native preview supports an expanding set of
+controls, Unicode text, IME and bounded rendering work. The latest scoped/full
+verification evidence is recorded in the [status summary](docs/development-plan.md#status).
+Complete browser/pilot acceptance, native styling and platform matrices, resource
+measurements and release/security acceptance remain open. See the
 [current queue](docs/development-plan.md#next-delivery-batches) and
 [CORE ledger](docs/development-plan.md#core-completion-ledger).
-Subsequent browser environment-input work has focused verification and is newer
-than that full-gate report.
 
 Native HTTP v2 acceptance covers sync/async handlers, disconnect/shutdown,
 bounded request usage/audit, scripted network waits and source-free/hostile

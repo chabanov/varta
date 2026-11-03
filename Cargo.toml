@@ -16,6 +16,7 @@ members = [
   "crates/varta-desktop",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
+exclude = ["vendor/parley", "vendor/harfrust"]
 
 [workspace.package]
 version = "0.1.0"
@@ -123,3 +124,10 @@ codegen-units = 1
 panic = "abort"
 debug = false
 strip = true
+
+# Preserve complete Unicode runs/clusters: upstream 0.11.1 has narrow cluster
+# offsets/counts and prefix-only font coverage. See vendor/parley/VARTA-PATCH.md.
+[patch.crates-io]
+parley = { path = "vendor/parley" }
+# Optional bounded shaping requests and explicit failure/accounting status.
+harfrust = { path = "vendor/harfrust" }

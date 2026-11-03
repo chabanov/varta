@@ -1,0 +1,548 @@
+--- a/src/analysis/cluster.rs
++++ b/src/analysis/cluster.rs
+@@ -5,15 +5,12 @@
+ use icu_normalizer::properties::Decomposed;
+ 
+ use crate::analysis::AnalysisDataSources;
+-
+-/// The maximum number of characters in a single cluster.
+-const MAX_CLUSTER_SIZE: usize = 32;
+ 
+ #[derive(Debug, Default)]
+ pub(crate) struct CharCluster {
+     pub chars: Vec<Char>,
+     pub is_emoji: bool,
+-    pub map_len: u8,
++    pub map_len: usize,
+     pub start: u32,
+     pub end: u32,
+     pub force_normalize: bool,
+@@ -204,11 +201,10 @@
+         if len == 0 {
+             return Status::Complete;
+         }
+-        let mut glyph_ids = [0_u16; MAX_CLUSTER_SIZE];
+         let prev_ratio = self.best_ratio;
+         let mut ratio;
+         if self.force_normalize && self.composed(analysis_data_sources).is_some() {
+-            ratio = self.comp.map(&f, &mut glyph_ids, self.best_ratio);
++            ratio = self.comp.map(&f, self.best_ratio);
+             if ratio > self.best_ratio {
+                 self.best_ratio = ratio;
+                 self.form = FormKind::NFC;
+@@ -222,7 +218,7 @@
+             map_len: self.map_len.max(1),
+             has_contributing: self.map_len > 0,
+         }
+-        .map(&f, &mut glyph_ids, self.best_ratio);
++        .map(&f, self.best_ratio);
+         if ratio > self.best_ratio {
+             self.best_ratio = ratio;
+             self.form = FormKind::Original;
+@@ -231,7 +227,7 @@
+             }
+         }
+         if self.decomposed(analysis_data_sources).is_some() {
+-            ratio = self.decomp.map(&f, &mut glyph_ids, self.best_ratio);
++            ratio = self.decomp.map(&f, self.best_ratio);
+             if ratio > self.best_ratio {
+                 self.best_ratio = ratio;
+                 self.form = FormKind::NFD;
+@@ -240,7 +236,7 @@
+                 }
+             }
+             if !self.force_normalize && self.composed(analysis_data_sources).is_some() {
+-                ratio = self.comp.map(&f, &mut glyph_ids, self.best_ratio);
++                ratio = self.comp.map(&f, self.best_ratio);
+                 if ratio > self.best_ratio {
+                     self.best_ratio = ratio;
+                     self.form = FormKind::NFC;
+@@ -278,7 +274,7 @@
+ pub(crate) struct Form {
+     chars: [Char; 2],
+     len: u8,
+-    map_len: u8,
++    map_len: usize,
+     has_contributing: bool,
+     state: FormState,
+ }
+@@ -319,62 +315,50 @@
+             .chars()
+             .iter()
+             .filter(|c| !c.is_control_character)
+-            .count() as u8)
+-            .max(1);
++            .count())
++        .max(1);
+         self.has_contributing = self.chars().iter().any(|c| c.contributes_to_shaping);
+     }
+ 
+     #[inline(always)]
+-    fn map(
+-        &mut self,
+-        f: &impl Fn(char) -> u16,
+-        glyphs: &mut [u16; MAX_CLUSTER_SIZE],
+-        best_ratio: f32,
+-    ) -> f32 {
++    fn map(&mut self, f: &impl Fn(char) -> u16, best_ratio: f32) -> f32 {
+         Mapper {
+             chars: &mut self.chars[..self.len as usize],
+             map_len: self.map_len,
+             has_contributing: self.has_contributing,
+         }
+-        .map(f, glyphs, best_ratio)
++        .map(f, best_ratio)
+     }
+ }
+ 
+ struct Mapper<'a> {
+     chars: &'a mut [Char],
+-    map_len: u8,
++    map_len: usize,
+     has_contributing: bool,
+ }
+ 
+ impl<'a> Mapper<'a> {
+-    fn map(
+-        &mut self,
+-        f: &impl Fn(char) -> u16,
+-        glyphs: &mut [u16; MAX_CLUSTER_SIZE],
+-        best_ratio: f32,
+-    ) -> f32 {
++    fn map(&mut self, f: &impl Fn(char) -> u16, best_ratio: f32) -> f32 {
+         if self.map_len == 0 {
+             return 1.;
+         }
+-        let mut mapped = 0;
+-        for (c, g) in self.chars.iter().zip(glyphs.iter_mut()) {
++        let mut mapped = 0usize;
++        // Evaluate the complete cluster without a fixed-size scratch prefix.
++        // Repeating the pure nominal mapping only for an improved candidate
++        // preserves prior glyph IDs on a losing candidate without allocation.
++        for c in self.chars.iter() {
+             if !c.contributes_to_shaping {
+-                *g = f(c.ch);
+                 if !self.has_contributing {
+                     mapped += 1;
+                 }
+-            } else {
+-                let gid = f(c.ch);
+-                *g = gid;
+-                if gid != 0 {
+-                    mapped += 1;
+-                }
++            } else if f(c.ch) != 0 {
++                mapped += 1;
+             }
+         }
+         let ratio = mapped as f32 / self.map_len as f32;
+         if ratio > best_ratio {
+-            for (ch, glyph) in self.chars.iter_mut().zip(glyphs) {
+-                ch.glyph_id = *glyph;
++            for ch in self.chars.iter_mut() {
++                ch.glyph_id = f(ch.ch);
+             }
+         }
+         ratio
+--- a/src/builder.rs
++++ b/src/builder.rs
+@@ -3,19 +3,19 @@
+ 
+ //! Context for layout.
+ 
+-use super::FontContext;
+ use super::context::LayoutContext;
+ use super::style::{Brush, StyleProperty, TextStyle, WhiteSpaceCollapse};
++use super::FontContext;
+ 
+ use super::layout::Layout;
+ 
+ use alloc::string::String;
+ use core::ops::{Bound, Range, RangeBounds};
+ 
+-use crate::InlineBoxKind;
+ use crate::break_overrides::LineBreakOverrideFn;
+ use crate::inline_box::InlineBox;
+-use crate::resolve::{ResolvedStyle, StyleRun, tree::ItemKind};
++use crate::resolve::{tree::ItemKind, ResolvedStyle, StyleRun};
++use crate::InlineBoxKind;
+ 
+ /// Builder for constructing a text layout with ranged attributes.
+ #[must_use]
+@@ -344,6 +344,13 @@
+         );
+     }
+ 
++    if !lcx.shaping_succeeded() {
++        // Never publish a partially shaped layout. The caller checks the
++        // explicit context status before measuring or painting.
++        layout.data.clear();
++        return;
++    }
++
+     // Move inline boxes into the layout
+     layout.data.inline_boxes.clear();
+     core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
+--- a/src/context.rs
++++ b/src/context.rs
+@@ -5,11 +5,11 @@
+ 
+ use alloc::{vec, vec::Vec};
+ 
+-use super::FontContext;
+ use super::builder::{RangedBuilder, StyleRunBuilder};
+ use super::resolve::tree::TreeStyleBuilder;
+ use super::resolve::{RangedStyleBuilder, ResolveContext, ResolvedStyle, StyleRun};
+ use super::style::{Brush, TextStyle};
++use super::FontContext;
+ 
+ use crate::analysis::{AnalysisDataSources, CharInfo};
+ use crate::bidi::BidiResolver;
+@@ -40,6 +40,59 @@
+ }
+ 
+ impl<B: Brush> LayoutContext<B> {
++    /// Bound completed glyphs, intermediate buffer slots, charged shaping
++    /// operations and retained buffer slots for each subsequent layout.
++    pub fn set_shaping_limits(
++        &mut self,
++        glyphs: usize,
++        buffer_slots: usize,
++        operations: u32,
++        cached_slots: usize,
++    ) {
++        self.scx.limits = Some((glyphs, buffer_slots, operations, cached_slots));
++    }
++
++    /// Apply an additional operation ceiling to builds until cleared. This
++    /// never raises the configured per-layout allowance.
++    pub fn set_shaping_operation_ceiling(&mut self, ceiling: Option<u32>) {
++        self.scx.operation_ceiling = ceiling;
++    }
++
++    /// Whether the last build completed without a shaping refusal.
++    pub fn shaping_succeeded(&self) -> bool {
++        !self.scx.failed
++    }
++
++    /// Charged shaping operations in the last build (not total CPU time).
++    pub fn shaping_operations(&self) -> u64 {
++        self.scx.ops_used
++    }
++
++    /// Peak glyph-info/position array slots in the last build (not total RSS).
++    pub fn shaping_peak_buffer_capacities(&self) -> (usize, usize) {
++        self.scx.peak_slots
++    }
++
++    /// Peak capacity bytes of the two shaping arrays (excluding allocator
++    /// overhead, font/analysis caches, other buffers and RSS).
++    pub fn shaping_peak_buffer_bytes(&self) -> usize {
++        self.scx
++            .peak_slots
++            .0
++            .saturating_mul(size_of::<harfrust::GlyphInfo>())
++            .saturating_add(
++                self.scx
++                    .peak_slots
++                    .1
++                    .saturating_mul(size_of::<harfrust::GlyphPosition>()),
++            )
++    }
++
++    /// Glyph-info/position array slots retained for reuse after the last build.
++    pub fn shaping_buffer_capacities(&self) -> (usize, usize) {
++        self.scx.buffer_capacities()
++    }
++
+     pub fn new() -> Self {
+         Self {
+             rcx: ResolveContext::default(),
+@@ -198,7 +251,10 @@
+ 
+ impl<B: Brush> Clone for LayoutContext<B> {
+     fn clone(&self) -> Self {
+-        // None of the internal state is visible so just return a new instance.
+-        Self::new()
+-    }
+-}
++        // Scratch/cache state is not cloned, but the caller's resource policy is.
++        let mut context = Self::new();
++        context.scx.limits = self.scx.limits;
++        context.scx.operation_ceiling = self.scx.operation_ceiling;
++        context
++    }
++}
+--- a/src/layout/cluster.rs
++++ b/src/layout/cluster.rs
+@@ -2,13 +2,13 @@
+ // SPDX-License-Identifier: Apache-2.0 OR MIT
+ 
+ use crate::analysis::cluster::Whitespace;
+-use crate::layout::Style;
+ use crate::layout::data::BreakReason;
+ use crate::layout::data::ClusterData;
+ use crate::layout::glyph::Glyph;
+ use crate::layout::layout::Layout;
+ use crate::layout::line::{Line, LineItem};
+ use crate::layout::run::Run;
++use crate::layout::Style;
+ use crate::style::Brush;
+ use core::ops::Range;
+ 
+@@ -205,7 +205,7 @@
+ 
+     /// Returns an iterator over the glyphs in the cluster.
+     pub fn glyphs(&self) -> impl Iterator<Item = Glyph> + 'a + Clone {
+-        if self.data.glyph_len == 0xFF {
++        if self.data.glyph_len == ClusterData::INLINE_GLYPH {
+             GlyphIter::Single(Some(Glyph {
+                 id: self.data.glyph_offset,
+                 style_index: self.data.style_index,
+--- a/src/layout/data.rs
++++ b/src/layout/data.rs
+@@ -20,21 +20,22 @@
+     pub(crate) flags: u16,
+     /// Style index for this cluster.
+     pub(crate) style_index: u16,
+-    /// Number of glyphs in this cluster (0xFF = single glyph stored inline)
+-    pub(crate) glyph_len: u8,
++    /// Number of glyphs in this cluster (u32::MAX = single glyph stored inline)
++    pub(crate) glyph_len: u32,
+     /// Number of text bytes in this cluster
+     pub(crate) text_len: u8,
+-    /// If `glyph_len == 0xFF`, then `glyph_offset` is a glyph identifier,
++    /// If `glyph_len == u32::MAX`, then `glyph_offset` is a glyph identifier,
+     /// otherwise, it's an offset into the glyph array with the base
+     /// taken from the owning run.
+     pub(crate) glyph_offset: u32,
+     /// Offset into the text for this cluster
+-    pub(crate) text_offset: u16,
++    pub(crate) text_offset: u32,
+     /// Advance width for this cluster
+     pub(crate) advance: f32,
+ }
+ 
+ impl ClusterData {
++    pub(crate) const INLINE_GLYPH: u32 = u32::MAX;
+     pub(crate) const LIGATURE_START: u16 = 1;
+     pub(crate) const LIGATURE_COMPONENT: u16 = 2;
+ 
+@@ -537,7 +538,7 @@
+                 }
+                 if !nearly_zero(spacing) {
+                     cluster.advance += spacing;
+-                    if cluster.glyph_len != 0xFF {
++                    if cluster.glyph_len != ClusterData::INLINE_GLYPH {
+                         let start = run.glyph_start + cluster.glyph_offset as usize;
+                         let end = start + cluster.glyph_len as usize;
+                         let glyphs = &mut self.glyphs[start..end];
+@@ -924,23 +925,23 @@
+     cluster_type: ClusterType,
+     inline_glyph_id: Option<u32>,
+ ) {
+-    let glyph_len = (total_glyphs - glyph_offset) as u8;
++    let glyph_len = total_glyphs - glyph_offset;
+ 
+     let (final_glyph_len, final_glyph_offset, final_advance) = match cluster_type {
+         ClusterType::LigatureComponent => {
+             // Ligature components have no glyphs, only advance.
+             debug_assert_eq!(glyph_len, 0);
+-            (0_u8, 0_u32, advance)
++            (0_u32, 0_u32, advance)
+         }
+         ClusterType::Newline => {
+             // Newline clusters are stripped of their glyph contribution.
+             debug_assert_eq!(glyph_len, 1);
+-            (0_u8, 0_u32, 0.0)
++            (0_u32, 0_u32, 0.0)
+         }
+         _ if inline_glyph_id.is_some() => {
+             // Inline glyphs are stored inline within `ClusterData`
+             debug_assert_eq!(glyph_len, 0);
+-            (0xFF_u8, inline_glyph_id.unwrap(), advance)
++            (ClusterData::INLINE_GLYPH, inline_glyph_id.unwrap(), advance)
+         }
+         ClusterType::Regular | ClusterType::LigatureStart => {
+             // Regular and ligature start clusters maintain their glyphs and advance.
+@@ -956,7 +957,7 @@
+         glyph_len: final_glyph_len,
+         text_len: cluster_start_char.1.len_utf8() as u8,
+         glyph_offset: final_glyph_offset,
+-        text_offset: cluster_start_char.0 as u16,
++        text_offset: cluster_start_char.0 as u32,
+         advance: final_advance,
+     });
+ }
+--- a/src/shape/mod.rs
++++ b/src/shape/mod.rs
+@@ -18,7 +18,7 @@
+ use crate::inline_box::InlineBox;
+ use crate::lru_cache::LruCache;
+ use crate::util::nearly_eq;
+-use crate::{FontData, convert};
++use crate::{convert, FontData};
+ use fontique::Language;
+ use icu_properties::props::Script;
+ 
+@@ -27,6 +27,13 @@
+ mod cache;
+ 
+ pub(crate) struct ShapeContext {
++    pub(crate) limits: Option<(usize, usize, u32, usize)>,
++    pub(crate) operation_ceiling: Option<u32>,
++    pub(crate) failed: bool,
++    pub(crate) glyphs_remaining: usize,
++    pub(crate) ops_remaining: u32,
++    pub(crate) ops_used: u64,
++    pub(crate) peak_slots: (usize, usize),
+     shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
+     shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
+     shape_plan_cache: LruCache<cache::ShapePlanId, harfrust::ShapePlan>,
+@@ -35,10 +42,25 @@
+     char_cluster: CharCluster,
+ }
+ 
++impl ShapeContext {
++    pub(crate) fn buffer_capacities(&self) -> (usize, usize) {
++        self.unicode_buffer
++            .as_ref()
++            .map_or((0, 0), |buffer| buffer.buffer_capacities())
++    }
++}
++
+ impl Default for ShapeContext {
+     fn default() -> Self {
+         const MAX_ENTRIES: usize = 16;
+         Self {
++            limits: None,
++            operation_ceiling: None,
++            failed: false,
++            glyphs_remaining: usize::MAX,
++            ops_remaining: u32::MAX,
++            ops_used: 0,
++            peak_slots: (0, 0),
+             shape_data_cache: LruCache::new(MAX_ENTRIES),
+             shape_instance_cache: LruCache::new(MAX_ENTRIES),
+             shape_plan_cache: LruCache::new(MAX_ENTRIES),
+@@ -74,6 +96,14 @@
+     layout: &mut Layout<B>,
+     analysis_data_sources: &AnalysisDataSources,
+ ) {
++    scx.failed = false;
++    scx.glyphs_remaining = scx.limits.map_or(usize::MAX, |limits| limits.0);
++    scx.ops_remaining = scx
++        .limits
++        .map_or(u32::MAX, |limits| limits.2)
++        .min(scx.operation_ceiling.unwrap_or(u32::MAX));
++    scx.ops_used = 0;
++    scx.peak_slots = (0, 0);
+     // If we have both empty text and no inline boxes, shape with a fake space
+     // to generate metrics that can be used to size a cursor.
+     if text.is_empty() && inline_boxes.is_empty() {
+@@ -177,6 +207,9 @@
+                 layout,
+                 analysis_data_sources,
+             );
++            if scx.failed {
++                return;
++            }
+             item.size = style.font_size;
+             item.level = level;
+             item.script = script;
+@@ -237,7 +270,7 @@
+ 
+     let mut force_normalize = false;
+     let mut is_emoji_or_pictograph = false;
+-    let mut map_len: u8 = 0;
++    let mut map_len: usize = 0;
+     let start = *code_unit_offset_in_string as u32;
+ 
+     for ((_, ch), (info, style_index)) in segment_text.char_indices().zip(item_infos_iter.by_ref())
+@@ -315,6 +348,9 @@
+     let mut code_unit_offset_in_string = text_range.start;
+     let char_cluster = &mut scx.char_cluster;
+ 
++    if scx.failed {
++        return;
++    }
+     // Build an iterator of boundaries and consume the first segment to seed the loop
+     let mut boundaries_iter = grapheme_cluster_boundaries.skip(1);
+     let mut last_boundary = 0_usize;
+@@ -439,10 +475,18 @@
+ 
+         // Prepare harfrust buffer
+         let mut buffer = mem::take(&mut scx.unicode_buffer).unwrap();
+-        buffer.clear();
+-
+-        // Use the entire segment text including newlines
+-        buffer.reserve(segment_text.len());
++        if let Some(limits) = scx.limits {
++            buffer.clear_with_buffer_limit(limits.1);
++        } else {
++            buffer.clear();
++        }
++
++        // Reserve glyph slots for source scalars, not UTF-8 storage bytes.
++        if !buffer.reserve(segment_text.chars().count()) {
++            scx.failed = true;
++            scx.unicode_buffer = Some(harfrust::UnicodeBuffer::new());
++            return;
++        }
+         for (i, ch) in segment_text.chars().enumerate() {
+             // Ensure that each cluster's index matches the index into `infos`. This is required
+             // for efficient cluster lookup within `data.rs`.
+@@ -462,13 +506,26 @@
+             buffer.set_language(lang);
+         }
+ 
+-        let glyph_buffer = harf_shaper.shape(
+-            buffer,
+-            ShapeOptions::new()
+-                .plan(Some(shaper_plan))
+-                .features(&scx.features)
+-                .point_size(Some(item.size)),
+-        );
++        let mut options = ShapeOptions::new()
++            .plan(Some(shaper_plan))
++            .features(&scx.features)
++            .point_size(Some(item.size));
++        if let Some(limits) = scx.limits {
++            options = options.limits(limits.1, scx.ops_remaining);
++        }
++        let glyph_buffer = harf_shaper.shape(buffer, options);
++        let capacity = glyph_buffer.buffer_capacities();
++        scx.peak_slots.0 = scx.peak_slots.0.max(capacity.0);
++        scx.peak_slots.1 = scx.peak_slots.1.max(capacity.1);
++        let used = glyph_buffer.shaping_operations();
++        scx.ops_used = scx.ops_used.saturating_add(u64::from(used));
++        scx.ops_remaining = scx.ops_remaining.saturating_sub(used);
++        if !glyph_buffer.shaping_succeeded() || glyph_buffer.len() > scx.glyphs_remaining {
++            scx.failed = true;
++            scx.unicode_buffer = Some(harfrust::UnicodeBuffer::new());
++            return;
++        }
++        scx.glyphs_remaining -= glyph_buffer.len();
+ 
+         // Extract relevant CharInfo slice for this segment
+         let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
+@@ -494,8 +551,17 @@
+             harf_shaper.coords(),
+         );
+ 
+-        // Replace buffer to reuse allocation in next iteration.
+-        scx.unicode_buffer = Some(glyph_buffer.clear());
++        // Keep only bounded scratch. Refused work above never enters the cache.
++        scx.unicode_buffer = Some(
++            if scx
++                .limits
++                .is_some_and(|limits| capacity.0 > limits.3 || capacity.1 > limits.3)
++            {
++                harfrust::UnicodeBuffer::new()
++            } else {
++                glyph_buffer.clear()
++            },
++        );
+     }
+ }
+ 

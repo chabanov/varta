@@ -1,0 +1,387 @@
+--- a/src/hb/aat/layout_kerx_table.rs
++++ b/src/hb/aat/layout_kerx_table.rs
+@@ -392,6 +392,10 @@
+             break;
+         };
+ 
++        if !c.buffer.charge_ops(1) {
++            break;
++        }
++
+         let next_state = entry.new_state;
+ 
+         // Conditions under which it's guaranteed safe-to-break before current glyph:
+@@ -483,10 +487,9 @@
+             break;
+         }
+ 
+-        if entry.has_advance() || c.buffer.max_ops <= 0 {
++        if entry.has_advance() {
+             c.buffer.next_glyph();
+         }
+-        c.buffer.max_ops -= 1;
+     }
+ }
+ 
+--- a/src/hb/aat/layout_morx_table.rs
++++ b/src/hb/aat/layout_morx_table.rs
+@@ -294,6 +294,10 @@
+         let Ok(entry) = machine.entry(state, class) else {
+             break;
+         };
++
++        if !ac.buffer.charge_ops(1) {
++            break;
++        }
+ 
+         let next_state = entry.new_state;
+ 
+@@ -382,11 +386,6 @@
+ 
+         if Ctx::can_advance(&entry) {
+             ac.buffer.next_glyph();
+-        } else {
+-            if ac.buffer.max_ops <= 0 {
+-                ac.buffer.next_glyph();
+-            }
+-            ac.buffer.max_ops -= 1;
+         }
+     }
+ 
+@@ -718,9 +717,8 @@
+ 
+         if entry.payload.marked_insert_index.get() != 0xFFFF {
+             let count = flags & Self::MARKED_INSERT_COUNT;
+-            ac.buffer.max_ops -= i32::from(count);
+-            if ac.buffer.max_ops <= 0 {
+-                return Some(());
++            if !ac.buffer.charge_ops(usize::from(count)) {
++                return None;
+             }
+ 
+             let start = entry.payload.marked_insert_index.get();
+@@ -761,9 +759,8 @@
+ 
+         if entry.payload.current_insert_index.get() != 0xFFFF {
+             let count = (flags & Self::CURRENT_INSERT_COUNT) >> 5;
+-            ac.buffer.max_ops -= i32::from(count);
+-            if ac.buffer.max_ops < 0 {
+-                return Some(());
++            if !ac.buffer.charge_ops(usize::from(count)) {
++                return None;
+             }
+ 
+             let start = entry.payload.current_insert_index.get();
+--- a/src/hb/buffer.rs
++++ b/src/hb/buffer.rs
+@@ -513,6 +513,7 @@
+     pub max_len: usize,
+     /// Maximum allowed operations.
+     pub max_ops: i32,
++    pub shaping_operations: u32,
+ }
+ 
+ impl hb_buffer_t {
+@@ -536,6 +537,7 @@
+             not_found_variation_selector: None,
+             max_len: Self::MAX_LEN_DEFAULT,
+             max_ops: Self::MAX_OPS_DEFAULT,
++            shaping_operations: 0,
+             direction: Direction::Invalid,
+             script: None,
+             language: None,
+@@ -672,6 +674,7 @@
+         self.language = None;
+ 
+         self.successful = true;
++        self.shaping_operations = 0;
+         self.have_output = false;
+         self.have_positions = false;
+ 
+@@ -1023,9 +1026,8 @@
+         let not_mask = !mask;
+         value &= mask;
+ 
+-        self.max_ops -= self.len as i32;
+-        if self.max_ops < 0 {
+-            self.successful = false;
++        if !self.charge_ops(self.len) {
++            return;
+         }
+ 
+         if cluster_start == 0 && cluster_end == u32::MAX {
+@@ -1058,9 +1060,8 @@
+     }
+ 
+     fn merge_clusters_impl(&mut self, mut start: usize, mut end: usize) {
+-        self.max_ops -= (end - start) as i32;
+-        if self.max_ops < 0 {
+-            self.successful = false;
++        if !self.charge_ops(end - start) {
++            return;
+         }
+ 
+         let cluster = self.info[start..end]
+@@ -1135,9 +1136,8 @@
+     }
+ 
+     fn merge_out_clusters_impl(&mut self, mut start: usize, mut end: usize) {
+-        self.max_ops -= (end - start) as i32;
+-        if self.max_ops < 0 {
+-            self.successful = false;
++        if !self.charge_ops(end - start) {
++            return;
+         }
+ 
+         let cluster = self.out_info()[start..end]
+@@ -1451,7 +1451,10 @@
+     #[must_use]
+     #[inline(always)]
+     pub fn ensure(&mut self, size: usize) -> bool {
+-        if size <= self.info.len() {
++        if size > self.max_len {
++            self.successful = false;
++            false
++        } else if size <= self.info.len() {
+             true
+         } else {
+             self.enlarge(size)
+@@ -1465,6 +1468,27 @@
+             return false;
+         }
+ 
++        if size > self.info.capacity() || size > self.pos.capacity() {
++            let target = size
++                .max(
++                    self.info
++                        .capacity()
++                        .max(self.pos.capacity())
++                        .saturating_mul(2),
++                )
++                .min(self.max_len);
++            if (target > self.info.capacity()
++                && self
++                    .info
++                    .try_reserve_exact(target - self.info.len())
++                    .is_err())
++                || (target > self.pos.capacity()
++                    && self.pos.try_reserve_exact(target - self.pos.len()).is_err())
++            {
++                self.successful = false;
++                return false;
++            }
++        }
+         self.info.resize(size, GlyphInfo::default());
+         self.pos.resize(size, GlyphPosition::default());
+         true
+@@ -1490,13 +1514,7 @@
+ 
+     fn shift_forward(&mut self, count: usize) -> bool {
+         debug_assert!(self.have_output);
+-        if !self.ensure(self.len + count) {
+-            return false;
+-        }
+-
+-        self.max_ops -= (self.len - self.idx) as i32;
+-        if self.max_ops < 0 {
+-            self.successful = false;
++        if !self.charge_ops(self.len - self.idx) || !self.ensure(self.len + count) {
+             return false;
+         }
+ 
+@@ -1553,6 +1571,24 @@
+         }
+ 
+         info.cluster = cluster;
++    }
++
++    /// Reserve charged work before any corresponding mutation/allocation.
++    /// Refusal is sticky and leaves the remaining allowance unchanged.
++    pub fn charge_ops(&mut self, amount: usize) -> bool {
++        if !self.successful {
++            return false;
++        }
++        let Ok(amount) = i32::try_from(amount) else {
++            self.successful = false;
++            return false;
++        };
++        if amount > self.max_ops {
++            self.successful = false;
++            return false;
++        }
++        self.max_ops -= amount;
++        true
+     }
+ 
+     // Called around shape()
+@@ -1836,6 +1872,24 @@
+ pub struct UnicodeBuffer(pub(crate) hb_buffer_t);
+ 
+ impl UnicodeBuffer {
++    /// Clear input and bound subsequent input-buffer growth. Oversized cached
++    /// arrays are released. Pair this with `ShapeOptions::limits` for shaping.
++    pub fn clear_with_buffer_limit(&mut self, limit: usize) {
++        self.0.clear();
++        if self.0.info.capacity() > limit {
++            self.0.info = Vec::new();
++        }
++        if self.0.pos.capacity() > limit {
++            self.0.pos = Vec::new();
++        }
++        self.0.max_len = limit.min(hb_buffer_t::MAX_LEN_DEFAULT);
++    }
++
++    /// Retained slots in the glyph-info and position arrays (not total RSS).
++    pub fn buffer_capacities(&self) -> (usize, usize) {
++        (self.0.info.capacity(), self.0.pos.capacity())
++    }
++
+     /// Create a new `UnicodeBuffer`.
+     #[inline]
+     pub fn new() -> UnicodeBuffer {
+@@ -2033,6 +2087,21 @@
+ pub struct GlyphBuffer(pub(crate) hb_buffer_t);
+ 
+ impl GlyphBuffer {
++    /// Whether shaping completed without allocation, length or operation refusal.
++    pub fn shaping_succeeded(&self) -> bool {
++        self.0.successful
++    }
++
++    /// Operations charged by the shaper for this result, including failed work.
++    pub fn shaping_operations(&self) -> u32 {
++        self.0.shaping_operations
++    }
++
++    /// Retained slots in the glyph-info and position arrays (not total RSS).
++    pub fn buffer_capacities(&self) -> (usize, usize) {
++        (self.0.info.capacity(), self.0.pos.capacity())
++    }
++
+     /// Returns the length of the data of the buffer.
+     ///
+     /// When called before shaping this is the number of unicode codepoints
+--- a/src/hb/face.rs
++++ b/src/hb/face.rs
+@@ -257,6 +257,8 @@
+ /// Options which can be used to configure shaping.
+ #[derive(Default)]
+ pub struct ShapeOptions<'a> {
++    max_buffer_len: Option<usize>,
++    max_operations: Option<i32>,
+     plan: Option<&'a ShapePlan>,
+     scale: Option<(i32, i32)>,
+     point_size: Option<f32>,
+@@ -268,6 +270,15 @@
+     /// Creates a default set of shape options ready for configuration.
+     pub fn new() -> Self {
+         Self::default()
++    }
++
++    /// Bound intermediate glyph storage and charged shaping operations.
++    /// These ceilings can only reduce the built-in safety limits. Callers must
++    /// check `GlyphBuffer::shaping_succeeded` before using the result.
++    pub fn limits(mut self, max_buffer_len: usize, max_operations: u32) -> Self {
++        self.max_buffer_len = Some(max_buffer_len);
++        self.max_operations = Some(max_operations.min(i32::MAX as u32) as i32);
++        self
+     }
+ 
+     /// Sets the plan to use for shaping.
+@@ -563,6 +574,14 @@
+     ) -> GlyphBuffer {
+         let mut buffer = buffer.0;
+         buffer.enter();
++        if let Some(limit) = options.max_buffer_len {
++            buffer.max_len = buffer.max_len.min(limit);
++            buffer.successful &= buffer.len <= buffer.max_len;
++        }
++        if let Some(limit) = options.max_operations {
++            buffer.max_ops = buffer.max_ops.min(limit);
++        }
++        let initial_ops = buffer.max_ops;
+ 
+         assert_eq!(
+             buffer.direction, plan.direction,
+@@ -577,7 +596,7 @@
+             plan.script.unwrap_or(script::UNKNOWN)
+         );
+ 
+-        if buffer.len > 0 {
++        if buffer.successful && buffer.len > 0 {
+             // Save the original direction, we use it later.
+             let target_direction = buffer.direction;
+             let scale = Scale::new(options.scale, self.units_per_em as i32);
+@@ -594,6 +613,8 @@
+             .shape_internal();
+         }
+ 
++        buffer.shaping_operations = (i64::from(initial_ops) - i64::from(buffer.max_ops))
++            .clamp(0, i64::from(u32::MAX)) as u32;
+         buffer.leave();
+ 
+         GlyphBuffer(buffer)
+--- a/src/hb/kerning.rs
++++ b/src/hb/kerning.rs
+@@ -325,6 +325,10 @@
+             break;
+         };
+ 
++        if !c.buffer.charge_ops(1) {
++            break;
++        }
++
+         let next_state = entry.new_state;
+ 
+         // Conditions under which it's guaranteed safe-to-break before current glyph:
+@@ -410,8 +414,7 @@
+             break;
+         }
+ 
+-        c.buffer.max_ops -= 1;
+-        if entry.has_advance() || c.buffer.max_ops <= 0 {
++        if entry.has_advance() {
+             c.buffer.next_glyph();
+         }
+     }
+--- a/src/hb/ot_layout_gsubgpos.rs
++++ b/src/hb/ot_layout_gsubgpos.rs
+@@ -551,15 +551,11 @@
+             continue;
+         }
+ 
+-        if !ctx.buffer.move_to(ctx.match_positions[idx] as usize) {
+-            break;
+-        }
+-
+-        if ctx.buffer.max_ops <= 0 {
+-            break;
+-        }
+-
+-        if ctx.recurse(record.lookup_list_index.get()).is_none() {
++        let position = ctx.match_positions[idx] as usize;
++        if ctx
++            .recurse(record.lookup_list_index.get(), position)
++            .is_none()
++        {
+             continue;
+         }
+ 
+@@ -936,15 +932,13 @@
+             self.context_matcher = matcher_t::new(self, true);
+         }
+ 
+-        pub fn recurse(&mut self, sub_lookup_index: u16) -> Option<()> {
++        pub fn recurse(&mut self, sub_lookup_index: u16, position: usize) -> Option<()> {
+             if self.nesting_level_left == 0 {
+                 self.buffer.successful = false;
+                 return None;
+             }
+ 
+-            self.buffer.max_ops -= 1;
+-            if self.buffer.max_ops < 0 {
+-                self.buffer.successful = false;
++            if !self.buffer.charge_ops(1) || !self.buffer.move_to(position) {
+                 return None;
+             }
+ 

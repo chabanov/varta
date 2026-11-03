@@ -1,6 +1,6 @@
 //! Initial, deliberately bounded box-only layout using the shared native engine.
 use crate::style::{self, Environment, Name};
-use crate::text::{TextOptions, WhiteSpaceMode};
+use crate::text::{TextOptions, TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_components, geometry_sides};
 use crate::{TextMeasurer, TextMetrics};
 use parley::LineHeight;
@@ -630,6 +630,7 @@ pub(crate) fn text_style(
             italic,
             white_space,
             break_anywhere,
+            source: TextSource::General,
         },
         families,
     ))
@@ -1121,6 +1122,19 @@ pub(crate) fn geometry_and_text(
     measurer: &mut TextMeasurer,
     font_size: f32,
 ) -> Result<TextGeometry, LayoutError> {
+    measurer.with_view_shaping(|measurer| {
+        geometry_and_text_inner(tree, env, width, height, measurer, font_size)
+    })
+}
+
+fn geometry_and_text_inner(
+    tree: &Tree,
+    env: &Environment,
+    width: f32,
+    height: f32,
+    measurer: &mut TextMeasurer,
+    font_size: f32,
+) -> Result<TextGeometry, LayoutError> {
     if !width.is_finite()
         || !height.is_finite()
         || width <= 0.0
@@ -1198,6 +1212,7 @@ pub(crate) fn geometry_and_text(
             let (mut options, families) = text_style(tree, &layout_env, id, font_size, measurer)?;
             options.white_space = WhiteSpaceMode::PreWrap;
             options.break_anywhere = true;
+            options.source = TextSource::Field;
             let measured = measurer
                 .measure_styled(&text, None, &families, options)
                 .map_err(|error| LayoutError::Text(error.to_string()))?;

@@ -2,7 +2,8 @@
 
 ## Status
 
-Updated 2026-11-03, against `main` at `01acc09` plus the accessible-name, diagnostic export/retention and native input-backlog increments below. Varta is an experimental
+Updated 2026-11-03 for the native text/shaping stabilization and shared
+view-request accounting checkpoint following `ab045dc`. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -14,7 +15,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | `01acc09` (2026-11-03): **3106 passed**, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-042426-afqeylv0/report.json`. This covers the committed empty-reference, browser computed-scope and potential expansion packages on macOS arm64. The subsequent accessible-name, diagnostic export/retention and native input-backlog changes have scoped evidence only. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Native text/shaping checkpoint (2026-11-03, macOS arm64): **3150 passed**, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-092401-wtk_ap8t/report.json`. Includes **194 native tests** and the consolidated workspace/dependency checks. Only result documentation changed after the gate. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -6665,3 +6666,251 @@ explicit bounded fonts with system-font discovery disabled. No cache reset or
 allowance increase was added. This source audit establishes entry/lifecycle
 behavior, not total cache bytes, glyph expansion or RSS. Broader input/rendering,
 backend allocation, platform, late-value CSS and release acceptance remain open.
+
+
+### Native field shaping reuse — implementation 2026-11-03
+
+The preceding naming, bounded diagnostic-export and GUI-input packages were
+committed together as `ab045dc`. Its full gate passed all eight commands with
+**3133 tests passed, 16 ignored**, **123 conformance cases passed and four known
+unsupported**, matching the baseline with no regressions or infrastructure
+failures. The source fingerprint stayed unchanged during verification; a separate
+19-test browser naming/session selection also passed. These results precede the
+renderer change below.
+
+A nonempty native field now retains one shaped layout for caret/selection/hit
+geometry and glyph painting. Painting no longer builds a second layout while
+the first is still live or clones the display into a temporary `TextShape`.
+Ordinary values are borrowed, composition uses copy-on-write and password
+masking replaces only the required display buffer; placeholder painting also
+borrows its source. Paragraph shaping retains its existing path. Glyph, outline,
+aggregate painting, image-dimension and shaping allowances are unchanged.
+
+Scoped acceptance passes **166 native view tests**, including field/password/
+IME/navigation/textarea rendering, strict all-target view Clippy, a fresh preview
+binary and formatting/whitespace checks. The [verification record](history.md#native-field-layout-reuse--scoped-verification-2026-11-03)
+separates these results from the preceding full gate. This is a reduction in
+redundant shaping and buffers, not a process-RSS or slow-consumer acceptance
+measurement.
+
+At this checkpoint the UTF-16/UTF-8 boundary remained open (addressed by the
+following package): a field may hold 32768 UTF-16 units, which become up to 98304 UTF-8 bytes; the public shaper accepts 65536 UTF-8
+bytes. Password masks can reach the same 98304-byte size even for ASCII input,
+while an IME replacement remains bounded by the existing combined-value check.
+The then-existing maximum-password rendering refusal remained a recorded limitation,
+not evidence of complete admitted-value rendering. A faithful bounded rendering
+path must preserve shaping context, bidi, source offsets, wrapping, selection
+and IME without truncating values or increasing guest/work budgets merely to
+pass tests. Complete backend-buffer/cache accounting, native/browser platform
+acceptance, late-value CSS and release acceptance also remain open.
+
+
+### Maximum Unicode native field display — implementation 2026-11-03
+
+The byte/UTF-16 mismatch identified above is addressed by a private field source
+classification in shaping options. General/public text still accepts at most
+65536 UTF-8 bytes. Field display independently verifies the existing semantic
+32768-UTF-16-unit bound and its derived 98304-byte UTF-8 reservation, including
+password masks and placeholders. Both checks run before building a layout, and
+the source classification follows content-sized textarea remeasurement. CSS
+cannot select it. No source, guest, glyph, aggregate shaping/paint, image or
+font allowance is increased. Each complete field is shaped in one context;
+there is no truncation, chunk boundary or persistent enlarged shaper state.
+
+The first focused regressions exposed an independent Parley 0.11.1 issue: its
+`ClusterData::text_offset` casts a run-local byte position to `u16`. A valid
+98304-byte field run wrapped offsets and panicked in line/source mapping.
+A documented local crates.io patch widens that field and its one construction
+cast to `u32`; all other copied source/manifests/licenses match the pinned
+release. The lockfile changes only Parley's source selection, with no dependency
+version changes. Upstream licenses and patch provenance/removal criteria are
+retained in `vendor/parley/VARTA-PATCH.md`. Splitting runs was rejected because
+it could alter contextual shaping, bidi and caret mapping.
+
+Acceptance covers successful maximum-size BMP/astral/combining field values,
+password masks, start/end source hits, caret visibility, grapheme deletion,
+one-unit excess refusal with rollback, complete IME replacement/commit and
+combined-value overflow cancellation. Full-size Unicode placeholders and
+content-sized textarea wrapping/remeasurement must succeed. A large mixed-
+direction field must match the pixels, caret and shifted source hits of its
+visible suffix, and a subsequent public shaper call must retain its byte limit.
+Acceptance passes **181 native tests** (170 view, 11 desktop), the initial
+**11-test** field/text selection and an **eight-test** field repeat after a
+Clippy-only test-iterator correction. Strict all-target view/desktop Clippy, a
+fresh preview binary, formatting and whitespace checks pass. Release archive
+checksum/source comparison confirms that the 45 copied vendor files match the
+pinned package except for the two documented substitutions. The
+[verification record](history.md#maximum-unicode-native-field-display--scoped-verification-2026-11-03)
+records the initial failures and unchanged upstream deprecation warning.
+
+Correction to the initial boundary note: inspection of `Input::ImePreedit`
+confirms the pre-existing prefix + replacement + suffix UTF-16 check. A valid
+composition does not exceed the combined field bound; no larger transient
+allowance was introduced. Complete cache/graph/backend/RSS measurement, complex-
+font expansion, full bidi navigation, platform/browser matrices, late-value CSS
+and release acceptance remain open.
+
+
+### Large native glyph clusters — implementation 2026-11-03
+
+The next complex-font probes found additional Parley 0.11.1 cluster assumptions:
+255 stored glyphs collided with the inline-single-glyph sentinel, larger counts
+wrapped, a contributing-character `u8` overflowed on a long grapheme, and font
+coverage inspected only a 32-character scratch prefix. The local dependency
+patch now uses `u32` glyph counts with a distinct `u32::MAX` inline marker and
+`usize` coverage counts. Complete nominal coverage is evaluated without scratch
+allocation; a second pure mapping pass publishes IDs only for a better candidate.
+No source, font, glyph/outline or aggregate work budget is increased.
+
+Two original, reproducible synthetic fonts exercise plain combining glyphs,
+three-glyph OpenType `ccmp` expansion and an incomplete leading font. Acceptance
+requires exact output counts around 254/255/256/257 and above; complete fallback
+coverage after the old 32-character prefix; a paintable 65536-glyph result;
+refusal at 65539 glyphs and a subsequent successful smaller render with the
+unchanged field value. The first pre-fix count test observed **1 instead of 255**
+glyphs; long-cluster painting also reproduced the contributing-counter panic.
+Two focused shaping checks and the focused paint-boundary check now pass.
+
+The expanded patch is limited to four upstream source files and is recorded in
+`vendor/parley/VARTA-PATCH.diff`; all other copied source, manifest and licenses
+remain identical to the checksum-pinned release. Fixture regeneration produces
+identical bytes. The former two-line description belongs to the preceding offset
+checkpoint; the current patch additionally covers these cluster counters/mapping.
+Acceptance passes **184 native tests** (173 view, 11 desktop), strict all-target
+view/desktop Clippy, a fresh preview binary and formatting/whitespace checks. The
+[verification record](history.md#large-native-glyph-clusters--scoped-verification-2026-11-03)
+records the focused failures, exact-count/coverage checks and provenance checks. Pre-paint glyph expansion allocation/CPU,
+complete cache/backend/RSS quotas, full bidi/OS/platform matrices, late-value CSS
+and release acceptance remain open.
+
+
+### Bounded native shaping requests — implementation 2026-11-03
+
+Pre-paint inspection found HarfRust's built-in safety bounds were not configurable
+through Parley and incomplete results were not checked before layout copying.
+The host now configures draft per-layout limits: 65536 completed glyphs,
+262144 intermediate slots per glyph-info/position array, an initial one-million upstream-
+charged-operation allowance across all runs, and 65536 retained slots per array.
+The completed-output allowance matches the pre-existing paint glyph budget;
+excess now refuses earlier with `TextMeasureError::Limit`/layout-text failure.
+Intermediate/output limits are separate so normal temporary expansion is not
+mistaken for completed output. Source, font, image and guest budgets are unchanged.
+
+A pinned local HarfRust 0.12.0 patch adds optional request limits, explicit
+completion status, charged-operation/capacity statistics and bounded fallible
+array growth. Checks precede resize, even when previously cached storage could
+hold the request; actual spare capacity is reused without unnecessary growth.
+Parley reserves scalar slots rather than UTF-8 bytes, applies the limits, shares
+output/operation accounting across font/script runs and refuses before copying
+incomplete/excessive results into layout. Refused work discards reusable glyph
+arrays; successful work discards arrays exceeding the retained allowance. Context
+cloning preserves configured policy. Varta checks status before measuring or
+painting, so partial shaping cannot appear as a successful frame.
+
+Acceptance includes exact 64-slot intermediate boundary and overflow, aggregate
+129/128-glyph script-run boundary, measured operation exhaustion and later retry,
+refusal/recovery after strong 16× OpenType expansion, unchanged maximum 65536-byte
+ASCII input and full Unicode/password/IME/textarea regressions. The focused
+selection passes **42 tests**. Observed capacity totals: the 16× refusal reached
+**10485760 bytes** and retained zero slots; a valid 65536-glyph result used
+**21846 charged operations**, **3495360 capacity bytes** and retained zero slots;
+a later small request used **800 capacity bytes** and retained 20 slots per array.
+These are measured array capacities, not allocator/RSS or total CPU measurements.
+
+Source/archive checks confirm unchanged dependency versions and local changes
+limited to two HarfRust and six Parley source files, with licenses/provenance and
+complete diffs retained. Acceptance passes **188 native tests** (177 view, 11 desktop), the **42-test**
+focused selection and **three policy tests** repeated after the context-clone
+policy correction. Final strict all-target view/desktop Clippy, a fresh preview,
+workspace/modified-vendor formatting, whitespace, archive/source comparison and
+three-fixture deterministic regeneration checks pass. The
+[verification record](history.md#bounded-native-shaping-requests--scoped-verification-2026-11-03)
+keeps these scoped results distinct from the last full gate at `ab045dc`. Full
+backend/cache/RSS accounting, reallocation overlap, parser/analysis/plan CPU,
+real-window/platform matrices, late-value CSS and release acceptance remain open.
+
+
+At the initial bounded-request checkpoint, the operation allowance was an
+exhaustion threshold: batch debits could overshoot it before failure (44 charged
+units versus an allowance of 43 in the three-run probe). The following package
+addresses strict pre-charge accounting. Coverage of uncharged analysis/plan/
+parser work remains separate from any claimed deadline.
+
+
+### Strict native shaping pre-charge — implementation 2026-11-03
+
+All existing HarfRust charged-work sites now reserve a complete batch through one
+checked helper before its corresponding mutation, allocation, recursion or AAT
+transition. Failed conversion/insufficient allowance marks the request failed
+without debiting the unfunded batch; refusal is sticky. The sole counter
+subtraction follows the checked affordability guard. Buffer masks/cluster merges
+and forward shifts no longer perform their charged work after rejection; forward
+shifts check before capacity growth. Contextual recursion charges before cursor
+movement. Kern/kerx/morx drivers charge transitions before flags/actions and no
+longer force advancement after exhaustion; current/marked insertion counts use
+the same helper. Exact zero remaining permits successful completion when no
+further charged work is requested. Configured limits are unchanged.
+
+Acceptance requires the multi-script baseline to succeed with its exact observed
+44-unit allowance and refuse at 43 without overspending. Five original AAT fonts
+exercise current insertion (4 output glyphs / 6 charged units), marked+current
+insertion (7 / 8), legacy kern and kerx (1 / 3 each) and a nonadvancing morx loop.
+For each finite fixture every smaller allowance must refuse without exceeding
+it, while the exact allowance reproduces the unrestricted metrics. The loop must
+stop at budgets 1/2/8/64, release refused glyph arrays and permit a later ordinary
+space render. Focused OpenType/resource (**6**) and AAT (**2**) checks pass; all five new fonts
+regenerate identically. Acceptance passes **190 native tests** (179 view,
+11 desktop), strict all-target view/desktop Clippy, a fresh preview, workspace/
+modified-vendor formatting and whitespace checks. The
+[verification record](history.md#strict-native-shaping-pre-charge--scoped-verification-2026-11-03)
+records scopes and remaining resource limits separately from `ab045dc`'s full gate.
+
+Source/archive comparison must show six changed HarfRust files and the existing
+six Parley files only, with all other copied source/manifests/licenses matching
+the pinned releases. This closes overspending of the existing charged meter;
+uncharged parser/plan/Unicode/outline work, frame-wide accounting, allocator/RSS,
+real-window/native/browser matrices, late-value CSS and release acceptance remain
+open. It does not establish a complete CPU/deadline guarantee.
+
+
+### Shared native view shaping scope — implementation 2026-11-03
+
+A new native-only draft allowance shares **16777216 charged operations** across
+one outer text view request. Rasterization includes intrinsic text, Taffy
+remeasurement, fields/placeholders/selects and painting; scaled rasterization
+uses the same entry. Geometry/box queries and a `commit_with_layout` batch also
+establish an outer scope. Repeated layout commands in a batch reuse it instead
+of resetting accounting per geometry pass. Existing per-layout, source, buffer,
+glyph/outline, image and guest limits are unchanged.
+
+The text adapter sets a temporary additional Parley operation ceiling from the
+remaining request allowance and deducts actual charged work, including failed
+layouts. Nested scopes do not replenish it. An owned guard clears scope state
+on success, ordinary error and unwinding; pointer-sized atomics retain the prior
+thread traits without requiring an additional 64-bit atomic capability. The new
+`last_view_shaping_operations()` diagnostic reports the last completed outer
+scope using that measurer. Standalone measurement clears the temporary ceiling
+and keeps its own profile; it does not overwrite the view-request diagnostic.
+
+Acceptance requires exact cumulative frame and geometry boundaries, geometry
+success followed by paint refusal under the same allowance, scaled-frame parity,
+multiple layout-command accounting and full model/deferred-effect rollback.
+Nested calls and caught refusals cannot reset the allowance; a later independent
+request must succeed. Scope state must also clear during a deliberate unwind
+after completed shaping. This tests counter cleanup, not all dependency-cache
+unwind safety. Four focused checks pass: the fixture uses **16 operations** for
+geometry, **24** for the frame and **32** for two layout commands; a refused batch
+preserves its prior snapshot and performs no deferred clipboard action, while
+the funded retry performs it once. Acceptance passes **194 native tests**
+(183 view, 11 desktop), strict all-target view/desktop Clippy, a fresh preview,
+workspace/modified-vendor formatting, whitespace and archive/source checks. The
+[verification record](history.md#shared-native-view-shaping-scope--scoped-verification-2026-11-03)
+records the final scoped results separately from the consolidated commit gate.
+
+All scope probes use actual view APIs, AAT shaping and Taffy remeasurement with
+smaller injected allowances to verify boundaries without an expensive default-
+limit stress loop. The default outer allowance is exercised by normal requests.
+The meter still omits some parser/plan/Unicode/coverage/outline work and does not
+bound total frame CPU, allocator overlap, other retained structures or RSS.
+Complete resource/platform matrices, late-value CSS and release acceptance remain
+open.

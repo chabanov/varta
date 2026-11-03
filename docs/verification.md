@@ -777,3 +777,167 @@ The normal native IME value/cursor/focus guards remain exercised. These checks d
 not substitute for real-window, OS composition, slow-consumer or cross-platform
 acceptance. Pinned shaping-cache source inspection is recorded separately from
 runtime memory measurements; cache entry counts are not an aggregate RSS quota.
+
+
+### Native field layout reuse
+
+```sh
+cargo test -p varta-view --locked
+cargo clippy -p varta-view --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+cargo fmt --all -- --check
+```
+
+The view suite covers plain/password glyph equivalence, UTF-8 hit positions,
+composition, selection, editing, multiline scroll/caret geometry and controls
+sharing the glyph painter. Source inspection additionally verifies that a
+nonempty field passes its existing caret/hit layout to painting and borrows
+ordinary values/placeholders. No allocator/RSS or frame-timing claim follows
+from these regressions. At the reuse checkpoint, full-size field values/masks
+could still exceed the unchanged general UTF-8 allowance. The subsequent Unicode field package below
+uses a separate semantic field bound and a wide-offset dependency patch;
+complete backend/platform acceptance remains separate.
+
+
+### Maximum Unicode native field display
+
+```sh
+cargo test -p varta-view --test fields --test text --locked
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+cargo fmt --all -- --check
+```
+
+The new field checks exercise maximum UTF-16 values occupying up to 98304 UTF-8
+bytes: plain/search Unicode, password masks, astral/combining text, exact source
+hits/caret, grapheme deletion and one-unit excess rollback. Full-size IME replaces
+an existing selection without mutating the value until commit; a composition at
+the full value's end still cancels under the unchanged combined-value guard.
+Long placeholders and content-sized textarea measurement/wrapping use the same
+semantic field classification. Mixed-direction suffix pixels, caret and shifted
+source hits are compared directly, and reuse of the shaper through the public
+API must still reject oversized general text.
+
+The initial local Parley 0.11.1 offset patch widened the cluster text offset and
+its construction cast; the subsequent large-cluster patch also fixes glyph/
+coverage counts and full font mapping. See `vendor/parley/VARTA-PATCH.md` and
+`VARTA-PATCH.diff` for its current scope. Verify the vendored
+source against the checksum-pinned original release when changing that patch,
+retaining upstream licenses and explicit dependency versions. The initial new
+regressions exposed wrapping offsets and UTF-8 slice panics without it; passing
+only a looser Varta input check is insufficient. The broader native suite checks
+other controls and text/layout callers sharing the patched dependency. These
+fixtures do not prove arbitrary font expansion, full bidi navigation, bounded
+aggregate caches/RSS, real-window IME or a complete platform matrix.
+
+
+### Large native glyph clusters
+
+```sh
+cargo test -p varta-view --lib text::tests --locked
+cargo test -p varta-view --test fields expanded_combining_cluster --locked
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+python3 scripts/generate-view-cluster-font.py
+```
+
+Only fixture regeneration needs fontTools; the committed original fonts are
+used directly by Cargo tests. Repeated generation must leave both font files
+byte-identical. One mark produces a single glyph, another expands through `ccmp`
+to three, and a partial face lacks the trailing character of a long grapheme.
+Checks observe actual glyph counts around the old inline sentinel, complete
+fallback selection past 32 characters and the existing 65536-glyph paint boundary
+with excessive refusal and subsequent recovery. Dependency source/manifest/
+license comparison against the checksum-pinned release must agree with the
+four-file patch diff. Neither these tests nor wider counters establish an
+aggregate bound on pre-paint allocation, shaping CPU, caches or RSS.
+
+
+### Bounded native shaping requests
+
+```sh
+cargo test -p varta-view --lib --test fields --test text --locked -- --nocapture
+cargo test -p varta-view --lib shaping_ --locked -- --nocapture
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+cargo fmt --all -- --check
+```
+
+Native request limits are 65536 completed glyphs, 262144 intermediate slots per
+glyph-info/position array, an initial allowance of one million upstream-charged
+operations across runs and 65536 retained slots per array. Tests cover a smaller
+exact array boundary/overflow, total output and operation exhaustion across
+scripts, configured policy surviving context clone, unchanged maximum ASCII/
+Unicode input, early refusal of strong 16× expansion and successful smaller
+reuse. Refused layouts never publish partial glyphs/metrics; refused glyph arrays
+are discarded before later calls. Array capacities and charged operations are
+read from the actual dependency pipeline rather than inferred from wall time.
+
+The 16× original synthetic font is generated alongside the earlier cluster
+fixtures; all three files must regenerate identically. The pinned HarfRust and
+Parley archives/manifests/licenses must match their original checksums except
+for the documented two- and six-file diffs, respectively. See both
+`vendor/*/VARTA-PATCH.md` records.
+
+Capacity bytes exclude allocator metadata/reallocation overlap and other
+analysis/font/plan/layout buffers. The initial request implementation could
+overshoot operation thresholds; the strict pre-charge checks below address that.
+The counter still omits some parser/analysis/plan work. These tests establish
+neither total RSS/CPU nor an execution deadline; complete backend/cache/platform
+acceptance remains open.
+
+
+### Strict native shaping pre-charge
+
+```sh
+cargo test -p varta-view --lib text::tests --locked -- --nocapture
+cargo test -p varta-view --lib aat_ --locked -- --nocapture
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+python3 scripts/generate-view-aat-fonts.py
+```
+
+The multi-script check must succeed with its exact observed allowance and refuse
+one unit below without overspending. Original AAT fonts cover finite current/
+marked insertion, legacy/extended kerning state machines and a nonadvancing morx
+loop. All smaller budgets refuse and drop scratch, exact budgets reproduce
+completed metrics/output, and a normal retry succeeds. Source inspection must
+find only one direct counter subtraction inside the checked charge helper and
+no counter-dependent forced advancement. All five AAT files regenerate
+byte-for-byte; archive comparison matches the current six-file HarfRust patch.
+These observations concern existing charged work, with some newly charged state
+transitions; they do not meter all parser, analysis, plan, outline or frame work.
+
+
+### Shared native view shaping scope
+
+```sh
+cargo test -p varta-view --lib view_shaping_scope --locked -- --nocapture
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+cargo fmt --all -- --check
+```
+
+The adapter's outer allowance is 16777216 charged operations, shared by nested
+measurement/paint calls; all per-layout/storage/paint limits remain independent.
+Real content-sized textarea probes verify intrinsic and Taffy remeasurement,
+geometry-to-paint exhaustion, exact funded output/pixel parity, scaled raster,
+box queries, and two layout commands in one batch. The failure preserves both
+the snapshot and deferred clipboard effects; a funded retry executes once.
+Nested/caught failures cannot refill quota. Standalone measurements and later
+independent requests recover normally; the diagnostic reports only the last
+outer view request. The deliberate unwind probe prints an expected panic with
+`--nocapture`, catches it, and verifies scope-state cleanup; it is not an uncaught
+test failure or a general dependency-cache unwind-safety claim. Tests use small
+injected allowances through the same scope path as the default view allowance.
+
+Regenerate the six-file Parley patch diff after the temporary-ceiling/context
+changes and compare source/manifest/licenses with the checksum-pinned release.
+No browser/Node/ABI claim follows from this native-only counter adapter. Unmetered
+work, full frame CPU/RSS, other buffers/caches and platform acceptance remain
+separate tasks.

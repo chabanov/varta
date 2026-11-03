@@ -4,7 +4,46 @@ use parley::{
     FontContext, FontFamilyName, FontStyle, FontWeight, Layout, LayoutContext, LineHeight,
     OverflowWrap, StyleProperty, TextWrapMode,
 };
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+
+// Native shaping requests: completed output, intermediate scratch, charged
+// operations and reusable scratch. Independent from source/paint allowances.
+const MAX_SHAPED_GLYPHS: usize = 65_536;
+const MAX_SHAPING_BUFFER_SLOTS: usize = 262_144;
+const MAX_SHAPING_OPERATIONS: u32 = 1_000_000;
+const MAX_CACHED_SHAPING_SLOTS: usize = 65_536;
+const MAX_VIEW_SHAPING_OPERATIONS: usize = 16 * 1024 * 1024;
+const NO_VIEW_REQUEST: usize = usize::MAX;
+
+struct ViewShapingState {
+    remaining: AtomicUsize,
+    last_used: AtomicUsize,
+}
+
+struct ViewShapingGuard {
+    state: Arc<ViewShapingState>,
+    limit: usize,
+    owner: bool,
+}
+impl Drop for ViewShapingGuard {
+    fn drop(&mut self) {
+        if self.owner {
+            let remaining = self
+                .state
+                .remaining
+                .swap(NO_VIEW_REQUEST, Ordering::Relaxed);
+            self.state
+                .last_used
+                .store(self.limit.saturating_sub(remaining), Ordering::Relaxed);
+        }
+    }
+}
 
 /// A font and explicit CSS aliases supplied by the embedding host.
 pub struct TextFont {
@@ -23,6 +62,7 @@ pub struct TextMeasurer {
     fonts: FontContext,
     layout: LayoutContext<()>,
     entries: Vec<FontEntry>,
+    view_shaping: Arc<ViewShapingState>,
 }
 
 /// The measured advance and height, in CSS pixels, and number of lines.
@@ -43,6 +83,36 @@ pub(crate) struct TextOptions {
     pub italic: bool,
     pub white_space: WhiteSpaceMode,
     pub break_anywhere: bool,
+    pub source: TextSource,
+}
+
+/// Private provenance: field display is bounded by the existing wire/editor
+/// UTF-16 allowance, including the combined IME replacement and password masks.
+/// It admits no more than 32768 scalars (less than the general ASCII maximum),
+/// but those scalars can occupy 98304 UTF-8 bytes. Never split shaping context
+/// or relax the general/public byte limit to account for this encoding growth.
+#[derive(Clone, Copy)]
+pub(crate) enum TextSource {
+    General,
+    Field,
+}
+impl TextSource {
+    fn admits(self, text: &str) -> bool {
+        match self {
+            Self::General => text.len() <= 64 * 1024,
+            Self::Field => {
+                use varta_common::view::{
+                    DRAFT_FIELD_VALUE_RESERVATION_BYTES, DRAFT_MAX_VALUE_BYTES,
+                };
+                text.len() <= DRAFT_FIELD_VALUE_RESERVATION_BYTES
+                    && text
+                        .encode_utf16()
+                        .take(DRAFT_MAX_VALUE_BYTES / 2 + 1)
+                        .count()
+                        <= DRAFT_MAX_VALUE_BYTES / 2
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -69,6 +139,36 @@ fn same_family(a: &FontFamilyName<'_>, b: &FontFamilyName<'_>) -> bool {
 }
 
 impl TextMeasurer {
+    /// Charged shaping operations in the last outer native view request.
+    /// Standalone measurements do not update this diagnostic. This excludes
+    /// unmetered analysis/plan work and is not a CPU-time or RSS measurement.
+    #[must_use]
+    pub fn last_view_shaping_operations(&self) -> usize {
+        self.view_shaping.last_used.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn with_view_shaping<T>(&mut self, action: impl FnOnce(&mut Self) -> T) -> T {
+        self.with_view_shaping_limit(MAX_VIEW_SHAPING_OPERATIONS, action)
+    }
+
+    fn with_view_shaping_limit<T>(
+        &mut self,
+        limit: usize,
+        action: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let owner = self
+            .view_shaping
+            .remaining
+            .compare_exchange(NO_VIEW_REQUEST, limit, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok();
+        let _guard = ViewShapingGuard {
+            state: Arc::clone(&self.view_shaping),
+            limit,
+            owner,
+        };
+        action(self)
+    }
+
     /// Resolve only registered names and explicit aliases. A generic family
     /// preceding any match is rejected unless the host explicitly mapped it.
     pub(crate) fn resolve_families(&self, css_family: Option<&str>) -> Option<Vec<String>> {
@@ -199,8 +299,21 @@ impl TextMeasurer {
                 collection,
                 source_cache: SourceCache::default(),
             },
-            layout: LayoutContext::new(),
+            layout: {
+                let mut layout = LayoutContext::new();
+                layout.set_shaping_limits(
+                    MAX_SHAPED_GLYPHS,
+                    MAX_SHAPING_BUFFER_SLOTS,
+                    MAX_SHAPING_OPERATIONS,
+                    MAX_CACHED_SHAPING_SLOTS,
+                );
+                layout
+            },
             entries,
+            view_shaping: Arc::new(ViewShapingState {
+                remaining: AtomicUsize::new(NO_VIEW_REQUEST),
+                last_used: AtomicUsize::new(0),
+            }),
         })
     }
 
@@ -223,6 +336,7 @@ impl TextMeasurer {
                 italic: false,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
+                source: TextSource::General,
             },
         )
     }
@@ -249,6 +363,7 @@ impl TextMeasurer {
                 italic: false,
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
+                source: TextSource::General,
             },
         )
     }
@@ -271,7 +386,7 @@ impl TextMeasurer {
         families: &[String],
         options: TextOptions,
     ) -> Result<(TextMetrics, Layout<()>), TextMeasureError> {
-        if text.len() > 64 * 1024
+        if !options.source.admits(text)
             || !options.size.is_finite()
             || !(0.01..=4096.0).contains(&options.size)
             || max_width.is_some_and(|v| !v.is_finite() || !(0.01..=1_000_000.0).contains(&v))
@@ -279,6 +394,11 @@ impl TextMeasurer {
         {
             return Err(TextMeasureError::Limit);
         }
+        let remaining = self.view_shaping.remaining.load(Ordering::Relaxed);
+        let scoped = remaining != NO_VIEW_REQUEST;
+        self.layout.set_shaping_operation_ceiling(
+            scoped.then_some(remaining.min(u32::MAX as usize) as u32),
+        );
         let family_names: Vec<_> = families
             .iter()
             .map(|name| FontFamilyName::Named(Cow::Borrowed(name.as_str())))
@@ -304,6 +424,25 @@ impl TextMeasurer {
             builder.push_default(StyleProperty::LineHeight(line_height));
         }
         let mut layout: Layout<()> = builder.build(text);
+        if scoped {
+            let used = self.layout.shaping_operations();
+            if self
+                .view_shaping
+                .remaining
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                    usize::try_from(used)
+                        .ok()
+                        .and_then(|used| value.checked_sub(used))
+                })
+                .is_err()
+            {
+                self.view_shaping.remaining.store(0, Ordering::Relaxed);
+                return Err(TextMeasureError::Limit);
+            }
+        }
+        if !self.layout.shaping_succeeded() {
+            return Err(TextMeasureError::Limit);
+        }
         let widths = layout.calculate_content_widths();
         let min_width = if options.white_space == WhiteSpaceMode::NoWrap {
             widths.max
@@ -320,5 +459,531 @@ impl TextMeasurer {
             },
             layout,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cluster_measurer() -> TextMeasurer {
+        TextMeasurer::new(
+            include_bytes!("../tests/fixtures/clusters.ttf").to_vec(),
+            "Varta Cluster Fixture",
+        )
+        .unwrap()
+    }
+
+    #[derive(Default)]
+    struct ScopeBroker {
+        writes: usize,
+    }
+    impl crate::Broker for ScopeBroker {
+        fn link_requested(&self, _: &str) -> bool {
+            true
+        }
+        fn open_url(&mut self, _: &str) -> crate::Access {
+            crate::Access::Denied
+        }
+        fn clipboard_write(&mut self) -> crate::Access {
+            self.writes += 1;
+            crate::Access::Granted
+        }
+    }
+
+    fn scoped_view() -> (crate::View, TextMeasurer) {
+        use varta_common::view::{CssProperty, Tag};
+        let mut view = crate::View::default();
+        let mut batch = crate::BatchWriter::new();
+        batch
+            .create_element(2, Tag::Textarea)
+            .set_value(2, "AA", 0)
+            .insert(1, 2, 0);
+        for (property, value) in [
+            (CssProperty::Display, "block"),
+            (CssProperty::Width, "80px"),
+            (CssProperty::Height, "auto"),
+            (CssProperty::MaxHeight, "60px"),
+            (CssProperty::MinWidth, "0"),
+            (CssProperty::MinHeight, "0"),
+            (CssProperty::FieldSizing, "content"),
+            (CssProperty::Resize, "none"),
+            (CssProperty::Padding, "4px"),
+            (CssProperty::Border, "2px solid #000"),
+            (CssProperty::BorderRadius, "0"),
+            (CssProperty::Outline, "none"),
+            (CssProperty::BackgroundColor, "#fff"),
+            (CssProperty::Color, "#00f"),
+            (CssProperty::FontFamily, "\"Varta AAT Marked\""),
+            (CssProperty::FontSize, "20px"),
+            (CssProperty::FontWeight, "normal"),
+            (CssProperty::FontStyle, "normal"),
+            (CssProperty::LineHeight, "20px"),
+        ] {
+            batch.set_style(2, property, value);
+        }
+        view.commit(&batch.finish(), false, &mut ScopeBroker::default())
+            .unwrap();
+        let measurer = TextMeasurer::new(
+            include_bytes!("../tests/fixtures/aat-marked.ttf").to_vec(),
+            "Varta AAT Marked",
+        )
+        .unwrap();
+        (view, measurer)
+    }
+
+    #[test]
+    fn view_shaping_scope_covers_geometry_remeasurement_paint_and_scaled_frames() {
+        let (view, mut measurer) = scoped_view();
+        view.layout_geometry_with_text(100.0, 100.0, &mut measurer, 20.0)
+            .unwrap();
+        let geometry_ops = measurer.last_view_shaping_operations();
+        assert!(geometry_ops > 8, "remeasurement must be included");
+        let expected = view
+            .rasterize_with_text(100, 100, &mut measurer, 20.0)
+            .unwrap();
+        let frame_ops = measurer.last_view_shaping_operations();
+        assert!(frame_ops > geometry_ops, "painting must share the scope");
+        let before = view.snapshot();
+        let exact = measurer
+            .with_view_shaping_limit(frame_ops, |font| {
+                view.rasterize_with_text(100, 100, font, 20.0)
+            })
+            .unwrap();
+        assert_eq!(exact.pixels, expected.pixels);
+        assert_eq!(measurer.last_view_shaping_operations(), frame_ops);
+        assert!(
+            measurer
+                .with_view_shaping_limit(geometry_ops, |font| view
+                    .rasterize_with_text(100, 100, font, 20.0))
+                .is_err()
+        );
+        assert!(measurer.last_view_shaping_operations() <= geometry_ops);
+        assert!(
+            measurer
+                .with_view_shaping_limit(frame_ops - 1, |font| view.rasterize_scaled(
+                    200,
+                    200,
+                    2.0,
+                    Some((font, 20.0))
+                ))
+                .is_err()
+        );
+        assert!(
+            measurer
+                .with_view_shaping_limit(geometry_ops - 1, |font| view
+                    .layout_boxes_with_text(100.0, 100.0, font, 20.0))
+                .is_err()
+        );
+        measurer
+            .with_view_shaping_limit(geometry_ops, |font| {
+                view.layout_boxes_with_text(100.0, 100.0, font, 20.0)
+            })
+            .unwrap();
+        assert_eq!(view.snapshot(), before);
+        measurer.measure("AA", 20.0, None).unwrap();
+        let recovered = view
+            .rasterize_scaled(200, 200, 2.0, Some((&mut measurer, 20.0)))
+            .unwrap();
+        assert_eq!(measurer.last_view_shaping_operations(), frame_ops);
+        assert_eq!(recovered.width, 200);
+        assert_eq!(
+            view.rasterize_with_text(100, 100, &mut measurer, 20.0)
+                .unwrap()
+                .pixels,
+            expected.pixels
+        );
+        eprintln!("view geometry operations={geometry_ops}, frame operations={frame_ops}");
+    }
+
+    #[test]
+    fn view_shaping_scope_is_shared_by_layout_commands_and_preserves_batch_atomicity() {
+        use varta_common::view::Command;
+        let (mut view, mut measurer) = scoped_view();
+        view.layout_geometry_with_text(100.0, 100.0, &mut measurer, 20.0)
+            .unwrap();
+        let one = measurer.last_view_shaping_operations();
+        let mut batch = crate::BatchWriter::new();
+        batch
+            .set_title("new title")
+            .copy_text(77, "deferred clipboard")
+            .command(2, Command::ScrollIntoView, 0.0)
+            .command(2, Command::ScrollTo, 0.0);
+        let bytes = batch.finish();
+        let before = view.snapshot();
+        let mut broker = ScopeBroker::default();
+        let result = measurer.with_view_shaping_limit(one, |font| {
+            view.commit_with_layout(&bytes, true, &mut broker, 100.0, 100.0, Some((font, 20.0)))
+        });
+        assert!(matches!(
+            result,
+            Err(crate::ViewError::Invalid {
+                violation: crate::Violation::ScrollLayout,
+                ..
+            })
+        ));
+        assert!(measurer.last_view_shaping_operations() <= one);
+        assert_eq!(view.snapshot(), before);
+        assert_eq!(broker.writes, 0);
+        measurer
+            .with_view_shaping_limit(one * 2, |font| {
+                view.commit_with_layout(&bytes, true, &mut broker, 100.0, 100.0, Some((font, 20.0)))
+            })
+            .unwrap();
+        assert_eq!(measurer.last_view_shaping_operations(), one * 2);
+        assert_eq!(view.title(), "new title");
+        assert_eq!(broker.writes, 1);
+    }
+
+    #[test]
+    fn view_shaping_scope_does_not_reset_on_nested_calls_or_handled_refusal() {
+        let (_, mut measurer) = scoped_view();
+        measurer.with_view_shaping_limit(8, |font| {
+            font.measure("AA", 20.0, None).unwrap();
+            assert!(
+                font.with_view_shaping(|font| font.measure("AA", 20.0, None))
+                    .is_err()
+            );
+            assert!(font.measure("AA", 20.0, None).is_err());
+        });
+        assert_eq!(measurer.last_view_shaping_operations(), 8);
+        measurer.measure("AA", 20.0, None).unwrap();
+        assert_eq!(
+            measurer.last_view_shaping_operations(),
+            8,
+            "standalone measurement is separate"
+        );
+    }
+
+    #[test]
+    fn view_shaping_scope_releases_its_state_during_unwinding() {
+        let (_, mut measurer) = scoped_view();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            measurer.with_view_shaping_limit(8, |font| {
+                font.measure("AA", 20.0, None).unwrap();
+                panic!("intentional view-scope unwind probe");
+            });
+        }));
+        assert!(result.is_err());
+        assert_eq!(measurer.last_view_shaping_operations(), 8);
+        measurer.measure("AA", 20.0, None).unwrap();
+        measurer
+            .with_view_shaping(|font| font.measure("AA", 20.0, None))
+            .unwrap();
+        assert_eq!(measurer.last_view_shaping_operations(), 8);
+    }
+
+    #[test]
+    fn aat_transition_and_insertion_debits_are_atomic_and_exact() {
+        for (data, family, text, expected_glyphs) in [
+            (
+                include_bytes!("../tests/fixtures/aat-current.ttf").as_slice(),
+                "Varta AAT Current",
+                "A",
+                4,
+            ),
+            (
+                include_bytes!("../tests/fixtures/aat-marked.ttf").as_slice(),
+                "Varta AAT Marked",
+                "AA",
+                7,
+            ),
+            (
+                include_bytes!("../tests/fixtures/aat-kern.ttf").as_slice(),
+                "Varta AAT Kern",
+                "A",
+                1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/aat-kerx.ttf").as_slice(),
+                "Varta AAT Kerx",
+                "A",
+                1,
+            ),
+        ] {
+            let mut measurer = TextMeasurer::new(data.to_vec(), family).unwrap();
+            let families = vec![family.into()];
+            let options = TextOptions {
+                size: 20.0,
+                line_height: None,
+                weight: 400.0,
+                italic: false,
+                white_space: WhiteSpaceMode::NoWrap,
+                break_anywhere: false,
+                source: TextSource::General,
+            };
+            let (expected, shaped) = measurer
+                .shape_styled(text, None, &families, options)
+                .unwrap();
+            let mut count = 0;
+            for line in shaped.lines() {
+                for item in line.items() {
+                    let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+                        panic!("inline box")
+                    };
+                    count += run.positioned_glyphs().count();
+                }
+            }
+            assert_eq!(count, expected_glyphs, "{family}");
+            let operations = u32::try_from(measurer.layout.shaping_operations()).unwrap();
+            assert!(operations > 1);
+            eprintln!("{family}: glyphs={count}, operations={operations}");
+            for budget in 0..operations {
+                measurer.layout.set_shaping_limits(
+                    MAX_SHAPED_GLYPHS,
+                    MAX_SHAPING_BUFFER_SLOTS,
+                    budget,
+                    MAX_CACHED_SHAPING_SLOTS,
+                );
+                assert!(
+                    matches!(
+                        measurer.measure(text, 20.0, None),
+                        Err(TextMeasureError::Limit)
+                    ),
+                    "{family}, {budget}"
+                );
+                assert!(
+                    measurer.layout.shaping_operations() <= u64::from(budget),
+                    "{family}, {budget}"
+                );
+                assert_eq!(measurer.layout.shaping_buffer_capacities(), (0, 0));
+            }
+            measurer.layout.set_shaping_limits(
+                MAX_SHAPED_GLYPHS,
+                MAX_SHAPING_BUFFER_SLOTS,
+                operations,
+                MAX_CACHED_SHAPING_SLOTS,
+            );
+            assert_eq!(measurer.measure(text, 20.0, None).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn aat_nonadvancing_state_loop_refuses_at_its_budget_and_can_retry() {
+        let mut measurer = TextMeasurer::new(
+            include_bytes!("../tests/fixtures/aat-loop.ttf").to_vec(),
+            "Varta AAT Loop",
+        )
+        .unwrap();
+        let expected = measurer.measure(" ", 20.0, None).unwrap();
+        for budget in [1, 2, 8, 64] {
+            measurer.layout.set_shaping_limits(
+                MAX_SHAPED_GLYPHS,
+                MAX_SHAPING_BUFFER_SLOTS,
+                budget,
+                MAX_CACHED_SHAPING_SLOTS,
+            );
+            assert!(matches!(
+                measurer.measure("A", 20.0, None),
+                Err(TextMeasureError::Limit)
+            ));
+            assert_eq!(measurer.layout.shaping_operations(), u64::from(budget));
+            assert_eq!(measurer.layout.shaping_buffer_capacities(), (0, 0));
+        }
+        assert_eq!(measurer.measure(" ", 20.0, None).unwrap(), expected);
+    }
+
+    #[test]
+    fn large_intermediate_expansion_stops_before_exceeding_the_array_budget() {
+        let mut measurer = TextMeasurer::new(
+            include_bytes!("../tests/fixtures/expansion.ttf").to_vec(),
+            "Varta Expansion Fixture",
+        )
+        .unwrap();
+        let small = format!("A{}", "\u{035c}".repeat(4));
+        let expected = measurer.measure(&small, 20.0, None).unwrap();
+        let large = format!("A{}", "\u{035c}".repeat(20_000));
+        assert!(matches!(
+            measurer.measure(&large, 20.0, None),
+            Err(TextMeasureError::Limit)
+        ));
+        assert_eq!(
+            measurer.layout.shaping_peak_buffer_capacities(),
+            (MAX_SHAPING_BUFFER_SLOTS, MAX_SHAPING_BUFFER_SLOTS)
+        );
+        assert_eq!(
+            measurer.layout.shaping_peak_buffer_bytes(),
+            10 * 1024 * 1024
+        );
+        assert!(measurer.layout.shaping_operations() < u64::from(MAX_SHAPING_OPERATIONS));
+        assert_eq!(measurer.layout.shaping_buffer_capacities(), (0, 0));
+        eprintln!(
+            "intermediate expansion refused: peak_bytes={}, operations={}, retained={:?}",
+            measurer.layout.shaping_peak_buffer_bytes(),
+            measurer.layout.shaping_operations(),
+            measurer.layout.shaping_buffer_capacities()
+        );
+        assert_eq!(measurer.measure(&small, 20.0, None).unwrap(), expected);
+    }
+
+    #[test]
+    fn shaping_buffer_boundary_releases_refused_scratch_and_recovers() {
+        let mut measurer = cluster_measurer();
+        measurer
+            .layout
+            .set_shaping_limits(MAX_SHAPED_GLYPHS, 64, MAX_SHAPING_OPERATIONS, 64);
+        for (count, accepted) in [(21, true), (22, false), (4, true)] {
+            let text = format!("A{}", "\u{035c}".repeat(count));
+            assert_eq!(measurer.measure(&text, 20.0, None).is_ok(), accepted);
+            let peak = measurer.layout.shaping_peak_buffer_capacities();
+            assert!(peak.0 <= 64 && peak.1 <= 64, "{peak:?}");
+            assert!(measurer.layout.shaping_peak_buffer_bytes() <= 64 * 40);
+            let cached = measurer.layout.shaping_buffer_capacities();
+            if accepted {
+                assert!(cached.0 <= 64 && cached.1 <= 64);
+            } else {
+                assert_eq!(cached, (0, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn shaping_glyph_and_operation_budgets_are_shared_across_script_runs() {
+        let text = format!("A{}ЖA{}", "\u{035c}".repeat(21), "\u{035c}".repeat(21));
+        let mut measurer = cluster_measurer();
+        measurer
+            .layout
+            .set_shaping_limits(129, 256, MAX_SHAPING_OPERATIONS, 256);
+        let expected = measurer.measure(&text, 20.0, None).unwrap();
+        let operations = u32::try_from(measurer.layout.shaping_operations()).unwrap();
+        assert!(operations > 1);
+        eprintln!(
+            "three-run shaping operations={operations}, buffers={:?}",
+            measurer.layout.shaping_peak_buffer_capacities()
+        );
+        measurer
+            .layout
+            .set_shaping_limits(128, 256, MAX_SHAPING_OPERATIONS, 256);
+        measurer.layout = measurer.layout.clone();
+        assert!(matches!(
+            measurer.measure(&text, 20.0, None),
+            Err(TextMeasureError::Limit)
+        ));
+        assert_eq!(measurer.layout.shaping_buffer_capacities(), (0, 0));
+        measurer
+            .layout
+            .set_shaping_limits(129, 256, operations - 1, 256);
+        assert!(matches!(
+            measurer.measure(&text, 20.0, None),
+            Err(TextMeasureError::Limit)
+        ));
+        assert_eq!(measurer.layout.shaping_buffer_capacities(), (0, 0));
+        assert!(measurer.layout.shaping_operations() <= u64::from(operations - 1));
+        measurer
+            .layout
+            .set_shaping_limits(129, 256, operations, 256);
+        assert_eq!(measurer.measure(&text, 20.0, None).unwrap(), expected);
+    }
+
+    #[test]
+    fn shaping_output_refusal_drops_scratch_and_maximum_output_remains_supported() {
+        let mut measurer = cluster_measurer();
+        for (count, accepted) in [(21_845, true), (21_846, false), (4, true)] {
+            let text = format!("A{}", "\u{035c}".repeat(count));
+            assert_eq!(measurer.measure(&text, 20.0, None).is_ok(), accepted);
+            let peak = measurer.layout.shaping_peak_buffer_capacities();
+            assert!(
+                peak.0 <= MAX_SHAPING_BUFFER_SLOTS && peak.1 <= MAX_SHAPING_BUFFER_SLOTS,
+                "{peak:?}"
+            );
+            let peak_bytes = measurer.layout.shaping_peak_buffer_bytes();
+            assert!(peak_bytes <= 10 * 1024 * 1024, "{peak_bytes}");
+            let retained = measurer.layout.shaping_buffer_capacities();
+            if accepted {
+                assert!(
+                    retained.0 <= MAX_CACHED_SHAPING_SLOTS
+                        && retained.1 <= MAX_CACHED_SHAPING_SLOTS
+                );
+            } else {
+                assert_eq!(retained, (0, 0));
+            }
+            eprintln!(
+                "marks={count}, accepted={accepted}, operations={}, peak={peak:?}, peak_bytes={peak_bytes}, retained={retained:?}",
+                measurer.layout.shaping_operations()
+            );
+        }
+    }
+
+    #[test]
+    fn long_cluster_font_coverage_includes_characters_after_the_old_scratch_prefix() {
+        let mut measurer = TextMeasurer::new_with_fonts(vec![
+            TextFont {
+                data: include_bytes!("../tests/fixtures/clusters-partial.ttf").to_vec(),
+                family: "Varta Cluster Partial".into(),
+                aliases: vec![],
+            },
+            TextFont {
+                data: include_bytes!("../tests/fixtures/clusters.ttf").to_vec(),
+                family: "Varta Cluster Fixture".into(),
+                aliases: vec![],
+            },
+        ])
+        .unwrap();
+        for count in [31, 32, 64, 253, 256, 1024] {
+            let text = format!("A{}\u{035c}", "\u{035d}".repeat(count));
+            let metrics = measurer
+                .measure_with_family_list(
+                    &text,
+                    20.0,
+                    None,
+                    "\"Varta Cluster Partial\", \"Varta Cluster Fixture\"",
+                )
+                .unwrap();
+            // The first font advances 18px and omits the final character;
+            // only the fallback covers the complete grapheme and advances 8px.
+            assert!(
+                (metrics.width - 8.0).abs() < 0.01,
+                "count={count}, {metrics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn large_combining_clusters_retain_every_shaped_glyph() {
+        let mut measurer = TextMeasurer::new(
+            include_bytes!("../tests/fixtures/clusters.ttf").to_vec(),
+            "Varta Cluster Fixture",
+        )
+        .unwrap();
+        let families = vec!["Varta Cluster Fixture".into()];
+        for (mark, multiplier, count) in [
+            ('\u{035d}', 1, 253),
+            ('\u{035d}', 1, 254),
+            ('\u{035d}', 1, 255),
+            ('\u{035d}', 1, 256),
+            ('\u{035c}', 3, 300),
+        ] {
+            let text = format!("A{}", mark.to_string().repeat(count));
+            let (_, shaped) = measurer
+                .shape_styled(
+                    &text,
+                    None,
+                    &families,
+                    TextOptions {
+                        size: 20.0,
+                        line_height: None,
+                        weight: 400.0,
+                        italic: false,
+                        white_space: WhiteSpaceMode::NoWrap,
+                        break_anywhere: false,
+                        source: TextSource::General,
+                    },
+                )
+                .unwrap();
+            let mut glyphs = 0;
+            for line in shaped.lines() {
+                for item in line.items() {
+                    let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+                        panic!("unexpected inline box")
+                    };
+                    glyphs += run.positioned_glyphs().count();
+                }
+            }
+            assert_eq!(
+                glyphs,
+                1 + count * multiplier,
+                "mark={mark:?}, count={count}"
+            );
+        }
     }
 }

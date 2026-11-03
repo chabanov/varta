@@ -28,6 +28,8 @@ fn explicit_font_shapes_predictable_text_and_rejects_invalid_inputs() {
         measurer.measure("A", 20.0, Some(0.0)),
         Err(TextMeasureError::Limit)
     ));
+    let boundary = measurer.measure(&"A".repeat(65536), 20.0, None).unwrap();
+    assert_eq!(boundary.width, 524_288.0);
     assert!(matches!(
         measurer.measure(&"A".repeat(65537), 20.0, None),
         Err(TextMeasureError::Limit)
