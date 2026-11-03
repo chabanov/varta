@@ -30,7 +30,7 @@ thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
 # CPU fallback for native view rendering, with no PNG or SIMD dependencies.
-tiny-skia = { version = "=0.11.4", default-features = false, features = ["std"] }
+tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", "simd"] }
 # Font outlines for the CPU text renderer; already used transitively by Parley.
 skrifa = "=0.44.0"
 # Unicode grapheme boundaries for safe native text editing.
@@ -38,6 +38,12 @@ unicode-segmentation = "=1.13.3"
 # Native desktop window/input and CPU frame presentation.
 winit = "=0.30.12"
 softbuffer = { version = "=0.4.6", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
+# Optional desktop GPU backend only; no GPU imports in the guest/runtime.
+# MIT OR Apache-2.0; wgpu validates native graphics operations, Vello GPU draws
+# the host-owned bounded 2D scene, pollster drives device initialization.
+wgpu = { version = "=30.0.0", default-features = false, features = ["std", "metal", "vulkan", "dx12", "wgsl"] }
+vello_gpu = { version = "=0.3.0", default-features = false, features = ["wgpu"] }
+pollster = "=0.4.0"
 ryu-js = "=1.0.3"
 # OS entropy for bounded Math.random samples; no guest seed or ambient file access.
 getrandom = "=0.3.4"
@@ -87,11 +93,12 @@ chrono = { version = "=0.4.42", default-features = false, features = ["std"] }
 # Test-only: certificates for the loopback HTTPS server of the runtime tests.
 rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "pem", "ring"] }
 
-# Debug and test builds optimize only the Wasm code generator: validating or
+# Debug and test builds optimize compute-heavy dependencies, keeping Varta
+# engine code unoptimized with debug assertions. The Wasm code generator: validating or
 # running a large guest module compiles it with Cranelift, which unoptimized
 # takes seconds per module and let `build --single` launcher probes and
 # wall-clock-bound tests race their deadlines under parallel test load.
-# Release builds and every guest limit are unchanged.
+# These profile overrides apply only to dev/test; guest limits are unchanged.
 [profile.dev.package.cranelift-codegen]
 opt-level = 3
 [profile.dev.package.cranelift-frontend]
@@ -111,6 +118,25 @@ opt-level = 3
 [profile.dev.package.wasmtime-internal-cranelift]
 opt-level = 3
 [profile.dev.package.wasmtime-environ]
+opt-level = 3
+
+# CPU scan conversion performs millions of scalar/vector operations per frame.
+# Keep the graphics primitives fast in dev without optimizing Varta's renderer,
+# changing debug assertions, dependencies, guest fuel or native work ceilings.
+[profile.dev.package.tiny-skia]
+opt-level = 3
+[profile.dev.package.tiny-skia-path]
+opt-level = 3
+
+# The window host packs millions of pixels for presentation while scrolling.
+# Keep this loop vectorizable in debug; the view/compiler/runtime engine stays
+# at opt-level 0, with all debug assertions enabled in the host too.
+[profile.dev.package.varta-desktop]
+opt-level = 3
+
+[profile.dev.package.vello_gpu]
+opt-level = 3
+[profile.dev.package.vello_common]
 opt-level = 3
 
 # The v38 guest intrinsic library (`scripts/build-intrinsics.py`): a size-

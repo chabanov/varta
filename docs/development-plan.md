@@ -2,8 +2,9 @@
 
 ## Status
 
-Updated 2026-11-03 against the verified native text batch following `1111baa`:
-measurement failure, Unicode paragraphs, reference lengths and inline formatting. Varta is an experimental
+Updated 2026-11-03 for the renderer batch based on `1259eb8`, including
+CPU renderer, pointer-state, TSX Showcase and optional native GPU work. The
+browser geometry/timing increment and Metal prototype are recorded below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -15,13 +16,102 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Native Unicode/rem/inline batch (2026-11-03, macOS arm64): **3174 passed**, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-122544-p42wl8c3/report.json`. Includes **217 native tests (206 view, 11 desktop)**. Only result/status documentation changed after the gate; code and build inputs are unchanged. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | UI renderer/browser timing/GPU prototype batch (2026-11-03, macOS arm64): **3202 passed**, 0 failures, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-182413-ec8q70t8/report.json`; source SHA-256 `009e775316e7cb5c20b627ba05cc95b75b780efe383caffdce10c1191f45482d`. Optional GPU all-target Clippy and 16 desktop tests pass separately; 162 browser Node tests, 12 Showcase assertions and 52 Metal offscreen cases also pass. Only documentation/measurement annotations changed after the gate. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU desktop preview has explicit text controls, font-independent checkbox/radio marks, multiline editing, caret/selection, Undo/IME preedit, scrolling, DPI/theme handling and guest layout commands. Textarea navigation/content sizing is committed in `870344d`; later password/search, checkbox/radio and single-select work adds shared control semantics and native/Wasm/browser checks. Shared selection-work accounting now covers native/browser transactions, including deferred Worker edits. Select popup keyboard/pointer/scroll/cancel and character input were observed on macOS Retina; other-platform acceptance remains open. [Field verification record](history.md#native-form-controls--2026-11-02). Full L0 styling, the console settings/list acceptance on macOS/Pi, metrics, accessibility and production shell packaging remain open  Unicode paragraphs, explicit rem reference metrics and inline-only text contexts now pass the consolidated gate and scoped Chrome oracles. The unchanged console reaches unsupported button styling at node 16; a complete native console session remains open. |
+| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Uncommitted work adds retained rendering caches/damage replay, RGB reuse, hover/active/cursors and input coalescing. Scoped verification and local frame measurements are recorded below; an optional shared-scene GPU backend now runs on Metal and recovers to CPU. Full L0 painting, paste/full IME, accessibility, production shell and target acceptance remain open. The old UARP node-16 refusal is the last recorded console probe, not a new result for this working tree. |
+| Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
+| GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
+
+### Current UI checkpoint and proposed continuation
+
+**Renderer batch based on `1259eb8`; 2026-11-03.** This batch includes renderer
+and pointer changes, new Rust modules/tests, the Showcase and documentation.
+The consolidated gate passes **3202 tests, 0 failures, 16 ignored**, all eight
+commands with unchanged source inputs. Evidence: `target/verification/20261103-182413-ec8q70t8/report.json`.
+The optional GPU graph has a separate passing all-target Clippy run and desktop
+test run; 52 real Metal offscreen cases and 162 browser Node cases pass. Only
+documentation and measurement annotations changed after verification. These
+checks close this implementation batch, not the broader P10/P13 target matrix.
+
+- Retained CPU rendering caches style reads, shaped text, glyph outlines and
+  bounded draw commands, replays damage and reuses packed RGB pixels. Pointer
+  hover/active and cursor feedback preserve stale-input protections; motion is
+  coalesced separately from activation and keyboard input. Immediate typing waits
+  for the focus frame. Debug assertions remain enabled; graphics dependencies
+  and the small desktop host have targeted dev optimization.
+- Recorded scoped checks: **43 tests passed** across matcher/cascade/expansion,
+  pointer, renderer/input, desktop and runtime selections; strict affected-package
+  all-target Clippy passed. Evidence: `target/hover-{view,matcher,desktop,runtime}-tests.log`
+  and `target/hover-clippy.log` (local, ignored). These logs predate subsequent
+  example-only edits and are not a workspace-wide result for all current files.
+- Latest external-CSS Showcase build and **12 trusted-input assertions** passed:
+  `target/showcase-css-dev-{build,verify,package}.log`. The Dev app contains that
+  artifact; earlier Debug/Release bundles are not automatically the latest build.
+- The pinned TSX pointer benchmark has **192 reference-equal frames**. At 2×,
+  historical Debug/Release median frame preparation is 8.58/1.66 ms for pointer
+  feedback, 6.68/1.38 ms for the counter and 16.85/10.23 ms for scrolling.
+  [Raw data](../examples/native-showcase/tsx-pointer-performance-2026-11-03.json)
+  identifies the measured Wasm and hosts. It predates the CSS extraction/browser
+  font configuration and excludes input turns, startup, presentation and pointer
+  sampling wait; it is not input latency or a current Chrome/native speed ratio.
+- The official browser dev host runs the same typed example with an explicitly
+  packaged Arial. Chrome checks cover counter/step/checkbox, Ukrainian editing,
+  Undo/Redo, Tab, select and JSON/generator/async output. The native output agrees.
+  The initial browser body margins/indefinite root height and control
+  content-box mismatch are corrected by UI-1 below; native controls still lack
+  OS accessibility exposure. This is a
+  scoped macOS/Chrome observation, not cross-platform acceptance.
+
+**Active package UI-1 — owner authorized implementation through completion.** Normalize
+root viewport and admitted control box sizing between the official browser host
+and native preview; add comparable input-to-present instrumentation and exercise
+counter, hover, editing and scrolling in Debug/Release. Preserve packaged fonts,
+CSP/resource checks, budgets and stale-frame rejection. Exit: regression cases
+for geometry at matched widths and the responsive breakpoint, the existing
+12-action scenario, and a report separating guest execution, frame preparation
+and presentation latency (with measurement limits stated). Do not assume that a
+submission timestamp proves actual screen presentation. Working changes now
+normalize standalone browser root geometry and admitted control border boxes,
+authorize the fixed page stylesheet with an exact CSP hash, add bounded opt-in
+native/browser timing and wake the native worker on input/presentation rather than
+waiting for its idle timer. Focused acceptance passes 162 browser Node tests, the 12-action Showcase
+scenario, vector/reference control tests and the optional GPU Clippy selection.
+Real browser root bounds match the viewport at 800/720/700 CSS px. Native and
+browser timing boundaries are explicitly different; physical scanout is unmeasured.
+The final consolidated gate passes 3202 tests. Matched CPU/GPU Debug/Release
+window timing, resize/visibility and native accessibility acceptance remain open;
+native UI automation timed out while attempting window activation.
+
+**P13a GPU prototype — implemented; local acceptance in progress.** The optional
+desktop feature pins wgpu 30.0.0/Vello GPU 0.3.0/pollster 0.4.0. Shared scene
+preparation supplies the same layout, shaping and input metadata without CPU
+rasterization; bounded neutral path reuse avoids repeated conversion. Windows
+present directly with one outstanding submission. Device/validation/surface
+failure recovers to CPU without recreating Wasm; a forced Metal device loss was
+observed preserving a changed counter and subsequent Ukrainian input. Explicit
+macOS Display P3 tagging and sRGB-primary conversion correct wide-gamut colors.
+Default builds/backend remain CPU. Debug and Release each pass 26 real Metal offscreen frames at 1×/2×, with
+exact input geometry and mean RGB delta 0.187–0.477/255. Release window samples
+(n=56) have preparation median/p95 1.65/4.46 ms and queue-to-present-return
+6.13/19.80 ms. One host-entry-to-first-present-return sample is 1.89 s. These
+small local observations exclude physical scanout and do not establish a Chrome
+speed ratio. Stripped Release bundles are CPU 24,065,252 bytes and GPU 28,574,180
+bytes. [Pinned measurements](../examples/native-showcase/gpu-ui-checkpoint-2026-11-03.json)
+identify inputs and binaries. Total GPU-memory accounting, broader target
+acceptance remain open. The consolidated final gate passes 3202 tests. P13b/P13c follow
+only after their contracts and source admission work; they do not delay closing
+ordinary UI gaps. Accessibility, richer painting/overlays/images, clipboard/IME,
+the unchanged UARP session and target packaging remain explicit P10 work.
+
+Development continues in coherent batches with focused checks during coding and
+one consolidated full gate at the completed code-batch boundary before a code
+commit, following [verification](verification.md). Documentation-only changes do
+not trigger another engine suite. Do not replace the historical reports or
+claim a passing full gate until it actually runs on the final inputs.
 
 ### Stabilization batch 1 — verified 2026-11-01
 
@@ -305,7 +395,10 @@ Server acceptance ledger, in order:
 
 ### Next delivery batches
 
-This queue follows the accepted platform design and the recorded integration gaps.
+This table preserves the broader platform queue. The immediate UI proposal is
+[UI-1, then the P13a prototype](#current-ui-checkpoint-and-proposed-continuation),
+authorized by the owner; the historical ordering below is not a claim that those
+streams are all unimplemented. It follows the accepted platform design and recorded integration gaps.
 Each batch has a concrete exit criterion; benchmark and compatibility results
 remain evidence for the measured target only.
 
@@ -315,7 +408,8 @@ remain evidence for the measured target only.
 | 2 | V38 server and asynchronous lifetime integration (CORE-08/09/11/17): native acceptance verified; broader lifecycle/replay/target work stays in its ledgers | V38 server boundary and scripted network completion cases pass with declared permissions, queue/deadline limits, late-completion cleanup and trap behavior; covered again by the consolidated browser-core gate; request isolation explicit |
 | 3 | Official browser delivery (P1/P9): bundles/views/resources/permissions/events/navigation and local memory-only dev/reload verified by the consolidated gate; scoped three-engine matrix passes; next portable matrix driver, remaining effects and pilot acceptance | Same supported artifacts and UARP session agree in Node, Chromium, Firefox and WebKit; fuel and host work are enforced, permission denials tested, bundle/startup costs measured |
 | 4 | Native targets (P3/P10–P10d): renderer, shells, bundles and headless layout comparison | Same console artifact completes the accepted session visibly on macOS and an actual Pi 5, with layout/accessibility agreement and measured startup, memory and input latency; Windows and target metadata have independent checks |
-| 5 | Release acceptance (CORE-14/15/16): explicit v38 subset, package compatibility and sustained/security validation | Reproducible target matrix, documented unsupported inventory, package-own-test results, long-lived resource measurements and release/trust policy; no production or full-compatibility claim before these pass |
+| 5 | Future native GPU and graphics (P13a–P13c), after the UI baseline and with independent contracts | Measured CPU/GPU Showcase prototype, then bounded game graphics and separately proven typed library/port; no Three.js or WebView compatibility inferred from GPU support |
+| 6 | Release acceptance (CORE-14/15/16): explicit v38 subset, package compatibility and sustained/security validation | Reproducible target matrix, documented unsupported inventory, package-own-test results, long-lived resource measurements and release/trust policy; no production or full-compatibility claim before these pass |
 
 Work on performance fast paths, wider standard APIs and KV async/watch/queues
 continues against measured blockers alongside these batches; it does not close
@@ -2950,14 +3044,14 @@ the same subset the browser maps one to one onto the DOM.
 | Windowing, input, IME events | `winit` | Apache-2.0 | IME preedit/commit on macOS, Windows, X11 and Wayland (`text-input-v3`; support in the Pi OS compositor is unverified) |
 | Layout | `taffy` | MIT | Block, flexbox and grid; no table layout (hence grid + roles in v1) |
 | Text shaping, bidi, line breaking, editing | `parley` (with `fontique` for font enumeration and fallback) | Apache-2.0 OR MIT | Includes a plain-text editor model with IME preedit; `cosmic-text` (MIT OR Apache-2.0) is the alternative |
-| GPU rendering | `vello` on `wgpu` | Apache-2.0 OR MIT; `wgpu` MIT OR Apache-2.0 | Compute-shader 2D renderer; Pi 5 VideoCore VII exposes Vulkan 1.2 through Mesa `v3dv` (performance unverified) |
+| GPU rendering | Vello family on `wgpu`; evaluate `vello_gpu` first | Apache-2.0 OR MIT; verify selected crates at adoption | Planned GPU path; renderer choice and actual desktop/Pi support require P13a measurements; the original compute-centric renderer is not mandatory |
 | CPU fallback | `vello_cpu`, or `tiny-skia` with `softbuffer` | Apache-2.0 OR MIT; `tiny-skia` BSD-3-Clause; `softbuffer` MIT OR Apache-2.0 | For weak or missing GPUs |
 | Accessibility | `accesskit` (with its `winit` adapter) | MIT OR Apache-2.0 | Maps to the native accessibility APIs on all three desktop OSes |
 | SVG images | `resvg` | Apache-2.0 OR MIT | Artifact SVG only |
 | Clipboard | `arboard` | MIT OR Apache-2.0 | v1: in-field copy/paste only |
 | Prior art | Dioxus Blitz (HTML/CSS renderer on Stylo, Taffy, Parley, Vello) | MIT OR Apache-2.0; Stylo is MPL-2.0 | A reference and possible source of parts; Stylo implements far more CSS than the subset needs, and the subset's selector language is small enough for our own cascade |
 
-Accepted stack: winit, taffy, parley/fontique, vello with a CPU fallback,
+Accepted stack direction: winit, taffy, parley/fontique, Vello-family GPU rendering with a CPU fallback,
 AccessKit and resvg; each dependency is justified and pinned exactly (`=`) when it
 is adopted. `varta-view` now pins Taffy 0.15.1 (MIT) for an experimental,
 bounded box-only layout API and Parley 0.11.1 (Apache-2.0 OR MIT) for explicit-font
@@ -2992,11 +3086,40 @@ against the browser within the freeze tolerance; binary size (estimated +10–20
 for the renderer stack, to measure); GPU availability and driver quality (vello's
 compute path on `v3dv`); startup and memory on Pi 5 (target well below the 100 MB
 or more of WebKitGTK, to measure); the effort of owning a renderer at all, which is
-contained only by keeping the subset small.
+contained only by keeping the subset small. The later GPU plan below refines
+renderer selection and records application graphics separately from UI painting.
 
 **First renderer increment.** Box, text, flex, button, text input with IME and
 overflow scrolling, measured on macOS and on a Pi 5: startup time, resident
 memory, frame time for the 50-row list and keystroke-to-frame latency.
+
+#### GPU and game graphics: future direction
+
+**Recorded 2026-11-03; P13a optional prototype implemented in the working tree,
+P13b/P13c planned.** Separate three increments:
+GPU acceleration of the existing UI, a typed graphics API for Wasm applications,
+and library compatibility. The [architecture contract](architecture.md#planned-gpu-rendering-and-application-graphics)
+records ownership, limits, fallback and acceptance requirements.
+
+| Increment | Planned work | Exit criterion |
+| --- | --- | --- |
+| P13a — GPU UI | Optional shared-scene wgpu/Vello GPU renderer implemented; CPU fallback, input revisions and bounded caches retained; acceptance in progress | Same Showcase runs on CPU/GPU in Debug/Release; geometry/text/input checks and startup, input-to-present latency, median/p95 frame cost, memory and package-size measurements; device-loss/fallback checks on declared targets |
+| P13b — Application graphics | Separately versioned typed GPU API, buffers/textures/shaders/pipelines, batched commands, composable graphics surfaces, budgeted frame callbacks and game input | Animated 3D scene alongside working TSX UI; validated resource ownership, capability and memory/queue limits, cleanup and device-loss recovery; shader/GPU execution limits specified independently of Wasm fuel |
+| P13c — 3D library reach | Inventory and pin a typed 3D library or Three.js port; specify source/language and host API gaps before implementation | Pinned port passes declared game scenes and target/resource tests; no unmodified Three.js/npm compatibility claim from wgpu or type declarations alone |
+
+P13a starts with a bounded prototype and measured backend selection. P13b depends
+on that device/presentation foundation and an approved graphics contract; it does
+not reuse the UI patch protocol as an unrestricted GPU command channel. P13c
+depends on P13b and source admission. P13a desktop-only dependencies are pinned
+in Cargo; the runtime/compiler dependency boundary is unchanged.
+These increments do not replace the pending P10/M7 and release acceptance work.
+
+Unmodified Three.js in a browser/WebView is a separate future compatibility
+option, not an accepted native fallback. Adopting it would require an explicit
+decision about the JS engine, Web APIs, distribution costs and execution/resource
+guarantees. The current native no-WebView direction remains unchanged. Audio and
+other game services also need separate contracts; GPU support alone does not
+constitute a complete game runtime.
 
 #### Desktop packaging
 
@@ -3338,9 +3461,10 @@ full acceptance in the following design table remains required.
 | P7 | L0 validation, headless tree/cascade/accessibility and official transactional browser DOM/event adapters | Headless geometry and cross-renderer layout/accessibility acceptance |
 | P8 | Compiler TSX/templates and example-local reactive L1/keyed lists | Reusable package delivery and complete cross-host example acceptance |
 | P9 | Official bundles/CSP/SRI/metering, views/resources/consent/events and local dev/reload covered by the consolidated gate; scoped Chrome/Firefox/WebKit matrix passes | Portable matrix driver, wider controls/effects/layout, three-browser pilot acceptance and measured target costs |
-| P10–P10d | Accepted native renderer/shell/bundle/startup design | Native implementation, signed/trusted delivery policy as applicable, macOS/Pi session, IME/accessibility and measurements |
+| P10–P10d | Experimental CPU controls/layout, retained renderer and pointer feedback with scoped macOS Showcase evidence; production shell still planned | Full admitted painting, clipboard/IME/accessibility, current UARP session, trusted delivery policy, macOS/Pi/other-target acceptance and end-to-end measurements |
 | P11 | Accepted later hooks-subset direction | Specification and implementation after L1 acceptance |
 | P12 | Native KV plus selected binary/encoding/Date/crypto APIs | KV async/watch/queues, wider values, remaining binary/crypto/Intl providers and cross-host parity |
+| P13a–P13c | Optional GPU UI prototype implemented with Metal recovery; application graphics and 3D-library work remain planned | Prototype and measurements, versioned GPU contract, device/resource acceptance and separately proven library reach; [scope](#gpu-and-game-graphics-future-direction) |
 | Svelte | Deferred design direction | Only after P8 is stable |
 
 #### Increments and acceptance

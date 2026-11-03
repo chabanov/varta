@@ -25,6 +25,7 @@ const VIEW_CSS: &str = include_str!("view-css.mjs");
 const VIEW_MODEL: &str = include_str!("view-model.mjs");
 const VIEW_SELECT: &str = include_str!("view-select.mjs");
 const VIEW_DOM: &str = include_str!("view-dom.mjs");
+const UI_TIMING: &str = include_str!("ui-timing.mjs");
 const VIEW_QUEUE: &str = include_str!("view-queue.mjs");
 const VIEW_WORKER: &str = include_str!("view-worker.mjs");
 const VIEW_POLICY: &str = include_str!("view-policy.mjs");
@@ -45,6 +46,9 @@ const IMAGE: &str = "app.private.wasm";
 const MANIFEST: &str = "app.manifest.json";
 const WORKER_FILE: &str = "varta-worker.js";
 const LOADER_FILE: &str = "varta-host.js";
+// Standalone page geometry only. Embedded views keep their owner's container.
+// This exact stylesheet is authorized by its CSP hash, never unsafe-inline.
+const PAGE_STYLE: &str = "html,body{height:100%;margin:0}body{display:flex;flex-direction:column}#varta-view{flex:1;min-height:0}#varta-view:empty{display:none}#varta-output{flex:none;margin:0;max-height:25vh;overflow:auto;white-space:pre-wrap}#varta-output:empty{display:none}";
 
 /// Current R1 effect implementations. Unsupported effects fail before producing
 /// a runnable bundle; extending this surface requires matching effect tests.
@@ -175,6 +179,7 @@ fn embedded_sources(dom: bool) -> String {
         .map(|(name, bindings, source, exports)| module(name, bindings, source, exports))
         .collect::<String>();
     if dom {
+        source.push_str(&module("uiTiming", "", UI_TIMING, "createUiTiming"));
         source.push_str(&module(
             "permissionPrompt",
             "",
@@ -392,9 +397,14 @@ impl BrowserArtifact {
             "sha256-{}",
             base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(&loader))
         );
+        let style_integrity = format!(
+            "sha256-{}",
+            base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(PAGE_STYLE))
+        );
         let html=format!(r#"<!doctype html>
 <html lang="en"><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src '{integrity}' 'wasm-unsafe-eval'; worker-src blob:; img-src blob:; connect-src 'self' {origins}; base-uri 'none'; object-src 'none'; trusted-types {TRUSTED_TYPES_POLICY}; require-trusted-types-for 'script'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src '{integrity}' 'wasm-unsafe-eval'; style-src '{style_integrity}'; worker-src blob:; img-src blob:; connect-src 'self' {origins}; base-uri 'none'; object-src 'none'; trusted-types {TRUSTED_TYPES_POLICY}; require-trusted-types-for 'script'">
+<style>{PAGE_STYLE}</style>
 <title>Varta application</title>
 <main id="varta-view"></main>
 <pre id="varta-output" aria-live="polite">Starting…</pre>

@@ -112,6 +112,9 @@ impl Session {
     pub(crate) fn cancel_preedit(&mut self) {
         self.view.cancel_preedit();
     }
+    pub(crate) fn set_pointer_state(&mut self, hovered: Option<u32>, active: Option<u32>) -> bool {
+        self.view.set_pointer_state(hovered, active)
+    }
     pub(crate) fn rasterize(
         &self,
         width: u32,
@@ -131,6 +134,24 @@ impl Session {
         font: Option<(&mut varta_view::TextMeasurer, f32)>,
     ) -> Result<varta_view::RasterImage, varta_view::PaintError> {
         self.view.rasterize_scaled(width, height, scale, font)
+    }
+    pub(crate) fn render(
+        &self,
+        renderer: &mut varta_view::Renderer,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<varta_view::RasterImage, varta_view::PaintError> {
+        renderer.render(&self.view, width, height, scale)
+    }
+    pub(crate) fn prepare(
+        &self,
+        renderer: &mut varta_view::Renderer,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<varta_view::PreparedFrame, varta_view::PaintError> {
+        renderer.prepare(&self.view, width, height, scale)
     }
     /// Whether a committed view can still receive platform inputs (and so
     /// records): it keeps an application instance alive like an open event

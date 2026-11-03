@@ -1,0 +1,1583 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-03",
+  "head": "1259eb8edee830868adbb191e56123fdd1c1aad2",
+  "workingTree": true,
+  "os": "27.0.1",
+  "machine": "Apple M1 Max, arm64",
+  "wasmSha256": "6f596c18e2c2e3c7652845a1f4c4c94b6f6efacaed1775777552da9b3612b970",
+  "fontSha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+  "notes": [
+    "Local Metal observations, no other target acceptance.",
+    "Offscreen timings include verification readback and cannot be used as window presentation times.",
+    "Window endpoint is queue-to-present-return, excludes OS delivery, pending key wait before dispatch, GPU completion and scanout.",
+    "Small mixed input samples; p95 is descriptive, not a controlled cross-host speed ratio.",
+    "CPU/GPU image mean RGB delta is a smoke tolerance of 2/255; maximum deltas at antialiasing edges are retained.",
+    "Native UI automation stopped responding after the Release input sequence; final Debug window, matched CPU window timing and resize/visibility acceptance remain unverified. Existing Debug functional observations precede the final neutral-segment cache.",
+    "Package bytes use generated launchers; temporary local stderr redirects used for measurements have been removed.",
+    "Native guest_ms includes accepted host input and application-step work, not isolated Wasm CPU time. Combined samples anchor the first worker-accepted stamp, not necessarily the earliest queued event.",
+    "Offscreen comparison uses encoded sRGB. The native Display P3 branch has solid-color screenshot observations, not a complete per-pixel window oracle."
+  ],
+  "offscreen": {
+    "debug": {
+      "probeSha256": "b6bcd2495ddbedeebaae6769f3ecd34bd957857c265726ef1473e7477dfe0fdb",
+      "boundary": "offscreen-with-readback",
+      "samples": [
+        {
+          "case": "initial",
+          "scale": 1,
+          "cpu_prepare_ms": 38.837,
+          "vector_prepare_ms": 33.651,
+          "scene_encode_ms": 1.417,
+          "gpu_readback_roundtrip_ms": 11.051,
+          "mean_rgb_delta": 0.4766,
+          "max_rgb_delta": 60,
+          "draws": 700
+        },
+        {
+          "case": "counter",
+          "scale": 1,
+          "cpu_prepare_ms": 7.937,
+          "vector_prepare_ms": 8.271,
+          "scene_encode_ms": 1.208,
+          "gpu_readback_roundtrip_ms": 3.586,
+          "mean_rgb_delta": 0.4758,
+          "max_rgb_delta": 60,
+          "draws": 701
+        },
+        {
+          "case": "check",
+          "scale": 1,
+          "cpu_prepare_ms": 7.798,
+          "vector_prepare_ms": 7.757,
+          "scene_encode_ms": 1.189,
+          "gpu_readback_roundtrip_ms": 7.489,
+          "mean_rgb_delta": 0.4729,
+          "max_rgb_delta": 59,
+          "draws": 702
+        },
+        {
+          "case": "edit",
+          "scale": 1,
+          "cpu_prepare_ms": 9.645,
+          "vector_prepare_ms": 7.923,
+          "scene_encode_ms": 1.204,
+          "gpu_readback_roundtrip_ms": 3.363,
+          "mean_rgb_delta": 0.4598,
+          "max_rgb_delta": 59,
+          "draws": 679
+        },
+        {
+          "case": "textarea",
+          "scale": 1,
+          "cpu_prepare_ms": 9.925,
+          "vector_prepare_ms": 9.978,
+          "scene_encode_ms": 1.308,
+          "gpu_readback_roundtrip_ms": 4.409,
+          "mean_rgb_delta": 0.459,
+          "max_rgb_delta": 59,
+          "draws": 673
+        },
+        {
+          "case": "selection",
+          "scale": 1,
+          "cpu_prepare_ms": 6.621,
+          "vector_prepare_ms": 5.931,
+          "scene_encode_ms": 1.143,
+          "gpu_readback_roundtrip_ms": 6.201,
+          "mean_rgb_delta": 0.4574,
+          "max_rgb_delta": 59,
+          "draws": 674
+        },
+        {
+          "case": "preedit",
+          "scale": 1,
+          "cpu_prepare_ms": 7.512,
+          "vector_prepare_ms": 7.213,
+          "scene_encode_ms": 1.148,
+          "gpu_readback_roundtrip_ms": 4.98,
+          "mean_rgb_delta": 0.4573,
+          "max_rgb_delta": 59,
+          "draws": 675
+        },
+        {
+          "case": "commit",
+          "scale": 1,
+          "cpu_prepare_ms": 6.148,
+          "vector_prepare_ms": 6.199,
+          "scene_encode_ms": 1.133,
+          "gpu_readback_roundtrip_ms": 5.349,
+          "mean_rgb_delta": 0.4584,
+          "max_rgb_delta": 59,
+          "draws": 673
+        },
+        {
+          "case": "scroll",
+          "scale": 1,
+          "cpu_prepare_ms": 10.211,
+          "vector_prepare_ms": 7.119,
+          "scene_encode_ms": 1.164,
+          "gpu_readback_roundtrip_ms": 3.305,
+          "mean_rgb_delta": 0.4588,
+          "max_rgb_delta": 58,
+          "draws": 673
+        },
+        {
+          "case": "select-open",
+          "scale": 1,
+          "cpu_prepare_ms": 12.023,
+          "vector_prepare_ms": 8.132,
+          "scene_encode_ms": 1.244,
+          "gpu_readback_roundtrip_ms": 3.789,
+          "mean_rgb_delta": 0.3968,
+          "max_rgb_delta": 58,
+          "draws": 696
+        },
+        {
+          "case": "select-preview",
+          "scale": 1,
+          "cpu_prepare_ms": 6.222,
+          "vector_prepare_ms": 5.95,
+          "scene_encode_ms": 1.229,
+          "gpu_readback_roundtrip_ms": 3.748,
+          "mean_rgb_delta": 0.3982,
+          "max_rgb_delta": 58,
+          "draws": 696
+        },
+        {
+          "case": "select-commit",
+          "scale": 1,
+          "cpu_prepare_ms": 8.806,
+          "vector_prepare_ms": 6.921,
+          "scene_encode_ms": 1.201,
+          "gpu_readback_roundtrip_ms": 7.0,
+          "mean_rgb_delta": 0.4501,
+          "max_rgb_delta": 58,
+          "draws": 662
+        },
+        {
+          "case": "engine",
+          "scale": 1,
+          "cpu_prepare_ms": 13.02,
+          "vector_prepare_ms": 11.109,
+          "scene_encode_ms": 1.288,
+          "gpu_readback_roundtrip_ms": 5.599,
+          "mean_rgb_delta": 0.4482,
+          "max_rgb_delta": 56,
+          "draws": 655
+        },
+        {
+          "case": "initial",
+          "scale": 2,
+          "cpu_prepare_ms": 46.121,
+          "vector_prepare_ms": 35.027,
+          "scene_encode_ms": 1.622,
+          "gpu_readback_roundtrip_ms": 10.203,
+          "mean_rgb_delta": 0.2251,
+          "max_rgb_delta": 67,
+          "draws": 700
+        },
+        {
+          "case": "counter",
+          "scale": 2,
+          "cpu_prepare_ms": 8.283,
+          "vector_prepare_ms": 8.721,
+          "scene_encode_ms": 1.601,
+          "gpu_readback_roundtrip_ms": 9.531,
+          "mean_rgb_delta": 0.2244,
+          "max_rgb_delta": 67,
+          "draws": 701
+        },
+        {
+          "case": "check",
+          "scale": 2,
+          "cpu_prepare_ms": 9.158,
+          "vector_prepare_ms": 8.375,
+          "scene_encode_ms": 1.716,
+          "gpu_readback_roundtrip_ms": 10.919,
+          "mean_rgb_delta": 0.2231,
+          "max_rgb_delta": 67,
+          "draws": 702
+        },
+        {
+          "case": "edit",
+          "scale": 2,
+          "cpu_prepare_ms": 12.525,
+          "vector_prepare_ms": 9.061,
+          "scene_encode_ms": 1.537,
+          "gpu_readback_roundtrip_ms": 9.557,
+          "mean_rgb_delta": 0.2181,
+          "max_rgb_delta": 67,
+          "draws": 679
+        },
+        {
+          "case": "textarea",
+          "scale": 2,
+          "cpu_prepare_ms": 12.171,
+          "vector_prepare_ms": 10.62,
+          "scene_encode_ms": 1.583,
+          "gpu_readback_roundtrip_ms": 23.588,
+          "mean_rgb_delta": 0.2172,
+          "max_rgb_delta": 67,
+          "draws": 673
+        },
+        {
+          "case": "selection",
+          "scale": 2,
+          "cpu_prepare_ms": 19.261,
+          "vector_prepare_ms": 8.976,
+          "scene_encode_ms": 1.585,
+          "gpu_readback_roundtrip_ms": 9.299,
+          "mean_rgb_delta": 0.2164,
+          "max_rgb_delta": 67,
+          "draws": 674
+        },
+        {
+          "case": "preedit",
+          "scale": 2,
+          "cpu_prepare_ms": 8.243,
+          "vector_prepare_ms": 6.996,
+          "scene_encode_ms": 1.537,
+          "gpu_readback_roundtrip_ms": 9.122,
+          "mean_rgb_delta": 0.2159,
+          "max_rgb_delta": 67,
+          "draws": 675
+        },
+        {
+          "case": "commit",
+          "scale": 2,
+          "cpu_prepare_ms": 7.977,
+          "vector_prepare_ms": 7.45,
+          "scene_encode_ms": 1.616,
+          "gpu_readback_roundtrip_ms": 9.48,
+          "mean_rgb_delta": 0.2164,
+          "max_rgb_delta": 67,
+          "draws": 673
+        },
+        {
+          "case": "scroll",
+          "scale": 2,
+          "cpu_prepare_ms": 15.857,
+          "vector_prepare_ms": 7.608,
+          "scene_encode_ms": 1.685,
+          "gpu_readback_roundtrip_ms": 11.238,
+          "mean_rgb_delta": 0.214,
+          "max_rgb_delta": 60,
+          "draws": 673
+        },
+        {
+          "case": "select-open",
+          "scale": 2,
+          "cpu_prepare_ms": 16.843,
+          "vector_prepare_ms": 9.571,
+          "scene_encode_ms": 1.771,
+          "gpu_readback_roundtrip_ms": 9.717,
+          "mean_rgb_delta": 0.1866,
+          "max_rgb_delta": 60,
+          "draws": 696
+        },
+        {
+          "case": "select-preview",
+          "scale": 2,
+          "cpu_prepare_ms": 8.185,
+          "vector_prepare_ms": 6.516,
+          "scene_encode_ms": 1.902,
+          "gpu_readback_roundtrip_ms": 8.924,
+          "mean_rgb_delta": 0.1871,
+          "max_rgb_delta": 60,
+          "draws": 696
+        },
+        {
+          "case": "select-commit",
+          "scale": 2,
+          "cpu_prepare_ms": 11.77,
+          "vector_prepare_ms": 7.327,
+          "scene_encode_ms": 1.64,
+          "gpu_readback_roundtrip_ms": 11.69,
+          "mean_rgb_delta": 0.2106,
+          "max_rgb_delta": 60,
+          "draws": 662
+        },
+        {
+          "case": "engine",
+          "scale": 2,
+          "cpu_prepare_ms": 15.574,
+          "vector_prepare_ms": 10.599,
+          "scene_encode_ms": 1.588,
+          "gpu_readback_roundtrip_ms": 8.625,
+          "mean_rgb_delta": 0.2085,
+          "max_rgb_delta": 63,
+          "draws": 655
+        }
+      ],
+      "geometryExactlyEqual": true,
+      "count": 26,
+      "complete": true,
+      "meanRgbDeltaRange": [
+        0.1866,
+        0.4766
+      ],
+      "warmByScale": {
+        "1": {
+          "cpu_prepare_ms": {
+            "count": 12,
+            "median": 8.371,
+            "p95NearestRank": 13.02,
+            "min": 6.148,
+            "max": 13.02
+          },
+          "vector_prepare_ms": {
+            "count": 12,
+            "median": 7.485,
+            "p95NearestRank": 11.109,
+            "min": 5.931,
+            "max": 11.109
+          },
+          "scene_encode_ms": {
+            "count": 12,
+            "median": 1.203,
+            "p95NearestRank": 1.308,
+            "min": 1.133,
+            "max": 1.308
+          },
+          "gpu_readback_roundtrip_ms": {
+            "count": 12,
+            "median": 4.694,
+            "p95NearestRank": 7.489,
+            "min": 3.305,
+            "max": 7.489
+          }
+        },
+        "2": {
+          "cpu_prepare_ms": {
+            "count": 12,
+            "median": 11.97,
+            "p95NearestRank": 19.261,
+            "min": 7.977,
+            "max": 19.261
+          },
+          "vector_prepare_ms": {
+            "count": 12,
+            "median": 8.548,
+            "p95NearestRank": 10.62,
+            "min": 6.516,
+            "max": 10.62
+          },
+          "scene_encode_ms": {
+            "count": 12,
+            "median": 1.609,
+            "p95NearestRank": 1.902,
+            "min": 1.537,
+            "max": 1.902
+          },
+          "gpu_readback_roundtrip_ms": {
+            "count": 12,
+            "median": 9.544,
+            "p95NearestRank": 23.588,
+            "min": 8.625,
+            "max": 23.588
+          }
+        }
+      }
+    },
+    "release": {
+      "probeSha256": "5bf21375d9e2456b32641fe3a0262a1e1c70b6317db7a3de4b5977b40e136adb",
+      "boundary": "offscreen-with-readback",
+      "samples": [
+        {
+          "case": "initial",
+          "scale": 1,
+          "cpu_prepare_ms": 8.31,
+          "vector_prepare_ms": 3.537,
+          "scene_encode_ms": 0.984,
+          "gpu_readback_roundtrip_ms": 11.924,
+          "mean_rgb_delta": 0.4766,
+          "max_rgb_delta": 60,
+          "draws": 700
+        },
+        {
+          "case": "counter",
+          "scale": 1,
+          "cpu_prepare_ms": 2.191,
+          "vector_prepare_ms": 1.867,
+          "scene_encode_ms": 0.948,
+          "gpu_readback_roundtrip_ms": 3.299,
+          "mean_rgb_delta": 0.4758,
+          "max_rgb_delta": 60,
+          "draws": 701
+        },
+        {
+          "case": "check",
+          "scale": 1,
+          "cpu_prepare_ms": 2.395,
+          "vector_prepare_ms": 2.0,
+          "scene_encode_ms": 0.965,
+          "gpu_readback_roundtrip_ms": 3.172,
+          "mean_rgb_delta": 0.4729,
+          "max_rgb_delta": 59,
+          "draws": 702
+        },
+        {
+          "case": "edit",
+          "scale": 1,
+          "cpu_prepare_ms": 5.218,
+          "vector_prepare_ms": 1.841,
+          "scene_encode_ms": 1.064,
+          "gpu_readback_roundtrip_ms": 5.91,
+          "mean_rgb_delta": 0.4598,
+          "max_rgb_delta": 59,
+          "draws": 679
+        },
+        {
+          "case": "textarea",
+          "scale": 1,
+          "cpu_prepare_ms": 3.304,
+          "vector_prepare_ms": 1.747,
+          "scene_encode_ms": 1.003,
+          "gpu_readback_roundtrip_ms": 3.851,
+          "mean_rgb_delta": 0.459,
+          "max_rgb_delta": 59,
+          "draws": 673
+        },
+        {
+          "case": "selection",
+          "scale": 1,
+          "cpu_prepare_ms": 3.022,
+          "vector_prepare_ms": 1.253,
+          "scene_encode_ms": 1.09,
+          "gpu_readback_roundtrip_ms": 2.581,
+          "mean_rgb_delta": 0.4574,
+          "max_rgb_delta": 59,
+          "draws": 674
+        },
+        {
+          "case": "preedit",
+          "scale": 1,
+          "cpu_prepare_ms": 2.214,
+          "vector_prepare_ms": 1.503,
+          "scene_encode_ms": 1.185,
+          "gpu_readback_roundtrip_ms": 2.55,
+          "mean_rgb_delta": 0.4573,
+          "max_rgb_delta": 59,
+          "draws": 675
+        },
+        {
+          "case": "commit",
+          "scale": 1,
+          "cpu_prepare_ms": 1.953,
+          "vector_prepare_ms": 1.555,
+          "scene_encode_ms": 0.925,
+          "gpu_readback_roundtrip_ms": 4.726,
+          "mean_rgb_delta": 0.4584,
+          "max_rgb_delta": 59,
+          "draws": 673
+        },
+        {
+          "case": "scroll",
+          "scale": 1,
+          "cpu_prepare_ms": 6.368,
+          "vector_prepare_ms": 1.673,
+          "scene_encode_ms": 0.897,
+          "gpu_readback_roundtrip_ms": 2.688,
+          "mean_rgb_delta": 0.4588,
+          "max_rgb_delta": 58,
+          "draws": 673
+        },
+        {
+          "case": "select-open",
+          "scale": 1,
+          "cpu_prepare_ms": 4.925,
+          "vector_prepare_ms": 1.506,
+          "scene_encode_ms": 1.226,
+          "gpu_readback_roundtrip_ms": 4.829,
+          "mean_rgb_delta": 0.3968,
+          "max_rgb_delta": 58,
+          "draws": 696
+        },
+        {
+          "case": "select-preview",
+          "scale": 1,
+          "cpu_prepare_ms": 2.226,
+          "vector_prepare_ms": 1.246,
+          "scene_encode_ms": 1.084,
+          "gpu_readback_roundtrip_ms": 2.662,
+          "mean_rgb_delta": 0.3982,
+          "max_rgb_delta": 58,
+          "draws": 696
+        },
+        {
+          "case": "select-commit",
+          "scale": 1,
+          "cpu_prepare_ms": 3.853,
+          "vector_prepare_ms": 1.276,
+          "scene_encode_ms": 1.019,
+          "gpu_readback_roundtrip_ms": 2.655,
+          "mean_rgb_delta": 0.4501,
+          "max_rgb_delta": 58,
+          "draws": 662
+        },
+        {
+          "case": "engine",
+          "scale": 1,
+          "cpu_prepare_ms": 4.092,
+          "vector_prepare_ms": 1.82,
+          "scene_encode_ms": 1.054,
+          "gpu_readback_roundtrip_ms": 4.172,
+          "mean_rgb_delta": 0.4482,
+          "max_rgb_delta": 56,
+          "draws": 655
+        },
+        {
+          "case": "initial",
+          "scale": 2,
+          "cpu_prepare_ms": 13.853,
+          "vector_prepare_ms": 3.348,
+          "scene_encode_ms": 1.457,
+          "gpu_readback_roundtrip_ms": 9.318,
+          "mean_rgb_delta": 0.2251,
+          "max_rgb_delta": 67,
+          "draws": 700
+        },
+        {
+          "case": "counter",
+          "scale": 2,
+          "cpu_prepare_ms": 2.359,
+          "vector_prepare_ms": 2.087,
+          "scene_encode_ms": 1.698,
+          "gpu_readback_roundtrip_ms": 8.185,
+          "mean_rgb_delta": 0.2244,
+          "max_rgb_delta": 67,
+          "draws": 701
+        },
+        {
+          "case": "check",
+          "scale": 2,
+          "cpu_prepare_ms": 3.576,
+          "vector_prepare_ms": 1.878,
+          "scene_encode_ms": 1.587,
+          "gpu_readback_roundtrip_ms": 8.443,
+          "mean_rgb_delta": 0.2231,
+          "max_rgb_delta": 67,
+          "draws": 702
+        },
+        {
+          "case": "edit",
+          "scale": 2,
+          "cpu_prepare_ms": 6.057,
+          "vector_prepare_ms": 2.559,
+          "scene_encode_ms": 1.318,
+          "gpu_readback_roundtrip_ms": 8.031,
+          "mean_rgb_delta": 0.2181,
+          "max_rgb_delta": 67,
+          "draws": 679
+        },
+        {
+          "case": "textarea",
+          "scale": 2,
+          "cpu_prepare_ms": 4.913,
+          "vector_prepare_ms": 1.774,
+          "scene_encode_ms": 1.331,
+          "gpu_readback_roundtrip_ms": 18.408,
+          "mean_rgb_delta": 0.2172,
+          "max_rgb_delta": 67,
+          "draws": 673
+        },
+        {
+          "case": "selection",
+          "scale": 2,
+          "cpu_prepare_ms": 3.229,
+          "vector_prepare_ms": 1.715,
+          "scene_encode_ms": 1.912,
+          "gpu_readback_roundtrip_ms": 10.148,
+          "mean_rgb_delta": 0.2164,
+          "max_rgb_delta": 67,
+          "draws": 674
+        },
+        {
+          "case": "preedit",
+          "scale": 2,
+          "cpu_prepare_ms": 3.061,
+          "vector_prepare_ms": 1.481,
+          "scene_encode_ms": 1.362,
+          "gpu_readback_roundtrip_ms": 8.866,
+          "mean_rgb_delta": 0.2159,
+          "max_rgb_delta": 67,
+          "draws": 675
+        },
+        {
+          "case": "commit",
+          "scale": 2,
+          "cpu_prepare_ms": 3.516,
+          "vector_prepare_ms": 1.731,
+          "scene_encode_ms": 1.597,
+          "gpu_readback_roundtrip_ms": 8.105,
+          "mean_rgb_delta": 0.2164,
+          "max_rgb_delta": 67,
+          "draws": 673
+        },
+        {
+          "case": "scroll",
+          "scale": 2,
+          "cpu_prepare_ms": 11.982,
+          "vector_prepare_ms": 1.684,
+          "scene_encode_ms": 1.446,
+          "gpu_readback_roundtrip_ms": 94.581,
+          "mean_rgb_delta": 0.214,
+          "max_rgb_delta": 60,
+          "draws": 673
+        },
+        {
+          "case": "select-open",
+          "scale": 2,
+          "cpu_prepare_ms": 10.623,
+          "vector_prepare_ms": 1.954,
+          "scene_encode_ms": 1.68,
+          "gpu_readback_roundtrip_ms": 7.932,
+          "mean_rgb_delta": 0.1866,
+          "max_rgb_delta": 60,
+          "draws": 696
+        },
+        {
+          "case": "select-preview",
+          "scale": 2,
+          "cpu_prepare_ms": 3.385,
+          "vector_prepare_ms": 1.397,
+          "scene_encode_ms": 1.522,
+          "gpu_readback_roundtrip_ms": 8.175,
+          "mean_rgb_delta": 0.1871,
+          "max_rgb_delta": 60,
+          "draws": 696
+        },
+        {
+          "case": "select-commit",
+          "scale": 2,
+          "cpu_prepare_ms": 6.965,
+          "vector_prepare_ms": 1.602,
+          "scene_encode_ms": 1.43,
+          "gpu_readback_roundtrip_ms": 8.314,
+          "mean_rgb_delta": 0.2106,
+          "max_rgb_delta": 60,
+          "draws": 662
+        },
+        {
+          "case": "engine",
+          "scale": 2,
+          "cpu_prepare_ms": 7.294,
+          "vector_prepare_ms": 1.894,
+          "scene_encode_ms": 1.473,
+          "gpu_readback_roundtrip_ms": 8.027,
+          "mean_rgb_delta": 0.2085,
+          "max_rgb_delta": 63,
+          "draws": 655
+        }
+      ],
+      "geometryExactlyEqual": true,
+      "count": 26,
+      "complete": true,
+      "meanRgbDeltaRange": [
+        0.1866,
+        0.4766
+      ],
+      "warmByScale": {
+        "1": {
+          "cpu_prepare_ms": {
+            "count": 12,
+            "median": 3.163,
+            "p95NearestRank": 6.368,
+            "min": 1.953,
+            "max": 6.368
+          },
+          "vector_prepare_ms": {
+            "count": 12,
+            "median": 1.614,
+            "p95NearestRank": 2.0,
+            "min": 1.246,
+            "max": 2.0
+          },
+          "scene_encode_ms": {
+            "count": 12,
+            "median": 1.036,
+            "p95NearestRank": 1.226,
+            "min": 0.897,
+            "max": 1.226
+          },
+          "gpu_readback_roundtrip_ms": {
+            "count": 12,
+            "median": 3.236,
+            "p95NearestRank": 5.91,
+            "min": 2.55,
+            "max": 5.91
+          }
+        },
+        "2": {
+          "cpu_prepare_ms": {
+            "count": 12,
+            "median": 4.245,
+            "p95NearestRank": 11.982,
+            "min": 2.359,
+            "max": 11.982
+          },
+          "vector_prepare_ms": {
+            "count": 12,
+            "median": 1.752,
+            "p95NearestRank": 2.559,
+            "min": 1.397,
+            "max": 2.559
+          },
+          "scene_encode_ms": {
+            "count": 12,
+            "median": 1.498,
+            "p95NearestRank": 1.912,
+            "min": 1.318,
+            "max": 1.912
+          },
+          "gpu_readback_roundtrip_ms": {
+            "count": 12,
+            "median": 8.25,
+            "p95NearestRank": 94.581,
+            "min": 7.932,
+            "max": 94.581
+          }
+        }
+      }
+    }
+  },
+  "packages": {
+    "cpu-debug": {
+      "bytes": 128743468,
+      "hostBytes": 127682576,
+      "hostSha256": "a17f9d3e57a635612e4c88eb38a9c86bb6c1590310f547a1e81a5f0806be0048",
+      "gpuCompiled": true,
+      "stripped": false
+    },
+    "gpu-debug": {
+      "bytes": 128743468,
+      "hostBytes": 127682576,
+      "hostSha256": "a17f9d3e57a635612e4c88eb38a9c86bb6c1590310f547a1e81a5f0806be0048",
+      "gpuCompiled": true,
+      "stripped": false
+    },
+    "cpu-release": {
+      "bytes": 24065252,
+      "hostBytes": 23004352,
+      "hostSha256": "c8f134817b69acbd4fc446cd00bcfb184c9b5e2dfe986850cc2dc830ee359e42",
+      "gpuCompiled": false,
+      "stripped": true
+    },
+    "gpu-release": {
+      "bytes": 28574180,
+      "hostBytes": 27513280,
+      "hostSha256": "a9c848e69207b61c1fcca0d750fb016b36ccc0fd4a556a168adb73127961472c",
+      "gpuCompiled": true,
+      "stripped": true
+    }
+  },
+  "window": {
+    "gpu-release": {
+      "startup": [
+        {
+          "boundary": "host-entry-to-first-present-return",
+          "backend": "gpu",
+          "total_ms": 1888.774
+        }
+      ],
+      "samples": [
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 2,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 1.254,
+          "guest_ms": 0.0,
+          "prepare_ms": 4.245,
+          "frame_wait_ms": 8.14,
+          "host_present_ms": 2.219,
+          "total_ms": 15.858
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 3,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.339,
+          "guest_ms": 0.0,
+          "prepare_ms": 3.974,
+          "frame_wait_ms": 0.321,
+          "host_present_ms": 1.698,
+          "total_ms": 6.333
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 4,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.22,
+          "guest_ms": 0.681,
+          "prepare_ms": 2.457,
+          "frame_wait_ms": 0.061,
+          "host_present_ms": 1.751,
+          "total_ms": 5.171
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 5,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 5.392,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.894,
+          "frame_wait_ms": 0.8,
+          "host_present_ms": 6.466,
+          "total_ms": 14.553
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 6,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.383,
+          "guest_ms": 0.0,
+          "prepare_ms": 3.534,
+          "frame_wait_ms": 0.046,
+          "host_present_ms": 1.614,
+          "total_ms": 5.576
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 7,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.032,
+          "guest_ms": 0.273,
+          "prepare_ms": 1.047,
+          "frame_wait_ms": 0.055,
+          "host_present_ms": 1.609,
+          "total_ms": 3.017
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 8,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 3.19,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.137,
+          "frame_wait_ms": 0.104,
+          "host_present_ms": 4.93,
+          "total_ms": 9.361
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 9,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.024,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.257,
+          "frame_wait_ms": 0.06,
+          "host_present_ms": 1.674,
+          "total_ms": 3.015
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 10,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.233,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.53,
+          "frame_wait_ms": 0.034,
+          "host_present_ms": 1.706,
+          "total_ms": 3.502
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 11,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.048,
+          "guest_ms": 0.466,
+          "prepare_ms": 2.901,
+          "frame_wait_ms": 0.071,
+          "host_present_ms": 1.656,
+          "total_ms": 5.143
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 12,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 5.447,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.44,
+          "frame_wait_ms": 0.046,
+          "host_present_ms": 4.966,
+          "total_ms": 11.899
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 13,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.301,
+          "guest_ms": 0.0,
+          "prepare_ms": 4.223,
+          "frame_wait_ms": 0.042,
+          "host_present_ms": 1.584,
+          "total_ms": 6.151
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 14,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.026,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.322,
+          "frame_wait_ms": 0.111,
+          "host_present_ms": 1.643,
+          "total_ms": 3.102
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 15,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.008,
+          "guest_ms": 0.274,
+          "prepare_ms": 1.621,
+          "frame_wait_ms": 1.525,
+          "host_present_ms": 1.667,
+          "total_ms": 5.097
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 16,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 5.401,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.359,
+          "frame_wait_ms": 0.046,
+          "host_present_ms": 10.755,
+          "total_ms": 17.561
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 17,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.358,
+          "guest_ms": 0.0,
+          "prepare_ms": 3.558,
+          "frame_wait_ms": 0.184,
+          "host_present_ms": 1.775,
+          "total_ms": 5.875
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 18,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 3.694,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.429,
+          "frame_wait_ms": 0.043,
+          "host_present_ms": 1.626,
+          "total_ms": 6.792
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 19,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.01,
+          "guest_ms": 0.707,
+          "prepare_ms": 1.682,
+          "frame_wait_ms": 0.066,
+          "host_present_ms": 1.604,
+          "total_ms": 4.071
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 20,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 4.366,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.321,
+          "frame_wait_ms": 0.046,
+          "host_present_ms": 2.997,
+          "total_ms": 8.73
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 21,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.223,
+          "guest_ms": 0.0,
+          "prepare_ms": 4.462,
+          "frame_wait_ms": 0.139,
+          "host_present_ms": 2.783,
+          "total_ms": 7.608
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 22,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.049,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.759,
+          "frame_wait_ms": 0.043,
+          "host_present_ms": 1.616,
+          "total_ms": 3.468
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 23,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.015,
+          "guest_ms": 0.318,
+          "prepare_ms": 1.829,
+          "frame_wait_ms": 0.663,
+          "host_present_ms": 1.769,
+          "total_ms": 4.596
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 24,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 4.956,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.468,
+          "frame_wait_ms": 3.276,
+          "host_present_ms": 11.429,
+          "total_ms": 21.13
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 25,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.254,
+          "guest_ms": 0.0,
+          "prepare_ms": 3.599,
+          "frame_wait_ms": 0.102,
+          "host_present_ms": 1.771,
+          "total_ms": 5.725
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 26,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.105,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.5,
+          "frame_wait_ms": 0.118,
+          "host_present_ms": 1.701,
+          "total_ms": 3.425
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 27,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.005,
+          "guest_ms": 0.62,
+          "prepare_ms": 3.065,
+          "frame_wait_ms": 12.78,
+          "host_present_ms": 1.754,
+          "total_ms": 18.224
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 28,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 18.394,
+          "guest_ms": 0.0,
+          "prepare_ms": 2.211,
+          "frame_wait_ms": 0.043,
+          "host_present_ms": 14.028,
+          "total_ms": 34.677
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 29,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.021,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.267,
+          "frame_wait_ms": 0.103,
+          "host_present_ms": 1.711,
+          "total_ms": 3.102
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 30,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.13,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.455,
+          "frame_wait_ms": 0.047,
+          "host_present_ms": 1.698,
+          "total_ms": 3.329
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 31,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.043,
+          "guest_ms": 0.278,
+          "prepare_ms": 2.763,
+          "frame_wait_ms": 0.031,
+          "host_present_ms": 1.698,
+          "total_ms": 4.814
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 32,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 4.995,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.287,
+          "frame_wait_ms": 5.095,
+          "host_present_ms": 4.62,
+          "total_ms": 15.998
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 33,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.233,
+          "guest_ms": 0.0,
+          "prepare_ms": 4.309,
+          "frame_wait_ms": 0.226,
+          "host_present_ms": 1.807,
+          "total_ms": 6.576
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 34,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.04,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.705,
+          "frame_wait_ms": 0.126,
+          "host_present_ms": 1.764,
+          "total_ms": 3.636
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 35,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.01,
+          "guest_ms": 0.412,
+          "prepare_ms": 1.51,
+          "frame_wait_ms": 0.135,
+          "host_present_ms": 1.769,
+          "total_ms": 3.836
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 36,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 4.006,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.23,
+          "frame_wait_ms": 4.742,
+          "host_present_ms": 1.577,
+          "total_ms": 11.556
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 37,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.228,
+          "guest_ms": 0.0,
+          "prepare_ms": 5.222,
+          "frame_wait_ms": 0.101,
+          "host_present_ms": 1.695,
+          "total_ms": 7.247
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 38,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.285,
+          "guest_ms": 0.0,
+          "prepare_ms": 3.52,
+          "frame_wait_ms": 0.118,
+          "host_present_ms": 1.666,
+          "total_ms": 5.589
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 39,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.014,
+          "guest_ms": 0.43,
+          "prepare_ms": 2.09,
+          "frame_wait_ms": 0.771,
+          "host_present_ms": 1.745,
+          "total_ms": 5.052
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 40,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 5.225,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.82,
+          "frame_wait_ms": 4.511,
+          "host_present_ms": 8.241,
+          "total_ms": 19.797
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 41,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.632,
+          "guest_ms": 0.0,
+          "prepare_ms": 5.234,
+          "frame_wait_ms": 0.099,
+          "host_present_ms": 2.106,
+          "total_ms": 8.071
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 42,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.937,
+          "guest_ms": 0.0,
+          "prepare_ms": 3.241,
+          "frame_wait_ms": 0.04,
+          "host_present_ms": 1.595,
+          "total_ms": 5.812
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 43,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.015,
+          "guest_ms": 0.748,
+          "prepare_ms": 1.342,
+          "frame_wait_ms": 0.11,
+          "host_present_ms": 1.743,
+          "total_ms": 3.958
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 44,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 4.155,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.342,
+          "frame_wait_ms": 0.095,
+          "host_present_ms": 8.082,
+          "total_ms": 13.675
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 45,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.238,
+          "guest_ms": 0.0,
+          "prepare_ms": 3.519,
+          "frame_wait_ms": 0.037,
+          "host_present_ms": 1.625,
+          "total_ms": 5.418
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 46,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.024,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.746,
+          "frame_wait_ms": 0.046,
+          "host_present_ms": 1.607,
+          "total_ms": 3.423
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 47,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.011,
+          "guest_ms": 0.343,
+          "prepare_ms": 1.698,
+          "frame_wait_ms": 0.066,
+          "host_present_ms": 1.664,
+          "total_ms": 3.784
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 48,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 3.915,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.27,
+          "frame_wait_ms": 1.14,
+          "host_present_ms": 8.792,
+          "total_ms": 15.117
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 49,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.048,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.242,
+          "frame_wait_ms": 12.827,
+          "host_present_ms": 1.637,
+          "total_ms": 15.754
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 50,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 0.019,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.274,
+          "frame_wait_ms": 0.044,
+          "host_present_ms": 1.628,
+          "total_ms": 2.966
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 51,
+          "backend": "gpu",
+          "kind": "pointer",
+          "inputs": 1,
+          "queue_ms": 0.228,
+          "guest_ms": 0.087,
+          "prepare_ms": 4.068,
+          "frame_wait_ms": 0.085,
+          "host_present_ms": 1.639,
+          "total_ms": 6.109
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 52,
+          "backend": "gpu",
+          "kind": "pointer-state",
+          "inputs": 1,
+          "queue_ms": 6.249,
+          "guest_ms": 0.0,
+          "prepare_ms": 1.245,
+          "frame_wait_ms": 0.042,
+          "host_present_ms": 11.814,
+          "total_ms": 19.35
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 53,
+          "backend": "gpu",
+          "kind": "key",
+          "inputs": 1,
+          "queue_ms": 0.036,
+          "guest_ms": 1.6,
+          "prepare_ms": 1.286,
+          "frame_wait_ms": 10.684,
+          "host_present_ms": 1.72,
+          "total_ms": 15.327
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 54,
+          "backend": "gpu",
+          "kind": "key",
+          "inputs": 1,
+          "queue_ms": 0.014,
+          "guest_ms": 0.25,
+          "prepare_ms": 1.362,
+          "frame_wait_ms": 4.763,
+          "host_present_ms": 5.627,
+          "total_ms": 12.016
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 55,
+          "backend": "gpu",
+          "kind": "key",
+          "inputs": 1,
+          "queue_ms": 0.013,
+          "guest_ms": 0.304,
+          "prepare_ms": 1.184,
+          "frame_wait_ms": 0.042,
+          "host_present_ms": 9.999,
+          "total_ms": 11.544
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 56,
+          "backend": "gpu",
+          "kind": "key",
+          "inputs": 1,
+          "queue_ms": 0.019,
+          "guest_ms": 0.257,
+          "prepare_ms": 1.236,
+          "frame_wait_ms": 0.062,
+          "host_present_ms": 13.513,
+          "total_ms": 15.088
+        },
+        {
+          "boundary": "queue-to-present-return",
+          "frame": 57,
+          "backend": "gpu",
+          "kind": "key",
+          "inputs": 1,
+          "queue_ms": 0.01,
+          "guest_ms": 0.295,
+          "prepare_ms": 1.102,
+          "frame_wait_ms": 0.045,
+          "host_present_ms": 7.704,
+          "total_ms": 9.155
+        }
+      ],
+      "phases": {
+        "queue_ms": {
+          "count": 56,
+          "median": 0.226,
+          "p95NearestRank": 5.447,
+          "min": 0.005,
+          "max": 18.394
+        },
+        "guest_ms": {
+          "count": 56,
+          "median": 0.0,
+          "p95NearestRank": 0.707,
+          "min": 0.0,
+          "max": 1.6
+        },
+        "prepare_ms": {
+          "count": 56,
+          "median": 1.651,
+          "p95NearestRank": 4.462,
+          "min": 1.047,
+          "max": 5.234
+        },
+        "frame_wait_ms": {
+          "count": 56,
+          "median": 0.1,
+          "p95NearestRank": 10.684,
+          "min": 0.031,
+          "max": 12.827
+        },
+        "host_present_ms": {
+          "count": 56,
+          "median": 1.744,
+          "p95NearestRank": 11.814,
+          "min": 1.577,
+          "max": 14.028
+        },
+        "total_ms": {
+          "count": 56,
+          "median": 6.13,
+          "p95NearestRank": 19.797,
+          "min": 2.966,
+          "max": 34.677
+        }
+      },
+      "processRssKiBObserved": 157168,
+      "processRssScope": "One process RSS observation after input sequence; excludes full driver/device accounting and is not peak usage.",
+      "systemSample": {
+        "source": "target/gpu-ui-release-thread-sample.txt",
+        "durationSeconds": 1,
+        "physicalFootprintAsReported": "86.8M",
+        "peakPhysicalFootprintAsReported": "105.4M",
+        "scope": "macOS sample process footprint, raw tool unit labels; not total GPU/device memory or a controlled peak-memory benchmark.",
+        "observation": "Worker observed waiting; main thread in AppKit event/AX window activation paths. No GPU-code blocking observed during this one-second sample."
+      }
+    }
+  },
+  "verification": {
+    "fullReport": "target/verification/20261103-182413-ec8q70t8/report.json",
+    "sourceSha256": "009e775316e7cb5c20b627ba05cc95b75b780efe383caffdce10c1191f45482d",
+    "passedTests": 3202,
+    "ignoredTests": 16,
+    "sourceUnchangedDuringGate": true,
+    "optionalGpuDesktopTests": 16,
+    "browserNodeTests": 162,
+    "showcaseTrustedInputs": 12,
+    "gpuOffscreenCases": 52,
+    "gpuClippy": "all-targets, affected packages, gpu feature, -D warnings; passed",
+    "postGateChanges": "Documentation and measurement annotations only."
+  }
+}

@@ -1,5 +1,77 @@
 # Experimental desktop preview
 
+## UI diagnostics and GPU prototype (working tree)
+
+The default build remains the software preview. `VARTA_PREVIEW_TIMING=1`
+prints a host-entry-to-first-presentation sample plus host-only JSON input
+diagnostics to stderr without input values: queue entry to
+worker acceptance, accepted input/application-turn work (`guest_ms`), frame
+preparation, window wait and host presentation return. This excludes OS event
+delivery before queue entry, queued-key waiting before dispatch, GPU completion
+and physical screen scanout. The `guest_ms` phase includes host input handling and application-step work; it
+is not an isolated Wasm CPU timer. Multiple accepted inputs in a frame share
+the first worker-accepted stamp and an explicit input count.
+Pointer-state samples remain coalesced outside the activation FIFO; a generation
+and condition variable wake the worker on pointer/input/frame acknowledgement
+without losing notifications that arrive just before it waits.
+
+An optional GPU prototype is implemented in the working tree:
+
+```sh
+cargo build -p varta-desktop --features gpu --bin varta-preview --locked
+VARTA_PREVIEW_RENDERER=gpu VARTA_PREVIEW_TIMING=1 target/debug/varta-preview app.wasm font.ttf Arial
+```
+
+`gpu` or `auto` requests GPU rendering in a GPU-enabled build; the default is CPU.
+The host logs the selected adapter or a CPU fallback. wgpu 30.0.0 and Vello GPU
+0.3.0 are pinned optional dependencies (MIT OR Apache-2.0); pollster 0.4.0
+(MIT OR Apache-2.0) drives host device initialization. They are desktop-only,
+not runtime/compiler dependencies. Their native implementations contain unsafe
+code; Varta's own renderer/host code continues to forbid unsafe code.
+
+Vector preparation shares CSS/layout, font shaping and input metadata with the
+CPU renderer, without producing a CPU pixel buffer. The backend consumes bounded
+rectangles and glyph paths, transformed and clipped in physical pixels. It
+presents directly to the window without per-frame readback. Recording/scene
+overflow retains software fallback; device/surface failures switch to CPU. An
+occluded window waits for visibility rather than continuously redrawing. At most
+one GPU submission remains outstanding; completion is polled without blocking the
+window thread and a two-second timeout triggers CPU recovery. A macOS window uses
+an explicit Display P3 surface and converts sRGB paint primaries before emission;
+this avoids oversaturated colors on untagged wide-gamut Metal layers.
+
+The prototype preserves the existing 4096-per-axis/16,777,216-pixel bounds, limits
+each GPU buffer to 64 MiB and disables intermediate layer textures for the admitted
+path-only UI. These are per-resource limits, not total GPU-memory accounting.
+An additional 8 MiB estimated cache reuses structurally equal neutral path
+segments; full scene admission is charged even on cache hits. Per-resource caps
+do not establish a total device-memory quota. Broader target acceptance and
+painting remain work in progress. This backend supplies no guest GPU API or Three.js compatibility.
+
+The browser diagnostic equivalent uses `?ui-timing=1` on a generated application
+page, or a trusted `mount({onFrameTiming})` callback. It reports queue/Worker
+round-trip/DOM-apply phases and two animation-frame callbacks. The endpoint is a
+paint opportunity, not actual screen presentation, and is not identical to the
+native presentation-return endpoint. Samples are bounded, dropped counts are
+explicit and pending callbacks are cancelled on shutdown. The diagnostics do not
+change guest fuel, event ordering, capabilities or gesture admission.
+
+For host recovery diagnostics only,
+`VARTA_PREVIEW_GPU_TEST_LOSS_AFTER=N` destroys the device after N submitted frames.
+The observed Metal recovery preserves Wasm state and subsequent input.
+`varta-preview --renderer-info` reports compiled backend availability without
+opening a window.
+
+The offscreen `gpu_probe` example compares real GPU output and input metadata
+against the software renderer at 1×/2×. It preserves RGBA outputs and reports
+readback timings; readback is diagnostic and is never used for window presentation:
+
+```sh
+cargo run -p varta-desktop --features gpu --example gpu_probe --locked -- app.wasm font.ttf Arial target/gpu-frame
+```
+
+## Software preview usage
+
 `varta-preview` opens a native CPU-rendered window for a precompiled v38 view
 module. Its Wasmtime application runs on a worker thread; the main thread owns
 the window and presents bounded frames. Pass a TrueType/OpenType file and its
@@ -92,7 +164,8 @@ Tab focuses the control. Space/Enter opens its popup; arrows preview a choice,
 Enter accepts and Escape cancels. The popup supports pointer selection and wheel
 scrolling. Character input cycles matching labels. Two options deliberately share
 a value: choosing between them still emits an edit, and a guest echo preserves
-the selected option. Timed multi-character search, hover highlighting and platform
+the selected option. Pointer hover shades an enabled row without changing the
+selection or the keyboard preview. Timed multi-character search and platform
 control themes remain open.
 
 On the development macOS Retina display, Tab/Space opened the popup, Down
@@ -157,3 +230,44 @@ Flex/grid children are blockified by their parent. Fonts remain explicit; mixed
 block/inline content, nonzero inline edges/decoration and full typography are
 outside this experimental subset. Element geometry unions do not make the gaps
 between wrapped fragments clickable. See the native layout contract for scope.
+
+## Local frame timing
+
+The preview applies `:hover` to the pointed element and its ancestors, and
+`:active` while the primary mouse button is down. Leaving the window or losing
+focus clears pointer state. The last pointer sample is coalesced separately from
+the activation/key FIFO, so motion cannot fill that queue. Native cursors honor
+the checked `default`, `pointer`, `text` and `not-allowed` values, including inline
+fragments. Color/cursor feedback preserves the frame's input revision; pointer
+styles that change input geometry invalidate stale hit coordinates. Pointer state
+does not dispatch a guest event, activate a control, edit a field or grant a gesture.
+
+`frame_timing` separates a trusted click's guest turns from native CPU frame
+construction for an unprivileged compiled view. Pass an existing button ID
+without `#`. It reuses the explicit font and application for five samples each
+at 800×600 CSS pixels, scales 1 and 2, under normal production budgets:
+
+```sh
+cargo run -p varta-desktop --example frame_timing --locked -- app.wasm font.ttf 'Font Family' button-id
+```
+
+The numbers exclude window presentation, event-queue delay and application
+startup; they are local diagnostic observations, not a cross-platform benchmark
+or throughput/readiness claim. Debug and release must be measured separately.
+Use `--retained` to exercise the preview's persistent renderer and `--verify`
+to compare every resulting pixel and input metadata against stateless rendering
+outside the measured interval. `--type=текст` targets an editable ID;
+`--scroll=40` alternates a scroll container between zero and that CSS offset.
+`--samples=N` selects 1–512 samples per scale. An additional `--release` before
+the cargo argument separator selects the release build. Run timings without a
+concurrent compilation or test load. The first frame includes cold caches;
+report it separately from subsequent frames.
+`packing_ms` separately measures the same damaged-region RGBA-to-RGB conversion
+and owned RGB copy used by the worker. Add it to `frame_ms` for complete worker
+frame preparation; window presentation and event-queue latency remain excluded.
+The dev profile keeps the view/runtime/compiler at opt-level 0, graphics
+dependencies at opt-level 3, and the small desktop host at opt-level 3 with debug
+assertions and symbols. Graphics SIMD is enabled in both profiles.
+`--pointer` cycles hover, primary press, release and leave on the target without
+activating it. It is mutually exclusive with `--type` and `--scroll`; it uses the
+same retained/reference pixel and metadata comparison with `--verify`.

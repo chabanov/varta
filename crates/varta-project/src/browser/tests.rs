@@ -187,6 +187,20 @@ fn bundle_pins_original_manifest_image_and_self_contained_worker() {
     assert!(page.contains("Content-Security-Policy"));
     assert!(page.contains("require-trusted-types-for 'script'"));
     assert!(page.contains("integrity=\"sha256-"));
+    // Standalone layout must work under the unchanged deny-by-default CSP.
+    // Authorize only the emitted style bytes; whitespace drift must change it.
+    use base64::Engine;
+    use sha2::Digest;
+    let style = page
+        .split_once("<style>")
+        .unwrap()
+        .1
+        .split_once("</style>")
+        .unwrap()
+        .0;
+    let style_hash = base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(style));
+    assert!(page.contains(&format!("style-src 'sha256-{style_hash}'")));
+    assert!(!page.contains("'unsafe-inline'"));
 }
 
 #[test]

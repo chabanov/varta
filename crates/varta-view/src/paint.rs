@@ -2,6 +2,8 @@
 mod select;
 use crate::TextMeasurer;
 use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
+use crate::render::glyphs::{self, Glyphs};
+use crate::render::scene::{self, Draw, Primitive, Recording, Scene};
 use crate::style::{self, Environment, Name};
 use crate::text::{TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_color_sides, outline_components};
@@ -14,7 +16,7 @@ use skrifa::{
     outline::{DrawSettings, OutlinePen},
 };
 use std::{borrow::Cow, collections::BTreeMap};
-use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Rect, Transform};
+use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Rect, Shader, Transform};
 use unicode_segmentation::UnicodeSegmentation;
 use varta_common::view::{Attribute, CssProperty, ROOT_NODE, Tag};
 
@@ -23,9 +25,29 @@ const PASSWORD_MASK: &str = "•";
 /// A transparent, premultiplied RGBA8 image in row-major order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RasterImage {
+    pub pixels: Vec<u8>,
+    metadata: FrameMetadata,
+}
+impl std::ops::Deref for RasterImage {
+    type Target = FrameMetadata;
+    fn deref(&self) -> &Self::Target {
+        &self.metadata
+    }
+}
+impl RasterImage {
+    pub fn into_metadata(self) -> FrameMetadata {
+        self.metadata
+    }
+    pub(crate) fn from_parts(metadata: FrameMetadata, pixels: Vec<u8>) -> Self {
+        Self { metadata, pixels }
+    }
+}
+
+/// Input and editing geometry, independent of a pixel or GPU backend.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameMetadata {
     pub width: u32,
     pub height: u32,
-    pub pixels: Vec<u8>,
     scale: f32,
     hit_regions: Vec<(u32, BoxRect)>,
     ancestors: BTreeMap<u32, Option<u32>>,
@@ -34,6 +56,17 @@ pub struct RasterImage {
     editable: Option<u32>,
     text_hits: BTreeMap<u32, TextHit>,
     select_menu: Option<Box<select::SelectMenu>>,
+    cursors: BTreeMap<u32, PointerCursor>,
+}
+
+/// The four cursor values admitted by the checked CSS subset.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PointerCursor {
+    #[default]
+    Default,
+    Pointer,
+    Text,
+    NotAllowed,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,7 +98,53 @@ pub struct TextNavigation {
     pub preferred_x: Option<f32>,
     pub upstream: bool,
 }
-impl RasterImage {
+fn pointer_cursor(tree: &Tree, env: &Environment, id: u32) -> PointerCursor {
+    for ancestor in tree.path(id) {
+        if let Some(value) = tree.computed_read(ancestor, env).get(&CssProperty::Cursor) {
+            return match value.as_str() {
+                "pointer" => PointerCursor::Pointer,
+                "text" => PointerCursor::Text,
+                "not-allowed" => PointerCursor::NotAllowed,
+                _ => PointerCursor::Default,
+            };
+        }
+    }
+    match tree.element(id) {
+        Some(element) if element.disabled() => PointerCursor::NotAllowed,
+        Some(element) if element.text_field() => PointerCursor::Text,
+        _ => PointerCursor::Default,
+    }
+}
+impl FrameMetadata {
+    /// Whether a repaint keeps every input target and editing metric intact.
+    /// Cosmetic pointer feedback need not invalidate an in-progress click.
+    /// Hosts must also retain their model revision and element-identity guards.
+    #[must_use]
+    pub fn same_input_geometry(&self, other: &Self) -> bool {
+        self.width == other.width
+            && self.height == other.height
+            && self.scale == other.scale
+            && self.hit_regions == other.hit_regions
+            && self.ancestors == other.ancestors
+            && self.scrolls == other.scrolls
+            && self.focused == other.focused
+            && self.editable == other.editable
+            && self.text_hits == other.text_hits
+            && self.select_menu == other.select_menu
+    }
+    #[must_use]
+    pub fn cursor_at(&self, x: f32, y: f32) -> PointerCursor {
+        if let Some(hit) = self.select_hit(x, y) {
+            return match hit {
+                SelectHit::Choice { .. } => PointerCursor::Pointer,
+                SelectHit::Disabled { .. } => PointerCursor::NotAllowed,
+                SelectHit::Dismiss { .. } => PointerCursor::Default,
+            };
+        }
+        self.hit_test(x, y)
+            .and_then(|id| self.cursors.get(&id).copied())
+            .unwrap_or_default()
+    }
     /// Native select-list hit testing consumes clicks even outside the list.
     #[must_use]
     pub fn select_hit(&self, x: f32, y: f32) -> Option<SelectHit> {
@@ -243,30 +322,142 @@ pub enum PaintError {
 }
 
 /// Paint logical geometry directly at device resolution, including glyph paths.
-struct Surface {
-    pixels: Pixmap,
-    scale: f32,
+struct ClipMask {
+    rect: Rect,
+    image: Option<Mask>,
 }
-impl Surface {
+struct Surface<'a> {
+    glyphs: Option<&'a mut Glyphs>,
+    pixels: Option<Pixmap>,
+    width: u32,
+    height: u32,
+    scale: f32,
+    commands: Option<Recording>,
+    failure: Option<PaintError>,
+}
+impl Surface<'_> {
     fn width(&self) -> u32 {
-        self.pixels.width()
+        self.width
     }
     fn height(&self) -> u32 {
-        self.pixels.height()
+        self.height
+    }
+    fn mask(&self, rect: Rect) -> Result<ClipMask, PaintError> {
+        let image = if self.commands.is_some() {
+            None
+        } else {
+            let mut image = Mask::new(self.width, self.height).ok_or(PaintError::Dimensions)?;
+            image.fill_path(
+                &PathBuilder::from_rect(rect),
+                FillRule::Winding,
+                true,
+                Transform::from_scale(self.scale, self.scale),
+            );
+            Some(image)
+        };
+        Ok(ClipMask { rect, image })
+    }
+    fn record(
+        &mut self,
+        primitive: Primitive,
+        paint: &Paint<'_>,
+        transform: Transform,
+        mask: Option<&ClipMask>,
+    ) {
+        if self.failure.is_some() {
+            return;
+        }
+        let Shader::SolidColor(color) = paint.shader else {
+            self.failure = Some(PaintError::Unsupported(ROOT_NODE));
+            return;
+        };
+        let bounds = match &primitive {
+            Primitive::Rect(rect) => *rect,
+            Primitive::Path(path, _) => path.bounds(),
+        };
+        let transform = transform.post_scale(self.scale, self.scale);
+        let Some(bounds) = bounds.transform(transform) else {
+            self.failure = Some(PaintError::Dimensions);
+            return;
+        };
+        let clip = mask.and_then(|m| {
+            m.rect
+                .transform(Transform::from_scale(self.scale, self.scale))
+        });
+        let draw = Draw {
+            primitive,
+            color,
+            transform,
+            clip,
+            bounds,
+        };
+        if let Some(recording) = self.commands.as_mut() {
+            let bytes = draw.bytes();
+            if recording.commands.len() < scene::MAX_SCENE_COMMANDS
+                && recording.bytes.saturating_add(bytes) <= scene::MAX_SCENE_BYTES
+            {
+                recording.bytes += bytes;
+                recording.commands.push(draw);
+                return;
+            }
+        }
+        // Cache capacity never changes content admission. A large scene flushes
+        // to the ordinary full-frame path instead of retaining an unbounded list.
+        let Some(mut pixels) = Pixmap::new(self.width, self.height) else {
+            self.failure = Some(PaintError::Dimensions);
+            return;
+        };
+        if let Some(recording) = self.commands.take()
+            && let Err(error) = scene::replay(&mut pixels, &recording.commands)
+        {
+            self.failure = Some(error);
+            return;
+        }
+        if let Err(error) = scene::replay(&mut pixels, std::slice::from_ref(&draw)) {
+            self.failure = Some(error);
+            return;
+        }
+        self.pixels = Some(pixels);
+    }
+    fn fallback_mask(&self, mask: Option<&ClipMask>) -> Result<Option<ClipMask>, PaintError> {
+        // A mask may have been created before a recording overflow. Subsequent
+        // ordinary draws must materialize that same clip rather than drop it.
+        mask.filter(|mask| mask.image.is_none())
+            .map(|mask| self.mask(mask.rect))
+            .transpose()
     }
     fn fill_rect(
         &mut self,
         rect: Rect,
         paint: &Paint<'_>,
         transform: Transform,
-        mask: Option<&Mask>,
+        mask: Option<&ClipMask>,
     ) {
-        self.pixels.fill_rect(
-            rect,
-            paint,
-            transform.post_scale(self.scale, self.scale),
-            mask,
-        );
+        if self.failure.is_some() {
+            return;
+        }
+        if self.commands.is_some() {
+            self.record(Primitive::Rect(rect), paint, transform, mask);
+        } else {
+            let materialized = match self.fallback_mask(mask) {
+                Ok(mask) => mask,
+                Err(error) => {
+                    self.failure = Some(error);
+                    return;
+                }
+            };
+            let mask = materialized.as_ref().or(mask);
+            let Some(pixels) = self.pixels.as_mut() else {
+                return;
+            };
+            scene::fill_rect(
+                pixels,
+                rect,
+                paint,
+                transform.post_scale(self.scale, self.scale),
+                mask.and_then(|m| m.image.as_ref()),
+            );
+        }
     }
     fn fill_path(
         &mut self,
@@ -274,15 +465,56 @@ impl Surface {
         paint: &Paint<'_>,
         rule: FillRule,
         transform: Transform,
-        mask: Option<&Mask>,
+        mask: Option<&ClipMask>,
     ) {
-        self.pixels.fill_path(
-            path,
-            paint,
-            rule,
-            transform.post_scale(self.scale, self.scale),
-            mask,
-        );
+        if self.failure.is_some() {
+            return;
+        }
+        if self.commands.is_some() {
+            self.record(
+                Primitive::Path(std::sync::Arc::new(path.clone()), rule),
+                paint,
+                transform,
+                mask,
+            );
+        } else {
+            let materialized = match self.fallback_mask(mask) {
+                Ok(mask) => mask,
+                Err(error) => {
+                    self.failure = Some(error);
+                    return;
+                }
+            };
+            let mask = materialized.as_ref().or(mask);
+            let Some(pixels) = self.pixels.as_mut() else {
+                return;
+            };
+            pixels.fill_path(
+                path,
+                paint,
+                rule,
+                transform.post_scale(self.scale, self.scale),
+                mask.and_then(|m| m.image.as_ref()),
+            );
+        }
+    }
+    fn finish(mut self, scene: Option<&mut Scene>) -> Result<Vec<u8>, PaintError> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        if let Some(recording) = self.commands.take()
+            && let Some(scene) = scene
+        {
+            if scene.record_only {
+                scene.record(recording.commands);
+                return Ok(Vec::new());
+            }
+            return scene.update(recording.commands, self.width, self.height);
+        }
+        if let Some(scene) = scene {
+            scene.reset(self.width, self.height);
+        }
+        Ok(self.pixels.take().ok_or(PaintError::Dimensions)?.take())
     }
 }
 
@@ -350,7 +582,7 @@ fn clipped(a: BoxRect, b: BoxRect) -> Option<Rect> {
 
 fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
     for ancestor in tree.path(id) {
-        if let Some(value) = tree.computed(ancestor, env).get(&CssProperty::Color)
+        if let Some(value) = tree.computed_read(ancestor, env).get(&CssProperty::Color)
             && value != "currentcolor"
         {
             return color(value);
@@ -488,6 +720,7 @@ fn outline(
                 },
                 raw,
                 units,
+                |p, v| tree.render_reads.validate(env, p, v),
             )
             .ok_or(PaintError::Unsupported(id))?
             .0
@@ -504,6 +737,7 @@ fn outline(
                 },
                 raw,
                 units,
+                |p, v| tree.render_reads.validate(env, p, v),
             )
             .ok_or(PaintError::Unsupported(id))?
             .1
@@ -566,17 +800,10 @@ fn paint_border(
     let mask = if contains {
         None
     } else {
-        let mut mask = Mask::new(pixmap.width(), pixmap.height()).ok_or(PaintError::Dimensions)?;
         let Some(clip_rect) = Rect::from_xywh(clip.x, clip.y, clip.width, clip.height) else {
             return Ok(());
         };
-        mask.fill_path(
-            &PathBuilder::from_rect(clip_rect),
-            FillRule::Winding,
-            true,
-            Transform::from_scale(pixmap.scale, pixmap.scale),
-        );
-        Some(mask)
+        Some(pixmap.mask(clip_rect)?)
     };
     let mut paint = Paint::default();
     paint.set_color(color);
@@ -703,14 +930,7 @@ fn paint_shaped_with(
     {
         None
     } else {
-        let mut mask = Mask::new(pixmap.width(), pixmap.height()).ok_or(PaintError::Dimensions)?;
-        mask.fill_path(
-            &PathBuilder::from_rect(clip),
-            FillRule::Winding,
-            true,
-            Transform::from_scale(pixmap.scale, pixmap.scale),
-        );
-        Some(mask)
+        Some(pixmap.mask(clip)?)
     };
     let mut paint = Paint::default();
     let mut glyph_count = 0usize;
@@ -727,9 +947,7 @@ fn paint_shaped_with(
                 return Err(PaintError::Unsupported(id));
             }
             let font_data = run.font();
-            let font = FontRef::from_index(font_data.data.data(), font_data.index)
-                .map_err(|_| PaintError::Unsupported(id))?;
-            let outlines = font.outline_glyphs();
+            let mut outlines: Option<skrifa::outline::OutlineGlyphCollection<'_>> = None;
             let coords: Vec<_> = run
                 .normalized_coords()
                 .iter()
@@ -750,33 +968,89 @@ fn paint_shaped_with(
                 if glyph_count > 65_536 {
                     return Err(PaintError::Unsupported(id));
                 }
-                let outline = outlines
-                    .get(GlyphId::new(glyph.id))
-                    .ok_or(PaintError::Unsupported(id))?;
-                let mut pen = GlyphPen {
-                    path: PathBuilder::new(),
-                    x: bounds.rect.x + glyph.x,
-                    y: bounds.rect.y + glyph.y + flow.map_or(0.0, |f| f.shaped.offsets[line_index]),
-                    commands: 0,
-                    exceeded: false,
+                let x = bounds.rect.x + glyph.x;
+                let y =
+                    bounds.rect.y + glyph.y + flow.map_or(0.0, |f| f.shaped.offsets[line_index]);
+                let key = pixmap.glyphs.as_ref().map(|_| glyphs::Key {
+                    font: font_data.data.id(),
+                    index: font_data.index,
+                    size: run.font_size().to_bits(),
+                    coords: run.normalized_coords().to_vec(),
+                    glyph: glyph.id,
+                });
+                let cached = key
+                    .as_ref()
+                    .and_then(|key| pixmap.glyphs.as_mut().and_then(|cache| cache.get(key)));
+                let retained = key.is_some();
+                let outline = if let Some(cached) = cached {
+                    cached
+                } else {
+                    if outlines.is_none() {
+                        let font = FontRef::from_index(font_data.data.data(), font_data.index)
+                            .map_err(|_| PaintError::Unsupported(id))?;
+                        outlines = Some(font.outline_glyphs());
+                    }
+                    let outline = outlines
+                        .as_ref()
+                        .and_then(|outlines| outlines.get(GlyphId::new(glyph.id)))
+                        .ok_or(PaintError::Unsupported(id))?;
+                    let mut pen = GlyphPen {
+                        path: PathBuilder::new(),
+                        x: if retained { 0.0 } else { x },
+                        y: if retained { 0.0 } else { y },
+                        commands: 0,
+                        exceeded: false,
+                    };
+                    outline
+                        .draw(
+                            DrawSettings::unhinted(
+                                Size::new(run.font_size()),
+                                LocationRef::new(&coords),
+                            ),
+                            &mut pen,
+                        )
+                        .map_err(|_| PaintError::Unsupported(id))?;
+                    if pen.exceeded {
+                        return Err(PaintError::Unsupported(id));
+                    }
+                    let result = glyphs::Outline {
+                        path: pen.path.finish().map(std::sync::Arc::new),
+                        commands: pen.commands,
+                    };
+                    if let Some(key) = key
+                        && let Some(cache) = pixmap.glyphs.as_mut()
+                    {
+                        cache.insert(key, result.clone());
+                    }
+                    result
                 };
-                let settings =
-                    DrawSettings::unhinted(Size::new(run.font_size()), LocationRef::new(&coords));
-                outline
-                    .draw(settings, &mut pen)
-                    .map_err(|_| PaintError::Unsupported(id))?;
-                *work = work.saturating_add(pen.commands.saturating_add(1));
-                if pen.exceeded || *work > 1_000_000 {
+                *work = work.saturating_add(outline.commands.saturating_add(1));
+                if *work > 1_000_000 {
                     return Err(PaintError::Unsupported(id));
                 }
-                if let Some(path) = pen.path.finish() {
-                    pixmap.fill_path(
-                        &path,
-                        &paint,
-                        FillRule::Winding,
-                        Transform::identity(),
-                        mask.as_ref(),
-                    );
+                if let Some(path) = outline.path {
+                    if retained {
+                        let positioned = path
+                            .as_ref()
+                            .clone()
+                            .transform(Transform::from_translate(x, y))
+                            .ok_or(PaintError::Unsupported(id))?;
+                        pixmap.fill_path(
+                            &positioned,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            mask.as_ref(),
+                        );
+                    } else {
+                        pixmap.fill_path(
+                            &path,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            mask.as_ref(),
+                        );
+                    }
                 }
             }
         }
@@ -835,15 +1109,7 @@ fn paint_checkable(
     {
         None
     } else {
-        let mut mask =
-            Mask::new(surface.width(), surface.height()).ok_or(PaintError::Dimensions)?;
-        mask.fill_path(
-            &PathBuilder::from_rect(clip),
-            FillRule::Winding,
-            true,
-            Transform::from_scale(surface.scale, surface.scale),
-        );
-        Some(mask)
+        Some(surface.mask(clip)?)
     };
     let mut paint = Paint::default();
     paint.set_color(color);
@@ -879,7 +1145,7 @@ fn paint_input(
         return Err(PaintError::Unsupported(id));
     }
     if tree.path(id).into_iter().any(|ancestor| {
-        tree.computed(ancestor, env)
+        tree.computed_read(ancestor, env)
             .get(&CssProperty::TextDecoration)
             .is_some_and(|value| value != "none")
     }) || element
@@ -1225,20 +1491,21 @@ fn rasterize_inner(
 ) -> Result<RasterImage, PaintError> {
     match text_input {
         Some((measurer, size)) => measurer.with_view_shaping(|measurer| {
-            rasterize_inner_scoped(tree, env, width, height, Some((measurer, size)), scale)
+            rasterize_inner_scoped(
+                tree,
+                env,
+                width,
+                height,
+                Some((measurer, size)),
+                scale,
+                None,
+            )
         }),
-        None => rasterize_inner_scoped(tree, env, width, height, None, scale),
+        None => rasterize_inner_scoped(tree, env, width, height, None, scale, None),
     }
 }
 
-fn rasterize_inner_scoped(
-    tree: &Tree,
-    env: &Environment,
-    width: u32,
-    height: u32,
-    mut text_input: Option<(&mut TextMeasurer, f32)>,
-    scale: f32,
-) -> Result<RasterImage, PaintError> {
+pub(crate) fn validate_dimensions(width: u32, height: u32, scale: f32) -> Result<(), PaintError> {
     // A bounded image prevents a guest-controlled viewport exhausting host memory.
     if !scale.is_finite()
         || !(0.25..=8.0).contains(&scale)
@@ -1250,6 +1517,43 @@ fn rasterize_inner_scoped(
     {
         return Err(PaintError::Dimensions);
     }
+    Ok(())
+}
+
+pub(crate) fn rasterize_retained(
+    tree: &Tree,
+    env: &Environment,
+    viewport: (u32, u32, f32),
+    font: Option<(&mut TextMeasurer, f32)>,
+    cache: (&mut Scene, &mut Glyphs),
+) -> Result<RasterImage, PaintError> {
+    let (width, height, scale) = viewport;
+    match font {
+        Some((font, size)) => font.with_view_shaping(|font| {
+            rasterize_inner_scoped(
+                tree,
+                env,
+                width,
+                height,
+                Some((font, size)),
+                scale,
+                Some(cache),
+            )
+        }),
+        None => rasterize_inner_scoped(tree, env, width, height, None, scale, Some(cache)),
+    }
+}
+
+fn rasterize_inner_scoped(
+    tree: &Tree,
+    env: &Environment,
+    width: u32,
+    height: u32,
+    mut text_input: Option<(&mut TextMeasurer, f32)>,
+    scale: f32,
+    cache: Option<(&mut Scene, &mut Glyphs)>,
+) -> Result<RasterImage, PaintError> {
+    validate_dimensions(width, height, scale)?;
     let env = Environment {
         width: f64::from(width) / f64::from(scale),
         ..*env
@@ -1271,9 +1575,23 @@ fn rasterize_inner_scoped(
             BTreeMap::new(),
         )
     };
+    let (scene, glyphs) = match cache {
+        Some((s, g)) => (Some(s), Some(g)),
+        None => (None, None),
+    };
+    let retained = scene.is_some();
     let mut pixmap = Surface {
-        pixels: Pixmap::new(width, height).ok_or(PaintError::Dimensions)?,
+        glyphs,
+        pixels: if retained {
+            None
+        } else {
+            Some(Pixmap::new(width, height).ok_or(PaintError::Dimensions)?)
+        },
+        width,
+        height,
         scale,
+        commands: retained.then(Recording::default),
+        failure: None,
     };
     let mut pending = vec![(ROOT_NODE, false)];
     let mut text_work = 0usize;
@@ -1282,6 +1600,7 @@ fn rasterize_inner_scoped(
     let mut scrolls = BTreeMap::new();
     let mut text_hits = BTreeMap::new();
     let mut menu_control = None;
+    let mut cursors = BTreeMap::new();
     while let Some((id, outline_phase)) = pending.pop() {
         if outline_phase {
             if let Some((width, offset, color)) = outline(tree, &env, id)? {
@@ -1303,7 +1622,7 @@ fn rasterize_inner_scoped(
             let (measurer, _) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
             let parent = node.parent.ok_or(PaintError::Unsupported(id))?;
             if tree.path(parent).into_iter().any(|ancestor| {
-                tree.computed(ancestor, &env)
+                tree.computed_read(ancestor, &env)
                     .get(&CssProperty::TextDecoration)
                     .is_some_and(|value| value != "none")
             }) {
@@ -1332,7 +1651,7 @@ fn rasterize_inner_scoped(
             }
             continue;
         };
-        let properties = tree.computed(id, &env);
+        let properties = tree.computed_read(id, &env);
         if properties
             .get(&CssProperty::Display)
             .is_some_and(|v| v.eq_ignore_ascii_case("none"))
@@ -1340,6 +1659,7 @@ fn rasterize_inner_scoped(
             continue;
         }
         ancestors.insert(id, node.parent);
+        cursors.insert(id, pointer_cursor(tree, &env, id));
         if let Some(scroll) = geometry[&id].scroll {
             scrolls.insert(id, scroll);
         }
@@ -1507,8 +1827,9 @@ fn rasterize_inner_scoped(
                     continue;
                 }
                 ancestors.insert(node, tree.nodes[&node].parent);
+                cursors.insert(node, pointer_cursor(tree, &env, node));
                 let background = tree
-                    .computed(node, &env)
+                    .computed_read(node, &env)
                     .get(&CssProperty::BackgroundColor)
                     .map(|value| {
                         if value == "currentcolor" {
@@ -1597,17 +1918,118 @@ fn rasterize_inner_scoped(
             line.bottom *= scale;
         }
     }
+    let pixels = pixmap.finish(scene)?;
     Ok(RasterImage {
-        width,
-        height,
-        pixels: pixmap.pixels.take(),
-        scale,
-        hit_regions,
-        ancestors,
-        scrolls,
-        focused,
-        editable,
-        text_hits,
-        select_menu,
+        pixels,
+        metadata: FrameMetadata {
+            width,
+            height,
+            scale,
+            hit_regions,
+            ancestors,
+            scrolls,
+            focused,
+            editable,
+            text_hits,
+            select_menu,
+            cursors,
+        },
     })
+}
+
+#[cfg(test)]
+mod retained_tests {
+    use super::*;
+    #[test]
+    fn fractional_one_pixel_caret_is_valid_in_debug_and_retained_frames() {
+        let rect = Rect::from_xywh(1.5, 1.25, 1.0, 7.0).unwrap();
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(0, 0, 255, 255);
+        let mut expected = Pixmap::new(12, 12).unwrap();
+        expected.fill_path(
+            &PathBuilder::from_rect(rect),
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+        let mut ordinary = Pixmap::new(12, 12).unwrap();
+        scene::fill_rect(&mut ordinary, rect, &paint, Transform::identity(), None);
+        let draw = Draw {
+            primitive: Primitive::Rect(rect),
+            color: Color::from_rgba8(0, 0, 255, 255),
+            transform: Transform::identity(),
+            clip: None,
+            bounds: rect,
+        };
+        let mut scene = Scene::default();
+        assert_eq!(ordinary.data(), expected.data());
+        assert_eq!(
+            scene.update(vec![draw.clone()], 12, 12).unwrap(),
+            expected.data()
+        );
+        assert_eq!(scene.update(vec![draw], 12, 12).unwrap(), expected.data());
+        assert_eq!(scene.dirty_pixels, 0);
+    }
+    #[test]
+    fn recording_overflow_preserves_existing_clips_and_following_draws() {
+        for record_only in [false, true] {
+            let mut retained = Surface {
+                glyphs: None,
+                pixels: None,
+                width: 12,
+                height: 12,
+                scale: 1.25,
+                commands: Some(Recording::default()),
+                failure: None,
+            };
+            let mut reference = Surface {
+                glyphs: None,
+                pixels: Pixmap::new(12, 12),
+                width: 12,
+                height: 12,
+                scale: 1.25,
+                commands: None,
+                failure: None,
+            };
+            let rect = Rect::from_xywh(0.0, 0.0, 9.0, 9.0).unwrap();
+            let clip = Rect::from_xywh(1.25, 2.25, 4.5, 3.5).unwrap();
+            let deferred = retained.mask(clip).unwrap();
+            let ordinary = reference.mask(clip).unwrap();
+            let mut paint = Paint::default();
+            paint.set_color_rgba8(200, 40, 10, 130);
+            retained.fill_rect(rect, &paint, Transform::identity(), Some(&deferred));
+            reference.fill_rect(rect, &paint, Transform::identity(), Some(&ordinary));
+            // Fill the byte budget without constructing an unnecessarily huge fixture.
+            retained.commands.as_mut().unwrap().bytes = scene::MAX_SCENE_BYTES;
+            retained.fill_rect(rect, &paint, Transform::identity(), Some(&deferred));
+            reference.fill_rect(rect, &paint, Transform::identity(), Some(&ordinary));
+            assert!(retained.commands.is_none());
+            retained.fill_rect(rect, &paint, Transform::identity(), Some(&deferred));
+            reference.fill_rect(rect, &paint, Transform::identity(), Some(&ordinary));
+            let path = PathBuilder::from_rect(rect);
+            retained.fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                Some(&deferred),
+            );
+            reference.fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                Some(&ordinary),
+            );
+            let mut scene = Scene::default();
+            scene.record_only = record_only;
+            assert_eq!(
+                retained.finish(Some(&mut scene)).unwrap(),
+                reference.finish(None).unwrap()
+            );
+            assert_eq!(scene.dirty_pixels, 144);
+            assert!(!scene.record_only);
+        }
+    }
 }

@@ -42,7 +42,8 @@ export function encodeViewEvent(kind, values = {}) {
 }
 
 /** A DOM boundary with no HTML parsing, ambient navigation or guest JS. */
-export function createViewDom({ container, onEvent = () => {}, onError = error => {queueMicrotask(()=>{throw error;});}, onTitle = () => {}, assets = new Map(), fonts = createFontNamespace(crypto.randomUUID().replaceAll('-', '')), linkRequested = () => false, copyText = async () => V.statuses.not_allowed, openUrl = () => V.statuses.not_allowed, interactive = true } = {}) {
+export function createViewDom({ container, onEvent = () => {}, onError = error => {queueMicrotask(()=>{throw error;});}, onTitle = () => {}, onVisualInput, assets = new Map(), fonts = createFontNamespace(crypto.randomUUID().replaceAll('-', '')), linkRequested = () => false, copyText = async () => V.statuses.not_allowed, openUrl = () => V.statuses.not_allowed, interactive = true } = {}) {
+  if(onVisualInput!==undefined&&typeof onVisualInput!=='function')throw new TypeError('invalid visual timing callback');
   if (!container?.isConnected) throw new TypeError("view container must be attached");
   if(mountedContainers.has(container))throw new TypeError("view container already hosts an active session");
   const model = createViewModel({ linkRequested }), document = container.ownerDocument, Sheet = document.defaultView.CSSStyleSheet;
@@ -53,7 +54,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
   shadow.addEventListener("click",preventViewNavigation,{capture:true});shadow.addEventListener("submit",preventViewNavigation,{capture:true});
   const base = new Sheet();
   const D = V.defaults;
-  base.replaceSync(`:host { all: initial; display: block; } ${D.rootSelector} { ${D.rootStyle}; } textarea { resize: none; } dialog { border: none; padding: 0; background-color: ${D.dialogBackground[0]}; color: ${D.dialogText[0]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[0]}; } @media (prefers-color-scheme: dark) { dialog { background-color: ${D.dialogBackground[1]}; color: ${D.dialogText[1]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[1]}; } }`);
+  base.replaceSync(`:host { all: initial; display: block; } ${D.rootSelector} { ${D.rootStyle}; } button, input, textarea, select { box-sizing: border-box; margin: 0; } textarea { resize: none; } dialog { border: none; padding: 0; background-color: ${D.dialogBackground[0]}; color: ${D.dialogText[0]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[0]}; } @media (prefers-color-scheme: dark) { dialog { background-color: ${D.dialogBackground[1]}; color: ${D.dialogText[1]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[1]}; } }`);
   const sheets = new Map(), nodes = new Map([[W.root, root]]), ids = new WeakMap([[root, W.root]]), ownedAssets = new Map(assets);
   const variables = createCustomPropertyStyles({root, shadow, nodes, ids, fonts, onError});
   let applying = false, closed = false;
@@ -96,6 +97,12 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
     }
   }
   const handlers = [];
+  if(onVisualInput!==undefined){
+    for(const kind of ['pointerover','pointerout','pointerdown','pointerup','scroll','input','keydown','focusin','focusout']){
+      const listener=event=>{if(!closed&&!applying&&interactive&&event.isTrusted)onVisualInput(kind);};
+      shadow.addEventListener(kind,listener,{capture:true,passive:true});handlers.push([kind,listener,true]);
+    }
+  }
   for (const kind of V.events.map((entry) => entry.name).filter((name) => name !== "command_result")) {
     const capture = ["scroll", "close", "cancel"].includes(kind), listener = (event) => dispatch(kind, event);
     shadow.addEventListener(kind, listener, { capture }); handlers.push([kind, listener, capture]);

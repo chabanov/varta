@@ -1,4 +1,5 @@
 //! Deterministic text shaping using only explicitly supplied fonts.
+mod cache;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{
     FontContext, FontFamilyName, FontStyle, FontWeight, Layout, LayoutContext, LineHeight,
@@ -64,6 +65,7 @@ struct FontEntry {
 
 /// A bounded explicit-font text shaper. Reuse it to retain shaping caches.
 pub struct TextMeasurer {
+    cached: Option<cache::Shaped>,
     fonts: FontContext,
     layout: LayoutContext<u32>,
     entries: Vec<FontEntry>,
@@ -82,7 +84,7 @@ pub struct TextMetrics {
     pub lines: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct TextOptions {
     pub size: f32,
     pub line_height: Option<LineHeight>,
@@ -94,7 +96,7 @@ pub(crate) struct TextOptions {
 }
 
 /// One source text node's normalized byte range and resolved font style.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct TextSpan {
     pub range: std::ops::Range<usize>,
     pub owner: u32,
@@ -107,7 +109,7 @@ pub(crate) struct TextSpan {
 /// It admits no more than 32768 scalars (less than the general ASCII maximum),
 /// but those scalars can occupy 98304 UTF-8 bytes. Never split shaping context
 /// or relax the general/public byte limit to account for this encoding growth.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TextSource {
     General,
     Field,
@@ -131,7 +133,7 @@ impl TextSource {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub(crate) enum WhiteSpaceMode {
     #[default]
     Normal,
@@ -202,6 +204,14 @@ impl TextMeasurer {
             .map_err(|_| TextMeasureError::Limit)
     }
 
+    pub(crate) fn cache_counts(&self) -> (usize, usize) {
+        self.cached
+            .as_ref()
+            .map_or((0, 0), |cache| (cache.hits, cache.misses))
+    }
+    pub(crate) fn cache_shapes(&mut self) {
+        self.cached = Some(cache::Shaped::default());
+    }
     /// Resolve only registered names and explicit aliases. A generic family
     /// preceding any match is rejected unless the host explicitly mapped it.
     pub(crate) fn resolve_families(&self, css_family: Option<&str>) -> Option<Vec<String>> {
@@ -328,6 +338,7 @@ impl TextMeasurer {
             }
         }
         Ok(Self {
+            cached: None,
             fonts: FontContext {
                 collection,
                 source_cache: SourceCache::default(),
@@ -457,8 +468,31 @@ impl TextMeasurer {
         if !spans.is_empty() {
             self.charge_inline_work(spans.len())?;
         }
+        let request = cache::Request {
+            text,
+            width: max_width,
+            families,
+            options,
+            spans,
+        };
         let remaining = self.view_shaping.remaining.load(Ordering::Relaxed);
         let scoped = remaining != NO_VIEW_REQUEST;
+        if let Some((value, operations)) = self.cached.as_mut().and_then(|cache| cache.get(request))
+        {
+            if scoped
+                && self
+                    .view_shaping
+                    .remaining
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                        left.checked_sub(operations)
+                    })
+                    .is_err()
+            {
+                self.view_shaping.remaining.store(0, Ordering::Relaxed);
+                return Err(TextMeasureError::Limit);
+            }
+            return Ok(value.clone());
+        }
         self.layout.set_shaping_operation_ceiling(
             scoped.then_some(remaining.min(u32::MAX as usize) as u32),
         );
@@ -567,7 +601,7 @@ impl TextMeasurer {
             widths.min
         };
         layout.break_all_lines(max_width);
-        Ok((
+        let result = (
             TextMetrics {
                 width: layout.width(),
                 min_width,
@@ -575,7 +609,11 @@ impl TextMeasurer {
                 lines: layout.len(),
             },
             layout,
-        ))
+        );
+        if let Some(cache) = self.cached.as_mut() {
+            cache.insert(request, &result, self.layout.shaping_operations() as usize);
+        }
+        Ok(result)
     }
 }
 
@@ -722,6 +760,47 @@ mod tests {
                 expected.pixels
             );
         }
+    }
+
+    #[test]
+    fn renderer_shape_cache_keeps_hot_entries_across_eviction() {
+        let mut font = cluster_measurer();
+        font.cache_shapes();
+        font.measure("A", 20.0, None).unwrap();
+        for width in 1..=200 {
+            font.measure("A", 20.0, Some(width as f32)).unwrap();
+            font.measure("A", 20.0, None).unwrap();
+        }
+        assert_eq!(font.shaping_builds, 201);
+        assert_eq!(font.cache_counts(), (200, 201));
+    }
+
+    #[test]
+    fn renderer_shape_cache_keeps_exact_work_charges_and_rejects_an_unfunded_hit() {
+        let mut font = cluster_measurer();
+        font.cache_shapes();
+        let expected = font
+            .with_view_shaping(|font| font.measure("A\u{035c}", 20.0, None))
+            .unwrap();
+        let operations = font.last_view_shaping_operations();
+        assert!(operations > 0);
+        let builds = font.shaping_builds;
+        assert!(matches!(
+            font.with_view_shaping_limit(operations - 1, |font| font.measure(
+                "A\u{035c}",
+                20.0,
+                None
+            )),
+            Err(TextMeasureError::Limit)
+        ));
+        assert_eq!(font.shaping_builds, builds);
+        assert_eq!(
+            font.with_view_shaping_limit(operations, |font| font.measure("A\u{035c}", 20.0, None))
+                .unwrap(),
+            expected
+        );
+        assert_eq!(font.last_view_shaping_operations(), operations);
+        assert_eq!(font.shaping_builds, builds);
     }
 
     #[test]

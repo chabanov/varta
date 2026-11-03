@@ -15,12 +15,14 @@
 //! Snapshots carry the tree, cascaded styles and accessibility tree. The
 //! separate experimental layout and CPU raster methods support bounded box and
 //! explicit-font text subsets; full native rendering is not implemented yet.
+mod drawing;
 mod events;
 mod inline;
 mod layout;
 mod name;
 mod naming_work;
 mod paint;
+mod render;
 mod select;
 mod snapshot;
 mod snapshot_json;
@@ -32,11 +34,16 @@ mod units;
 mod variables;
 mod wire;
 
+pub use drawing::{DisplayList, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame};
 pub use events::{
     HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target,
 };
 pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
-pub use paint::{PaintError, RasterImage, SelectHit, SelectMenuMetrics, TextNavigation};
+pub use paint::{
+    FrameMetadata, PaintError, PointerCursor, RasterImage, SelectHit, SelectMenuMetrics,
+    TextNavigation,
+};
+pub use render::{RenderStats, Renderer};
 pub use snapshot::project_flex_blockification;
 pub use snapshot_json::{SnapshotError, SnapshotFormat, encode_snapshot};
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment};
@@ -320,6 +327,20 @@ impl View {
     #[must_use]
     pub fn resolve_node_identity(&self, identity: &NodeIdentity) -> Option<u32> {
         (self.node_identity(identity.id).as_ref() == Some(identity)).then_some(identity.id)
+    }
+
+    /// Update trusted pointing-device CSS states between turns. Targets and
+    /// their ancestors match; identity guards prevent transfer across ID reuse.
+    /// This neither activates a control nor dispatches guest events.
+    pub fn set_pointer_state(&mut self, hovered: Option<u32>, active: Option<u32>) -> bool {
+        let hovered = hovered.and_then(|id| self.node_identity(id));
+        let active = active.and_then(|id| self.node_identity(id));
+        if self.tree.hovered == hovered && self.tree.active == active {
+            return false;
+        }
+        self.tree.hovered = hovered;
+        self.tree.active = active;
+        true
     }
 
     /// Update host viewport conditions used by the cascade and platform input.

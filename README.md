@@ -24,6 +24,19 @@ measurements and release/security acceptance remain open. See the
 [current queue](docs/development-plan.md#next-delivery-batches) and
 [CORE ledger](docs/development-plan.md#core-completion-ledger).
 
+The current UI working tree adds retained CPU rendering, hover/active feedback
+and a [TSX Showcase](examples/native-showcase/README.md) with external CSS,
+native macOS bundles and official browser dev support. Scoped checks and pinned
+frame benchmarks are recorded in the [UI checkpoint](docs/development-plan.md#current-ui-checkpoint-and-proposed-continuation);
+the consolidated gate passes 3202 tests with unchanged code/build inputs. Standalone browser root and
+control geometry now match the native sizing rules; bounded opt-in timing covers
+both hosts with explicitly different presentation boundaries. An optional native
+Metal/wgpu UI prototype consumes shared vector scenes and recovers to CPU without
+restarting the application. Accessibility and broader target acceptance remain
+open. Typed application graphics and 3D-library ports remain
+[planned work](docs/development-plan.md#gpu-and-game-graphics-future-direction);
+the UI backend supplies no guest GPU API or Three.js compatibility.
+
 Native HTTP v2 acceptance covers sync/async handlers, disconnect/shutdown,
 bounded request usage/audit, scripted network waits and source-free/hostile
 artifacts. `build --target browser` now delivers metered console and v38 view

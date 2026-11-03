@@ -65,7 +65,7 @@ pub(crate) fn scroll_into_view_plan(
     let path = tree.path(target);
     for id in &path {
         if tree
-            .computed(*id, environment)
+            .computed_read(*id, environment)
             .get(&CssProperty::Position)
             .is_some_and(|position| matches!(position.as_str(), "absolute" | "fixed"))
         {
@@ -151,11 +151,15 @@ fn paint_only(property: CssProperty) -> bool {
     )
 }
 
-fn grid_tracks(value: &str, units: Units) -> Option<Vec<GridTemplateComponent<String>>> {
+fn grid_tracks(
+    value: &str,
+    units: Units,
+    valid: impl FnOnce(CssProperty, &str) -> bool,
+) -> Option<Vec<GridTemplateComponent<String>>> {
     if value == "none" {
         return Some(Vec::new());
     }
-    if !varta_common::view::css::property_value(CssProperty::GridTemplateColumns, value) {
+    if !valid(CssProperty::GridTemplateColumns, value) {
         return None;
     }
     // The profile grammar bounds token count, not numeric magnitude. Reject
@@ -213,8 +217,12 @@ fn grid_placement(value: &str) -> Option<Line<GridPlacement<String>>> {
     })
 }
 
-fn border_shorthand(value: &str, units: Units) -> Option<(f32, bool)> {
-    if !varta_common::view::css::property_value(CssProperty::Border, value) {
+fn border_shorthand(
+    value: &str,
+    units: Units,
+    valid: impl FnOnce(CssProperty, &str) -> bool,
+) -> Option<(f32, bool)> {
+    if !valid(CssProperty::Border, value) {
         return None;
     }
     let mut width = 3.0;
@@ -250,6 +258,7 @@ pub(crate) fn border_component(
     property: CssProperty,
     value: &str,
     units: Units,
+    valid: impl FnOnce(CssProperty, &str) -> bool,
 ) -> Option<(f32, bool)> {
     match property {
         CssProperty::BorderWidth => {
@@ -261,7 +270,7 @@ pub(crate) fn border_component(
             "none" => Some((3.0, false)),
             _ => None,
         },
-        _ => border_shorthand(value, units),
+        _ => border_shorthand(value, units, valid),
     }
 }
 
@@ -270,6 +279,9 @@ pub(crate) fn border_widths(
     env: &Environment,
     id: u32,
 ) -> Result<[f32; 4], LayoutError> {
+    if let Some(widths) = tree.render_reads.borders(id, env) {
+        return Ok(widths);
+    }
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     let element = tree.element(id).ok_or(LayoutError::Unsupported(id))?;
     let variables = style::Variables::new(tree, id, env);
@@ -287,9 +299,10 @@ pub(crate) fn border_widths(
         let value = variables.property(property, raw);
         for (side, is_style) in components {
             let (width, present) = match &value {
-                Some(value) => {
-                    border_component(property, value, units).ok_or(LayoutError::Unsupported(id))?
-                }
+                Some(value) => border_component(property, value, units, |p, v| {
+                    tree.render_reads.validate(env, p, v)
+                })
+                .ok_or(LayoutError::Unsupported(id))?,
                 None => (3.0, false),
             };
             if is_style {
@@ -301,9 +314,10 @@ pub(crate) fn border_widths(
     }
     for (&(side, is_style), (property, raw)) in &element.border_inline {
         let (width, present) = match variables.property(*property, raw) {
-            Some(value) => {
-                border_component(*property, &value, units).ok_or(LayoutError::Unsupported(id))?
-            }
+            Some(value) => border_component(*property, &value, units, |p, v| {
+                tree.render_reads.validate(env, p, v)
+            })
+            .ok_or(LayoutError::Unsupported(id))?,
             None => (3.0, false),
         };
         if is_style {
@@ -317,6 +331,7 @@ pub(crate) fn border_widths(
             widths[i] = 0.0;
         }
     }
+    tree.render_reads.remember_borders(id, env, widths);
     Ok(widths)
 }
 
@@ -337,6 +352,9 @@ fn layout_properties(
     env: &Environment,
     id: u32,
 ) -> Result<BTreeMap<CssProperty, String>, LayoutError> {
+    if let Some(values) = tree.render_reads.layout(id, env) {
+        return Ok(values);
+    }
     let element = tree.element(id).ok_or(LayoutError::Unsupported(id))?;
     let variables = style::Variables::new(tree, id, env);
     let declarations = tree
@@ -439,6 +457,7 @@ fn layout_properties(
         };
         result.insert(*side, normalized);
     }
+    tree.render_reads.remember_layout(id, env, &result);
     Ok(result)
 }
 
@@ -499,7 +518,7 @@ pub(crate) fn text_style(
     let mut break_anywhere = false;
     let mut family = None;
     for ancestor in tree.path(id).into_iter().rev() {
-        let properties = tree.computed(ancestor, env);
+        let properties = tree.computed_read(ancestor, env);
         if let Some(element) = tree.element(ancestor) {
             if element.tag == Tag::Strong && !properties.contains_key(&CssProperty::FontWeight) {
                 weight = if weight < 400.0 {
@@ -647,7 +666,7 @@ fn build(
     // their tag or CSS is not supported by the visible layout path.
     if id != ROOT_NODE
         && tree
-            .computed(id, env)
+            .computed_read(id, env)
             .get(&CssProperty::Display)
             .is_some_and(|value| value.eq_ignore_ascii_case("none"))
     {
@@ -691,7 +710,7 @@ fn build(
         ..Default::default()
     };
     if id == ROOT_NODE {
-        if tree.computed(id, env).keys().any(|property| {
+        if tree.computed_read(id, env).keys().any(|property| {
             !matches!(
                 property,
                 CssProperty::FontSize
@@ -715,7 +734,7 @@ fn build(
             Tag::Button | Tag::Input | Tag::Textarea | Tag::Select
         ) {
             let properties = layout_properties(tree, env, id)?;
-            let computed = tree.computed(id, env);
+            let computed = tree.computed_read(id, env);
             let content_sizing = element.tag == Tag::Textarea
                 && computed
                     .get(&CssProperty::FieldSizing)
@@ -940,11 +959,13 @@ fn build(
                 }
                 CssProperty::GridTemplateColumns => {
                     style.grid_template_columns =
-                        grid_tracks(&value, units).ok_or(LayoutError::Unsupported(id))?
+                        grid_tracks(&value, units, |p, v| tree.render_reads.validate(env, p, v))
+                            .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::GridTemplateRows => {
                     style.grid_template_rows =
-                        grid_tracks(&value, units).ok_or(LayoutError::Unsupported(id))?
+                        grid_tracks(&value, units, |p, v| tree.render_reads.validate(env, p, v))
+                            .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::GridColumn => {
                     style.grid_column =
@@ -1070,7 +1091,7 @@ fn build(
     let node_id = if text_metrics.get(&id).is_some_and(|s| s.rich.is_some())
         || (element.tag == Tag::Textarea
             && tree
-                .computed(id, env)
+                .computed_read(id, env)
                 .get(&CssProperty::FieldSizing)
                 .is_some_and(|value| value == "content"))
     {
@@ -1177,7 +1198,7 @@ fn geometry_and_text_inner(
         if id != ROOT_NODE
             && matches!(node.content, Content::Element(_))
             && tree
-                .computed(id, &layout_env)
+                .computed_read(id, &layout_env)
                 .get(&CssProperty::Display)
                 .is_some_and(|value| value.eq_ignore_ascii_case("none"))
         {
@@ -1201,7 +1222,7 @@ fn geometry_and_text_inner(
         if let Content::Element(element) = &node.content
             && element.tag == Tag::Textarea
             && tree
-                .computed(id, &layout_env)
+                .computed_read(id, &layout_env)
                 .get(&CssProperty::FieldSizing)
                 .is_some_and(|value| value == "content")
         {
@@ -1252,7 +1273,7 @@ fn geometry_and_text_inner(
                 .nodes
                 .get(&parent)
                 .ok_or(LayoutError::Unsupported(id))?;
-            let parent_style = tree.computed(parent, &layout_env);
+            let parent_style = tree.computed_read(parent, &layout_env);
             let is_flex_or_grid = parent_style
                 .get(&CssProperty::Display)
                 .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"));
@@ -1643,22 +1664,47 @@ mod tests {
     fn border_width_ignores_numeric_components_of_color_functions() {
         let units = Units::new(&Environment::default()).unwrap();
         assert_eq!(
-            border_shorthand("solid rgb(0, 0, 0)", units),
+            border_shorthand(
+                "solid rgb(0, 0, 0)",
+                units,
+                varta_common::view::css::property_value
+            ),
             Some((3.0, true))
         );
         assert_eq!(
-            border_shorthand("4px solid rgb(0, 0, 0)", units),
+            border_shorthand(
+                "4px solid rgb(0, 0, 0)",
+                units,
+                varta_common::view::css::property_value
+            ),
             Some((4.0, true))
         );
-        assert_eq!(border_shorthand("none", units), Some((3.0, false)));
+        assert_eq!(
+            border_shorthand("none", units, varta_common::view::css::property_value),
+            Some((3.0, false))
+        );
     }
 
     #[test]
     fn grid_parser_bounds_track_counts_and_numeric_values() {
         let units = Units::new(&Environment::default()).unwrap();
-        assert!(grid_tracks("repeat(2, minmax(0, 1fr))", units).is_some());
-        assert!(grid_tracks("repeat(65, 1fr)", units).is_none());
-        assert!(grid_tracks("1000001px", units).is_none());
-        assert!(grid_tracks("-1fr", units).is_none());
+        assert!(
+            grid_tracks(
+                "repeat(2, minmax(0, 1fr))",
+                units,
+                varta_common::view::css::property_value
+            )
+            .is_some()
+        );
+        assert!(
+            grid_tracks(
+                "repeat(65, 1fr)",
+                units,
+                varta_common::view::css::property_value
+            )
+            .is_none()
+        );
+        assert!(grid_tracks("1000001px", units, varta_common::view::css::property_value).is_none());
+        assert!(grid_tracks("-1fr", units, varta_common::view::css::property_value).is_none());
     }
 }

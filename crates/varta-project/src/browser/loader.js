@@ -78,8 +78,10 @@ function resolvePermissions(ceiling) {
   }
   return snapshot;
 }
-function execute({ signal, budgetCeiling, permissionCeiling, decisions, decisionStore, environmentInputs, onPrompt, onAudit, container, mode="run", onControl=()=>{}, onReady=()=>{}, onTurn=()=>{}, onLog=()=>{} } = {}) {
+function execute({ signal, budgetCeiling, permissionCeiling, decisions, decisionStore, environmentInputs, onPrompt, onAudit, container, mode="run", onControl=()=>{}, onReady=()=>{}, onTurn=()=>{}, onLog=()=>{}, onFrameTiming } = {}) {
   return new Promise((resolve, reject) => {
+    if(onFrameTiming!==undefined&&typeof onFrameTiming!=="function")throw new TypeError("invalid UI timing callback");
+    const timing=onFrameTiming===undefined?undefined:uiTiming.createUiTiming({now:()=>performance.now(),request:f=>requestAnimationFrame(f),cancel:id=>cancelAnimationFrame(id),emit:sample=>{try{onFrameTiming(sample);}catch(error){finish(error);}},limit:descriptor.view.limits.events});
     const budgets = resolveBudgets(budgetCeiling);
     const permissions = resolvePermissions(permissionCeiling);
     let storedDecisions=permissionBroker.snapshotDecisionFile(decisions);
@@ -149,6 +151,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       const event=queue.shift(),record=viewCodec.decodeViewEvent(event.bytes);
       if(record.kind==="command_result"&&record.key==="copy_text")renderer.complete(record.seq);
       inFlight=++eventId;
+      timing?.begin(inFlight,record.kind,event.arrived-performance.timeOrigin);
       worker.postMessage({type:"view_event",id:inFlight,bytes:event.bytes,gesture:event.gesture,arrived:event.arrived,selectedOption:event.selectedOption},[event.bytes.buffer]);
     };
     let pumpPending=false;
@@ -171,7 +174,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       clearTimeout(timer);
       signal?.removeEventListener("abort", aborted);
       controller.abort();
-      queue.clear();renderer?.freeze();
+      queue.clear();timing?.close();renderer?.freeze();
       for(const url of assetUrls.values())URL.revokeObjectURL(url);assetUrls.clear();
       for(const face of fontFaces)document.fonts.delete(face);fontFaces.length=0;
       for(const remove of permissionListeners)remove();permissionListeners.length=0;
@@ -242,7 +245,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
         const ui=viewPolicy.createViewPolicy(packageManifest,permissions,broker.granted);
         if(container){
           for(const face of fontFaces)document.fonts.add(face);
-          renderer=viewDom.createViewDom({container,assets:assetUrls,fonts,interactive:mode==="application",onEvent:enqueue,onError:finish,linkRequested:ui.linkRequested,onTitle:(title)=>{document.title=title;},
+          renderer=viewDom.createViewDom({container,assets:assetUrls,fonts,interactive:mode==="application",onEvent:enqueue,onError:finish,linkRequested:ui.linkRequested,onTitle:(title)=>{document.title=title;},onVisualInput:timing===undefined?undefined:kind=>timing.visual(kind,performance.now()),
             copyText:async(text)=>{if(!broker.operation(descriptor.view.capabilities.clipboard,'',!consenting&&!navigation&&ui.clipboardAllowed())||settled)return descriptor.view.statuses.not_allowed;try{await navigator.clipboard.writeText(text);return descriptor.view.statuses.ok;}catch{return descriptor.view.statuses.refused_by_platform;}},
             openUrl:(url)=>navigate(url,ui)
           });
@@ -279,8 +282,10 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
         if(data?.type==="view"){
           try{
             if(!descriptor.hasView||data.id!==lastBatch+1||!(data.bytes instanceof Uint8Array))throw new Error("invalid view commit message");
+            const applyStarted=onFrameTiming===undefined?0:performance.now();
             if(renderer)renderer.apply(data.bytes,{gesture:Boolean(data.gesture)});
             else{const {effects}=headless.commit(data.bytes);for(const effect of effects)if(effect.name==="copy_text")headless.complete(effect.request);}
+            if(onFrameTiming!==undefined)timing.applied(performance.now()-applyStarted);
             lastBatch=data.id;worker.postMessage({type:"view_ack",id:data.id});
           }catch(error){finish(error);}return;
         }
@@ -289,7 +294,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
           if(consenting){finish(new Error('unexpected browser checkpoint during consent'));return;}
           if(!Number.isSafeInteger(data.id)||data.id!==lastCheckpoint+1){finish(new Error('invalid browser turn checkpoint'));return;}lastCheckpoint=data.id;
           if(mode==="application")clearTimeout(timer);
-          if(data.event!==undefined){if(data.event!==inFlight){finish(new Error("invalid view event acknowledgement"));return;}inFlight=undefined;}
+          if(data.event!==undefined){if(data.event!==inFlight){finish(new Error("invalid view event acknowledgement"));return;}inFlight=undefined;timing?.end(data.event);}
           (async()=>{try{
           const catalog=data.sources??[],nextSources=new Map(),ids=new Set(),E=descriptor.permissions.events;
           if(!Array.isArray(catalog)||catalog.length>E.sources)throw new Error('invalid host source catalog');
@@ -377,6 +382,7 @@ export function mount(options={}) {
 }
 
 function bootstrap(runtime={}){
+  if(new URL(location.href).searchParams.get("ui-timing")==="1")runtime={...runtime,onFrameTiming:sample=>console.debug("varta-ui-timing:",JSON.stringify(sample))};
   const output=document.querySelector("#varta-output");
   if(output){
     const show=(usage)=>{

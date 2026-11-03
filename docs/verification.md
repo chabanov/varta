@@ -69,6 +69,28 @@ repeat is reserved for launcher/packaging changes or a named flakiness investiga
 CI retains complete Linux/macOS coverage. A local full pass proves only that host.
 Known unsupported conformance cases remain gaps, even when the baseline matches.
 
+## Optional desktop GPU backend
+
+The default workspace gate does not enable the optional GPU dependency graph.
+For a renderer/backend batch, also run:
+
+```sh
+cargo clippy -p varta-view -p varta-runtime -p varta-project -p varta-desktop --all-targets --features varta-desktop/gpu --locked -- -D warnings
+cargo test -p varta-desktop --features gpu --locked
+cargo test -p varta-view --test renderer --test renderer_inputs --locked
+cargo build -p varta-desktop --features gpu --bin varta-preview --example gpu_probe --locked
+```
+
+On a declared GPU target, run the diagnostic `gpu_probe` against the same Wasm
+and explicit font as the CPU reference, preserve its raw RGBA outputs, and record
+adapter/driver/build/input hashes. Check Debug and Release windows, input geometry,
+text/selection/popup clips, hover, scrolling, resize/visibility, color management
+and device-loss recovery. Host timing ends at presentation return; offscreen
+readback includes a GPU wait/copy. Neither proves physical display latency.
+The probe's mean RGB tolerance is an antialiasing smoke check, not complete pixel
+or cross-platform acceptance. Resource caps must be reported with their actual
+scope; individual buffer caps are not a total GPU-memory quota.
+
 ## Evidence and failure handling
 
 The helper streams command output and records per-command logs, exit status,

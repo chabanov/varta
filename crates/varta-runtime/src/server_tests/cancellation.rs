@@ -477,8 +477,12 @@ fn sustained_disconnects_release_sockets_and_keep_request_memory_bounded() {
             );
             thread::sleep(Duration::from_millis(1));
         }
+        // A request report proves that the Store was dropped, but the blocking
+        // worker still holds its admission permit until the observer returns.
+        // A completed health response crosses that boundary before the next
+        // slow request. Otherwise it can receive 503 and never reach upstream.
+        health();
         if index + 1 == WARMUP {
-            health();
             baseline = descriptors();
         }
     }
@@ -509,7 +513,7 @@ fn sustained_disconnects_release_sockets_and_keep_request_memory_bounded() {
     let aggregate = aggregate.lock().unwrap();
     let report = aggregate.as_ref().unwrap();
     assert_eq!(report.cancelled, (WARMUP + SAMPLES) as u64);
-    assert_eq!(report.returned, 2);
+    assert_eq!(report.returned, (WARMUP + SAMPLES + 1) as u64);
     println!(
         "HTTP lifecycle sample: {SAMPLES} cancellations after {WARMUP} warmups; descriptors {baseline} -> {after}; guest peak {} bytes",
         peaks[0]

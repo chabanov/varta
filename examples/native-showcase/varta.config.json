@@ -1,0 +1,13 @@
+{
+  "entry": "main.tsx",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "dist/showcase",
+  "languageProfile": "checked-f64-utf16-v38",
+  "capabilities": {},
+  "browser": {
+    "fonts": {
+      "Arial": "dist/Arial.ttf"
+    }
+  }
+}

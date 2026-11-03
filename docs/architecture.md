@@ -1,8 +1,12 @@
 # Varta architecture and implemented contract
 
 This document is the normative contract of the implemented compiler and runtime.
-Planned work, including agreed designs that are not implemented yet, lives in
-[development-plan.md](development-plan.md); its [status summary](development-plan.md#status)
+Planned work, including agreed designs that are not implemented yet, is tracked in
+[development-plan.md](development-plan.md). The explicitly marked
+[GPU section](#planned-gpu-rendering-and-application-graphics) separates the
+optional desktop UI prototype from planned application graphics; it adds no guest
+ABI or normative graphics admission contract.
+The plan's [status summary](development-plan.md#status)
 records the current stage and verification. Varta compiles a checked TypeScript
 subset, selected per module by an explicit language profile, to portable
 WebAssembly and executes it in a capability-checked Wasmtime host. It does not
@@ -11921,7 +11925,7 @@ subtrees have no ordinary layout boxes. Pointer choice, wheel scrolling, keyboar
 preview/accept/cancel and character cycling use concrete option identities;
 disabled or hidden options are skipped. Focus loss dismisses the popup. Relevant
 guest mutations close it, and stale-frame input is discarded. Option styling is
-limited to display and foreground color; platform themes, hover highlighting and
+limited to display and foreground color; platform themes and
 timed multi-character search remain open. Native and browser transactions share
 the [single-select work admission rules](embedding.md#view-protocol-draft-v0-unstable):
 ownership walks, option source bytes and final inventory consume one allowance.
@@ -11953,7 +11957,13 @@ native platform-default disabled styling is not supplied.
 For a focused input that subsequently becomes disabled, Varta can still deliver
 keydown but Enter does not submit its form. In a focused test Chrome did not
 submit, whereas WebKit submitted; complete cross-browser parity remains open.
-The experimental desktop preview uses these CPU images.
+The experimental desktop preview uses these CPU images. Its current uncommitted
+retained-renderer/pointer implementation and the TSX Showcase have scoped local
+verification; the native-text full gate at `1259eb8` predates those changes.
+See the [current UI checkpoint](development-plan.md#current-ui-checkpoint-and-proposed-continuation)
+for evidence and remaining acceptance. The browser/native Showcase comparison
+also records root/control sizing and OS accessibility gaps; a shared patch stream
+does not yet establish complete visual or platform parity.
 Explicitly styled textareas preserve newlines, wrap long text to the content
 width, paint multiline selection/caret and keep the caret vertically visible.
 Physical two-dimensional text hit testing places and selects text across rows.
@@ -11983,6 +11993,58 @@ Measured host inputs reject non-finite, negative or inconsistent geometry before
 mutating the view; basic unmeasured script scroll inputs retain their old behavior.
 An application host may request the current CPU frame between guest turns via
 `Application::view_rasterize`, with the same bounds and fail-closed subset.
+Hosts can instead keep a `varta_view::Renderer` and call
+`Application::view_render` between turns. The desktop preview uses this path.
+It owns explicit fonts, memoizes computed style reads, expanded geometry
+declarations, border widths and shaped text, retains
+unhinted glyph outlines and a bounded display list, and replays changed pixel
+bounds. Hit, focus, selection and IME metadata are rebuilt for each frame even
+when its pixels do not change. Media conditions, style sources, element
+identity/parentage, inline side precedence, focus, pointer, checked and disabled states invalidate style reads;
+text, editor and scroll state remain fresh inputs to layout and painting.
+The live view never holds render-only memoized state. Stateless raster APIs
+remain available as reference paths. Both paths route narrow rectangles through
+the path converter to handle fractional one-pixel carets without a debug assertion.
+
+Renderer cache bounds are 128 shaped requests with 2 MiB of key payload and
+65,536 glyphs, 4,096 glyph-outline entries with 8 MiB of estimated payload,
+4,096 pure CSS validation/variable-detection entries with 2 MiB of string
+payload, and 65,536 display-list commands with 16 MiB of estimated payload.
+Eviction or a display-list overflow changes reuse, not admission; an overflow
+falls back to full painting with the original clips. Cached shaping and glyph
+outlines still debit the original native work charges. Existing image, text,
+depth and work ceilings remain in force. Geometry-read memos have at most one
+property map and border-width tuple per prepared visible node, within the
+admitted tree inventory. Retained pixels and a scratch image stay within the
+existing image dimensions; these cache accounting limits are
+not total allocator or RSS quotas. A failed frame publishes neither pixels nor
+new input metadata. `Renderer::damage` reports physical pixel bounds;
+`Renderer::stats` reports avoided-work counts, not CPU timings. The preview
+also keeps packed RGB pixels, converts only damaged regions and copies those
+packed pixels on the window thread. Debug builds retain Varta debug assertions
+and unoptimized engine code while optimizing the tiny-skia graphics dependencies
+and enabling their portable SIMD paths. The small desktop host uses dev opt-level
+3 for its RGB packing loop, with debug assertions and debug information retained;
+the compiler, runtime and view engine remain at dev opt-level 0.
+Characters typed immediately after pointer activation wait in the bounded input
+FIFO for its resulting focus frame, just as they wait for a preceding key turn.
+Trusted embedders can call `View::set_pointer_state` or
+`Application::view_set_pointer_state` between turns. The pointed element and its
+attached ancestors match `:hover`; the indicated primary-down element and its
+ancestors match `:active`, as in [CSS Selectors](https://www.w3.org/TR/selectors-4/#useraction-pseudos).
+The targets carry opaque element identities: removal and numeric ID reuse cannot
+transfer a pointer state to a replacement. With no host pointer input those
+states stay inactive. Updating them does not create a guest event, activation,
+commit, edit or user-gesture grant. The desktop host coalesces pointer position
+and button state outside its bounded activation/key FIFO, resolves them only
+against current presented geometry, and clears them on leave or focus loss.
+Cosmetic repaints retain the model revision so they cannot swallow a pending
+click or key; changed input geometry advances it and preserves stale-frame
+rejection. Worker and window share the current immutable image with `Arc`,
+without copying its pixel buffer for hit testing. Native cursor hints honor the
+four checked CSS cursor values and inherit through inline fragments. An enabled
+select row has separate pointer shading without changing keyboard preview or
+committed selection.
 The frame carries bounded rectangular hit regions in paint order. The desktop
 preview uses those regions for left-button activation and discards events when
 the view state or viewport has changed since the displayed frame. For vertical
@@ -12521,6 +12583,86 @@ permissions and labels its authorization mode `declared`.
 A native launcher itself has the authority of the OS user launching that
 executable. Rebuild existing launchers to make their own CLI accept `--policy`;
 the portable artifact format and ABI are unchanged.
+
+### Planned GPU rendering and application graphics
+
+**Direction recorded 2026-11-03; optional UI prototype implemented in the working tree.**
+GPU rendering of Varta UI, a guest graphics API for games, and compatibility with Three.js are
+three separate deliverables. This direction extends the native renderer design
+without expanding the current L0 subset or admitting new host imports. Delivery
+and acceptance are tracked as [P13a–P13c](development-plan.md#gpu-and-game-graphics-future-direction).
+
+**UI renderer (P13a).** Keep application logic in Wasm and CSS, layout, shaping,
+hit testing and accessibility semantics on the CPU. Extract a bounded,
+backend-independent scene from the current tiny-skia-specific retained display
+list; CPU and GPU renderers consume the same scene and preserve model revisions
+and stale-input rejection. The host owns GPU submission and window presentation.
+Retain the CPU implementation for fallback and reference checks. Render on changes
+and during active animations rather than continuously repainting an idle UI.
+Cache reusable geometry, glyphs and images; avoid per-frame GPU-to-CPU readback.
+
+The optional desktop `gpu` feature pins wgpu 30.0.0, vello_gpu 0.3.0 and
+pollster 0.4.0. It uses host-owned vector commands and shared frame/input metadata;
+no guest import, capability or language ABI changes. The software reference can
+replay the same neutral commands exactly. Native presentation has no per-frame
+readback. Recording overflow or device/surface failure switches to CPU without
+restarting Wasm; stale vector frames are acknowledged before CPU regeneration.
+One GPU submission can remain outstanding; nonblocking completion polling ends
+in a two-second recovery timeout. macOS output explicitly tags Display P3 and
+converts sRGB paint primaries. Neutral paths have an 8 MiB estimated cache and
+retain full scene admission charges on hits. Existing 4096-per-axis limits and
+64 MiB individual GPU buffer limits do not establish total GPU-memory accounting.
+The default build/backend remains CPU pending broader acceptance.
+The [Vello renderer families](https://github.com/linebender/vello#choose-a-renderer)
+have distinct maturity and device requirements. Pin and review the chosen
+dependencies at adoption. Metal, Vulkan and DX12 paths are candidates through
+[wgpu](https://github.com/gfx-rs/wgpu#supported-platforms); actual Pi and desktop
+device acceptance remains necessary. GPU acceleration does not itself implement
+missing CSS, controls, IME, clipboard or accessibility.
+
+**Application graphics (P13b).** Plan a separately versioned, typed Wasm-to-host
+graphics API for buffers, textures, shaders, render pipelines and batched command
+submission. A graphics surface can be composed with TSX UI using host-owned GPU
+resources and coordinated frame presentation. It needs explicit surface sizing,
+DPI, clipping, layering and input ownership, a bounded frame callback with timing,
+and game input beyond the current L0 event subset. A frame callback remains a
+budgeted application turn, not an unmetered callback into the guest.
+
+Define capability admission, opaque resource ownership, validation before effects,
+resource destruction, cancellation and shutdown, bounded upload/queue sizes,
+GPU-memory accounting, and device/surface-loss recovery before exposing the API.
+Shader admission and GPU execution need their own limits and failure policy:
+Wasm fuel does not meter GPU execution. Retain the existing guest isolation and
+host ceilings; do not promise exact GPU instruction accounting or deterministic
+pixels across devices. Audio, gamepads, pointer lock and other game services
+need separately specified contracts; a 3D rendering demo does not establish a
+complete game platform.
+
+**Three.js compatibility (P13c).** Unmodified Three.js is not supported today.
+Its [WebGLRenderer](https://threejs.org/docs/pages/WebGLRenderer.html) requires
+WebGL 2; its [WebGPURenderer](https://threejs.org/manual/pages/webgpurenderer)
+uses WebGPU with a WebGL 2 fallback. An internal wgpu device supplies neither
+those JavaScript APIs nor a compatible canvas/environment. JavaScript sources
+with `.d.ts` declarations also do not satisfy Varta's typed-source admission.
+
+The preferred native direction is a typed graphics library or a port over P13b.
+An adapter alone is insufficient unless the library sources also compile and
+their language, binary-value, loader and host dependencies are supported. Pin a
+candidate library version and publish a dependency/admission inventory before
+claiming compatibility. Running original Three.js in a browser/WebView is a
+separate compatibility option requiring a future architecture decision; it is
+not an accepted fallback and does not inherit Varta's Wasm metering guarantees.
+The existing no-WebView native direction remains in force.
+
+**Acceptance.** First compare the same Showcase UI under CPU and GPU in Debug
+and Release: startup, input-to-present latency, median/p95 frame costs, CPU/GPU
+memory and artifact size. Check geometry, clipping, text, hover, editing,
+scrolling, resize/DPI and failure recovery; compare geometry and visual output
+with stated tolerances rather than requiring CPU/GPU pixel identity. Then prove
+a bounded animated 3D scene alongside interactive TSX UI, resource cleanup,
+limit rejection and device-loss behavior on declared targets. Three.js acceptance
+requires a separately pinned port or compatibility mode and its own conformance
+matrix. These future increments do not close P10, M7 or release acceptance.
 
 ### Filesystem
 

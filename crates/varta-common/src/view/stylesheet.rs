@@ -56,6 +56,8 @@ pub struct Subject<'a> {
     pub root: bool,
     pub classes: &'a [&'a str],
     pub focused: bool,
+    pub hovered: bool,
+    pub active: bool,
     pub disabled: bool,
     pub checked: bool,
 }
@@ -110,7 +112,8 @@ impl Rule {
                     && (selector.root || !selector.classes.is_empty())
                     && selector.classes.iter().all(|class| contains(class))
                     && selector.pseudo.iter().all(|pseudo| match pseudo {
-                        Pseudo::Hover | Pseudo::Active => false,
+                        Pseudo::Hover => subject.hovered,
+                        Pseudo::Active => subject.active,
                         Pseudo::FocusVisible => subject.focused,
                         Pseudo::Disabled => subject.disabled,
                         Pseudo::Checked => subject.checked,
@@ -535,6 +538,8 @@ mod tests {
                     root: false,
                     classes: &classes,
                     focused: false,
+                    hovered: false,
+                    active: false,
                     disabled: false,
                     checked,
                 };
@@ -602,5 +607,32 @@ mod tests {
             Violation::Media
         );
         assert_eq!(error("@media (orientation: landscape) { }").offset, 8);
+    }
+}
+
+#[cfg(test)]
+mod pointer_match_tests {
+    use super::*;
+    #[test]
+    fn pointer_pseudo_classes_are_independent_and_can_combine_with_disabled() {
+        let rules =
+            parse(".a:hover {color:#00f} .a:active {color:#f00} .a:hover:disabled {color:#888}")
+                .unwrap();
+        for hovered in [false, true] {
+            for active in [false, true] {
+                let subject = Subject {
+                    root: false,
+                    classes: &["a"],
+                    focused: false,
+                    hovered,
+                    active,
+                    disabled: true,
+                    checked: false,
+                };
+                assert_eq!(rules[0].matching(&subject).is_some(), hovered);
+                assert_eq!(rules[1].matching(&subject).is_some(), active);
+                assert_eq!(rules[2].matching(&subject).is_some(), hovered);
+            }
+        }
     }
 }

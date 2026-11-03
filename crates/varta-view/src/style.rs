@@ -135,10 +135,17 @@ impl<'a> Variables<'a> {
         value: &str,
     ) -> Option<String> {
         let result = self.substitute(value)?;
-        varta_common::view::css::property_value(property, &result).then_some(result)
+        self.tree
+            .render_reads
+            .validate(self.environment, property, &result)
+            .then_some(result)
     }
     pub fn substitute(&self, value: &str) -> Option<String> {
-        if !varta_common::view::css::contains_variable(value) {
+        if !self
+            .tree
+            .render_reads
+            .contains_variable(self.environment, value)
+        {
             return Some(value.to_owned());
         }
         self.custom

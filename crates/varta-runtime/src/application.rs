@@ -682,6 +682,14 @@ impl Application {
     pub fn view_cancel_preedit(&mut self) {
         self.execution.store.data_mut().view.cancel_preedit();
     }
+    /// Update host pointer CSS state without a guest event or activation.
+    pub fn view_set_pointer_state(&mut self, hovered: Option<u32>, active: Option<u32>) -> bool {
+        self.execution
+            .store
+            .data_mut()
+            .view
+            .set_pointer_state(hovered, active)
+    }
 
     /// Render the current view to a bounded CPU image using explicitly supplied fonts.
     /// This is host-side work between guest turns; unsupported view content fails closed.
@@ -711,6 +719,37 @@ impl Application {
             .data()
             .view
             .rasterize_scaled(width, height, scale, font)
+    }
+
+    /// Render through an embedding-owned reusable native renderer. Caches do not
+    /// alter guest state, event delivery or the stateless raster APIs.
+    pub fn view_render(
+        &self,
+        renderer: &mut varta_view::Renderer,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<varta_view::RasterImage, varta_view::PaintError> {
+        self.execution
+            .store
+            .data()
+            .view
+            .render(renderer, width, height, scale)
+    }
+
+    /// Prepare a host-owned vector scene, preserving the ordinary view limits.
+    pub fn view_prepare(
+        &self,
+        renderer: &mut varta_view::Renderer,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<varta_view::PreparedFrame, varta_view::PaintError> {
+        self.execution
+            .store
+            .data()
+            .view
+            .prepare(renderer, width, height, scale)
     }
 
     /// Queue a host event for its source. It runs in a later turn; nothing

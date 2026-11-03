@@ -4,9 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+gpu = ["dep:wgpu", "dep:vello_gpu", "dep:pollster"]
+
 [[bin]]
 name = "varta-preview"
 path = "src/main.rs"
+
+[[example]]
+name = "gpu_probe"
+required-features = ["gpu"]
 
 [dependencies]
 varta-common = { path = "../varta-common" }
@@ -15,3 +23,6 @@ varta-view = { path = "../varta-view" }
 # Windowing and CPU presentation; Apache-2.0 and MIT OR Apache-2.0 respectively.
 winit.workspace = true
 softbuffer.workspace = true
+wgpu = { workspace = true, optional = true }
+vello_gpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }

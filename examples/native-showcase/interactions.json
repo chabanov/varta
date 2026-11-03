@@ -1,0 +1,17 @@
+{
+  "viewport": {"width": 1024},
+  "inputs": [
+    {"input":"click", "target":"#increment"},
+    {"input":"click", "target":"#increment"},
+    {"input":"click", "target":"#step-five"},
+    {"input":"click", "target":"#increment"},
+    {"input":"click", "target":"#decrement"},
+    {"input":"click", "target":"#reset"},
+    {"input":"click", "target":"#increment"},
+    {"input":"click", "target":"#highlight"},
+    {"input":"type", "target":"#name", "text":"Павло"},
+    {"input":"type", "target":"#editor", "text":" Готово!"},
+    {"input":"select", "target":"#topic", "value":"core"},
+    {"input":"click", "target":"#run-engine"}
+  ]
+}

@@ -1390,6 +1390,20 @@ export function main(): void {
     )
     .unwrap();
     let frame = app.view_rasterize(40, 40, Some((&mut font, 20.0))).unwrap();
+    let mut renderer = varta_view::Renderer::new(
+        Some(
+            varta_view::TextMeasurer::new(
+                include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf").to_vec(),
+                "Varta Fixture 400",
+            )
+            .unwrap(),
+        ),
+        20.0,
+    )
+    .unwrap();
+    assert_eq!(app.view_render(&mut renderer, 40, 40, 1.0).unwrap(), frame);
+    assert_eq!(app.view_render(&mut renderer, 40, 40, 1.0).unwrap(), frame);
+    assert_eq!(renderer.stats().dirty_pixels, 0);
     let scaled = app
         .view_rasterize_scaled(80, 80, 2.0, Some((&mut font, 20.0)))
         .unwrap();
@@ -1414,6 +1428,13 @@ export function main(): void {
     assert_eq!(app.run(), crate::Step::Idle);
     assert_eq!(app.view_title(), "After click");
     let frame = app.view_rasterize(40, 40, Some((&mut font, 20.0))).unwrap();
+    assert_eq!(app.view_render(&mut renderer, 40, 40, 1.0).unwrap(), frame);
+    assert!(renderer.stats().dirty_pixels > 0);
+    assert_eq!(
+        app.view_render(&mut renderer, 80, 80, 2.0).unwrap(),
+        app.view_rasterize_scaled(80, 80, 2.0, Some((&mut font, 20.0)))
+            .unwrap()
+    );
     assert_eq!(
         &frame.pixels[(18 * 40 + 18) * 4..(18 * 40 + 19) * 4],
         &[0, 0, 255, 255]
@@ -2043,4 +2064,43 @@ export function main():void {{
     assert_eq!(style["padding"], "1px 2px");
     assert_eq!(style["opacity"], ".5");
     assert_eq!(style["margin"], "3px");
+}
+
+#[test]
+fn native_pointer_styles_do_not_run_guest_turns_or_activate_controls() {
+    let source = r##"
+export function main():void {
+ View.stylesheet(1,'.card {width:40px; height:40px; background-color:#f00} .card:hover {background-color:#00f} .card:active {background-color:#0f0}');
+ const root=View.node(); View.createElement(root,1); View.setClass(root,'card');
+ View.on(root,1,(event:ViewEvent):void=>{console.log('activated');},0,0,0,0);
+ View.mount(root);
+}
+"##;
+    let mut app = instance(source, vec![], None);
+    let commits = app.view_commits();
+    let mut renderer = varta_view::Renderer::new(None, 16.0).unwrap();
+    let before = app.view_render(&mut renderer, 80, 80, 1.0).unwrap();
+    let target = before.hit_test(5.0, 5.0).unwrap();
+    assert!(app.view_set_pointer_state(Some(target), None));
+    assert!(!app.view_set_pointer_state(Some(target), None));
+    let hovered = app.view_render(&mut renderer, 80, 80, 1.0).unwrap();
+    assert_eq!(
+        &hovered.pixels[(5 * 80 + 5) * 4..(5 * 80 + 6) * 4],
+        [0, 0, 255, 255]
+    );
+    assert!(before.same_input_geometry(&hovered));
+    app.view_set_pointer_state(Some(target), Some(target));
+    let pressed = app.view_render(&mut renderer, 80, 80, 1.0).unwrap();
+    assert_eq!(
+        &pressed.pixels[(5 * 80 + 5) * 4..(5 * 80 + 6) * 4],
+        [0, 255, 0, 255]
+    );
+    assert_eq!(app.view_commits(), commits);
+    assert!(app.take_output().is_empty());
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Node(target),
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), ["varta log: activated"]);
 }

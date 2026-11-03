@@ -234,6 +234,7 @@ pub(crate) struct Sheet {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Tree {
+    pub render_reads: crate::render::ReadCache,
     pub nodes: BTreeMap<u32, Node>,
     /// Live handler ids and the node holding each.
     pub handlers: BTreeMap<u32, u32>,
@@ -243,6 +244,8 @@ pub(crate) struct Tree {
     pub rule_index: style::CascadeIndex,
     pub title: String,
     pub focus: Option<u32>,
+    pub hovered: Option<crate::NodeIdentity>,
+    pub active: Option<crate::NodeIdentity>,
     /// `copy_text` requests whose `command_result` is not yet delivered.
     pub pending_requests: BTreeSet<u32>,
 }
@@ -255,6 +258,7 @@ impl Default for Tree {
             children: Vec::new(),
         };
         Self {
+            render_reads: crate::render::ReadCache::default(),
             nodes: BTreeMap::from([(ROOT_NODE, root)]),
             handlers: BTreeMap::new(),
             sheets: BTreeMap::new(),
@@ -263,6 +267,8 @@ impl Default for Tree {
             rule_index: style::CascadeIndex::default(),
             title: String::new(),
             focus: None,
+            hovered: None,
+            active: None,
             pending_requests: BTreeSet::new(),
         }
     }
@@ -687,6 +693,15 @@ impl Tree {
         }
         scope
     }
+    pub(crate) fn pointer_contains(&self, target: Option<&crate::NodeIdentity>, id: u32) -> bool {
+        target.is_some_and(|target| {
+            self.nodes
+                .get(&target.id)
+                .is_some_and(|node| Arc::ptr_eq(&node.identity, &target.token))
+                && self.attached(target.id)
+                && self.path(target.id).contains(&id)
+        })
+    }
     pub(crate) fn cascade_refs(&self, id: u32, environment: &Environment) -> Vec<(&Name, &str)> {
         let Some(element) = self.element(id) else {
             return Vec::new();
@@ -697,6 +712,8 @@ impl Tree {
             root: id == ROOT_NODE,
             classes: &class_list,
             focused: self.focus == Some(id),
+            hovered: self.pointer_contains(self.hovered.as_ref(), id),
+            active: self.pointer_contains(self.active.as_ref(), id),
             disabled: element.disabled(),
             checked: element.checked,
         };
@@ -727,6 +744,9 @@ impl Tree {
         environment: &Environment,
         property: CssProperty,
     ) -> Option<String> {
+        if let Some(values) = self.render_reads.get(id, environment) {
+            return values.get(&property).cloned();
+        }
         let inline = self
             .element(id)
             .and_then(|element| element.style.get(&property));
@@ -745,6 +765,9 @@ impl Tree {
         id: u32,
         environment: &Environment,
     ) -> BTreeMap<CssProperty, String> {
+        if let Some(values) = self.render_reads.get(id, environment) {
+            return values.clone();
+        }
         let mut declared = BTreeMap::new();
         for (name, value) in self.cascade_refs(id, environment) {
             if let Name::Property(property) = name {
@@ -765,6 +788,16 @@ impl Tree {
                     .map(|value| (property, value))
             })
             .collect()
+    }
+    pub(crate) fn computed_read<'a>(
+        &'a self,
+        id: u32,
+        env: &Environment,
+    ) -> std::borrow::Cow<'a, BTreeMap<CssProperty, String>> {
+        match self.render_reads.get(id, env) {
+            Some(values) => std::borrow::Cow::Borrowed(values),
+            None => std::borrow::Cow::Owned(self.computed(id, env)),
+        }
     }
     /// Document order with hidden subtrees skipped once, rather than checking
     /// the complete ancestor path for every prospective focus stop.

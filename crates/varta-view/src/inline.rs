@@ -125,8 +125,8 @@ fn is_inline(tree: &Tree, env: &Environment, id: u32) -> bool {
 }
 
 fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> {
-    let properties = tree.computed(id, env);
-    for (&property, value) in &properties {
+    let properties = tree.computed_read(id, env);
+    for (&property, value) in properties.iter() {
         let supported = match property {
             P::Display => value == "inline",
             P::FontSize
@@ -137,6 +137,7 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> 
             | P::WhiteSpace
             | P::OverflowWrap
             | P::Color
+            | P::Cursor
             | P::BackgroundColor => true,
             P::TextDecoration => value == "none",
             P::Position => value == "static",

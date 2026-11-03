@@ -7,6 +7,82 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-03 — UI geometry/timing and optional Metal GPU prototype
+
+Working tree after `1259eb8`: standalone browser root/control geometry normalized
+under an exact inline-style CSP hash; bounded opt-in timing reports Worker/DOM/frame
+opportunity phases. Native input/frame acknowledgement wakes the worker without
+lost notifications; timing ends at host presentation return, excluding scanout.
+Shared bounded vector commands and frame metadata feed an optional desktop-only
+wgpu 30.0.0/Vello GPU 0.3.0 backend; pollster 0.4.0 supplies initialization.
+No guest ABI/import change. Normal window presentation has no CPU rasterization
+or readback. One outstanding submission, completion timeout and CPU recovery
+preserve Wasm state. Metal device-loss recovery and explicit Display P3/sRGB
+conversion were observed on the development Mac.
+
+Debug/Release each pass 26 GPU offscreen cases at 1×/2×, including text, selection,
+preedit/commit and select popup states, with exact input geometry and mean RGB
+delta 0.187–0.477/255. Real GPU Debug checks cover editing/Undo/Redo, scrolling,
+select and JSON/generator/async output. A 56-sample Release window observation
+records preparation median/p95 1.65/4.46 ms and queue-to-present-return
+6.13/19.80 ms. One first-presentation sample is 1.89 s. Release bundles are
+24,065,252 bytes CPU and 28,574,180 bytes GPU. These local measurements are
+[hash-pinned](../examples/native-showcase/gpu-ui-checkpoint-2026-11-03.json);
+readback timings are diagnostic and not window latency. Default backend remains
+CPU; broader target/device acceptance, total GPU memory and guest graphics remain
+open. Focused checks include 162 browser Node tests, 12 Showcase assertions,
+13 renderer/control tests and optional GPU all-target Clippy; the final consolidated
+gate passes **3202 tests, 0 failures, 16 ignored**, all eight commands with
+unchanged sources. Report: `target/verification/20261103-182413-ec8q70t8/report.json`;
+source SHA-256 `009e775316e7cb5c20b627ba05cc95b75b780efe383caffdce10c1191f45482d`. Conformance
+remains 123 passed/4 known unsupported, baseline matched and zero regressions.
+Only documentation/measurement annotations changed after the gate. The first consolidated attempt stopped on an
+HTTP lifecycle test race: request reporting precedes release of the worker permit.
+The test now waits for a completed health response after every cancellation;
+production limits, timeouts, 48 cancellation samples and memory/descriptor
+assertions are unchanged. The original test passes when isolated. Retained-input
+checks now keep CPU and vector renderers separate and hold viewport dimensions
+fixed through each input sequence, so validation also exercises CPU damage replay.
+
+## 2026-11-03 — CPU renderer, pointer states and TSX Showcase checkpoint
+
+Working tree after `1259eb8`; these changes are not committed. The retained
+CPU renderer caches style/geometry preparation, shaping, glyph outlines and
+bounded draw commands, replays damage and reuses RGB pixels. The desktop host
+coalesces pointer samples separately from activations/keys, supports hover/active
+and cursors, preserves stale-input rejection and waits for the focus frame before
+typing. Targeted graphics/host dev optimization keeps debug assertions enabled.
+
+Recorded scoped selections pass **43 tests** across common/view/desktop/runtime;
+affected-package all-target Clippy passes. Local logs are
+`target/hover-{view,matcher,desktop,runtime}-tests.log` and
+`target/hover-clippy.log`. Later example-only edits have a successful external-CSS
+build and **12 trusted-input assertions** in
+`target/showcase-css-dev-{build,verify,package}.log`. These results do not replace
+the earlier 3174-test full gate or cover all current inputs as a consolidated gate.
+
+The example uses typed TSX, reactive signals, external `styles.css` and explicit
+`.ts` imports. Local macOS Debug/Release bundles exist; the newer Dev bundle uses
+the external-CSS artifact. Two pinned benchmark reports retain distinct scopes:
+the pre-TSX CPU baseline has 384 reference-equal frames; the later TSX/pointer run
+has 192. Both reports predate subsequent example changes and exclude presentation.
+At 2× the latter's Debug/Release medians are 8.58/1.66 ms for pointer feedback,
+6.68/1.38 ms for the counter and 16.85/10.23 ms for scrolling. Original hashes and
+limitations are retained in the [Showcase](../examples/native-showcase/README.md).
+
+The official browser dev host was opened alongside native preview. Chrome
+interaction checks cover Ukrainian editing/Undo/Redo, Tab, counter/radio/checkbox,
+select and JSON/generator/async output; the native result agrees. Explicit Arial
+registration resolves the browser fallback font mismatch. Browser root margins,
+height/scroll ownership and field box sizing still differ; native controls lack
+OS accessibility exposure. This is a local comparison, without a comparable
+input-to-present performance result or broader platform acceptance.
+
+P13a–P13c record future native GPU UI, typed application graphics and 3D-library
+port work. They add no implementation, dependency or Three.js compatibility.
+Current proposed continuation and acceptance are in the
+[UI checkpoint](development-plan.md#current-ui-checkpoint-and-proposed-continuation).
+
 ## 2026-11-02 — Browser dev/reload and scoped browser matrix verified
 
 Working tree after `abea3ac`: memory-only loopback browser development now includes

@@ -142,7 +142,7 @@ pub(super) fn paint_control(
     let (font, size) = font;
     for option in tree.select_options(id) {
         if tree
-            .computed(option, env)
+            .computed_read(option, env)
             .keys()
             .any(|property| !matches!(property, CssProperty::Display | CssProperty::Color))
         {
@@ -192,15 +192,7 @@ pub(super) fn paint_control(
         {
             None
         } else {
-            let mut mask =
-                Mask::new(surface.width(), surface.height()).ok_or(PaintError::Dimensions)?;
-            mask.fill_path(
-                &PathBuilder::from_rect(clip),
-                FillRule::Winding,
-                true,
-                Transform::from_scale(surface.scale, surface.scale),
-            );
-            Some(mask)
+            Some(surface.mask(clip)?)
         };
         let mut paint = Paint::default();
         paint.set_color(color);
@@ -234,7 +226,7 @@ pub(super) fn paint_menu(
         .select_options(id)
         .into_iter()
         .filter(|option| {
-            tree.computed(*option, env)
+            tree.computed_read(*option, env)
                 .get(&CssProperty::Display)
                 .is_none_or(|value| value != "none")
         })
@@ -294,7 +286,7 @@ pub(super) fn paint_menu(
     }
     let mut rows = Vec::new();
     let background = tree
-        .computed(id, env)
+        .computed_read(id, env)
         .get(&CssProperty::BackgroundColor)
         .and_then(|value| {
             if value == "currentcolor" {
@@ -327,9 +319,14 @@ pub(super) fn paint_menu(
             .element(*option)
             .is_none_or(|element| element.disabled());
         let highlighted = popup.active == Some(*option) && !disabled;
-        if highlighted {
+        let hovered = !disabled && tree.pointer_contains(tree.hovered.as_ref(), *option);
+        if highlighted || hovered {
             let mut paint = Paint::default();
-            paint.set_color_rgba8(40, 90, 180, 255);
+            if highlighted {
+                paint.set_color_rgba8(40, 90, 180, 255);
+            } else {
+                paint.set_color_rgba8(230, 240, 255, 255);
+            }
             if let Some(rect) = Rect::from_xywh(row.x, row.y, row.width, row.height) {
                 surface.fill_rect(rect, &paint, Transform::identity(), None);
             }

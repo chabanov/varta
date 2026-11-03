@@ -1,0 +1,151 @@
+{
+  "date": "2026-11-03",
+  "platform": "Darwin arm64",
+  "cssViewport": [
+    800,
+    600
+  ],
+  "entry": "main.tsx",
+  "timed": "Native frame preparation including RGB conversion and copy; excludes input turns, startup, presentation and pointer sampling wait.",
+  "pointerCycle": "hover, primary down, release, leave; no activation",
+  "oracleFrames": 192,
+  "wasmSha256": "562f283432b4926edfb8958790d53d61569fed8dda43be75e809ee207da0654c",
+  "hostSha256": {
+    "debug": "70be5ab6c11fcfcc3333e62d91f9834d22a76266f5571f26d15c2b503145ddb8",
+    "release": "978a446b4cce718c65beec56d59ec9d909033e3b918caa8b34f0c6a3746ffa6b"
+  },
+  "results": [
+    {
+      "profile": "debug",
+      "scenario": "pointer",
+      "scale": 1.0,
+      "samples": 16,
+      "first_ms": 41.490916999999996,
+      "median_ms": 8.139999,
+      "p95_ms": 9.553042000000001,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 3680 }"
+    },
+    {
+      "profile": "debug",
+      "scenario": "pointer",
+      "scale": 2.0,
+      "samples": 16,
+      "first_ms": 21.087166,
+      "median_ms": 8.580917,
+      "p95_ms": 9.577416,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 13680 }"
+    },
+    {
+      "profile": "debug",
+      "scenario": "click",
+      "scale": 1.0,
+      "samples": 16,
+      "first_ms": 37.453417,
+      "median_ms": 6.078709000000001,
+      "p95_ms": 6.942376,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 144, shaping_cache_misses: 3, glyph_cache_hits: 750, dirty_pixels: 962 }"
+    },
+    {
+      "profile": "debug",
+      "scenario": "click",
+      "scale": 2.0,
+      "samples": 16,
+      "first_ms": 18.974334,
+      "median_ms": 6.679167,
+      "p95_ms": 7.0378750000000005,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 144, shaping_cache_misses: 3, glyph_cache_hits: 750, dirty_pixels: 3128 }"
+    },
+    {
+      "profile": "debug",
+      "scenario": "scroll",
+      "scale": 1.0,
+      "samples": 16,
+      "first_ms": 39.658457999999996,
+      "median_ms": 10.229209,
+      "p95_ms": 10.842084,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 453600 }"
+    },
+    {
+      "profile": "debug",
+      "scenario": "scroll",
+      "scale": 2.0,
+      "samples": 16,
+      "first_ms": 18.979543,
+      "median_ms": 16.852249999999998,
+      "p95_ms": 18.036875000000002,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 1809600 }"
+    },
+    {
+      "profile": "release",
+      "scenario": "pointer",
+      "scale": 1.0,
+      "samples": 16,
+      "first_ms": 8.028209,
+      "median_ms": 1.110375,
+      "p95_ms": 1.4259169999999999,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 3680 }"
+    },
+    {
+      "profile": "release",
+      "scenario": "pointer",
+      "scale": 2.0,
+      "samples": 16,
+      "first_ms": 12.440666,
+      "median_ms": 1.6606670000000001,
+      "p95_ms": 2.01225,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 13680 }"
+    },
+    {
+      "profile": "release",
+      "scenario": "click",
+      "scale": 1.0,
+      "samples": 16,
+      "first_ms": 6.656125,
+      "median_ms": 0.952667,
+      "p95_ms": 1.309249,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 144, shaping_cache_misses: 3, glyph_cache_hits: 750, dirty_pixels: 962 }"
+    },
+    {
+      "profile": "release",
+      "scenario": "click",
+      "scale": 2.0,
+      "samples": 16,
+      "first_ms": 11.262125000000001,
+      "median_ms": 1.376416,
+      "p95_ms": 2.178416,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 144, shaping_cache_misses: 3, glyph_cache_hits: 750, dirty_pixels: 3128 }"
+    },
+    {
+      "profile": "release",
+      "scenario": "scroll",
+      "scale": 1.0,
+      "samples": 16,
+      "first_ms": 7.036916,
+      "median_ms": 5.024125000000001,
+      "p95_ms": 5.746791999999999,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 453600 }"
+    },
+    {
+      "profile": "release",
+      "scenario": "scroll",
+      "scale": 2.0,
+      "samples": 16,
+      "first_ms": 12.186458,
+      "median_ms": 10.227333,
+      "p95_ms": 10.914251,
+      "reference_equal": true,
+      "stats": "RenderStats { shaping_cache_hits: 147, shaping_cache_misses: 0, glyph_cache_hits: 749, dirty_pixels: 1809600 }"
+    }
+  ]
+}
