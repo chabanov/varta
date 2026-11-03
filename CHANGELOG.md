@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Native custom properties now resolve aliases and directed cycles per element
+  before inheritance, preserving quoted text and token boundaries. Nested/function/empty
+  fallbacks and case-insensitive variable functions are admitted consistently;
+  malformed custom values fail early and numeric notes are checked after
+  substitution. Resolved values are revalidated by snapshot, geometry and paint.
+  A shared dependency arena avoids recursive ownership and exponential cached
+  text; native per-value limits are checked before expansion. A WebKit
+  outside-cycle fallback discrepancy remains open.
+
+- Shared potential-cascade accounting bounds candidate rule/source work and
+  inherited variable discovery across live and detached nodes. Explicit
+  style-reading commands and final admission share one allowance; media, local
+  edits and equal focus do not discount it. Native cached rule costs and private
+  transaction-owned browser indices preserve atomic rejection and reclamation.
+
+- View insertion now enforces a shared component-depth ceiling for attached and
+  detached subtrees, including text leaves and reparenting. Excess depth rejects
+  the complete transaction at its insertion before external effects. Native
+  snapshot/accessibility projection, descendant naming and subtree text collection
+  use iterative work lists; the accepted boundary no longer requires a larger
+  host stack.
+
 - Stylesheet admission now bounds parsed expansion work per transaction and
   installed inventory before media-condition copies and browser CSSOM parsing.
   Native cascade uses incremental selector indices, borrowed declarations and

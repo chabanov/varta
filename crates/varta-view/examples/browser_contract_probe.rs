@@ -554,6 +554,203 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             B::new().stylesheet(1, "").finish(),
         ],
     ));
+    let depth = varta_common::view::DRAFT_MAX_TREE_DEPTH;
+    let depth_chain = |first: u32, count: usize, parent: Option<u32>| {
+        let mut batch = B::new();
+        for offset in 0..count as u32 {
+            let id = first + offset;
+            batch.create_element(id, Tag::Span);
+            if offset > 0 {
+                batch.insert(id - 1, id, 0);
+            } else if let Some(parent) = parent {
+                batch.insert(parent, id, 0);
+            }
+        }
+        batch.finish()
+    };
+    cases.push((
+        "tree-depth-attached",
+        vec![
+            depth_chain(2, depth, Some(1)),
+            B::new()
+                .set_title("rollback")
+                .create_text(9000, "too deep")
+                .insert(depth as u32 + 1, 9000, 0)
+                .remove(9000)
+                .finish(),
+            B::new()
+                .remove(depth as u32 + 1)
+                .create_text(9000, "exact boundary")
+                .insert(depth as u32, 9000, 0)
+                .finish(),
+        ],
+    ));
+    cases.push((
+        "tree-depth-detached",
+        vec![
+            depth_chain(2, depth / 2 + 1, None),
+            depth_chain(3 + depth as u32 / 2, depth / 2, Some(2 + depth as u32 / 2)),
+            B::new().insert(1, 2, 0).finish(),
+            B::new()
+                .create_element(9000, Tag::Span)
+                .insert(depth as u32 + 2, 9000, 0)
+                .finish(),
+            B::new().remove(depth as u32 + 2).insert(1, 2, 0).finish(),
+        ],
+    ));
+    let parent = 1000 + depth as u32 / 2 - 1;
+    cases.push((
+        "tree-depth-reparent",
+        vec![
+            depth_chain(2, depth / 2, Some(1)),
+            depth_chain(1000, depth / 2, Some(1)),
+            B::new().insert(parent, 2, 0).finish(),
+            B::new()
+                .create_element(2000, Tag::Span)
+                .insert(parent, 2000, 2)
+                .finish(),
+            B::new().set_title("rollback").insert(2000, 2, 0).finish(),
+            B::new().insert(1, 2, 1000).finish(),
+        ],
+    ));
+    let cascade_setup = |count: usize, source: &str, class: &str, attached: bool| {
+        let mut batch = B::new();
+        batch.stylesheet(1, source);
+        for id in 2..count as u32 + 2 {
+            batch.create_element(id, Tag::Button).set_class(id, class);
+            if attached {
+                batch.insert(1, id, 0);
+            }
+        }
+        batch
+    };
+    let potential = |count: usize, source: &str, class: &str| {
+        let weight = varta_common::view::DRAFT_STYLESHEET_NODE_WORK;
+        weight
+            + count
+                * (weight
+                    + class.len()
+                    + varta_common::view::stylesheet::parse(source)
+                        .unwrap()
+                        .iter()
+                        .map(|r| r.cascade_work())
+                        .sum::<usize>())
+    };
+    let cascade_limit = varta_common::view::DRAFT_MAX_CASCADE_WORK;
+    let simple = ".a{}".repeat(1337);
+    let exact_class = format!(
+        "a{}",
+        " ".repeat(cascade_limit - potential(128, &simple, "a"))
+    );
+    let mut setup = cascade_setup(128, &simple, "a", true);
+    setup.set_class(2, &exact_class);
+    cases.push((
+        "cascade-work-exact",
+        vec![
+            setup.finish(),
+            B::new()
+                .set_title("rollback")
+                .set_class(2, &format!("{exact_class} "))
+                .finish(),
+            B::new()
+                .remove(2)
+                .set_class(3, &format!("{exact_class} "))
+                .finish(),
+            B::new().stylesheet(1, "").finish(),
+        ],
+    ));
+    let compound = ".a,.a.b,.b{}".repeat(496);
+    let padded = format!(
+        "a a b{}",
+        " ".repeat(cascade_limit - potential(128, &compound, "a a b"))
+    );
+    let mut setup = cascade_setup(128, &compound, "a a b", true);
+    setup.set_class(2, &padded);
+    cases.push((
+        "cascade-work-anchors",
+        vec![
+            setup.finish(),
+            B::new()
+                .stylesheet(1, &format!("{compound}.a{{}}"))
+                .finish(),
+            B::new()
+                .stylesheet(1, "")
+                .stylesheet(2, ".unused{color:#abc}")
+                .finish(),
+            B::new().stylesheet(1, ".a{color:#123456}").finish(),
+        ],
+    ));
+    let moderate = ".a{}".repeat(100);
+    let reads = cascade_limit / potential(64, &moderate, "a");
+    let commands = |count: usize| {
+        let mut b = B::new();
+        for _ in 0..count {
+            b.command(2, Command::Focus, 0.0);
+        }
+        b.finish()
+    };
+    cases.push((
+        "cascade-work-commands",
+        vec![
+            cascade_setup(64, &moderate, "a", true).finish(),
+            commands(reads - 1),
+            commands(reads),
+            commands(reads + 1),
+            B::new().finish(),
+        ],
+    ));
+    let expanded = format!("{simple}.a{{}}");
+    cases.push((
+        "cascade-work-transient",
+        vec![
+            cascade_setup(128, &simple, "a", true).finish(),
+            B::new()
+                .stylesheet(1, &expanded)
+                .command(2, Command::Focus, 0.0)
+                .stylesheet(1, "")
+                .finish(),
+            B::new().stylesheet(1, &expanded).stylesheet(1, "").finish(),
+        ],
+    ));
+    let variables = ".a{color:var(--tone)}".repeat(100);
+    let mut setup = cascade_setup(64, &variables, "a", true);
+    setup.stylesheet(2, ":root{--tone:#abc}");
+    let mut chain = B::new();
+    for id in 3..66 {
+        chain.insert(id - 1, id, 0);
+    }
+    let mut without = B::new();
+    without.stylesheet(2, "");
+    for id in 3..66 {
+        without.insert(id - 1, id, 0);
+    }
+    cases.push((
+        "cascade-work-inherit",
+        vec![
+            setup.finish(),
+            chain.finish(),
+            without.finish(),
+            B::new().stylesheet(2, ":root{--tone:#abc}").finish(),
+            B::new().finish(),
+        ],
+    ));
+    let inactive = format!(
+        "@media (min-width:999999px){{{}}}",
+        ".a.absent:checked{}".repeat(1338)
+    );
+    let mut enable = B::new();
+    for id in 2..130 {
+        enable.set_class(id, "a");
+    }
+    cases.push((
+        "cascade-work-detached-inactive",
+        vec![
+            cascade_setup(128, &expanded, "a", false).finish(),
+            cascade_setup(128, &inactive, "unrelated", false).finish(),
+            enable.finish(),
+            B::new().finish(),
+        ],
+    ));
     let stylesheet_sources = vec![
         ".a{}".to_owned(),
         ":root { --c: \"界\" } .a.a:checked, .b { color:#abc }".to_owned(),
@@ -566,11 +763,107 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         medium,
         huge,
         exact,
+        ":root{--x:rgb(var(--r),20,30)}.a{color:var(--x,rgb(10,20,30));padding:var(--gap,1px 2px)}"
+            .to_owned(),
+        ":root{--x:VAR(--A)}.a{opacity:VAR(--alpha,2)}".to_owned(),
+        ":root{--x:var(no-name)}".to_owned(),
+        ":root{--x:var(--x,)}".to_owned(),
+        ":root{--x:rgb(1,2,3}".to_owned(),
+        ":root{--x:#}".to_owned(),
     ];
     let stylesheet_checks=stylesheet_sources.into_iter().map(|source|{
         let parsed=varta_common::view::stylesheet::parse_with_work_limit(&source,usize::MAX);
-        serde_json::json!({"source":source,"valid":parsed.is_ok(),"work":parsed.as_ref().ok().map(|sheet|sheet.work),
+        serde_json::json!({"source":source,"valid":parsed.is_ok(),"work":parsed.as_ref().ok().map(|sheet|sheet.work),"ruleCosts":parsed.as_ref().ok().map(|sheet|sheet.rules.iter().map(|rule|rule.cascade_work()).collect::<Vec<_>>()),
             "limit":matches!(parsed.as_ref().err(),Some(error) if error.violation==varta_common::view::stylesheet::Violation::WorkLimit)})
+    }).collect::<Vec<_>>();
+    let variable_sources = [
+        (
+            "empty-splice",
+            ".target{width:var(--unused,)auto;padding:var(--a,)var(--b,)var(--c,)var(--d,)var(--e,) 2px}",
+        ),
+        (
+            "cycle-escape",
+            ":root{--a:var(--c,#abc);--b:var(--c,var(--a));--c:var(--b)}.target{color:var(--a,#789)}",
+        ),
+        (
+            "invalid-prefix-cycle",
+            ":root{--a:var(--missing) var(--b);--b:var(--a,#abc)}.target{color:var(--b,#789)}",
+        ),
+        (
+            "empty-fallback",
+            ":root{--empty:var(--missing,)}.target{padding:var(--gap,) 2px;color:var(--empty,#abc);border:var(--border-width,) solid var(--border-color,)}",
+        ),
+        (
+            "wide-fallback",
+            ":root{--tone:#123}.parent{--tone:var(--missing,inherit)}.target{color:var(--tone,#789)}",
+        ),
+        (
+            "cross-ancestor",
+            ":root{--a:#123}.parent{--b:var(--a)}.target{--a:var(--b);color:var(--a)}",
+        ),
+        (
+            "aliases",
+            ":root{--base:#123;--alias:var(--base)}.target{--base:#456;color:var(--alias)}",
+        ),
+        (
+            "masked-parent",
+            ":root{--base:#123;--alias:var(--base)}.parent{--alias:var(--missing)}.target{color:var(--alias,#abc)}",
+        ),
+        (
+            "cycles",
+            ":root{--a:var(--b,#123);--b:var(--a,#456);--safe:#111;--self:var(--safe,var(--self));--c:var(--a,#abc)}.target{color:var(--c);background-color:var(--self,#789)}",
+        ),
+        (
+            "functions-fallbacks",
+            ":root{--red:10;--alpha:.5;--tone:rgb(var(--red),20,30)}.target{color:var(--missing,var(--tone));padding:var(--gap,1px 2px);opacity:var(--alpha,2)}",
+        ),
+        (
+            "invalid-typed-values",
+            ":root{--bad:-1px;--alpha:2}.target{padding:5px;padding:var(--bad,3px);opacity:.25;opacity:var(--alpha,.75)}",
+        ),
+        (
+            "token-boundaries",
+            ":root{--n:10;--width:var(--n)px;--base:#123;--color:var(--base)abc}.target{width:9px;width:var(--width);color:#abc;color:var(--color)}",
+        ),
+        (
+            "quoted-and-case",
+            ":root{--literal:\"var(--missing)\";--Tone:#123;--tone:#456;--alias:VAR(--Tone)}.target{font-family:var(--literal);color:VAR(--alias);background-color:var(--tone)}",
+        ),
+        (
+            "wide-inherit",
+            ":root{--tone:#123}.target{--tone:inherit;color:var(--tone,#abc)}",
+        ),
+        (
+            "wide-unset",
+            ":root{--tone:#123}.target{--tone:unset;color:var(--tone,#abc)}",
+        ),
+        (
+            "wide-revert",
+            ":root{--tone:#123}.target{--tone:revert;color:var(--tone,#abc)}",
+        ),
+        (
+            "wide-revert-layer",
+            ":root{--tone:#123}.target{--tone:revert-layer;color:var(--tone,#abc)}",
+        ),
+        (
+            "wide-initial",
+            ":root{--tone:#123}.target{--tone:initial;color:var(--tone,#abc)}",
+        ),
+        (
+            "display-case",
+            ":root{--display:NoNe}.target{display:var(--display)}",
+        ),
+        (
+            "border-fallback",
+            ":root{--bad:-1px}.target{border:var(--missing,2px solid #abc);padding:9px;padding:var(--bad)}",
+        ),
+    ];
+    let variable_cases=variable_sources.into_iter().map(|(name,source)|{
+        let mut view=View::default();let mut batch=B::new();
+        batch.stylesheet(1,source).create_element(2,Tag::Div).set_class(2,"parent").set_style(2,CssProperty::Width,"200px").insert(1,2,0)
+            .create_element(3,Tag::Span).set_class(3,"target").insert(2,3,0);
+        let bytes=batch.finish();view.commit(&bytes,false,&mut Denied).unwrap();let snapshot=view.snapshot();
+        serde_json::json!({"name":name,"batch":bytes,"style":snapshot["tree"]["children"][0]["children"][0].get("style").cloned().unwrap_or_else(||serde_json::json!({}))})
     }).collect::<Vec<_>>();
     let observations=cases.into_iter().map(|(name,batches)|{
         let mut view=View::default();let mut broker=Denied;
@@ -584,10 +877,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(varta_view::ViewError::Invalid {operation, violation:varta_view::Violation::RadioWorkLimit}) => (true, *operation),
                 _ => (false, None),
             };
+            let (depth_budget,depth_operation)=match result.as_ref().err(){
+                Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::TreeDepthLimit})=>(true,*operation),_ =>(false,None)};
+            let (cascade_budget,cascade_operation)=match result.as_ref().err(){
+                Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::CascadeWorkLimit})=>(true,*operation),_ =>(false,None)};
             let retained_budget = matches!(result.as_ref().err(), Some(varta_view::ViewError::Invalid {violation:varta_view::Violation::RetainedTextLimit,..}));
             let (stylesheet_budget,stylesheet_operation)=match result.as_ref().err(){
                 Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::StylesheetWorkLimit})=>(true,*operation),_ =>(false,None)};
-            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"radioBudget":radio_budget,"radioOperation":radio_operation,"retainedBudget":retained_budget,"stylesheetBudget":stylesheet_budget,"stylesheetOperation":stylesheet_operation,"snapshot":view.snapshot()})
+            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"radioBudget":radio_budget,"radioOperation":radio_operation,"cascadeBudget":cascade_budget,"cascadeOperation":cascade_operation,"depthBudget":depth_budget,"depthOperation":depth_operation,"retainedBudget":retained_budget,"stylesheetBudget":stylesheet_budget,"stylesheetOperation":stylesheet_operation,"snapshot":view.snapshot()})
         }).collect::<Vec<_>>();
         serde_json::json!({"name":name,"batches":batches,"results":results})
     }).collect::<Vec<_>>();
@@ -805,7 +1102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let selects = serde_json::json!({"batch":choice_batch,"steps":steps});
     let output = serde_json::to_vec(
-        &serde_json::json!({"cases":observations,"stylesheetChecks":stylesheet_checks,"css":css,"events":events,"flex":flex,"checkables":checkables,"selects":selects}),
+        &serde_json::json!({"cases":observations,"stylesheetChecks":stylesheet_checks,"variableCases":variable_cases,"css":css,"events":events,"flex":flex,"checkables":checkables,"selects":selects}),
     )?;
     if let Some(path) = std::env::args_os().nth(1) {
         std::fs::write(path, output)?;

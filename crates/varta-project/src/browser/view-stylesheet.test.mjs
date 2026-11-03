@@ -37,7 +37,7 @@ test('repeated replacement shares a transaction parsing allowance',()=>{
 test('keyword-only property grammars admit a whole var component',()=>{
  assert.deepEqual(checkStylesheet(':root { --mode:none } .a { display:var(--mode) }',V).errors,[]);
  assert.deepEqual(checkStylesheet('.a { display:var(--mode, none) }',V).errors,[]);
- assert(checkStylesheet('.a { display:var(--mode,) }',V).errors.length);
+ assert.deepEqual(checkStylesheet('.a { display:var(--mode,) }',V).errors,[]);
 });
 
 test('empty declaration placement matches the native stylesheet grammar',()=>{
@@ -47,9 +47,10 @@ test('empty declaration placement matches the native stylesheet grammar',()=>{
 
 test('ambiguous repeated variable tracks reject an invalid tail without exponential backtracking',()=>{
  const module=new URL('./view-css.mjs',import.meta.url).href,registryModule=new URL('../../../varta-common/browser/registry.mjs',import.meta.url).href;
- const code=`import {checkStyleDeclaration} from ${JSON.stringify(module)};import {registry} from ${JSON.stringify(registryModule)};
- const valid='var(--x) '.repeat(24).trim();checkStyleDeclaration(registry.view,'grid-template-columns',valid);
- let rejected=false;try{checkStyleDeclaration(registry.view,'grid-template-columns',valid+' bogus');}catch{rejected=true;}
+ const code=`import {createValueMatcher} from ${JSON.stringify(module)};import {registry} from ${JSON.stringify(registryModule)};
+ const check=createValueMatcher(Object.fromEntries(registry.view.css.map(row=>[row.name,row.grammar])));
+ const valid='var(--x) '.repeat(24).trim();check('grid-template-columns',valid);
+ let rejected=false;try{check('grid-template-columns',valid+' bogus');}catch{rejected=true;}
  if(!rejected)throw Error('invalid tail admitted');console.log('checked');`;
  const result=spawnSync(process.execPath,['--input-type=module','-e',code],{encoding:'utf8',timeout:10000});
  assert.equal(result.error,undefined);assert.equal(result.status,0,result.stderr);assert.equal(result.stdout.trim(),'checked');

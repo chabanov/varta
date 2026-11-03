@@ -21,7 +21,7 @@ export function createFontNamespace(prefix, families = []) {
       case 'string': return JSON.stringify(family(token.value));
       case 'ident': return family(token.value, false);
       case 'function': {
-        if (token.name === 'var') {
+        if (token.name.toLowerCase() === 'var') {
           const [name, ...fallback] = token.args;
           if (name?.kind !== 'ident' || !name.value.startsWith('--')) throw new TypeError('invalid font variable');
           return `var(${variable(name.value)} ${tokens(fallback)})`;

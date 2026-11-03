@@ -25,6 +25,7 @@ mod style;
 mod text;
 mod tree;
 
+mod variables;
 mod wire;
 
 pub use events::{
@@ -139,6 +140,8 @@ pub enum Violation {
     InvalidFilter,
     #[error("event kind cannot be listened to")]
     NotListenable,
+    #[error("view tree exceeds its component depth limit")]
+    TreeDepthLimit,
     #[error("too many live nodes")]
     TooManyNodes,
     #[error("cannot compute geometry for scroll_into_view")]
@@ -157,6 +160,8 @@ pub enum Violation {
     InvalidStylesheet,
     #[error("stylesheets exceed the stylesheet byte limit")]
     StylesheetsTooLarge,
+    #[error("potential cascade reads exceed their transaction limit")]
+    CascadeWorkLimit,
     #[error("stylesheet parsing or inventory work exceeds its limit")]
     StylesheetWorkLimit,
     #[error("request id {0} is zero or already pending")]

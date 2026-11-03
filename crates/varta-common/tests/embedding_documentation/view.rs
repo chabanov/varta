@@ -99,6 +99,10 @@ fn layout() -> String {
             ),
         ),
         (
+            "Placeholder: tree component depth".into(),
+            view::DRAFT_MAX_TREE_DEPTH.to_string(),
+        ),
+        (
             "Placeholder: value bytes / stylesheet bytes / pending events".into(),
             format!(
                 "{} / {} / {}",
@@ -134,6 +138,10 @@ fn layout() -> String {
                 view::DRAFT_MAX_RADIO_WORK,
                 view::DRAFT_RADIO_NODE_WORK
             ),
+        ),
+        (
+            "Placeholder: potential cascade read work".into(),
+            view::DRAFT_MAX_CASCADE_WORK.to_string(),
         ),
         (
             "Placeholder: parsed stylesheet work / syntax node units".into(),

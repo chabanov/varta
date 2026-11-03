@@ -11684,7 +11684,13 @@ tree (tags, attributes, classes, computed styles, field values and edit
 counters, listeners), the accessibility tree (roles, names, states), title,
 focus, stylesheets and the simulated clipboard, opened URLs and prompt count.
 The cascade orders sheets by id, then specificity, then source order; inline
-styles win; custom properties inherit and `var()` is substituted; other
+styles win; custom properties resolve through an iterative dependency graph at
+each element before inheritance. The native resolver invalidates active dependency
+cycles, evaluates only selected fallbacks, freezes inherited aliases, preserves token
+boundaries/quoted text and revalidates selected values for geometry and paint.
+Arena indices share resolved fragments without recursively owned dependency
+chains; native per-value limits are checked before materialization. Aggregate
+output and cross-engine expansion limits remain open. Other
 properties report their cascaded value. Ordinary snapshots do not include layout
 rectangles. An experimental separate `layout_boxes` API uses pinned Taffy to
 compute a bounded subset of div and semantic block/flex/grid geometry and
@@ -13117,6 +13123,19 @@ limits. Transactions also meter radio owner/group scans, compared UTF-8 name
 bytes and insertion-subtree visits through the shared registry. The scan charges
 ignore local checked state and stale edit counters so an undelivered edit cannot
 change Worker/DOM admission. Failure discards the copied tree and any effects.
+Every insertion checks the shared component depth ceiling for the complete moved
+subtree, including detached nodes and text leaves, before external effects. A
+later repair in the same batch does not admit a transient excessive depth. Native
+snapshot/accessibility construction, subtree text and accessible-name descendants
+use iterative work lists instead of depth-proportional native calls.
+Before explicit style-reading commands and at final admission, a shared potential
+cascade allowance charges every live node's class/inline sources and anchored
+candidate rule construction costs, ignoring media/pseudo/local-edit state. Raw
+var() candidates additionally charge their inherited ancestor scope when custom
+properties exist. A transaction-owned incremental JS anchor index and cached
+native rule costs avoid reparsing or rebuilding all sheets for each read. Rejected
+changes discard these indices with the tree. This is a matching/inheritance
+work envelope; derived output and repeated accessibility work remain separate.
 Snapshots cannot mutate the authority. Final retained-text accounting covers
 UTF-8 source slots plus sticky worst-case UTF-8 reservations for live field values.
 Capacity follows surviving nodes across type changes, so deferred edits and stale

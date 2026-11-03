@@ -139,6 +139,39 @@ try{
           cssGuard.app.apply(encodeViewBatch([{name:'stylesheet',sheet:1,text:'.a { color:#abc }'},{name:'set_class',node:span,text:'a'}]));
           check(getComputedStyle(cssGuard.app.inspectNode(span)).color==='rgb(170, 187, 204)','small stylesheet succeeds after work refusal');
         }finally{cssGuard.app.close();cssGuard.container.remove();}
+        const depthGuard=project('<span>A</span>');
+        try{
+          const operations=[];
+          for(let i=0;i<view.limits.treeDepth;i++)operations.push({name:'create_element',node:1000+i,tag:'span'},
+            {name:'insert',parent:i===0?1:999+i,node:1000+i,before:0});
+          depthGuard.app.apply(encodeViewBatch(operations));
+          const leaf=999+view.limits.treeDepth;
+          check(depthGuard.app.inspectNode(leaf).isConnected,'exact component depth admitted by DOM');
+          const before=JSON.stringify(depthGuard.app.snapshot());let failure;
+          try{depthGuard.app.apply(encodeViewBatch([{name:'set_title',text:'after'},{name:'create_text',node:9000,text:'excess'},
+            {name:'insert',parent:leaf,node:9000,before:0}]));}catch(error){failure=error;}
+          check(failure?.rule==='tree depth budget'&&failure.operation===2,'tree depth refusal position');
+          check(JSON.stringify(depthGuard.app.snapshot())===before&&depthGuard.root.textContent==='A','tree depth rollback');
+          depthGuard.app.apply(encodeViewBatch([{name:'remove',node:1000},{name:'set_title',text:'recovered'}]));
+          check(depthGuard.app.snapshot().title==='recovered','tree depth recovery');
+        }finally{depthGuard.app.close();depthGuard.container.remove();}
+        const cascadeGuard=project('<button>Trigger</button>');
+        try{
+          const before=JSON.stringify(cascadeGuard.app.snapshot()),trigger=cascadeGuard.app.snapshot().nodes.find(n=>n.tag==='button').id;
+          const operations=[{name:'set_title',text:'after'},{name:'stylesheet',sheet:2,text:'.a{}'.repeat(1338)}];
+          for(let i=0;i<128;i++)operations.push({name:'create_element',node:1000+i,tag:'span'},
+            {name:'set_class',node:1000+i,text:'a'},{name:'insert',parent:1,node:1000+i,before:0});
+          const commandAt=operations.length;
+          operations.push({name:'command',node:trigger,command:'focus',argument:0},{name:'stylesheet',sheet:2,text:''});
+          let commandFailure;try{cascadeGuard.app.apply(encodeViewBatch(operations));}catch(error){commandFailure=error;}
+          check(commandFailure?.rule==='cascade work budget'&&commandFailure.operation===commandAt,'cascade refused before a transient command read');
+          let finalFailure;try{cascadeGuard.app.apply(encodeViewBatch(operations.slice(0,commandAt)));}catch(error){finalFailure=error;}
+          check(finalFailure?.rule==='cascade work budget'&&finalFailure.operation===undefined,'final cascade inventory refusal');
+          check(JSON.stringify(cascadeGuard.app.snapshot())===before&&cascadeGuard.root.textContent==='Trigger','cascade refusal preserves DOM/model');
+          operations[1].text='.a{color:#abc}';
+          cascadeGuard.app.apply(encodeViewBatch(operations.slice(0,commandAt+1)));
+          check(cascadeGuard.app.snapshot().title==='after'&&getComputedStyle(cascadeGuard.app.inspectNode(1000)).color==='rgb(170, 187, 204)','cascade smaller retry uses a fresh rule index');
+        }finally{cascadeGuard.app.close();cascadeGuard.container.remove();}
         return checks;
       });
       await page.goto(base+'/uarp-console/mockups/conformance/conformance.html');

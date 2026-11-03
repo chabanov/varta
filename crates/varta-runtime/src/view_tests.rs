@@ -1687,3 +1687,129 @@ fn narrowing_reaches_tsx_holes() {
     assert_eq!(children[1]["tag"], "span");
     assert_eq!(text_of(&children[1]), "plain");
 }
+
+#[test]
+fn tree_depth_exhaustion_is_fatal_before_effects_and_retains_the_prior_view() {
+    let source = format!(
+        r#"
+export function main():void {{
+  const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id_attr},'trigger');
+  View.on(button,{click},(event:ViewEvent):void=>{{
+    let parent={root};const count={depth}+(event.seq===0?1:2);
+    for(let i=0;i<count;i++){{const node=View.node();View.createElement(node,{span});View.insert(parent,node,0);parent=node;}}
+    View.setTitle('after');
+    try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+  }},0,0,0,0);
+  View.insert({root},button,0);View.setTitle('before');View.commit();
+}}
+"#,
+        root = view::ROOT_NODE,
+        button = view::Tag::Button.code(),
+        span = view::Tag::Span.code(),
+        id_attr = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code(),
+        depth = view::DRAFT_MAX_TREE_DEPTH
+    );
+    let bytes = compile(&source);
+    let mut result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(result.report.failure.take().expect("fatal tree depth")),
+        varta_view::Violation::TreeDepthLimit
+    );
+    assert!(
+        result.report.output.lines.is_empty(),
+        "{:?}",
+        result.report.output.lines
+    );
+    assert_eq!(result.commits, 1);
+    let snapshot = result.snapshot.expect("retained view");
+    assert_eq!(snapshot["title"], "before");
+    assert_eq!(snapshot["tree"]["children"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn cascade_read_exhaustion_is_fatal_before_transient_state_can_be_repaired() {
+    let source = format!(
+        r#"
+export function main():void {{
+  const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id_attr},'trigger');
+  View.on(button,{click},(event:ViewEvent):void=>{{
+    const count=event.seq===0?1338:1339;View.stylesheet(1,'.a{{}}'.repeat(count));
+    for(let i=0;i<128;i++){{const node=View.node();View.createElement(node,{span});View.setClass(node,'a');View.insert({root},node,0);}}
+    View.command(button,{focus},0);View.stylesheet(1,'');View.setTitle('after');
+    try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+  }},0,0,0,0);
+  View.insert({root},button,0);View.setTitle('before');View.commit();
+}}
+"#,
+        root = view::ROOT_NODE,
+        button = view::Tag::Button.code(),
+        span = view::Tag::Span.code(),
+        id_attr = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code(),
+        focus = view::Command::Focus.code()
+    );
+    let bytes = compile(&source);
+    let mut result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(result.report.failure.take().expect("fatal cascade work")),
+        varta_view::Violation::CascadeWorkLimit
+    );
+    assert!(
+        result.report.output.lines.is_empty(),
+        "{:?}",
+        result.report.output.lines
+    );
+    assert_eq!(result.commits, 1);
+    let snapshot = result.snapshot.expect("retained view");
+    assert_eq!(snapshot["title"], "before");
+    assert_eq!(snapshot["tree"]["children"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn compiled_variable_scopes_resolve_aliases_cycles_and_numeric_fallbacks_across_turns() {
+    let initial = ":root{--base:#123;--alias:var(--base);--alpha:.5}.target{--base:#abc;color:VAR(--alias);padding:var(--gap,1px 2px);margin:var(--missing,) 3px;opacity:var(--alpha,2)}";
+    let changed = ":root{--base:#456;--alias:var(--base);--alpha:.5;--a:var(--b);--b:var(--a)}.target{--base:#abc;color:VAR(--alias);background-color:var(--a,#789);padding:var(--gap,1px 2px);margin:var(--missing,) 3px;opacity:var(--alpha,2)}";
+    let source = format!(
+        r#"
+export function main():void {{
+ const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id_attr},'trigger');View.setClass(button,'target');
+ View.stylesheet(1,{initial:?});
+ View.on(button,{click},(event:ViewEvent):void=>{{View.stylesheet(1,{changed:?});View.setTitle('after');View.commit();}},0,0,0,0);
+ View.insert({root},button,0);View.setTitle('before');View.commit();
+}}
+"#,
+        button = view::Tag::Button.code(),
+        id_attr = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code(),
+        root = view::ROOT_NODE
+    );
+    let bytes = compile(&source);
+    let result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert!(
+        result.report.failure.is_none(),
+        "{:?}",
+        result.report.failure
+    );
+    assert_eq!(result.commits, 2);
+    let snapshot = result.snapshot.expect("variable frame");
+    let style = &snapshot["tree"]["children"][0]["style"];
+    assert_eq!(snapshot["title"], "after");
+    assert_eq!(style["color"], "#456");
+    assert_eq!(style["background-color"], "#789");
+    assert_eq!(style["padding"], "1px 2px");
+    assert_eq!(style["opacity"], ".5");
+    assert_eq!(style["margin"], "3px");
+}

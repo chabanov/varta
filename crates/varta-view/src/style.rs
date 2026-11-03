@@ -41,48 +41,6 @@ pub(crate) fn parse(
     varta_common::view::stylesheet::parse_with_work_limit(text, allowance)
 }
 
-/// Substitute `var(--name)` and `var(--name, fallback)` with the custom
-/// properties in scope; `None` when a referenced property is missing and
-/// has no fallback (the declaration is then invalid at computed-value time).
-pub(crate) fn substitute(value: &str, custom: &BTreeMap<String, String>) -> Option<String> {
-    let mut out = String::new();
-    let mut rest = value;
-    while let Some(start) = rest.find("var(") {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + "var(".len()..];
-        let end = after.find(')')?;
-        let inner = &after[..end];
-        let (name, fallback) = match inner.split_once(',') {
-            Some((name, fallback)) => (name.trim(), Some(fallback.trim())),
-            None => (inner.trim(), None),
-        };
-        let name = name.strip_prefix("--")?;
-        out.push_str(custom.get(name).map(String::as_str).or(fallback)?);
-        rest = &after[end + 1..];
-    }
-    out.push_str(rest);
-    Some(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn var_substitution_uses_fallbacks() {
-        let custom = BTreeMap::from([("fg".to_string(), "#111".to_string())]);
-        assert_eq!(
-            substitute("1px solid var(--fg)", &custom).as_deref(),
-            Some("1px solid #111")
-        );
-        assert_eq!(
-            substitute("var(--bg, #fff)", &custom).as_deref(),
-            Some("#fff")
-        );
-        assert_eq!(substitute("var(--bg)", &custom), None);
-    }
-}
-
 /// Rule anchors preserve the shared matcher's semantics, including comma
 /// specificity. Each rule is considered once even with duplicate class names.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -90,11 +48,24 @@ pub(crate) struct RuleIndex {
     roots: Vec<usize>,
     classes: BTreeMap<String, Vec<usize>>,
     pub has_custom: bool,
+    pub costs: Vec<RuleCost>,
+}
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RuleCost {
+    pub work: usize,
+    pub variables: bool,
 }
 impl RuleIndex {
     pub fn new(rules: &[Rule]) -> Self {
         let mut out = Self::default();
         for (index, rule) in rules.iter().enumerate() {
+            out.costs.push(RuleCost {
+                work: rule.cascade_work(),
+                variables: rule
+                    .declarations
+                    .iter()
+                    .any(|(_, value)| varta_common::view::css::contains_variable(value)),
+            });
             out.has_custom |= rule
                 .declarations
                 .iter()
@@ -122,7 +93,7 @@ pub(crate) struct Variables<'a> {
     tree: &'a crate::tree::Tree,
     id: u32,
     environment: &'a Environment,
-    custom: std::cell::OnceCell<BTreeMap<String, String>>,
+    custom: std::cell::OnceCell<crate::variables::Scope<'a>>,
 }
 impl<'a> Variables<'a> {
     pub fn new(tree: &'a crate::tree::Tree, id: u32, environment: &'a Environment) -> Self {
@@ -133,15 +104,21 @@ impl<'a> Variables<'a> {
             custom: std::cell::OnceCell::new(),
         }
     }
+    pub fn property(
+        &self,
+        property: varta_common::view::CssProperty,
+        value: &str,
+    ) -> Option<String> {
+        let result = self.substitute(value)?;
+        varta_common::view::css::property_value(property, &result).then_some(result)
+    }
     pub fn substitute(&self, value: &str) -> Option<String> {
-        if !value.contains("var(") {
+        if !varta_common::view::css::contains_variable(value) {
             return Some(value.to_owned());
         }
-        substitute(
-            value,
-            self.custom
-                .get_or_init(|| self.tree.custom_properties(self.id, self.environment)),
-        )
+        self.custom
+            .get_or_init(|| self.tree.custom_properties(self.id, self.environment))
+            .substitute(value)
     }
 }
 

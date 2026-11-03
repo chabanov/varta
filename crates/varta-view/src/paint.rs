@@ -403,7 +403,7 @@ fn border_color(
     let mut values = std::array::from_fn::<_, 4, _>(|_| "currentcolor".to_owned());
     let variables = style::Variables::new(tree, id, env);
     let set = |values: &mut [String; 4], property, raw: &str, sides: &[u8]| {
-        let substituted = variables.substitute(raw);
+        let substituted = variables.property(property, raw);
         let value = substituted.as_deref().map_or("currentcolor", |v| {
             if property == CssProperty::BorderColor {
                 v
@@ -458,7 +458,7 @@ fn outline(
         if let Name::Property(property) = name {
             let property = *property;
             for component in outline_components(property) {
-                values.insert(*component, (property, variables.substitute(raw)));
+                values.insert(*component, (property, variables.property(property, raw)));
             }
         }
     }
@@ -469,7 +469,7 @@ fn outline(
         .values
         .iter()
     {
-        values.insert(*component, (*property, variables.substitute(raw)));
+        values.insert(*component, (*property, variables.property(*property, raw)));
     }
     let get = |component| {
         values
@@ -1281,7 +1281,7 @@ fn rasterize_inner(
         let properties = tree.computed(id, &env);
         if properties
             .get(&CssProperty::Display)
-            .is_some_and(|v| v == "none")
+            .is_some_and(|v| v.eq_ignore_ascii_case("none"))
         {
             continue;
         }

@@ -155,3 +155,28 @@ test('Worker rejects excessive stylesheet expansion before sending any batch',as
   commit([{name:'stylesheet',sheet:1,text:'.a { color:#abc }'}]);
   view.receive({type:'view_ack',id:1});await view.flush();assert.equal(messages.length,1);view.close();
 });
+
+
+test('Worker rejects excessive tree depth before posting a batch and retains the prior model',async()=>{
+ const {view,commit,messages}=state();
+ commit([{name:'set_title',text:'before'}]);view.receive({type:'view_ack',id:messages[0].id});await view.flush();view.begin();
+ const before=view.model.snapshot(),ops=[{name:'set_title',text:'after'}];
+ for(let i=0;i<=registry.view.limits.treeDepth;i++)ops.push({name:'create_element',node:i+2,tag:'span'},
+   {name:'insert',parent:i+1,node:i+2,before:0});
+ assert.throws(()=>commit(ops),e=>e.rule==='tree depth budget'&&e.operation===2*(registry.view.limits.treeDepth+1));
+ assert.equal(messages.length,1);assert.deepEqual(view.model.snapshot(),before);
+ commit([{name:'set_title',text:'recovered'}]);view.receive({type:'view_ack',id:messages[1].id});await view.flush();
+ assert.equal(view.model.snapshot().title,'recovered');view.close();
+});
+
+
+test('Worker rejects a transient excessive cascade before commands and before posting any batch',async()=>{
+ const {view,commit,messages}=state();commit([{name:'set_title',text:'before'},{name:'create_element',node:2,tag:'button'},
+ {name:'insert',parent:1,node:2,before:0}]);view.receive({type:'view_ack',id:messages[0].id});await view.flush();view.begin();
+ const before=view.model.snapshot(),ops=[{name:'stylesheet',sheet:1,text:'.a{}'.repeat(1338)}];
+ for(let id=3;id<131;id++)ops.push({name:'create_element',node:id,tag:'span'},{name:'set_class',node:id,text:'a'},{name:'insert',parent:1,node:id,before:0});
+ const at=ops.length;ops.push({name:'command',node:2,command:'focus',argument:0},{name:'stylesheet',sheet:1,text:''});
+ assert.throws(()=>commit(ops),e=>e.rule==='cascade work budget'&&e.operation===at);
+ assert.equal(messages.length,1);assert.deepEqual(view.model.snapshot(),before);
+ commit([]);view.receive({type:'view_ack',id:messages[1].id});await view.flush();view.close();
+});

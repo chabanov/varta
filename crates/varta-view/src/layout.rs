@@ -335,7 +335,7 @@ pub(crate) fn border_widths(
         if components.is_empty() {
             continue;
         }
-        let value = variables.substitute(raw);
+        let value = variables.property(property, raw);
         for (side, is_style) in components {
             let (width, present) = match &value {
                 Some(value) => {
@@ -351,7 +351,7 @@ pub(crate) fn border_widths(
         }
     }
     for (&(side, is_style), (property, raw)) in &element.border_inline {
-        let (width, present) = match variables.substitute(raw) {
+        let (width, present) = match variables.property(*property, raw) {
             Some(value) => {
                 border_component(*property, &value).ok_or(LayoutError::Unsupported(id))?
             }
@@ -406,7 +406,7 @@ fn layout_properties(
         );
     let mut result = BTreeMap::new();
     for (property, value) in declarations {
-        let Some(value) = variables.substitute(value) else {
+        let Some(value) = variables.property(property, value) else {
             let affected: &[CssProperty] = match property {
                 CssProperty::Margin => &[
                     CssProperty::MarginTop,
@@ -462,7 +462,7 @@ fn layout_properties(
         }
     }
     for (side, (source, raw, index)) in &element.layout_inline {
-        let Some(value) = variables.substitute(raw) else {
+        let Some(value) = variables.property(*source, raw) else {
             result.remove(side);
             continue;
         };
@@ -666,7 +666,7 @@ fn build(
         && tree
             .computed(id, env)
             .get(&CssProperty::Display)
-            .is_some_and(|value| value == "none")
+            .is_some_and(|value| value.eq_ignore_ascii_case("none"))
     {
         let hidden = engine
             .new_leaf(Style {
@@ -1151,7 +1151,7 @@ pub(crate) fn geometry_and_text(
             && tree
                 .computed(id, &layout_env)
                 .get(&CssProperty::Display)
-                .is_some_and(|value| value == "none")
+                .is_some_and(|value| value.eq_ignore_ascii_case("none"))
         {
             continue;
         }

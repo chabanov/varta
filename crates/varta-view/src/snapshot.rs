@@ -7,16 +7,18 @@ use serde_json::{Map, Value, json};
 use varta_common::view::{Attribute, ROOT_NODE, Tag};
 
 pub(crate) fn snapshot(tree: &Tree, environment: &Environment, platform: &Effects) -> Value {
-    json!({
+    let mut out = json!({
         "title": tree.title,
         "focus": tree.focus,
-        "tree": node(tree, ROOT_NODE, environment),
-        "accessibility": accessibility_root(tree, environment),
         "stylesheets": tree.sheets.iter().map(|(id, sheet)| json!({"id": id, "text": sheet.text})).collect::<Vec<_>>(),
         "clipboard": platform.clipboard,
         "opened": platform.opened,
         "prompts": platform.prompts,
-    })
+    });
+    // Insert already-built values without serde recursively reserializing them.
+    out["tree"] = node_tree(tree, environment);
+    out["accessibility"] = accessibility_root(tree, environment);
+    out
 }
 
 /// Project explicit cascaded `display` values through flex item blockification.
@@ -55,7 +57,20 @@ pub fn project_flex_blockification(snapshot: &mut Value) {
     }
 }
 
-fn node(tree: &Tree, id: u32, environment: &Environment) -> Value {
+fn node_tree(tree: &Tree, environment: &Environment) -> Value {
+    let mut built = std::collections::BTreeMap::new();
+    for id in tree.document_order().into_iter().rev() {
+        let children = tree.nodes[&id]
+            .children
+            .iter()
+            .filter_map(|child| built.remove(child))
+            .collect();
+        built.insert(id, node(tree, id, environment, children));
+    }
+    built.remove(&ROOT_NODE).unwrap_or(Value::Null)
+}
+
+fn node(tree: &Tree, id: u32, environment: &Environment, children: Vec<Value>) -> Value {
     let Some(entry) = tree.nodes.get(&id) else {
         return Value::Null;
     };
@@ -129,16 +144,7 @@ fn node(tree: &Tree, id: u32, environment: &Environment) -> Value {
                 );
             }
             if !entry.children.is_empty() {
-                out.insert(
-                    "children".into(),
-                    Value::Array(
-                        entry
-                            .children
-                            .iter()
-                            .map(|child| node(tree, *child, environment))
-                            .collect(),
-                    ),
-                );
+                out.insert("children".into(), Value::Array(children));
             }
             Value::Object(out)
         }
@@ -194,39 +200,48 @@ pub(crate) fn role(element: &Element) -> Option<&str> {
 }
 
 fn accessibility_root(tree: &Tree, environment: &Environment) -> Value {
-    json!({
-        "role": "application",
-        "children": children(tree, ROOT_NODE, environment),
-    })
-}
-
-fn children(tree: &Tree, id: u32, environment: &Environment) -> Vec<Value> {
-    let Some(entry) = tree.nodes.get(&id) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for child in &entry.children {
-        out.extend(accessible(tree, *child, environment));
+    let mut order = Vec::new();
+    let mut pending = vec![ROOT_NODE];
+    while let Some(id) = pending.pop() {
+        let entry = &tree.nodes[&id];
+        if id != ROOT_NODE
+            && let Content::Element(element) = &entry.content
+            && crate::name::hidden_element(tree, id, element, environment)
+        {
+            continue;
+        }
+        order.push(id);
+        pending.extend(entry.children.iter().rev());
     }
-    out
+    let mut built = std::collections::BTreeMap::<u32, Vec<Value>>::new();
+    for id in order.into_iter().rev() {
+        let nested = tree.nodes[&id]
+            .children
+            .iter()
+            .flat_map(|child| built.remove(child).unwrap_or_default())
+            .collect();
+        if id == ROOT_NODE {
+            let mut root = Map::new();
+            root.insert("role".into(), json!("application"));
+            root.insert("children".into(), Value::Array(nested));
+            return Value::Object(root);
+        }
+        built.insert(id, accessible(tree, id, environment, nested));
+    }
+    unreachable!("the view root is always present")
 }
 
-/// The accessible nodes of one subtree: a node with a role, or the flattened
-/// children of a generic container, or a text leaf.
-fn accessible(tree: &Tree, id: u32, environment: &Environment) -> Vec<Value> {
-    let Some(entry) = tree.nodes.get(&id) else {
-        return Vec::new();
-    };
+/// Bottom-up accessibility projection flattens generic containers without
+/// recursive calls proportional to guest-controlled tree depth.
+fn accessible(tree: &Tree, id: u32, environment: &Environment, nested: Vec<Value>) -> Vec<Value> {
+    let entry = &tree.nodes[&id];
     let element = match &entry.content {
         Content::Text(text) if text.trim().is_empty() => return Vec::new(),
         Content::Text(text) => return vec![json!({ "role": "text", "name": text })],
         Content::Element(element) => element,
     };
-    if crate::name::hidden_element(tree, id, element, environment) {
-        return Vec::new();
-    }
     let Some(role) = role(element) else {
-        return children(tree, id, environment);
+        return nested;
     };
     let mut out = Map::new();
     out.insert("role".into(), json!(role));
@@ -288,7 +303,6 @@ fn accessible(tree: &Tree, id: u32, environment: &Environment) -> Vec<Value> {
         element.tag,
         Tag::Button | Tag::A | Tag::Option | Tag::H1 | Tag::H2 | Tag::H3
     );
-    let nested = children(tree, id, environment);
     if !nested.is_empty() && !(leaf_named && nested.iter().all(|n| n["role"] == "text")) {
         out.insert("children".into(), Value::Array(nested));
     }

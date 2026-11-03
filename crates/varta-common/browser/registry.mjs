@@ -11091,6 +11091,7 @@ export const registry = freeze({
     ],
     "limits": {
       "batchBytes": 262144,
+      "cascadeWork": 8388608,
       "commands": 16,
       "cssTokens": 128,
       "events": 64,
@@ -11112,6 +11113,7 @@ export const registry = freeze({
       "stylesheetBytes": 262144,
       "stylesheetNodeWork": 16,
       "stylesheetWork": 8388608,
+      "treeDepth": 512,
       "valueBytes": 65536
     },
     "opcodes": [

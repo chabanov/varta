@@ -61,6 +61,26 @@ pub struct Subject<'a> {
 }
 
 impl Rule {
+    /// Canonical syntax/source cost of considering this rule, independent of
+    /// media or pseudo-class state. Uses the parsed stylesheet node weight.
+    #[must_use]
+    pub fn cascade_work(&self) -> usize {
+        let weight = super::DRAFT_STYLESHEET_NODE_WORK;
+        let mut work = weight.saturating_mul(1 + self.media.len());
+        for selector in &self.selectors {
+            work = work.saturating_add(weight.saturating_mul(1 + selector.pseudo.len()));
+            for class in &selector.classes {
+                work = work.saturating_add(weight + class.len());
+            }
+        }
+        for (name, value) in &self.declarations {
+            work = work.saturating_add(weight + value.len());
+            if let Name::Custom(name) = name {
+                work = work.saturating_add(name.len());
+            }
+        }
+        work
+    }
     /// Whether every media condition holds for a viewport `width` in CSS
     /// pixels and colour scheme.
     #[must_use]

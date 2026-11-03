@@ -46,6 +46,8 @@ pub const STRING_ALIGNMENT: usize = 4;
 pub const DRAFT_MAX_BATCH_BYTES: usize = 256 * 1024;
 pub const DRAFT_MAX_BATCH_OPERATIONS: usize = 16 * 1024;
 pub const DRAFT_MAX_LIVE_NODES: usize = 64 * 1024;
+/// Edges from a component root (attached or detached) to any node.
+pub const DRAFT_MAX_TREE_DEPTH: usize = 512;
 pub const DRAFT_MAX_LIVE_LISTENERS: usize = 8 * 1024;
 pub const DRAFT_MAX_VALUE_BYTES: usize = 64 * 1024;
 /// Guest text payload plus live-value reservations, independent of local edits.
@@ -62,6 +64,8 @@ pub const DRAFT_RADIO_NODE_WORK: usize = 16;
 pub const DRAFT_MAX_STYLESHEET_BYTES: usize = 256 * 1024;
 /// Parsed stylesheet work, per transaction and installed view inventory.
 pub const DRAFT_MAX_STYLESHEET_WORK: usize = 8 * 1024 * 1024;
+/// Potential cascade inventory reads, including command-time reads, per batch.
+pub const DRAFT_MAX_CASCADE_WORK: usize = 8 * 1024 * 1024;
 pub const DRAFT_STYLESHEET_NODE_WORK: usize = 16;
 pub const DRAFT_MAX_PENDING_EVENTS: usize = 64;
 /// Placeholder: `copy_text` requests awaiting their `command_result` at once.

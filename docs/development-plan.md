@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-11-02, against `main` at `a71d281` plus the radio/navigation/text and stylesheet increments below. Varta is an experimental
+Updated 2026-11-03, against `main` at `6830dab` plus the depth, potential-cascade and CSS-variable increments below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -14,7 +14,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Commit-boundary radio/navigation/text/stylesheet package after `a71d281` (2026-11-02): **3066 passed**, all eight commands passed with unchanged sources. Report: `target/verification/20261102-215501-s16w2dmu/report.json`. This covers the current package on macOS arm64. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Commit-boundary radio/navigation/text/stylesheet package after `a71d281` (2026-11-02): **3066 passed**, all eight commands passed with unchanged sources. Report: `target/verification/20261102-215501-s16w2dmu/report.json`. This covers the committed resource package on macOS arm64; the later depth/cascade increments have scoped evidence only. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -6319,3 +6319,115 @@ artifact verifies the typed stylesheet failure across Worker/DOM bundle bindings
 The [verification record](history.md#stylesheet-expansion-and-indexed-cascade--scoped-verification-2026-11-02)
 records the repaired packaging failure and the final successful retries. Full
 cascade/derived-output/accessibility budgeting remains the next resource package.
+
+
+### View component depth and native traversal — implementation 2026-11-02
+
+After `6830dab`, a native regression reproduced stack exhaustion while snapshotting
+an accepted 512-edge branch on a normal 2 MiB test-thread stack. The shared draft
+registry now caps component depth at 512 edges, including detached roots and text
+leaves. Each insertion checks all moved descendants in the existing metered
+subtree walk; a later repair in the same transaction does not admit the excessive
+intermediate state. Failure reports the insertion and rolls back the complete
+batch. The rule is independent of local field state and the smaller experimental
+layout ceiling. Native tree/accessibility projection, descendant accessible-name
+computation and subtree text collection use iterative work lists. Already-built
+JSON values are inserted directly instead of recursively reserialized.
+
+Acceptance: exact boundary snapshots, nested accessibility roles, accessible names,
+serialization/clone/drop on the normal test stack; multi-batch detached growth,
+attachment/reparenting, text-leaf depth, original insertion position, whole-batch
+rollback and successful later recovery; native/model/real DOM parity and Worker
+rejection before sending a batch. A compiled Wasm resource failure must stop
+before catch/logging and retain its prior view. Scoped checks cover this package;
+full cascade/derived-output/accessibility work budgets, other host buffers,
+complete controls/platforms, metrics and release acceptance remain open.
+
+
+Scoped acceptance passed: 119 existing view checks plus four corrected depth
+regressions, 46 runtime/view checks and 131 oracle-enabled Node checks. Chrome
+matches 102 work/payload/depth batches; Chrome/WebKit each pass 15 mockup
+projections and 55 regressions. Generated browser depth/CSS failure probes,
+registry/documentation/no-std/strict Clippy and the normal UARP
+107-test/28-group/two-view check pass. The
+[verification record](history.md#component-depth-and-iterative-native-projection--scoped-verification-2026-11-02)
+distinguishes the repaired stack abort, corrected test assertion and final scoped
+passes from the previous full gate. Next resource work remains complete cascade,
+derived output and accessibility evaluation budgets.
+
+
+### Potential cascade reads — implementation 2026-11-02
+
+The working tree after `6830dab` and the depth package now charges potential
+candidate/source and inherited variable discovery work before style-reading
+commands and final inventory admission. Each candidate is considered once through
+root/first-class anchors, regardless of duplicate classes, extra selector tests,
+media, pseudo-state, local edits or winning declarations. Nodes and inline/class
+source bytes are charged even in detached components. Raw `var(` candidates with
+installed custom properties add their ancestor scope costs, calculated by an
+iterative prefix walk rather than repeated ancestry scans during admission.
+Native rule costs are cached with parsed indices; browser anchor sets and rule
+records are private, incrementally updated and copied with the transaction.
+
+One allowance spans command reads and the final inventory. Equal/disabled focus
+commands do not discount it. Reading an excessive intermediate state fails at the
+command, before style computation; final failure has no operation index. Later
+replacement/removal can reclaim transient capacity if no command first reads it.
+This package targets potential matching and inherited-map discovery. Derived-value
+expansion/output, repeated accessibility evaluation, browser-private invalidation
+costs and other host-buffer/lifetime limits remain open.
+
+Acceptance: exact budget and one-byte overflow; duplicate/compound anchors;
+rejected stylesheet replacement without poisoning indices; inactive media and
+unmatched selector tails; detached inventory, ancestor scope changes/reparenting,
+reclamation, repeated equal command reads and original command/final failure
+positions. Native/model/DOM/Worker must agree and retain their previous state.
+Compiled Wasm and source-free browser artifacts must stop before catch/logging
+and preserve their last successful view. Broader platform/release criteria remain
+separate from these scoped checks.
+
+
+Scoped acceptance passed: 129 native view checks, 47 runtime/view checks, 138
+oracle-enabled Node checks and 127 real Chrome work/payload/depth/cascade batches.
+Each selected Chrome/WebKit engine passes 15 mockup projections and 59 regressions.
+Fresh source-free artifact probes cover cascade, depth and stylesheet fatal
+failure; normal UARP passes 107 tests in 28 groups plus two views, and live chat
+passes tree/accessibility/style/interaction probes on Chrome/WebKit. Registry,
+documentation, no-std, affected strict Clippy and intrinsic fingerprints pass.
+The [verification record](history.md#potential-cascade-reads--scoped-verification-2026-11-02)
+keeps these results separate from the last full gate. Next work remains derived
+CSS value resolution/output and repeated accessibility evaluation, followed by
+other host-buffer/lifetime and platform/release acceptance.
+
+
+### Computed custom-property scopes — implementation 2026-11-03
+
+Native substitution previously stopped after one alias and flattened inherited
+raw declarations, which rebound parent aliases in child scopes. The renderer now
+computes declarations at each element before inheritance. An iterative work stack
+tracks active dependency cycles and evaluates fallback branches only when needed;
+known invalid cycles cannot capture outside fallback consumers. This follows the
+current working-draft substitution contexts and the Chrome comparison; WebKit
+has a recorded outside-cycle fallback discrepancy. For unused self-fallbacks, the initial 2022 eager fallback graph was contradicted by both browsers.
+
+Resolved fragments use arena indices and length summaries, with direct alias
+reuse. Dependency traversal and ownership/drop do not recurse with alias depth;
+UTF-16 size is checked before expansion. Empty/nested/function fallbacks and
+case-insensitive variable functions are admitted by both validators. Malformed
+custom references/functions/hashes fail early. With a valid variable reference,
+the whole property grammar and numeric notes defer until substitution; property
+whitelists and forbidden-source checks still apply. Native snapshot, geometry and paint revalidate
+resolved values, preserve quoted strings and token boundaries, and do not revive
+an earlier declaration after computed invalidity. Display-none consumers handle
+keyword casing. The browser font namespace handles variable function casing.
+
+Acceptance: alias chains, scope freezing and invalid local masks; actual cycles,
+unused fallback self-references, outside consumers, invalid-prefix cycles and
+cross-ancestor aliases; empty and wide-keyword fallbacks, quoted text, component
+boundaries, selected numeric notes, viewport changes and geometry/paint; normal
+2 MiB stack traversal/drop at dependency depth 5000, exact UTF-16 value limit and
+bounded expansion. Independent browser CSS must agree with native resolved
+values in the sampled supported property subset. Compiled Wasm must execute new
+syntax and update aliases across turns. Native per-value computed invalidity is
+renderer policy; common aggregate output/work limits and broader computed
+property/default/inheritance coverage remain separate requirements.

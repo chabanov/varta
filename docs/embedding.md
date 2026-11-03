@@ -2309,6 +2309,19 @@ draft.
   a prevented click restores the previous group before `input`/`change` or an
   edit-counter increment. Those field-change records have an empty `value` and
   carry checked state in the flags.
+- **Tree component depth.** Every live node, including a text leaf or a node in
+  a detached component, must fit the depth limit in the table. Depth counts edges
+  from that component's root (zero for the implicit view root and each detached
+  root). Every insertion checks the prospective depth of all moved descendants,
+  using the existing moved-subtree walk; ancestor depth is already bounded.
+  The check applies after each insertion, even if a later operation would remove
+  the excessive branch. A violation identifies that insertion and rejects the
+  whole copied transaction before external effects. Moving a detached component
+  under the view root adds an edge. This structural ceiling is independent of
+  field edits, radio/select work and the experimental native layout depth limit.
+  Native tree/accessibility projection, content collection and accessible-name
+  descendant traversal use iterative work lists so accepted depth does not
+  require a larger host thread stack.
 - **Radio reconciliation work.** Each transaction has a separate allowance and
   node-visit weight in the limits table. Charge one node weight for every ancestor
   visited while finding a radio's closest form or tree root, and for every node
@@ -2326,6 +2339,30 @@ draft.
   batch; exceeding it rejects the transaction atomically before external effects.
   This admission allowance does not change checked state, edit counters or peer
   ordering for accepted batches, and is separate from guest fuel and select work.
+- **Potential cascade read work.** One transaction allowance spans every
+  `focus`, `select`, `scroll_to` and `scroll_into_view` command's inventory read,
+  before its style computation, plus one final inventory read. Each read visits
+  every live node, including detached components. Charge one stylesheet node
+  weight per node; for elements, add class-source UTF-8 bytes and one node weight
+  plus value UTF-8 bytes for every inline declaration. Candidate rules are the
+  union indexed by the first class of each selector, or `:root` for the implicit
+  view root; consider each rule once even through duplicate classes/anchors.
+  Charge each candidate's parsed construction cost: rule/media-copy, selector,
+  class, pseudo and declaration weights plus class/custom-name/value source bytes,
+  excluding raw input bytes and media-header conditions. Media, remaining selector
+  classes, pseudo-state, local edits and winning declarations do not discount it.
+
+  Each node has an own cost from those charges. If any inline/candidate value
+  contains an ASCII-case-insensitive `var(` and any installed sheet has a custom declaration,
+  additionally charge the sum of own costs for that node and all its ancestors
+  in its component. This conservatively covers inherited-map discovery without
+  rescanning ancestor paths during admission. Private rule costs/indices are
+  updated on replacement/removal and copied with the transaction. Exceeding the
+  counter rejects at the reading command, or with no operation index at final
+  validation. Later reclamation can repair a transient excess only if no command
+  first reads it. This bounds potential matching/inheritance work; complete
+  derived-value output, repeated accessibility evaluation and other host-buffer
+  limits remain separate.
 - **Parsed stylesheet work.** The limits table gives a work allowance and one
   syntax-node weight. One parse charges the input UTF-8 byte length; one node
   weight per media-header condition; one node weight per rule plus each media
@@ -2449,6 +2486,36 @@ values:
 | Forbidden in `set_style` values | `;`, `{`, `}` |
 <!-- generated:view-stylesheet-tokens:end -->
 
+**Variable values.** `var()` function names are ASCII case-insensitive; custom-property
+names remain case-sensitive. The fallback is a balanced component list, including nested references or
+functions; a bare comma specifies an empty fallback. Unbalanced functions, empty hashes and malformed references also reject
+custom declarations. The whole property grammar and numerical notes defer when a syntactically valid
+reference occurs; a reference can replace an empty or multiple-component sequence.
+Known property names and forbidden-source checks still apply before deferral.
+Forbidden CSS tokens remain forbidden in every branch.
+
+The native renderer resolves custom declarations at each element before they are
+inherited. An invalid local declaration masks the inherited binding. Only selected fallback branches are evaluated. Active dependency cycles
+invalidate their members; an outside dependent can still use a fallback, and an
+unused fallback does not introduce a cycle. Chrome matches the current fixtures;
+WebKit has a recorded outside-cycle fallback discrepancy, so full cross-engine
+parity is not established. The native algorithm follows the [2026 working draft's substitution contexts](https://drafts.csswg.org/css-values-5/#substitution),
+rather than the 2022 snapshot's eager fallback dependency graph. Quoted strings are literal and
+substitution preserves component-token boundaries. Native geometry/paint and
+snapshots revalidate the resolved value against the property's subset grammar,
+without resurrecting an earlier cascaded declaration. Custom `initial` is
+invalid; custom `inherit`/`unset` and the single-origin, unlayered subset's
+`revert`/`revert-layer` use the computed inherited binding.
+
+The native resolver stores a shared dependency arena and measures UTF-16 length
+before expansion. A native computed custom value exceeding the existing value
+byte limit is invalid at computed-value time; selected property values must also
+fit the subset value grammar/token ceiling. This follows the renderer-defined
+size-limit mechanism in [CSS Variables §3.3](https://www.w3.org/TR/css-variables-1/#long-variables).
+Browser CSS engines retain their own computed-value limits; this is not a shared
+aggregate-output admission guarantee. Whole-frame derived output, broader
+computed defaults/inheritance and cross-engine expansion limits remain open.
+
 **CSS value types.** The per-property grammars below use these types:
 
 <!-- generated:view-css-values:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
@@ -2483,11 +2550,13 @@ values:
 | Event strings after the header | key, value |
 | Placeholder: batch bytes / operations | 262144 / 16384 |
 | Placeholder: live nodes / listeners | 65536 / 8192 |
+| Placeholder: tree component depth | 512 |
 | Placeholder: value bytes / stylesheet bytes / pending events | 65536 / 262144 / 64 |
 | Placeholder: retained text bytes / live field reservation bytes | 8388608 / 98304 |
 | Placeholder: pending `copy_text` requests | 16 |
 | Placeholder: single-select work / node visit units | 8388608 / 16 |
 | Placeholder: radio reconciliation work / node visit units | 8388608 / 16 |
+| Placeholder: potential cascade read work | 8388608 |
 | Placeholder: parsed stylesheet work / syntax node units | 8388608 / 16 |
 | Placeholder: tokens of one CSS property value | 128 |
 | `id` / `for` ident characters | 64 |

@@ -114,6 +114,8 @@ if (oraclePath) {
         assert.equal(ok, result.ok, `${item.name}/${i}: ${result.error}`);
         if(result.budget){assert.equal(error.rule,'select work budget');assert.equal(error.operation??null,result.operation,`${item.name}/${i}: budget position`);}
         if(result.radioBudget){assert.equal(error.rule,'radio work budget');assert.equal(error.operation??null,result.radioOperation,`${item.name}/${i}: radio budget position`);}
+        if(result.cascadeBudget){assert.equal(error.rule,'cascade work budget');assert.equal(error.operation??null,result.cascadeOperation,`${item.name}/${i}: cascade position`);}
+        if(result.depthBudget){assert.equal(error.rule,'tree depth budget');assert.equal(error.operation??null,result.depthOperation,`${item.name}/${i}: depth position`);}
         if(result.retainedBudget){assert.equal(error.rule,'retained text budget');assert.equal(error.operation,undefined,`${item.name}/${i}: final inventory`);}
         if(result.stylesheetBudget){assert.equal(error.rule,'stylesheet work budget');assert.equal(error.operation??null,result.stylesheetOperation,`${item.name}/${i}: stylesheet work`);}
         const expected = structuredClone(result.snapshot);
@@ -131,7 +133,7 @@ if (oraclePath) {
       let parsed,error;try{parsed=checkStylesheet(item.source,V);}catch(caught){error=caught;}
       assert.equal(Boolean(parsed&&!parsed.errors.length),item.valid);
       assert.equal(error instanceof StylesheetWorkError,item.limit);
-      if(item.valid)assert.equal(parsed.work,item.work);
+      if(item.valid){assert.deepEqual(parsed.rules.map(rule=>rule.work),item.ruleCosts,`${item.source}: rule costs`);assert.equal(parsed.work,item.work);}
     }
   });
   test("all native event record kinds encode byte-identically",()=>{

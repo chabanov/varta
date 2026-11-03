@@ -592,3 +592,49 @@ The source/parsed-work ceiling and selector indexing do not establish a complete
 bound for per-frame cascade, derived output or accessibility work. Reuse the
 selected-engine mockup/live-chat checks above for application coverage; a
 Chrome/WebKit pass does not establish the full three-engine matrix.
+
+
+## Component depth and potential cascade reads
+
+Exercise attached and detached depth boundaries, moved text leaves, iterative
+snapshot/accessibility serialization on a normal stack, command/final cascade
+failure positions, cached index rollback and successful smaller retries:
+
+```sh
+cargo test -p varta-view --test tree_depth --test cascade_work --locked
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-oracle.json
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node --test crates/varta-project/src/browser/*.test.mjs
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node scripts/test-browser-view.mjs
+node scripts/test-browser-style-work-bundle.mjs target/debug/varta --tree-depth
+node scripts/test-browser-style-work-bundle.mjs target/debug/varta --cascade-work
+```
+
+Rebuild the CLI/companion before generated-artifact probes. These allowances cover
+structural depth and potential matching/inherited-map discovery, rather than a
+complete derived-output, accessibility, CPU or RSS budget.
+
+## Computed CSS-variable scopes
+
+Use a fresh native oracle to compare computed inheritance, alias freezing, invalid
+local masks, active cycles, selected/empty fallbacks, token boundaries and typed
+post-substitution validation. The resolver tests also cover dependency depth 5000
+on a 2 MiB stack and exact UTF-16 expansion limits.
+
+```sh
+cargo test -p varta-view --lib variables:: --locked
+cargo test -p varta-view --test variables --locked
+cargo test -p varta-runtime --lib compiled_variable_scopes --locked
+cargo test -p varta-common --lib view:: --locked
+cargo run -p varta-view --example browser_contract_probe --locked -- target/browser-view-oracle.json
+VARTA_VIEW_ORACLE=target/browser-view-oracle.json node --test crates/varta-project/src/browser/*.test.mjs
+node scripts/test-browser-variables.mjs target/browser-view-oracle.json /path/to/playwright/index.mjs chrome
+node scripts/test-browser-variables.mjs target/browser-view-oracle.json /path/to/playwright/index.mjs webkit
+```
+
+The browser probe compares independently computed raw CSS with native resolved
+literal declarations through the official host. Separate platform-only controls
+isolate cycle behavior from font rewriting. A failed comparison is retained as a
+failure, including the currently observed WebKit outside-cycle fallback mismatch;
+it is not a passing engine matrix. Native per-value invalidity uses renderer
+limits; browser engines retain their own limits. Shared expansion/output budgets,
+broader computed defaults/inheritance and full platform acceptance remain open.

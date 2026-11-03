@@ -188,6 +188,7 @@ fn lex_value(text: &str) -> Option<Vec<V>> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
+    let mut nesting = 0usize;
     while i < chars.len() {
         if out.len() > MAX_VALUE_TOKENS {
             return None;
@@ -202,6 +203,7 @@ fn lex_value(text: &str) -> Option<Vec<V>> {
             out.push(V::Slash);
             i += 1;
         } else if c == ')' {
+            nesting = nesting.checked_sub(1)?;
             out.push(V::Close);
             i += 1;
         } else if c == '"' {
@@ -214,6 +216,9 @@ fn lex_value(text: &str) -> Option<Vec<V>> {
             while i < chars.len() && chars[i].is_ascii_hexdigit() {
                 i += 1;
             }
+            if start == i {
+                return None;
+            }
             out.push(V::Hash(chars[start..i].iter().collect()));
         } else {
             let start = i;
@@ -225,6 +230,7 @@ fn lex_value(text: &str) -> Option<Vec<V>> {
             }
             let word: String = chars[start..i].iter().collect();
             if chars.get(i) == Some(&'(') {
+                nesting += 1;
                 out.push(V::Function(word));
                 i += 1;
             } else {
@@ -232,7 +238,7 @@ fn lex_value(text: &str) -> Option<Vec<V>> {
             }
         }
     }
-    (out.len() <= MAX_VALUE_TOKENS).then_some(out)
+    (nesting == 0 && out.len() <= MAX_VALUE_TOKENS).then_some(out)
 }
 
 fn number(word: &str) -> bool {
@@ -301,9 +307,39 @@ pub fn ident(word: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
 }
 
-/// `var(--name)` or `var(--name, <one token>)` stands for any whole component.
+/// Conservative reference probe for work admission, including quoted text.
+#[must_use]
+pub fn contains_variable(value: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(4)
+        .any(|part| part.eq_ignore_ascii_case(b"var("))
+}
+fn function_end(tokens: &[V], at: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, token) in tokens.iter().enumerate().skip(at) {
+        match token {
+            V::Function(_) => depth += 1,
+            V::Close => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+fn valid_variables(tokens: &[V]) -> bool {
+    tokens.iter().enumerate().all(|(at, token)| {
+        !matches!(token,V::Function(name) if name.eq_ignore_ascii_case("var"))
+            || !var(tokens, at).is_empty()
+    })
+}
+/// A reference or a reference with a balanced component fallback.
 fn var(tokens: &[V], at: usize) -> Vec<usize> {
-    if tokens.get(at) != Some(&V::Function("var".into())) {
+    if !matches!(tokens.get(at),Some(V::Function(name)) if name.eq_ignore_ascii_case("var")) {
         return vec![];
     }
     let Some(V::Word(name)) = tokens.get(at + 1) else {
@@ -312,14 +348,12 @@ fn var(tokens: &[V], at: usize) -> Vec<usize> {
     if !name.strip_prefix("--").is_some_and(ident) {
         return vec![];
     }
+    let Some(end) = function_end(tokens, at) else {
+        return vec![];
+    };
     match tokens.get(at + 2) {
-        Some(V::Close) => vec![at + 3],
-        Some(V::Comma)
-            if tokens.get(at + 4) == Some(&V::Close)
-                && !matches!(tokens.get(at + 3), Some(V::Close | V::Comma)) =>
-        {
-            vec![at + 5]
-        }
+        Some(V::Close) => vec![end],
+        Some(V::Comma) if end >= at + 4 && valid_variables(&tokens[at + 3..end - 1]) => vec![end],
         _ => vec![],
     }
 }
@@ -462,12 +496,20 @@ pub fn property_value(property: CssProperty, value: &str) -> bool {
     if forbidden(value) || FORBIDDEN_STYLE_VALUE.iter().any(|c| value.contains(c)) {
         return false;
     }
-    if !matches(property.grammar(), value) {
-        return false;
-    }
     let Some(tokens) = lex_value(value) else {
         return false;
     };
+    // A reference may substitute an empty or multiple-component sequence.
+    // Its presence defers the whole property grammar, not just one atom.
+    if tokens
+        .iter()
+        .any(|token| matches!(token,V::Function(name) if name.eq_ignore_ascii_case("var")))
+    {
+        return valid_variables(&tokens);
+    }
+    if !matches(property.grammar(), value) {
+        return false;
+    }
     let words = || {
         tokens.iter().filter_map(|token| match token {
             V::Word(word) if !word.starts_with("--") => Some(word.as_str()),
@@ -495,7 +537,7 @@ pub fn property_value(property: CssProperty, value: &str) -> bool {
 pub fn custom_value(value: &str) -> bool {
     !forbidden(value)
         && !FORBIDDEN_STYLE_VALUE.iter().any(|c| value.contains(c))
-        && lex_value(value).is_some_and(|tokens| !tokens.is_empty())
+        && lex_value(value).is_some_and(|tokens| !tokens.is_empty() && valid_variables(&tokens))
 }
 
 #[cfg(test)]
@@ -515,7 +557,7 @@ mod tests {
         assert!(property_value(CssProperty::Padding, "var(--gap)"));
         assert!(property_value(CssProperty::Display, "var(--mode)"));
         assert!(property_value(CssProperty::Display, "var(--mode, none)"));
-        assert!(!property_value(CssProperty::Display, "var(--mode,)"));
+        assert!(property_value(CssProperty::Display, "var(--mode,)"));
         assert!(!property_value(CssProperty::Opacity, "1.5"));
         assert!(property_value(CssProperty::Opacity, "0.5"));
         assert!(!property_value(CssProperty::Color, "#fff;"));

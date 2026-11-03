@@ -176,10 +176,26 @@ const COMPOSITE_TYPES = registry.view.cssTypes;
 BUILTIN["<hex>"] = (token) => token.kind === "hash" && registry.view.limits.hexDigits.includes(token.value.length);
 BUILTIN["<flex>"] = (token) => token.kind === "dimension" && token.unit === "fr";
 
+function isVar(t) {
+  if(t?.kind!=='function'||t.name.toLowerCase()!=='var')return false;
+  const [name,...rest]=t.args;
+  if(name?.kind!=='ident'||!/^--[A-Za-z_][A-Za-z0-9_-]*$/.test(name.value))return false;
+  return rest.length===0||(rest.length>=1&&rest[0].kind==='comma'&&validVariables(rest.slice(1)));
+}
+function validVariables(tokens){return tokens.every(t=>t.kind!=='function'||(t.name.toLowerCase()==='var'?isVar(t):validVariables(t.args)));}
+
 /**
  * @param {Record<string, string>} grammars property -> value definition
  * @param {Record<string, string>} notes property -> restriction note ("nonnegative", "0 to 1", …)
  */
+function hasVariables(tokens){return tokens.some(t=>t.kind==='function'&&(t.name.toLowerCase()==='var'||hasVariables(t.args)));}
+function admitValue(view,property,value,checkValue){
+  if(!view.css.some(row=>row.name===property))throw new CssError(`unknown property ${property}`);
+  const tokens=tokenizeValue(value);
+  if(hasVariables(tokens)){if(!validVariables(tokens))throw new CssError('invalid variable syntax');return;}
+  checkValue(property,value);
+}
+
 export function createValueMatcher(grammars, notes = {}) {
   const cache = new Map();
   const composites = Object.fromEntries(Object.entries(COMPOSITE_TYPES).map(([name, definition]) => [name, parseGrammar(definition)]));
@@ -193,16 +209,10 @@ export function createValueMatcher(grammars, notes = {}) {
   };
 
   function single(name, t, locals) {
-    if (t.kind === "function" && t.name === "var") return isVar(t);
+    if (t.kind === "function" && t.name.toLowerCase() === "var") return isVar(t);
     if (locals[name]) return null;
     if (BUILTIN[name]) return BUILTIN[name](t);
     throw new CssError(`unknown value type ${name}`);
-  }
-
-  function isVar(t) {
-    const [name, ...rest] = t.args;
-    if (!name || name.kind !== "ident" || !/^--[A-Za-z_][A-Za-z0-9_-]*$/.test(name.value)) return false;
-    return rest.length === 0 || (rest.length === 2 && rest[0].kind === "comma" && !["comma", "function"].includes(rest[1].kind));
   }
 
   function full(ast, tokens, locals, memo = new WeakMap()) {
@@ -222,7 +232,7 @@ export function createValueMatcher(grammars, notes = {}) {
     const t = tokens[i];
     switch (node.type) {
       case "keyword":
-        if(t?.kind==='function'&&t.name==='var'&&isVar(t))yield i+1;
+        if(t?.kind==='function'&&t.name.toLowerCase()==='var'&&isVar(t))yield i+1;
         if (t && t.kind === "ident" && t.value.toLowerCase() === node.value.toLowerCase()) yield i + 1;
         else if (t && t.kind === "number" && t.raw === node.value) yield i + 1;
         return;
@@ -264,7 +274,7 @@ export function createValueMatcher(grammars, notes = {}) {
   }
 
   function words(tokens) {
-    return tokens.flatMap((t) => t.kind === "function" ? words(t.args) : t.kind === "ident" ? (t.value.startsWith("--") ? [] : [t.value]) : ["number", "dimension", "percentage"].includes(t.kind) ? [t.raw + (t.unit ?? (t.kind === "percentage" ? "%" : ""))] : []);
+    return tokens.flatMap((t) => t.kind === "function" ? (t.name.toLowerCase()==='var'?[]:words(t.args)) : t.kind === "ident" ? (t.value.startsWith("--") ? [] : [t.value]) : ["number", "dimension", "percentage"].includes(t.kind) ? [t.raw + (t.unit ?? (t.kind === "percentage" ? "%" : ""))] : []);
   }
 
   /** Throws CssError unless `value` matches the property's grammar. */
@@ -304,6 +314,7 @@ export function checkStylesheet(text, view, {workLimit=view.limits.stylesheetWor
     while (/\s/.test(text[at] ?? "")) at += 1;
   };
   function readRule(where,mediaCount=0) {
+    const before=work;
     charge(weight*(1+mediaCount));
     const open = text.indexOf("{", at);
     const close = text.indexOf("}", open);
@@ -330,20 +341,22 @@ export function checkStylesheet(text, view, {workLimit=view.limits.stylesheetWor
       else if (property.startsWith("--")) {
         if (!/^--[A-Za-z_][A-Za-z0-9_-]*$/.test(property)) errors.push(`${where}: bad custom property ${property}`);
         try {
-          if (!tokenizeValue(value).length) throw new CssError("empty custom property");
+          const tokens=tokenizeValue(value);
+          if (!tokens.length||!validVariables(tokens)) throw new CssError("invalid custom property value");
         } catch (error) {
           errors.push(`${where}: ${property}: ${error.message}`);
         }
       } else {
         try {
-          checkValue(property, value);
+          admitValue(view, property, value, checkValue);
         } catch (error) {
           errors.push(`${where}: ${error.message}`);
         }
       }
       if(errors.length===errorsBefore)charge(weight+cssBytes(value)+(property.startsWith('--')?cssBytes(property.slice(2)):0));
     }
-    rules.push({ selectors, declarations: declarations.length });
+    rules.push({ selectors, declarations: declarations.length, work:work-before,
+      variables:declarations.some(d=>d.slice(d.indexOf(':')+1).toLowerCase().includes('var(')), custom:declarations.some(d=>d.startsWith('--')) });
   }
   for (;;) {
     skip();
@@ -376,7 +389,7 @@ export function checkStyleDeclaration(view, property, value, checkValue = create
   const forbidden = [...view.stylesheet.forbidden, ...view.stylesheet.forbiddenInline];
   const token = forbidden.find((t) => value.toLowerCase().includes(t));
   if (token) throw new CssError(`${property}: forbidden token ${token}`);
-  checkValue(property, value);
+  admitValue(view,property,value,checkValue);
 }
 
 /** Rewrites `:root` selectors to the renderer's root-container selector. */

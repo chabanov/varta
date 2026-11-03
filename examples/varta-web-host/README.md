@@ -7,7 +7,8 @@ check that the document is sufficient. It remains an independent historical prot
 `crates/varta-project/src/browser/`, uses the common Rust registry and is emitted
 by `varta build/dev --target browser`. The UARP console and its mockup tools use
 that official host. This prototype is not their backend and does not implement
-subsequent official-host selection/radio work allowances.
+subsequent official-host selection/radio/stylesheet/cascade work allowances,
+retained-field capacity or component-depth limits.
 
 Checkpoint 2026-11-01 (native server batch after `abea3ac`): **117 shared differential cases pass under
 Node**. This is not a new real-browser result or official platform acceptance.

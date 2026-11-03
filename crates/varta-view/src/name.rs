@@ -80,7 +80,7 @@ pub(crate) fn hidden_element(
         == Some("true")
         || tree
             .computed_property(id, environment, CssProperty::Display)
-            .is_some_and(|display| display == "none")
+            .is_some_and(|display| display.eq_ignore_ascii_case("none"))
         || (element.tag == Tag::Dialog && !element.open)
 }
 
@@ -92,71 +92,109 @@ fn hidden_in_tree(tree: &Tree, id: u32, environment: &Environment) -> bool {
     })
 }
 
-fn compute(
-    tree: &Tree,
+fn compute<'a>(
+    tree: &'a Tree,
     id: u32,
-    role: Option<&str>,
+    role: Option<&'a str>,
     traversal: Traversal,
     step: Step,
     environment: &Environment,
 ) -> String {
-    let Some(node) = tree.nodes.get(&id) else {
-        return String::new();
-    };
-    let element = match &node.content {
-        // 2G: a text node contributes its text.
-        Content::Text(text) => return text.clone(),
-        Content::Element(element) => element,
-    };
-    // The root met again inside its own label or content is not "another
-    // widget" and contributes nothing (this also ends every cycle).
-    if step == Step::Descendant && id == traversal.root {
-        return String::new();
+    enum Task<'a> {
+        Visit(u32, Option<&'a str>, Step),
+        Content {
+            start: usize,
+            recursion: bool,
+            placeholder: Option<&'a str>,
+        },
     }
-    // 2A: hidden nodes are skipped unless the relation started at a hidden node.
-    if !traversal.include_hidden && hidden_element(tree, id, element, environment) {
-        return String::new();
-    }
-    // 2B: aria-labelledby, once per traversal.
-    if !traversal.labelledby
-        && let Some(name) = labelledby(tree, element, traversal, environment)
-    {
-        return name;
-    }
-    let recursion = step != Step::Root;
-    // 2C: a control embedded in the label of another widget gives its value.
-    if recursion && let Some(value) = embedded_value(tree, id, element) {
-        return value;
-    }
-    // 2D: a nonblank aria-label.
-    if let Some(label) = element.attributes.get(&Attribute::AriaLabel)
-        && !flat(label).is_empty()
-    {
-        return label.clone();
-    }
-    // 2E: the host language label (`alt`; `label for` only for the root).
-    if let Some(name) = host_label(tree, element, step, traversal, environment) {
-        return name;
-    }
-    // 2F (root with a name-from-content role) and 2H (every recursion).
-    let role = role.or_else(|| crate::snapshot::role(element));
-    if recursion || role.is_some_and(|role| NAME_FROM_CONTENT.contains(&role)) {
-        let content: String = node
-            .children
-            .iter()
-            .map(|child| compute(tree, *child, None, traversal, Step::Descendant, environment))
-            .collect();
-        if recursion || !flat(&content).is_empty() {
-            return content;
+    let mut pending = vec![Task::Visit(id, role, step)];
+    let mut parts = Vec::<String>::new();
+    while let Some(task) = pending.pop() {
+        let Task::Visit(id, role, step) = task else {
+            let Task::Content {
+                start,
+                recursion,
+                placeholder,
+            } = task
+            else {
+                unreachable!()
+            };
+            let content: String = parts.drain(start..).collect();
+            parts.push(if recursion || !flat(&content).is_empty() {
+                content
+            } else {
+                placeholder.unwrap_or_default().to_owned()
+            });
+            continue;
+        };
+        let Some(node) = tree.nodes.get(&id) else {
+            parts.push(String::new());
+            continue;
+        };
+        let element = match &node.content {
+            // 2G: a text node contributes its text.
+            Content::Text(text) => {
+                parts.push(text.clone());
+                continue;
+            }
+            Content::Element(element) => element,
+        };
+        if step == Step::Descendant && id == traversal.root {
+            parts.push(String::new());
+            continue;
+        }
+        // 2A: a relation starting at a hidden node includes its descendants.
+        if !traversal.include_hidden && hidden_element(tree, id, element, environment) {
+            parts.push(String::new());
+            continue;
+        }
+        // Relation nesting remains bounded: labelledby is disabled in its
+        // referenced traversal, and host labels apply only to the root step.
+        if !traversal.labelledby
+            && let Some(name) = labelledby(tree, element, traversal, environment)
+        {
+            parts.push(name);
+            continue;
+        }
+        let recursion = step != Step::Root;
+        if recursion && let Some(value) = embedded_value(tree, id, element) {
+            parts.push(value);
+            continue;
+        }
+        if let Some(label) = element.attributes.get(&Attribute::AriaLabel)
+            && !flat(label).is_empty()
+        {
+            parts.push(label.clone());
+            continue;
+        }
+        if let Some(name) = host_label(tree, element, step, traversal, environment) {
+            parts.push(name);
+            continue;
+        }
+        let placeholder = element
+            .text_field()
+            .then(|| element.attributes.get(&Attribute::Placeholder))
+            .flatten()
+            .map(String::as_str);
+        let role = role.or_else(|| crate::snapshot::role(element));
+        if recursion || role.is_some_and(|role| NAME_FROM_CONTENT.contains(&role)) {
+            pending.push(Task::Content {
+                start: parts.len(),
+                recursion,
+                placeholder,
+            });
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|child| Task::Visit(*child, None, Step::Descendant)),
+            );
+        } else {
+            parts.push(placeholder.unwrap_or_default().to_owned());
         }
     }
-    // HTML-AAM's last resort for text fields (after the absent `title`).
-    if element.text_field()
-        && let Some(placeholder) = element.attributes.get(&Attribute::Placeholder)
-    {
-        return placeholder.clone();
-    }
-    String::new()
+    parts.pop().unwrap_or_default()
 }
 
 /// 2B: the names of the attached referenced nodes, joined by one space; `None`

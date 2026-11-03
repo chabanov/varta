@@ -1677,3 +1677,169 @@ acceptance remain open.
 The additional packaging-boundary CLI smoke repeat also passed **350 tests**;
 evidence: `target/view-resource-commit-cli-repeat.log`. No engine/build inputs
 changed between the full gate, this repeat and the commit.
+
+
+## Component depth and iterative native projection — scoped verification 2026-11-02
+
+Working tree after `6830dab`: the draft registry now declares a maximum component
+depth of **512 edges**, measured from the implicit view root or each detached
+component root. Each insertion checks the whole moved subtree in its existing
+metered walk, including text leaves, and reports the insertion on rejection. The
+copied transaction, its title and pending effects roll back; later transactions
+can reclaim/reparent normally. Local field values and counters do not affect the
+rule. Later removal in the same batch does not admit excessive transient depth.
+
+A real native test reproduced stack exhaustion even at the admitted boundary,
+so the fix includes iterative node/accessibility projection, descendant name
+computation and subtree text collection. The top-level snapshot inserts built
+JSON values directly instead of recursively reserializing them. The final child
+regression passes on a normal **2 MiB** thread stack with generic flattening,
+nested accessibility roles, descendant names, serialization, clone and drop;
+no stack allowance was raised.
+
+Scoped evidence: the **119 existing native view checks** pass on the final engine
+code. An intermediate new boundary assertion walked one accessibility level too
+far; after correcting that test, all **four depth tests** pass. The original
+`target/tree-depth-component.log` therefore records an overall test failure,
+not a full-suite pass; `target/tree-depth-boundary-final.log` records the corrected
+four-test pass. The earlier `target/tree-depth-component-first.log` captures the
+repaired stack abort. **46 filtered runtime/view checks**, including compiled
+fatal failure before catch/logging and retention of the prior view, pass.
+
+A fresh native oracle agrees with **131 Node checks** and **102 real Chrome
+work/payload/depth batches**, including operation positions and DOM rollback.
+The existing 1839 radio observations, eight disabled-select batches, six checkable
+activation and eleven select identity/event scenarios pass. Chrome and WebKit
+each pass 15 mockup projections and **55 regressions**. Five registry checks,
+eleven embedding documentation checks, no-std, formatting/whitespace, current
+intrinsic fingerprint and strict all-target Clippy for common/view/project/runtime
+pass. Fresh CLI/companion builds pass. UARP passes **107 tests in 28 groups and
+two expected native views**. The source-free generated browser probe passes both
+the new trusted-event depth failure and its existing stylesheet failure, keeping
+the prior DOM/title and reaching neither catch nor later logging.
+
+Local logs: `target/tree-depth-runtime.log`, `target/tree-depth-oracle-node.log`,
+`target/tree-depth-chrome.log`, `target/tree-depth-pilot-chrome.log`,
+`target/tree-depth-pilot-webkit.log`, `target/tree-depth-clippy.log`,
+`target/tree-depth-generated-bundle.log`, `target/tree-depth-css-bundle.log` and
+`target/tree-depth-pilot-native.log`. These ignored scoped results do not replace
+the last full gate for `6830dab`. Full cascade/derived-output/accessibility work
+budgets, other host buffers, Firefox/current full matrix, native platforms,
+metrics and release acceptance remain open. The existing experimental native
+layout depth ceiling is unchanged.
+
+
+## Potential cascade reads — scoped verification 2026-11-02
+
+Working tree after `6830dab` and the component-depth package: the shared draft
+registry now declares **8,388,608 units** for potential cascade inventory reads.
+Every live node (including detached components) charges its node/class/inline
+source cost and deduplicated root/first-class candidate rule construction costs.
+Media, remaining selector classes, pseudo-state, local field edits and winning
+declarations do not discount candidates. Raw variable candidates additionally
+charge ancestor own-cost prefixes when any installed custom property exists.
+Native rule costs are cached with parsed indices; private browser rule records
+and anchor sets are incrementally updated, copied per transaction and discarded
+on failure. The estimator walks component prefixes iteratively.
+
+Explicit focus/select/scroll reads and final inventory share one allowance.
+Equal focus commands still count. A style-reading command rejects excessive
+intermediate state before computation, even if the guest planned to remove the
+sheet later in the same batch. Final excess has no operation index; replacement,
+deletion and index reclamation remain atomic. This is a potential matching and
+inherited-map discovery contract, not a complete frame CPU/output/RSS budget.
+
+Final scoped checks pass: **129 native view tests**, **47 filtered runtime/view
+checks**, **138 oracle-enabled Node checks**, five registry checks and eleven
+embedding documentation checks. Exact allowance/one-byte overflow, compound and
+duplicate anchors, rejected replacement/index rollback, detached nodes, inactive
+media, unmatched selector tails, inheritance/reparenting, repeated equal focus,
+command/final failure positions and smaller retries are covered. Common no-std,
+strict all-target Clippy for common/view/project/runtime, formatting/whitespace
+and the current intrinsic fingerprint pass. The fresh oracle also compares
+native rule costs with JS parser metadata.
+
+Real Chrome agrees on **127 work/payload/depth/cascade batches**; 1839 radio
+observations, eight disabled-select batches, six activation and eleven select
+identity/event scenarios still pass. Chrome and WebKit each pass 15 mockup
+projections and **59 regressions**, including command/final cascade refusal,
+DOM/model rollback and a smaller retry with correct computed color.
+
+Fresh CLI/companion/projection builds pass. UARP passes **107 tests in 28 groups
+and two expected native views**. Live compiled chat passes in Chrome 156.0.8078.80
+and Playwright WebKit 26.5, including trusted interactions, the ordered native
+tree, selected accessibility and 195 declarations across 14 style properties.
+Source-free generated browser artifacts pass the new trusted-event cascade
+failure before catch/logging and retain prior DOM/title; depth and stylesheet
+failure modes also pass with the new model. The native Wasm regression likewise
+rejects a transient excessive command read before a later attempted repair.
+
+Evidence: `target/cascade-component.log`, `target/cascade-runtime.log`,
+`target/cascade-oracle-node.log`, `target/cascade-chrome.log`,
+`target/cascade-pilot-chrome.log`, `target/cascade-pilot-webkit.log`,
+`target/cascade-clippy.log`, `target/cascade-generated-bundle.log`,
+`target/cascade-depth-bundle.log`, `target/cascade-css-bundle.log`,
+`target/cascade-pilot-native.log`, `target/cascade-live-chrome.log` and
+`target/cascade-live-webkit.log` (local, ignored). The initial focused native
+five-test log had an unused test assignment; it was removed before the final
+six-test/all-component pass and strict Clippy. No production allowance was raised
+to obtain passing results.
+
+The last full workspace gate still belongs to `6830dab`. Complete derived-value
+expansion/output, repeated accessibility evaluation, browser-private invalidation,
+other host buffers/lifetime, Firefox/current full matrix, native targets, sustained
+resource measurements and release acceptance remain open.
+
+
+## Computed custom-property scopes — scoped verification 2026-11-03
+
+The native renderer now resolves custom declarations before inheritance, freezes
+aliases, masks invalid local bindings and tracks active dependency cycles with an
+iterative work stack. Only selected fallback branches participate. An initial
+eager graph based on the 2022 specification snapshot disagreed with both tested
+browsers on an unused self-fallback; it was replaced using the current draft's
+substitution contexts and independent platform-only CSS controls. The arena shares
+fragments and checks UTF-16 size before materialization. Whole property grammar
+and numerical notes defer for valid variable references, then native snapshot,
+geometry and paint validate selected values. Empty/nested/function fallbacks,
+quoted text, token boundaries and case-insensitive variable functions are covered.
+
+Scoped checks pass: **143 native view tests**, **48 runtime/view checks**,
+**18 common view checks**, **142 oracle-enabled Node checks**, five registry and
+eleven embedding-documentation checks, common no-std and strict all-target Clippy
+for common/view/project/runtime. The native suite includes nine resolver unit
+checks and six variable integration checks. Chrome passes **20 variable fixtures
+and 220 computed-style observations**.
+
+WebKit does **not** pass that comparison: the `cycle-escape` fixture differs in
+color and its derived border color. Platform-only controls also expose a renamed
+outside-cycle consumer difference. This remains an explicit browser compatibility
+gap; the failing probe is retained. No complete Chrome/WebKit variable parity,
+Firefox matrix, generated variable-specific browser acceptance or release
+readiness is claimed.
+
+Evidence: `target/variables-complete-native.log`,
+`target/variables-complete-runtime.log`, `target/variables-complete-common.log`,
+`target/variables-complete-node.log`, `target/variables-complete-chrome.log`,
+`target/variables-complete-webkit.log`, `target/variables-complete-registry.log`,
+`target/variables-complete-docs.log` and `target/variables-complete-clippy.log`.
+These ignored scoped results precede the commit gate. Shared expansion/output
+budgets, repeated accessibility evaluation, broader CSS defaults/inheritance and
+lexical parity, other host buffers, native targets and release acceptance remain
+open.
+
+
+## Commit verification — 2026-11-03
+
+The full gate for the depth, potential-cascade and computed-variable batch passes
+**8/8 steps**, including workspace all-target strict Clippy/build, no-std checks,
+**3093 passing tests** and 16 ignored tests. The conformance inventory reports
+123 passes, four known unsupported cases, zero regressions and zero infrastructure
+failures; its baseline matches. Sources remained unchanged during verification.
+Local report: `target/verification/20261103-004541-0we5hp3_/report.json`.
+The subsequent edit only records these results in documentation.
+
+The current real Chrome DOM boundary probe also passes with the fresh variable
+oracle (`target/commit-20261103-browser.log`). This full gate does not erase the
+separately failing WebKit variable comparison recorded above, establish a full
+browser/platform matrix, or close the remaining development plan.

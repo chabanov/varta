@@ -291,6 +291,7 @@ struct Apply<'tree, 'context, 'input> {
     select_work: usize,
     radio_work: usize,
     stylesheet_work: usize,
+    cascade_work: usize,
     last_select_value: Option<(u32, u32, String)>,
 }
 
@@ -344,6 +345,55 @@ impl Tree {
             }
         }
         Ok(())
+    }
+
+    /// One conservative full-inventory read. Candidate anchors ignore media and
+    /// local field/focus state; var() scopes include the ancestor inventory cost.
+    fn potential_cascade_work(&self, allowance: usize) -> Result<usize, Violation> {
+        let weight = varta_common::view::DRAFT_STYLESHEET_NODE_WORK;
+        let mut total = 0usize;
+        let mut charge = |work: usize| {
+            total = total.saturating_add(work);
+            if total > allowance {
+                Err(Violation::CascadeWorkLimit)
+            } else {
+                Ok(())
+            }
+        };
+        let mut pending: Vec<_> = self
+            .nodes
+            .iter()
+            .filter_map(|(id, node)| node.parent.is_none().then_some((*id, 0usize)))
+            .collect();
+        while let Some((id, ancestors)) = pending.pop() {
+            charge(weight)?;
+            let node = &self.nodes[&id];
+            let mut own = weight;
+            let mut variables = false;
+            if let Content::Element(element) = &node.content {
+                charge(element.class.len())?;
+                own = own.saturating_add(element.class.len());
+                for value in element.style.values() {
+                    let work = weight + value.len();
+                    charge(work)?;
+                    own = own.saturating_add(work);
+                    variables |= varta_common::view::css::contains_variable(value);
+                }
+                let classes = element.class.split_ascii_whitespace().collect();
+                for (sheet, index) in self.rule_index.candidates(id == ROOT_NODE, &classes) {
+                    let cost = self.sheets[&sheet].index.costs[index];
+                    charge(cost.work)?;
+                    own = own.saturating_add(cost.work);
+                    variables |= cost.variables;
+                }
+            }
+            let scope = ancestors.saturating_add(own);
+            if variables && self.rule_index.has_custom() {
+                charge(scope)?;
+            }
+            pending.extend(node.children.iter().map(|child| (*child, scope)));
+        }
+        Ok(total)
     }
 
     pub(crate) fn radio_groups(&self) -> RadioGroups {
@@ -414,7 +464,7 @@ impl Tree {
         self.attached(id)
             && !self.path(id).into_iter().any(|ancestor| {
                 self.computed_property(ancestor, environment, CssProperty::Display)
-                    .is_some_and(|value| value == "none")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("none"))
             })
     }
     /// The node and its ancestors, target first.
@@ -430,21 +480,16 @@ impl Tree {
     /// Concatenated text of a subtree.
     pub(crate) fn text_content(&self, id: u32) -> String {
         let mut out = String::new();
-        self.collect_text(id, &mut out);
-        out
-    }
-    fn collect_text(&self, id: u32, out: &mut String) {
-        let Some(node) = self.nodes.get(&id) else {
-            return;
-        };
-        match &node.content {
-            Content::Text(text) => out.push_str(text),
-            Content::Element(_) => {
-                for child in &node.children {
-                    self.collect_text(*child, out);
-                }
+        for id in self.subtree_order(id) {
+            if let Some(Node {
+                content: Content::Text(text),
+                ..
+            }) = self.nodes.get(&id)
+            {
+                out.push_str(text);
             }
         }
+        out
     }
     /// Live attached elements in document order.
     pub(crate) fn document_order(&self) -> Vec<u32> {
@@ -545,26 +590,27 @@ impl Tree {
                 _ => None,
             })
     }
-    /// Resolve inherited custom properties, copying only the winning bindings.
-    pub(crate) fn custom_properties(
-        &self,
+    /// Resolve custom declarations at each ancestor before inheritance.
+    pub(crate) fn custom_properties<'a>(
+        &'a self,
         id: u32,
         environment: &Environment,
-    ) -> BTreeMap<String, String> {
-        if !self.rule_index.has_custom() {
-            return BTreeMap::new();
-        }
-        let mut raw = BTreeMap::new();
-        for ancestor in self.path(id).into_iter().rev() {
-            for (name, value) in self.cascade_refs(ancestor, environment) {
-                if let Name::Custom(name) = name {
-                    raw.insert(name.as_str(), value);
-                }
+    ) -> crate::variables::Scope<'a> {
+        let mut scope = crate::variables::Scope::default();
+        if self.rule_index.has_custom() {
+            for ancestor in self.path(id).into_iter().rev() {
+                let raw = self
+                    .cascade_refs(ancestor, environment)
+                    .into_iter()
+                    .filter_map(|(name, value)| match name {
+                        Name::Custom(name) => Some((name.as_str(), value)),
+                        Name::Property(_) => None,
+                    })
+                    .collect();
+                scope.extend(raw);
             }
         }
-        raw.into_iter()
-            .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .collect()
+        scope
     }
     pub(crate) fn cascade_refs(&self, id: u32, environment: &Environment) -> Vec<(&Name, &str)> {
         let Some(element) = self.element(id) else {
@@ -617,7 +663,7 @@ impl Tree {
                     matches!(name,Name::Property(p) if *p==property).then_some(value)
                 })
         })?;
-        style::Variables::new(self, id, environment).substitute(raw)
+        style::Variables::new(self, id, environment).property(property, raw)
     }
     pub(crate) fn computed(
         &self,
@@ -639,7 +685,9 @@ impl Tree {
         declared
             .into_iter()
             .filter_map(|(property, value)| {
-                variables.substitute(value).map(|value| (property, value))
+                variables
+                    .property(property, value)
+                    .map(|value| (property, value))
             })
             .collect()
     }
@@ -651,7 +699,7 @@ impl Tree {
         while let Some(id) = stack.pop() {
             if self
                 .computed_property(id, environment, CssProperty::Display)
-                .is_some_and(|display| display == "none")
+                .is_some_and(|display| display.eq_ignore_ascii_case("none"))
             {
                 continue;
             }
@@ -676,6 +724,7 @@ impl Tree {
             select_work: 0,
             radio_work: 0,
             stylesheet_work: 0,
+            cascade_work: 0,
             last_select_value: None,
         };
         for (index, operation) in operations.iter().enumerate() {
@@ -730,6 +779,20 @@ impl Apply<'_, '_, '_> {
                 violation: Violation::SelectWorkLimit,
             });
         }
+        Ok(())
+    }
+
+    fn charge_cascade_read(&mut self, operation: Option<usize>) -> Result<(), ViewError> {
+        let work = self
+            .tree
+            .potential_cascade_work(
+                varta_common::view::DRAFT_MAX_CASCADE_WORK.saturating_sub(self.cascade_work),
+            )
+            .map_err(|violation| ViewError::Invalid {
+                operation,
+                violation,
+            })?;
+        self.cascade_work = self.cascade_work.saturating_add(work);
         Ok(())
     }
 
@@ -1027,7 +1090,8 @@ impl Apply<'_, '_, '_> {
         if !parent_tag.admits_child(child_tag) {
             return Err(self.fail(Violation::ChildNotAllowed));
         }
-        if self.tree.path(parent).contains(&node) {
+        let parent_path = self.tree.path(parent);
+        if parent_path.contains(&node) {
             return Err(self.fail(Violation::Cycle));
         }
         if before != NO_NODE
@@ -1063,8 +1127,13 @@ impl Apply<'_, '_, '_> {
         if let Some(child) = self.tree.nodes.get_mut(&node) {
             child.parent = Some(parent);
         }
-        let mut stack = vec![node];
-        while let Some(radio) = stack.pop() {
+        // The existing moved-subtree walk checks every descendant, including
+        // detached components and text leaves, before any host effect escapes.
+        let mut stack = vec![(node, parent_path.len())];
+        while let Some((radio, depth)) = stack.pop() {
+            if depth > varta_common::view::DRAFT_MAX_TREE_DEPTH {
+                return Err(self.fail(Violation::TreeDepthLimit));
+            }
             self.charge_radio_work(varta_common::view::DRAFT_RADIO_NODE_WORK)?;
             if let Some(element) = self.tree.element(radio)
                 && element.checkable()
@@ -1073,7 +1142,13 @@ impl Apply<'_, '_, '_> {
                 let checked = element.checked;
                 self.reconcile_radio(radio, checked)?;
             }
-            stack.extend(self.tree.nodes[&radio].children.iter().rev());
+            stack.extend(
+                self.tree.nodes[&radio]
+                    .children
+                    .iter()
+                    .rev()
+                    .map(|child| (*child, depth + 1)),
+            );
         }
         if let Some(select) = old_select {
             if moved_option {
@@ -1283,6 +1358,12 @@ impl Apply<'_, '_, '_> {
         };
         if !valid_argument {
             return Err(self.fail(Violation::InvalidArgument));
+        }
+        if matches!(
+            command,
+            Command::Focus | Command::Select | Command::ScrollIntoView | Command::ScrollTo
+        ) {
+            self.charge_cascade_read(Some(self.index))?;
         }
         match command {
             Command::Focus => {
@@ -1494,6 +1575,7 @@ impl Apply<'_, '_, '_> {
 
     /// Invariants of the whole batch: `id` values unique among live elements.
     fn finish(&mut self) -> Result<(), ViewError> {
+        self.charge_cascade_read(None)?;
         self.charge_select_work(self.tree.select_inventory_work(), None)?;
         self.tree
             .validate_retained_text()

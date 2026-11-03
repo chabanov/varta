@@ -74,10 +74,49 @@ function attributeValue(rule, tag, text, linkRequested) {
   }
 }
 
+// Private immutable rule records and copied anchor sets make rejected sheet
+// updates unable to poison later admission. No media or local input state is read.
+function cascadeIndex(source) {
+  return { roots:new Set(source?.roots), classes:new Map(source?[...source.classes].map(([key,rules])=>[key,new Set(rules)]):[]), custom:source?.custom??0 };
+}
+function updateCascade(index,rules,adding) {
+  for(const rule of rules){
+    if(rule.custom)index.custom+=adding?1:-1;
+    const anchors=new Set(rule.selectors.map(s=>s===':root'?null:s.match(/^\.[A-Za-z_][A-Za-z0-9_-]*/)[0].slice(1)));
+    for(const anchor of anchors){
+      let set=anchor===null?index.roots:index.classes.get(anchor);
+      if(adding){if(!set){set=new Set();index.classes.set(anchor,set);}set.add(rule);}
+      else if(set){set.delete(rule);if(anchor!==null&&!set.size)index.classes.delete(anchor);}
+    }
+  }
+}
+function potentialCascadeRead(nodes,index,charge) {
+  const weight=V.limits.stylesheetNodeWork,pending=[];
+  for(const [id,node] of nodes)if(node.parent===W.noNode)pending.push([id,0]);
+  while(pending.length){
+    const [id,ancestors]=pending.pop(),node=nodes.get(id);charge(weight);
+    let own=weight,variables=false;
+    if(node.kind==='element'){
+      charge(node.classBytes);own+=node.classBytes;
+      for(const [property,value] of node.style){const work=weight+node.styleBytes.get(property);charge(work);own+=work;variables ||= value.toLowerCase().includes('var(');}
+      let candidates=index.roots;
+      if(id!==W.root){
+        candidates=new Set();
+        for(const className of new Set(node.class.split(/[\t\n\f\r ]+/).filter(Boolean)))
+          for(const rule of index.classes.get(className)??[])candidates.add(rule);
+      }
+      for(const rule of candidates){charge(rule.work);own+=rule.work;variables ||= rule.variables;}
+    }
+    const scope=ancestors+own;if(variables&&index.custom)charge(scope);
+    for(const child of node.children)pending.push([child,scope]);
+  }
+}
+
 /** Pure transaction validator shared by the Worker and DOM adapter. */
 export function createViewModel({ linkRequested = () => false, assetRequested = () => true } = {}) {
   const checkValue = createValueMatcher(Object.fromEntries(V.css.map((row) => [row.name, row.grammar])), Object.fromEntries(V.css.map((row) => [row.name, row.note ?? ""])));
   let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), sheetBytes = new Map(), sheetWork = new Map(), stylesheetBytes=0, installedStylesheetWork=0, pending = new Set(), title = "", titleBytes = 0, focus = W.noNode;
+  let cascade=cascadeIndex(), sheetRules=new Map();
   let closed = false;
   const validateChoice = (record, choice) => {
     const MAX_NODE_ID=0xffff_ffff;
@@ -89,11 +128,14 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     // Copy every mutable container. A failed last operation cannot affect a
     // previously committed tree, listener, field, stylesheet or command request.
     const next = new Map([...nodes].map(([id, node]) => [id, { ...node, children: [...node.children], listeners: [...node.listeners], ...(node.kind === "element" ? { attributes: new Map(node.attributes), style: new Map(node.style), attributeBytes: new Map(node.attributeBytes), styleBytes: new Map(node.styleBytes) } : {}) }]));
+    const nextCascade=cascadeIndex(cascade),nextRules=new Map(sheetRules);
     const nextSheets = new Map(sheets), nextSheetBytes = new Map(sheetBytes), nextSheetWork=new Map(sheetWork), copies = new Set(pending), effects = [];
     const handlers = new Set([...nodes.values()].flatMap((node) => node.listeners.map((listener) => listener.handler)));
     let index, nextTitle = title, nextTitleBytes = titleBytes, nextFocus = focus;
     let parsedStylesheetWork=0,nextStylesheetBytes=stylesheetBytes,nextInstalledStylesheetWork=installedStylesheetWork;
     const fail = (rule) => { throw new ViewProtocolError(rule, index); };
+    let cascadeWork=0;
+    const chargeCascade=()=>potentialCascadeRead(next,nextCascade,work=>{cascadeWork+=work;if(cascadeWork>V.limits.cascadeWork)fail('cascade work budget');});
     let selectionWork=0;
     let lastSelectValue;
     const skippedValues=new Set();
@@ -147,20 +189,22 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (op.node === W.root) fail("root not movable");
           const parent = asElement(op.parent), node = live(op.node), rule = tags.get(parent.tag);
           if (node.kind === "text" ? !rule.textChild : !rule.children.includes(node.tag)) fail("child not allowed");
-          for (let at = op.parent; at !== W.noNode; at = live(at).parent) if (at === op.node) fail("cycle");
+          let depth=0;
+          for (let at = op.parent; at !== W.noNode; at = live(at).parent) { if (at === op.node) fail("cycle"); depth++; }
           if (op.before !== W.noNode && (op.before === op.node || live(op.before).parent !== op.parent)) fail("before is not a sibling");
           const oldSelect=selectOwner(next,op.node);
           detach(op.node); parent.children.splice(op.before === W.noNode ? parent.children.length : parent.children.indexOf(op.before), 0, op.node); node.parent = op.parent;
+          const stack = [[op.node,depth]];
+          while (stack.length) {
+            const [id,depth] = stack.pop(), child = live(id);
+            if(depth>V.limits.treeDepth)fail('tree depth budget');
+            chargeRadio(V.limits.radioNodeWork);
+            if (checkable(child) && inputType(child) === "radio") reconcileRadio(id,child.checked);
+            for(let i=child.children.length-1;i>=0;i--)stack.push([child.children[i],depth+1]);
+          }
           if(oldSelect!==undefined){if(node.tag==='option')normalizeSelect(next,oldSelect);else syncSelect(next,oldSelect);}
           const owner=selectOwner(next,op.node);
           if(owner!==undefined){if(node.tag==='option')normalizeSelect(next,owner,node.optionSelected?op.node:undefined);else syncSelect(next,owner);}
-          const stack = [op.node];
-          while (stack.length) {
-            chargeRadio(V.limits.radioNodeWork);
-            const id = stack.pop(), child = live(id);
-            if (checkable(child) && inputType(child) === "radio") reconcileRadio(id,child.checked);
-            stack.push(...child.children.toReversed());
-          }
           break;
         }
         case "remove": {
@@ -192,6 +236,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         case "command": {
           const node = asElement(op.node), rule = commands.get(op.command); if (!admitted(rule.tags, node)) fail("command not allowed");
           if (rule.argument ? !(Number.isFinite(op.argument) && op.argument >= 0) : !Object.is(op.argument, 0)) fail("command argument");
+          if(['focus','select','scroll_into_view','scroll_to'].includes(op.command))chargeCascade();
           if (op.command === "show_modal") { if (!attached(op.node)) fail("detached modal"); node.open = true; }
           if (op.command === "close") node.open = false;
           if (op.command === "focus" && !node.attributes.has("disabled") && attached(op.node)) nextFocus = op.node;
@@ -200,18 +245,19 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         }
         case "stylesheet": {
           if(!op.sheet)fail('stylesheet id');
-          let work=0;
+          let work=0,rules=[];
           if(op.text){
             let checked;try{checked=checkStylesheet(op.text,V,{workLimit:V.limits.stylesheetWork-parsedStylesheetWork});}
             catch(error){fail(error instanceof StylesheetWorkError?'stylesheet work budget':'stylesheet value');}
-            if(checked.errors.length)fail('stylesheet value');work=checked.work;parsedStylesheetWork+=work;
+            if(checked.errors.length)fail('stylesheet value');work=checked.work;rules=checked.rules;parsedStylesheetWork+=work;
           }
           nextStylesheetBytes=nextStylesheetBytes-(nextSheets.get(op.sheet)?.length??0)*2+op.text.length*2;
           nextInstalledStylesheetWork=nextInstalledStylesheetWork-(nextSheetWork.get(op.sheet)??0)+work;
           if(nextStylesheetBytes>V.limits.stylesheetBytes)fail('stylesheet budget');
           if(nextInstalledStylesheetWork>V.limits.stylesheetWork)fail('stylesheet work budget');
-          if(op.text){nextSheets.set(op.sheet,op.text);nextSheetBytes.set(op.sheet,selectionTextBytes(op.text));nextSheetWork.set(op.sheet,work);}
-          else{nextSheets.delete(op.sheet);nextSheetBytes.delete(op.sheet);nextSheetWork.delete(op.sheet);}
+          updateCascade(nextCascade,nextRules.get(op.sheet)??[],false);
+          if(op.text){nextRules.set(op.sheet,rules);updateCascade(nextCascade,rules,true);nextSheets.set(op.sheet,op.text);nextSheetBytes.set(op.sheet,selectionTextBytes(op.text));nextSheetWork.set(op.sheet,work);}
+          else{nextRules.delete(op.sheet);nextSheets.delete(op.sheet);nextSheetBytes.delete(op.sheet);nextSheetWork.delete(op.sheet);}
           break;
         }
         case "set_title": nextTitle = op.text; nextTitleBytes=selectionTextBytes(op.text); break;
@@ -220,6 +266,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
       }
     }
     index = undefined; const ids = new Set();
+    chargeCascade();
     chargeSelection(selectInventoryWork(next));
     let retained=nextTitleBytes;
     const retain=bytes=>{retained+=bytes;if(retained>V.limits.retainedTextBytes)fail('retained text budget');};
@@ -237,6 +284,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     }
     for (const node of next.values()) if (node.kind === "element" && node.attributes.has("id")) { const id = node.attributes.get("id"); if (ids.has(id)) fail("duplicate id attribute"); ids.add(id); }
     for(const [id,node] of next)if((node.tag==='select'&&node.value.length*2>V.limits.valueBytes)||(node.tag==='option'&&optionValue(next,id).length*2>V.limits.valueBytes))fail('select value budget');
+    cascade=nextCascade;sheetRules=nextRules;
     nodes = next; sheets = nextSheets; sheetBytes=nextSheetBytes; sheetWork=nextSheetWork; stylesheetBytes=nextStylesheetBytes; installedStylesheetWork=nextInstalledStylesheetWork; pending = copies; title = nextTitle; titleBytes=nextTitleBytes; focus = nextFocus;
     return { operations, effects, skippedValues };
   };
@@ -246,7 +294,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
       const {attributeBytes,styleBytes,...state}=node;
       return { id, ...state, children: [...node.children], listeners: node.listeners.map((listener) => ({ ...listener })), ...(node.kind === "element" ? { attributes: Object.fromEntries(node.attributes), style: Object.fromEntries(node.style) } : {}) };
     }), sheets: Object.fromEntries(sheets), title, focus, pending: [...pending] }; },
-    close() { closed = true; nodes.clear(); sheets.clear(); sheetBytes.clear(); sheetWork.clear(); stylesheetBytes=0; installedStylesheetWork=0; pending.clear(); title = ""; titleBytes=0; focus = W.noNode; },
+    close() { closed = true; nodes.clear(); sheets.clear(); sheetBytes.clear(); sheetWork.clear();sheetRules.clear();cascade=cascadeIndex(); stylesheetBytes=0; installedStylesheetWork=0; pending.clear(); title = ""; titleBytes=0; focus = W.noNode; },
     complete(request) { if (!pending.delete(request)) throw new ViewProtocolError("unknown command result"); },
     validateChoice,
     syncEvent(record, selectedOption) {
