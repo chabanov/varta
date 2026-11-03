@@ -19,10 +19,12 @@ const MAX_SHAPING_BUFFER_SLOTS: usize = 262_144;
 const MAX_SHAPING_OPERATIONS: u32 = 1_000_000;
 const MAX_CACHED_SHAPING_SLOTS: usize = 65_536;
 const MAX_VIEW_SHAPING_OPERATIONS: usize = 16 * 1024 * 1024;
+const MAX_INLINE_WORK: usize = 1_000_000;
 const NO_VIEW_REQUEST: usize = usize::MAX;
 
 struct ViewShapingState {
     remaining: AtomicUsize,
+    inline_remaining: AtomicUsize,
     last_used: AtomicUsize,
 }
 
@@ -34,6 +36,9 @@ struct ViewShapingGuard {
 impl Drop for ViewShapingGuard {
     fn drop(&mut self) {
         if self.owner {
+            self.state
+                .inline_remaining
+                .store(NO_VIEW_REQUEST, Ordering::Relaxed);
             let remaining = self
                 .state
                 .remaining
@@ -60,9 +65,11 @@ struct FontEntry {
 /// A bounded explicit-font text shaper. Reuse it to retain shaping caches.
 pub struct TextMeasurer {
     fonts: FontContext,
-    layout: LayoutContext<()>,
+    layout: LayoutContext<u32>,
     entries: Vec<FontEntry>,
     view_shaping: Arc<ViewShapingState>,
+    #[cfg(test)]
+    shaping_builds: usize,
 }
 
 /// The measured advance and height, in CSS pixels, and number of lines.
@@ -84,6 +91,15 @@ pub(crate) struct TextOptions {
     pub white_space: WhiteSpaceMode,
     pub break_anywhere: bool,
     pub source: TextSource,
+}
+
+/// One source text node's normalized byte range and resolved font style.
+#[derive(Clone)]
+pub(crate) struct TextSpan {
+    pub range: std::ops::Range<usize>,
+    pub owner: u32,
+    pub options: TextOptions,
+    pub families: Vec<String>,
 }
 
 /// Private provenance: field display is bounded by the existing wire/editor
@@ -161,12 +177,29 @@ impl TextMeasurer {
             .remaining
             .compare_exchange(NO_VIEW_REQUEST, limit, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok();
+        if owner {
+            self.view_shaping
+                .inline_remaining
+                .store(MAX_INLINE_WORK, Ordering::Relaxed);
+        }
         let _guard = ViewShapingGuard {
             state: Arc::clone(&self.view_shaping),
             limit,
             owner,
         };
         action(self)
+    }
+
+    pub(crate) fn charge_inline_work(&mut self, amount: usize) -> Result<(), TextMeasureError> {
+        self.view_shaping
+            .inline_remaining
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                (remaining != NO_VIEW_REQUEST)
+                    .then(|| remaining.checked_sub(amount))
+                    .flatten()
+            })
+            .map(|_| ())
+            .map_err(|_| TextMeasureError::Limit)
     }
 
     /// Resolve only registered names and explicit aliases. A generic family
@@ -312,8 +345,11 @@ impl TextMeasurer {
             entries,
             view_shaping: Arc::new(ViewShapingState {
                 remaining: AtomicUsize::new(NO_VIEW_REQUEST),
+                inline_remaining: AtomicUsize::new(NO_VIEW_REQUEST),
                 last_used: AtomicUsize::new(0),
             }),
+            #[cfg(test)]
+            shaping_builds: 0,
         })
     }
 
@@ -385,7 +421,18 @@ impl TextMeasurer {
         max_width: Option<f32>,
         families: &[String],
         options: TextOptions,
-    ) -> Result<(TextMetrics, Layout<()>), TextMeasureError> {
+    ) -> Result<(TextMetrics, Layout<u32>), TextMeasureError> {
+        self.shape_with_spans(text, max_width, families, options, &[])
+    }
+
+    pub(crate) fn shape_with_spans(
+        &mut self,
+        text: &str,
+        max_width: Option<f32>,
+        families: &[String],
+        options: TextOptions,
+        spans: &[TextSpan],
+    ) -> Result<(TextMetrics, Layout<u32>), TextMeasureError> {
         if !options.source.admits(text)
             || !options.size.is_finite()
             || !(0.01..=4096.0).contains(&options.size)
@@ -393,6 +440,22 @@ impl TextMeasurer {
             || families.is_empty()
         {
             return Err(TextMeasureError::Limit);
+        }
+        if spans.len() > 1024
+            || spans.iter().any(|span| {
+                span.range.start > span.range.end
+                    || span.range.end > text.len()
+                    || !text.is_char_boundary(span.range.start)
+                    || !text.is_char_boundary(span.range.end)
+                    || !span.options.size.is_finite()
+                    || !(0.01..=4096.0).contains(&span.options.size)
+                    || span.families.is_empty()
+            })
+        {
+            return Err(TextMeasureError::Limit);
+        }
+        if !spans.is_empty() {
+            self.charge_inline_work(spans.len())?;
         }
         let remaining = self.view_shaping.remaining.load(Ordering::Relaxed);
         let scoped = remaining != NO_VIEW_REQUEST;
@@ -406,6 +469,10 @@ impl TextMeasurer {
         let mut builder = self
             .layout
             .ranged_builder(&mut self.fonts, text, 1.0, false);
+        #[cfg(test)]
+        {
+            self.shaping_builds += 1;
+        }
         builder.push_default(StyleProperty::FontFamily(family_names.as_slice().into()));
         builder.push_default(StyleProperty::FontSize(options.size));
         builder.push_default(StyleProperty::FontWeight(FontWeight::new(options.weight)));
@@ -423,7 +490,57 @@ impl TextMeasurer {
         if let Some(line_height) = options.line_height {
             builder.push_default(StyleProperty::LineHeight(line_height));
         }
-        let mut layout: Layout<()> = builder.build(text);
+        for span in spans {
+            if span.range.is_empty() {
+                continue;
+            }
+            let names: Vec<_> = span
+                .families
+                .iter()
+                .map(|name| FontFamilyName::Named(Cow::Borrowed(name.as_str())))
+                .collect();
+            let range = span.range.clone();
+            let style = span.options;
+            builder.push(StyleProperty::Brush(span.owner), range.clone());
+            builder.push(
+                StyleProperty::FontFamily(names.as_slice().into()),
+                range.clone(),
+            );
+            builder.push(StyleProperty::FontSize(style.size), range.clone());
+            builder.push(
+                StyleProperty::FontWeight(FontWeight::new(style.weight)),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::FontStyle(if style.italic {
+                    FontStyle::Italic
+                } else {
+                    FontStyle::Normal
+                }),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::LineHeight(style.line_height.unwrap_or_default()),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::TextWrapMode(if style.white_space == WhiteSpaceMode::NoWrap {
+                    TextWrapMode::NoWrap
+                } else {
+                    TextWrapMode::Wrap
+                }),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::OverflowWrap(if style.break_anywhere {
+                    OverflowWrap::Anywhere
+                } else {
+                    OverflowWrap::Normal
+                }),
+                range,
+            );
+        }
+        let mut layout: Layout<u32> = builder.build(text);
         if scoped {
             let used = self.layout.shaping_operations();
             if self
@@ -492,35 +609,41 @@ mod tests {
     }
 
     fn scoped_view() -> (crate::View, TextMeasurer) {
+        scoped_view_with_fields(1)
+    }
+
+    fn scoped_view_with_fields(fields: u32) -> (crate::View, TextMeasurer) {
         use varta_common::view::{CssProperty, Tag};
         let mut view = crate::View::default();
         let mut batch = crate::BatchWriter::new();
-        batch
-            .create_element(2, Tag::Textarea)
-            .set_value(2, "AA", 0)
-            .insert(1, 2, 0);
-        for (property, value) in [
-            (CssProperty::Display, "block"),
-            (CssProperty::Width, "80px"),
-            (CssProperty::Height, "auto"),
-            (CssProperty::MaxHeight, "60px"),
-            (CssProperty::MinWidth, "0"),
-            (CssProperty::MinHeight, "0"),
-            (CssProperty::FieldSizing, "content"),
-            (CssProperty::Resize, "none"),
-            (CssProperty::Padding, "4px"),
-            (CssProperty::Border, "2px solid #000"),
-            (CssProperty::BorderRadius, "0"),
-            (CssProperty::Outline, "none"),
-            (CssProperty::BackgroundColor, "#fff"),
-            (CssProperty::Color, "#00f"),
-            (CssProperty::FontFamily, "\"Varta AAT Marked\""),
-            (CssProperty::FontSize, "20px"),
-            (CssProperty::FontWeight, "normal"),
-            (CssProperty::FontStyle, "normal"),
-            (CssProperty::LineHeight, "20px"),
-        ] {
-            batch.set_style(2, property, value);
+        for id in 2..2 + fields {
+            batch
+                .create_element(id, Tag::Textarea)
+                .set_value(id, "AA", 0)
+                .insert(1, id, 0);
+            for (property, value) in [
+                (CssProperty::Display, "block"),
+                (CssProperty::Width, "80px"),
+                (CssProperty::Height, "auto"),
+                (CssProperty::MaxHeight, "60px"),
+                (CssProperty::MinWidth, "0"),
+                (CssProperty::MinHeight, "0"),
+                (CssProperty::FieldSizing, "content"),
+                (CssProperty::Resize, "none"),
+                (CssProperty::Padding, "4px"),
+                (CssProperty::Border, "2px solid #000"),
+                (CssProperty::BorderRadius, "0"),
+                (CssProperty::Outline, "none"),
+                (CssProperty::BackgroundColor, "#fff"),
+                (CssProperty::Color, "#00f"),
+                (CssProperty::FontFamily, "\"Varta AAT Marked\""),
+                (CssProperty::FontSize, "20px"),
+                (CssProperty::FontWeight, "normal"),
+                (CssProperty::FontStyle, "normal"),
+                (CssProperty::LineHeight, "20px"),
+            ] {
+                batch.set_style(id, property, value);
+            }
         }
         view.commit(&batch.finish(), false, &mut ScopeBroker::default())
             .unwrap();
@@ -530,6 +653,185 @@ mod tests {
         )
         .unwrap();
         (view, measurer)
+    }
+
+    #[test]
+    fn view_shaping_failure_stops_further_taffy_measurements() {
+        #[derive(Debug)]
+        enum Request {
+            Geometry,
+            Boxes,
+            Raster,
+            Scaled,
+        }
+        const FIELDS: u32 = 8;
+        let (view, mut measurer) = scoped_view_with_fields(FIELDS);
+        // Each fixture shapes in eight charged units. All intrinsic builds
+        // succeed, but the first width-constrained build cannot complete.
+        measurer.measure("AA", 20.0, None).unwrap();
+        let one = measurer.layout.shaping_operations() as usize;
+        assert_eq!(one, 8);
+        let intrinsic = FIELDS as usize;
+        let limit = intrinsic * one + one - 1;
+        let snapshot = view.snapshot();
+        let expected = view
+            .rasterize_with_text(100, 100, &mut measurer, 20.0)
+            .unwrap();
+        for request in [
+            Request::Geometry,
+            Request::Boxes,
+            Request::Raster,
+            Request::Scaled,
+        ] {
+            let before = measurer.shaping_builds;
+            let error = measurer
+                .with_view_shaping_limit(limit, |font| match request {
+                    Request::Geometry => view
+                        .layout_geometry_with_text(100.0, 100.0, font, 20.0)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string()),
+                    Request::Boxes => view
+                        .layout_boxes_with_text(100.0, 100.0, font, 20.0)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string()),
+                    Request::Raster => view
+                        .rasterize_with_text(100, 100, font, 20.0)
+                        .map(|_| ())
+                        .map_err(|error| error.to_string()),
+                    Request::Scaled => view
+                        .rasterize_scaled(200, 200, 2.0, Some((font, 20.0)))
+                        .map(|_| ())
+                        .map_err(|error| error.to_string()),
+                })
+                .unwrap_err();
+            assert_eq!(
+                error,
+                format!("text measurement failed: {}", TextMeasureError::Limit)
+            );
+            assert_eq!(
+                measurer.shaping_builds - before,
+                intrinsic + 1,
+                "{request:?}: a refused layout must not construct any more shaping builders"
+            );
+            assert!(measurer.last_view_shaping_operations() <= limit);
+            assert_eq!(view.snapshot(), snapshot);
+            assert_eq!(
+                view.rasterize_with_text(100, 100, &mut measurer, 20.0)
+                    .unwrap()
+                    .pixels,
+                expected.pixels
+            );
+        }
+    }
+
+    #[test]
+    fn inline_work_scope_is_shared_and_failed_layout_keeps_batch_effects_atomic() {
+        use varta_common::view::{Command, CssProperty as P, Tag};
+        let mut view = crate::View::default();
+        let mut font = cluster_measurer();
+        let mut broker = ScopeBroker::default();
+        let mut b = crate::BatchWriter::new();
+        b.create_element(2, Tag::Div)
+            .insert(1, 2, 0)
+            .create_element(3, Tag::Span)
+            .insert(2, 3, 0)
+            .create_text(4, "AA")
+            .insert(3, 4, 0)
+            .set_style(2, P::FontFamily, "\"Varta Cluster Fixture\"")
+            .set_style(2, P::FontSize, "20px")
+            .set_style(2, P::LineHeight, "20px");
+        view.commit(&b.finish(), false, &mut broker).unwrap();
+        let snapshot = view.snapshot();
+        let commits = view.commits();
+        let mut b = crate::BatchWriter::new();
+        b.set_title("only after geometry")
+            .copy_text(77, "deferred")
+            .command(3, Command::ScrollIntoView, 0.0);
+        let bytes = b.finish();
+        font.with_view_shaping(|font| {
+            font.view_shaping
+                .inline_remaining
+                .store(1, Ordering::Relaxed);
+            let error = view
+                .commit_with_layout(&bytes, true, &mut broker, 100.0, 100.0, Some((font, 20.0)))
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                crate::ViewError::Invalid {
+                    violation: crate::Violation::ScrollLayout,
+                    ..
+                }
+            ));
+            assert!(
+                view.layout_boxes_with_text(100.0, 100.0, font, 20.0)
+                    .is_err(),
+                "a nested API cannot refill inline work"
+            );
+            assert_eq!(view.snapshot(), snapshot);
+            assert_eq!(view.commits(), commits);
+            assert_eq!(broker.writes, 0);
+        });
+        view.commit_with_layout(
+            &bytes,
+            true,
+            &mut broker,
+            100.0,
+            100.0,
+            Some((&mut font, 20.0)),
+        )
+        .unwrap();
+        assert_eq!(view.title(), "only after geometry");
+        assert_eq!(broker.writes, 1);
+        assert_eq!(view.commits(), commits + 1);
+    }
+
+    #[test]
+    fn view_shaping_failure_stops_measurements_before_batch_effects() {
+        use varta_common::view::Command;
+        const FIELDS: u32 = 8;
+        const OPERATIONS_PER_FIELD: usize = 8;
+        let (mut view, mut measurer) = scoped_view_with_fields(FIELDS);
+        let intrinsic = FIELDS as usize;
+        let limit = intrinsic * OPERATIONS_PER_FIELD + OPERATIONS_PER_FIELD - 1;
+        let snapshot = view.snapshot();
+        let commits = view.commits();
+        let mut batch = crate::BatchWriter::new();
+        batch
+            .set_title("after complete layout")
+            .copy_text(77, "deferred clipboard")
+            .command(2, Command::ScrollIntoView, 0.0)
+            .command(3, Command::ScrollTo, 0.0);
+        let bytes = batch.finish();
+        let mut broker = ScopeBroker::default();
+        let error = measurer
+            .with_view_shaping_limit(limit, |font| {
+                view.commit_with_layout(&bytes, true, &mut broker, 100.0, 100.0, Some((font, 20.0)))
+            })
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::ViewError::Invalid {
+                operation: Some(2),
+                violation: crate::Violation::ScrollLayout,
+            }
+        ));
+        assert_eq!(measurer.shaping_builds, intrinsic + 1);
+        assert!(measurer.last_view_shaping_operations() <= limit);
+        assert_eq!(view.snapshot(), snapshot);
+        assert_eq!(view.commits(), commits);
+        assert_eq!(broker.writes, 0);
+        view.commit_with_layout(
+            &bytes,
+            true,
+            &mut broker,
+            100.0,
+            100.0,
+            Some((&mut measurer, 20.0)),
+        )
+        .unwrap();
+        assert_eq!(view.title(), "after complete layout");
+        assert_eq!(view.commits(), commits + 1);
+        assert_eq!(broker.writes, 1);
     }
 
     #[test]

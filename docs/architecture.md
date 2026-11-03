@@ -11721,24 +11721,88 @@ their rendering. Transforms and other unsupported geometry effects still fail.
 `TextMeasurer` separately shapes bounded text using explicitly supplied fonts
 and Parley; its font collection disables system-font discovery. It reports
 advance, height and line count. The separate experimental `layout_boxes_with_text`
-uses it for isolated ASCII graphic characters, Cyrillic alphanumeric text, selected
-punctuation and collapsed CSS whitespace in flex/grid containers and blocks with one
-text child, with a caller-supplied covering font and base size. Supported
-`white-space` modes include `normal`, `nowrap`, and a `pre-wrap` subset; tabs
-and leading/trailing line spaces in `pre-wrap` are rejected. Pixel/percentage
-font sizes, supported weights/styles, and normal, numeric, pixel or percentage line heights inherit along
+uses it for isolated Unicode text and collapsed CSS whitespace in flex/grid
+containers and blocks with one text child, with caller-supplied fonts and base
+size. Symbols, supplementary scalars, combining marks, bidirectional runs and
+Unicode line breaking use the same bounded shaper as fields. NUL is rejected
+by the view protocol; other control characters except TAB/LF/CR/FF are rejected
+by native text layout. The general 64 KiB UTF-8 source allowance still applies.
+Supported `white-space` modes include `normal`, `nowrap`, and a `pre-wrap` subset; tabs
+and leading/trailing line spaces in `pre-wrap` are rejected. Pixel/rem/percentage
+font sizes, supported weights/styles, and normal, numeric, pixel/rem or percentage line heights inherit along
 the element tree. A CSS family list resolves against the supplied fonts; an
 unmapped generic family before a match is rejected. The embedding host may
 explicitly map aliases, including generic families, to a supplied font and must ensure
 the same fonts and glyph coverage on comparison targets. Glyph fallback is limited
-to the explicit collection. A text node's rectangle
-is its anonymous layout box, not a glyph-ink bound. Adjacent text, mixed block
-children, baseline alignment and general inline formatting are rejected.
-Platform font selection and text rendering remain open.
+to the explicit collection; missing glyphs use its `.notdef`, with no ambient
+system-font discovery. A text node's rectangle
+is its anonymous layout box, not a glyph-ink bound, on the single-text-child
+path. Inline-only formatting contexts instead expose unions of their font-box
+fragments for descendants; those unions are not themselves hit regions.
+
+The text-aware native path admits adjacent text and nested `span`, `strong`,
+`em`, `code`, explicitly styled links and `br` inside supported block containers.
+Inline flex/grid items are blockified by their parent; ordinary inline nodes
+share one shaped paragraph with style ranges. Whitespace collapses across node
+boundaries, line breaks preserve source order, and hanging break spaces do not
+extend normal-whitespace fragments. Parent and inline-ancestor line struts share
+a baseline; each inline element retains its own font-box height. Empty inline
+anchors retain their source position and contribute line metrics when a line
+exists. Strong/em/code defaults participate before explicit author declarations;
+code's monospace family still needs an explicit host font mapping.
+
+Shaping context crosses source-node boundaries for ligatures, combining marks,
+Arabic joining and bidi runs. As in the checked Chrome fixtures, the first
+source node of a shaped cluster owns its glyph color and full advance; continuation
+nodes retain zero-width fragments. This does not supply caret subdivision or
+inline text selection. Fragment backgrounds, rectangular clipping, vertical
+scroll offsets and descendant hit regions use the final shaped layout; overflow
+of bare text targets its container. Rendering reuses that layout for glyphs.
+
+The context shares the existing node/depth, aggregate text/leaf, per-paragraph
+UTF-8 and shaping limits. A separate 1000000-operation native request allowance
+charges inline collection, copied ancestor paths, span styles, line/cluster/glyph
+projection and fragment assignment; geometry and layout-command nesting cannot
+refill it. One geometry request admits at most 65536 fragments. These counters
+are work bounds, not proof of total CPU time/RSS, and no prior ceiling is raised.
+Nonzero inline edges/borders/radii, decoration, mixed block/inline contexts,
+mixed whitespace-preservation modes, full inline formatting, platform font
+selection and general typography acceptance remain open; unsupported styles
+fail explicitly.
+
+Native `rem` resolution uses `Environment::root_font_size`, a host-supplied
+document-root reference in CSS pixels, initially the subset's initial font size.
+It is independent of the shaper's default text size and the view root's own
+`font-size`: the official browser root lives inside a shadow tree, where `rem`
+still refers to the containing document root. An embedding comparison sets the
+native reference to that document's computed root size. Native standalone hosts
+retain the initial default unless explicitly configured. No OS font lookup or
+new guest operation is involved. `ViewLayout::with_root_font_size` applies the
+reference before the initial guest turn; later environment and viewport updates
+retain the configured reference unless the host supplies a different one.
+
+The reference must be finite and within 0..=1000000 CSS pixels. Invalid setters
+and native layout reject with `LayoutError::RootFont`; zero is valid for geometry,
+while existing text-size minima still apply. Rust environment literals can retain
+the default with `..Environment::default()`. This is an embedding API extension,
+not a wire/host-ABI change; scripted viewport JSON still defaults to the initial
+reference. Existing media-query parsing continues to use its separate initial-
+font reference, unaffected by author document/view font changes.
+
+One native converter handles pixel/rem lengths, signed offsets/margins,
+percentages and auto margins. It checks both the numeric coefficient and the
+resolved length against the existing 1000000 magnitude ceiling, preserving each
+property's signed/nonnegative rule. Grid dimensions are converted as complete
+tokens before the bounded track parser, including nested minmax/repeat tracks.
+Geometry, font sizes, absolute line heights, border widths, outline widths and
+signed outline offsets use the same host reference; DPI scaling follows logical
+CSS conversion. Zero rem radii use the existing rectangular paint path; nonzero
+rounded painting and other unsupported styles remain explicit errors. Raw view
+styles/custom values and snapshots retain their authored units.
 `overflow-wrap: normal` and `anywhere` inherit and participate in line breaking
 and flex/grid minimum-content sizing; `nowrap` still suppresses soft breaks.
 For a supported `p`, default vertical margins are one supplied-font em unless
-overridden by the cascade; the paragraph currently requires one text child.
+overridden by the cascade; text-aware paragraphs also admit the inline-only contexts above.
 `display: none` subtrees produce zero rectangles without measuring or validating
 their hidden layout contents; visible unsupported content still fails closed.
 Vertical scroll offsets for `overflow: auto` and `hidden` affect descendant
@@ -11797,6 +11861,15 @@ request using that measurer, including failed work; it is not a CPU/RSS metric.
 The scope uses pointer-sized atomics without changing the measurer's thread
 traits. Budget-state unwind cleanup does not prove arbitrary dependency-cache
 unwind safety.
+
+Taffy's measurement callback cannot propagate failure directly. After its first
+text error (including aggregate measurement-work refusal), that geometry pass
+uses only the intrinsic fallback metrics for further callbacks; it does not
+construct more text builders, re-run font analysis or overwrite the first text
+diagnostic. The complete geometry is then rejected before publication or paint.
+A failed layout command also rejects its transaction before deferred effects.
+This stops text preparation for an already rejected pass; it does not interrupt
+Taffy's remaining traversal or permanently poison later independent requests.
 
 These are draft native-host request bounds. Array capacity totals are at most
 10 MiB (2.5 MiB retained), excluding allocator/reallocation overlap and other

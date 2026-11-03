@@ -444,6 +444,7 @@ impl Script {
             .map_or_else(crate::Environment::default, |v| crate::Environment {
                 width: v.width,
                 dark: v.dark,
+                ..Default::default()
             })
     }
 }

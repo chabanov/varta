@@ -58,6 +58,7 @@ pub struct ViewLayout {
     pub(crate) font: Option<varta_view::TextMeasurer>,
     pub(crate) font_size: f32,
     pub(crate) dark: Option<bool>,
+    pub(crate) root_font_size: Option<f64>,
 }
 
 impl ViewLayout {
@@ -74,6 +75,7 @@ impl ViewLayout {
             font,
             font_size,
             dark: None,
+            root_font_size: None,
         })
     }
 
@@ -82,6 +84,14 @@ impl ViewLayout {
     pub fn with_dark_mode(mut self, dark: bool) -> Self {
         self.dark = Some(dark);
         self
+    }
+
+    /// Set the host document-root reference for native `rem` lengths before
+    /// the first guest turn. This is independent of the view's own font size.
+    pub fn with_root_font_size(mut self, size: f64) -> Result<Self, varta_view::LayoutError> {
+        varta_view::Environment::default().with_root_font_size(size)?;
+        self.root_font_size = Some(size);
+        Ok(self)
     }
 
     pub(crate) fn validate(

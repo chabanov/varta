@@ -2,8 +2,8 @@
 
 ## Status
 
-Updated 2026-11-03 for the native text/shaping stabilization and shared
-view-request accounting checkpoint following `ab045dc`. Varta is an experimental
+Updated 2026-11-03 against the verified native text batch following `1111baa`:
+measurement failure, Unicode paragraphs, reference lengths and inline formatting. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -15,11 +15,11 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Native text/shaping checkpoint (2026-11-03, macOS arm64): **3150 passed**, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-092401-wtk_ap8t/report.json`. Includes **194 native tests** and the consolidated workspace/dependency checks. Only result documentation changed after the gate. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Native Unicode/rem/inline batch (2026-11-03, macOS arm64): **3174 passed**, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-122544-p42wl8c3/report.json`. Includes **217 native tests (206 view, 11 desktop)**. Only result/status documentation changed after the gate; code and build inputs are unchanged. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU desktop preview has explicit text controls, font-independent checkbox/radio marks, multiline editing, caret/selection, Undo/IME preedit, scrolling, DPI/theme handling and guest layout commands. Textarea navigation/content sizing is committed in `870344d`; later password/search, checkbox/radio and single-select work adds shared control semantics and native/Wasm/browser checks. Shared selection-work accounting now covers native/browser transactions, including deferred Worker edits. Select popup keyboard/pointer/scroll/cancel and character input were observed on macOS Retina; other-platform acceptance remains open. [Field verification record](history.md#native-form-controls--2026-11-02). Full L0 styling, the console settings/list acceptance on macOS/Pi, metrics, accessibility and production shell packaging remain open |
+| Native renderer | Experimental CPU desktop preview has explicit text controls, font-independent checkbox/radio marks, multiline editing, caret/selection, Undo/IME preedit, scrolling, DPI/theme handling and guest layout commands. Textarea navigation/content sizing is committed in `870344d`; later password/search, checkbox/radio and single-select work adds shared control semantics and native/Wasm/browser checks. Shared selection-work accounting now covers native/browser transactions, including deferred Worker edits. Select popup keyboard/pointer/scroll/cancel and character input were observed on macOS Retina; other-platform acceptance remains open. [Field verification record](history.md#native-form-controls--2026-11-02). Full L0 styling, the console settings/list acceptance on macOS/Pi, metrics, accessibility and production shell packaging remain open  Unicode paragraphs, explicit rem reference metrics and inline-only text contexts now pass the consolidated gate and scoped Chrome oracles. The unchanged console reaches unsupported button styling at node 16; a complete native console session remains open. |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
 
@@ -363,8 +363,10 @@ invocation. Closed records, bounded resizable/sparse typed arrays in opt-in prof
 `JSON.stringify`, `varta.json.parse<T>` and the first HTTP/1 service profile are
 implemented. A shared-state application service, broader Application Contracts,
 MCP, package signatures,
-native GUI and hardware adapters and full JS/npm compatibility are not
-implemented yet. KV storage is implemented; broader database APIs remain open. HTTP listeners are independent of the existing outbound client.
+production native GUI shells, hardware adapters and full JS/npm compatibility
+remain open. An experimental CPU desktop preview is implemented. KV storage is
+implemented; broader database APIs remain open. HTTP listeners are independent of
+the existing outbound client.
 
 ### Research thesis
 
@@ -403,11 +405,11 @@ The complete core roadmap must cover:
 | --- | --- | --- |
 | Language semantics | ECMAScript values, numbers, strings, objects/arrays, functions/closures, errors and control flow | Opt-in binary64/UTF-16, typed graphs, classes/generics, collections and structural views work. General prototypes/descriptors, coercion, symbols and full call semantics remain open |
 | Memory | Bounded ownership and exact tracing for application graphs | Exact roots and v38 incremental/idle GC cover admitted graphs and suspended frames. Sustained lifetime, cancellation, peak-memory and leak measurements remain acceptance work |
-| Scheduling | Event loop, Promise jobs, async/await, timers, cancellation and shutdown | Bounded microtasks, timers, network completions and application turns work. Unsupported structural thenables are rejected; generalized cancellation/shutdown, replay and async server integration remain open |
+| Scheduling | Event loop, Promise jobs, async/await, timers, cancellation and shutdown | Bounded microtasks, timers, network completions, application turns and native v38 async HTTP adapters work. Unsupported structural thenables are rejected; generalized cancellation/shutdown, replay and cross-target lifecycle acceptance remain open |
 | Standard APIs | JSON, URL, encoding/binary, Request/Response/Headers, streams and abort | Checked/unknown JSON, compiled decoders, linked serialization, fetch/Web bytes, URL, abort, selected collections/Date/RegExp work. Full standard-library and binary/crypto/Intl surfaces remain partial |
-| System APIs | Capability-checked files, environment, processes and networking | Files with v38 virtual roots, outbound async HTTP(S), initial inbound HTTP and KV work. Wider process/filesystem APIs, v38 HTTP adapters and browser effect coverage remain open |
+| System APIs | Capability-checked files, environment, processes and networking | Files with v38 virtual roots, outbound async HTTP(S), native v38 sync/async HTTP adapters and KV work. Wider process/filesystem APIs and complete cross-target effect coverage remain open |
 | Modules/packages | ES modules, explicit resolution/loading policy and tested packages | Local typed graphs, constants/live bindings, re-exports/defaults, named types and text resources work; pinned pilot checks. General module initialization/loading and package-own-test acceptance remain open |
-| Distribution | Independent runtime, portable Wasm and target-specific packaging | Source-free Wasm and single native executable work on the build target. Official browser bundles, native GUI shells, cross-target releases and authenticity remain open |
+| Distribution | Independent runtime, portable Wasm and target-specific packaging | Source-free Wasm and single native executable work on the build target; official browser bundles and experimental desktop preview work within their checked surfaces. Production native GUI shells, cross-target releases and authenticity remain open |
 | Verification | Conformance, boundary/security tests and resource/performance measurements | Workspace and partial checked conformance pass at the checkpoint above. Upstream Test262 execution, complete feature inventory, sustained target workloads and independent security review remain open |
 
 Do not treat unsupported JS as solved by providing an application-specific host
@@ -6914,3 +6916,150 @@ The meter still omits some parser/plan/Unicode/coverage/outline work and does no
 bound total frame CPU, allocator overlap, other retained structures or RSS.
 Complete resource/platform matrices, late-value CSS and release acceptance remain
 open.
+
+### Native layout measurement failure — verified 2026-11-03
+
+After a text measurement fails, Taffy's callback cannot return the error and its
+traversal continues. The callback now retains the first diagnostic and uses only
+intrinsic fallback sizes for the remaining measurements in that pass. It builds
+no further text requests. The entire geometry/image is rejected, and failed
+layout-command transactions retain their prior model and deferred effects.
+Independent funded requests still render normally. Source, shaping, glyph,
+measurement-work and guest allowances are unchanged; no dependency patch or
+public ABI changed.
+
+An eight-textarea AAT regression reproduced **16 shaping builds instead of the
+necessary 9** before the fix. Geometry, boxes, raster and scaled-raster requests
+now stop at nine: eight successful intrinsic builds and one refused width-bound
+build. They preserve the text error and snapshot, and independent retries reproduce
+the prior pixels. A two-command batch fails at its first layout command without
+changing its title, commit count or clipboard; its funded retry writes once.
+
+The focused **6-test** shaping-scope selection and **196 native tests** (185 view,
+11 desktop) pass, along with strict all-target view/desktop Clippy, a fresh preview
+build, formatting and whitespace checks. This is scoped evidence for the working
+tree after `1111baa`; the last full gate remains that commit's checkpoint. See the
+[verification record](history.md#native-layout-measurement-failure--scoped-verification-2026-11-03).
+Taffy's remaining traversal, unmetered parser/plan/Unicode/coverage/outline work,
+total CPU/RSS, real-window/platform matrices, full L0 styling/accessibility,
+production distribution and release acceptance remain open.
+
+### Native Unicode text nodes — verified 2026-11-03
+
+The unchanged console view artifact reproduced native layout refusal on node
+44's send-button text `↑`. Native text-node admission now accepts Unicode through
+the existing explicit-font shaper instead of an ASCII/Cyrillic alphabet list.
+Symbols, supplementary scalars, combining marks, mixed bidirectional runs and
+Unicode line breaking keep their complete shaping context. The general 64 KiB
+UTF-8 shaping allowance, aggregate work/output limits, control-character checks
+and existing `pre-wrap` restrictions remain unchanged. No language profile,
+host ABI or dependency version changed.
+
+Three focused tests cover original-font glyph aliases and visual run order,
+combining ink, CJK wrapping, normal/nowrap/pre-wrap/nonbreaking whitespace,
+control refusal, unchanged source and UTF-8-limit refusal/recovery. The old
+isolated-emoji rejection test now checks explicit-font `.notdef` geometry and
+retains a control-character negative case. An independent real Chrome probe
+passes **81 checks across 33 block/flex/grid cases**, including browser shaping
+of the glyph-order oracle. This does not compare rasterizer pixels across engines
+or establish complete natural-script typography/inline formatting.
+
+**199 native tests (188 view, 11 desktop)** pass across valid reused scopes and
+the corrected continuation, with strict all-target view/desktop Clippy, fresh
+preview/headless-example builds, formatting and whitespace checks. A test-only
+iterator lint correction was followed by the three focused tests. The original
+font regenerates byte-for-byte. The generic `headless_frame` example runs an
+actual Wasm/manifest pair and exports a bounded initial snapshot and CPU image;
+its successful Unicode artifact, argument/font refusal paths and console failure
+were checked. It does not drive later interactive turns. See the
+[verification record](history.md#native-unicode-text-nodes--scoped-verification-2026-11-03).
+
+With the same console artifact and identical initial snapshots, rendering now
+reaches node 2's `max-width: 48rem` limitation. **Next native delivery work is
+relative-length resolution**, with an explicit reference-font contract and
+browser/native geometry checks across affected layout/text/paint properties;
+converting just that one console declaration is not the acceptance criterion.
+The console's complete native frame/session, other L0 styling and inline layout,
+actual macOS/Pi target acceptance, accessibility, performance/resource measurements
+and release work remain open. The last full gate remains `1111baa`.
+
+### Native rem reference lengths — verified 2026-11-03
+
+The shared L0 grammar already admits rem lengths; native geometry/text/paint now
+resolve them against an explicit host document-root font reference. It defaults
+to the initial font size and is independent of the view root's authored font,
+the shaper's default text size and the media-query initial-font reference. A real
+Chrome shadow-tree probe confirmed that a document root at 20px and view root at
+40px still produce a 40px-wide `2rem` box. `Environment::root_font_size` and its
+checked builder expose that reference to native hosts; `ViewLayout` can apply it
+before the first guest turn. Existing Rust struct literals retain defaults with
+`..Default::default()`. No wire field, guest operation or host ABI was added.
+
+One bounded converter handles dimensions/min/max, padding/margins, gaps, flex
+basis, signed positioned edges, nested grid tracks, font size/absolute line
+height, borders and outlines. Both coefficients and resolved values retain the
+existing numeric ceilings; text/shaping/paint budgets are unchanged. Internal
+viewport and DPI contexts preserve the reference. Raw styles remain authored
+units. Invalid host metrics reject without updating the environment; zero is
+valid for geometry, while the existing text-size minimum still applies. Layout
+failure retains the transaction and makes no deferred clipboard write.
+
+The first three regressions failed before implementation. All **6 focused length
+tests**, **3 runtime native-layout tests**, and **205 native tests (194 view,
+11 desktop)** pass. The six-case selection was repeated after strengthening the
+inherited-font fixture so rem line height cannot be mistaken for a multiplier.
+Real Chrome passes **168 checks across 18 cases** at reference sizes 16/20/24px,
+including distinct view/media font meanings. Strict all-target view/desktop/
+runtime Clippy, fresh preview/headless-example builds, formatting and whitespace
+checks pass. See the [verification record](history.md#native-rem-reference-lengths--scoped-verification-2026-11-03).
+These are scoped results for newer code; the last full gate remains `1111baa`.
+
+The unchanged console artifact and identical initial snapshots now reach node
+11, `span.author-name`, beyond the previous node-2 `48rem` refusal. **Next native
+work is semantic/inline container layout**, including proper inline flow rather
+than globally replacing inline elements with blocks. Full console frame/session,
+remaining styling/typography, OS accessibility, macOS/Pi/other-target acceptance,
+resource/performance measurements and release validation remain open.
+
+### Native inline formatting — verified 2026-11-03
+
+Inline-only contexts now share one paragraph across adjacent text and nested
+span/strong/em/code/link/br descendants. Flex/grid item blockification remains a
+parent layout rule. Text normalization preserves cross-node whitespace and
+shaping context; parent/ancestor struts, own-font fragment heights and empty
+anchors determine line geometry. Original ligature/combining/Arabic fixtures and
+real Chrome establish cluster ownership: the first source node owns its advance
+and ink, while continuation nodes retain zero-width boxes. Painting reuses the
+final shaped layout; backgrounds and hits use clipped fragments, including bare
+text overflow and vertical scrolling. Snapshot/model state remains unchanged by
+rendering. Explicit unsupported styles still fail closed.
+
+An independent native request allowance bounds inline collection/path copying,
+style-span work, line/cluster/glyph projection and fragment assignment. Existing
+node/depth/text/shaping/paint ceilings are retained; nested layout calls cannot
+refill the allowance. Failed layout commands roll back model changes and deferred
+clipboard effects; independent retries succeed. No guest ABI, wire format,
+dependency or old production budget was changed.
+
+**11 inline tests** and the real layout-command work-scope regression pass.
+The standards-mode real Chrome oracle passes **2724 checks over 13 fixtures**:
+geometry, interior hit targets and selected screenshot pixels, with identical
+original font bytes. It covers wrapping/nowrap, glyph context, nested metrics,
+empty anchors, trailing breaks and clipping. Native tests separately cover
+scroll movement, DPI, semantic font faces, fragment gaps and unsupported-style
+refusal. Original inline/Unicode fonts regenerate byte-for-byte. Fresh native
+preview/headless builds and browser/generator syntax checks pass.
+
+The unchanged console Wasm has the same initial snapshots and advances from
+`Layout(Unsupported(11))` at the author span to `Layout(Unsupported(16))` at the
+styled thinking button. Full button/text alignment, remaining native styling,
+mixed block/inline formatting, nonzero inline edges/decoration, platform fonts,
+accessibility, real target sessions, CPU/RSS and release acceptance remain open.
+This is a bounded native increment, not full browser or production readiness.
+
+The consolidated full gate covers this increment and the preceding measurement,
+Unicode and rem work: **3174 passed, 0 failed, 16 ignored**, all eight commands,
+strict workspace Clippy/all-target build and unchanged source fingerprint.
+Conformance: **123 passed, 4 known unsupported / 127**, baseline matched, no
+regressions. See the current status and
+[verification record](history.md#native-text-batch--full-verification-2026-11-03).

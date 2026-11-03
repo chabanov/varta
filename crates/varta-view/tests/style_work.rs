@@ -101,6 +101,7 @@ fn indexed_rules_preserve_source_specificity_media_and_transactional_replacement
     view.set_environment(varta_view::Environment {
         width: 20.0,
         dark: false,
+        ..Default::default()
     })
     .unwrap();
     assert_eq!(color(&view), "#fff");

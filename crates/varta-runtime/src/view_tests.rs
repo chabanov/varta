@@ -862,6 +862,74 @@ export function main(): void {
 "#;
 
 #[test]
+fn native_layout_root_font_applies_before_main_and_survives_resize() {
+    let source = format!(
+        r##"
+export function main(): void {{
+  View.stylesheet(1, '.pane {{ width:4rem; height:2rem; overflow:auto }} .tall {{ height:6rem; background-color:#0f0 }}');
+  const pane=<div class="pane"><div class="tall" /></div>;
+  View.insert({},pane,0);
+  View.command(pane,{},1000);
+  View.commit();
+}}
+"##,
+        view::ROOT_NODE,
+        view::Command::ScrollTo.code()
+    );
+    let bytes = compile_tsx(&source, &[]);
+    let mut app = VartaRuntime::new()
+        .start_application(
+            &bytes,
+            crate::ApplicationOptions {
+                view_layout: Some(
+                    crate::ViewLayout::new(100.0, 100.0, None, 16.0)
+                        .unwrap()
+                        .with_root_font_size(20.0)
+                        .unwrap(),
+                ),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    assert_eq!(
+        app.view_snapshot()["tree"]["children"][0]["scrollTop"],
+        80.0
+    );
+    let ink = |image: &varta_view::RasterImage, x: usize| {
+        image.pixels[(10 * image.width as usize + x) * 4..(10 * image.width as usize + x + 1) * 4]
+            .to_vec()
+    };
+    assert_eq!(
+        ink(&app.view_rasterize(100, 100, None).unwrap(), 70),
+        [0, 255, 0, 255]
+    );
+    app.view_set_layout_size(200.0, 100.0).unwrap();
+    assert_eq!(
+        ink(&app.view_rasterize(200, 100, None).unwrap(), 70),
+        [0, 255, 0, 255]
+    );
+    app.view_set_environment(
+        varta_view::Environment {
+            width: 200.0,
+            ..Default::default()
+        }
+        .with_root_font_size(24.0)
+        .unwrap(),
+    )
+    .unwrap();
+    let image = app.view_rasterize_scaled(400, 200, 2.0, None).unwrap();
+    assert_eq!(ink(&image, 180), [0, 255, 0, 255]);
+    assert_eq!(ink(&image, 195), [0, 0, 0, 0]);
+    assert!(matches!(
+        crate::ViewLayout::new(100.0, 100.0, None, 16.0)
+            .unwrap()
+            .with_root_font_size(f64::NAN),
+        Err(varta_view::LayoutError::RootFont)
+    ));
+}
+
+#[test]
 fn native_layout_applies_initial_theme_preserves_it_on_resize_and_updates_media() {
     let bytes = compile(
         r##"
@@ -897,6 +965,7 @@ export function main(): void {
     app.view_set_environment(varta_view::Environment {
         width: 200.0,
         dark: false,
+        ..Default::default()
     })
     .unwrap();
     assert_eq!(

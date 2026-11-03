@@ -2601,3 +2601,215 @@ Development remains paused. This commit checkpoint does not close the remaining
 unmetered shaping work, total memory/CPU accounting, browser/pilot or native
 platform matrices, full L0 styling/accessibility, distribution and release
 acceptance.
+
+## Native layout measurement failure — scoped verification 2026-11-03
+
+Taffy remeasurement previously continued creating text builders after the first
+measurement failure, although the complete geometry was already destined for
+rejection. A new regression with eight actual content-sized textarea nodes and
+the original marked-insertion AAT font observed **16 builds instead of 9** before
+the fix. A test-only counter observes real ranged-builder construction; no mock
+shaper or timing threshold is involved.
+
+The measurement callback now retains its first failure and returns intrinsic
+fallback sizes without subsequent text preparation. Taffy finishes its remaining
+traversal; its fallback geometry is discarded before returning an error. The
+expanded tests exercise geometry, box queries, ordinary and scaled rasterization,
+and a layout-command transaction. They require exactly eight successful intrinsic
+builds plus one refused width-constrained build, the original text-limit
+diagnostic, no geometry/image publication, unchanged snapshots, and an independent
+funded retry with identical pixels. A failed two-command batch stops at its first
+layout command, retains title/commit count/model and makes no deferred clipboard
+write; its funded retry writes once. All existing production limits are unchanged.
+
+**6 focused shaping-scope tests** and **196 native tests (185 view, 11 desktop)**
+pass with no failures or ignored native tests. Strict all-target view/desktop
+Clippy, a fresh preview build, workspace formatting and whitespace checks pass.
+Existing upstream dependency warnings remain visible. The focused log includes
+the earlier intentional caught unwind probe; it passes. No vendor sources,
+dependency versions, public API or ABI changed.
+
+Evidence (local, ignored): `target/layout-failfast-before.log` (reproduced
+failure), `target/layout-failfast-focused.log`, `target/layout-failfast-native.log`,
+`target/layout-failfast-clippy.log`, `target/layout-failfast-preview.log` and
+`target/layout-failfast-format.log`. The last full gate remains the `1111baa`
+checkpoint; these are scoped results for newer work. No new real-window,
+browser/Node, cross-platform, total CPU/RSS or release acceptance is inferred.
+Unmetered shaping work, full L0 styling/accessibility and the platform/release
+queue remain open. The plan's compatibility table also now acknowledges the
+already implemented native v38 HTTP adapters, official browser bundles and
+experimental desktop preview instead of listing those as wholly future work.
+
+## Native Unicode text nodes — scoped verification 2026-11-03
+
+Building the unmodified console view entry succeeds. The generic native
+initial-frame probe then reproduced `Layout(Unsupported(44))`, whose text is
+the send-button `↑`. The native text-node alphabet restriction was narrower than
+the explicit-font shaper already used by fields. It now admits Unicode while
+retaining general UTF-8/aggregate/glyph/shaping limits, the existing whitespace
+subset and control refusal. Wire NUL rejection remains earlier and atomic.
+
+All three new paragraph tests failed on the old alphabet restriction. Final
+tests pass for symbols, accented Latin, supplementary input, distinct Hebrew/
+Arabic visual order with an LTR prefix, combining-mark ink, CJK wrapping,
+normal/nowrap/pre-wrap/nonbreaking whitespace, unchanged source, control rejection
+and the 64 KiB UTF-8 shaping boundary with recovery. Initial negative fixture
+expectations were corrected to distinguish earlier wire NUL rejection from
+native layout refusal. The new original font has fixed timestamps and regenerates
+identically; its bar/square glyph aliases expose ordering without third-party
+font data. Synthetic glyphs do not establish complete script typography.
+
+The native oracle emits 33 block/flex/grid cases. Real Chrome passes **81
+checks**: native/container rectangle parity, exact source text and applicable
+canvas source-to-alias comparisons. Native tests independently compare their
+source/alias pixels within the native backend. This is not cross-rasterizer pixel
+identity or a Firefox/WebKit/full-browser matrix.
+
+The first native suite invocation passed **78 cases** before an older headless
+test required emoji rejection. That test now checks a missing glyph's explicit
+font `.notdef` advance and preserves its control-character negative. With
+renderer code and fonts unchanged, the corrected continuation passes **121
+cases**, including all 72 headless tests: **199 native cases total (188 view,
+11 desktop)** across all 14 view integration suites plus library/desktop tests.
+After the test-only `as_chunks` lint adjustment, all three focused paragraph
+tests pass again. Strict all-target view/desktop Clippy, fresh preview and
+headless-example builds, formatting and whitespace checks pass. Upstream warnings
+remain visible; no dependency/profile/ABI changes were made.
+
+The generic manifest-driven `headless_frame` example successfully renders an
+actual Unicode Wasm artifact into a 1024×768 premultiplied RGBA frame with its
+exact snapshot text. Missing arguments, a non-UTF-8 family and an oversized font
+refuse cleanly; the oversized-font path produces no output. The example uses
+public runtime/raster APIs with normal production budgets and explicit font
+aliases, and does not step later timer/view turns. An initial probe-only use of
+a type selector was corrected to an admitted class selector; this was not an
+engine stylesheet change.
+
+The console artifact SHA-256 is
+`ac764bd1184ebc4c5b80e7929fdfca6efa13345746687657af392a24a3043164`.
+Its before/after initial snapshots are identical; the same artifact now reaches
+`Layout(Unsupported(2))` for the thread's `max-width: 48rem`. It still does not
+render a complete console frame. Relative-length/reference-font parity is the
+next native package; full styling/inline layout, natural typography, real-window
+macOS/Pi/other-target sessions, accessibility, CPU/RSS and release acceptance remain
+open. The last full workspace gate remains the `1111baa` checkpoint.
+
+Evidence (local, ignored): `target/native-console-build.log`,
+`target/native-console-initial.log`/`.json`,
+`target/native-console-unicode.log`/`.json`,
+`target/native-console-unicode-summary.log`, `target/unicode-paragraph-before.log`,
+`target/unicode-paragraph-focused.log`, `target/unicode-paragraph-oracle.log`,
+`target/native-paragraph-oracle.json`, `target/unicode-paragraph-chrome.log`,
+`target/unicode-paragraph-native.log`,
+`target/unicode-paragraph-native-continuation.log`,
+`target/unicode-paragraph-native-summary.log`, `target/unicode-paragraph-clippy.log`,
+`target/unicode-paragraph-preview.log`, `target/unicode-paragraph-format.log`,
+`target/unicode-paragraph-fixture.log`, `target/unicode-paragraph-artifact.log`
+and `target/unicode-paragraph-probe-checks.log`.
+
+## Native rem reference lengths — scoped verification 2026-11-03
+
+The current L0 grammar admits rem, but native length, border, grid and font
+parsers previously required pixels/percentages. Three new default-reference
+regressions all failed with unsupported native layout. Real Chrome independently
+confirmed the reference distinction: with document root font 20px and a shadow
+view root at 40px, `2rem` measures 40px, not 80px. Native hosts now explicitly
+supply that document-root metric through `Environment::root_font_size` (initial
+default retained), independently of view/default/media fonts. The checked
+`ViewLayout` builder applies it before Wasm instantiation/main. Existing Rust
+environment literals were updated to retain defaults. Wire/schema/profile,
+permissions, guest ABI and dependency versions are unchanged.
+
+A shared native converter preserves coefficient/resolved numeric bounds and
+property sign rules across box dimensions/edges, padding/margins, flex basis,
+gaps, nested grid tracks, font sizes, absolute line heights, border and outline
+widths and signed outline offsets. Root metrics are retained when geometry and
+scaled painting construct viewport contexts. Style strings are not rewritten in
+the model. Invalid host values reject before environment publication; zero is
+valid geometry while text minima remain separate. A failed layout transaction
+preserves its model and defers no clipboard effect; funded/valid retry succeeds.
+No production shaping/paint/guest budget was raised.
+
+**6 focused length tests** pass, including dynamic/zero/invalid references,
+rem/pixel geometry and native pixel parity, exact resolved-limit refusal,
+variable/inherited values and separate media font semantics. The inherited-font
+fixture was strengthened from 50% to 25%, so absolute rem line height differs
+from an inherited numeric multiplier; all six tests pass again. **3 runtime
+native-layout tests** pass, including actual Wasm initial-turn scroll geometry,
+resize preservation and later root/DPI changes, plus prior theme/scroll cases.
+The native view/desktop run passes **205 tests (194 view, 11 desktop), 0 ignored**.
+
+The original-font native oracle and independent real Chrome shadow-tree probe
+pass **168 checks across 18 fixtures**, with document references 16/20/24px and
+view roots twice those sizes. They cover flex edges, nested grid, positioning,
+48rem max-width, inherited text and media rem's initial-font reference. A probe
+macro-expression compilation error was corrected before this oracle ran. This
+does not prove all fractional border rounding, typography, real-window or target
+acceptance. Strict all-target view/desktop/runtime Clippy, fresh preview and
+headless-example builds, formatting and whitespace checks pass. Existing upstream
+warnings remain visible. The last full gate remains `1111baa`.
+
+The console artifact remains SHA-256
+`ac764bd1184ebc4c5b80e7929fdfca6efa13345746687657af392a24a3043164`.
+Initial snapshots before/after rem support are identical. Native rendering moves
+from node 2's `max-width: 48rem` to `Layout(Unsupported(11))` at
+`span.author-name`. The complete console frame/session still does not pass.
+Proper semantic/inline formatting, remaining styling, accessibility, real
+macOS/Pi/other-target sessions, CPU/RSS and release acceptance remain open.
+
+Evidence (local, ignored): `target/rem-before.log`,
+`target/rem-browser-reference.log`, `target/rem-focused.log`,
+`target/rem-runtime.log`, `target/native-lengths-oracle.json`,
+`target/rem-oracle.log`, `target/rem-chrome.log`, `target/rem-native.log`,
+`target/rem-clippy.log`, `target/rem-preview.log`, `target/rem-format.log`,
+`target/native-console-rem.log`/`.json` and `target/rem-console-summary.log`.
+
+### Native text batch — full verification 2026-11-03
+
+The consolidated batch includes fail-fast Taffy measurement after its first text
+error, Unicode paragraphs, explicit document-root rem lengths and shared inline
+formatting contexts. Inline source ranges retain style and shaping context,
+semantic defaults, ancestor line struts and empty-node positions. Font-box
+fragments drive backgrounds/hits and scroll clipping; their geometry unions do
+not make wrapped gaps clickable. The final shaped layout also supplies glyph
+painting. Original ligature/mark/Arabic fixtures and real Chrome confirm first-
+source-node cluster ownership, including zero-width continuation boxes.
+
+Inline collection/path, span-style, projection and fragment work share a bounded
+native request counter. Existing production limits are unchanged. Real failed
+layout-command tests preserve the model/commit count and defer clipboard writes;
+nested calls cannot refill the counter and independent retry succeeds. Unsupported
+inline edges, decoration and mixed block/inline contexts remain explicit errors.
+
+Scoped evidence: **11 inline tests**, one work-scope/atomicity regression, and
+**2724 Chrome comparisons across 13 fixtures**. The browser probe uses standards
+mode, identical original fonts, element rectangles, interior targets and selected
+screenshot pixels. It excludes points near pixel-footprint boundaries; native
+regressions separately test point hits/gaps, scrolling and DPI. Semantic font
+faces, unsupported styles and snapshot preservation are also checked. Both new
+font generators reproduce their fixture bytes in an isolated ignored directory.
+Fresh preview/headless-example builds and script syntax checks pass.
+
+The final full gate passes **3174 tests, 0 failed, 16 ignored** with all eight
+commands successful and the source fingerprint unchanged. It includes **217
+native tests (206 view, 11 desktop)**, **2007 runtime unit tests**, public API,
+CLI/packaged execution, dependency boundaries, strict workspace Clippy and all-
+target builds. Conformance remains **123 passed and 4 known unsupported / 127**,
+with the baseline matched and no regression. Evidence: `target/verification/20261103-122544-p42wl8c3/report.json`
+(local, ignored), plus its per-command logs. Only result/status documentation
+changed after this gate; code and build inputs did not change.
+
+The unchanged console artifact remains SHA-256
+`ac764bd1184ebc4c5b80e7929fdfca6efa13345746687657af392a24a3043164`.
+Initial snapshots before/after are identical; native rendering now passes the
+author span and reaches `Layout(Unsupported(16))` at the thinking button. The
+complete console frame/session still fails. Remaining button/text alignment and
+styling, full inline typography, OS accessibility, macOS/Pi/other-target sessions,
+performance/resource measurements and release acceptance remain open.
+
+Additional local evidence: `target/inline-focused.log`,
+`target/native-inline-oracle.json`, `target/inline-chrome.log`,
+`target/inline-preview.log`, `target/native-console-inline.log`/`.json`,
+`target/inline-console-summary.log`, `target/native-text-full-gate.log` and
+`target/inline-font-regeneration/`. Historical scoped records above describe
+intermediate states; this full gate covers their final code together.

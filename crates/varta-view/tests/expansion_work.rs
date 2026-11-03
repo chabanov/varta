@@ -134,6 +134,7 @@ fn inactive_candidates_and_detached_scopes_do_not_hide_expansion_capacity() {
     view.set_environment(varta_view::Environment {
         width: 1_000_000.0,
         dark: false,
+        ..Default::default()
     })
     .unwrap();
     commit(&mut view, B::new());

@@ -5,6 +5,7 @@ use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
 use crate::style::{self, Environment, Name};
 use crate::text::{TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_color_sides, outline_components};
+use crate::units::Units;
 use parley::{Affinity, Cursor, Layout, PositionedLayoutItem, Selection};
 pub use select::{SelectHit, SelectMenuMetrics};
 use skrifa::{
@@ -452,6 +453,7 @@ fn outline(
     env: &Environment,
     id: u32,
 ) -> Result<Option<(f32, f32, Color)>, PaintError> {
+    let units = Units::new(env).ok_or(layout::LayoutError::RootFont)?;
     let variables = style::Variables::new(tree, id, env);
     let mut values = BTreeMap::new();
     for (name, raw) in tree.cascade_refs(id, env) {
@@ -485,6 +487,7 @@ fn outline(
                     CssProperty::BorderWidth
                 },
                 raw,
+                units,
             )
             .ok_or(PaintError::Unsupported(id))?
             .0
@@ -500,6 +503,7 @@ fn outline(
                     CssProperty::BorderStyle
                 },
                 raw,
+                units,
             )
             .ok_or(PaintError::Unsupported(id))?
             .1
@@ -524,11 +528,7 @@ fn outline(
     .ok_or(PaintError::Unsupported(id))?;
     let offset = match get(CssProperty::OutlineOffset) {
         Some((_, "0")) | None => 0.0,
-        Some((_, raw)) => raw
-            .strip_suffix("px")
-            .and_then(|v| v.parse::<f32>().ok())
-            .filter(|v| v.is_finite() && v.abs() <= 1_000_000.0)
-            .ok_or(PaintError::Unsupported(id))?,
+        Some((_, raw)) => units.pixels(raw, true).ok_or(PaintError::Unsupported(id))?,
     };
     Ok(Some((width, offset, color)))
 }
@@ -670,11 +670,23 @@ fn paint_text(
 // needs a second layout or a cloned display buffer just to paint its glyphs.
 fn paint_shaped(
     pixmap: &mut Surface,
-    layout: &Layout<()>,
+    layout: &Layout<u32>,
     bounds: layout::BoxGeometry,
     color: Color,
     id: u32,
     work: &mut usize,
+) -> Result<(), PaintError> {
+    paint_shaped_with(pixmap, layout, bounds, |_| Ok(color), id, work, None)
+}
+
+fn paint_shaped_with(
+    pixmap: &mut Surface,
+    layout: &Layout<u32>,
+    bounds: layout::BoxGeometry,
+    mut color: impl FnMut(u32) -> Result<Color, PaintError>,
+    id: u32,
+    work: &mut usize,
+    flow: Option<&crate::inline::Frame>,
 ) -> Result<(), PaintError> {
     let Some(clip) = Rect::from_xywh(
         bounds.clip.x,
@@ -701,13 +713,15 @@ fn paint_shaped(
         Some(mask)
     };
     let mut paint = Paint::default();
-    paint.set_color(color);
     let mut glyph_count = 0usize;
-    for line in layout.lines() {
+    for (line_index, line) in layout.lines().enumerate() {
+        let mut line_glyph = 0usize;
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                 return Err(PaintError::Unsupported(id));
             };
+            let base_color = color(glyph_run.style().brush)?;
+            paint.set_color(base_color);
             let run = glyph_run.run();
             if run.synthesis().embolden() || run.synthesis().skew().is_some() {
                 return Err(PaintError::Unsupported(id));
@@ -722,6 +736,16 @@ fn paint_shaped(
                 .map(|coord| NormalizedCoord::from_bits(*coord))
                 .collect();
             for glyph in glyph_run.positioned_glyphs() {
+                let glyph_color = match flow {
+                    Some(frame) => color(
+                        *frame.glyph_owners[line_index]
+                            .get(line_glyph)
+                            .ok_or(PaintError::Unsupported(id))?,
+                    )?,
+                    None => base_color,
+                };
+                line_glyph += 1;
+                paint.set_color(glyph_color);
                 glyph_count += 1;
                 if glyph_count > 65_536 {
                     return Err(PaintError::Unsupported(id));
@@ -732,7 +756,7 @@ fn paint_shaped(
                 let mut pen = GlyphPen {
                     path: PathBuilder::new(),
                     x: bounds.rect.x + glyph.x,
-                    y: bounds.rect.y + glyph.y,
+                    y: bounds.rect.y + glyph.y + flow.map_or(0.0, |f| f.shaped.offsets[line_index]),
                     commands: 0,
                     exceeded: false,
                 };
@@ -1228,9 +1252,10 @@ fn rasterize_inner_scoped(
     }
     let env = Environment {
         width: f64::from(width) / f64::from(scale),
-        dark: env.dark,
+        ..*env
     };
-    let (geometry, shapes) = if let Some((measurer, font_size)) = text_input.as_mut() {
+    let units = Units::new(&env).ok_or(layout::LayoutError::RootFont)?;
+    let (geometry, shapes, flows) = if let Some((measurer, font_size)) = text_input.as_mut() {
         layout::geometry_and_text(
             tree,
             &env,
@@ -1242,6 +1267,7 @@ fn rasterize_inner_scoped(
     } else {
         (
             layout::geometry(tree, &env, width as f32 / scale, height as f32 / scale)?,
+            BTreeMap::new(),
             BTreeMap::new(),
         )
     };
@@ -1330,7 +1356,7 @@ fn rasterize_inner_scoped(
                     .is_some_and(|value| {
                         value
                             .split_ascii_whitespace()
-                            .all(|part| matches!(part, "0" | "0px"))
+                            .all(|part| units.pixels(part, false) == Some(0.0))
                     }));
         let input_ready = !matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
             || ([CssProperty::BackgroundColor, CssProperty::Color]
@@ -1353,7 +1379,7 @@ fn rasterize_inner_scoped(
                     .is_some_and(|value| {
                         value
                             .split_ascii_whitespace()
-                            .all(|part| matches!(part, "0" | "0px"))
+                            .all(|part| units.pixels(part, false) == Some(0.0))
                     }));
         if !input_ready
             || !button_ready
@@ -1371,7 +1397,7 @@ fn rasterize_inner_scoped(
                 .is_some_and(|value| {
                     !value
                         .split_ascii_whitespace()
-                        .all(|part| matches!(part, "0" | "0px"))
+                        .all(|part| units.pixels(part, false) == Some(0.0))
                 })
         {
             return Err(PaintError::Unsupported(id));
@@ -1452,7 +1478,85 @@ fn rasterize_inner_scoped(
             text_hits.insert(id, hit);
         }
         pending.push((id, true));
-        if element.tag != Tag::Select {
+        if let Some(frame) = flows.get(&id) {
+            let shape = shapes
+                .get(&id)
+                .and_then(|s| s.rich.as_ref())
+                .ok_or(PaintError::Unsupported(id))?;
+            // Bare text can overflow its container without belonging to an
+            // inline element. Its visible fragments still target the container.
+            for &child in &node.children {
+                if matches!(tree.nodes[&child].content, Content::Text(_)) {
+                    for &piece in frame.fragments.get(&child).into_iter().flatten() {
+                        if let Some(rect) = clipped(piece, frame.bounds.clip) {
+                            hit_regions.push((
+                                id,
+                                BoxRect {
+                                    x: rect.x(),
+                                    y: rect.y(),
+                                    width: rect.width(),
+                                    height: rect.height(),
+                                },
+                            ));
+                        }
+                    }
+                }
+            }
+            for &node in &shape.nodes {
+                if tree.element(node).is_none() {
+                    continue;
+                }
+                ancestors.insert(node, tree.nodes[&node].parent);
+                let background = tree
+                    .computed(node, &env)
+                    .get(&CssProperty::BackgroundColor)
+                    .map(|value| {
+                        if value == "currentcolor" {
+                            current_color(tree, &env, node)
+                        } else {
+                            color(value)
+                        }
+                        .ok_or(PaintError::Unsupported(node))
+                    })
+                    .transpose()?;
+                for &rect in frame.fragments.get(&node).into_iter().flatten() {
+                    if let Some(rect) = clipped(rect, frame.bounds.clip) {
+                        hit_regions.push((
+                            node,
+                            BoxRect {
+                                x: rect.x(),
+                                y: rect.y(),
+                                width: rect.width(),
+                                height: rect.height(),
+                            },
+                        ));
+                        if let Some(c) = background {
+                            let mut paint = Paint::default();
+                            paint.set_color(c);
+                            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                        }
+                    }
+                }
+            }
+            let mut colors = BTreeMap::new();
+            paint_shaped_with(
+                &mut pixmap,
+                &frame.shaped.layout,
+                frame.bounds,
+                |owner| {
+                    if let Some(c) = colors.get(&owner) {
+                        return Ok(*c);
+                    }
+                    let c =
+                        current_color(tree, &env, owner).ok_or(PaintError::Unsupported(owner))?;
+                    colors.insert(owner, c);
+                    Ok(c)
+                },
+                id,
+                &mut text_work,
+                Some(frame),
+            )?;
+        } else if element.tag != Tag::Select {
             pending.extend(node.children.iter().rev().map(|id| (*id, false)));
         }
     }

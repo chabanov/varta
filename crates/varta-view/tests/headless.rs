@@ -2142,6 +2142,7 @@ fn keyboard_tab_skips_hidden_ancestors_and_uses_updated_viewport() {
     view.set_environment(Environment {
         width: 300.0,
         dark: false,
+        ..Default::default()
     })
     .unwrap();
     let key = |target, key: &str, shift| Input::Key {
@@ -2166,6 +2167,7 @@ fn keyboard_tab_skips_hidden_ancestors_and_uses_updated_viewport() {
     view.set_environment(Environment {
         width: 800.0,
         dark: false,
+        ..Default::default()
     })
     .unwrap();
     view.input(&key(4, "Tab", false), &mut Fixed::default())
@@ -2174,7 +2176,8 @@ fn keyboard_tab_skips_hidden_ancestors_and_uses_updated_viewport() {
     assert!(
         view.set_environment(Environment {
             width: f64::NAN,
-            dark: false
+            dark: false,
+            ..Default::default()
         })
         .is_err()
     );
@@ -2884,9 +2887,18 @@ fn flex_layout_measures_isolated_text_with_an_explicit_font() {
             height: 20.0
         }
     );
-    let mut invalid = BatchWriter::new();
-    invalid.create_text(5, "🙂").insert(2, 5, 0);
-    commit(&mut view, &invalid).unwrap();
+    let mut unicode = BatchWriter::new();
+    unicode.create_text(5, "🙂").insert(2, 5, 0);
+    commit(&mut view, &unicode).unwrap();
+    let boxes = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    // This explicit font lacks an emoji glyph: its .notdef keeps the same
+    // bounded advance without asking the OS for another font.
+    assert_eq!(boxes[&5].width, 8.0);
+    let mut control = BatchWriter::new();
+    control.set_text(5, "\u{0007}");
+    commit(&mut view, &control).unwrap();
     assert!(matches!(
         view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),
         Err(varta_view::LayoutError::Unsupported(5))

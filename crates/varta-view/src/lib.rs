@@ -16,6 +16,7 @@
 //! separate experimental layout and CPU raster methods support bounded box and
 //! explicit-font text subsets; full native rendering is not implemented yet.
 mod events;
+mod inline;
 mod layout;
 mod name;
 mod naming_work;
@@ -26,6 +27,7 @@ mod snapshot_json;
 mod style;
 mod text;
 mod tree;
+mod units;
 
 mod variables;
 mod wire;
@@ -325,6 +327,7 @@ impl View {
         if !environment.width.is_finite() || !(0.01..=1_000_000.0).contains(&environment.width) {
             return Err(LayoutError::Viewport);
         }
+        units::Units::new(&environment).ok_or(LayoutError::RootFont)?;
         self.environment = environment;
         Ok(())
     }

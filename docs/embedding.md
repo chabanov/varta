@@ -2675,6 +2675,28 @@ admission and the shared work allowances remain enforced independently.
 
 **CSS value types.** The per-property grammars below use these types:
 
+Native text-aware rendering now groups inline-only descendants into one shaped
+formatting context, while flex/grid parents blockify inline items. Supported
+semantic inline tags and adjacent text retain style ranges, shared shaping and
+per-fragment hits; a descendant's geometry union does not make gaps clickable.
+Fonts remain host-supplied. Mixed block/inline contexts, nonzero inline edges,
+decoration and full typography/platform parity remain outside this native subset.
+See the [native layout contract](architecture.md) for limits and failure behavior.
+This is an implementation expansion; the view wire and guest ABI are unchanged.
+
+Native host length metrics are explicit: `varta_view::Environment::root_font_size`
+is the reference document-root font size for `rem`, initially the subset's initial
+font size. A host comparing native geometry with the official shadow-DOM adapter
+supplies the containing document root's computed font size; guest `:root` font
+declarations apply to the view root and do not redefine this reference. The shaper's
+default text size is independent. Native application hosts can set the reference
+before `main` with `ViewLayout::with_root_font_size` and change it later through
+the environment API. This Rust embedding extension adds no wire field or host
+operation; scripted viewport JSON retains the initial reference. The existing
+initial-font reference for media-query lengths is separate. Native numeric/text
+limits and unsupported-style errors still apply; a common unit converter does
+not imply complete CSS rendering or typography acceptance.
+
 <!-- generated:view-css-values:begin (checked by crates/varta-common/tests/embedding_documentation/view.rs) -->
 | Type | Definition |
 | --- | --- |

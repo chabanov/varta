@@ -86,6 +86,9 @@ impl Session {
         if let Some(dark) = layout.dark {
             environment.dark = dark;
         }
+        if let Some(size) = layout.root_font_size {
+            environment.root_font_size = size;
+        }
         self.view.set_environment(environment)?;
         self.layout = Some(layout);
         Ok(())

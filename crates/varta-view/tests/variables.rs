@@ -99,6 +99,7 @@ fn custom_wide_keywords_and_live_media_changes_resolve_before_inheritance() {
     view.set_environment(varta_view::Environment {
         width: 20.0,
         dark: false,
+        ..Default::default()
     })
     .unwrap();
     assert_eq!(

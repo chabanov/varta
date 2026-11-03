@@ -244,6 +244,7 @@ fn worker(
                     width: f64::from((environment_dimensions >> 32) as u32)
                         / f64::from_bits(environment_scale),
                     dark: current_dark,
+                    ..Default::default()
                 })
                 .map_err(|e| e.to_string())?;
                 environment_dark = current_dark;

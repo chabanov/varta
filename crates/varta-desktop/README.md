@@ -9,6 +9,23 @@ family name for the currently supported explicit-font text subset:
 cargo run -p varta-desktop --bin varta-preview -- app.wasm font.ttf 'Font Family'
 ```
 
+For a diagnostic initial frame without a window, the `headless_frame` example
+uses the same public runtime/raster APIs. It runs `main` with the supplied
+validated manifest's grants and normal production budgets. Additional arguments
+map CSS aliases to the explicit font:
+
+```sh
+cargo run -p varta-desktop --example headless_frame --locked -- app.wasm app.manifest.json font.ttf 'Font Family' target/frame system-ui sans-serif
+```
+
+The output is a bounded `target/frame.json` snapshot and, on successful painting,
+a 1024×768 `target/frame.rgba` image (premultiplied RGBA8, row-major). The output
+directory must exist. A rendering failure retains the snapshot for locating its
+node and returns a nonzero status. The example does not drive later timer/view
+turns or prove an interactive session. Font and input files are size-bounded;
+font aliases do not enable system-font discovery. The unprivileged window preview
+above still does not load a manifest or grant capabilities.
+
 To exercise guest-initiated scrolling without a font, build and open the
 included fixture from the workspace root:
 
@@ -133,3 +150,10 @@ on theme changes. Direct OS theme-switch acceptance remains open.
 Full IME support, accessibility, broader platform integration, packaging, target
 acceptance and a production shell remain open. The preview is not a `--single` launcher
 and does not accept a package manifest or embedded artifact.
+
+The text-aware renderer also admits inline-only paragraphs with adjacent text,
+nested semantic inline tags, shared shaping, inherited styles and fragment hits.
+Flex/grid children are blockified by their parent. Fonts remain explicit; mixed
+block/inline content, nonzero inline edges/decoration and full typography are
+outside this experimental subset. Element geometry unions do not make the gaps
+between wrapped fragments clickable. See the native layout contract for scope.

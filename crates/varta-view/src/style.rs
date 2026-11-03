@@ -5,19 +5,32 @@
 //! property's computed value is its cascaded value.
 use std::collections::BTreeMap;
 
-/// The renderer environment media conditions are evaluated against.
+/// Host media conditions and native reference metrics, in CSS pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Environment {
     /// Viewport width in CSS pixels.
     pub width: f64,
     pub dark: bool,
+    /// Reference document-root font size for `rem`, independent of the view
+    /// root's own font size and the shaper's default text size.
+    pub root_font_size: f64,
 }
 impl Default for Environment {
     fn default() -> Self {
         Self {
             width: DEFAULT_VIEWPORT_WIDTH,
             dark: false,
+            root_font_size: varta_common::view::stylesheet::REM_PIXELS,
         }
+    }
+}
+impl Environment {
+    /// Set the host reference font. Zero is valid for geometry; text shaping
+    /// still applies its independent minimum font size. No OS lookup occurs.
+    pub fn with_root_font_size(mut self, size: f64) -> Result<Self, crate::LayoutError> {
+        self.root_font_size = size;
+        crate::units::Units::new(&self).ok_or(crate::LayoutError::RootFont)?;
+        Ok(self)
     }
 }
 /// Default headless viewport width in CSS pixels.

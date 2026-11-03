@@ -941,3 +941,125 @@ changes and compare source/manifest/licenses with the checksum-pinned release.
 No browser/Node/ABI claim follows from this native-only counter adapter. Unmetered
 work, full frame CPU/RSS, other buffers/caches and platform acceptance remain
 separate tasks.
+
+### Native layout measurement failure
+
+```sh
+cargo test -p varta-view --lib view_shaping --locked -- --nocapture
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+cargo fmt --all -- --check
+```
+
+Eight actual content-sized textareas use the original marked-insertion AAT
+fixture. Their intrinsic measurements succeed; the first width-constrained
+measurement cannot complete within the injected shared allowance. A test-only
+builder counter must observe exactly nine builds (eight intrinsic and one
+refused), through geometry, box, raster and scaled-raster entry points. Subsequent Taffy callbacks
+must use fallback metrics without another builder. Failure retains its text
+diagnostic, publishes no geometry/image and leaves the snapshot unchanged; a
+funded independent retry reproduces the original pixels. A layout-command batch
+must stop at its first failing command, preserve its title/commit count/snapshot,
+and perform no deferred clipboard write. Its funded retry executes that write
+once. The builder count observes real dependency requests; it is not a timing,
+allocation or complete CPU measurement. Taffy's remaining traversal still runs.
+
+### Native Unicode paragraphs
+
+```sh
+cargo test -p varta-view --test paragraphs --locked -- --nocapture
+cargo run -p varta-view --example native_paragraph_probe --locked -- target/native-paragraph-oracle.json
+node scripts/test-native-paragraphs.mjs target/native-paragraph-oracle.json
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+cargo fmt --all -- --check
+```
+
+The original `unicode.ttf` covers distinct bar/square glyphs and a zero-advance
+mark. Three native tests check symbols, supplementary scalars, accented Latin,
+mixed Hebrew/Arabic visual ordering, combining ink, CJK wrapping, nonbreaking
+space and CSS whitespace across block/flex/grid. The source remains unchanged.
+NUL still rejects atomically at wire admission; other unsupported controls and
+the existing `pre-wrap` tab/edge-space restrictions remain errors. The general
+64 KiB UTF-8 boundary refuses excess and a smaller independent render recovers.
+
+The probe emits 33 original-font cases. Real Chrome compares container geometry
+and source text, then independently shapes the source and its glyph aliases in
+a canvas for the applicable cases: 81 checks. Native tests compare the equivalent
+glyph sequences within the native backend. This is not a claim of identical
+pixels between different rasterizers or complete script typography/inline layout.
+Regenerate `unicode.ttf` with `python3 scripts/generate-view-unicode-font.py` and
+compare its bytes; fontTools is used only for regeneration.
+
+The generic [headless-frame example](../crates/varta-desktop/README.md) runs an
+actual compiled module and validated manifest through the public application
+and raster APIs. Check both successful initial RGBA output and nonzero failure
+diagnostics; it does not run the rest of an interactive session. The unchanged
+UARP console view artifact initially refused node 44's `↑`. With Unicode text
+admission it reaches node 2's `max-width: 48rem` limitation instead. Keep those
+failures distinct from the passing synthetic Unicode artifact. This does not
+close the console/native platform acceptance or native relative-length support.
+
+### Native rem reference metrics
+
+```sh
+cargo test -p varta-view --test lengths --locked -- --nocapture
+cargo test -p varta-runtime --lib native_layout_ --locked -- --nocapture
+cargo run -p varta-view --example native_lengths_probe --locked -- target/native-lengths-oracle.json
+node scripts/test-native-lengths.mjs target/native-lengths-oracle.json
+cargo test -p varta-view -p varta-desktop --locked
+cargo clippy -p varta-view -p varta-desktop -p varta-runtime --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --example headless_frame --locked
+cargo fmt --all -- --check
+```
+
+Six native cases compare rem/pixel geometry and native pixels for dimensions,
+edges, nested grid tracks, signed positioned edges, border/outline widths and
+offsets, font size and absolute line height. They cover raw-style preservation,
+reference changes/zero, invalid host metrics, separate view/default/media font
+meanings, variable inheritance, coefficient/resolved limits and rollback before
+deferred clipboard effects. The inherited text size intentionally differs from
+the document reference, so a font-relative line-height multiplier cannot stand
+in for a rem length. The runtime selection proves initial-turn scroll geometry,
+reference preservation through resize/environment/DPI updates and earlier theme/
+scroll behavior. Neither default budgets nor the guest ABI change.
+
+The independent Chrome probe creates a shadow tree and explicitly sets the
+containing document's font to 16/20/24 px while its view root uses 2rem. Eighteen
+fixtures compare native and DOM boxes plus document/view font identities (168
+checks), including media rem's independent initial-font reference. Anonymous
+native text boxes are compared through their container, not DOM glyph ranges.
+This is scoped geometry evidence, not complete fractional-border rounding,
+typography, real-window or platform acceptance. Native standalone hosts keep the
+default reference; embedding hosts explicitly supply other root metrics.
+
+### Native inline formatting
+
+```sh
+cargo test -p varta-view --test inline --locked
+cargo test -p varta-view --lib inline_work_scope --locked
+cargo run -p varta-view --example native_inline_probe --locked > target/native-inline-oracle.json
+node scripts/test-native-inline.mjs target/native-inline-oracle.json
+```
+
+The original-font probe compares a standards-mode real Chrome DOM with native
+fragment unions, interior hits and selected solid/background screenshot pixels.
+Boundary pixel footprints differ from native point hits: the browser probe
+excludes points within one CSS pixel of a fragment edge, while native regression
+tests check fragment gaps and overflow targets directly. Text-node anonymous
+boxes, `br` rectangles and implicit/document root hits are not conflated with
+DOM element rectangles. The cases include wrapping, no-wrap overflow, nested
+font/line struts, ligatures, combining marks, Arabic context, empty anchors,
+trailing breaks and clipping. This is not full browser or platform typography
+parity. The work-scope test exercises real failed layout commands, nested calls,
+model/clipboard atomicity and independent retry. Before committing, run the full
+workspace gate; scoped/browser success alone is insufficient.
+
+Consolidated 2026-11-03 result: **3174 passed, 0 failed, 16 ignored**, all eight
+full-gate commands and unchanged sources, recorded at `target/verification/20261103-122544-p42wl8c3/report.json` (local,
+ignored). The batch includes **217 native tests**, the separate **2724-check
+Chrome inline oracle**, and the earlier Unicode/rem scoped probes. Only result
+and status documentation was updated after the full gate; code/build inputs
+were unchanged. This does not close native console/platform/release acceptance.

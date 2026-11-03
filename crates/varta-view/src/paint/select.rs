@@ -89,6 +89,7 @@ fn label_shape(
         )
         .map_err(|error| PaintError::Layout(LayoutError::Text(error.to_string())))?;
     Ok(TextShape {
+        rich: None,
         text: label,
         metrics,
         options,

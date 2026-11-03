@@ -2,6 +2,7 @@
 use crate::style::{self, Environment, Name};
 use crate::text::{TextOptions, TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_components, geometry_sides};
+use crate::units::Units;
 use crate::{TextMeasurer, TextMetrics};
 use parley::LineHeight;
 use std::collections::BTreeMap;
@@ -113,6 +114,8 @@ pub(crate) fn scroll_into_view_plan(
 pub enum LayoutError {
     #[error("invalid viewport dimensions")]
     Viewport,
+    #[error("invalid host reference root font size")]
+    RootFont,
     #[error("layout exceeds the initial box or depth limit")]
     Limit,
     #[error("unsupported layout content or style on node {0}")]
@@ -121,37 +124,6 @@ pub enum LayoutError {
     Engine(String),
     #[error("text measurement failed: {0}")]
     Text(String),
-}
-
-fn length_value<T: FromLength + FromPercent>(value: &str) -> Option<T> {
-    length_value_signed(value, false)
-}
-
-fn length_value_signed<T: FromLength + FromPercent>(value: &str, signed: bool) -> Option<T> {
-    let (number, percentage) = if let Some(number) = value.strip_suffix('%') {
-        (number, true)
-    } else if value == "0" {
-        ("0", false)
-    } else {
-        (value.strip_suffix("px")?, false)
-    };
-    let number: f32 = number.parse().ok()?;
-    if !number.is_finite() || number.abs() > 1_000_000.0 || (!signed && number < 0.0) {
-        return None;
-    }
-    Some(if percentage {
-        percent(number / 100.0)
-    } else {
-        length(number)
-    })
-}
-
-fn margin_value(value: &str) -> Option<LengthPercentageAuto> {
-    if value == "auto" {
-        Some(auto())
-    } else {
-        length_value_signed(value, true)
-    }
 }
 
 fn factor(value: &str) -> Option<f32> {
@@ -179,7 +151,7 @@ fn paint_only(property: CssProperty) -> bool {
     )
 }
 
-fn grid_tracks(value: &str) -> Option<Vec<GridTemplateComponent<String>>> {
+fn grid_tracks(value: &str, units: Units) -> Option<Vec<GridTemplateComponent<String>>> {
     if value == "none" {
         return Some(Vec::new());
     }
@@ -197,22 +169,7 @@ fn grid_tracks(value: &str) -> Option<Vec<GridTemplateComponent<String>>> {
             return None;
         }
     }
-    // CSS permits a unitless zero as a length; Taffy's parser expects px.
-    let chars: Vec<char> = value.chars().collect();
-    let mut normalized = String::with_capacity(value.len());
-    for (index, ch) in chars.iter().copied().enumerate() {
-        let before = index == 0
-            || chars[index - 1].is_ascii_whitespace()
-            || matches!(chars[index - 1], '(' | ',');
-        let after = index + 1 == chars.len()
-            || chars[index + 1].is_ascii_whitespace()
-            || matches!(chars[index + 1], ')' | ',');
-        if ch == '0' && before && after {
-            normalized.push_str("0px");
-        } else {
-            normalized.push(ch);
-        }
-    }
+    let normalized = units.grid(value)?;
     let parsed: GridTemplateTracks<String, GridTemplateComponent<String>> =
         normalized.parse().ok()?;
     let mut count = 0usize;
@@ -256,7 +213,7 @@ fn grid_placement(value: &str) -> Option<Line<GridPlacement<String>>> {
     })
 }
 
-fn border_shorthand(value: &str) -> Option<(f32, bool)> {
+fn border_shorthand(value: &str, units: Units) -> Option<(f32, bool)> {
     if !varta_common::view::css::property_value(CssProperty::Border, value) {
         return None;
     }
@@ -278,34 +235,25 @@ fn border_shorthand(value: &str) -> Option<(f32, bool)> {
         }
         if token == "solid" {
             solid = true;
-        } else if token == "0" {
-            width = 0.0;
-        } else if let Some(number) = token.strip_suffix("px") {
-            width = number
-                .parse::<f32>()
-                .ok()
-                .filter(|n| n.is_finite() && (0.0..=1_000_000.0).contains(n))?;
+        } else if token == "0" || token.ends_with("px") || token.ends_with("rem") {
+            width = units.pixels(token, false)?;
         } else if token.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.')
             && token.ends_with(|c: char| c.is_ascii_alphabetic())
         {
-            // Relative lengths require font metrics, which the box-only path lacks.
             return None;
         }
     }
     Some((width, solid))
 }
 
-pub(crate) fn border_component(property: CssProperty, value: &str) -> Option<(f32, bool)> {
+pub(crate) fn border_component(
+    property: CssProperty,
+    value: &str,
+    units: Units,
+) -> Option<(f32, bool)> {
     match property {
         CssProperty::BorderWidth => {
-            let number = if value == "0" {
-                0.0
-            } else {
-                value.strip_suffix("px")?.parse::<f32>().ok()?
-            };
-            if !number.is_finite() || !(0.0..=1_000_000.0).contains(&number) {
-                return None;
-            }
+            let number = units.pixels(value, false)?;
             Some((number, false))
         }
         CssProperty::BorderStyle => match value {
@@ -313,7 +261,7 @@ pub(crate) fn border_component(property: CssProperty, value: &str) -> Option<(f3
             "none" => Some((3.0, false)),
             _ => None,
         },
-        _ => border_shorthand(value),
+        _ => border_shorthand(value, units),
     }
 }
 
@@ -322,6 +270,7 @@ pub(crate) fn border_widths(
     env: &Environment,
     id: u32,
 ) -> Result<[f32; 4], LayoutError> {
+    let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     let element = tree.element(id).ok_or(LayoutError::Unsupported(id))?;
     let variables = style::Variables::new(tree, id, env);
     let mut widths = [3.0; 4];
@@ -339,7 +288,7 @@ pub(crate) fn border_widths(
         for (side, is_style) in components {
             let (width, present) = match &value {
                 Some(value) => {
-                    border_component(property, value).ok_or(LayoutError::Unsupported(id))?
+                    border_component(property, value, units).ok_or(LayoutError::Unsupported(id))?
                 }
                 None => (3.0, false),
             };
@@ -353,7 +302,7 @@ pub(crate) fn border_widths(
     for (&(side, is_style), (property, raw)) in &element.border_inline {
         let (width, present) = match variables.property(*property, raw) {
             Some(value) => {
-                border_component(*property, &value).ok_or(LayoutError::Unsupported(id))?
+                border_component(*property, &value, units).ok_or(LayoutError::Unsupported(id))?
             }
             None => (3.0, false),
         };
@@ -512,8 +461,27 @@ pub(crate) struct TextShape {
     pub metrics: TextMetrics,
     pub options: TextOptions,
     pub families: Vec<String>,
+    pub rich: Option<std::sync::Arc<crate::inline::ContentFlow>>,
 }
-type TextGeometry = (BTreeMap<u32, BoxGeometry>, BTreeMap<u32, TextShape>);
+impl TextShape {
+    pub(crate) fn measure(
+        &self,
+        measurer: &mut TextMeasurer,
+        width: Option<f32>,
+    ) -> Result<TextMetrics, crate::TextMeasureError> {
+        match &self.rich {
+            Some(rich) => rich
+                .shape(self, measurer, width)
+                .map(|shaped| shaped.metrics),
+            None => measurer.measure_styled(&self.text, width, &self.families, self.options),
+        }
+    }
+}
+type TextGeometry = (
+    BTreeMap<u32, BoxGeometry>,
+    BTreeMap<u32, TextShape>,
+    BTreeMap<u32, crate::inline::Frame>,
+);
 
 pub(crate) fn text_style(
     tree: &Tree,
@@ -522,6 +490,7 @@ pub(crate) fn text_style(
     base_size: f32,
     measurer: &TextMeasurer,
 ) -> Result<(TextOptions, Vec<String>), LayoutError> {
+    let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     let mut size = base_size;
     let mut line_height = None;
     let mut weight = 400.0;
@@ -531,6 +500,23 @@ pub(crate) fn text_style(
     let mut family = None;
     for ancestor in tree.path(id).into_iter().rev() {
         let properties = tree.computed(ancestor, env);
+        if let Some(element) = tree.element(ancestor) {
+            if element.tag == Tag::Strong && !properties.contains_key(&CssProperty::FontWeight) {
+                weight = if weight < 400.0 {
+                    400.0
+                } else if weight < 600.0 {
+                    700.0
+                } else {
+                    900.0
+                };
+            }
+            if element.tag == Tag::Em && !properties.contains_key(&CssProperty::FontStyle) {
+                italic = true;
+            }
+            if element.tag == Tag::Code && !properties.contains_key(&CssProperty::FontFamily) {
+                family = Some((ancestor, "monospace".into()));
+            }
+        }
         if let Some(value) = properties.get(&CssProperty::OverflowWrap) {
             break_anywhere = match value.as_str() {
                 "normal" => false,
@@ -568,20 +554,15 @@ pub(crate) fn text_style(
             };
         }
         if let Some(value) = properties.get(&CssProperty::FontSize) {
-            let (number, percentage) = if let Some(number) = value.strip_suffix('%') {
-                (number, true)
-            } else if let Some(number) = value.strip_suffix("px") {
-                (number, false)
-            } else {
-                return Err(LayoutError::Unsupported(ancestor));
-            };
-            let number: f32 = number
-                .parse()
-                .map_err(|_| LayoutError::Unsupported(ancestor))?;
-            size = if percentage {
+            size = if let Some(number) = value.strip_suffix('%') {
+                let number: f32 = number
+                    .parse()
+                    .map_err(|_| LayoutError::Unsupported(ancestor))?;
                 size * number / 100.0
             } else {
-                number
+                units
+                    .pixels(value, false)
+                    .ok_or(LayoutError::Unsupported(ancestor))?
             };
             if !size.is_finite() || !(0.01..=4096.0).contains(&size) {
                 return Err(LayoutError::Unsupported(ancestor));
@@ -590,10 +571,10 @@ pub(crate) fn text_style(
         if let Some(value) = properties.get(&CssProperty::LineHeight) {
             line_height = if value == "normal" {
                 None
-            } else if let Some(value) = value.strip_suffix("px") {
-                let px: f32 = value
-                    .parse()
-                    .map_err(|_| LayoutError::Unsupported(ancestor))?;
+            } else if value.ends_with("px") || value.ends_with("rem") {
+                let px = units
+                    .pixels(value, false)
+                    .ok_or(LayoutError::Unsupported(ancestor))?;
                 if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
                     return Err(LayoutError::Unsupported(ancestor));
                 }
@@ -646,6 +627,7 @@ fn build(
     viewport: (f32, f32),
 ) -> Result<NodeId, LayoutError> {
     let (id, depth) = location;
+    let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     if depth > 128 || ids.len() >= 4096 {
         return Err(LayoutError::Limit);
     }
@@ -679,7 +661,7 @@ fn build(
         return Ok(hidden);
     }
     if id != ROOT_NODE
-        && !matches!(
+        && !(matches!(
             element.tag,
             Tag::Div
                 | Tag::P
@@ -694,7 +676,12 @@ fn build(
                 | Tag::Input
                 | Tag::Textarea
                 | Tag::Select
-        )
+        ) || (crate::inline::inline_tag(element.tag)
+            && element.tag != Tag::Br
+            && (crate::inline::blockified(tree, env, id)
+                || tree
+                    .computed_property(id, env, CssProperty::Display)
+                    .is_some_and(|d| matches!(d.as_str(), "block" | "flex" | "grid")))))
     {
         return Err(LayoutError::Unsupported(id));
     }
@@ -778,10 +765,9 @@ fn build(
             }
             if element.tag == Tag::Button
                 && !node.children.is_empty()
-                && (!matches!(node.children.as_slice(), [child] if matches!(tree.nodes.get(child).map(|node| &node.content), Some(Content::Text(_))))
-                    || properties
-                        .get(&CssProperty::Display)
-                        .is_none_or(|value| value != "flex")
+                && (properties
+                    .get(&CssProperty::Display)
+                    .is_none_or(|value| value != "flex")
                     || [
                         CssProperty::FontFamily,
                         CssProperty::FontSize,
@@ -799,14 +785,19 @@ fn build(
             style.box_sizing = BoxSizing::BorderBox;
         }
         if element.tag == Tag::P {
-            let [child] = node.children.as_slice() else {
-                return Err(LayoutError::Unsupported(id));
+            let font_size = if let Some(shape) = text_metrics.get(&id).filter(|s| s.rich.is_some())
+            {
+                shape.options.size
+            } else {
+                let [child] = node.children.as_slice() else {
+                    return Err(LayoutError::Unsupported(id));
+                };
+                text_metrics
+                    .get(child)
+                    .ok_or(LayoutError::Unsupported(id))?
+                    .options
+                    .size
             };
-            let font_size = text_metrics
-                .get(child)
-                .ok_or(LayoutError::Unsupported(id))?
-                .options
-                .size;
             // HTML's default paragraph margins are one em vertically.
             style.margin.top = length(font_size);
             style.margin.bottom = length(font_size);
@@ -827,6 +818,7 @@ fn build(
                         "block" => Display::Block,
                         "grid" => Display::Grid,
                         "none" => Display::None,
+                        "inline" if crate::inline::blockified(tree, env, id) => Display::Block,
                         _ => return Err(LayoutError::Unsupported(id)),
                     }
                 }
@@ -854,70 +846,88 @@ fn build(
                     style.size.width = if value == "auto" {
                         auto()
                     } else {
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        units
+                            .length(&value, false)
+                            .ok_or(LayoutError::Unsupported(id))?
                     }
                 }
                 CssProperty::Height => {
                     style.size.height = if value == "auto" {
                         auto()
                     } else {
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        units
+                            .length(&value, false)
+                            .ok_or(LayoutError::Unsupported(id))?
                     }
                 }
                 CssProperty::MinWidth => {
                     style.min_size.width = if value == "auto" {
                         auto()
                     } else {
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        units
+                            .length(&value, false)
+                            .ok_or(LayoutError::Unsupported(id))?
                     }
                 }
                 CssProperty::MinHeight => {
                     style.min_size.height = if value == "auto" {
                         auto()
                     } else {
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        units
+                            .length(&value, false)
+                            .ok_or(LayoutError::Unsupported(id))?
                     }
                 }
                 CssProperty::MaxWidth => {
                     style.max_size.width = if value == "none" {
                         auto()
                     } else {
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        units
+                            .length(&value, false)
+                            .ok_or(LayoutError::Unsupported(id))?
                     }
                 }
                 CssProperty::MaxHeight => {
                     style.max_size.height = if value == "none" {
                         auto()
                     } else {
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        units
+                            .length(&value, false)
+                            .ok_or(LayoutError::Unsupported(id))?
                     }
                 }
                 CssProperty::PaddingTop => {
-                    style.padding.top = length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.padding.top = units
+                        .length(&value, false)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::PaddingRight => {
-                    style.padding.right =
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.padding.right = units
+                        .length(&value, false)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::PaddingBottom => {
-                    style.padding.bottom =
-                        length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.padding.bottom = units
+                        .length(&value, false)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::PaddingLeft => {
-                    style.padding.left = length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.padding.left = units
+                        .length(&value, false)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::MarginTop => {
-                    style.margin.top = margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.margin.top = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::MarginRight => {
-                    style.margin.right = margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.margin.right = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::MarginBottom => {
                     style.margin.bottom =
-                        margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::MarginLeft => {
-                    style.margin.left = margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.margin.left = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::FlexDirection => {
                     style.flex_direction = match value.as_str() {
@@ -930,11 +940,11 @@ fn build(
                 }
                 CssProperty::GridTemplateColumns => {
                     style.grid_template_columns =
-                        grid_tracks(&value).ok_or(LayoutError::Unsupported(id))?
+                        grid_tracks(&value, units).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::GridTemplateRows => {
                     style.grid_template_rows =
-                        grid_tracks(&value).ok_or(LayoutError::Unsupported(id))?
+                        grid_tracks(&value, units).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::GridColumn => {
                     style.grid_column =
@@ -965,22 +975,26 @@ fn build(
                     };
                 }
                 CssProperty::Top => {
-                    style.inset.top = margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.inset.top = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::Right => {
-                    style.inset.right = margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.inset.right = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::Bottom => {
-                    style.inset.bottom = margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.inset.bottom = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::Left => {
-                    style.inset.left = margin_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.inset.left = units.margin(&value).ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::RowGap => {
-                    style.gap.height = length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.gap.height = units
+                        .length(&value, false)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::ColumnGap => {
-                    style.gap.width = length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                    style.gap.width = units
+                        .length(&value, false)
+                        .ok_or(LayoutError::Unsupported(id))?
                 }
                 CssProperty::FlexWrap => {
                     style.flex_wrap = match value.as_str() {
@@ -1021,8 +1035,9 @@ fn build(
                 }
                 CssProperty::FlexBasis => {
                     if value != "auto" {
-                        style.flex_basis =
-                            length_value(&value).ok_or(LayoutError::Unsupported(id))?
+                        style.flex_basis = units
+                            .length(&value, false)
+                            .ok_or(LayoutError::Unsupported(id))?
                     }
                 }
                 _ => return Err(LayoutError::Unsupported(id)),
@@ -1037,7 +1052,9 @@ fn build(
     let children = node
         .children
         .iter()
-        .filter(|_| element.tag != Tag::Select)
+        .filter(|_| {
+            element.tag != Tag::Select && text_metrics.get(&id).is_none_or(|s| s.rich.is_none())
+        })
         .map(|child| {
             build(
                 tree,
@@ -1050,11 +1067,12 @@ fn build(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let node_id = if element.tag == Tag::Textarea
-        && tree
-            .computed(id, env)
-            .get(&CssProperty::FieldSizing)
-            .is_some_and(|value| value == "content")
+    let node_id = if text_metrics.get(&id).is_some_and(|s| s.rich.is_some())
+        || (element.tag == Tag::Textarea
+            && tree
+                .computed(id, env)
+                .get(&CssProperty::FieldSizing)
+                .is_some_and(|value| value == "content"))
     {
         let shape = text_metrics.get(&id).ok_or(LayoutError::Unsupported(id))?;
         engine.new_leaf_with_context(style, shape.clone())
@@ -1148,17 +1166,13 @@ fn geometry_and_text_inner(
     // Adjacent text nodes form one anonymous box in CSS and are not handled yet.
     let layout_env = Environment {
         width: f64::from(width),
-        dark: env.dark,
+        ..*env
     };
     let mut pending = vec![(ROOT_NODE, 0usize)];
     let mut metrics = BTreeMap::new();
-    let mut count = 0usize;
-    let mut text_bytes = 0usize;
+    let mut inventory = crate::inline::Inventory::default();
     while let Some((id, depth)) = pending.pop() {
-        count += 1;
-        if count > 4096 || depth > 128 {
-            return Err(LayoutError::Limit);
-        }
+        inventory.node(depth)?;
         let node = tree.nodes.get(&id).ok_or(LayoutError::Unsupported(id))?;
         if id != ROOT_NODE
             && matches!(node.content, Content::Element(_))
@@ -1172,6 +1186,16 @@ fn geometry_and_text_inner(
         if let Content::Element(element) = &node.content
             && element.tag == Tag::Select
         {
+            continue;
+        }
+        if let Some(shape) = crate::inline::collect(
+            tree,
+            &layout_env,
+            (id, depth),
+            (measurer, font_size),
+            &mut inventory,
+        )? {
+            metrics.insert(id, shape);
             continue;
         }
         if let Content::Element(element) = &node.content
@@ -1203,12 +1227,7 @@ fn geometry_and_text_inner(
             {
                 return Err(LayoutError::Unsupported(id));
             }
-            text_bytes = text_bytes
-                .checked_add(text.len())
-                .ok_or(LayoutError::Limit)?;
-            if text_bytes > 256 * 1024 || metrics.len() >= 1024 {
-                return Err(LayoutError::Limit);
-            }
+            inventory.text(text.len())?;
             let (mut options, families) = text_style(tree, &layout_env, id, font_size, measurer)?;
             options.white_space = WhiteSpaceMode::PreWrap;
             options.break_anywhere = true;
@@ -1223,6 +1242,7 @@ fn geometry_and_text_inner(
                     metrics: measured,
                     options,
                     families,
+                    rich: None,
                 },
             );
         }
@@ -1253,24 +1273,16 @@ fn geometry_and_text_inner(
             if !(is_flex_or_grid || is_simple_block)
                 || adjacent_text
                 || text.is_empty()
-                || !text.chars().all(|ch| {
-                    ch.is_ascii_graphic()
-                        || matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
-                        || ('\u{0400}'..='\u{052f}').contains(&ch) && ch.is_alphanumeric()
-                        || matches!(ch, '«' | '»' | '’' | '—' | '–' | '…')
-                })
+                || text
+                    .chars()
+                    .any(|ch| ch.is_control() && !matches!(ch, '\t' | '\n' | '\r' | '\u{000c}'))
                 || parent_style
                     .get(&CssProperty::AlignItems)
                     .is_some_and(|value| value == "baseline")
             {
                 return Err(LayoutError::Unsupported(id));
             }
-            text_bytes = text_bytes
-                .checked_add(text.len())
-                .ok_or(LayoutError::Limit)?;
-            if text_bytes > 256 * 1024 || metrics.len() >= 1024 {
-                return Err(LayoutError::Limit);
-            }
+            inventory.text(text.len())?;
             let (options, families) = text_style(tree, &layout_env, parent, font_size, measurer)?;
             let text = if options.white_space == WhiteSpaceMode::PreWrap {
                 // Tab stops and hanging edge spaces are not yet modeled.
@@ -1298,13 +1310,15 @@ fn geometry_and_text_inner(
                     metrics: measured,
                     options,
                     families,
+                    rich: None,
                 },
             );
         }
         pending.extend(node.children.iter().map(|child| (*child, depth + 1)));
     }
-    let boxes = boxes_inner(tree, env, width, height, &metrics, Some(measurer))?;
-    Ok((boxes, metrics))
+    let mut boxes = boxes_inner(tree, env, width, height, &metrics, Some(measurer))?;
+    let frames = crate::inline::frames(&mut boxes, &metrics, measurer)?;
+    Ok((boxes, metrics, frames))
 }
 
 fn boxes_inner(
@@ -1329,7 +1343,7 @@ fn boxes_inner(
     let mut ids = BTreeMap::new();
     let layout_env = Environment {
         width: f64::from(width),
-        dark: env.dark,
+        ..*env
     };
     let root = build(
         tree,
@@ -1379,6 +1393,17 @@ fn boxes_inner(
                                 height: known.height.unwrap_or(0.0),
                             };
                         };
+                        // Taffy's measurement callback cannot return an error.
+                        // Once one is recorded, finish its traversal with cheap
+                        // fallback sizes: the whole geometry is rejected below.
+                        // Do not repeat shaping/analysis for an unusable layout
+                        // or replace its first failure with a later diagnostic.
+                        if measurement_error.is_some() {
+                            return Size {
+                                width: known.width.unwrap_or(shape.metrics.width),
+                                height: known.height.unwrap_or(shape.metrics.height),
+                            };
+                        }
                         let target = known.width.unwrap_or(match available.width {
                             AvailableSpace::MinContent => shape.metrics.min_width,
                             AvailableSpace::MaxContent => shape.metrics.width,
@@ -1395,12 +1420,7 @@ fn boxes_inner(
                             measurement_error = Some("text shaping work limit exceeded".to_owned());
                             shape.metrics
                         } else if let Some(measurer) = text_input.as_mut() {
-                            match measurer.measure_styled(
-                                &shape.text,
-                                Some(target.clamp(0.01, 1_000_000.0)),
-                                &shape.families,
-                                shape.options,
-                            ) {
+                            match shape.measure(measurer, Some(target.clamp(0.01, 1_000_000.0))) {
                                 Ok(metrics) => metrics,
                                 Err(error) => {
                                     measurement_error = Some(error.to_string());
@@ -1411,8 +1431,16 @@ fn boxes_inner(
                             shape.metrics
                         };
                         Size {
-                            width: known.width.unwrap_or(measured.width),
-                            height: known.height.unwrap_or(measured.height),
+                            width: if shape.rich.is_some() {
+                                measured.width
+                            } else {
+                                known.width.unwrap_or(measured.width)
+                            },
+                            height: if shape.rich.is_some() {
+                                measured.height
+                            } else {
+                                known.height.unwrap_or(measured.height)
+                            },
                         }
                     },
                 )
@@ -1590,6 +1618,9 @@ fn boxes_inner(
             }
             continue;
         }
+        if text_metrics.get(&id).is_some_and(|s| s.rich.is_some()) {
+            continue;
+        }
         for child in &tree.nodes[&id].children {
             pending.push((
                 *child,
@@ -1606,23 +1637,28 @@ fn boxes_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::{border_shorthand, grid_tracks};
+    use super::{Environment, Units, border_shorthand, grid_tracks};
 
     #[test]
     fn border_width_ignores_numeric_components_of_color_functions() {
-        assert_eq!(border_shorthand("solid rgb(0, 0, 0)"), Some((3.0, true)));
+        let units = Units::new(&Environment::default()).unwrap();
         assert_eq!(
-            border_shorthand("4px solid rgb(0, 0, 0)"),
+            border_shorthand("solid rgb(0, 0, 0)", units),
+            Some((3.0, true))
+        );
+        assert_eq!(
+            border_shorthand("4px solid rgb(0, 0, 0)", units),
             Some((4.0, true))
         );
-        assert_eq!(border_shorthand("none"), Some((3.0, false)));
+        assert_eq!(border_shorthand("none", units), Some((3.0, false)));
     }
 
     #[test]
     fn grid_parser_bounds_track_counts_and_numeric_values() {
-        assert!(grid_tracks("repeat(2, minmax(0, 1fr))").is_some());
-        assert!(grid_tracks("repeat(65, 1fr)").is_none());
-        assert!(grid_tracks("1000001px").is_none());
-        assert!(grid_tracks("-1fr").is_none());
+        let units = Units::new(&Environment::default()).unwrap();
+        assert!(grid_tracks("repeat(2, minmax(0, 1fr))", units).is_some());
+        assert!(grid_tracks("repeat(65, 1fr)", units).is_none());
+        assert!(grid_tracks("1000001px", units).is_none());
+        assert!(grid_tracks("-1fr", units).is_none());
     }
 }

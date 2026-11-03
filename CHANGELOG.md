@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Native text-aware layout shares shaping across adjacent text and nested inline
+  elements, preserving whitespace, breaks, semantic font styles, ancestor line
+  metrics, cluster ownership and empty anchors. Painting and hits use clipped
+  fragments, including overflowing bare text and scrolling. Independent Chrome
+  probes cover the bounded subset; mixed block/inline flow and inline box edges
+  remain unsupported.
+
+- Native lengths resolve `rem` through an explicit host document-root font
+  reference across box/grid layout, text, borders and outlines. The default is
+  the initial font size; view-root font declarations and media-query units keep
+  their separate meanings. Initial application layout and resize preserve the
+  supplied metric, with the existing numeric/shaping/paint ceilings retained.
+
+- Native isolated text nodes admit Unicode through the existing bounded shaper,
+  including symbols, supplementary characters, combining marks, bidirectional
+  runs and Unicode line breaks. General UTF-8, control-character and whitespace
+  limits remain in force. Native/Chrome probes compare geometry and glyph order;
+  a manifest-driven headless example exports initial-frame diagnostics.
+
+- Native layout stops further text preparation after its first measurement
+  failure. Taffy finishes with fallback sizes that are discarded; failed frames
+  and layout-command batches publish no partial result, and later requests can
+  render normally.
+
 - Native view requests share one charged-shaping allowance across intrinsic/
   repeated measurement and painting, including scaled frames and multiple
   layout commands in a batch. Nested calls preserve accounting; scope cleanup
