@@ -70,8 +70,32 @@ pub struct Platform {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Effects {
     pub clipboard: Option<String>,
-    pub opened: Vec<String>,
+    pub opened: std::collections::VecDeque<String>,
+    opened_bytes: usize,
+    pub opened_dropped: u64,
     pub prompts: usize,
+}
+
+impl Effects {
+    fn opened(&mut self, url: &str) {
+        use varta_common::view::{
+            DRAFT_MAX_OPENED_URL_BYTES as BYTES, DRAFT_MAX_OPENED_URLS as COUNT,
+        };
+        if url.len() > BYTES {
+            self.opened_dropped = self.opened_dropped.saturating_add(1);
+            return;
+        }
+        while self.opened.len() >= COUNT || self.opened_bytes + url.len() > BYTES {
+            let previous = self
+                .opened
+                .pop_front()
+                .expect("retained opens exceed a nonzero allowance");
+            self.opened_bytes -= previous.len();
+            self.opened_dropped = self.opened_dropped.saturating_add(1);
+        }
+        self.opened_bytes += url.len();
+        self.opened.push_back(url.into());
+    }
 }
 
 fn previous_grapheme(value: &str, offset: usize) -> usize {
@@ -133,7 +157,7 @@ impl View {
     }
 
     pub(crate) fn prompt_allows(&mut self) -> bool {
-        self.effects.prompts += 1;
+        self.effects.prompts = self.effects.prompts.saturating_add(1);
         self.platform.prompt == PromptAnswer::Allow
     }
     pub(crate) fn write_clipboard(&mut self, text: &str) -> CommandStatus {
@@ -147,7 +171,7 @@ impl View {
         if self.platform.browser_fails {
             return CommandStatus::RefusedByPlatform;
         }
-        self.effects.opened.push(url.into());
+        self.effects.opened(url);
         CommandStatus::Ok
     }
 }
@@ -427,6 +451,23 @@ impl Script {
 #[cfg(test)]
 mod script_tests {
     use super::*;
+
+    #[test]
+    fn oversized_open_diagnostics_preserve_retained_entries_and_saturate_counters() {
+        let mut effects = Effects::default();
+        effects.opened("https://example.test/kept");
+        effects.opened(&"x".repeat(varta_common::view::DRAFT_MAX_OPENED_URL_BYTES + 1));
+        assert_eq!(effects.opened.len(), 1);
+        assert_eq!(effects.opened_dropped, 1);
+        assert_eq!(effects.opened_bytes, "https://example.test/kept".len());
+        effects.opened_dropped = u64::MAX;
+        effects.opened(&"x".repeat(varta_common::view::DRAFT_MAX_OPENED_URL_BYTES + 1));
+        assert_eq!(effects.opened_dropped, u64::MAX);
+        let mut view = View::default();
+        view.effects.prompts = usize::MAX;
+        assert!(!view.prompt_allows());
+        assert_eq!(view.effects.prompts, usize::MAX);
+    }
 
     struct Deny;
     impl Broker for Deny {

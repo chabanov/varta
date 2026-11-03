@@ -1,6 +1,7 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { potentialExpandedValues } from './view-expansion.mjs';
+import { potentialNamingWork } from './view-naming.mjs';
 import { checkStylesheet, checkStyleDeclaration, createValueMatcher, StylesheetWorkError } from "./view-css.mjs";
 
 import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork} from './view-select.mjs';
@@ -288,6 +289,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     }
     for (const node of next.values()) if (node.kind === "element" && node.attributes.has("id")) { const id = node.attributes.get("id"); if (ids.has(id)) fail("duplicate id attribute"); ids.add(id); }
     for(const [id,node] of next)if((node.tag==='select'&&node.value.length*2>V.limits.valueBytes)||(node.tag==='option'&&optionValue(next,id).length*2>V.limits.valueBytes))fail('select value budget');
+    if(potentialNamingWork(next)>V.limits.namingWork)fail('accessible name work budget');
     cascade=nextCascade;sheetRules=nextRules;
     nodes = next; sheets = nextSheets; sheetBytes=nextSheetBytes; sheetWork=nextSheetWork; stylesheetBytes=nextStylesheetBytes; installedStylesheetWork=nextInstalledStylesheetWork; pending = copies; title = nextTitle; titleBytes=nextTitleBytes; focus = nextFocus;
     return { operations, effects, skippedValues };

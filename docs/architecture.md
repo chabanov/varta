@@ -11934,6 +11934,20 @@ highlighting, bidirectional visual navigation and native accessibility are not
 yet provided by this preview. Firefox can delete
 part of a ZWJ emoji sequence where this editor removes its whole grapheme;
 cross-renderer equivalence for those cases remains open.
+The native GUI backlog has separate host limits: 64 pending key/IME records and
+1 MiB of retained owned text buffers; the GUI-to-worker channel remains eight
+messages. `varta-desktop/src/input_queue.rs` owns those limits and accounting.
+Ordinary key/character/IME-commit records remain FIFO. Only a consecutive preedit
+for the same node and guest-commit binding replaces its predecessor. Check the
+prospective count/bytes with the old record refunded before changing the queue or
+compacting incoming text. Admitted strings release spare platform capacity, so a
+short valid value is not refused solely because its incoming buffer was large;
+retained `String` capacity equals its UTF-8 length. Rejection leaves the prior
+queue/preedit intact and follows the preview's existing queue-full error/exit
+policy, without truncating committed text. Pop, binding-filter retention and
+focus-loss clear all release accounted capacity. Focus-loss cleanup uses the same
+checked enqueue path. Existing per-key and IME value/cursor guards remain in force.
+This is distinct from runtime event queues and whole-backend/RSS accounting.
 Explicitly sized text inputs and buttons with explicit display, minimum sizes,
 padding and border can participate in this experimental geometry. A button with
 text requires one text child, flex display and explicit font and alignment
@@ -11995,6 +12009,22 @@ at E (the root step):
    (a field inside its own label, for example) gives the empty string.
 7. **HTML-AAM last resort.** A text field gives its `placeholder`.
 
+Before publication, native and browser admission check a shared potential
+accessible-name inventory across all components. Indexed numeric descendant and
+relation summaries include repeated ids, native-label alternatives and future
+live-field capacity without evaluating names. Hidden state and author precedence
+do not discount them; relation-disabled references keep cyclic ids finite. See
+[the embedding contract](embedding.md) for the work recurrence and final-only
+rollback semantics. Raw text leaves and stored source retain their separate
+limits; browser accessibility-engine CPU, complete JSON/frame/backend memory and
+RSS guarantees remain separate requirements.
+
+Each native snapshot builds attached id/label and visibility indices once. Label
+order follows document order. Descendant text remains an ordered fragment range
+until the traversal ends, avoiding a fresh concatenation at each ancestor. These
+indices belong to one snapshot, so edits, reparenting, environment changes and
+removal cannot reuse stale names or visibility.
+
 The name is the result as a flat string: every run of ASCII whitespace
 becomes one space and the ends are trimmed. A node whose name is empty has
 no `name` member. Every other role (`list`, `listitem`, `dialog`,
@@ -12006,6 +12036,18 @@ no layout, so a block-level child adds no separating space; these parts of
 accname do not apply. Example: `<button><span aria-hidden="true">◇</span>
 <span>Reasoning</span><span aria-hidden="true">▸</span></button>` is
 `button "Reasoning"`.
+
+**Diagnostic export.** Native view/application JSON export uses a separate
+encoded-byte allowance. A bounded writer counts compact/pretty keys, escaping and
+indentation before allocating/copying each fragment. Export refusal returns a
+typed observer error without terminating the application or exposing partial JSON.
+The CLI's scripted-view path uses this encoder and retains budget diagnostics on
+refusal. Structured inspection remains available to trusted embedders; their own
+copies/formatting and complete allocator/RSS accounting are separate. The
+simulated platform retains a bounded tail of successful
+opened URLs in chronological order, with complete strings, entry/UTF-8
+byte ceilings and an explicit `openedDropped` counter after eviction. Actual
+permission decisions and action results do not depend on diagnostic retention.
 
 **View prelude.** `<varta>/view/view.ts`, loaded when a module names a
 `View.*` member or `ViewEvent` (TSX compiles to `View.*` calls). It encodes
@@ -13147,7 +13189,14 @@ var() candidates additionally charge their inherited ancestor scope when custom
 properties exist. A transaction-owned incremental JS anchor index and cached
 native rule costs avoid reparsing or rebuilding all sheets for each read. Rejected
 changes discard these indices with the tree. This is a matching/inheritance
-work envelope; derived output and repeated accessibility work remain separate.
+work envelope. A separate potential UTF-16 component-content allowance checks
+cached candidate programs and inherited numeric bounds across the same reads.
+Final publication also checks a potential accessible-name inventory: descendant
+summaries, repeated id relations, native labels and reserved live-field capacity.
+The common role tables determine which root roles can read content. Detached
+nodes, hidden state and author precedence cannot hide potential naming work;
+referenced traversals disable further labelledby relations. These envelopes do
+not establish complete serialization, retained-frame, backend or RSS quotas.
 Snapshots cannot mutate the authority. Final retained-text accounting covers
 UTF-8 source slots plus sticky worst-case UTF-8 reservations for live field values.
 Capacity follows surviving nodes across type changes, so deferred edits and stale

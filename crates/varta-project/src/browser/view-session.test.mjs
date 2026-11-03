@@ -13,6 +13,22 @@ function state() {
   const commit = (operations) => { const bytes = encodeViewBatch(operations); new Uint8Array(memory.buffer).set(bytes); return view.commit(0, bytes.length, false); };
   return { view, messages, commit };
 }
+test('naming work admission agrees before and after a deferred local field edit',async()=>{
+ const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
+ const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+ const commitWorker=ops=>{const bytes=encodeViewBatch(ops);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
+ const references=count=>({name:'set_attribute',node:2,attribute:'aria-labelledby',text:Array(count).fill('field').join(' ')});
+ const setup=[{name:'create_element',node:2,tag:'button'},{name:'set_attribute',node:2,attribute:'aria-hidden',text:'true'},references(80),
+  {name:'create_element',node:3,tag:'input'},{name:'set_attribute',node:3,attribute:'type',text:'password'},{name:'set_attribute',node:3,attribute:'id',text:'field'}];
+ main.commit(encodeViewBatch(setup));commitWorker(setup);worker.receive({type:'view_ack',id:1});await worker.flush();worker.begin();
+ const value='界'.repeat(registry.view.limits.valueBytes/2);main.input(3,value,false,true);
+ worker.receive({type:'view_event',id:1,bytes:encodeViewEvent('input',{handler:10,target:3,seq:1,value}),gesture:false});
+ assert.equal(worker.model.snapshot().nodes.find(n=>n.id===3).seq,0);
+ for(const commit of [ops=>main.commit(encodeViewBatch(ops)),commitWorker])assert.throws(()=>commit([references(86)]),e=>e.rule==='accessible name work budget'&&e.operation===undefined);
+ assert.equal(messages.length,1);assert.equal(worker.take().id,1);assert.deepEqual(worker.model.snapshot(),main.snapshot());
+ main.commit(encodeViewBatch([references(81)]));commitWorker([references(81)]);worker.receive({type:'view_ack',id:2});await worker.flush();
+ assert.deepEqual(worker.model.snapshot(),main.snapshot());worker.close();
+});
 test('expanded component quota rejects in the Worker before a parent batch is sent',async()=>{
  const memory=new WebAssembly.Memory({initial:4}),messages=[];
  const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});

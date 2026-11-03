@@ -31,6 +31,7 @@ const VIEW_POLICY: &str = include_str!("view-policy.mjs");
 const VIEW_FONTS: &str = include_str!("view-fonts.mjs");
 const VIEW_VARIABLES: &str = include_str!("view-variables.mjs");
 const VIEW_EXPANSION: &str = include_str!("view-expansion.mjs");
+const VIEW_NAMING: &str = include_str!("view-naming.mjs");
 const VIEW_CUSTOM_PROPERTIES: &str = include_str!("view-custom-properties.mjs");
 const PERMISSIONS: &str = include_str!("permission-broker.mjs");
 const PERMISSION_STORE: &str = include_str!("permission-store.mjs");
@@ -139,9 +140,10 @@ fn embedded_sources(dom: bool) -> String {
             VIEW_SELECT,
             "selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork",
         ),
+        ("viewNaming", "", VIEW_NAMING, "potentialNamingWork"),
         (
             "viewModel",
-            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher,StylesheetWorkError}=viewCss;const {potentialExpandedValues}=viewExpansion;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
+            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher,StylesheetWorkError}=viewCss;const {potentialExpandedValues}=viewExpansion;const {potentialNamingWork}=viewNaming;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
             VIEW_MODEL,
             "createViewModel",
         ),

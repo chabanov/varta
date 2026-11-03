@@ -18,9 +18,11 @@
 mod events;
 mod layout;
 mod name;
+mod naming_work;
 mod paint;
 mod select;
 mod snapshot;
+mod snapshot_json;
 mod style;
 mod text;
 mod tree;
@@ -34,6 +36,7 @@ pub use events::{
 pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
 pub use paint::{PaintError, RasterImage, SelectHit, SelectMenuMetrics, TextNavigation};
 pub use snapshot::project_flex_blockification;
+pub use snapshot_json::{SnapshotError, SnapshotFormat, encode_snapshot};
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment};
 pub use text::{TextFont, TextMeasureError, TextMeasurer, TextMetrics};
 pub use wire::{BatchWriter, EventRecord};
@@ -164,6 +167,8 @@ pub enum Violation {
     CascadeWorkLimit,
     #[error("potential expanded component values exceed their transaction limit")]
     ExpandedValueLimit,
+    #[error("potential accessible-name work exceeds its inventory limit")]
+    NamingWorkLimit,
     #[error("stylesheet parsing or inventory work exceeds its limit")]
     StylesheetWorkLimit,
     #[error("request id {0} is zero or already pending")]
@@ -516,9 +521,18 @@ impl View {
     /// The deterministic headless snapshot: the node tree with attributes,
     /// text, field state and computed styles; the accessibility tree; the
     /// title, focus, stylesheets and the simulated platform's effects.
+    /// This is structured inspection; use [`Self::snapshot_json`] or
+    /// [`encode_snapshot`] for bounded JSON export. Caller-owned copies and
+    /// independently chosen serialization remain the embedder's responsibility.
     #[must_use]
     pub fn snapshot(&self) -> serde_json::Value {
         snapshot::snapshot(&self.tree, &self.environment, &self.effects)
+    }
+
+    /// Export diagnostic JSON under its separate host byte allowance. A refused
+    /// export does not alter the tree, event queue or simulated platform effects.
+    pub fn snapshot_json(&self, format: SnapshotFormat) -> Result<Vec<u8>, SnapshotError> {
+        encode_snapshot(&self.snapshot(), format)
     }
 
     /// Current guest title without constructing a complete view snapshot.

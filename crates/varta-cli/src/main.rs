@@ -285,16 +285,27 @@ fn execute(
             for line in std::mem::take(&mut report.output.lines) {
                 println!("{line}");
             }
-            if report.failure.is_none()
-                && let Some(snapshot) = snapshot
-            {
+            let snapshot_json = if report.failure.is_none() {
+                snapshot
+                    .as_ref()
+                    .map(|value| {
+                        varta_project::encode_view_snapshot(
+                            value,
+                            varta_project::ViewSnapshotFormat::Pretty,
+                        )
+                    })
+                    .transpose()
+            } else {
+                Ok(None)
+            };
+            if let Ok(Some(bytes)) = &snapshot_json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&snapshot)
-                        .map_err(|e| ProjectError::Usage(e.to_string()))?
+                    std::str::from_utf8(bytes).expect("JSON encoding is UTF-8")
                 );
             }
             let code = finish(report, execution.budget_report)?;
+            snapshot_json?;
             println!("varta dev: completed");
             return Ok(code);
         }

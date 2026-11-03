@@ -705,3 +705,75 @@ The compiled source-free failure probe checks prior DOM/title retention and fata
 Worker rejection before guest catch/logging. These checks bound potential
 component text, not serialized output, retained history, backend allocation or
 process RSS; selected-engine observations do not establish full platform coverage.
+
+### Potential accessible-name work
+
+The native `naming_work` integration suite and browser `view-naming` suite cover
+the exact UTF-8 allowance, one-byte overflow, final-inventory repair/rollback,
+detached and hidden candidates, native host labels, repeated/cyclic relations,
+field reservations and changes in naming-capable roles. A maximum-depth tree with
+a full-size text leaf remains accepted for author-only roles; making every role
+content-naming rejects, while making only one does not. Native snapshot tests
+also verify label document order and index refresh on rename/reparent/removal.
+A native unit matrix checks computed element-name sizes against the bound across
+144 worlds. Raw text-leaf publication is covered by retained-source limits.
+
+```sh
+cargo test -p varta-view --test naming_work --locked
+cargo test -p varta-view --lib naming_work --locked
+cargo test -p varta-runtime --lib accessible_name_budget --locked
+node --test crates/varta-project/src/browser/view-naming.test.mjs crates/varta-project/src/browser/view-session.test.mjs
+node scripts/test-browser-style-work-bundle.mjs target/debug/varta --naming-work
+```
+
+Use the refreshed native view oracle for Node and the Chrome DOM boundary probe.
+Its five naming cases cover 25 batches, including the author-only/content-role
+transition. The official-host mockup probe includes final-inventory refusal,
+DOM/model/title rollback, preserved node identity and smaller retry in each
+selected engine. The compiled source-free probe verifies fatal Worker refusal
+before guest catch/logging. These observations do not measure platform
+accessibility-engine CPU or establish a complete browser/platform memory quota.
+
+### Bounded native view diagnostics
+
+Snapshot encoder units verify encoded UTF-8 boundaries, escaping/keys in compact
+and pretty output, oversized-fragment refusal before allocation, bounded requested
+capacity and the public 16 MiB allowance. Native integration checks retain newest
+complete opened URLs by both entry and UTF-8 byte limits, preserve action results
+and rollback, and ignore platform refusals. A 500-level/3000-leaf view is built
+under the existing per-transaction work limits; pretty export refuses while
+compact retry and later cleanup succeed. The compiled TSX fixture builds in
+bounded timer turns with its explicit timer grant and unchanged guest budgets.
+
+```sh
+cargo test -p varta-view --lib snapshot_json --locked
+cargo test -p varta-view --test snapshot_export --locked
+cargo test -p varta-runtime --lib snapshot_export_limits --locked
+cargo test -p varta --test smoke view_snapshot_export_is_bounded --locked
+```
+
+The CLI regression also checks that requested budget diagnostics survive export
+refusal and that no partial JSON/completion marker is printed. Its cleanup script
+then succeeds through the ordinary output path. Structured inspection/caller-owned
+copies, external serializers and complete RSS accounting are outside this byte
+buffer check. The desktop worker's one-outstanding-frame acknowledgement gate and
+raster dimension checks are source-inspected separately; no new GUI/backpressure
+or cross-platform observation is inferred from these serializer tests.
+
+### Native GUI input backlog
+
+```sh
+cargo test -p varta-desktop --locked
+cargo clippy -p varta-desktop --all-targets --locked -- -D warnings
+cargo build -p varta-desktop --bin varta-preview --locked
+```
+
+Queue tests cover exact aggregate owned text, one-byte overflow, count capacity,
+atomic preedit replacement, FIFO/binding boundaries, full Unicode commit values
+and capacity release on pop/filter/clear. Preview-method tests use bounded real
+channels and synthetic CPU frames without an OS window to exercise first-frame
+deferral, one-key backpressure, stale-binding release and spare-buffer compaction.
+The normal native IME value/cursor/focus guards remain exercised. These checks do
+not substitute for real-window, OS composition, slow-consumer or cross-platform
+acceptance. Pinned shaping-cache source inspection is recorded separately from
+runtime memory measurements; cache entry counts are not an aggregate RSS quota.

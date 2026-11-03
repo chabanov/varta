@@ -11,6 +11,7 @@
 //! gets its own version and host ABI.
 use crate::HostScalar;
 
+pub mod accessibility;
 pub mod attributes;
 pub mod css;
 pub mod expansion;
@@ -69,6 +70,14 @@ pub const DRAFT_MAX_STYLESHEET_WORK: usize = 8 * 1024 * 1024;
 pub const DRAFT_MAX_CASCADE_WORK: usize = 8 * 1024 * 1024;
 /// Potential UTF-16 component text across command/final inventory reads.
 pub const DRAFT_MAX_EXPANDED_VALUE_BYTES: usize = 8 * 1024 * 1024;
+/// Potential accessible-name evaluation of the final component inventory.
+pub const DRAFT_MAX_NAMING_WORK: usize = 8 * 1024 * 1024;
+pub const DRAFT_NAMING_NODE_WORK: usize = 16;
+/// Host diagnostic JSON, separate from guest output and admitted view state.
+pub const DRAFT_MAX_SNAPSHOT_JSON_BYTES: usize = 16 * 1024 * 1024;
+/// Newest successful simulated URL opens retained for diagnostic snapshots.
+pub const DRAFT_MAX_OPENED_URLS: usize = 64;
+pub const DRAFT_MAX_OPENED_URL_BYTES: usize = 1024 * 1024;
 pub const DRAFT_STYLESHEET_NODE_WORK: usize = 16;
 pub const DRAFT_MAX_PENDING_EVENTS: usize = 64;
 /// Placeholder: `copy_text` requests awaiting their `command_result` at once.

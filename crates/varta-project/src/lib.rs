@@ -22,7 +22,8 @@ pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
 pub use varta_runtime::{
     FileRoots, HttpReport, HttpRequestOutcome, HttpRequestReport, RunOutput, RunReport,
-    RuntimeEvent, RuntimeObserver, ViewReport, ViewScript,
+    RuntimeEvent, RuntimeObserver, ViewReport, ViewScript, ViewSnapshotError, ViewSnapshotFormat,
+    encode_view_snapshot,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -43,6 +44,8 @@ pub enum ProjectError {
     FileRoot(#[from] varta_common::files::FileRootError),
     #[error(transparent)]
     ViewScript(#[from] varta_runtime::ViewScriptError),
+    #[error(transparent)]
+    ViewSnapshot(#[from] varta_runtime::ViewSnapshotError),
     #[error("invalid artifact: {0}")]
     Artifact(String),
     #[error("{0}")]

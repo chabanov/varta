@@ -17046,6 +17046,43 @@ fn view_snapshot(output: &std::process::Output) -> serde_json::Value {
 }
 
 #[test]
+fn view_snapshot_export_is_bounded_atomic_and_keeps_budget_diagnostics() {
+    let project = view_project(serde_json::json!({"time":{"timer":true}}));
+    fs::write(
+        project.0.join("src/main.tsx"),
+        include_str!("../../varta-runtime/src/view_cases/snapshot-export.tsx"),
+    )
+    .unwrap();
+    fs::write(project.0.join("script.json"), r#"{"inputs":[]}"#).unwrap();
+    let output = project.command(&["dev", "--view-script", "script.json", "--budget-report"]);
+    assert!(
+        !output.status.success(),
+        "snapshot export must refuse the oversized pretty document"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("READY"), "{stdout}\n{stderr}");
+    assert!(!stdout.contains('{'), "no partial JSON may be published");
+    assert!(!stdout.contains("varta dev: completed"));
+    assert!(
+        stderr.contains("view snapshot JSON exceeds its 16777216-byte limit"),
+        "{stderr}"
+    );
+    assert!(
+        !turn_lines(&output).is_empty(),
+        "budget diagnostics survive export refusal: {stderr}"
+    );
+    fs::write(
+        project.0.join("script.json"),
+        r##"{"inputs":[{"input":"click","target":"#clear"}]}"##,
+    )
+    .unwrap();
+    let recovered = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(recovered.status.success(), "{}", combined(&recovered));
+    assert_eq!(view_snapshot(&recovered)["title"], "recovered");
+}
+
+#[test]
 fn a_view_script_waits_for_network_explicitly_and_rejects_invalid_wall_bounds() {
     use std::{
         io::{BufRead, BufReader, Write},

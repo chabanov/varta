@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-11-03, against `main` at `bfbeaf8` plus the empty-reference, browser computed-scope and potential expansion increments below. Varta is an experimental
+Updated 2026-11-03, against `main` at `01acc09` plus the accessible-name, diagnostic export/retention and native input-backlog increments below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -14,7 +14,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Commit-boundary depth/cascade/computed-variable package committed as `bfbeaf8` (2026-11-03): **3093 passed**, 16 ignored, all eight commands passed with unchanged sources. Report: `target/verification/20261103-004541-0we5hp3_/report.json`. This covers that committed package on macOS arm64; the subsequent empty-reference and browser computed-scope changes have scoped evidence only. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | `01acc09` (2026-11-03): **3106 passed**, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-042426-afqeylv0/report.json`. This covers the committed empty-reference, browser computed-scope and potential expansion packages on macOS arm64. The subsequent accessible-name, diagnostic export/retention and native input-backlog changes have scoped evidence only. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -6544,3 +6544,124 @@ quota. Serialized JSON, retained frames, namespace/cache/backend overhead,
 repeated accessibility/backend work, RSS, late-value typed-subset parity and
 platform/release acceptance remain open. The full commit-boundary gate is separate
 from these scoped results.
+
+### Potential accessible-name work — implementation 2026-11-03
+
+Native and browser admission now check a shared 8 MiB potential naming-work
+inventory before final publication. Numeric descendant and relation summaries
+cover the entire forest, repeated `aria-labelledby` tokens, native labels and
+future live-field capacity. Referenced traversals disable further labelledby
+relations, keeping cycles finite. Visibility and author precedence do not discount
+potential work. Root content is charged only for roles that admit name from
+content, using the common role/label tables; descendants retain their content
+semantics. Excess rejects the copied transaction before effects, with no operation
+index. Transient excess can be repaired before the final inventory check.
+
+Native snapshots build attached id/label and visibility indices once per snapshot.
+Label order follows document order and hidden-ancestor relation behavior is
+preserved. Descendant text remains an ordered fragment range until its traversal
+ends, avoiding concatenation at every ancestor. Indices are snapshot-local, so
+renaming, reparenting, removal and environment changes do not retain stale names.
+
+Acceptance criteria: exact UTF-8 boundary and one-byte overflow; rollback and
+reclamation; detached/hidden/author alternatives; host-label relations and cycles;
+field type changes and deferred local input; cache order/lifetime; a depth-512
+author-only tree with a full-size text leaf, rejection when all roles become
+content-naming and acceptance when only one does. Compare computed element-name
+sizes with the bound across 144 relation/visibility/role/control worlds. Compiled
+Wasm and source-free Worker failure must retain the previous view and terminate
+before guest catch/logging. Selected browser DOM adapters must retain node identity
+and accept a smaller retry.
+
+Scoped acceptance passes: **158 native view checks**, including the 144-world
+unit matrix and six naming integration checks; **50 runtime/view checks**;
+**162 oracle-enabled Node checks**; strict affected all-target Clippy; registry,
+embedding-documentation, no-default-features and formatting checks. The final six
+naming checks were rerun after extending the role-transition assertions. The
+Chrome boundary probe passes **169 resource batches**, including **25 naming
+batches**. Chrome/WebKit each pass **15 mockup projections and 63 regressions**,
+the positive source-free variable bundle and live compiled chat (tree, selected
+accessibility and 195 style declarations). The fresh source-free naming-failure
+probe retains prior DOM/title before guest catch/logging; normal UARP retains
+107 tests in 28 groups and two view snapshots. The
+[verification record](history.md#potential-accessible-name-work--scoped-verification-2026-11-03)
+keeps these scoped results separate from the preceding full gate.
+
+This closes one repeated naming source/visit-work gap. Raw text leaves retain
+their source bounds; whole serialized output, retained frames, repeated backend
+getters, browser accessibility-engine CPU, complete platform accessibility APIs,
+RSS, late-value CSS parity and platform/release acceptance remain open.
+
+### Bounded view diagnostic export and effects — implementation 2026-11-03
+
+Native view/application APIs now provide typed compact/pretty JSON export under
+a separate 16 MiB encoded-byte allowance. The official CLI scripted-view path uses
+it. Keys, escaping and indentation count before output allocation/copy, and no
+partial document is published on refusal. Export failure leaves application state
+and pending events intact, so compact retry or a later simplifying turn can
+succeed. Requested budget diagnostics survive CLI export refusal. Structured
+inspection remains available; caller-owned copies and custom serialization are
+outside this buffer allowance.
+
+The simulated platform's successful-open history now retains the newest 64
+complete URLs within 1 MiB of raw UTF-8. Oldest entries are evicted before retaining
+a new entry; `openedDropped` is added to snapshots only after a drop. Permission
+and platform refusals do not enter that history, and retention never prevents a
+later action. Prompt/drop counters saturate instead of overflowing.
+
+Acceptance criteria: exact encoded boundary, one-byte excess, Unicode/escape/key
+accounting in both formats, refusal before oversized-fragment allocation, bounded
+capacity during incremental writes, long-URL byte eviction and action continuity.
+A deep/wide admitted view must refuse pretty export while accepting compact
+export; a compiled application must remain running and handle a later clear
+click. The CLI must print no partial JSON or completion marker on refusal, retain
+budget diagnostics, and print a normal snapshot after scripted cleanup. Fixtures
+build in bounded chunks/turns under the existing select and execution allowances.
+
+Scoped acceptance passes: **166 native view tests**, **51 runtime/view tests**,
+**7 CLI view scenarios** and **162 oracle-enabled Node checks**. Strict all-target
+Clippy passes for common/view/runtime/project/CLI; fresh CLI/companion, registry
+(**5**), embedding documentation (**11**), no-default-features and formatting
+checks pass. Normal UARP retains **107 tests in 28 groups and two view snapshots**.
+The [verification record](history.md#bounded-view-diagnostic-export-and-effects--scoped-verification-2026-11-03)
+keeps this evidence separate from the last full gate at `01acc09`.
+
+Frame-retention inspection found an existing count bound in the desktop worker:
+only one frame can await presentation acknowledgement, alongside the currently
+held frame; there is no archived frame vector. CPU image dimensions are already
+capped at 4096×4096 and 16,777,216 pixels. This is source evidence for those count/
+dimension rules, not a new slow-consumer GUI/platform acceptance result or an
+aggregate frame/geometry/font/cache/RSS quota. Those broader requirements and
+late-value CSS, full native/browser matrices and release acceptance remain open.
+
+### Native GUI input backlog — implementation 2026-11-03
+
+The preview's keyboard/IME backlog now has a centralized 64-record limit and
+1 MiB aggregate owned-text allowance. Its existing worker channel remains eight
+messages and per-key/IME input validation is unchanged. The new controller checks
+prospective count/bytes before compacting text or changing the queue. Spare input
+buffer capacity is released on admission; short valid input is preserved even
+when a platform buffer had large unused capacity. No committed text is truncated.
+
+Only the last preedit with the same node/commit binding may coalesce; ordinary
+keys, characters and IME commits keep FIFO order. Refused replacement preserves
+its predecessor. Pop, stale-binding retention and clear release byte accounting.
+Every producer, including focus-loss select/IME cleanup, uses one checked enqueue
+path; overflow retains the existing explicit GUI error/exit policy.
+
+Acceptance passes **11 desktop tests**: six queue quota/order/coalescing/release
+checks, three real-preview-method checks without an OS window, and two existing
+IME validation/focus checks. They cover exact bytes and one-byte excess, the
+64-record boundary, rejected/successful replacement, full-size Unicode commits,
+spare-buffer compaction, first-frame deferral, one-input-per-frame backpressure
+and stale-binding capacity release. Strict desktop all-target Clippy, a fresh
+`varta-preview` binary, formatting and whitespace checks pass. These are targeted
+native-host checks, not a new GUI/OS IME or cross-platform acceptance matrix.
+
+Text-cache inspection found existing bounds in pinned Parley 0.11.1: shaping
+data/instance/plan LRUs each retain at most 16 entries; layout construction clears
+its resolution/style/analysis scratch and prunes font sources. The engine uses
+explicit bounded fonts with system-font discovery disabled. No cache reset or
+allowance increase was added. This source audit establishes entry/lifecycle
+behavior, not total cache bytes, glyph expansion or RSS. Broader input/rendering,
+backend allocation, platform, late-value CSS and release acceptance remain open.

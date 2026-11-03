@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Experimental native preview for an already compiled, unprivileged view module.
-use std::collections::VecDeque;
+mod input_queue;
+use input_queue::{MAX_KEY_TEXT_BYTES, PendingKey, PendingKeys, WORKER_QUEUE_CAPACITY};
 use std::io::Read;
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -56,28 +57,6 @@ enum WorkerMessage {
         dimensions: u64,
         dark: bool,
         scale: u64,
-    },
-}
-enum PendingKey {
-    SelectClose(u32),
-    Key(&'static str, ModifiersState),
-    Character {
-        key: String,
-        text: String,
-        modifiers: ModifiersState,
-        select_all: bool,
-        history: Option<varta_view::HistoryAction>,
-    },
-    ImePreedit {
-        node: u32,
-        commits: usize,
-        text: String,
-        cursor: Option<(usize, usize)>,
-    },
-    ImeCommit {
-        node: u32,
-        commits: usize,
-        text: String,
     },
 }
 
@@ -350,7 +329,7 @@ struct Preview {
     pending_scroll: f32,
     scroll_inflight: Option<(u64, u64)>,
     modifiers: ModifiersState,
-    pending_keys: VecDeque<PendingKey>,
+    pending_keys: PendingKeys,
     key_inflight: Option<(u64, u64)>,
     window_focused: bool,
     ime_binding: Option<(u32, usize)>,
@@ -536,6 +515,10 @@ impl Preview {
             self.scroll_inflight = Some((frame.revision, frame.dimensions));
         }
         Ok(())
+    }
+    fn enqueue_key(&mut self, pending: PendingKey) -> Result<(), String> {
+        self.pending_keys.push(pending).map_err(str::to_owned)?;
+        self.flush_keys()
     }
     fn flush_keys(&mut self) -> Result<(), String> {
         if self.key_inflight.is_some() || self.scroll_inflight.is_some() || !self.frame_presented {
@@ -780,27 +763,23 @@ impl ApplicationHandler<GuiEvent> for Preview {
                         .frame
                         .as_ref()
                         .and_then(|frame| frame.image.select_menu())
+                        && let Err(error) = self.enqueue_key(PendingKey::SelectClose(menu.target))
                     {
-                        self.pending_keys
-                            .push_back(PendingKey::SelectClose(menu.target));
-                        if let Err(error) = self.flush_keys() {
-                            self.error = Some(error);
-                            event_loop.exit();
-                        }
+                        self.error = Some(error);
+                        event_loop.exit();
                     }
                     // Some windowing backends do not report Ime::Disabled when
                     // focus moves away. Clear any displayed composition even then.
-                    if let Some((node, commits)) = self.ime_binding {
-                        self.pending_keys.push_back(PendingKey::ImePreedit {
+                    if let Some((node, commits)) = self.ime_binding
+                        && let Err(error) = self.enqueue_key(PendingKey::ImePreedit {
                             node,
                             commits,
                             text: String::new(),
                             cursor: None,
-                        });
-                        if let Err(error) = self.flush_keys() {
-                            self.error = Some(error);
-                            event_loop.exit();
-                        }
+                        })
+                    {
+                        self.error = Some(error);
+                        event_loop.exit();
                     }
                 }
             }
@@ -812,23 +791,11 @@ impl ApplicationHandler<GuiEvent> for Preview {
                         (node, commits),
                         &mut self.ime_composing,
                     );
-                    if let Some(pending) = pending {
-                        if matches!((&pending, self.pending_keys.back()),
-                            (PendingKey::ImePreedit { node: a, commits: b, .. },
-                             Some(PendingKey::ImePreedit { node: c, commits: d, .. })) if a == c && b == d)
-                        {
-                            self.pending_keys.pop_back();
-                        }
-                        if self.pending_keys.len() >= 64 {
-                            self.error = Some("native keyboard queue is full".into());
-                            event_loop.exit();
-                        } else {
-                            self.pending_keys.push_back(pending);
-                            if let Err(error) = self.flush_keys() {
-                                self.error = Some(error);
-                                event_loop.exit();
-                            }
-                        }
+                    if let Some(pending) = pending
+                        && let Err(error) = self.enqueue_key(pending)
+                    {
+                        self.error = Some(error);
+                        event_loop.exit();
                     }
                 }
             }
@@ -840,14 +807,18 @@ impl ApplicationHandler<GuiEvent> for Preview {
                 let pending = if let Some(key) = supported_key(&event.logical_key) {
                     Some(PendingKey::Key(key, self.modifiers))
                 } else if let WinitKey::Character(key) = &event.logical_key {
-                    if key.is_empty() || key.len() > 4096 || key.chars().any(char::is_control) {
+                    if key.is_empty()
+                        || key.len() > MAX_KEY_TEXT_BYTES
+                        || key.chars().any(char::is_control)
+                    {
                         None
                     } else {
                         let text = event
                             .text
                             .as_ref()
                             .filter(|text| {
-                                text.len() <= 4096 && !text.chars().any(char::is_control)
+                                text.len() <= MAX_KEY_TEXT_BYTES
+                                    && !text.chars().any(char::is_control)
                             })
                             .map_or_else(String::new, ToString::to_string);
                         Some(PendingKey::Character {
@@ -873,17 +844,11 @@ impl ApplicationHandler<GuiEvent> for Preview {
                 } else {
                     None
                 };
-                if let Some(pending) = pending {
-                    if self.pending_keys.len() >= 64 {
-                        self.error = Some("native keyboard queue is full".into());
-                        event_loop.exit();
-                    } else {
-                        self.pending_keys.push_back(pending);
-                        if let Err(error) = self.flush_keys() {
-                            self.error = Some(error);
-                            event_loop.exit();
-                        }
-                    }
+                if let Some(pending) = pending
+                    && let Err(error) = self.enqueue_key(pending)
+                {
+                    self.error = Some(error);
+                    event_loop.exit();
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -1041,7 +1006,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dark = Arc::new(AtomicBool::new(false));
     let scale = Arc::new(AtomicU64::new(1.0_f64.to_bits()));
     let frame_ack = Arc::new(AtomicU64::new(0));
-    let (sender, receiver) = mpsc::sync_channel(8);
+    let (sender, receiver) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
     let proxy = event_loop.create_proxy();
     let worker_dimensions = dimensions.clone();
     let worker_dark = dark.clone();
@@ -1078,7 +1043,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pending_scroll: 0.0,
         scroll_inflight: None,
         modifiers: ModifiersState::empty(),
-        pending_keys: VecDeque::new(),
+        pending_keys: PendingKeys::default(),
         key_inflight: None,
         window_focused: false,
         ime_binding: None,
@@ -1095,6 +1060,142 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::{Ime, PendingKey, translate_ime};
+
+    fn headless_preview() -> (
+        super::Preview,
+        std::sync::mpsc::Receiver<super::WorkerMessage>,
+    ) {
+        use super::*;
+        let (sender, receiver) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
+        (
+            Preview {
+                window: None,
+                surface: None,
+                dimensions: Arc::new(AtomicU64::new(0)),
+                dark: Arc::new(AtomicBool::new(false)),
+                scale: Arc::new(AtomicU64::new(1.0f64.to_bits())),
+                sender,
+                frame: None,
+                error: None,
+                presented: false,
+                frame_presented: false,
+                frame_ack: Arc::new(AtomicU64::new(0)),
+                cursor: None,
+                pressed: None,
+                pending_scroll: 0.0,
+                scroll_inflight: None,
+                modifiers: ModifiersState::empty(),
+                pending_keys: PendingKeys::default(),
+                key_inflight: None,
+                window_focused: true,
+                ime_binding: None,
+                ime_composing: false,
+                title: String::new(),
+            },
+            receiver,
+        )
+    }
+    fn present_empty_frame(preview: &mut super::Preview) {
+        preview.frame = Some(super::PreviewFrame {
+            image: varta_view::View::default().rasterize_boxes(16, 16).unwrap(),
+            revision: 1,
+            dimensions: 16u64 << 32 | 16,
+            sequence: 1,
+            commits: 0,
+            dark: false,
+            title: String::new(),
+            scale: 1.0f64.to_bits(),
+        });
+        preview.frame_presented = true;
+    }
+    #[test]
+    fn blocked_preview_compacts_spare_capacity_without_losing_preedit_text() {
+        let (mut preview, receiver) = headless_preview();
+        let mut text = String::with_capacity(super::input_queue::MAX_PENDING_TEXT_BYTES);
+        text.push_str("old");
+        let pending = translate_ime(
+            Ime::Preedit(text, None),
+            true,
+            (7, 3),
+            &mut preview.ime_composing,
+        )
+        .unwrap();
+        preview.enqueue_key(pending).unwrap();
+        let mut text = String::with_capacity(super::input_queue::MAX_PENDING_TEXT_BYTES + 1);
+        text.push_str("new");
+        let pending = translate_ime(
+            Ime::Preedit(text, None),
+            true,
+            (7, 3),
+            &mut preview.ime_composing,
+        )
+        .unwrap();
+        preview.enqueue_key(pending).unwrap();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        assert!(
+            matches!(preview.pending_keys.pop_front(),Some(PendingKey::ImePreedit{text,..}) if text=="new" && text.capacity()==3)
+        );
+    }
+    #[test]
+    fn preview_keeps_fifo_before_first_frame_and_sends_one_key_until_the_next_frame() {
+        let (mut preview, receiver) = headless_preview();
+        preview
+            .enqueue_key(PendingKey::Key("Tab", super::ModifiersState::SHIFT))
+            .unwrap();
+        preview
+            .enqueue_key(PendingKey::Key("Enter", super::ModifiersState::empty()))
+            .unwrap();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        present_empty_frame(&mut preview);
+        preview.flush_keys().unwrap();
+        preview.flush_keys().unwrap();
+        let super::WorkerMessage::Input { input, .. } = receiver.try_recv().unwrap();
+        assert!(matches!(input,varta_view::Input::Key{key,shift:true,..} if key=="Tab"));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            preview.pending_keys.pop_front(),
+            Some(PendingKey::Key("Enter", _))
+        ));
+    }
+    #[test]
+    fn stale_ime_binding_discard_releases_capacity_before_new_input_is_queued() {
+        let (mut preview, receiver) = headless_preview();
+        let text = "界".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2);
+        let count = super::input_queue::MAX_PENDING_TEXT_BYTES / text.len();
+        for _ in 0..count {
+            preview
+                .enqueue_key(PendingKey::ImeCommit {
+                    node: 7,
+                    commits: 3,
+                    text: text.clone(),
+                })
+                .unwrap();
+        }
+        present_empty_frame(&mut preview);
+        preview.flush_keys().unwrap();
+        assert!(preview.pending_keys.is_empty());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        preview.frame_presented = false;
+        preview
+            .enqueue_key(PendingKey::ImeCommit {
+                node: 8,
+                commits: 4,
+                text,
+            })
+            .unwrap();
+    }
 
     #[test]
     fn ime_ignores_late_input_after_window_focus_loss() {

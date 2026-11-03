@@ -613,6 +613,105 @@ export function main():void {{
 }
 
 #[test]
+fn accessible_name_budget_is_fatal_before_publication_and_guest_catch() {
+    let before = vec!["field"; 80].join(" ");
+    let excessive = vec!["field"; 86].join(" ");
+    let source = format!(
+        r#"
+export function main():void {{
+ const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id},'trigger');
+ View.setAttribute(button,{refs},'{before}');View.insert(1,button,0);
+ const field=View.node();View.createElement(field,{input});View.setAttribute(field,{id},'field');View.setAttribute(field,{kind},'password');View.insert(1,field,0);
+ View.on(button,{click},(event:ViewEvent):void=>{{
+  View.setAttribute(button,{refs},'{excessive}');View.setTitle('after');
+  try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+ }},0,0,0,0);
+ View.setTitle('before');View.commit();
+}}
+"#,
+        button = view::Tag::Button.code(),
+        input = view::Tag::Input.code(),
+        id = view::Attribute::Id.code(),
+        refs = view::Attribute::AriaLabelledby.code(),
+        kind = view::Attribute::Type.code(),
+        click = view::EventKind::Click.code()
+    );
+    let mut result = VartaRuntime::new().run_view(
+        &compile(&source),
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(result.report.failure.take().expect("fatal naming quota")),
+        varta_view::Violation::NamingWorkLimit
+    );
+    assert!(result.report.output.lines.is_empty());
+    assert_eq!(result.commits, 1);
+    let snapshot = result.snapshot.unwrap();
+    assert_eq!(snapshot["title"], "before");
+    assert_eq!(
+        snapshot["tree"]["children"][0]["attributes"]["aria-labelledby"],
+        before
+    );
+}
+
+#[test]
+fn snapshot_export_limits_do_not_terminate_the_application_or_prevent_a_later_turn() {
+    let bytes = compile_tsx(include_str!("view_cases/snapshot-export.tsx"), &[]);
+    let mut app = VartaRuntime::new()
+        .start_application(
+            &bytes,
+            crate::ApplicationOptions {
+                run: crate::RunOptions {
+                    requested: vec![timers()],
+                    ..crate::RunOptions::default()
+                },
+                ..crate::ApplicationOptions::default()
+            },
+        )
+        .unwrap();
+    for _ in 0..200 {
+        if app.view_commits() >= 110 {
+            break;
+        }
+        match app.step(Some(std::time::Duration::from_millis(20))) {
+            crate::Step::Turn(_) | crate::Step::Idle => {}
+            other => panic!("snapshot fixture stopped: {other:?}; {:?}", app.failure()),
+        }
+    }
+    assert_eq!(app.view_commits(), 110, "{:?}", app.failure());
+    let state = app.state();
+    assert_eq!(state, crate::InstanceState::Running);
+    assert!(matches!(
+        app.view_snapshot_json(crate::ViewSnapshotFormat::Pretty),
+        Err(crate::ViewSnapshotError::Limit { .. })
+    ));
+    assert_eq!(app.state(), state);
+    assert!(app.failure().is_none());
+    assert!(
+        app.view_snapshot_json(crate::ViewSnapshotFormat::Compact)
+            .unwrap()
+            .len()
+            < 1024 * 1024
+    );
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Ident("#clear".into()),
+    })
+    .unwrap();
+    assert!(matches!(
+        app.step(Some(std::time::Duration::ZERO)),
+        crate::Step::Turn(_)
+    ));
+    let bytes = app
+        .view_snapshot_json(crate::ViewSnapshotFormat::Pretty)
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["title"],
+        "recovered"
+    );
+}
+
+#[test]
 fn a_turn_commits_at_most_one_batch() {
     let source = "export function main(): void { View.setTitle('a'); View.commit(); View.setTitle('b'); View.commit(); }";
     assert!(matches!(

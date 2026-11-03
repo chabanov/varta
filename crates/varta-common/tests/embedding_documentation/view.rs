@@ -148,6 +148,26 @@ fn layout() -> String {
             view::DRAFT_MAX_EXPANDED_VALUE_BYTES.to_string(),
         ),
         (
+            "Placeholder: potential accessible-name work".into(),
+            view::DRAFT_MAX_NAMING_WORK.to_string(),
+        ),
+        (
+            "Placeholder: accessible-name node/lookup work".into(),
+            view::DRAFT_NAMING_NODE_WORK.to_string(),
+        ),
+        (
+            "Host diagnostics: encoded snapshot JSON bytes".into(),
+            view::DRAFT_MAX_SNAPSHOT_JSON_BYTES.to_string(),
+        ),
+        (
+            "Host diagnostics: retained opened URLs / UTF-8 bytes".into(),
+            format!(
+                "{} / {}",
+                view::DRAFT_MAX_OPENED_URLS,
+                view::DRAFT_MAX_OPENED_URL_BYTES
+            ),
+        ),
+        (
             "Placeholder: parsed stylesheet work / syntax node units".into(),
             format!(
                 "{} / {}",

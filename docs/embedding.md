@@ -2407,6 +2407,85 @@ draft.
   renderer/host-lifetime requirements remain separate. It is not an exact estimate
   of one winning environment's output, an aggregate host-memory quota or a change
   to CSS fallback semantics.
+- **Potential accessible-name work.** After the existing final cascade,
+  expansion, select, retained-text, id-uniqueness and option/value checks, validate
+  one final naming inventory before publishing the copied transaction or effects.
+  This is an inventory allowance, not a counter per style-reading command. A
+  transient excess repaired before final validation is permitted. Excess rejects
+  with no operation index. The same check runs in the pure Worker and DOM models.
+
+  Walk every component, including detached nodes. Charge one node weight per
+  live node for the inventory walk. Separately define each node's own summary as
+  one node weight plus its text's UTF-8 bytes, or, for an element, the UTF-8 bytes
+  of its `id`, `for`, `aria-label`, `aria-labelledby`, `alt` and `placeholder`
+  attributes. One-time retained source and raw text-leaf publication remain
+  covered by their source limits; the naming allowance charges repeated name
+  reads. Use the following summaries without allocating computed names, clamping
+  every addition to allowance + 1:
+
+  1. A relation-disabled descendant summary is its own summary, plus the summaries
+     of its children, plus the live-field UTF-8 reservation for a text field or
+     select. This includes all possible select option-label text through children.
+  2. A node's relation summary adds, for every ASCII-whitespace-separated
+     `aria-labelledby` token, one lookup node weight and one possible separator
+     unit, plus the relation-disabled summary of its target if the id exists.
+     Include detached targets and repeated tokens. An unresolved token still
+     incurs lookup/separator work.
+  3. A relation-enabled descendant summary is its own and relation summaries,
+     plus its children's relation-enabled summaries and the same field reservation.
+  4. Aggregate native `label` alternatives by `for`: each label contributes one
+     lookup weight, one separator and its relation-enabled descendant summary.
+  5. For every element with an explicit or implicit role, except the implicit
+     application root, add its own and relation summaries, its children's
+     relation-enabled summaries when its role permits name from content, and,
+     for a labelable element with `id`, that id's
+     native-label aggregate. The root naming summary has no embedded-value
+     reservation of its own: embedded values apply below the root step.
+
+  All eligible branches contribute, regardless of hidden/dialog/media state,
+  author precedence, blankness, selected option or current local value. Relations
+  are disabled in their referenced traversal and native host labels apply only
+  to a root, so these three descendant passes depend on children, not cyclic
+  relation recursion. IDs are already unique; label aggregation and indexed
+  lookups avoid rescanning the forest for each relation/root. Field reservations
+  keep admission identical while local input is awaiting Worker delivery.
+
+  This bounds potential name evaluation using source-byte and visit weights.
+  It does not measure browser accessibility-engine CPU, whole serialized JSON,
+  frame retention, platform caches, every repeated backend read or process RSS.
+- **Host diagnostic export and effect retention.** Native `View::snapshot_json`
+  and `Application::view_snapshot_json` encode under the diagnostic JSON byte
+  allowance; `encode_snapshot` (re-exported by runtime/project as
+  `encode_view_snapshot`) applies it to an existing structured snapshot. Compact
+  and pretty formats both count actual encoded UTF-8, including keys, escapes,
+  punctuation and indentation. Check the remaining allowance before reserving or
+  copying each output fragment; requested vector capacity never exceeds the
+  allowance. Export returns complete bytes or a typed limit/allocation/encoding
+  error, never a partial document. An export error is an observer failure, not a
+  guest trap or a state-admission failure. It leaves the application and events
+  unchanged, allowing compact retry or a later guest turn that reduces the tree.
+
+  `varta dev --view-script` uses the bounded pretty encoder. On export refusal it
+  prints no partial snapshot and no completion marker, retains preceding guest
+  logs and requested budget diagnostics, and returns the diagnostic error. The
+  output document allowance excludes the CLI's terminating newline. This is
+  separate from the guest's output budget. Structured `snapshot`/`view_snapshot`
+  and `ViewReport.snapshot` remain inspection APIs: their graphs follow the view
+  source/topology/work envelopes, while caller-owned copies and independently
+  chosen serialization belong to the embedder. This is not a total allocator/RSS
+  quota for structured graphs, serializers or platform caches.
+
+  The native simulated platform retains the newest successful opened URLs, in
+  order, under both the diagnostic entry and raw UTF-8 byte ceilings. Evict oldest
+  entries before retaining a new complete URL. `openedDropped`, present only
+  after a drop, reports evicted/unretained entries with a saturating counter. A
+  single entry exceeding the byte ceiling is not retained and increments that
+  counter without clearing existing entries. Permission/platform refusals never
+  enter the successful-open history. Retention does not change action status or
+  broker decisions. Clipboard diagnostics retain the last value under the existing
+  per-value limit; the prompt counter saturates. Browser permission audits keep
+  their separate retention contract; these native diagnostics do not impose a
+  browser URL-action count limit.
 - **Parsed stylesheet work.** The limits table gives a work allowance and one
   syntax-node weight. One parse charges the input UTF-8 byte length; one node
   weight per media-header condition; one node weight per rule plus each media
@@ -2636,6 +2715,10 @@ admission and the shared work allowances remain enforced independently.
 | Placeholder: radio reconciliation work / node visit units | 8388608 / 16 |
 | Placeholder: potential cascade read work | 8388608 |
 | Placeholder: potential expanded component bytes | 8388608 |
+| Placeholder: potential accessible-name work | 8388608 |
+| Placeholder: accessible-name node/lookup work | 16 |
+| Host diagnostics: encoded snapshot JSON bytes | 16777216 |
+| Host diagnostics: retained opened URLs / UTF-8 bytes | 64 / 1048576 |
 | Placeholder: parsed stylesheet work / syntax node units | 8388608 / 16 |
 | Placeholder: tokens of one CSS property value | 128 |
 | `id` / `for` ident characters | 64 |

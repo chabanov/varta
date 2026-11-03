@@ -216,7 +216,10 @@ mod view;
 mod view_tests;
 #[cfg(test)]
 mod web_bytes_tests;
-pub use varta_view::{Script as ViewScript, ScriptError as ViewScriptError, ViewError};
+pub use varta_view::{
+    Script as ViewScript, ScriptError as ViewScriptError, SnapshotError as ViewSnapshotError,
+    SnapshotFormat as ViewSnapshotFormat, ViewError, encode_snapshot as encode_view_snapshot,
+};
 
 use std::collections::BTreeMap;
 use std::time::Instant;

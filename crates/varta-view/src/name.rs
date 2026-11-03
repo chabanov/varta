@@ -6,20 +6,71 @@ use crate::style::Environment;
 use crate::tree::{Content, Element, Tree};
 use varta_common::view::{Attribute, CssProperty, Tag};
 
-/// Roles of the subset whose name may come from their content (ARIA 1.2
-/// "Name From: contents"). Every other role is named by its author only.
-const NAME_FROM_CONTENT: &[&str] = &[
-    "button",
-    "link",
-    "heading",
-    "option",
-    "cell",
-    "columnheader",
-    "row",
-    "tab",
-    "checkbox",
-    "radio",
-];
+use std::collections::BTreeMap;
+use varta_common::view::accessibility::NAME_FROM_CONTENT;
+
+/// Snapshot-local indices. Visibility and id/label lookup are evaluated once,
+/// rather than scanning the document for every repeated naming relation.
+pub(crate) struct Names<'a> {
+    tree: &'a Tree,
+    ids: BTreeMap<&'a str, u32>,
+    labels: BTreeMap<&'a str, Vec<u32>>,
+    hidden: BTreeMap<u32, bool>,
+    hidden_in_tree: BTreeMap<u32, bool>,
+}
+
+impl<'a> Names<'a> {
+    pub(crate) fn new(tree: &'a Tree, environment: &Environment) -> Self {
+        let mut names = Self {
+            tree,
+            ids: BTreeMap::new(),
+            labels: BTreeMap::new(),
+            hidden: BTreeMap::new(),
+            hidden_in_tree: BTreeMap::new(),
+        };
+        let order = tree.document_order();
+        for id in order {
+            let own = tree
+                .element(id)
+                .is_some_and(|e| hidden_element(tree, id, e, environment));
+            let parent_hidden = tree.nodes[&id]
+                .parent
+                .is_some_and(|p| names.hidden_in_tree[&p]);
+            names.hidden.insert(id, own);
+            names.hidden_in_tree.insert(id, own || parent_hidden);
+            if let Some(element) = tree.element(id) {
+                if let Some(ident) = element.attributes.get(&Attribute::Id) {
+                    names.ids.insert(ident, id);
+                }
+                if element.tag == Tag::Label
+                    && let Some(ident) = element.attributes.get(&Attribute::For)
+                {
+                    names.labels.entry(ident).or_default().push(id);
+                }
+            }
+        }
+        names
+    }
+
+    pub(crate) fn hidden(&self, id: u32) -> bool {
+        self.hidden[&id]
+    }
+
+    /// Flat ASCII-whitespace-normalized name; no borrowed cache survives a frame.
+    pub(crate) fn accessible_name(&self, id: u32, role: &str) -> String {
+        flat(&compute(
+            self,
+            id,
+            Some(role),
+            Traversal {
+                root: id,
+                labelledby: false,
+                include_hidden: false,
+            },
+            Step::Root,
+        ))
+    }
+}
 
 /// Where the current node sits in the traversal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,29 +93,6 @@ struct Traversal {
     include_hidden: bool,
 }
 
-/// The accessible name of `id` with role `role`, as a flat string (ASCII
-/// whitespace runs collapsed to one space, trimmed).
-pub(crate) fn accessible_name(
-    tree: &Tree,
-    id: u32,
-    role: &str,
-    environment: &Environment,
-) -> String {
-    let traversal = Traversal {
-        root: id,
-        labelledby: false,
-        include_hidden: false,
-    };
-    flat(&compute(
-        tree,
-        id,
-        Some(role),
-        traversal,
-        Step::Root,
-        environment,
-    ))
-}
-
 /// Whether the element itself is hidden under the L0 rules: `aria-hidden="true"`,
 /// a computed `display: none`, or a `dialog` that is not open.
 pub(crate) fn hidden_element(
@@ -84,22 +112,14 @@ pub(crate) fn hidden_element(
         || (element.tag == Tag::Dialog && !element.open)
 }
 
-/// Whether the node or any ancestor is hidden.
-fn hidden_in_tree(tree: &Tree, id: u32, environment: &Environment) -> bool {
-    tree.path(id).into_iter().any(|node| {
-        tree.element(node)
-            .is_some_and(|element| hidden_element(tree, node, element, environment))
-    })
-}
-
 fn compute<'a>(
-    tree: &'a Tree,
+    names: &'a Names<'_>,
     id: u32,
     role: Option<&'a str>,
     traversal: Traversal,
     step: Step,
-    environment: &Environment,
 ) -> String {
+    let tree = names.tree;
     enum Task<'a> {
         Visit(u32, Option<&'a str>, Step),
         Content {
@@ -120,12 +140,16 @@ fn compute<'a>(
             else {
                 unreachable!()
             };
-            let content: String = parts.drain(start..).collect();
-            parts.push(if recursion || !flat(&content).is_empty() {
-                content
-            } else {
-                placeholder.unwrap_or_default().to_owned()
-            });
+            // Descendant content already occupies an ordered fragment range.
+            // Do not concatenate that range again at every ancestor depth.
+            if !recursion
+                && parts[start..]
+                    .iter()
+                    .all(|part| part.split_ascii_whitespace().next().is_none())
+            {
+                parts.truncate(start);
+                parts.push(placeholder.unwrap_or_default().to_owned());
+            }
             continue;
         };
         let Some(node) = tree.nodes.get(&id) else {
@@ -145,14 +169,14 @@ fn compute<'a>(
             continue;
         }
         // 2A: a relation starting at a hidden node includes its descendants.
-        if !traversal.include_hidden && hidden_element(tree, id, element, environment) {
+        if !traversal.include_hidden && names.hidden(id) {
             parts.push(String::new());
             continue;
         }
         // Relation nesting remains bounded: labelledby is disabled in its
         // referenced traversal, and host labels apply only to the root step.
         if !traversal.labelledby
-            && let Some(name) = labelledby(tree, element, traversal, environment)
+            && let Some(name) = labelledby(names, element, traversal)
         {
             parts.push(name);
             continue;
@@ -168,7 +192,7 @@ fn compute<'a>(
             parts.push(label.clone());
             continue;
         }
-        if let Some(name) = host_label(tree, element, step, traversal, environment) {
+        if let Some(name) = host_label(names, element, step, traversal) {
             parts.push(name);
             continue;
         }
@@ -194,36 +218,23 @@ fn compute<'a>(
             parts.push(placeholder.unwrap_or_default().to_owned());
         }
     }
-    parts.pop().unwrap_or_default()
+    parts.concat()
 }
 
 /// 2B: the names of the attached referenced nodes, joined by one space; `None`
 /// when no reference resolves or the result is blank.
-fn labelledby(
-    tree: &Tree,
-    element: &Element,
-    traversal: Traversal,
-    environment: &Environment,
-) -> Option<String> {
+fn labelledby(names: &Names<'_>, element: &Element, traversal: Traversal) -> Option<String> {
     let ids = element.attributes.get(&Attribute::AriaLabelledby)?;
     let parts: Vec<String> = ids
         .split_ascii_whitespace()
-        .filter_map(|ident| tree.by_ident(ident))
-        .filter(|referenced| tree.attached(*referenced))
+        .filter_map(|ident| names.ids.get(ident).copied())
         .map(|referenced| {
             let nested = Traversal {
                 root: traversal.root,
                 labelledby: true,
-                include_hidden: hidden_in_tree(tree, referenced, environment),
+                include_hidden: names.hidden_in_tree[&referenced],
             };
-            compute(
-                tree,
-                referenced,
-                None,
-                nested,
-                Step::Referenced,
-                environment,
-            )
+            compute(names, referenced, None, nested, Step::Referenced)
         })
         .collect();
     let joined = parts.join(" ");
@@ -254,40 +265,31 @@ fn embedded_value(tree: &Tree, id: u32, element: &Element) -> Option<String> {
 /// a recursion a field gave its value at 2C already, and skipping the `label`
 /// relation of other controls there keeps every traversal finite.
 fn host_label(
-    tree: &Tree,
+    names: &Names<'_>,
     element: &Element,
     step: Step,
     traversal: Traversal,
-    environment: &Environment,
 ) -> Option<String> {
     if element.tag == Tag::Img {
         return element.attributes.get(&Attribute::Alt).cloned();
     }
-    if step != Step::Root
-        || !matches!(
-            element.tag,
-            Tag::Input | Tag::Textarea | Tag::Select | Tag::Progress
-        )
-    {
+    if step != Step::Root || !varta_common::view::accessibility::LABELABLE.contains(&element.tag) {
         return None;
     }
     let ident = element.attributes.get(&Attribute::Id)?;
-    let parts: Vec<String> = tree
-        .document_order()
+    let parts: Vec<String> = names
+        .labels
+        .get(ident.as_str())
         .into_iter()
-        .filter(|label| {
-            tree.element(*label).is_some_and(|candidate| {
-                candidate.tag == Tag::Label
-                    && candidate.attributes.get(&Attribute::For) == Some(ident)
-            })
-        })
+        .flatten()
+        .copied()
         .map(|label| {
             let nested = Traversal {
                 root: traversal.root,
                 labelledby: traversal.labelledby,
-                include_hidden: hidden_in_tree(tree, label, environment),
+                include_hidden: names.hidden_in_tree[&label],
             };
-            compute(tree, label, None, nested, Step::Referenced, environment)
+            compute(names, label, None, nested, Step::Referenced)
         })
         .collect();
     let joined = parts.join(" ");

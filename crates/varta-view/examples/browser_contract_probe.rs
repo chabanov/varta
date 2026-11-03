@@ -838,6 +838,131 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             B::new().command(2, Command::Focus, 0.0).finish(),
         ],
     ));
+    let naming_setup = |attached| {
+        let mut b = B::new();
+        b.create_element(2, Tag::Button)
+            .set_attribute(2, A::AriaHidden, "true")
+            .set_attribute(2, A::AriaLabelledby, &vec!["label"; 255].join(" "))
+            .set_attribute(2, A::AriaLabel, &"x".repeat(1579))
+            .create_element(3, Tag::Div)
+            .set_attribute(3, A::Id, "label")
+            .create_text(4, &format!("{}{}", "é".repeat(62), "a".repeat(32768 - 62)))
+            .insert(3, 4, 0);
+        if attached {
+            b.insert(1, 2, 0).insert(1, 3, 0);
+        }
+        b
+    };
+    cases.push((
+        "naming-work-boundary",
+        vec![
+            naming_setup(true).finish(),
+            B::new()
+                .set_title("rollback")
+                .set_attribute(2, A::AriaLabel, &"x".repeat(1580))
+                .finish(),
+            B::new()
+                .set_attribute(2, A::AriaLabel, &"x".repeat(1580))
+                .set_attribute(2, A::AriaLabel, &"x".repeat(1579))
+                .finish(),
+            B::new()
+                .remove_attribute(3, A::Id)
+                .set_attribute(2, A::AriaLabel, &"x".repeat(1580))
+                .finish(),
+            B::new().set_attribute(3, A::Id, "label").finish(),
+            B::new()
+                .set_attribute(2, A::AriaLabel, &"x".repeat(1579))
+                .set_attribute(3, A::Id, "label")
+                .finish(),
+            B::new().finish(),
+        ],
+    ));
+    cases.push((
+        "naming-work-detached",
+        vec![
+            naming_setup(false).finish(),
+            B::new()
+                .set_attribute(2, A::AriaLabel, &"x".repeat(1580))
+                .finish(),
+            B::new().insert(1, 2, 0).insert(1, 3, 0).finish(),
+            B::new().set_attribute(3, A::AriaHidden, "true").finish(),
+            B::new()
+                .set_attribute(2, A::AriaLabel, &"x".repeat(1580))
+                .finish(),
+            B::new().remove(2).finish(),
+        ],
+    ));
+    let mut field_setup = B::new();
+    field_setup
+        .create_element(2, Tag::Button)
+        .set_attribute(2, A::AriaHidden, "true")
+        .set_attribute(2, A::AriaLabelledby, &vec!["field"; 100].join(" "))
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Input)
+        .set_attribute(3, A::Id, "field")
+        .set_attribute(3, A::Type, "checkbox")
+        .insert(1, 3, 0);
+    cases.push((
+        "naming-work-field",
+        vec![
+            field_setup.finish(),
+            B::new().set_attribute(3, A::Type, "password").finish(),
+            B::new()
+                .set_attribute(2, A::AriaLabelledby, &vec!["field"; 80].join(" "))
+                .set_attribute(3, A::Type, "password")
+                .finish(),
+            B::new()
+                .set_attribute(2, A::AriaLabelledby, &vec!["field"; 86].join(" "))
+                .finish(),
+            B::new()
+                .set_attribute(2, A::AriaLabelledby, &vec!["field"; 81].join(" "))
+                .finish(),
+        ],
+    ));
+    let mut host_setup = naming_setup(false);
+    host_setup
+        .remove(2)
+        .create_element(6, Tag::Input)
+        .set_attribute(6, A::Id, "field")
+        .create_element(7, Tag::Label)
+        .set_attribute(7, A::For, "field")
+        .set_attribute(7, A::AriaLabelledby, &vec!["label"; 300].join(" "));
+    cases.push((
+        "naming-work-host-label",
+        vec![
+            host_setup.clone().finish(),
+            host_setup
+                .set_attribute(7, A::AriaLabelledby, &vec!["label"; 80].join(" "))
+                .finish(),
+            B::new()
+                .set_attribute(7, A::AriaLabelledby, &vec!["label"; 300].join(" "))
+                .finish(),
+            B::new().remove(6).finish(),
+        ],
+    ));
+    let mut author_only = B::new();
+    for id in 2..=varta_common::view::DRAFT_MAX_TREE_DEPTH as u32 {
+        author_only
+            .create_element(id, Tag::Span)
+            .set_attribute(id, A::Role, "list")
+            .insert(id - 1, id, 0);
+    }
+    let leaf = varta_common::view::DRAFT_MAX_TREE_DEPTH as u32 + 1;
+    author_only
+        .create_text(leaf, &"a".repeat(32768))
+        .insert(leaf - 1, leaf, 0);
+    let mut all_content = B::new();
+    for id in 2..=varta_common::view::DRAFT_MAX_TREE_DEPTH as u32 {
+        all_content.set_attribute(id, A::Role, "cell");
+    }
+    cases.push((
+        "naming-work-author-only",
+        vec![
+            author_only.finish(),
+            all_content.finish(),
+            B::new().set_attribute(2, A::Role, "cell").finish(),
+        ],
+    ));
     let stylesheet_sources = vec![
         ".a{}".to_owned(),
         ":root { --c: \"界\" } .a.a:checked, .b { color:#abc }".to_owned(),
@@ -990,10 +1115,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::CascadeWorkLimit})=>(true,*operation),_ =>(false,None)};
             let (expanded_budget,expanded_operation)=match result.as_ref().err(){
                 Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::ExpandedValueLimit})=>(true,*operation),_ =>(false,None)};
+            let naming_budget = matches!(result.as_ref().err(), Some(varta_view::ViewError::Invalid {operation:None,violation:varta_view::Violation::NamingWorkLimit}));
             let retained_budget = matches!(result.as_ref().err(), Some(varta_view::ViewError::Invalid {violation:varta_view::Violation::RetainedTextLimit,..}));
             let (stylesheet_budget,stylesheet_operation)=match result.as_ref().err(){
                 Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::StylesheetWorkLimit})=>(true,*operation),_ =>(false,None)};
-            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"radioBudget":radio_budget,"radioOperation":radio_operation,"cascadeBudget":cascade_budget,"cascadeOperation":cascade_operation,"expandedBudget":expanded_budget,"expandedOperation":expanded_operation,"depthBudget":depth_budget,"depthOperation":depth_operation,"retainedBudget":retained_budget,"stylesheetBudget":stylesheet_budget,"stylesheetOperation":stylesheet_operation,"snapshot":view.snapshot()})
+            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"radioBudget":radio_budget,"radioOperation":radio_operation,"cascadeBudget":cascade_budget,"cascadeOperation":cascade_operation,"expandedBudget":expanded_budget,"expandedOperation":expanded_operation,"depthBudget":depth_budget,"depthOperation":depth_operation,"retainedBudget":retained_budget,"namingBudget":naming_budget,"stylesheetBudget":stylesheet_budget,"stylesheetOperation":stylesheet_operation,"snapshot":view.snapshot()})
         }).collect::<Vec<_>>();
         serde_json::json!({"name":name,"batches":batches,"results":results})
     }).collect::<Vec<_>>();

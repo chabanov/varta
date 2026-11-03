@@ -1713,6 +1713,13 @@ impl Apply<'_, '_, '_> {
                 });
             }
         }
+        if crate::naming_work::potential_work(self.tree) > varta_common::view::DRAFT_MAX_NAMING_WORK
+        {
+            return Err(ViewError::Invalid {
+                operation: None,
+                violation: Violation::NamingWorkLimit,
+            });
+        }
         Ok(())
     }
 }

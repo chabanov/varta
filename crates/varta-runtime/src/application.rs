@@ -625,6 +625,13 @@ impl Application {
     pub fn view_snapshot(&self) -> serde_json::Value {
         self.execution.store.data().view.snapshot()
     }
+    /// Bounded diagnostic JSON export; failure leaves the application running.
+    pub fn view_snapshot_json(
+        &self,
+        format: crate::ViewSnapshotFormat,
+    ) -> Result<Vec<u8>, crate::ViewSnapshotError> {
+        crate::encode_view_snapshot(&self.view_snapshot(), format)
+    }
     /// The title committed by the guest view.
     #[must_use]
     pub fn view_title(&self) -> &str {

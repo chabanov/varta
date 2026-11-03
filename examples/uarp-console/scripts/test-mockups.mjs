@@ -172,6 +172,22 @@ try{
           cascadeGuard.app.apply(encodeViewBatch(operations.slice(0,commandAt+1)));
           check(cascadeGuard.app.snapshot().title==='after'&&getComputedStyle(cascadeGuard.app.inspectNode(1000)).color==='rgb(170, 187, 204)','cascade smaller retry uses a fresh rule index');
         }finally{cascadeGuard.app.close();cascadeGuard.container.remove();}
+        const namingGuard=project('<button>Trigger</button>');
+        try{
+          const trigger=namingGuard.app.snapshot().nodes.find(n=>n.tag==='button').id;
+          const before=JSON.stringify(namingGuard.app.snapshot()),button=namingGuard.app.inspectNode(trigger);
+          const ops=[{name:'set_title',text:'after'},
+            {name:'create_element',node:1000,tag:'div'},{name:'set_attribute',node:1000,attribute:'id',text:'label'},
+            {name:'create_text',node:1001,text:'a'.repeat(view.limits.valueBytes/2)},
+            {name:'insert',parent:1000,node:1001,before:0},{name:'insert',parent:1,node:1000,before:0},
+            {name:'set_attribute',node:trigger,attribute:'aria-labelledby',text:Array(300).fill('label').join(' ')}];
+          let failure;try{namingGuard.app.apply(encodeViewBatch(ops));}catch(error){failure=error;}
+          check(failure?.rule==='accessible name work budget'&&failure.operation===undefined,'naming final-inventory refusal');
+          check(JSON.stringify(namingGuard.app.snapshot())===before&&namingGuard.root.textContent==='Trigger','naming refusal retains DOM/model/title');
+          check(namingGuard.app.inspectNode(trigger)===button&&button.isConnected,'naming refusal retains element identity');
+          ops.at(-1).text=Array(80).fill('label').join(' ');namingGuard.app.apply(encodeViewBatch(ops));
+          check(namingGuard.app.snapshot().title==='after'&&namingGuard.app.inspectNode(1001).data.length===view.limits.valueBytes/2,'smaller naming retry publishes the complete view');
+        }finally{namingGuard.app.close();namingGuard.container.remove();}
         return checks;
       });
       await page.goto(base+'/uarp-console/mockups/conformance/conformance.html');

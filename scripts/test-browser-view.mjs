@@ -78,7 +78,7 @@ try {
       })()`});
       assert(!stateResult.exceptionDetails,JSON.stringify(stateResult.exceptionDetails));assert.deepEqual(stateResult.result.value.mismatches,[]);
       console.log(`Native/Chrome disabled select, explicit none and reinsertion: ${stateResult.result.value.checks} batches passed`);
-      const workCases=oracle.cases.filter(item=>/^(select|radio|css|cascade|expanded)-work-|^retained-text-|^tree-depth-/.test(item.name));
+      const workCases=oracle.cases.filter(item=>/^(select|radio|css|cascade|expanded|naming)-work-|^retained-text-|^tree-depth-/.test(item.name));
       assert(workCases.some(item=>item.name.startsWith('radio-work-')),'native radio work fixtures missing');
       const work=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
         const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
@@ -112,7 +112,7 @@ try {
       })()`});
       assert(!work.exceptionDetails,JSON.stringify(work.exceptionDetails));
       assert.deepEqual(work.result.value.mismatches,[]);
-      console.log(`Native/Chrome selection/radio/CSS/cascade/depth work and retained-text admission/rollback: ${work.result.value.checks} batches passed`);
+      console.log(`Native/Chrome resource admission and rollback: ${work.result.value.checks} batches passed`);
       const radioCases=oracle.cases.filter(item=>item.name.startsWith('radio-'));
       assert(radioCases.length,'native radio group fixture missing');
       const radios=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{

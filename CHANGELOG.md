@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Native preview input now shares one checked keyboard/IME backlog with an
+  aggregate owned-text limit. Admission compacts spare platform buffers,
+  preserves FIFO and commits, and atomically replaces matching preedit updates.
+  Filtering, draining and focus-loss cleanup release accounted text capacity.
+
+- Native view/application APIs now export compact or pretty diagnostic JSON under
+  a separate encoded-byte limit. The CLI preserves budget diagnostics and emits
+  no partial snapshot on refusal. Export failure leaves the application usable.
+  Successful URL-open diagnostics retain a bounded tail of complete URLs and
+  report dropped entries without limiting later authorized actions.
+
+- View admission now bounds potential accessible-name evaluation across attached
+  and detached components, including repeated relations, native labels and live
+  field capacity. Shared role rules avoid charging author-only content reads.
+  Native snapshots index names/visibility once and avoid repeated descendant-text
+  concatenation at every ancestor.
+
 - View admission now bounds potential expanded component text before style-reading
   commands and final publication. Cached value programs and iterative candidate
   scopes bound custom definitions and standard-property values across attached

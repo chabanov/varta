@@ -15,6 +15,9 @@ pub(crate) fn snapshot(tree: &Tree, environment: &Environment, platform: &Effect
         "opened": platform.opened,
         "prompts": platform.prompts,
     });
+    if platform.opened_dropped != 0 {
+        out["openedDropped"] = json!(platform.opened_dropped);
+    }
     // Insert already-built values without serde recursively reserializing them.
     out["tree"] = node_tree(tree, environment);
     out["accessibility"] = accessibility_root(tree, environment);
@@ -154,40 +157,12 @@ fn node(tree: &Tree, id: u32, environment: &Environment, children: Vec<Value>) -
 /// The implicit role of an element, before a `role` attribute overrides it;
 /// `None` for generic containers, which are flattened into their parent.
 fn implicit_role(element: &Element) -> Option<&'static str> {
-    Some(match element.tag {
-        Tag::Button => "button",
-        Tag::A => "link",
-        Tag::H1 | Tag::H2 | Tag::H3 => "heading",
-        Tag::Ul | Tag::Ol => "list",
-        Tag::Li => "listitem",
-        Tag::Nav => "navigation",
-        Tag::Main => "main",
-        Tag::Header => "banner",
-        Tag::Footer => "contentinfo",
-        Tag::Aside => "complementary",
-        Tag::Form => "form",
-        Tag::P => "paragraph",
-        Tag::Dialog => "dialog",
-        Tag::Progress => "progressbar",
-        Tag::Img => "image",
-        Tag::Textarea => "textbox",
-        Tag::Select => "combobox",
-        Tag::Option => "option",
-        Tag::Input => match element.input_type() {
-            "checkbox" => "checkbox",
-            "radio" => "radio",
-            "search" => "searchbox",
-            "number" => "spinbutton",
-            _ => "textbox",
-        },
-        Tag::Section
-            if element.attributes.contains_key(&Attribute::AriaLabel)
-                || element.attributes.contains_key(&Attribute::AriaLabelledby) =>
-        {
-            "region"
-        }
-        _ => return None,
-    })
+    varta_common::view::accessibility::implicit_role(
+        element.tag,
+        element.input_type(),
+        element.attributes.contains_key(&Attribute::AriaLabel)
+            || element.attributes.contains_key(&Attribute::AriaLabelledby),
+    )
 }
 
 /// The role of an element: its `role` attribute, or else its implicit role.
@@ -200,14 +175,12 @@ pub(crate) fn role(element: &Element) -> Option<&str> {
 }
 
 fn accessibility_root(tree: &Tree, environment: &Environment) -> Value {
+    let names = crate::name::Names::new(tree, environment);
     let mut order = Vec::new();
     let mut pending = vec![ROOT_NODE];
     while let Some(id) = pending.pop() {
         let entry = &tree.nodes[&id];
-        if id != ROOT_NODE
-            && let Content::Element(element) = &entry.content
-            && crate::name::hidden_element(tree, id, element, environment)
-        {
+        if id != ROOT_NODE && names.hidden(id) {
             continue;
         }
         order.push(id);
@@ -226,14 +199,19 @@ fn accessibility_root(tree: &Tree, environment: &Environment) -> Value {
             root.insert("children".into(), Value::Array(nested));
             return Value::Object(root);
         }
-        built.insert(id, accessible(tree, id, environment, nested));
+        built.insert(id, accessible(tree, id, &names, nested));
     }
     unreachable!("the view root is always present")
 }
 
 /// Bottom-up accessibility projection flattens generic containers without
 /// recursive calls proportional to guest-controlled tree depth.
-fn accessible(tree: &Tree, id: u32, environment: &Environment, nested: Vec<Value>) -> Vec<Value> {
+fn accessible(
+    tree: &Tree,
+    id: u32,
+    names: &crate::name::Names<'_>,
+    nested: Vec<Value>,
+) -> Vec<Value> {
     let entry = &tree.nodes[&id];
     let element = match &entry.content {
         Content::Text(text) if text.trim().is_empty() => return Vec::new(),
@@ -245,7 +223,7 @@ fn accessible(tree: &Tree, id: u32, environment: &Environment, nested: Vec<Value
     };
     let mut out = Map::new();
     out.insert("role".into(), json!(role));
-    let name = crate::name::accessible_name(tree, id, role, environment);
+    let name = names.accessible_name(id, role);
     if !name.is_empty() {
         out.insert("name".into(), json!(name));
     }

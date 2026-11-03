@@ -39,6 +39,8 @@ pub(super) fn registry() -> Value {
         "radioWork":v::DRAFT_MAX_RADIO_WORK,"radioNodeWork":v::DRAFT_RADIO_NODE_WORK,
         "cascadeWork":v::DRAFT_MAX_CASCADE_WORK,
         "expandedValueBytes":v::DRAFT_MAX_EXPANDED_VALUE_BYTES,
+        "namingWork":v::DRAFT_MAX_NAMING_WORK,"namingNodeWork":v::DRAFT_NAMING_NODE_WORK,
+        "snapshotJsonBytes":v::DRAFT_MAX_SNAPSHOT_JSON_BYTES,"openedUrls":v::DRAFT_MAX_OPENED_URLS,"openedUrlBytes":v::DRAFT_MAX_OPENED_URL_BYTES,
         "stylesheetWork":v::DRAFT_MAX_STYLESHEET_WORK,"stylesheetNodeWork":v::DRAFT_STYLESHEET_NODE_WORK,
         "events":v::DRAFT_MAX_PENDING_EVENTS,"commands":v::DRAFT_MAX_PENDING_COMMANDS,
         "identChars":v::attributes::MAX_IDENT_CHARS,"cssTokens":v::css::MAX_VALUE_TOKENS,"hexDigits":v::css::HEX_COLOR_DIGITS,
@@ -57,6 +59,7 @@ pub(super) fn registry() -> Value {
         "dialogBackdrop":v::DIALOG_BACKDROP,"dialogBackground":v::DIALOG_BACKGROUND,"dialogText":v::DIALOG_TEXT});
     json!({
         "limits":limits,"wire":wire,"filters":filters,"defaults":defaults,
+        "accessibility":{"implicitRoles":v::Tag::ALL.iter().filter_map(|tag|v::accessibility::implicit_role(*tag,"text",false).map(|role|(tag.name(),role))).collect::<std::collections::BTreeMap<_,_>>(),"inputRoles":v::INPUT_TYPES.iter().map(|kind|(*kind,v::accessibility::implicit_role(v::Tag::Input,kind,false).unwrap())).collect::<std::collections::BTreeMap<_,_>>(),"labelable":v::accessibility::LABELABLE.iter().map(|tag|tag.name()).collect::<Vec<_>>(),"nameFromContent":v::accessibility::NAME_FROM_CONTENT},
         "capabilities":{"openUrl":v::OPEN_URL_CAPABILITY,"clipboard":v::CLIPBOARD_WRITE_CAPABILITY,"anyHttps":v::ANY_HTTPS_PATTERN},
         "opcodes":v::Opcode::ALL.iter().map(|op|json!({"code":op.code(),"name":op.name(),"operands":op.operands().iter().map(|&operand|{
             let kind=match operand {O::Node|O::Parent|O::Before|O::Handler|O::Sheet|O::Request=>"id",

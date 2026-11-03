@@ -2063,3 +2063,209 @@ These are scoped results; the full commit gate is recorded separately under
 `target/verification/`. Serialized output/history/backend/RSS limits, late-value
 subset parity and complete browser/native platform and release acceptance remain
 open.
+
+## Commit boundary 01acc09 — full verification 2026-11-03
+
+The empty-reference, browser computed custom-property and potential expansion
+packages were committed as `01acc09` after the full eight-command gate passed:
+**3106 tests passed, 16 ignored**, source fingerprint unchanged. Conformance
+remains 123 passed and four known unsupported out of 127, with a matching baseline
+and no regressions. The fresh source-free positive variable bundle also passed in
+Chrome 156.0.8078.80 and Playwright WebKit 26.5. `.claude/` was excluded and no push
+was performed. Evidence: `target/verification/20261103-042426-afqeylv0/report.json`,
+`target/commit-css-bundle-chrome.log` and `target/commit-css-bundle-webkit.log`.
+This is the last full gate before the accessible-name work below.
+
+## Potential accessible-name work — scoped verification 2026-11-03
+
+A shared final-inventory allowance now checks potential name evaluation before
+publication. Iterative descendant summaries distinguish relation-disabled and
+relation-enabled traversal, include repeated `aria-labelledby` tokens and native
+host labels, and reserve future text-field/select capacity. All components are
+included. Hidden state, blankness, current local edits and author precedence do
+not discount eligible branches. Root content is eligible only for roles that name
+from content, using shared role tables emitted into the browser registry. Excess
+rejects the copied transaction with no operation index before external effects;
+transient excess can be repaired before final validation.
+
+Native snapshots now index attached ids, labels in document order and own/ancestor
+visibility once per snapshot. Name-from-content traversal retains an ordered
+fragment range until it finishes, eliminating repeated text concatenation at
+every ancestor. Indices do not survive a snapshot. Existing hidden-ancestor,
+cycle, placeholder and root/descendant rules are preserved.
+
+Scoped evidence passes **158 native view tests**, including a **144-world**
+comparison of computed element-name sizes with the numeric bound, and six new
+integration checks. The final six-test naming suite was rerun after adding
+all-content-role rejection and one-content-role acceptance to the maximum-depth
+fixture. **50 runtime/view tests** and **162 oracle-enabled Node tests** pass.
+The Worker deferred-input check admits/refuses identically before and after a
+full-size local Unicode field edit is delivered; a rejected batch is never sent.
+Strict all-target Clippy passes for the four affected crates, with a final
+view-only check after test/oracle extensions. Registry tests **5**, embedding
+documentation **11**, no-default-features common/intrinsics, formatting and
+whitespace checks pass. CLI/companion binaries were freshly built.
+
+The native oracle adds five naming cases with **25 batches**: exact boundary,
+rollback/reclamation, detached/hidden candidates, embedded-field capacity, native
+host-label references and author-only/content-role transitions. Chrome passes
+**169 resource batches**, 1839 radio observations, six activation scenarios,
+eleven select identity/event scenarios and eight disabled-select batches.
+Chrome 156.0.8078.80 and Playwright WebKit 26.5 each pass **15 official-host mockup
+projections and 63 regressions**, including naming refusal, DOM/model/title
+rollback, node identity and a smaller retry. Both pass the positive source-free
+variable bundle and live compiled chat (ordered native tree, selected
+accessibility and 195 declarations across 14 properties). A fresh source-free
+naming-failure application terminates in the Worker before guest catch/logging,
+retaining the previous DOM/title. Normal UARP passes **107 tests in 28 groups and
+two view snapshots**.
+
+Two estimator refinements preserve admitted behavior without increasing limits.
+An initial inventory counted static source bytes again and conflicted with the
+existing retained-text boundary. The final metric charges the fixed inventory
+walk and repeated element-name reads, leaving one-time source/raw-text publication
+to the retained-source allowance. A new depth-512 fixture with a full-size text
+leaf reproduced overcounted content reads for author-only `list` roles. Root
+content now follows the common name-from-content table; references/descendants
+still retain their content rules. Turning all those roles into `cell` rejects,
+while turning only one does not. Initial naming fixtures also had an unsupported
+explicit role and text under the wrong referenced branch; their correction kept
+the checked role whitelist and relation semantics intact. Diagnostic logs remain
+in `target/naming-native-fixture-before.log`, `target/naming-native-all.log`,
+`target/naming-node-static-before.log` and `target/naming-author-only-before.log`.
+
+Final evidence: `target/naming-native-complete.log`,
+`target/naming-native-focused-complete.log`, `target/naming-runtime-complete.log`,
+`target/naming-node-oracle-complete.log`, `target/naming-worker-complete.log`,
+`target/naming-dom-complete.log`, `target/naming-clippy-complete.log`,
+`target/naming-view-clippy-final.log`, `target/naming-cli-complete.log`,
+`target/naming-registry-complete.log`, `target/naming-docs-complete.log`,
+`target/naming-no-std-complete.log`, `target/naming-format.log`,
+`target/naming-mockup-chrome.log`, `target/naming-mockup-webkit.log`,
+`target/naming-bundle.log`, `target/naming-positive-chrome.log`,
+`target/naming-positive-webkit.log`, `target/naming-chat-chrome.log`,
+`target/naming-chat-webkit.log` and `target/naming-pilot.log`.
+These are scoped results after `01acc09`, not a new full-workspace pass. No source,
+fuel, deadline, memory or existing admission allowance was increased. Complete
+serialized output/frame/backend quotas, browser accessibility-engine CPU and
+platform accessibility APIs, RSS, late-value CSS parity and complete browser/native
+platform and release acceptance remain open.
+
+## Bounded view diagnostic export and effects — scoped verification 2026-11-03
+
+Native view/application APIs now provide compact and pretty diagnostic JSON under
+a separate draft **16 MiB encoded-byte allowance**. The CLI's scripted-view path
+uses the bounded encoder. UTF-8, keys, escaping, punctuation and indentation count
+before output-fragment allocation/copy; geometric growth caps requested capacity
+without per-character reallocations. Export returns a complete document or a
+typed limit/allocation/encoding error, with no exposed partial buffer. Export
+refusal leaves application state and events intact. CLI refusal retains guest logs
+and requested budget diagnostics, prints no partial snapshot/completion marker,
+and returns the export error. Structured inspection and caller-owned copies/custom
+formatting remain separate from this serialized-buffer allowance.
+
+The simulated platform's successful-open diagnostics now retain the newest
+**64 complete URLs within 1 MiB of raw UTF-8**, evicting oldest entries before
+retaining a new URL. `openedDropped` is added only after a drop and saturates.
+Permission/platform refusals do not enter the successful history. Retention never
+prevents a later authorized action. Prompt counts also saturate. Existing ordinary
+snapshot fields/values remain unchanged when no records have been dropped.
+
+Final scoped evidence passes **166 native view tests**, including four encoder
+boundary/capacity checks, a counter/oversized-entry check and three native export/
+effect integrations. **51 runtime/view tests**, **7 CLI view scenarios** and
+**162 oracle-enabled Node tests** pass. The CLI scenarios cover ordinary scripted
+views, virtual timers, determinism, explicit network waiting, capability refusals,
+native packaging/browser-view build and the new export refusal/recovery path.
+Strict all-target Clippy passes for common/view/runtime/project/CLI; fresh CLI and
+companion builds, registry **5**, embedding documentation **11**, no-default-features
+common/intrinsics, formatting and whitespace checks pass. The normal UARP CLI
+path passes **107 tests in 28 groups and two view snapshots**. No new real-browser
+style/control matrix is inferred from the Node run; browser applier logic is
+unchanged by this native diagnostic increment.
+
+The deep/wide fixture retains 500 span levels and 3000 text leaves. Pretty export
+exceeds the allowance; compact export succeeds. A compiled TSX instance builds in
+110 bounded timer turns under normal guest budgets, remains running after export
+refusal and handles a later clear click, after which pretty export succeeds. The
+CLI exercises the same source with an explicit timer grant. Earlier fixture
+failures are retained: one monolithic native batch exhausted the existing select
+work allowance, so construction now uses bounded batches; the compiled fixture
+initially omitted its timer grant and used an input identifier without the required
+`#` prefix. Corrections preserved the intended scene, current admission rules and
+all production source/fuel/deadline/memory allowances. Logs:
+`target/snapshot-export-batch-before.log`,
+`target/snapshot-runtime-permission-before.log` and
+`target/snapshot-runtime-target-before.log`.
+
+Frame-retention source inspection confirms the desktop worker's existing
+`in_flight`/presentation acknowledgement gate: no next raster is built until the
+outstanding frame is acknowledged, alongside the GUI's current frame. There is no
+archived-frame vector. Existing raster checks cap dimensions at 4096×4096 and
+16,777,216 pixels. This is source evidence for count/dimension invariants, not a
+new GUI slow-consumer or cross-platform acceptance run, and not a total quota for
+geometry, glyph/font caches, surface buffers or RSS.
+
+Evidence (local, ignored): `target/snapshot-encoder-final.log`,
+`target/snapshot-export-final.log`, `target/snapshot-runtime-complete.log`,
+`target/snapshot-cli-complete.log`, `target/snapshot-native-complete.log`,
+`target/snapshot-runtime-view.log`, `target/snapshot-cli-view.log`,
+`target/snapshot-node.log`, `target/snapshot-clippy.log`,
+`target/snapshot-cli-build.log`, `target/snapshot-registry.log`,
+`target/snapshot-docs.log`, `target/snapshot-no-std.log`,
+`target/snapshot-format.log` and `target/snapshot-pilot.log`.
+The last full workspace gate remains `01acc09` (3106 passed, 16 ignored); these
+newer engine/tooling changes have scoped evidence. Aggregate structured-graph/
+backend/RSS accounting, repeated backend work, native input/GUI acceptance,
+late-value CSS parity, full browser/native platform matrices, measurements and
+release criteria remain open.
+
+## Native GUI input backlog — scoped verification 2026-11-03
+
+The desktop preview now routes all key/character/IME and focus-loss cleanup
+producers through one bounded `PendingKeys` controller. The 64-record GUI cap,
+eight-message worker channel and 4096-byte ordinary key/text guards are preserved
+and centralized. A separate 1 MiB aggregate owned-text allowance bounds retained
+payloads. Admission checks prospective count/bytes before copying/compacting or
+mutating the backlog. Only a consecutive preedit for the same node and guest
+commit binding can replace its predecessor; replacement refunds its old capacity.
+A refused append/replacement leaves the prior FIFO and preedit intact.
+
+Incoming strings release spare allocation capacity on admission through boxed
+string conversion. Retained string capacity therefore equals its UTF-8 length;
+short valid text does not cause a GUI failure merely because a platform string
+had excessive spare capacity. Ordinary input and IME commits are never coalesced
+or truncated. Pop, clear and stale-binding retention release accounting. Overflow
+uses the preview's existing explicit queue-full error/exit behavior.
+
+**11 desktop tests pass**: six private-controller quota/order/lifetime checks,
+three checks using the actual preview enqueue/flush methods with bounded channels
+and synthetic CPU frames but no OS window, and the two existing IME/focus tests.
+Coverage includes exact aggregate capacity and one-byte excess; count capacity
+with valid replacement; replacement refusal/refund; binding boundaries; clear/
+retain; complete maximum-size Unicode commits; valid text with spare platform
+allocation; no send before the first frame; at most one key before a new frame;
+and stale IME discard followed by successful reuse of capacity. Desktop all-target
+strict Clippy and a fresh `varta-preview` build pass, as do formatting/whitespace
+checks. Initial Clippy feedback concerned collapsible event-handler branches;
+the branches were simplified without suppressing warnings. The final tests were
+rerun after normalization replaced a more restrictive initial spare-capacity
+refusal, preserving valid input rather than narrowing that behavior.
+
+Pinned-source inspection confirms Parley 0.11.1 `shape/mod.rs` uses three
+16-entry LRUs for shaping data, instances and plans. Its `LayoutContext::begin`
+clears resolution, style, inline-box, analysis and bidi scratch before reuse;
+ranged construction prunes font sources. `TextMeasurer` supplies fixed explicit
+fonts under existing count/byte/name/alias bounds with system-font discovery
+disabled. No production shaping code, cache reset or allowance was changed.
+These are entry/lifecycle observations, not a full cache-byte, glyph-work, GUI
+slow-consumer, OS IME, cross-platform or RSS measurement.
+
+Evidence (local, ignored): `target/input-queue-check.log`,
+`target/input-queue-normalized-tests.log`,
+`target/input-queue-normalized-clippy.log`,
+`target/input-queue-normalized-build.log` and `target/input-queue-format.log`.
+The last full gate remains `01acc09`; no unchanged engine/browser/CLI suites were
+repeated for this desktop-only increment. Other backend buffers/caches, native
+rendering/platform acceptance, late-value CSS parity and release criteria remain
+open.

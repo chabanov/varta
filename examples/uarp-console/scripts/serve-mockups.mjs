@@ -11,7 +11,7 @@ const prefix='/uarp-console/mockups/';
 const pages=[...MOCKUPS,'console.css','frame.css','lint.html','official-host.js',
   'lint/lint-html.js','conformance/conformance.html','conformance/conformance-frame.html',
   'conformance/mockup-batch.js','conformance/compare.js'];
-const modules=['view-dom','view-model','view-codec','view-css','view-fonts','view-select','view-policy','view-variables','view-custom-properties','view-expansion'];
+const modules=['view-dom','view-model','view-codec','view-css','view-fonts','view-select','view-policy','view-variables','view-custom-properties','view-expansion','view-naming'];
 export const MAX_STATIC_BYTES=1024*1024;
 
 export function createMockupServer({root=repository}={}){

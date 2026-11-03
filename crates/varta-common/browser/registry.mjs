@@ -10042,6 +10042,58 @@ export const registry = freeze({
     "unionFlag": 16
   },
   "view": {
+    "accessibility": {
+      "implicitRoles": {
+        "a": "link",
+        "aside": "complementary",
+        "button": "button",
+        "dialog": "dialog",
+        "footer": "contentinfo",
+        "form": "form",
+        "h1": "heading",
+        "h2": "heading",
+        "h3": "heading",
+        "header": "banner",
+        "img": "image",
+        "input": "textbox",
+        "li": "listitem",
+        "main": "main",
+        "nav": "navigation",
+        "ol": "list",
+        "option": "option",
+        "p": "paragraph",
+        "progress": "progressbar",
+        "select": "combobox",
+        "textarea": "textbox",
+        "ul": "list"
+      },
+      "inputRoles": {
+        "checkbox": "checkbox",
+        "number": "spinbutton",
+        "password": "textbox",
+        "radio": "radio",
+        "search": "searchbox",
+        "text": "textbox"
+      },
+      "labelable": [
+        "input",
+        "textarea",
+        "select",
+        "progress"
+      ],
+      "nameFromContent": [
+        "button",
+        "link",
+        "heading",
+        "option",
+        "cell",
+        "columnheader",
+        "row",
+        "tab",
+        "checkbox",
+        "radio"
+      ]
+    },
     "attributes": [
       {
         "code": 1,
@@ -11104,13 +11156,18 @@ export const registry = freeze({
       ],
       "identChars": 64,
       "listeners": 8192,
+      "namingNodeWork": 16,
+      "namingWork": 8388608,
       "nodes": 65536,
+      "openedUrlBytes": 1048576,
+      "openedUrls": 64,
       "operations": 16384,
       "radioNodeWork": 16,
       "radioWork": 8388608,
       "retainedTextBytes": 8388608,
       "selectNodeWork": 16,
       "selectWork": 8388608,
+      "snapshotJsonBytes": 16777216,
       "stylesheetBytes": 262144,
       "stylesheetNodeWork": 16,
       "stylesheetWork": 8388608,
