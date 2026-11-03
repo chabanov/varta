@@ -13,6 +13,7 @@ use crate::HostScalar;
 
 pub mod attributes;
 pub mod css;
+pub mod expansion;
 pub mod stylesheet;
 
 /// Draft protocol version carried in every batch and event record header.
@@ -66,6 +67,8 @@ pub const DRAFT_MAX_STYLESHEET_BYTES: usize = 256 * 1024;
 pub const DRAFT_MAX_STYLESHEET_WORK: usize = 8 * 1024 * 1024;
 /// Potential cascade inventory reads, including command-time reads, per batch.
 pub const DRAFT_MAX_CASCADE_WORK: usize = 8 * 1024 * 1024;
+/// Potential UTF-16 component text across command/final inventory reads.
+pub const DRAFT_MAX_EXPANDED_VALUE_BYTES: usize = 8 * 1024 * 1024;
 pub const DRAFT_STYLESHEET_NODE_WORK: usize = 16;
 pub const DRAFT_MAX_PENDING_EVENTS: usize = 64;
 /// Placeholder: `copy_text` requests awaiting their `command_result` at once.

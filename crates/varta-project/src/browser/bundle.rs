@@ -29,6 +29,9 @@ const VIEW_QUEUE: &str = include_str!("view-queue.mjs");
 const VIEW_WORKER: &str = include_str!("view-worker.mjs");
 const VIEW_POLICY: &str = include_str!("view-policy.mjs");
 const VIEW_FONTS: &str = include_str!("view-fonts.mjs");
+const VIEW_VARIABLES: &str = include_str!("view-variables.mjs");
+const VIEW_EXPANSION: &str = include_str!("view-expansion.mjs");
+const VIEW_CUSTOM_PROPERTIES: &str = include_str!("view-custom-properties.mjs");
 const PERMISSIONS: &str = include_str!("permission-broker.mjs");
 const PERMISSION_STORE: &str = include_str!("permission-store.mjs");
 const PERMISSION_PROMPT: &str = include_str!("permission-prompt.mjs");
@@ -113,10 +116,22 @@ fn embedded_sources(dom: bool) -> String {
             "ViewProtocolError,decodeViewBatch,encodeViewBatch,decodeViewEvent",
         ),
         (
-            "viewCss",
+            "viewVariables",
             "",
+            VIEW_VARIABLES,
+            "compileVariableValue,createVariableScope",
+        ),
+        (
+            "viewExpansion",
+            "const {compileVariableValue}=viewVariables;",
+            VIEW_EXPANSION,
+            "compileExpansionValue,createExpansionScope,potentialExpandedValues",
+        ),
+        (
+            "viewCss",
+            "const {compileExpansionValue}=viewExpansion;",
             VIEW_CSS,
-            "createValueMatcher,checkStyleDeclaration,checkStylesheet,rewriteRootSelector,tokenizeValue,StylesheetWorkError",
+            "createValueMatcher,checkStyleDeclaration,checkStylesheet,rewriteRootSelector,tokenizeValue,CssError,StylesheetWorkError",
         ),
         (
             "viewSelect",
@@ -126,7 +141,7 @@ fn embedded_sources(dom: bool) -> String {
         ),
         (
             "viewModel",
-            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher,StylesheetWorkError}=viewCss;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
+            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher,StylesheetWorkError}=viewCss;const {potentialExpandedValues}=viewExpansion;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
             VIEW_MODEL,
             "createViewModel",
         ),
@@ -176,7 +191,8 @@ fn embedded_sources(dom: bool) -> String {
             VIEW_FONTS,
             "createFontNamespace",
         ));
-        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;", VIEW_DOM, "createViewDom,encodeViewEvent"));
+        source.push_str(&module("viewCustomProperties", "const {CssError}=viewCss;const {compileVariableValue,createVariableScope}=viewVariables;", VIEW_CUSTOM_PROPERTIES, "createCustomPropertyStyles"));
+        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;const {createCustomPropertyStyles}=viewCustomProperties;", VIEW_DOM, "createViewDom,encodeViewEvent"));
     }
     source
 }

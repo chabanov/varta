@@ -11095,6 +11095,7 @@ export const registry = freeze({
       "commands": 16,
       "cssTokens": 128,
       "events": 64,
+      "expandedValueBytes": 8388608,
       "fieldValueReservationBytes": 98304,
       "hexDigits": [
         3,

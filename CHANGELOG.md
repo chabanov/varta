@@ -2,14 +2,37 @@
 
 ## Unreleased
 
+- View admission now bounds potential expanded component text before style-reading
+  commands and final publication. Cached value programs and iterative candidate
+  scopes bound custom definitions and standard-property values across attached
+  and detached components, without expanding strings. Media, pseudo state and
+  winners cannot discount the allowance; pure aliases do not duplicate fresh
+  literal text. Standard stylesheet literals retain their full source length.
+  Excess rejects the copied transaction before effects, including through the
+  Worker, with the prior view retained.
+
+- The official browser renderer now computes custom-property scopes using the
+  native resolver's cycle, fallback, inheritance and UTF-16 limit rules. It no
+  longer delegates variable-cycle resolution to the browser engine. Private
+  literals preserve frozen aliases and font namespaces across media/pseudo-state
+  changes, reparenting and stylesheet replacement/removal. Missing variables are
+  isolated from ambient page bindings, including shorthand references. Closed
+  sessions release media/state listeners and queued refreshes. Root-selector
+  rewriting preserves quoted values.
+
+- Native CSS-variable resolution discards zero-length dependency fragments while
+  preserving valid empty values. Repeated empty-reference fan-out no longer
+  triggers exponential materialization without consuming the output-size limit;
+  fallback selection, token boundaries and quoted empty strings keep their meaning.
+
 - Native custom properties now resolve aliases and directed cycles per element
   before inheritance, preserving quoted text and token boundaries. Nested/function/empty
   fallbacks and case-insensitive variable functions are admitted consistently;
   malformed custom values fail early and numeric notes are checked after
   substitution. Resolved values are revalidated by snapshot, geometry and paint.
   A shared dependency arena avoids recursive ownership and exponential cached
-  text; native per-value limits are checked before expansion. A WebKit
-  outside-cycle fallback discrepancy remains open.
+  text; per-value limits are checked before expansion. The official browser
+  resolver now normalizes the previously observed WebKit outside-cycle difference.
 
 - Shared potential-cascade accounting bounds candidate rule/source work and
   inherited variable discovery across live and detached nodes. Explicit

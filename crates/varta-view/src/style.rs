@@ -49,6 +49,7 @@ pub(crate) struct RuleIndex {
     classes: BTreeMap<String, Vec<usize>>,
     pub has_custom: bool,
     pub costs: Vec<RuleCost>,
+    pub expansion: Vec<Vec<(Name, varta_common::view::expansion::Value)>>,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RuleCost {
@@ -59,6 +60,17 @@ impl RuleIndex {
     pub fn new(rules: &[Rule]) -> Self {
         let mut out = Self::default();
         for (index, rule) in rules.iter().enumerate() {
+            out.expansion.push(
+                rule.declarations
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.clone(),
+                            varta_common::view::expansion::Value::new(value),
+                        )
+                    })
+                    .collect(),
+            );
             out.costs.push(RuleCost {
                 work: rule.cascade_work(),
                 variables: rule

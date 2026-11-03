@@ -83,6 +83,12 @@ impl<'a> Value<'a> {
         last: Option<char>,
         token: Token,
     ) -> Option<()> {
+        // Keep empty as a valid computed value, but do not retain its graph
+        // edges. Repeatedly doubling an empty reference otherwise produces
+        // exponential traversal with zero output, bypassing the size ceiling.
+        if units == 0 {
+            return Some(());
+        }
         // Substitution preserves component-token boundaries: `var(--n)px`
         // must never turn a number token and an identifier into a dimension.
         let separator = self
@@ -482,6 +488,27 @@ mod tests {
         assert_eq!(escape.substitute("var(--a)").as_deref(), Some("#abc"));
         let invalid = scope([("a", "var(--missing) var(--b)"), ("b", "var(--a,#abc)")]);
         assert_eq!(invalid.substitute("var(--b,#789)").as_deref(), Some("#789"));
+    }
+    #[test]
+    fn empty_fragments_preserve_boundaries_keywords_and_quoted_empty_strings() {
+        let mut env = scope([("keyword", "#456")]);
+        env.extend(BTreeMap::from([
+            ("a", "var(--empty)var(--b)"),
+            ("b", "var(--a)"),
+            ("empty", "var(--missing,)"),
+            ("keyword", "var(--empty)InHeRiT"),
+            ("n", "10"),
+            ("quoted", "\"\""),
+        ]));
+        assert_eq!(env.substitute("var(--empty,#abc)").as_deref(), Some(""));
+        assert_eq!(
+            env.substitute("var(--n)var(--empty)px").as_deref(),
+            Some("10 px")
+        );
+        assert_eq!(env.substitute("var(--keyword)").as_deref(), Some("#456"));
+        assert_eq!(env.substitute("var(--quoted)").as_deref(), Some("\"\""));
+        assert_eq!(env.substitute("var(--absent)"), None);
+        assert_eq!(env.substitute("var(--a,#abc)").as_deref(), Some("#abc"));
     }
     #[test]
     fn quoted_text_and_identifier_boundaries_do_not_become_variable_tokens() {

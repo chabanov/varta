@@ -1,4 +1,5 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
+import { compileExpansionValue } from './view-expansion.mjs';
 // Engine-owned CSS validator ported from the third-party contract probe.
 // Wire grammars and limits now come directly from the common registry.
 // CSS checks for the L0 view subset, driven by the common registry:
@@ -331,7 +332,7 @@ export function checkStylesheet(text, view, {workLimit=view.limits.stylesheetWor
     at = close + 1;
     const parts=body.split(';');
     for(let index=0;index<parts.length;index++)if(!parts[index].trim()&&index!==parts.length-1)errors.push(`${where}: empty declaration`);
-    const declarations = parts.map((d) => d.trim()).filter(Boolean);
+    const declarations = parts.map((d) => d.trim()).filter(Boolean), expansion=[];
     for (const declaration of declarations) {
       const errorsBefore=errors.length;
       const colon = declaration.indexOf(":");
@@ -353,9 +354,9 @@ export function checkStylesheet(text, view, {workLimit=view.limits.stylesheetWor
           errors.push(`${where}: ${error.message}`);
         }
       }
-      if(errors.length===errorsBefore)charge(weight+cssBytes(value)+(property.startsWith('--')?cssBytes(property.slice(2)):0));
+      if(errors.length===errorsBefore){charge(weight+cssBytes(value)+(property.startsWith('--')?cssBytes(property.slice(2)):0));expansion.push([property,compileExpansionValue(value)]);}
     }
-    rules.push({ selectors, declarations: declarations.length, work:work-before,
+    rules.push({ selectors, declarations: declarations.length, work:work-before, expansion,
       variables:declarations.some(d=>d.slice(d.indexOf(':')+1).toLowerCase().includes('var(')), custom:declarations.some(d=>d.startsWith('--')) });
   }
   for (;;) {
@@ -394,5 +395,5 @@ export function checkStyleDeclaration(view, property, value, checkValue = create
 
 /** Rewrites `:root` selectors to the renderer's root-container selector. */
 export function rewriteRootSelector(text, selector) {
-  return text.replace(/:root(?![A-Za-z0-9_-])/g, selector);
+  return text.replace(/"[^"]*"|[^{}"]+(?=\{)/g, header => header.startsWith('"') ? header : header.replace(/:root(?![A-Za-z0-9_-])/g, selector));
 }

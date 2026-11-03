@@ -2,10 +2,15 @@ import {spawnSync} from 'node:child_process';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {registry} from '../../../varta-common/browser/registry.mjs';
-import {checkStylesheet,StylesheetWorkError} from './view-css.mjs';
+import {checkStylesheet,StylesheetWorkError,rewriteRootSelector} from './view-css.mjs';
 import {createViewModel} from './view-model.mjs';
 import {encodeViewBatch} from './view-codec.mjs';
 const V=registry.view;
+test('root rewriting preserves quoted custom text and changes only selector headers',()=>{
+ const css=':root{--font:":root"}.a{font-family:var(--font)}@media (min-width:0px){:root{--other:":root"}}';
+ assert.equal(rewriteRootSelector(css,'[data-root]'),'[data-root]{--font:":root"}.a{font-family:var(--font)}@media (min-width:0px){[data-root]{--other:":root"}}');
+ assert.equal(rewriteRootSelector(':root{--font:":root{"}','[data-root]'),'[data-root]{--font:":root{"}');
+});
 const source=(conditions,rules)=>`@media ${Array(conditions).fill('(min-width:0px)').join(' and ')}{${'.a{}'.repeat(rules)}}`;
 const sheet=(sheet,text)=>({name:'stylesheet',sheet,text});
 const commit=(m,...ops)=>m.commit(encodeViewBatch(ops));

@@ -38,6 +38,7 @@ pub(super) fn registry() -> Value {
         "selectWork":v::DRAFT_MAX_SELECT_WORK,"selectNodeWork":v::DRAFT_SELECT_NODE_WORK,
         "radioWork":v::DRAFT_MAX_RADIO_WORK,"radioNodeWork":v::DRAFT_RADIO_NODE_WORK,
         "cascadeWork":v::DRAFT_MAX_CASCADE_WORK,
+        "expandedValueBytes":v::DRAFT_MAX_EXPANDED_VALUE_BYTES,
         "stylesheetWork":v::DRAFT_MAX_STYLESHEET_WORK,"stylesheetNodeWork":v::DRAFT_STYLESHEET_NODE_WORK,
         "events":v::DRAFT_MAX_PENDING_EVENTS,"commands":v::DRAFT_MAX_PENDING_COMMANDS,
         "identChars":v::attributes::MAX_IDENT_CHARS,"cssTokens":v::css::MAX_VALUE_TOKENS,"hexDigits":v::css::HEX_COLOR_DIGITS,

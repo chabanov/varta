@@ -13,6 +13,19 @@ function state() {
   const commit = (operations) => { const bytes = encodeViewBatch(operations); new Uint8Array(memory.buffer).set(bytes); return view.commit(0, bytes.length, false); };
   return { view, messages, commit };
 }
+test('expanded component quota rejects in the Worker before a parent batch is sent',async()=>{
+ const memory=new WebAssembly.Memory({initial:4}),messages=[];
+ const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+ const commit=operations=>{const bytes=encodeViewBatch(operations);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
+ const seed='"'+'a'.repeat(registry.view.limits.valueBytes/2-3)+'"';
+ const setup=[{name:'stylesheet',sheet:1,text:`:root{--seed:${seed}}.a{--copy:var(--seed)/}`}];
+ for(let node=2;node<129;node++)setup.push({name:'create_element',node,tag:'button'},{name:'set_class',node,text:'a'},{name:'insert',node,parent:1,before:0});
+ commit(setup);worker.receive({type:'view_ack',id:1});await worker.flush();worker.begin();
+ const before=worker.model.snapshot();
+ assert.throws(()=>commit([{name:'set_style',node:2,property:'width',text:'0'},{name:'set_style',node:2,property:'height',text:'0'}]),error=>error.rule==='expanded value budget'&&error.operation===undefined);
+ assert.equal(messages.length,1);assert.deepEqual(worker.model.snapshot(),before);
+ commit([{name:'set_style',node:2,property:'width',text:'0'}]);worker.receive({type:'view_ack',id:2});await worker.flush();worker.close();
+});
 test("Worker rejects a bad batch before sending it and requires one commit per turn", async () => {
   const { view, commit, messages } = state();
   assert.equal(view.attached(),false);

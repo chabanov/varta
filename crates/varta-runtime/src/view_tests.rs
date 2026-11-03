@@ -563,6 +563,56 @@ export function main():void {{
 }
 
 #[test]
+fn expanded_component_budget_is_fatal_before_later_repair_and_guest_catch() {
+    let source = format!(
+        r#"
+export function main():void {{
+ const button=View.node();View.createElement(button,{button});View.setAttribute(button,{id},'trigger');View.setClass(button,'a');View.insert(1,button,0);
+ for(let i=0;i<62;i++){{const node=View.node();View.createElement(node,{button});View.setClass(node,'a');View.insert(1,node,0);}}
+ const seed='"'+'a'.repeat({length})+'"';View.stylesheet(1,':root{{--seed:'+seed+'}}.a{{--copy:var(--seed)/}}');
+ View.on(button,{click},(event:ViewEvent):void=>{{
+  View.command(button,{focus},0);View.command(button,{focus},0);View.command(button,{focus},0);
+  View.stylesheet(1,'');View.setTitle('after');
+  try{{View.commit();console.log('AFTER');}}catch(error){{console.log('CAUGHT');}}
+ }},0,0,0,0);
+ View.setTitle('before');View.commit();
+}}
+"#,
+        button = view::Tag::Button.code(),
+        id = view::Attribute::Id.code(),
+        click = view::EventKind::Click.code(),
+        focus = view::Command::Focus.code(),
+        length = view::DRAFT_MAX_VALUE_BYTES / 2 - 3
+    );
+    let bytes = compile(&source);
+    let mut result = VartaRuntime::new().run_view(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(r##"{"inputs":[{"input":"click","target":"#trigger"}]}"##),
+    );
+    assert_eq!(
+        invalid(
+            result
+                .report
+                .failure
+                .take()
+                .expect("fatal expanded component quota")
+        ),
+        varta_view::Violation::ExpandedValueLimit
+    );
+    assert!(
+        result.report.output.lines.is_empty(),
+        "{:?}",
+        result.report.output.lines
+    );
+    assert_eq!(result.commits, 1);
+    let snapshot = result.snapshot.expect("prior view");
+    assert_eq!(snapshot["title"], "before");
+    assert_eq!(snapshot["tree"]["children"].as_array().unwrap().len(), 63);
+    assert_eq!(snapshot["stylesheets"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn a_turn_commits_at_most_one_batch() {
     let source = "export function main(): void { View.setTitle('a'); View.commit(); View.setTitle('b'); View.commit(); }";
     assert!(matches!(
@@ -1776,8 +1826,21 @@ export function main():void {{
 
 #[test]
 fn compiled_variable_scopes_resolve_aliases_cycles_and_numeric_fallbacks_across_turns() {
-    let initial = ":root{--base:#123;--alias:var(--base);--alpha:.5}.target{--base:#abc;color:VAR(--alias);padding:var(--gap,1px 2px);margin:var(--missing,) 3px;opacity:var(--alpha,2)}";
-    let changed = ":root{--base:#456;--alias:var(--base);--alpha:.5;--a:var(--b);--b:var(--a)}.target{--base:#abc;color:VAR(--alias);background-color:var(--a,#789);padding:var(--gap,1px 2px);margin:var(--missing,) 3px;opacity:var(--alpha,2)}";
+    let mut empty = ":root{--empty0:var(--missing,);".to_owned();
+    for i in 1..32 {
+        empty.push_str(&format!(
+            "--empty{i}:var(--empty{})var(--empty{});",
+            i - 1,
+            i - 1
+        ));
+    }
+    empty.push('}');
+    let initial = format!(
+        "{empty}:root{{--base:#123;--alias:var(--base);--alpha:.5}}.target{{--base:#abc;color:VAR(--alias);padding:var(--gap,1px 2px);margin:var(--empty31,7px) 3px;opacity:var(--alpha,2)}}"
+    );
+    let changed = format!(
+        "{empty}:root{{--base:#456;--alias:var(--base);--alpha:.5;--a:var(--b);--b:var(--a)}}.target{{--base:#abc;color:VAR(--alias);background-color:var(--a,#789);padding:var(--gap,1px 2px);margin:var(--empty31,7px) 3px;opacity:var(--alpha,2)}}"
+    );
     let source = format!(
         r#"
 export function main():void {{

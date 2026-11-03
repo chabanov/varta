@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-11-03, against `main` at `6830dab` plus the depth, potential-cascade and CSS-variable increments below. Varta is an experimental
+Updated 2026-11-03, against `main` at `bfbeaf8` plus the empty-reference, browser computed-scope and potential expansion increments below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -14,7 +14,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Commit-boundary radio/navigation/text/stylesheet package after `a71d281` (2026-11-02): **3066 passed**, all eight commands passed with unchanged sources. Report: `target/verification/20261102-215501-s16w2dmu/report.json`. This covers the committed resource package on macOS arm64; the later depth/cascade increments have scoped evidence only. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Commit-boundary depth/cascade/computed-variable package committed as `bfbeaf8` (2026-11-03): **3093 passed**, 16 ignored, all eight commands passed with unchanged sources. Report: `target/verification/20261103-004541-0we5hp3_/report.json`. This covers that committed package on macOS arm64; the subsequent empty-reference and browser computed-scope changes have scoped evidence only. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -6431,3 +6431,116 @@ values in the sampled supported property subset. Compiled Wasm must execute new
 syntax and update aliases across turns. Native per-value computed invalidity is
 renderer policy; common aggregate output/work limits and broader computed
 property/default/inheritance coverage remain separate requirements.
+
+Source-free generated-browser acceptance now passes in Chrome 156.0.8078.80 and
+Playwright WebKit 26.5. A compiled v38 application runs through the packaged
+loader/Worker after source and configuration removal. Initial styles and two
+trusted clicks verify alias freezing, root updates and stylesheet removal, empty
+component splices, chosen numeric fallbacks, ordinary cycles, unused self-fallbacks
+and the private font namespace. The complex outside-cycle comparison remains
+failing on WebKit; this positive artifact check does not establish full variable
+parity. The [verification record](history.md#source-free-css-variable-acceptance--2026-11-03)
+records that distinction. Next work remains cross-engine cycle semantics and
+shared derived-output/expansion budgets, followed by accessibility and other host
+buffer/lifetime bounds and platform/release acceptance.
+
+### Empty CSS-reference fan-out — implementation 2026-11-03
+
+During preparation of shared browser variable evaluation, a native materialization
+gap was reproduced: doubling a valid empty reference built an exponentially
+traversed graph with no output, bypassing the per-value size ceiling. The native
+arena now discards zero-length fragments while retaining valid empty bindings.
+Missing values, selected fallbacks, quoted empty strings, token boundaries and
+CSS-wide keywords keep their semantics. No parser, source, execution or memory
+allowance is increased.
+
+Acceptance: a legal 2048-definition forward fan-out must complete snapshot,
+style-reading focus, layout, paint and stylesheet replacement within a bounded
+subprocess; empty remains distinct from missing. Compiled Wasm and generated
+source-free browser artifacts must preserve empty-fallback semantics across turns
+for a 32-level doubling fixture. Independent browser style observations must
+retain the known complex-cycle discrepancy separately. Nonempty aggregate output,
+shared browser variable evaluation, accessibility work and the remaining platform
+and release requirements stay open.
+
+Scoped acceptance passes: 145 native view tests, 48 runtime/view tests and 142
+oracle-enabled Node checks; strict affected Clippy and fresh CLI/companion builds.
+Chrome passes 21 variable fixtures with 231 observations. WebKit agrees on the new
+empty fixture while retaining its two known complex-cycle mismatches. The updated
+source-free 32-level fan-out artifact passes in Chrome/WebKit, and UARP passes 107
+tests in 28 groups plus two views. The
+[verification record](history.md#empty-css-reference-fan-out--scoped-verification-2026-11-03)
+retains the reproduced timeout and corrected geometry fixture. Shared browser
+variable evaluation and nonempty aggregate expansion/output remain the next
+resource work; this package does not complete the platform or release plan.
+
+### Browser computed custom-property scopes — implementation 2026-11-03
+
+The official DOM adapter now owns custom-property computation through a JavaScript
+port of the native iterative scope algorithm. Browser-native resolution is no
+longer the authority for custom cycles: the previously failing WebKit outside-cycle
+consumer now matches native output. The shared per-value UTF-16 ceiling, valid
+empty values, selected fallbacks, inherited alias freezing and invalid local masks
+apply before platform ordinary-property computation.
+
+Prepared CSSOM custom declarations become private compiled records before sheet
+adoption. Cached root/first-class anchors select candidates in specificity/sheet/
+source order. Iterative component checkpoints avoid inherited-map copies and
+restore sibling scopes. Non-ASCII private literal names cannot be declared by the
+guest; aliases refer to inherited literals and font values use parallel namespace
+bindings. Missing references, including pending shorthands, cannot inherit ambient
+page variables. Root-selector rewriting preserves quoted component text.
+
+Commits and focus effects refresh bindings; pseudo-state changes coalesce on an
+animation frame, and media conditions have owned listeners. Replacement/removal
+release old media listeners, rejected preparations install none, and close/freeze
+cancel pending refreshes and release listeners. Renderer-private state remains
+outside model snapshots and guest authority.
+
+Scoped acceptance passes: **149 oracle-enabled Node checks**, **35 project browser
+checks** and strict project all-target Clippy. Chrome/WebKit each match **23 native
+fixtures, 253 computed-style observations and 34 live observations**, including
+media/pseudo/input state, focus commands, reparenting/detached nodes, rollback,
+removal, ambient isolation, quoted packaged-font names and media-listener lifecycle.
+Each engine also passes **15 UARP mockup projections and 59 regressions**, the
+source-free generated variable bundle (now including the outside-cycle consumer)
+and live chat tree/accessibility/195-declaration checks. The fresh generated
+CSS/depth/cascade fatal-failure probes retain prior DOM/title before catch/logging.
+The broader Chrome DOM probe still passes 127 work batches, 1839 radio observations,
+six activation scenarios and eleven select identity/event scenarios.
+
+The [verification record](history.md#browser-computed-custom-property-scopes--scoped-verification-2026-11-03)
+distinguishes browser-native controls from the normalized host results and records
+the fixture/server corrections. This closes the recorded selected-engine custom
+cycle discrepancy, not complete CSS or platform acceptance. Next work is aggregate
+computed output/expansion admission and complete late-value typed-subset parity,
+followed by accessibility work, other host buffers/lifetimes, full browser/native
+platform evidence, metrics and release acceptance.
+
+### Potential expanded component values — implementation 2026-11-03
+
+Native and browser admission now share an 8 MiB UTF-16 allowance for potential
+expanded component content. Cached declaration programs, iterative dependency
+components and scoped inherited bounds cover the entire forest without expanding
+strings. Custom candidates include parent alternatives and all fallback branches;
+standard declarations use a maximum per property. Pure aliases reuse literal
+content, while standard literals without references retain their full source
+length. Inactive media, remaining selector classes, pseudo-state and winners do
+not discount the estimate. Style-reading commands and final validation share the
+allowance; excess rolls back before effects with the reading operation index.
+
+Acceptance passes exact-boundary, one-unit excess, repeated command reads,
+transient repair, alias reuse, inactive candidates, detached components and plain
+oversized standard literals. Four common estimator tests, six native integration
+tests and six Node expansion tests include 1458 candidate-world comparisons with
+the actual resolver. The current scoped suites pass 151 native view tests, 49
+runtime/view tests and 156 oracle-enabled Node checks; the Chrome boundary probe
+passes 144 batches. Chrome/WebKit each retain 23 native variable fixtures, 253
+style and 34 live observations. A source-free compiled Worker excess retains the
+previous DOM/title and terminates before guest catch/logging.
+
+This is conservative component-content admission, not an aggregate host-memory
+quota. Serialized JSON, retained frames, namespace/cache/backend overhead,
+repeated accessibility/backend work, RSS, late-value typed-subset parity and
+platform/release acceptance remain open. The full commit-boundary gate is separate
+from these scoped results.

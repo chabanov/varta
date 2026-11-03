@@ -292,6 +292,7 @@ struct Apply<'tree, 'context, 'input> {
     radio_work: usize,
     stylesheet_work: usize,
     cascade_work: usize,
+    expanded_value_bytes: usize,
     last_select_value: Option<(u32, u32, String)>,
 }
 
@@ -392,6 +393,80 @@ impl Tree {
                 charge(scope)?;
             }
             pending.extend(node.children.iter().map(|child| (*child, scope)));
+        }
+        Ok(total)
+    }
+
+    /// Potential UTF-16 component text. Scope alternatives ignore environment,
+    /// local state and winners, while aliases do not duplicate fresh literals.
+    fn potential_expanded_values(&self, allowance: usize) -> Result<usize, Violation> {
+        use varta_common::view::expansion::{Checkpoint, Scope, Value};
+        enum Work {
+            Enter(u32),
+            Leave(Checkpoint),
+        }
+        let mut pending: Vec<_> = self
+            .nodes
+            .iter()
+            .filter_map(|(id, node)| node.parent.is_none().then_some(Work::Enter(*id)))
+            .collect();
+        let mut scope = Scope::default();
+        let mut total = 0usize;
+        let mut charge = |units: usize| {
+            total = total.saturating_add(units.saturating_mul(2));
+            if total > allowance {
+                Err(Violation::ExpandedValueLimit)
+            } else {
+                Ok(())
+            }
+        };
+        while let Some(task) = pending.pop() {
+            let id = match task {
+                Work::Leave(checkpoint) => {
+                    scope.restore(checkpoint);
+                    continue;
+                }
+                Work::Enter(id) => id,
+            };
+            let node = &self.nodes[&id];
+            let mut custom: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+            let mut properties: BTreeMap<CssProperty, Vec<&Value>> = BTreeMap::new();
+            let mut inline = Vec::new();
+            if let Content::Element(element) = &node.content {
+                let classes = element.class.split_ascii_whitespace().collect();
+                for (sheet, index) in self.rule_index.candidates(id == ROOT_NODE, &classes) {
+                    for (name, value) in &self.sheets[&sheet].index.expansion[index] {
+                        match name {
+                            Name::Custom(name) => custom.entry(name).or_default().push(value),
+                            Name::Property(property) => {
+                                properties.entry(*property).or_default().push(value)
+                            }
+                        }
+                    }
+                }
+                inline.extend(
+                    element
+                        .style
+                        .iter()
+                        .map(|(property, value)| (*property, Value::new(value))),
+                );
+                for (property, value) in &inline {
+                    properties.entry(*property).or_default().push(value);
+                }
+            }
+            let (checkpoint, fresh) = scope.extend(&custom);
+            charge(fresh)?;
+            for values in properties.values() {
+                charge(
+                    values
+                        .iter()
+                        .map(|value| scope.upper(value))
+                        .max()
+                        .unwrap_or(0),
+                )?;
+            }
+            pending.push(Work::Leave(checkpoint));
+            pending.extend(node.children.iter().rev().map(|id| Work::Enter(*id)));
         }
         Ok(total)
     }
@@ -725,6 +800,7 @@ impl Tree {
             radio_work: 0,
             stylesheet_work: 0,
             cascade_work: 0,
+            expanded_value_bytes: 0,
             last_select_value: None,
         };
         for (index, operation) in operations.iter().enumerate() {
@@ -793,6 +869,17 @@ impl Apply<'_, '_, '_> {
                 violation,
             })?;
         self.cascade_work = self.cascade_work.saturating_add(work);
+        let bytes = self
+            .tree
+            .potential_expanded_values(
+                varta_common::view::DRAFT_MAX_EXPANDED_VALUE_BYTES
+                    .saturating_sub(self.expanded_value_bytes),
+            )
+            .map_err(|violation| ViewError::Invalid {
+                operation,
+                violation,
+            })?;
+        self.expanded_value_bytes = self.expanded_value_bytes.saturating_add(bytes);
         Ok(())
     }
 

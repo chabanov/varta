@@ -617,8 +617,18 @@ complete derived-output, accessibility, CPU or RSS budget.
 
 Use a fresh native oracle to compare computed inheritance, alias freezing, invalid
 local masks, active cycles, selected/empty fallbacks, token boundaries and typed
-post-substitution validation. The resolver tests also cover dependency depth 5000
-on a 2 MiB stack and exact UTF-16 expansion limits.
+post-substitution validation. The native resolver tests also cover dependency depth
+5000 on a 2 MiB stack and exact UTF-16 expansion limits. Browser scope tests cover
+the same dependency depth and UTF-16 boundaries; empty fan-out runs in a bounded
+Node subprocess so a regression cannot hang the entire suite.
+
+The empty-reference fan-out regression runs a legal stylesheet with 2048 forward
+dependencies in a bounded subprocess. Snapshot, style-reading focus, layout,
+paint and stylesheet replacement must complete while the result remains valid
+empty rather than choosing its fallback. The subprocess watchdog stops a
+regression from hanging the whole suite; it does not raise a runtime allowance.
+Small resolver checks separately retain token boundaries, inherited keywords,
+quoted empty strings and the distinction between empty and missing values.
 
 ```sh
 cargo test -p varta-view --lib variables:: --locked
@@ -631,10 +641,67 @@ node scripts/test-browser-variables.mjs target/browser-view-oracle.json /path/to
 node scripts/test-browser-variables.mjs target/browser-view-oracle.json /path/to/playwright/index.mjs webkit
 ```
 
-The browser probe compares independently computed raw CSS with native resolved
-literal declarations through the official host. Separate platform-only controls
-isolate cycle behavior from font rewriting. A failed comparison is retained as a
-failure, including the currently observed WebKit outside-cycle fallback mismatch;
-it is not a passing engine matrix. Native per-value invalidity uses renderer
-limits; browser engines retain their own limits. Shared expansion/output budgets,
-broader computed defaults/inheritance and full platform acceptance remain open.
+After rebuilding the CLI/companion, verify the production generated loader and
+Worker separately from the direct DOM fixture harness:
+
+```sh
+node scripts/test-browser-variable-bundle.mjs target/debug/varta /path/to/playwright/index.mjs chrome
+node scripts/test-browser-variable-bundle.mjs target/debug/varta /path/to/playwright/index.mjs webkit
+```
+
+This probe compiles a real v38 application, removes its source/configuration and
+serves only the generated browser directory under its original CSP. A test-owned
+inspection handle retains the closed shadow root without changing its mode.
+Initial computed styles and two trusted mouse clicks cover frozen inherited
+aliases, replacement/removal, empty component splices, selected numeric fallbacks,
+ordinary cycles, outside-cycle consumers, unused self-fallbacks and private font names. The second turn
+checks that removing the stylesheet discards the old alias binding. Network
+requests outside the owned origin and page errors fail the probe. This positive
+fixture does not replace the separate adversarial cycle comparison below.
+
+The compiled fixture also includes 32 levels of doubled empty references. Its
+margin selects the valid empty result, rather than the nonempty fallback; native
+compiled-Wasm coverage and the independent native/browser oracle exercise the
+same fan-out behavior. This is distinct from expansion of nonempty output.
+
+The browser probe compares the browser host's computed scopes with independently
+produced native literal declarations. Separate platform-only controls retain the
+browser-native cycle results without the host's normalization. Chrome and WebKit
+must agree with the native fixtures, including the formerly divergent outside-cycle
+consumer and oversized UTF-16 custom values. The live part checks pseudo/media
+changes, local and committed check state, focus effects, reparenting and detached
+components, rollback/removal, ambient-variable masking and quoted packaged font
+names. Media-listener counts must remain stable on replacement/rejection and fall
+to zero on removal/close. A selected-engine pass is not a complete browser matrix.
+Class rules must also leave the implicit root's style and custom bindings
+unchanged when guest classes are assigned to it.
+
+Repeat selected-engine mockup and live-chat acceptance after rebuilding the
+CLI/companion. When renderer imports change, update only the named public module
+allowlist in the mockup server and retain its private-path/method checks. Reuse the
+CSS/depth/cascade generated failure probes to retain fatal Worker behavior and
+prior-DOM rollback. Shared per-value custom invalidity does not establish aggregate
+output/work bounds, complete late-value subset/default/inheritance parity or full
+platform acceptance.
+
+### Potential expanded-component admission
+
+The native `expansion_work` integration suite and browser `view-expansion` suite
+exercise exact UTF-16 inventory boundaries, repeated style-reading commands,
+operation attribution, transient repair, alias reuse, inactive candidates,
+detached components and standard literals exceeding the custom-value cap. Common
+estimator unit tests cover iterative dependency components and scope restoration.
+The Node suite also compares bounds with actual resolution across 1458 candidate
+worlds. The shared native oracle includes four expansion cases (17 batches).
+
+```sh
+cargo test -p varta-common --lib expansion --locked
+cargo test -p varta-view --test expansion_work --locked
+node --test crates/varta-project/src/browser/view-expansion.test.mjs
+node scripts/test-browser-style-work-bundle.mjs target/debug/varta --expanded-values
+```
+
+The compiled source-free failure probe checks prior DOM/title retention and fatal
+Worker rejection before guest catch/logging. These checks bound potential
+component text, not serialized output, retained history, backend allocation or
+process RSS; selected-engine observations do not establish full platform coverage.

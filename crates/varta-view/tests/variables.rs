@@ -125,6 +125,81 @@ fn resolved_invalid_display_and_geometry_values_do_not_escape_native_readers() {
             .to_string()
             .contains("hidden")
     );
-    assert!(view.layout_boxes(200.0, 100.0).is_ok());
-    assert!(view.rasterize_boxes(200, 100).is_ok());
+    view.layout_boxes(200.0, 100.0).unwrap();
+    view.rasterize_boxes(200, 100).unwrap();
+}
+
+#[test]
+fn empty_reference_fanout_remains_valid_and_renders_without_expansion_work() {
+    const CHILD: &str = "VARTA_EMPTY_VARIABLE_FANOUT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // A regression must fail this test instead of hanging the entire suite.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "empty_reference_fanout_remains_valid_and_renders_without_expansion_work",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            if started.elapsed() > std::time::Duration::from_secs(45) {
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "empty-reference rendering exceeded the subprocess deadline: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use std::fmt::Write;
+    let mut css = ":root{".to_owned();
+    for i in 0..2047 {
+        write!(
+            css,
+            "--e{i:03x}:var(--e{:03x})var(--e{:03x});",
+            i + 1,
+            i + 1
+        )
+        .unwrap();
+    }
+    css.push_str("--e7ff:var(--missing,)}.target{padding:var(--e000,9px) 2px;color:var(--e000,#abc);width:20px;height:20px}");
+    let mut view = View::default();
+    let mut batch = B::new();
+    batch
+        .stylesheet(1, &css)
+        .create_element(2, Tag::Div)
+        .set_attribute(2, Attribute::Tabindex, "0")
+        .set_class(2, "target")
+        .insert(1, 2, 0)
+        .command(2, varta_common::view::Command::Focus, 0.0);
+    commit(&mut view, batch);
+    let snapshot = view.snapshot();
+    let style = &snapshot["tree"]["children"][0]["style"];
+    assert_eq!(style["padding"], "2px");
+    // Empty is a valid value: it does not select either property's fallback.
+    assert!(style.get("color").is_none());
+    view.layout_boxes(200.0, 100.0).unwrap();
+    view.rasterize_boxes(200, 100).unwrap();
+    let mut replacement = B::new();
+    replacement.stylesheet(1, ".target{padding:var(--e000,9px) 2px}");
+    commit(&mut view, replacement);
+    assert_eq!(
+        view.snapshot()["tree"]["children"][0]["style"]["padding"],
+        "9px 2px"
+    );
 }

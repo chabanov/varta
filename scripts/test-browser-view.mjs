@@ -78,7 +78,7 @@ try {
       })()`});
       assert(!stateResult.exceptionDetails,JSON.stringify(stateResult.exceptionDetails));assert.deepEqual(stateResult.result.value.mismatches,[]);
       console.log(`Native/Chrome disabled select, explicit none and reinsertion: ${stateResult.result.value.checks} batches passed`);
-      const workCases=oracle.cases.filter(item=>/^(select|radio|css|cascade)-work-|^retained-text-|^tree-depth-/.test(item.name));
+      const workCases=oracle.cases.filter(item=>/^(select|radio|css|cascade|expanded)-work-|^retained-text-|^tree-depth-/.test(item.name));
       assert(workCases.some(item=>item.name.startsWith('radio-work-')),'native radio work fixtures missing');
       const work=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
         const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
@@ -96,6 +96,7 @@ try {
             if(expected.budget&&(error?.rule!=='select work budget'||(error.operation??null)!==expected.operation))mismatches.push([fixture.name,i,'budget position']);
             if(expected.radioBudget&&(error?.rule!=='radio work budget'||(error.operation??null)!==expected.radioOperation))mismatches.push([fixture.name,i,'radio budget position']);
             if(expected.cascadeBudget&&(error?.rule!=='cascade work budget'||(error.operation??null)!==expected.cascadeOperation))mismatches.push([fixture.name,i,'cascade work position']);
+            if(expected.expandedBudget&&(error?.rule!=='expanded value budget'||(error.operation??null)!==expected.expandedOperation))mismatches.push([fixture.name,i,'expanded value position']);
             if(expected.depthBudget&&(error?.rule!=='tree depth budget'||(error.operation??null)!==expected.depthOperation))mismatches.push([fixture.name,i,'tree depth position']);
             if(expected.retainedBudget&&(error?.rule!=='retained text budget'||error.operation!==undefined))mismatches.push([fixture.name,i,'retained text budget']);
             if(expected.stylesheetBudget&&(error?.rule!=='stylesheet work budget'||(error.operation??null)!==expected.stylesheetOperation))mismatches.push([fixture.name,i,'stylesheet work']);

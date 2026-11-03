@@ -144,6 +144,10 @@ fn layout() -> String {
             view::DRAFT_MAX_CASCADE_WORK.to_string(),
         ),
         (
+            "Placeholder: potential expanded component bytes".into(),
+            view::DRAFT_MAX_EXPANDED_VALUE_BYTES.to_string(),
+        ),
+        (
             "Placeholder: parsed stylesheet work / syntax node units".into(),
             format!(
                 "{} / {}",

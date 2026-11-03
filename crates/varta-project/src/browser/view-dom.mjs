@@ -1,5 +1,6 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { createFontNamespace } from './view-fonts.mjs';
+import { createCustomPropertyStyles } from './view-custom-properties.mjs';
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { createViewModel } from "./view-model.mjs";
 import { rewriteRootSelector, checkStylesheet, StylesheetWorkError } from "./view-css.mjs";
@@ -54,6 +55,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
   const D = V.defaults;
   base.replaceSync(`:host { all: initial; display: block; } ${D.rootSelector} { ${D.rootStyle}; } textarea { resize: none; } dialog { border: none; padding: 0; background-color: ${D.dialogBackground[0]}; color: ${D.dialogText[0]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[0]}; } @media (prefers-color-scheme: dark) { dialog { background-color: ${D.dialogBackground[1]}; color: ${D.dialogText[1]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[1]}; } }`);
   const sheets = new Map(), nodes = new Map([[W.root, root]]), ids = new WeakMap([[root, W.root]]), ownedAssets = new Map(assets);
+  const variables = createCustomPropertyStyles({root, shadow, nodes, ids, fonts, onError});
   let applying = false, closed = false;
   const adopt = () => { shadow.adoptedStyleSheets = [base, ...[...sheets].sort(([a], [b]) => a - b).map(([, sheet]) => sheet)]; }; adopt();
   const snapshots = () => new Map(model.snapshot().nodes.map((node) => [node.id, node]));
@@ -108,7 +110,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
     }
     // Parsing sheets before commit catches platform allocation/parse failures
     // without advancing either validation state or visible DOM.
-    const preparedSheets = new Map(), preparedFonts = new Map();
+    const preparedSheets = new Map(), preparedFonts = new Map(), preparedCustom = new Map();
     let stylesheetWork=0;
     for (let i = 0; i < decoded.length; i++) {
       if (decoded[i].name === "stylesheet" && decoded[i].text) {
@@ -116,7 +118,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
         catch(error){throw new ViewProtocolError(error instanceof StylesheetWorkError?'stylesheet work budget':'stylesheet value',i);}
         if(checked.errors.length)throw new ViewProtocolError('stylesheet value',i);
         stylesheetWork+=checked.work;
-        const sheet=new Sheet();sheet.replaceSync(rewriteRootSelector(decoded[i].text,D.rootSelector));fonts.sheet(sheet.cssRules);preparedSheets.set(i,sheet);
+        const sheet=new Sheet();sheet.replaceSync(rewriteRootSelector(decoded[i].text,D.rootSelector));preparedCustom.set(i,variables.prepare(sheet));preparedSheets.set(i,sheet);
       }
       if (decoded[i].name === "set_style" && decoded[i].property === "font-family") preparedFonts.set(i, fonts.value(decoded[i].text));
     }
@@ -139,7 +141,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
           case "remove": { const stack = [node]; while (stack.length) { const removed = stack.pop(); for (const child of removed.childNodes) stack.push(child); nodes.delete(ids.get(removed)); ids.delete(removed); } node.remove(); break; }
           case "set_value": if (current.get(op.node)?.seq === op.base_seq && node.value!==op.text) node.value = op.text; break;
           case "set_checked": if (current.get(op.node)?.seq === op.base_seq) node.checked = Boolean(op.checked); break;
-          case "stylesheet": if (op.text) sheets.set(op.sheet, preparedSheets.get(i)); else sheets.delete(op.sheet); adopt(); break;
+          case "stylesheet": if (op.text) sheets.set(op.sheet, preparedSheets.get(i)); else sheets.delete(op.sheet); variables.replace(op.sheet,preparedCustom.get(i));adopt(); break;
           case "set_title": onTitle(op.text); break;
           // Listener and command state is already committed in the pure model.
         }
@@ -153,6 +155,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
         const element=nodes.get(id);
         if(element.selectedIndex!==selected)element.selectedIndex=selected;
       }
+      variables.commit(current);
     } finally { applying = false; }
     for (const op of effects) {
       const node = nodes.get(op.node);
@@ -170,11 +173,12 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
         case "close": node.close(); break;
       }
     }
+    if(effects.some(op=>['focus','blur','show_modal','close'].includes(op.command)))variables.refresh();
     return 0;
   }
   return { apply, snapshot: () => model.snapshot(), complete: (id) => model.complete(id),
-    freeze() { if(closed)return;closed=true;root.inert=true;mountedContainers.delete(container);for(const [kind,listener,capture] of handlers)shadow.removeEventListener(kind,listener,{capture}); },
-    close() { if (closed) return; closed = true;mountedContainers.delete(container); for (const [kind, listener, capture] of handlers) shadow.removeEventListener(kind, listener, { capture }); root.replaceChildren(); nodes.clear(); sheets.clear(); ownedAssets.clear(); model.close(); shadow.adoptedStyleSheets = []; },
+    freeze() { if(closed)return;closed=true;root.inert=true;variables.close();mountedContainers.delete(container);for(const [kind,listener,capture] of handlers)shadow.removeEventListener(kind,listener,{capture}); },
+    close() { if (closed) return; closed = true;variables.close();mountedContainers.delete(container); for (const [kind, listener, capture] of handlers) shadow.removeEventListener(kind, listener, { capture }); root.replaceChildren(); nodes.clear(); sheets.clear(); ownedAssets.clear(); model.close(); shadow.adoptedStyleSheets = []; },
     // Explicit inspection seam for host tests. The guest receives no DOM handle.
     inspectNode(id) { return nodes.get(id); },
   };

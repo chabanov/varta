@@ -1,5 +1,6 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
+import { potentialExpandedValues } from './view-expansion.mjs';
 import { checkStylesheet, checkStyleDeclaration, createValueMatcher, StylesheetWorkError } from "./view-css.mjs";
 
 import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork} from './view-select.mjs';
@@ -134,8 +135,11 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     let index, nextTitle = title, nextTitleBytes = titleBytes, nextFocus = focus;
     let parsedStylesheetWork=0,nextStylesheetBytes=stylesheetBytes,nextInstalledStylesheetWork=installedStylesheetWork;
     const fail = (rule) => { throw new ViewProtocolError(rule, index); };
-    let cascadeWork=0;
-    const chargeCascade=()=>potentialCascadeRead(next,nextCascade,work=>{cascadeWork+=work;if(cascadeWork>V.limits.cascadeWork)fail('cascade work budget');});
+    let cascadeWork=0,expandedValueBytes=0;
+    const chargeCascade=()=>{
+      potentialCascadeRead(next,nextCascade,work=>{cascadeWork+=work;if(cascadeWork>V.limits.cascadeWork)fail('cascade work budget');});
+      potentialExpandedValues(next,nextCascade,W.root,bytes=>{expandedValueBytes+=bytes;if(expandedValueBytes>V.limits.expandedValueBytes)fail('expanded value budget');});
+    };
     let selectionWork=0;
     let lastSelectValue;
     const skippedValues=new Set();

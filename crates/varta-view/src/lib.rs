@@ -162,6 +162,8 @@ pub enum Violation {
     StylesheetsTooLarge,
     #[error("potential cascade reads exceed their transaction limit")]
     CascadeWorkLimit,
+    #[error("potential expanded component values exceed their transaction limit")]
+    ExpandedValueLimit,
     #[error("stylesheet parsing or inventory work exceeds its limit")]
     StylesheetWorkLimit,
     #[error("request id {0} is zero or already pending")]

@@ -11683,14 +11683,26 @@ and `stopPropagation`; and serializes a deterministic JSON snapshot: the
 tree (tags, attributes, classes, computed styles, field values and edit
 counters, listeners), the accessibility tree (roles, names, states), title,
 focus, stylesheets and the simulated clipboard, opened URLs and prompt count.
-The cascade orders sheets by id, then specificity, then source order; inline
+The cascade orders by specificity, sheet id, then source order; inline
 styles win; custom properties resolve through an iterative dependency graph at
 each element before inheritance. The native resolver invalidates active dependency
 cycles, evaluates only selected fallbacks, freezes inherited aliases, preserves token
 boundaries/quoted text and revalidates selected values for geometry and paint.
 Arena indices share resolved fragments without recursively owned dependency
-chains; native per-value limits are checked before materialization. Aggregate
-output and cross-engine expansion limits remain open. Other
+chains; native per-value limits are checked before materialization. Zero-length
+fragments are folded away without making their valid empty binding missing, so
+empty-reference fan-out cannot produce an exponential traversal with zero output.
+A shared 8 MiB potential expanded-component byte allowance now checks every
+component, including detached nodes, before style-reading commands and final
+publication. Cached candidate programs and iterative inherited bound scopes count
+fresh custom literals and per-property maxima without materializing values.
+Media, pseudo-state and declaration winners cannot discount candidates. Standard
+literals without references retain their full UTF-16 length; custom substitution
+bounds retain the per-value cap. Command reads share the final-read allowance and
+excess rejects the copied transaction before effects. See the embedding contract
+for graph, fallback, alias and reclamation rules. Serialized output, retained
+frames, backend overhead, repeated getter work, process RSS and cross-engine
+late-value subset parity remain open. Other
 properties report their cascaded value. Ordinary snapshots do not include layout
 rectangles. An experimental separate `layout_boxes` API uses pinned Taffy to
 compute a bounded subset of div and semantic block/flex/grid geometry and
@@ -13146,6 +13158,30 @@ and parent DOM adapter use this model. Invalid batches trap in
 `view_commit` before any later guest effect, and the parent checks again before
 DOM application. One turn can commit once; it must receive the parent acknowledgement
 before taking another task. At most one bounded batch is in flight.
+
+The browser custom-property renderer ports the native iterative scope algorithm,
+including active cycles, selected fallbacks, valid empty values and the shared
+UTF-16 per-value ceiling. CSSOM custom declarations are compiled from private
+prepared sheets and removed before adoption. A separate cached candidate index
+follows specificity, sheet id and source order. Component walks use scoped
+checkpoints instead of copying inherited maps at every node. Non-ASCII private
+literal names are outside the guest grammar; alias bindings reference inherited
+literals and the private font namespace uses parallel resolved values. Missing
+references cannot inherit ambient page variables. Pending shorthands are inspected
+through their authored CSSOM serialization, whose longhands otherwise serialize
+as empty before substitution. Root rewriting skips quoted component text.
+Class selectors additionally receive a private zero-specificity guard excluding
+the implicit root, matching the native root/class split and work inventory even
+when the root has guest classes.
+
+Bindings refresh on commits, after focus effects, on coalesced pseudo-state events
+and on owned media-query changes. Rejected prepared sheets install no listeners;
+replacement/removal and close/freeze release query/state listeners and pending
+animation frames. The frozen view retains its last computed bindings. Renderer
+indices and bindings stay outside the pure model's transaction authority and
+snapshots. The browser still uses platform ordinary-property layout; complete
+late-value subset parity, aggregate expansion/output and broader renderer/lifetime
+budgets remain open.
 
 The DOM adapter uses a closed shadow root and checked CSSOM/DOM methods,
 never HTML parsing. It preserves live node identities, drops stale field patches

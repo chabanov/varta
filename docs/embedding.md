@@ -2363,6 +2363,50 @@ draft.
   first reads it. This bounds potential matching/inheritance work; complete
   derived-value output, repeated accessibility evaluation and other host-buffer
   limits remain separate.
+- **Potential expanded component text.** A separate UTF-16 byte allowance in the
+  limits table spans the same style-reading command inventories and final read as
+  potential cascade work. Check the cascade allowance first. The expansion read
+  walks every component, including detached nodes, with scoped inherited upper
+  bounds; it does not allocate expanded values. Candidates are the same deduplicated
+  root/first-class anchor sets. Media, remaining classes, pseudo/local state,
+  declaration winners and computed-property validity do not discount candidates.
+
+  At each element, group custom candidate definitions by name and standard
+  declarations (including inline values) by property. Parent custom bounds remain
+  possible alternatives. Build a graph from references in every candidate branch,
+  including fallbacks. An acyclic name takes the maximum of its parent alternative
+  and candidate expression bounds. In a cyclic component, the seed is the maximum
+  parent bound, external-reference bound or literal terminal. Choice-only
+  components retain that maximum. A component with concatenation and a nonzero
+  seed takes the per-custom-value code-unit cap; an unseeded component stays zero.
+  This is a conservative potential graph, separate from active-cycle substitution.
+
+  An expression sums literal/reference bounds, adding one possible separator
+  between positive component parts and saturating at the per-custom-value cap.
+  A reference takes the maximum of its name and fallback bounds. Oversized custom
+  literal chunks contribute zero, since selecting them invalidates that value.
+  Unknown compiled syntax conservatively uses the cap. A fresh definition with
+  multiple positive parts charges its expression bound; a sole non-wide literal
+  charges its length. A reference-only definition charges only possible fresh
+  fallback text. Empty and CSS-wide alias definitions do not duplicate a literal.
+
+  Charge twice the maximum possible fresh units per custom name and twice the
+  maximum possible component units per standard property. Standard literals with
+  no actual references charge their full UTF-16 source length: they do not acquire
+  the custom substitution cap merely by sharing this estimator. Repeated or
+  shadowed candidates of one name/property use a maximum, not a sum. All command
+  reads and the final read share the byte counter, including equal focus commands.
+  Excess reports the reading command's operation, or no operation at final
+  validation, and rejects the entire copied transaction before effects. Reclamation
+  can repair a transient excess only before a command reads it.
+
+  This allowance bounds potential guest-owned component content. It excludes
+  source/selector caches, private namespace identifiers, CSSOM/backend overhead,
+  serialized JSON escaping/keys, retained frame history, repeated backend getter
+  work and process RSS. Their source, topology and work limits or remaining
+  renderer/host-lifetime requirements remain separate. It is not an exact estimate
+  of one winning environment's output, an aggregate host-memory quota or a change
+  to CSS fallback semantics.
 - **Parsed stylesheet work.** The limits table gives a work allowance and one
   syntax-node weight. One parse charges the input UTF-8 byte length; one node
   weight per media-header condition; one node weight per rule plus each media
@@ -2494,12 +2538,14 @@ reference occurs; a reference can replace an empty or multiple-component sequenc
 Known property names and forbidden-source checks still apply before deferral.
 Forbidden CSS tokens remain forbidden in every branch.
 
-The native renderer resolves custom declarations at each element before they are
-inherited. An invalid local declaration masks the inherited binding. Only selected fallback branches are evaluated. Active dependency cycles
+The native and official browser renderers resolve custom declarations at each
+element before inheritance. An invalid local declaration masks the inherited
+binding. Only selected fallback branches are evaluated. Active dependency cycles
 invalidate their members; an outside dependent can still use a fallback, and an
-unused fallback does not introduce a cycle. Chrome matches the current fixtures;
-WebKit has a recorded outside-cycle fallback discrepancy, so full cross-engine
-parity is not established. The native algorithm follows the [2026 working draft's substitution contexts](https://drafts.csswg.org/css-values-5/#substitution),
+unused fallback does not introduce a cycle. The browser renderer uses an engine-owned
+port of the native algorithm, rather than browser-native variable-cycle handling.
+The previously recorded WebKit outside-cycle fixtures now match the native renderer.
+The algorithm follows the [2026 working draft's substitution contexts](https://drafts.csswg.org/css-values-5/#substitution),
 rather than the 2022 snapshot's eager fallback dependency graph. Quoted strings are literal and
 substitution preserves component-token boundaries. Native geometry/paint and
 snapshots revalidate the resolved value against the property's subset grammar,
@@ -2507,14 +2553,46 @@ without resurrecting an earlier cascaded declaration. Custom `initial` is
 invalid; custom `inherit`/`unset` and the single-origin, unlayered subset's
 `revert`/`revert-layer` use the computed inherited binding.
 
-The native resolver stores a shared dependency arena and measures UTF-16 length
-before expansion. A native computed custom value exceeding the existing value
-byte limit is invalid at computed-value time; selected property values must also
-fit the subset value grammar/token ceiling. This follows the renderer-defined
+Both resolvers store dependency arenas and measure UTF-16 length before expansion.
+A computed custom value exceeding the existing value byte limit is invalid at
+computed-value time. Native selected property values must also fit the subset
+value grammar/token ceiling. This follows the renderer-defined
 size-limit mechanism in [CSS Variables §3.3](https://www.w3.org/TR/css-variables-1/#long-variables).
-Browser CSS engines retain their own computed-value limits; this is not a shared
-aggregate-output admission guarantee. Whole-frame derived output, broader
-computed defaults/inheritance and cross-engine expansion limits remain open.
+Browser ordinary-property layout and final CSS computation retain platform
+semantics. Complete late-value subset parity, whole-frame derived output, broader
+computed defaults/inheritance and aggregate expansion/work limits remain open.
+The shared custom-value cap is not an aggregate-output admission guarantee.
+
+An empty substitution is a valid computed value and does not select a fallback.
+Both resolvers omit zero-length fragments from their dependency arena edges
+without discarding that binding. This also applies inside fallback composition;
+token boundaries, CSS-wide keyword handling and quoted empty strings retain their
+ordinary meaning. Output size alone does not bound traversal of an empty graph,
+so repeated references to an empty value must not require expanding that graph's
+logical reference multiplicity. This specific guard does not establish aggregate
+derived-output or complete renderer work budgets.
+
+The official browser adapter removes custom declarations from its private,
+unadopted sheets after syntax/work checking and before publication. A cached selector index
+selects winning definitions, and an iterative component walk resolves them before
+descendants inherit them. Class rules exclude the implicit view root even when it has guest classes, as in
+the native matcher; the private selector guard adds no specificity. Only `:root`
+rules select that root. Private literals are stored at their defining element;
+aliases refer to those literals instead of copying expanded declaration text.
+Private literal identifiers use characters outside the guest custom-name grammar.
+Font values retain their separate private namespace. Missing standard-property
+references are masked against ambient document bindings, including references in
+pending shorthands; missing references inside custom definitions resolve only
+against the guest scope.
+
+Commits refresh scoped bindings after DOM replay and focus effects. Supported
+pseudo-state changes are refreshed on a coalesced animation frame; media conditions
+have owned change listeners. Replaced or removed sheets release their listeners;
+rejected preparations register none. Closing or freezing the session removes
+listeners and cancels queued refreshes while a frozen DOM retains its last
+computed bindings. These renderer-private maps are not guest authority or part of
+the model snapshot. Ordinary property grammar, forbidden-source checks, transaction
+admission and the shared work allowances remain enforced independently.
 
 **CSS value types.** The per-property grammars below use these types:
 
@@ -2557,6 +2635,7 @@ computed defaults/inheritance and cross-engine expansion limits remain open.
 | Placeholder: single-select work / node visit units | 8388608 / 16 |
 | Placeholder: radio reconciliation work / node visit units | 8388608 / 16 |
 | Placeholder: potential cascade read work | 8388608 |
+| Placeholder: potential expanded component bytes | 8388608 |
 | Placeholder: parsed stylesheet work / syntax node units | 8388608 / 16 |
 | Placeholder: tokens of one CSS property value | 128 |
 | `id` / `for` ident characters | 64 |

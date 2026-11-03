@@ -751,6 +751,93 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             B::new().finish(),
         ],
     ));
+    let expanded_seed = format!(
+        "\"{}\"",
+        "a".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2 - 3)
+    );
+    let expanded_css = format!(":root{{--seed:{expanded_seed}}}.a{{--copy:var(--seed)/}}");
+    let expanded_setup = |count: u32| {
+        let mut batch = B::new();
+        batch.stylesheet(1, &expanded_css);
+        for node in 2..count + 2 {
+            batch
+                .create_element(node, Tag::Button)
+                .set_class(node, "a")
+                .insert(1, node, 0);
+        }
+        batch.finish()
+    };
+    cases.push((
+        "expanded-work-boundary",
+        vec![
+            expanded_setup(127),
+            B::new().set_style(2, CssProperty::Width, "0").finish(),
+            B::new().set_style(2, CssProperty::Height, "0").finish(),
+            B::new()
+                .set_style(2, CssProperty::Height, "0")
+                .remove_style(2, CssProperty::Height)
+                .finish(),
+            B::new()
+                .remove(2)
+                .set_style(3, CssProperty::Height, "0")
+                .finish(),
+        ],
+    ));
+    cases.push((
+        "expanded-work-command",
+        vec![
+            expanded_setup(63),
+            B::new().command(2, Command::Focus, 0.0).finish(),
+            B::new()
+                .command(2, Command::Focus, 0.0)
+                .command(2, Command::Focus, 0.0)
+                .finish(),
+            B::new()
+                .command(2, Command::Focus, 0.0)
+                .command(2, Command::Focus, 0.0)
+                .command(2, Command::Focus, 0.0)
+                .finish(),
+            B::new().finish(),
+        ],
+    ));
+    cases.push((
+        "expanded-work-transient",
+        vec![
+            expanded_setup(127),
+            B::new()
+                .set_style(2, CssProperty::Width, "0")
+                .set_style(2, CssProperty::Height, "0")
+                .command(2, Command::Focus, 0.0)
+                .remove_style(2, CssProperty::Height)
+                .finish(),
+            B::new().finish(),
+        ],
+    ));
+    let plain = format!(
+        ".a{{font-family:\"{}\"}}",
+        "a".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2)
+    );
+    let mut plain_setup = B::new();
+    plain_setup
+        .stylesheet(1, &plain)
+        .create_element(2, Tag::Button)
+        .set_class(2, "a")
+        .insert(1, 2, 0);
+    let mut plain_final = B::new();
+    for _ in 0..127 {
+        plain_final.command(2, Command::Focus, 0.0);
+    }
+    let mut plain_command = plain_final.clone();
+    plain_command.command(2, Command::Focus, 0.0);
+    cases.push((
+        "expanded-work-plain",
+        vec![
+            plain_setup.finish(),
+            plain_final.finish(),
+            plain_command.finish(),
+            B::new().command(2, Command::Focus, 0.0).finish(),
+        ],
+    ));
     let stylesheet_sources = vec![
         ".a{}".to_owned(),
         ":root { --c: \"界\" } .a.a:checked, .b { color:#abc }".to_owned(),
@@ -776,7 +863,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::json!({"source":source,"valid":parsed.is_ok(),"work":parsed.as_ref().ok().map(|sheet|sheet.work),"ruleCosts":parsed.as_ref().ok().map(|sheet|sheet.rules.iter().map(|rule|rule.cascade_work()).collect::<Vec<_>>()),
             "limit":matches!(parsed.as_ref().err(),Some(error) if error.violation==varta_common::view::stylesheet::Violation::WorkLimit)})
     }).collect::<Vec<_>>();
+    let mut empty_fanout = ":root{--empty0:var(--missing,);".to_owned();
+    for i in 1..32 {
+        empty_fanout.push_str(&format!(
+            "--empty{i}:var(--empty{})var(--empty{});",
+            i - 1,
+            i - 1
+        ));
+    }
+    empty_fanout.push_str("}.target{padding:var(--empty31,9px) 2px;color:var(--empty31,#abc)}");
+    let oversized_custom = format!(
+        ":root{{--large:{}}}.target{{color:var(--large,#abc)}}",
+        "x".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 2 + 1)
+    );
+    let oversized_utf16 = format!(
+        ":root{{--large:\"{}\"}}.target{{color:var(--large,#abc)}}",
+        "😀".repeat(varta_common::view::DRAFT_MAX_VALUE_BYTES / 4)
+    );
     let variable_sources = [
+        ("empty-fanout", empty_fanout.as_str()),
+        ("oversized-custom", oversized_custom.as_str()),
+        ("oversized-utf16", oversized_utf16.as_str()),
         (
             "empty-splice",
             ".target{width:var(--unused,)auto;padding:var(--a,)var(--b,)var(--c,)var(--d,)var(--e,) 2px}",
@@ -881,10 +988,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::TreeDepthLimit})=>(true,*operation),_ =>(false,None)};
             let (cascade_budget,cascade_operation)=match result.as_ref().err(){
                 Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::CascadeWorkLimit})=>(true,*operation),_ =>(false,None)};
+            let (expanded_budget,expanded_operation)=match result.as_ref().err(){
+                Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::ExpandedValueLimit})=>(true,*operation),_ =>(false,None)};
             let retained_budget = matches!(result.as_ref().err(), Some(varta_view::ViewError::Invalid {violation:varta_view::Violation::RetainedTextLimit,..}));
             let (stylesheet_budget,stylesheet_operation)=match result.as_ref().err(){
                 Some(varta_view::ViewError::Invalid{operation,violation:varta_view::Violation::StylesheetWorkLimit})=>(true,*operation),_ =>(false,None)};
-            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"radioBudget":radio_budget,"radioOperation":radio_operation,"cascadeBudget":cascade_budget,"cascadeOperation":cascade_operation,"depthBudget":depth_budget,"depthOperation":depth_operation,"retainedBudget":retained_budget,"stylesheetBudget":stylesheet_budget,"stylesheetOperation":stylesheet_operation,"snapshot":view.snapshot()})
+            serde_json::json!({"ok":result.is_ok(),"error":result.err().map(|e|e.to_string()),"budget":budget,"operation":operation,"radioBudget":radio_budget,"radioOperation":radio_operation,"cascadeBudget":cascade_budget,"cascadeOperation":cascade_operation,"expandedBudget":expanded_budget,"expandedOperation":expanded_operation,"depthBudget":depth_budget,"depthOperation":depth_operation,"retainedBudget":retained_budget,"stylesheetBudget":stylesheet_budget,"stylesheetOperation":stylesheet_operation,"snapshot":view.snapshot()})
         }).collect::<Vec<_>>();
         serde_json::json!({"name":name,"batches":batches,"results":results})
     }).collect::<Vec<_>>();

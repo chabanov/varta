@@ -1843,3 +1843,223 @@ The current real Chrome DOM boundary probe also passes with the fresh variable
 oracle (`target/commit-20261103-browser.log`). This full gate does not erase the
 separately failing WebKit variable comparison recorded above, establish a full
 browser/platform matrix, or close the remaining development plan.
+
+
+## Source-free CSS-variable acceptance — 2026-11-03
+
+After `bfbeaf8`, a new generated-artifact probe closes the pending variable-specific
+loader/Worker acceptance criterion. It builds a real v38 program with the current
+CLI, deletes the source/configuration and serves only the generated directory.
+The production CSP and closed shadow-root mode remain intact; a host-test handle
+permits computed-style inspection. Requests outside the owned origin and page
+errors fail the probe.
+
+Chrome **156.0.8078.80** and Playwright WebKit **26.5** each pass initial style
+checks and two trusted mouse turns. Coverage includes computed inherited alias
+freezing, stylesheet replacement and removal, empty component substitution and
+auto width, chosen numeric fallback validation, an ordinary dependency cycle,
+an unused self-fallback and quoted font text in the private font namespace.
+Removing the sheet then applying an inline variable reference selects the missing
+alias fallback instead of retaining stale custom-property state.
+
+The first Chrome run exposed an incorrect fixture width expectation: the content
+box is 186px after subtracting margins, padding and borders from the 200px parent.
+The expectation was corrected; no engine code, allowance or browser policy was
+changed. The final checks also wait for both the committed title and the turn's
+log marker to avoid observing an intermediate Worker message.
+
+Evidence: `target/variables-bundle-chrome-final.log` and
+`target/variables-bundle-webkit-final.log` (local, ignored). The earlier failing
+Chrome fixture log remains `target/variables-bundle-chrome.log`. These are focused
+acceptance results for new verification tooling; production code is unchanged
+from the full gate recorded above. The independent complex outside-cycle WebKit
+comparison still fails and remains an explicit compatibility gap. Firefox and the
+full matrix, shared computed-output limits, broader CSS defaults/inheritance,
+accessibility work, other host buffers and platform/release acceptance remain open.
+
+
+## Empty CSS-reference fan-out — scoped verification 2026-11-03
+
+Preparation for shared browser variable evaluation uncovered an independent native
+resource gap. The arena retained edges to valid empty values. Repeatedly doubling
+those references caused exponential materialization despite producing zero UTF-16
+units, so the output-size ceiling could never stop it. The native append path now
+omits zero-length fragments while retaining the valid empty binding. Dependency
+resolution and cycle detection still execute; empty is not converted to missing.
+
+A legal stylesheet with 2048 forward fan-out definitions reproduced the failure
+before the fix: the isolated child consumed one CPU core until its 45-second test
+watchdog killed and reaped it. After the fix, the focused regression passed in
+0.12 seconds of harness execution, covering style-reading focus, snapshot,
+layout, paint and stylesheet replacement. The initial post-fix integration run
+had already completed substitution but failed its geometry assertion because the
+fixture used a button without the explicit control metrics required by native
+layout. A focusable div replaced that button; no production allowance or control
+layout restriction changed. This is a regression result, not a sustained resource
+benchmark or a complete renderer work budget.
+
+Final focused verification passes **145 native view tests**, including seven
+variable integration tests. The ten resolver unit checks were also rerun after
+adding the empty-fragment/real-cycle case; quoted empty strings, component-token
+boundaries and inherited CSS-wide keywords remain covered. **48 runtime/view
+tests** pass, with the compiled-Wasm fixture extended to 32 doubled empty levels
+across two turns. **142 oracle-enabled Node checks** pass. Strict all-target
+Clippy passes for view/runtime, with view checked again after the final unit-test
+addition. Formatting and whitespace checks pass.
+
+The fresh oracle contains **21 variable fixtures**; Chrome passes all **231
+computed-style observations**. WebKit agrees on the new empty-reference fixture
+but its complete comparison still fails on the same two color observations in
+the previously recorded outside-cycle case. No new browser-cycle compatibility
+claim is made. Fresh CLI/companion builds pass. UARP passes **107 tests in 28
+groups and two expected native views**. Chrome 156.0.8078.80 and Playwright WebKit
+26.5 each pass the source-free generated loader/Worker probe, now including the
+32-level empty fan-out margin check and the two trusted update/removal turns.
+
+Evidence (local, ignored): `target/variables-empty-fanout-before.log`,
+`target/variables-empty-integration.log` (the intermediate fixture failure),
+`target/variables-empty-fanout-geometry.log`, `target/variables-empty-native.log`,
+`target/variables-empty-unit-final.log`, `target/variables-empty-runtime.log`,
+`target/variables-empty-node.log`, `target/variables-empty-chrome.log`,
+`target/variables-empty-webkit.log`, `target/variables-empty-clippy.log`,
+`target/variables-empty-view-clippy-final.log`,
+`target/variables-empty-bundle-chrome.log`,
+`target/variables-empty-bundle-webkit.log` and `target/variables-empty-pilot.log`.
+The last full workspace gate remains the one recorded for `bfbeaf8`; these newer
+engine changes have scoped evidence. Shared browser variable evaluation,
+nonempty aggregate output/expansion budgets, accessibility work, other host
+buffers, full browser/native platform acceptance and release criteria remain open.
+
+
+## Browser computed custom-property scopes — scoped verification 2026-11-03
+
+The official browser renderer now uses an engine-owned port of native computed
+custom-property scopes instead of delegating cycle resolution to the CSS engine.
+`view-variables.mjs` compiles quoted/component-preserving templates and executes
+dependency resolution with explicit work stacks and indexed fragments. Scoped
+checkpoints retain inherited aliases and restore siblings without copying ancestor
+maps. UTF-16 length summaries check the shared per-value ceiling before expansion;
+empty fragments remain valid without retaining exponential traversal edges.
+
+`view-custom-properties.mjs` extracts custom declarations from unadopted prepared
+CSSOM sheets, removes them before adoption and maintains candidate indices for
+the current sheets. Browser-native selectors/media select winning definitions;
+the scope algorithm determines computed custom values. Non-ASCII private literal
+names are outside the guest grammar; original and private font bindings reference
+those inherited literals. Missing standard references are masked from ambient page
+variables. CSSOM pending shorthands require reading authored `cssText`, because
+their longhand getters serialize as empty before substitution. Root rewriting now
+skips quoted values instead of rewriting literal `:root` text.
+
+Local pseudo-state changes coalesce into animation-frame refreshes, media queries
+have owned change listeners and commits/focus effects refresh synchronously.
+Replacement/removal and close/freeze release listeners; rejected preparations do
+not install them. Instrumented live tests retain stable media-listener counts on
+replacement/rejection and observe zero after removal/close. Frozen DOM retains its
+last computed bindings. The pure Worker/model authority and snapshots remain
+separate from renderer-private caches and DOM declarations.
+
+Final focused evidence passes **149 oracle-enabled Node checks**, including six
+new scope checks (dependency depth 5000, bounded empty fan-out, UTF-16 boundaries,
+cycles, scope restoration and token/keyword semantics) and a quoted-root rewrite
+check. **35 project browser checks**, strict project all-target Clippy, formatting
+and whitespace checks pass. Fresh CLI/companion builds pass.
+
+Chrome **156.0.8078.80** and Playwright WebKit **26.5** each match **23 native
+fixtures and 253 computed-style observations**, including oversized ASCII/UTF-16
+custom values. Each also passes **34 live observations** covering hover/active,
+focus-visible via View focus, checked/disabled state, viewport/color-scheme media,
+reparenting and detached-component scope changes, rejected-sheet rollback,
+removal, ambient-variable isolation (including a shorthand), quoted packaged-font
+names, implicit-root selector separation and media-listener lifecycle. Platform-only controls still expose WebKit's
+raw outside-cycle difference; the official host now normalizes both tested engines
+to the native algorithm. The old failing host comparison is not silently skipped.
+
+Each selected engine passes **15 UARP official-host mockup projections and 59
+regressions**, the source-free compiled variable bundle with the complex
+outside-cycle consumer, and live compiled chat (ordered native tree, selected
+accessibility and 195 declarations across 14 properties). The broader Chrome
+boundary probe passes 127 work/payload/depth/cascade batches, 1839 radio checks,
+six activation and eleven select identity/event scenarios. Fresh generated CSS,
+depth and cascade failure probes retain prior DOM/title and terminate before
+catch/logging. The named-asset mockup server test passes after adding the two new
+public dependencies to its allowlist.
+
+Intermediate failures are retained: the first scope test attempted non-LIFO
+checkpoint restoration and was corrected to restore the grandchild first. A live
+fixture tried to assert a styled border on a native-appearance checkbox; the same
+cycle assertion now uses a div, with the original computed custom value already
+confirmed correct. WebKit's macOS Tab policy skipped that checkbox, so focus-visible
+coverage now uses a text input and the View focus command. A further live check reproduced class rules matching the implicit root and
+therefore inheriting ambient page color, despite the native matcher excluding
+those rules. A zero-specificity private selector guard now excludes the root from
+class rules; both engines retain the original root color and no class-defined
+custom binding. The initial mockup
+loads timed out because their server omitted the new public modules; its explicit
+allowlist was updated, and both engines then passed. No source, fuel, memory,
+admission allowance or production layout restriction was raised for these passes.
+
+Evidence (local, ignored): `target/variables-owned-unit-final.log`,
+`target/variables-owned-node-canonical.log`,
+`target/variables-owned-project-canonical.log`,
+`target/variables-owned-clippy-canonical.log`,
+`target/variables-owned-chrome-canonical.log`,
+`target/variables-owned-webkit-canonical.log`, `target/variables-owned-dom-canonical.log`,
+`target/variables-owned-mockup-server.log`,
+`target/variables-owned-mockups-chrome-canonical.log`,
+`target/variables-owned-mockups-webkit-canonical.log`,
+`target/variables-owned-bundle-chrome-canonical.log`,
+`target/variables-owned-bundle-webkit-canonical.log`, `target/variables-owned-chat-chrome-canonical.log`,
+`target/variables-owned-chat-webkit-canonical.log`, `target/variables-owned-css-failure-canonical.log`,
+`target/variables-owned-depth-failure-canonical.log` and
+`target/variables-owned-cascade-failure-canonical.log`. Earlier `variables-owned-*` failure
+logs retain the diagnostic steps above. The last full workspace gate remains
+`bfbeaf8`; the subsequent empty-reference and browser-scope packages have focused
+evidence only. Complete late-value typed-subset/default/inheritance/lexical parity,
+aggregate output/work/RSS guarantees, accessibility work, other host lifetimes,
+Firefox/full browser matrix, native platform acceptance, metrics and release
+criteria remain open.
+
+## Potential expanded component values — scoped verification 2026-11-03
+
+A shared 8 MiB potential expanded-component byte allowance now runs after cascade
+admission at each style-reading command and final publication. Native and browser
+implementations cache numeric value programs and walk every component with
+iterative dependency graphs and inherited scope checkpoints. The estimate keeps
+inactive candidate and fallback alternatives, charges fresh custom content and
+per-property maxima, and avoids copying pure aliases. Excess rejects before
+external effects, with the command index or no index for final validation.
+
+Focused evidence: four common estimator tests; six native integration checks;
+six Node expansion checks, including 1458 comparisons of potential bounds with
+actual candidate-world resolution; 151 complete native view tests; 49 runtime/view
+tests; 156 oracle-enabled Node checks; strict all-target Clippy for the four
+affected crates; no-default-features common/intrinsics checks; five registry and
+11 embedding-documentation tests. The Chrome DOM probe passes 144 admission
+batches, 1839 radio checks, six activation scenarios, eleven select scenarios and
+eight disabled-select batches. Chrome/WebKit each retain 23 native variable
+fixtures, 253 computed-style and 34 live observations, plus 15 mockup projections
+and 59 regressions. UARP passes 107 tests in 28 groups and two view snapshots.
+The fresh source-free expanded-value failure probe retains previous DOM/title and
+terminates before guest catch/logging.
+
+An intermediate regression exposed an underestimate for ordinary stylesheet
+literals exceeding the custom-value ceiling: the ordinary no-reference fast path
+retains those literals. The estimator now records full UTF-16 source length in
+that context, preserving the accepted language instead of imposing a new
+per-value restriction. Native, Node and native/Chrome oracle cases retain this
+regression. The prior failing Node log remains in
+`target/expansion-literal-before.log`.
+
+Evidence: `target/expansion-common-unit-final.log`,
+`target/expansion-native-complete.log`, `target/expansion-runtime.log`,
+`target/expansion-node-complete.log`, `target/expansion-dom-complete.log`,
+`target/expansion-clippy-complete.log`, `target/expansion-no-std.log`,
+`target/expansion-registry.log`, `target/expansion-docs.log`,
+`target/expansion-vars-chrome.log`, `target/expansion-vars-webkit.log`,
+`target/expansion-mockup-chrome.log`, `target/expansion-mockup-webkit.log`,
+`target/expansion-pilot.log` and `target/expansion-bundle.log`.
+These are scoped results; the full commit gate is recorded separately under
+`target/verification/`. Serialized output/history/backend/RSS limits, late-value
+subset parity and complete browser/native platform and release acceptance remain
+open.

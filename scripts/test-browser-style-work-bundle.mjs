@@ -7,11 +7,13 @@ import {join,resolve,sep} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {withBrowserPage} from './browser-probe.mjs';
 import {registry} from '../crates/varta-common/browser/registry.mjs';
-assert(process.argv[2],'Usage: node scripts/test-browser-style-work-bundle.mjs <varta-executable> [--tree-depth|--cascade-work]');
-const treeDepth=process.argv[3]==='--tree-depth',cascadeWork=process.argv[3]==='--cascade-work';
-assert(process.argv[3]===undefined||treeDepth||cascadeWork,'optional mode: --tree-depth or --cascade-work');
+assert(process.argv[2],'Usage: node scripts/test-browser-style-work-bundle.mjs <varta-executable> [--tree-depth|--cascade-work|--expanded-values]');
+const treeDepth=process.argv[3]==='--tree-depth',cascadeWork=process.argv[3]==='--cascade-work',expandedValues=process.argv[3]==='--expanded-values';
+assert(process.argv[3]===undefined||treeDepth||cascadeWork||expandedValues,'optional mode: --tree-depth, --cascade-work or --expanded-values');
 const directory=await mkdtemp(join(tmpdir(),'varta-browser-view-resource-'));
-const limitBody=cascadeWork?`const count=event.seq===0?1338:1339;View.stylesheet(2,'.a{}'.repeat(count));
+const expandedSource=':root{--seed:"'+'a'.repeat(registry.view.limits.valueBytes/2-3)+'"}.a{--copy:var(--seed)/}';
+const limitBody=expandedValues?`View.stylesheet(2,${JSON.stringify(expandedSource)});
+    for(let i=0;i<127;i++){const child=View.node();View.createElement(child,${registry.view.tags.find(t=>t.name==='span').code});View.setClass(child,'a');View.insert(1,child,0);}`:cascadeWork?`const count=event.seq===0?1338:1339;View.stylesheet(2,'.a{}'.repeat(count));
     for(let i=0;i<128;i++){const child=View.node();View.createElement(child,${registry.view.tags.find(t=>t.name==='span').code});View.setClass(child,'a');View.insert(1,child,0);}
     View.command(button,${registry.view.commands.find(c=>c.name==='focus').code},0);View.stylesheet(2,'');`:treeDepth?`let parent=1;const count=${registry.view.limits.treeDepth}+(event.seq===0?1:2);
     for(let i=0;i<count;i++){const child=View.node();View.createElement(child,${registry.view.tags.find(t=>t.name==='span').code});View.insert(parent,child,0);parent=child;}`:String.raw`
@@ -55,12 +57,12 @@ try{
     const button=find(doc);assert(button,'initial committed button missing');
     const {model}=await call('DOM.getBoxModel',{nodeId:button.nodeId}),q=model.content,x=(q[0]+q[2])/2,y=(q[1]+q[5])/2;
     for(const type of ['mousePressed','mouseReleased'])await call('Input.dispatchMouseEvent',{type,x,y,button:'left',clickCount:1});
-    const failed=await wait(state=>state.status==='failed');assert.match(failed.text,cascadeWork?/cascade work budget/:treeDepth?/tree depth budget/:/stylesheet work budget/);
+    const failed=await wait(state=>state.status==='failed');assert.match(failed.text,expandedValues?/expanded value budget/:cascadeWork?/cascade work budget/:treeDepth?/tree depth budget/:/stylesheet work budget/);
     assert(!failed.text.includes('AFTER')&&!failed.text.includes('CAUGHT'),failed.text);assert.equal(failed.title,'before');
     const remote=await call('DOM.resolveNode',{nodeId:button.nodeId});
     const retained=await call('Runtime.callFunctionOn',{objectId:remote.object.objectId,returnByValue:true,functionDeclaration:'function(){return this.isConnected&&this.textContent===\'Trigger\';}'});
     assert.equal(retained.result.value,true,'last successful DOM must remain visible');
-    console.log(`Generated ${cascadeWork?'cascade work':treeDepth?'tree depth':'CSS work'}: initial stylesheet, trusted event, typed Worker failure before catch/logging and retained DOM/title passed`);
+    console.log(`Generated ${expandedValues?'expanded values':cascadeWork?'cascade work':treeDepth?'tree depth':'CSS work'}: initial stylesheet, trusted event, typed Worker failure before catch/logging and retained DOM/title passed`);
   });
 }finally{
   if(server){server.closeAllConnections();await new Promise(done=>server.close(done));}
