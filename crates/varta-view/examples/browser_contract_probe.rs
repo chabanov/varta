@@ -271,6 +271,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             B::new().set_checked(7, 1, 0).remove(999).finish(),
         ],
     ));
+    let mut disabled = B::new();
+    disabled.create_element(2, Tag::Select);
+    for (id, value) in [(3, "a"), (4, "b")] {
+        disabled
+            .create_element(id, Tag::Option)
+            .set_attribute(id, A::Disabled, "")
+            .set_attribute(id, A::Value, value)
+            .create_text(id + 100, value)
+            .insert(id, id + 100, 0)
+            .insert(2, id, 0);
+    }
+    disabled.insert(1, 2, 0);
+    cases.push((
+        "select-state-disabled-none",
+        vec![
+            disabled.finish(),
+            B::new().remove_attribute(3, A::Disabled).finish(),
+            B::new().set_attribute(4, A::Selected, "").finish(),
+            B::new().set_value(2, "missing", 0).finish(),
+            B::new()
+                .create_element(10, Tag::Div)
+                .insert(1, 10, 0)
+                .insert(10, 2, 0)
+                .finish(),
+            B::new().remove_attribute(4, A::Selected).finish(),
+            B::new().set_value(2, "b", 0).finish(),
+            B::new().finish(),
+        ],
+    ));
     for (name, value, fallback) in [
         ("select-work-ascii", "X".repeat(4096), false),
         ("select-work-unicode", "😀".repeat(1024), false),

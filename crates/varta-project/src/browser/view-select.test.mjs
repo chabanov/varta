@@ -11,6 +11,16 @@ function fixture(){const model=createViewModel();model.commit(encodeViewBatch([c
 const state=(model,id)=>model.snapshot().nodes.find(n=>n.id===id);
 const commit=(model,...ops)=>model.commit(encodeViewBatch(ops));
 
+test('all-disabled select and reinsertion keep explicit no-selection until a selected attribute',()=>{
+  const m=createViewModel();commit(m,create(2,'select'),...option(3,'a','A',true),...option(4,'b','B',true),insert(1,2));
+  assert.equal(state(m,2).value,'');assert(!state(m,3).optionSelected&&!state(m,4).optionSelected);
+  commit(m,{name:'remove_attribute',node:3,attribute:'disabled'});assert.equal(state(m,2).value,'');
+  commit(m,attr(4,'selected',''));assert.equal(state(m,2).value,'b');
+  commit(m,value(2,'missing'),create(10,'div'),insert(1,10),insert(10,2));
+  assert.equal(state(m,2).value,'');assert.equal(state(m,2).seq,0);
+  commit(m,{name:'remove_attribute',node:4,attribute:'selected'});assert.equal(state(m,2).value,'a');
+});
+
 test('single-select defaults, duplicate choices and equal echoes keep host identity',()=>{
   const m=fixture();assert.equal(state(m,2).value,'same');assert.equal(state(m,4).optionSelected,true);
   m.input(2,'same',false,true,5);assert.equal(state(m,5).optionSelected,true);assert.equal(state(m,2).seq,1);

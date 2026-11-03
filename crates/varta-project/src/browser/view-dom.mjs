@@ -137,6 +137,15 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
           // Listener and command state is already committed in the pure model.
         }
       }
+      // Browsers differ when all options are disabled, when a detached select
+      // is reinserted, and when attribute writes meet internal dirty flags.
+      // The shared model owns selectedness. Reconcile once after mutation,
+      // retaining duplicate identity and avoiding writes on equal/no-op commits.
+      for(const [id,node] of current)if(node.tag==='select'){
+        const selected=node.children.findIndex(option=>current.get(option)?.optionSelected);
+        const element=nodes.get(id);
+        if(element.selectedIndex!==selected)element.selectedIndex=selected;
+      }
     } finally { applying = false; }
     for (const op of effects) {
       const node = nodes.get(op.node);

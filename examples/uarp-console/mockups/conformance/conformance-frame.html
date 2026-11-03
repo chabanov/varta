@@ -13,20 +13,22 @@
 <div id="host"></div>
 <script type="module">
   // Renders one mockup through the applier, full page, for the conformance runner.
-  import { createApplier } from "../../../varta-web-host/applier.js";
+  import {createViewDom,view,MOCKUPS,linkPolicy} from "../official-host.js";
   import { mockupBatches } from "./mockup-batch.js";
 
   const mockup = new URL(location.href).searchParams.get("mockup");
   try {
-    const view = (await (await fetch("../../../varta-web-host/contract.json", { cache: "no-store" })).json()).view;
+    if(!MOCKUPS.includes(mockup))throw new Error('unknown mockup');
     const html = await (await fetch(`../${mockup}`, { cache: "no-store" })).text();
     const css = await (await fetch("../console.css", { cache: "no-store" })).text();
     const doc = new DOMParser().parseFromString(html, "text/html");
-    const applier = createApplier(view, { container: document.getElementById("host"), assetBase: new URL("../", location.href).href, onEvent: () => {} });
-    const { tree, states } = mockupBatches(view, doc, css);
+    const applier = createViewDom({container:document.getElementById("host"),interactive:false,linkRequested:linkPolicy()});
+    const { tree, states } = mockupBatches(doc, css);
     applier.apply(tree);
     applier.apply(states);
-    window.__root = applier.debugRoot();
+    window.__root = applier.inspectNode(view.wire.root);
+    window.__snapshot = applier.snapshot();
+    window.addEventListener('pagehide',()=>applier.close(),{once:true});
     window.__ready = true;
   } catch (error) {
     window.__error = String(error?.message ?? error);

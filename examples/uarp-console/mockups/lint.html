@@ -21,69 +21,72 @@
 <body>
 <main>
 <h1>UARP Console — макети Single Chat</h1>
-<p>Кожен макет перевіряється на відповідність підмножині L0 v1 з генерованих таблиць <code>docs/embedding.md</code>: елементи, атрибути та їхні граматики, класи, inline-стилі, рядки й таблиця стилів.</p>
+<p>Кожен макет перевіряється на відповідність підмножині L0 v1 зі спільного реєстру та моделі офіційного browser host: елементи, атрибути та їхні граматики, класи, inline-стилі, рядки й таблиця стилів.</p>
 <div id="summary">Перевірка…</div>
 <div id="results"></div>
 </main>
 <script type="module">
   import { lintTree } from "./lint/lint-html.js";
-  import { checkStylesheet } from "../../varta-web-host/view-css.js";
+  import {checkStylesheet,view} from "./official-host.js";
 
-  const MOCKUPS = [
-    ["chat-empty.html", "Початок розмови"],
-    ["chat.html", "Розмова: міркування, делегування, інструменти, Markdown, потокова відповідь"],
-    ["chat-cards.html", "Картки: дозвіл, питання агента, помилка, втрачене з'єднання, тост"],
-    ["chat-context.html", "Бічна панель контексту: агент, запуск, активні запуски"],
-    ["settings.html", "Діалог підключення"],
-  ];
-  const view = (await (await fetch("../../varta-web-host/contract.json", { cache: "no-store" })).json()).view;
-  const results = document.getElementById("results");
-  let errorCount = 0;
-  const report = { mockups: {}, stylesheet: null };
+  async function run(){
+    const MOCKUPS = [
+      ["chat-empty.html", "Початок розмови"],
+      ["chat.html", "Розмова: міркування, делегування, інструменти, Markdown, потокова відповідь"],
+      ["chat-cards.html", "Картки: дозвіл, питання агента, помилка, втрачене з'єднання, тост"],
+      ["chat-context.html", "Бічна панель контексту: агент, запуск, активні запуски"],
+      ["settings.html", "Діалог підключення"],
+    ];
+    const results = document.getElementById("results");
+    let errorCount = 0;
+    const report = { mockups: {}, stylesheet: null };
 
-  const sheet = checkStylesheet(await (await fetch("console.css", { cache: "no-store" })).text(), view);
-  errorCount += sheet.errors.length;
-  report.stylesheet = { rules: sheet.rules.length, errors: sheet.errors };
-  results.append(section("console.css", `${sheet.rules.length} правил`, sheet.errors, []));
+    const stylesheet=await (await fetch("console.css", {cache:"no-store"})).text();
+    const sheet = checkStylesheet(stylesheet, view);
+    errorCount += sheet.errors.length;
+    report.stylesheet = { rules: sheet.rules.length, errors: sheet.errors };
+    results.append(section("console.css", `${sheet.rules.length} правил`, sheet.errors, []));
 
-  const usedClasses = new Set();
-  for (const [file, label] of MOCKUPS) {
-    const html = await (await fetch(file, { cache: "no-store" })).text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const { errors, states, elements, classes } = lintTree(doc, view, { openUrlPatterns: ["https://docs.snaga.ai/*"] });
-    classes.forEach((c) => usedClasses.add(c));
-    errorCount += errors.length;
-    report.mockups[file] = { errors, states, elements };
-    results.append(section(file, `${label} · ${elements} елементів`, errors, states, true));
-  }
-
-  document.getElementById("summary").innerHTML = errorCount
-    ? `<span class="bad">✗ ${errorCount} порушень підмножини</span>`
-    : `<span class="ok">✓ усі макети й таблиця стилів у межах підмножини L0 v1</span>`;
-  window.__lint = { errors: errorCount, report, classes: [...usedClasses] };
-
-  function section(file, label, errors, states, link = false) {
-    const el = document.createElement("section");
-    const title = document.createElement("h2");
-    title.innerHTML = `${errors.length ? '<span class="bad">✗</span>' : '<span class="ok">✓</span>'} `;
-    if (link) {
-      const a = document.createElement("a");
-      a.href = file;
-      a.textContent = file;
-      title.append(a);
-    } else title.append(file);
-    const meta = document.createElement("div");
-    meta.className = "muted";
-    meta.textContent = label;
-    el.append(title, meta);
-    if (errors.length || states.length) {
-      const list = document.createElement("ul");
-      for (const e of errors) list.append(Object.assign(document.createElement("li"), { className: "bad", textContent: e }));
-      for (const s of states) list.append(Object.assign(document.createElement("li"), { className: "muted", textContent: s }));
-      el.append(list);
+    const usedClasses = new Set();
+    for (const [file, label] of MOCKUPS) {
+      const html = await (await fetch(file, { cache: "no-store" })).text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const { errors, states, elements, classes } = lintTree(doc, {stylesheet});
+      classes.forEach((c) => usedClasses.add(c));
+      errorCount += errors.length;
+      report.mockups[file] = { errors, states, elements };
+      results.append(section(file, `${label} · ${elements} елементів`, errors, states, true));
     }
-    return el;
+
+    document.getElementById("summary").innerHTML = errorCount
+      ? `<span class="bad">✗ ${errorCount} порушень підмножини</span>`
+      : `<span class="ok">✓ усі макети й таблиця стилів у межах підмножини L0 v1</span>`;
+    window.__lint = { errors: errorCount, report, classes: [...usedClasses] };
+
+    function section(file, label, errors, states, link = false) {
+      const el = document.createElement("section");
+      const title = document.createElement("h2");
+      title.innerHTML = `${errors.length ? '<span class="bad">✗</span>' : '<span class="ok">✓</span>'} `;
+      if (link) {
+        const a = document.createElement("a");
+        a.href = file;
+        a.textContent = file;
+        title.append(a);
+      } else title.append(file);
+      const meta = document.createElement("div");
+      meta.className = "muted";
+      meta.textContent = label;
+      el.append(title, meta);
+      if (errors.length || states.length) {
+        const list = document.createElement("ul");
+        for (const e of errors) list.append(Object.assign(document.createElement("li"), { className: "bad", textContent: e }));
+        for (const s of states) list.append(Object.assign(document.createElement("li"), { className: "muted", textContent: s }));
+        el.append(list);
+      }
+      return el;
+    }
   }
+  run().catch(error=>{document.getElementById("summary").textContent="Не вдалося перевірити: "+error.message;window.__lint={errors:1,report:{fatal:String(error)},classes:[]};});
 </script>
 </body>
 </html>

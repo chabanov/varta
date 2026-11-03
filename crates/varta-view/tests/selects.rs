@@ -87,6 +87,52 @@ fn changes(view: &mut View) -> Vec<(EventKind, u32, String)> {
 }
 
 #[test]
+fn disabled_select_defaults_and_reinsertion_preserve_explicit_no_selection() {
+    let mut view = field();
+    let mut setup = BatchWriter::new();
+    option(&mut setup, 3, 2, Some("a"), "A", true);
+    option(&mut setup, 4, 2, Some("b"), "B", true);
+    commit(&mut view, &setup);
+    assert_eq!(state(&view)["value"], "");
+    assert!(
+        state(&view)["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|option| option["selected"] == false)
+    );
+    let mut enable = BatchWriter::new();
+    enable.remove_attribute(3, Attribute::Disabled);
+    commit(&mut view, &enable);
+    assert_eq!(state(&view)["value"], "");
+    let mut selected = BatchWriter::new();
+    selected.set_attribute(4, Attribute::Selected, "");
+    commit(&mut view, &selected);
+    assert_eq!(state(&view)["value"], "b");
+    let mut clear = BatchWriter::new();
+    clear.set_value(2, "missing", 0);
+    commit(&mut view, &clear);
+    let mut move_select = BatchWriter::new();
+    move_select
+        .create_element(1000, Tag::Div)
+        .insert(1, 1000, 0)
+        .insert(1000, 2, 0);
+    commit(&mut view, &move_select);
+    let snapshot = view.snapshot();
+    let select = &snapshot["tree"]["children"][0]["children"][0];
+    assert_eq!(select["value"], "");
+    assert_eq!(select["seq"], 0);
+    assert!(
+        select["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|option| option["selected"] == false)
+    );
+    assert!(changes(&mut view).is_empty());
+}
+
+#[test]
 fn select_initial_values_disabled_options_duplicate_values_and_equal_echoes() {
     let mut view = field();
     let mut batch = BatchWriter::new();

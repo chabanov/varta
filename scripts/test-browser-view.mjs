@@ -55,6 +55,29 @@ try {
       const cascaded=oracle.flex.cascade.tree.children[0].children[0].style.display;
       const projected=oracle.flex.projected.tree.children[0].children[0].style.display;
       assert.equal(cascaded,'inline');assert.equal(projected,'block');assert.equal(comparison.result.value,projected);
+      const selectStates=oracle.cases.filter(item=>item.name.startsWith('select-state-'));
+      assert(selectStates.length,'native select state fixtures missing');
+      const stateResult=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
+        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        let checks=0;const mismatches=[];
+        const expectedFields=root=>{const fields=[],stack=[root];while(stack.length){const node=stack.pop();
+          if(node.tag==='select')fields.push({id:node.id,value:node.value,seq:node.seq,selected:(node.children??[]).filter(option=>option.selected).map(option=>option.id)});
+          stack.push(...node.children??[]);}return fields.sort((a,b)=>a.id-b.id);};
+        for(const fixture of ${JSON.stringify(selectStates)}){
+          const host=document.createElement('div');document.body.append(host);const app=createViewDom({container:host});
+          for(let i=0;i<fixture.batches.length;i++){
+            let ok=true;try{app.apply(Uint8Array.from(fixture.batches[i]));}catch{ok=false;}
+            const expected=fixture.results[i];if(ok!==expected.ok)mismatches.push([fixture.name,i,'admission']);
+            const fields=app.snapshot().nodes.filter(node=>node.tag==='select').map(node=>({id:node.id,value:app.inspectNode(node.id).value,seq:node.seq,
+              selected:node.children.filter(id=>app.inspectNode(id).selected)})).sort((a,b)=>a.id-b.id);
+            if(JSON.stringify(fields)!==JSON.stringify(expectedFields(expected.snapshot.tree)))mismatches.push([fixture.name,i,'DOM selectedness']);checks++;
+          }
+          app.close();host.remove();
+        }
+        return {checks,mismatches};
+      })()`});
+      assert(!stateResult.exceptionDetails,JSON.stringify(stateResult.exceptionDetails));assert.deepEqual(stateResult.result.value.mismatches,[]);
+      console.log(`Native/Chrome disabled select, explicit none and reinsertion: ${stateResult.result.value.checks} batches passed`);
       const workCases=oracle.cases.filter(item=>item.name.startsWith('select-work-'));
       assert(workCases.length,'native select work fixtures missing');
       const work=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
