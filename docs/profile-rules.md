@@ -4161,13 +4161,23 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   The CPU side painter uses one premultiplied field over shared ring coverage.
   Preserve its inward-front ownership, exact zero-width donation, analytic ordinary
   angle comparison and bounded opposing-corner solve. Interval-proven solid color
-  blocks may avoid point work; uncertain blocks must retain sampling. Average
+  blocks may avoid point work; uncertain blocks must retain sampling. Early
+  corner selection requires proof that exactly one front has arrived before
+  every other candidate and the rectangle; close arrivals keep the bounded search.
+  Coverage-based block reduction must enclose whole nonzero-mask pixels, including
+  their complete color sample area. Average
   seam colors before source-over and apply contour alpha once. Enclose fractional
   far edges explicitly; origin-floor/size-ceil is not a containing pixel bound.
   Direct GPU color fields remain separate acceptance work.
 - Static box opacity isolates the whole painted subtree, including its outline;
   never scale overlapping child draw alpha independently. Keep zero-opacity input
-  geometry and top-layer popup scope. Use explicit bounded group replay with
+  geometry and top-layer popup scope. Nonunit opacity creates a zero-level context:
+  delay its whole subtree until after ordinary content in the nearest root/opacity
+  context, preserve source order among peers, lift through nonisolating ancestors
+  with their original clips and never escape an isolating ancestor. Paint and hit
+  ordering must agree, including opacity0. Context changes may conservatively
+  invalidate input-geometry reuse; do not hide changed overlap targets to preserve
+  an old metadata equality assertion. Use explicit bounded group replay with
   reusable tiles; do not allocate one viewport layer per source depth. Paths that
   cross tile edges need shared physical AA coverage. Strip inherited scopes only
   from pixel commands and composite them once; source text/hit/IME clips stay raw.
@@ -4178,8 +4188,92 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   preparation work by rerunning layout/shaping/guest code. Preserve streamed
   prefixes, following draws and cache recovery. Grouped CPU preparation must keep
   retained damage reuse across unchanged/changed frames; report fallback honestly
-  rather than counting it as GPU composition. Inline opacity and direct GPU groups
-  remain separate acceptance work.
+  rather than counting it as GPU composition. Direct GPU groups remain separate
+  acceptance work.
+- Inline background radii use slice geometry, not independently rounded line
+  boxes. Assemble fragments in visual order, resolve/normalize radii against each
+  fragment's border box and apply them to that full strip. Keep wide offsets and
+  contours in f64 until local clipping; preserve narrow tails beyond f32 strip
+  precision. A radius affects only the background/own font-box hit, never clips
+  descendant glyphs or their independent font-box hits. Charge contour work to
+  the shared existing text paint allowance before generation, across all inline
+  nodes; zero-alpha/hidden-group pixels skip that work without erasing metadata.
+  Horizontal inline spacing and nonzero borders require their remaining
+  implementations. Inline opacity uses one source capture with original clips,
+  shared shaping/first-source glyph ownership, per-line source ordering and whole
+  subtree isolation. Never renew text work or retained cache allowances per
+  context; overflow capture is temporary, and hidden contexts preserve hits.
+  Ordinary block backgrounds precede inline content. Flex/grid items and replaced
+  controls use atomic pseudo contexts; descendant opacity lifts to the nearest
+  real context. Preserve ancestor clips across these phases, and join pointer
+  fragments in the same order. Plain text contributes occupied font-box line
+  fragments, never the whole anonymous block width. Background-decorated flows
+  need source capture even at opacity1; undecorated glyphs keep their direct path
+  while hit fragments retain line/source order. This does not establish general
+  positioned/z-index ordering or browser raster parity. Decoration edge rounding happens before host DPI scaling; radii keep
+  logical percentage bases with snapped paint constraints. Broken-inline paint
+  radii use floored fragment dimensions on the snapped whole strip. Clip chains
+  retain independent logical bounds, so an empty painted clip cannot erase a
+  positive logical target or text visibility. Paragraphs round only their
+  containing vertical paint origin before DPI. Paragraph font boxes separately
+  round CSS ascent/descent before splitting leading, with the smaller half above;
+  preserve fractional horizontal advances, containing line heights and glyph
+  offsets. Apply this rule equally with/without underline. Keep source positions
+  and field editing/selection geometry separate from paint snapping, and retain
+  the position-independent outline cache. Native
+  field painting retains its direct shaped-control path. The implicit canvas
+  keeps its actual physical far edges. Preserve raw styles,
+  source/cache limits, safety margins and comparison thresholds; keep remaining
+  fractional-DPI text/clip failures visible.
+- Solid underline is propagated decoration, not ordinary inherited style.
+  Preserve decorating-box color/thickness through descendant color/size/`none`,
+  stop at replaced/atomic boundaries and retain nested lines in source order.
+  Draw before each line's glyphs, not all lines before all glyphs; capture rich
+  underlined flows even without a background so overhangs obey source order.
+  Use selected unhinted outlines for auto ink interception; exclude CJK, preserve
+  disjoint contours and quadratic/cubic extrema without flattening. Charge the
+  temporary stroke/index and each contour operation to the existing shared text
+  work before generating them. Static glyf bounds may cull a nonintersecting
+  glyph; CFF/variation bounds must not perform an unmetered outline redraw.
+  Replaced fields admit own decoration while keeping their shaped editing buffer
+  (including password masks), geometry and limits. Share rectangle spans between
+  CPU/GPU; no extra retained cache, texture or layer budget. Keep remaining
+  whitespace, real-font, control and platform acceptance gaps explicit.
+- Solid inline outlines unite expanded font-box fragments before insetting the
+  whole boundary. Clamp negative offsets per fragment/axis; reference rounded
+  radii to the first fragment and preserve convex/concave corner transitions.
+  Clip cubic subcurves analytically in f64 before conversion; never flatten or
+  allocate a viewport mask. The inner inverse clip removes winding exactly +1,
+  not every positive winding: folded inset regions must retain their ink. Fill
+  a single path to avoid duplicate alpha. Normalize nonzero outline width/offset
+  magnitudes to at least one integral CSS pixel before DPI, preserving raw styles.
+  Outline replay is tree postorder after descendants, including containing block
+  outlines, with original clips and opacity. Share the existing text work and
+  total captured frame-command limit; add no cache/texture/layer allowance.
+- Non-replaced inline vertical padding expands only that element's border-box
+  fragments, backgrounds, rounded hits and outlines. Preserve font boxes, glyph
+  positions, underline metrics, ancestor fragments and line height; exclude
+  padding from the public content box. Resolve both percentage sides from the
+  containing block content width, not a fragment or line width. Reuse the existing
+  cascade-ordered geometry side store, including variable resolution and CSSOM
+  removal. Vertical margins have no line-layout effect; horizontal auto is zero.
+  Refuse nonzero horizontal spacing until shaping boundary support exists. Keep
+  the existing used-length, aggregate fragment/work and retained-cache limits.
+  Retain owned pixel/fraction values in shared flows, not opaque-pointer-capable
+  layout dimensions; preserve the flow's `Send`/`Sync` properties.
+- Optional native glyph coverage is a host input, never an engine OS/font lookup.
+  Keep selected bytes/index/coordinates and shaped glyph IDs/advances unchanged.
+  Validate mask extents, arithmetic and byte length before conversion; return to
+  portable outlines on refusal without substituting another face. Coverage runs
+  must be disjoint and use existing rectangle/clip/group commands, never a fresh
+  image/layer allowance. Visible mask cells charge the same shared text budget
+  on cache hits and misses; offscreen/hidden ink may skip pixel work while logical
+  metadata remains. Share the old4096-entry/8MiB glyph cache with coverage and
+  provider-retained font bytes; do not grow it or the65536-command/16MiB scene cache.
+  Replacing a provider invalidates retained pixels. Keep actual GPU observations
+  separate from raster/outline preparation counters. CoreText is desktop-only,
+  uses explicit bytes without font registration, and preserves outline fallback
+  for collection/variation/color instances it cannot instantiate exactly.
 - Rounded overflow paths are physical and closed; preserve the inherited scope
   for each primitive and independent hit region. Own borders/outlines are not
   clipped by their own overflow; children use the padding curve and select popups

@@ -11,6 +11,22 @@ const BOTTOM_LEFT: usize = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(crate) struct Corners(pub [[f32; 2]; CORNERS]);
 impl Corners {
+    pub(super) fn resolve_paint(
+        raw: &str,
+        logical: BoxRect,
+        paint: BoxRect,
+        units: Units,
+    ) -> Option<Self> {
+        Some(Self(
+            resolve_radii_in(
+                raw,
+                [f64::from(logical.width), f64::from(logical.height)],
+                [f64::from(paint.width), f64::from(paint.height)],
+                units,
+            )?
+            .map(|r| r.map(|v| v as f32)),
+        ))
+    }
     pub fn resolve(raw: &str, bounds: BoxRect, units: Units) -> Option<Self> {
         if ![bounds.x, bounds.y, bounds.width, bounds.height]
             .into_iter()
@@ -20,74 +36,14 @@ impl Corners {
         {
             return None;
         }
-        // Normalize magnitudes before applying axis factors. Even very large
-        // finite percentages/lengths reduce to a bounded contour without an
-        // overflowing intermediate or an arbitrary radius-admission ceiling.
-        let mut parsed = [(0.0_f64, [1.0_f64; 2]); CORNERS];
-        let mut count = 0;
-        let mut maximum = 0.0_f64;
-        for value in raw.split_ascii_whitespace() {
-            if count == CORNERS {
-                return None;
-            }
-            let (number, factors) = if value == "0" {
-                ("0", [1.0; 2])
-            } else if let Some(number) = value.strip_suffix('%') {
-                (
-                    number,
-                    [
-                        f64::from(bounds.width) / 100.0,
-                        f64::from(bounds.height) / 100.0,
-                    ],
-                )
-            } else if let Some(number) = value.strip_suffix("px") {
-                (number, [1.0; 2])
-            } else {
-                (
-                    value.strip_suffix("rem")?,
-                    [f64::from(units.pixels("1rem", false)?); 2],
-                )
-            };
-            let number = number.parse::<f64>().ok()?;
-            if !number.is_finite() || number < 0.0 {
-                return None;
-            }
-            parsed[count] = (number, factors);
-            maximum = maximum.max(number);
-            count += 1;
-        }
-        parsed = match count {
-            1 => [parsed[0]; CORNERS],
-            2 => [parsed[0], parsed[1], parsed[0], parsed[1]],
-            3 => [parsed[0], parsed[1], parsed[2], parsed[1]],
-            4 => parsed,
-            _ => return None,
-        };
-        if maximum == 0.0 {
-            return Some(Self::default());
-        }
-        let values =
-            parsed.map(|(number, factors)| factors.map(|factor| number / maximum * factor));
-        let mut pixel_scale = maximum;
-        for (extent, sum) in [
-            (bounds.width, values[TOP_LEFT][0] + values[TOP_RIGHT][0]),
-            (
-                bounds.width,
-                values[BOTTOM_LEFT][0] + values[BOTTOM_RIGHT][0],
-            ),
-            (bounds.height, values[TOP_LEFT][1] + values[BOTTOM_LEFT][1]),
-            (
-                bounds.height,
-                values[TOP_RIGHT][1] + values[BOTTOM_RIGHT][1],
-            ),
-        ] {
-            if sum > 0.0 {
-                pixel_scale = pixel_scale.min(f64::from(extent) / sum);
-            }
-        }
-        Some(Self(values.map(|radius| {
-            radius.map(|axis| (axis * pixel_scale) as f32)
-        })))
+        Some(Self(
+            resolve_radii(
+                raw,
+                [f64::from(bounds.width), f64::from(bounds.height)],
+                units,
+            )?
+            .map(|r| r.map(|axis| axis as f32)),
+        ))
     }
     pub fn is_square(self) -> bool {
         self.0.into_iter().all(|[x, y]| x == 0.0 || y == 0.0)
@@ -211,6 +167,84 @@ impl Corners {
         }
         true
     }
+}
+
+/// Normalize before converting coordinates: an inline composite can be much
+/// wider than its individual fragments. Keep its offsets/radii in f64 until
+/// clipping the contour to a local fragment.
+pub(super) fn resolve_radii(
+    raw: &str,
+    size: [f64; 2],
+    units: Units,
+) -> Option<[[f64; 2]; CORNERS]> {
+    resolve_radii_in(raw, size, size, units)
+}
+pub(super) fn resolve_radii_in(
+    raw: &str,
+    size: [f64; 2],
+    limit: [f64; 2],
+    units: Units,
+) -> Option<[[f64; 2]; CORNERS]> {
+    if size
+        .into_iter()
+        .chain(limit)
+        .any(|v| !v.is_finite() || v < 0.0)
+    {
+        return None;
+    }
+    // Normalize magnitudes before applying axis factors. Even very large
+    // finite percentages/lengths reduce to a bounded contour without an
+    // overflowing intermediate or an arbitrary radius-admission ceiling.
+    let mut parsed = [(0.0_f64, [1.0_f64; 2]); CORNERS];
+    let mut count = 0;
+    let mut maximum = 0.0_f64;
+    for value in raw.split_ascii_whitespace() {
+        if count == CORNERS {
+            return None;
+        }
+        let (number, factors) = if value == "0" {
+            ("0", [1.0; 2])
+        } else if let Some(number) = value.strip_suffix('%') {
+            (number, [size[0] / 100.0, size[1] / 100.0])
+        } else if let Some(number) = value.strip_suffix("px") {
+            (number, [1.0; 2])
+        } else {
+            (
+                value.strip_suffix("rem")?,
+                [f64::from(units.pixels("1rem", false)?); 2],
+            )
+        };
+        let number = number.parse::<f64>().ok()?;
+        if !number.is_finite() || number < 0.0 {
+            return None;
+        }
+        parsed[count] = (number, factors);
+        maximum = maximum.max(number);
+        count += 1;
+    }
+    parsed = match count {
+        1 => [parsed[0]; CORNERS],
+        2 => [parsed[0], parsed[1], parsed[0], parsed[1]],
+        3 => [parsed[0], parsed[1], parsed[2], parsed[1]],
+        4 => parsed,
+        _ => return None,
+    };
+    if maximum == 0.0 {
+        return Some([[0.0; 2]; CORNERS]);
+    }
+    let values = parsed.map(|(number, factors)| factors.map(|factor| number / maximum * factor));
+    let mut pixel_scale = maximum;
+    for (extent, sum) in [
+        (limit[0], values[TOP_LEFT][0] + values[TOP_RIGHT][0]),
+        (limit[0], values[BOTTOM_LEFT][0] + values[BOTTOM_RIGHT][0]),
+        (limit[1], values[TOP_LEFT][1] + values[BOTTOM_LEFT][1]),
+        (limit[1], values[TOP_RIGHT][1] + values[BOTTOM_RIGHT][1]),
+    ] {
+        if sum > 0.0 {
+            pixel_scale = pixel_scale.min(extent / sum);
+        }
+    }
+    Some(values.map(|radius| radius.map(|axis| axis * pixel_scale)))
 }
 
 #[cfg(test)]

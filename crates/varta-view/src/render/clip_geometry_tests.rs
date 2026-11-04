@@ -2,6 +2,16 @@ use super::*;
 use crate::paint::corners::Corners;
 use std::sync::Arc;
 
+#[test]
+fn empty_pixel_clip_keeps_logical_visibility_for_text_observers() {
+    let bounds = rect(3.25, 3.25, 0.03125, 40.0);
+    let clip = Clip::with_paint(None, None, bounds, Corners([[0.015625, 20.0]; 4]));
+    let query = rect(3.265625, 20.0, 0.0, 6.0);
+    assert!(clip.bounds.is_none());
+    assert!(clip.contains(3.265625, 23.25));
+    assert_eq!(visible(&clip, query), Some(query));
+}
+
 fn rounded(parent: Option<Arc<Clip>>, rect: BoxRect, corners: Corners) -> Arc<Clip> {
     Clip::new(parent, corners.clipped_path(rect), rect, corners)
 }

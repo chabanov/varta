@@ -40,10 +40,10 @@ impl Border {
     }
     pub fn pixel(&self, x: f64, y: f64, step: f64) -> [u8; 4] {
         let center = self.colors[self.partition.owner(x + step * 0.5, y + step * 0.5)];
-        let corners = [[x, y], [x + step, y], [x, y + step], [x + step, y + step]];
-        if corners
-            .into_iter()
-            .all(|[x, y]| self.colors[self.partition.owner(x, y)] == center)
+        if self.colors[self.partition.owner(x, y)] == center
+            && self.colors[self.partition.owner(x + step, y)] == center
+            && self.colors[self.partition.owner(x, y + step)] == center
+            && self.colors[self.partition.owner(x + step, y + step)] == center
         {
             return center;
         }
@@ -51,14 +51,15 @@ impl Border {
         let mut count = 0;
         for row in 0..COLOR_GRID {
             for column in 0..COLOR_GRID {
-                for [ox, oy] in COLOR_OFFSETS {
+                for &[ox, oy] in &COLOR_OFFSETS {
                     let sx = x + step * (column as f64 + ox) / COLOR_GRID as f64;
                     let sy = y + step * (row as f64 + oy) / COLOR_GRID as f64;
                     if self.partition.in_ring(sx, sy) {
                         let color = self.colors[self.partition.owner(sx, sy)];
-                        for (sum, value) in sum.iter_mut().zip(color) {
-                            *sum += u32::from(value);
-                        }
+                        sum[0] += u32::from(color[0]);
+                        sum[1] += u32::from(color[1]);
+                        sum[2] += u32::from(color[2]);
+                        sum[3] += u32::from(color[3]);
                         count += 1;
                     }
                 }

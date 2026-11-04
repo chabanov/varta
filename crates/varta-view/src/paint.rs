@@ -5,10 +5,19 @@ mod clip_curve;
 mod corner_arc;
 mod corner_clip;
 pub(crate) mod corners;
+mod curve_region;
 mod groups;
+mod inline_decor;
+mod inline_groups;
+mod inline_outline;
+mod order;
+mod outline_curve;
+mod outline_union;
 mod scroll;
 mod select;
+mod snap;
 mod text_geometry;
+mod underline;
 use crate::TextMeasurer;
 use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
 use crate::render::clips::{Clip, MaskCache};
@@ -61,7 +70,7 @@ pub struct FrameMetadata {
     hit_regions: Vec<(u32, BoxRect)>,
     // Only the element's own border-box hit is rounded. Visible overflowing
     // descendant/text fragments retain their independent hit rectangles.
-    rounded_regions: BTreeMap<usize, (BoxRect, Corners)>,
+    rounded_regions: BTreeMap<usize, inline_decor::Region>,
     hit_clips: BTreeMap<usize, std::sync::Arc<Clip>>,
     ancestors: BTreeMap<u32, Option<u32>>,
     scrolls: BTreeMap<u32, ScrollMetrics>,
@@ -340,7 +349,7 @@ impl FrameMetadata {
                     && self
                         .rounded_regions
                         .get(&index)
-                        .is_none_or(|(bounds, radii)| radii.contains(*bounds, x, y))
+                        .is_none_or(|region| region.contains(x, y, self.scale))
                     && self
                         .hit_clips
                         .get(&index)
@@ -406,17 +415,24 @@ struct Surface<'a> {
     groups: Vec<groups::Scope>,
     relative_clips: BTreeMap<(usize, usize), groups::RelativeClip>,
     isolation_required: bool,
+    capture: Option<inline_groups::Capture>,
 }
 impl Surface<'_> {
-    fn push_clip(&mut self, rect: BoxRect, corners: Corners) -> Result<(), PaintError> {
-        let path = corners
-            .clipped_path(rect)
+    fn push_clip(
+        &mut self,
+        rect: BoxRect,
+        corners: Corners,
+        paint_rect: BoxRect,
+        paint_corners: Corners,
+    ) -> Result<(), PaintError> {
+        let path = paint_corners
+            .clipped_path(paint_rect)
             .map(|path| {
                 path.transform(Transform::from_scale(self.scale, self.scale))
                     .ok_or(PaintError::Dimensions)
             })
             .transpose()?;
-        self.active_clip = Some(Clip::new(
+        self.active_clip = Some(Clip::with_paint(
             self.active_clip.clone(),
             path,
             scaled_rect(rect, self.scale),
@@ -444,7 +460,7 @@ impl Surface<'_> {
         })
     }
     fn mask(&self, rect: Rect) -> Result<ClipMask, PaintError> {
-        if self.commands.is_some() || self.active_clip.is_some() {
+        if self.capture.is_some() || self.commands.is_some() || self.active_clip.is_some() {
             Ok(ClipMask { rect, image: None })
         } else {
             self.rectangle_mask(rect)
@@ -470,6 +486,18 @@ impl Surface<'_> {
             self.failure = Some(PaintError::Unsupported(ROOT_NODE));
             return;
         };
+        if let Some(capture) = self.capture.as_mut() {
+            if let Err(error) = capture.push(inline_groups::SourceDraw {
+                primitive,
+                color,
+                transform,
+                clip: mask.map(|m| m.rect),
+                clips: self.active_clip.clone(),
+            }) {
+                self.failure = Some(error);
+            }
+            return;
+        }
         let bounds = match &primitive {
             Primitive::Rect(rect) => *rect,
             Primitive::Path(path, _) => path.bounds(),
@@ -545,7 +573,7 @@ impl Surface<'_> {
         if self.failure.is_some() || self.groups.last().is_some_and(|scope| scope.hidden) {
             return;
         }
-        if self.commands.is_some() {
+        if self.capture.is_some() || self.commands.is_some() {
             self.record(Primitive::Rect(rect), paint, transform, mask);
         } else if let Some(chain) = self
             .active_clip
@@ -616,7 +644,7 @@ impl Surface<'_> {
         if self.failure.is_some() || self.groups.last().is_some_and(|scope| scope.hidden) {
             return;
         }
-        if self.commands.is_some() {
+        if self.capture.is_some() || self.commands.is_some() {
             self.record(
                 Primitive::Path(std::sync::Arc::new(path.clone()), rule),
                 paint,
@@ -873,6 +901,17 @@ fn border_colors(
     Ok(Some(result))
 }
 
+// Nonzero CSS outline lengths retain a one-pixel minimum and truncate the
+// remaining magnitude before host DPI. Authored values remain untouched.
+fn outline_used_length(value: f32) -> f32 {
+    const MINIMUM: f32 = 1.0;
+    if value == 0.0 {
+        0.0
+    } else {
+        value.abs().floor().max(MINIMUM).copysign(value)
+    }
+}
+
 fn outline(
     tree: &Tree,
     env: &Environment,
@@ -920,6 +959,7 @@ fn outline(
         }
         None => 3.0,
     };
+    let width = outline_used_length(width);
     let solid = match get(CssProperty::OutlineStyle) {
         Some((property, raw)) => {
             layout::border_component(
@@ -957,7 +997,7 @@ fn outline(
         Some((_, "0")) | None => 0.0,
         Some((_, raw)) => units.pixels(raw, true).ok_or(PaintError::Unsupported(id))?,
     };
-    Ok(Some((width, offset, color)))
+    Ok(Some((width, outline_used_length(offset), color)))
 }
 
 fn paint_border(
@@ -968,6 +1008,7 @@ fn paint_border(
     radii: Corners,
     colors: [Color; 4],
 ) -> Result<(), PaintError> {
+    let bounds = snap::rect(bounds);
     let clip = pixmap.local_clip(clip);
     let Some(outer) = Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height) else {
         return Ok(());
@@ -1109,10 +1150,10 @@ fn paint_text(
     measurer: &mut TextMeasurer,
     shape: &TextShape,
     bounds: layout::BoxGeometry,
-    color: Color,
+    style: underline::Style,
     id: u32,
     work: &mut usize,
-) -> Result<(), PaintError> {
+) -> Result<Layout<u32>, PaintError> {
     let (_, layout) = measurer
         .shape_styled(
             &shape.text,
@@ -1121,7 +1162,37 @@ fn paint_text(
             shape.options,
         )
         .map_err(|error| PaintError::Layout(LayoutError::Text(error.to_string())))?;
-    paint_shaped(pixmap, &layout, bounds, color, id, work)
+    paint_shaped(
+        pixmap,
+        &layout,
+        paragraph_paint_bounds(bounds),
+        (&style, &shape.text, shape.options.white_space),
+        id,
+        work,
+    )?;
+    Ok(layout)
+}
+
+// The horizontal position and all logical text geometry remain fractional.
+// Round only the containing paragraph's vertical paint origin, before DPI;
+// per-line font offsets and glyph outlines retain their original coordinates.
+fn paragraph_paint_bounds(bounds: layout::BoxGeometry) -> layout::BoxGeometry {
+    layout::BoxGeometry {
+        rect: BoxRect {
+            y: snap::edge(f64::from(bounds.rect.y)) as f32,
+            ..bounds.rect
+        },
+        ..bounds
+    }
+}
+
+// CSS rounds primary ascent/descent before sharing line leading, placing the
+// smaller half above. Preserve the containing line's fractional advance and all
+// horizontal shaping. Fields keep their shared editing layout unchanged.
+fn paragraph_baseline_offset(m: &parley::LineMetrics) -> f32 {
+    let above =
+        m.ascent.round() + ((m.line_height - m.ascent.round() - m.descent.round()) * 0.5).floor();
+    above - (m.ascent + m.leading * 0.5)
 }
 
 // Field caret/selection/hit geometry and glyph painting must use the same
@@ -1131,13 +1202,33 @@ fn paint_shaped(
     pixmap: &mut Surface,
     layout: &Layout<u32>,
     bounds: layout::BoxGeometry,
-    color: Color,
+    style: (&underline::Style, &str, WhiteSpaceMode),
     id: u32,
     work: &mut usize,
 ) -> Result<(), PaintError> {
-    paint_shaped_with(pixmap, layout, bounds, |_| Ok(color), id, work, None)
+    let (style, text, white_space) = style;
+    let mut plan = underline::Plan::plain(layout, bounds, style, white_space, id, work)?;
+    paint_shaped_with(
+        pixmap,
+        layout,
+        bounds,
+        |_| Ok(style.color),
+        id,
+        work,
+        TextInk {
+            flow: None,
+            paragraph: style.paragraph,
+            underlines: Some((&mut plan, text)),
+        },
+    )
 }
 
+#[derive(Default)]
+struct TextInk<'a> {
+    flow: Option<&'a crate::inline::Frame>,
+    paragraph: bool,
+    underlines: Option<(&'a mut underline::Plan, &'a str)>,
+}
 fn paint_shaped_with(
     pixmap: &mut Surface,
     layout: &Layout<u32>,
@@ -1145,8 +1236,17 @@ fn paint_shaped_with(
     mut color: impl FnMut(u32) -> Result<Color, PaintError>,
     id: u32,
     work: &mut usize,
-    flow: Option<&crate::inline::Frame>,
+    ink: TextInk<'_>,
 ) -> Result<(), PaintError> {
+    let flow = ink.flow;
+    let mut underlines = ink.underlines;
+    if let Some((plan, text)) = underlines.as_mut() {
+        plan.prepare(
+            pixmap,
+            (layout, bounds, flow, text, id, ink.paragraph),
+            work,
+        )?;
+    }
     let bounds = layout::BoxGeometry {
         clip: pixmap.local_clip(bounds.clip),
         ..bounds
@@ -1171,6 +1271,9 @@ fn paint_shaped_with(
     let mut paint = Paint::default();
     let mut glyph_count = 0usize;
     for (line_index, line) in layout.lines().enumerate() {
+        if let Some((plan, _)) = underlines.as_mut() {
+            plan.paint_line(pixmap, line_index, mask.as_ref());
+        }
         let mut line_glyph = 0usize;
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
@@ -1190,13 +1293,16 @@ fn paint_shaped_with(
                 .map(|coord| NormalizedCoord::from_bits(*coord))
                 .collect();
             for glyph in glyph_run.positioned_glyphs() {
-                let glyph_color = match flow {
-                    Some(frame) => color(
-                        *frame.glyph_owners[line_index]
-                            .get(line_glyph)
-                            .ok_or(PaintError::Unsupported(id))?,
-                    )?,
-                    None => base_color,
+                let owner = match flow {
+                    Some(frame) => *frame.glyph_owners[line_index]
+                        .get(line_glyph)
+                        .ok_or(PaintError::Unsupported(id))?,
+                    None => glyph_run.style().brush,
+                };
+                let glyph_color = if flow.is_some() {
+                    color(owner)?
+                } else {
+                    base_color
                 };
                 line_glyph += 1;
                 paint.set_color(glyph_color);
@@ -1204,15 +1310,100 @@ fn paint_shaped_with(
                 if glyph_count > 65_536 {
                     return Err(PaintError::Unsupported(id));
                 }
+                if let Some(capture) = pixmap.capture.as_mut() {
+                    capture.owner = owner;
+                    capture.line = line_index;
+                    if capture.hidden.contains(&owner) {
+                        continue;
+                    }
+                }
+                if pixmap.groups.last().is_some_and(|group| group.hidden) {
+                    continue;
+                }
                 let x = bounds.rect.x + glyph.x;
-                let y =
-                    bounds.rect.y + glyph.y + flow.map_or(0.0, |f| f.shaped.offsets[line_index]);
+                let y = bounds.rect.y
+                    + glyph.y
+                    + flow.map_or_else(
+                        || {
+                            if ink.paragraph {
+                                paragraph_baseline_offset(line.metrics())
+                            } else {
+                                0.0
+                            }
+                        },
+                        |f| f.shaped.offsets[line_index],
+                    );
+                if let Some(cache) = pixmap.glyphs.as_mut().filter(|cache| cache.has_provider()) {
+                    const PHASES: f32 = 4.0;
+                    let quarter = (x * pixmap.scale * PHASES + 0.5).floor() / PHASES;
+                    let origin = (quarter.floor(), (y * pixmap.scale + 0.5).floor());
+                    let phase = ((quarter - origin.0) * PHASES) as u8;
+                    let request = crate::GlyphRasterRequest {
+                        font_id: font_data.data.id(),
+                        font_data: font_data.data.data(),
+                        font_index: font_data.index,
+                        glyph: glyph.id,
+                        size: run.font_size() * pixmap.scale,
+                        normalized_coords: run.normalized_coords(),
+                        phase_x: phase,
+                        max_pixels: MAX_TEXT_PAINT_WORK,
+                        cache_bytes: glyphs::MAX_BYTES,
+                    };
+                    let key = glyphs::Key {
+                        font: request.font_id,
+                        index: request.font_index,
+                        size: request.size.to_bits(),
+                        coords: request.normalized_coords.to_vec(),
+                        glyph: request.glyph,
+                        phase: Some(phase),
+                    };
+                    let physical_clip = clip
+                        .transform(Transform::from_scale(pixmap.scale, pixmap.scale))
+                        .ok_or(PaintError::Unsupported(id))?;
+                    match cache.raster(key, &request, origin, physical_clip, work)? {
+                        glyphs::Outcome::Culled => {
+                            if *work > MAX_TEXT_PAINT_WORK {
+                                return Err(PaintError::Unsupported(id));
+                            }
+                            continue;
+                        }
+                        glyphs::Outcome::Ready(coverage) => {
+                            let transform =
+                                Transform::from_scale(1.0 / pixmap.scale, 1.0 / pixmap.scale);
+                            for span in &coverage.spans {
+                                let rect = Rect::from_xywh(
+                                    origin.0 + coverage.bounds.left as f32 + span.x as f32,
+                                    origin.1 + coverage.bounds.top as f32 + span.y as f32,
+                                    span.width as f32,
+                                    span.height as f32,
+                                )
+                                .ok_or(PaintError::Unsupported(id))?;
+                                let color = Color::from_rgba(
+                                    glyph_color.red(),
+                                    glyph_color.green(),
+                                    glyph_color.blue(),
+                                    glyph_color.alpha() * f32::from(span.alpha)
+                                        / f32::from(u8::MAX),
+                                )
+                                .ok_or(PaintError::Unsupported(id))?;
+                                paint.set_color(color);
+                                pixmap.fill_rect(rect, &paint, transform, mask.as_ref());
+                            }
+                            continue;
+                        }
+                        glyphs::Outcome::Missing => {}
+                    }
+                }
+                if let Some(cache) = pixmap.glyphs.as_mut() {
+                    cache.outline_glyphs = cache.outline_glyphs.saturating_add(1);
+                }
                 let key = pixmap.glyphs.as_ref().map(|_| glyphs::Key {
                     font: font_data.data.id(),
                     index: font_data.index,
                     size: run.font_size().to_bits(),
                     coords: run.normalized_coords().to_vec(),
                     glyph: glyph.id,
+                    phase: None,
                 });
                 let cached = key
                     .as_ref()
@@ -1384,11 +1575,7 @@ fn paint_input(
     if *work > MAX_TEXT_PAINT_WORK {
         return Err(PaintError::Unsupported(id));
     }
-    if tree.path(id).into_iter().any(|ancestor| {
-        tree.computed_read(ancestor, env)
-            .get(&CssProperty::TextDecoration)
-            .is_some_and(|value| value != "none")
-    }) || element.value.char_indices().any(|(byte, ch)| {
+    if element.value.char_indices().any(|(byte, ch)| {
         ch.is_control()
             && !(element.tag == Tag::Textarea
                 && (matches!(ch, '\n' | '\t')
@@ -1612,7 +1799,15 @@ fn paint_input(
             scroll: None,
             programmatic_scroll: None,
         };
-        paint_shaped(pixmap, &shaped, glyph_bounds, color, id, work)?;
+        let style = underline::Style::resolve(tree, env, id, true, color)?;
+        paint_shaped(
+            pixmap,
+            &shaped,
+            glyph_bounds,
+            (&style, &display, options.white_space),
+            id,
+            work,
+        )?;
     } else if let Some(placeholder) = element.attributes.get(&Attribute::Placeholder)
         && !placeholder.is_empty()
     {
@@ -1643,11 +1838,13 @@ fn paint_input(
             scroll: None,
             programmatic_scroll: None,
         };
+        let style =
+            underline::Style::resolve(tree, env, id, true, Color::from_rgba8(117, 117, 117, 255))?;
         paint_shaped(
             pixmap,
             &placeholder_layout,
             glyph_bounds,
-            Color::from_rgba8(117, 117, 117, 255),
+            (&style, placeholder, options.white_space),
             id,
             work,
         )?;
@@ -1896,28 +2093,60 @@ fn rasterize_inner_scoped(
         groups: Vec::new(),
         relative_clips: BTreeMap::new(),
         isolation_required: false,
+        capture: None,
     };
-    let mut pending = vec![(ROOT_NODE, false)];
+    let mut pending = order::Order::new(tree);
     let mut text_work = 0usize;
+    let mut inline_programs = inline_groups::Programs::default();
     let mut hit_regions = Vec::new();
     let mut rounded_regions = BTreeMap::new();
     let mut hit_clips = BTreeMap::new();
     let mut inherited_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
     let mut children_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
+    let mut content_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
     let mut ancestors = BTreeMap::new();
     let mut scrolls = BTreeMap::new();
     let mut text_hits = BTreeMap::new();
     let mut menu_control = None;
     let mut cursors = BTreeMap::new();
-    while let Some((id, outline_phase)) = pending.pop() {
+    while let Some((id, phase)) = pending.next() {
+        if phase == order::Phase::InlineOutline {
+            inline_programs.paint_outlines(id, &mut pixmap)?;
+            continue;
+        }
+        if phase == order::Phase::InlineEnd {
+            pixmap.end_group(id)?;
+            continue;
+        }
+        if phase == order::Phase::InlineContext {
+            inline_programs.paint(
+                id,
+                &mut pixmap,
+                &mut inline_groups::Metadata {
+                    hits: &mut hit_regions,
+                    rounded: &mut rounded_regions,
+                    clips: &mut hit_clips,
+                    ancestors: &mut ancestors,
+                    cursors: &mut cursors,
+                },
+                &mut pending,
+            )?;
+            continue;
+        }
+        let outline_phase = phase == order::Phase::Outline;
         pixmap.active_clip = if outline_phase {
             inherited_clips.get(&id).cloned()
+        } else if phase == order::Phase::Content && tree.element(id).is_some() {
+            content_clips.get(&id).cloned()
         } else {
             tree.nodes[&id]
                 .parent
                 .and_then(|parent| children_clips.get(&parent).cloned())
         };
-        if !outline_phase && let Some(clip) = &pixmap.active_clip {
+        if phase != order::Phase::Content
+            && !outline_phase
+            && let Some(clip) = &pixmap.active_clip
+        {
             inherited_clips.insert(id, clip.clone());
         }
         if outline_phase {
@@ -1925,19 +2154,21 @@ fn rasterize_inner_scoped(
                 let bounds = geometry[&id];
                 // CSS UI4 keeps an outline visible even when a very negative
                 // offset would otherwise collapse it; clamp the axes separately.
-                let expansion_x = (width + offset).max(width - bounds.rect.width * 0.5);
-                let expansion_y = (width + offset).max(width - bounds.rect.height * 0.5);
+                let paint_bounds = snap::rect(bounds.rect);
+                let expansion_x = (width + offset).max(width - paint_bounds.width * 0.5);
+                let expansion_y = (width + offset).max(width - paint_bounds.height * 0.5);
                 let rect = BoxRect {
-                    x: bounds.rect.x - expansion_x,
-                    y: bounds.rect.y - expansion_y,
-                    width: bounds.rect.width + 2.0 * expansion_x,
-                    height: bounds.rect.height + 2.0 * expansion_y,
+                    x: paint_bounds.x - expansion_x,
+                    y: paint_bounds.y - expansion_y,
+                    width: paint_bounds.width + 2.0 * expansion_x,
+                    height: paint_bounds.height + 2.0 * expansion_y,
                 };
                 let radii = tree
                     .computed_read(id, &env)
                     .get(&CssProperty::BorderRadius)
                     .map(|raw| {
-                        Corners::resolve(raw, bounds.rect, units).ok_or(PaintError::Unsupported(id))
+                        Corners::resolve_paint(raw, bounds.rect, paint_bounds, units)
+                            .ok_or(PaintError::Unsupported(id))
                     })
                     .transpose()?
                     .unwrap_or_default()
@@ -1956,47 +2187,162 @@ fn rasterize_inner_scoped(
         }
         let node = &tree.nodes[&id];
         let Content::Element(element) = &node.content else {
+            if phase != order::Phase::Content {
+                pending.content(id);
+                continue;
+            }
             let shape = shapes.get(&id).ok_or(PaintError::Unsupported(id))?;
             let (measurer, _) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
             let parent = node.parent.ok_or(PaintError::Unsupported(id))?;
-            if tree.path(parent).into_iter().any(|ancestor| {
-                tree.computed_read(ancestor, &env)
-                    .get(&CssProperty::TextDecoration)
-                    .is_some_and(|value| value != "none")
-            }) {
-                return Err(PaintError::Unsupported(id));
-            }
             let color = current_color(tree, &env, parent).ok_or(PaintError::Unsupported(id))?;
-            paint_text(
+            let layout = paint_text(
                 &mut pixmap,
                 measurer,
                 shape,
                 geometry[&id],
-                color,
+                underline::Style::resolve(tree, &env, parent, false, color)?,
                 id,
                 &mut text_work,
             )?;
-            if let Some(rect) = clipped(geometry[&id].rect, geometry[&id].clip) {
-                if let Some(clip) = &pixmap.active_clip {
-                    hit_clips.insert(hit_regions.len(), clip.clone());
+            // The anonymous text box can fill the available block width. Only
+            // occupied line fragments join the inline pointer phase.
+            for line in layout.lines() {
+                let metrics = line.metrics();
+                let bounds = geometry[&id];
+                let fragment = BoxRect {
+                    x: bounds.rect.x + metrics.offset + metrics.inline_min_coord,
+                    y: bounds.rect.y + metrics.baseline + paragraph_baseline_offset(metrics)
+                        - metrics.ascent.round(),
+                    width: metrics.advance
+                        - if shape.options.white_space == WhiteSpaceMode::PreWrap {
+                            0.0
+                        } else {
+                            metrics.trailing_whitespace
+                        },
+                    height: metrics.ascent.round() + metrics.descent.round(),
+                };
+                if let Some(rect) = clipped(fragment, bounds.clip) {
+                    if let Some(clip) = &pixmap.active_clip {
+                        hit_clips.insert(hit_regions.len(), clip.clone());
+                    }
+                    hit_regions.push((
+                        parent,
+                        BoxRect {
+                            x: rect.x(),
+                            y: rect.y(),
+                            width: rect.width(),
+                            height: rect.height(),
+                        },
+                    ));
                 }
-                hit_regions.push((
-                    parent,
-                    BoxRect {
-                        x: rect.x(),
-                        y: rect.y(),
-                        width: rect.width(),
-                        height: rect.height(),
-                    },
-                ));
             }
             continue;
         };
+        if phase == order::Phase::Content {
+            if element.tag == Tag::Select {
+                let (measurer, size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
+                select::paint_control(
+                    &mut pixmap,
+                    tree,
+                    &env,
+                    id,
+                    geometry[&id],
+                    (measurer, *size),
+                    &mut text_work,
+                )?;
+                if tree.focus == Some(id)
+                    && element.editor.select_popup.is_some()
+                    && !element.disabled()
+                {
+                    menu_control = Some((id, geometry[&id]));
+                }
+            } else if element.checkable() {
+                if element.checked {
+                    let color = current_color(tree, &env, id).ok_or(PaintError::Unsupported(id))?;
+                    paint_checkable(
+                        &mut pixmap,
+                        geometry[&id],
+                        color,
+                        element.input_type() == "radio",
+                    )?;
+                }
+            } else if matches!(element.tag, Tag::Input | Tag::Textarea) {
+                let (measurer, font_size) =
+                    text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
+                let hit = paint_input(
+                    &mut pixmap,
+                    tree,
+                    &env,
+                    id,
+                    geometry[&id],
+                    (measurer, *font_size),
+                    &mut text_work,
+                )?;
+                if let Some(scroll) = hit.scroll {
+                    scrolls.insert(id, scroll);
+                }
+                text_hits.insert(id, hit);
+            }
+            pixmap.active_clip = children_clips.get(&id).cloned();
+            if let Some(frame) = flows.get(&id) {
+                let shape = shapes
+                    .get(&id)
+                    .and_then(|s| s.rich.as_ref())
+                    .ok_or(PaintError::Unsupported(id))?;
+                inline_groups::Flow {
+                    text: &shapes[&id].text,
+                    id,
+                    tree,
+                    env: &env,
+                    frame,
+                    shape,
+                    units,
+                }
+                .paint(
+                    &mut pixmap,
+                    &mut text_work,
+                    &mut inline_groups::Metadata {
+                        hits: &mut hit_regions,
+                        rounded: &mut rounded_regions,
+                        clips: &mut hit_clips,
+                        ancestors: &mut ancestors,
+                        cursors: &mut cursors,
+                    },
+                    &mut pending,
+                    &mut inline_programs,
+                )?;
+            }
+            continue;
+        }
         let properties = tree.computed_read(id, &env);
         if properties
             .get(&CssProperty::Display)
             .is_some_and(|v| v.eq_ignore_ascii_case("none"))
         {
+            continue;
+        }
+        let opacity = properties
+            .get(&CssProperty::Opacity)
+            .map(|raw| {
+                raw.parse::<f32>()
+                    .ok()
+                    .filter(|a| a.is_finite() && (0.0..=1.0).contains(a))
+                    .ok_or(PaintError::Unsupported(id))
+            })
+            .transpose()?
+            .unwrap_or(1.0);
+        if opacity != 1.0 && phase == order::Phase::Enter {
+            pending.defer(id);
+            continue;
+        }
+        if phase == order::Phase::Enter
+            && (matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
+                || node.parent.is_some_and(|parent| {
+                    tree.computed_property(parent, &env, CssProperty::Display)
+                        .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"))
+                }))
+        {
+            pending.atomic(id);
             continue;
         }
         ancestors.insert(id, node.parent);
@@ -2038,6 +2384,19 @@ fn rasterize_inner_scoped(
             })
             .transpose()?
             .unwrap_or_default();
+        let paint_rect = if id == ROOT_NODE {
+            geometry[&id].rect
+        } else {
+            snap::rect(geometry[&id].rect)
+        };
+        let paint_radii = properties
+            .get(&CssProperty::BorderRadius)
+            .map(|raw| {
+                Corners::resolve_paint(raw, geometry[&id].rect, paint_rect, units)
+                    .ok_or(PaintError::Unsupported(id))
+            })
+            .transpose()?
+            .unwrap_or_default();
         let widths = layout::border_widths(tree, &env, id)?;
         if !input_ready
             || !button_ready
@@ -2050,16 +2409,6 @@ fn rasterize_inner_scoped(
         {
             return Err(PaintError::Unsupported(id));
         }
-        let opacity = properties
-            .get(&CssProperty::Opacity)
-            .map(|raw| {
-                raw.parse::<f32>()
-                    .ok()
-                    .filter(|a| a.is_finite() && (0.0..=1.0).contains(a))
-                    .ok_or(PaintError::Unsupported(id))
-            })
-            .transpose()?
-            .unwrap_or(1.0);
         if opacity != 1.0 {
             pixmap.begin_group(id, opacity, geometry[&id].clip)?;
         }
@@ -2069,7 +2418,10 @@ fn rasterize_inner_scoped(
             if !radii.is_square() {
                 rounded_regions.insert(
                     hit_regions.len(),
-                    (scaled_rect(geometry[&id].rect, scale), radii.scaled(scale)),
+                    inline_decor::Region::Box(
+                        scaled_rect(geometry[&id].rect, scale),
+                        radii.scaled(scale),
+                    ),
                 );
             }
             if let Some(clip) = &pixmap.active_clip {
@@ -2093,12 +2445,12 @@ fn rasterize_inner_scoped(
             }
             .ok_or(PaintError::Unsupported(id))?;
             let bounds = geometry[&id];
-            if let Some(rect) = clipped(bounds.rect, pixmap.local_clip(bounds.clip)) {
+            if let Some(rect) = clipped(paint_rect, pixmap.local_clip(bounds.clip)) {
                 let mut paint = Paint::default();
                 paint.set_color(color);
-                if radii.is_square() {
+                if paint_radii.is_square() {
                     pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                } else if let Some(path) = radii.path(bounds.rect) {
+                } else if let Some(path) = paint_radii.path(paint_rect) {
                     let mask = pixmap.mask(rect)?;
                     pixmap.fill_path(
                         &path,
@@ -2112,7 +2464,14 @@ fn rasterize_inner_scoped(
         }
         if let Some(colors) = border_colors(tree, &env, id, widths)? {
             let bounds = geometry[&id];
-            paint_border(&mut pixmap, bounds.rect, bounds.clip, widths, radii, colors)?;
+            paint_border(
+                &mut pixmap,
+                paint_rect,
+                bounds.clip,
+                widths,
+                paint_radii,
+                colors,
+            )?;
         }
         if !radii.is_square()
             && properties
@@ -2120,8 +2479,15 @@ fn rasterize_inner_scoped(
                 .is_some_and(|value| value != "visible")
         {
             let (padding, inner) = radii.inset(geometry[&id].rect, widths);
-            if !inner.is_square() || padding.width == 0.0 || padding.height == 0.0 {
-                pixmap.push_clip(padding, inner)?;
+            let (paint_padding, paint_inner) = paint_radii.inset(paint_rect, widths);
+            if !inner.is_square()
+                || !paint_inner.is_square()
+                || padding.width == 0.0
+                || padding.height == 0.0
+                || paint_padding.width == 0.0
+                || paint_padding.height == 0.0
+            {
+                pixmap.push_clip(padding, inner, paint_padding, paint_inner)?;
             }
         }
         if let Some(clip) = &pixmap.active_clip {
@@ -2139,144 +2505,33 @@ fn rasterize_inner_scoped(
             ]
             .map(|inset| inset.max(0.0));
             let (content, inner) = radii.inset(bounds.rect, insets);
-            if !inner.is_square() || content.width == 0.0 || content.height == 0.0 {
-                pixmap.push_clip(content, inner)?;
+            let (paint_content, paint_inner) = paint_radii.inset(paint_rect, insets);
+            if !inner.is_square()
+                || !paint_inner.is_square()
+                || content.width == 0.0
+                || content.height == 0.0
+                || paint_content.width == 0.0
+                || paint_content.height == 0.0
+            {
+                pixmap.push_clip(content, inner, paint_content, paint_inner)?;
             }
         }
-        if element.tag == Tag::Select {
-            let (measurer, size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
-            select::paint_control(
-                &mut pixmap,
-                tree,
-                &env,
-                id,
-                geometry[&id],
-                (measurer, *size),
-                &mut text_work,
-            )?;
-            if tree.focus == Some(id)
-                && element.editor.select_popup.is_some()
-                && !element.disabled()
-            {
-                menu_control = Some((id, geometry[&id]));
-            }
-        } else if element.checkable() {
-            if element.checked {
-                let color = current_color(tree, &env, id).ok_or(PaintError::Unsupported(id))?;
-                paint_checkable(
-                    &mut pixmap,
-                    geometry[&id],
-                    color,
-                    element.input_type() == "radio",
-                )?;
-            }
-        } else if matches!(element.tag, Tag::Input | Tag::Textarea) {
-            let (measurer, font_size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
-            let hit = paint_input(
-                &mut pixmap,
-                tree,
-                &env,
-                id,
-                geometry[&id],
-                (measurer, *font_size),
-                &mut text_work,
-            )?;
-            if let Some(scroll) = hit.scroll {
-                scrolls.insert(id, scroll);
-            }
-            text_hits.insert(id, hit);
+        if let Some(clip) = &pixmap.active_clip {
+            content_clips.insert(id, clip.clone());
         }
         pixmap.active_clip = content_scope;
-        pending.push((id, true));
-        if let Some(frame) = flows.get(&id) {
-            let shape = shapes
-                .get(&id)
-                .and_then(|s| s.rich.as_ref())
-                .ok_or(PaintError::Unsupported(id))?;
-            // Bare text can overflow its container without belonging to an
-            // inline element. Its visible fragments still target the container.
-            for &child in &node.children {
-                if matches!(tree.nodes[&child].content, Content::Text(_)) {
-                    for &piece in frame.fragments.get(&child).into_iter().flatten() {
-                        if let Some(rect) = clipped(piece, frame.bounds.clip) {
-                            if let Some(clip) = &pixmap.active_clip {
-                                hit_clips.insert(hit_regions.len(), clip.clone());
-                            }
-                            hit_regions.push((
-                                id,
-                                BoxRect {
-                                    x: rect.x(),
-                                    y: rect.y(),
-                                    width: rect.width(),
-                                    height: rect.height(),
-                                },
-                            ));
-                        }
-                    }
-                }
-            }
-            for &node in &shape.nodes {
-                if tree.element(node).is_none() {
-                    continue;
-                }
-                ancestors.insert(node, tree.nodes[&node].parent);
-                cursors.insert(node, pointer_cursor(tree, &env, node));
-                let background = tree
-                    .computed_read(node, &env)
-                    .get(&CssProperty::BackgroundColor)
-                    .map(|value| {
-                        if value == "currentcolor" {
-                            current_color(tree, &env, node)
-                        } else {
-                            color(value)
-                        }
-                        .ok_or(PaintError::Unsupported(node))
-                    })
-                    .transpose()?;
-                for &rect in frame.fragments.get(&node).into_iter().flatten() {
-                    if let Some(c) = background
-                        && let Some(rect) = clipped(rect, pixmap.local_clip(frame.bounds.clip))
-                    {
-                        let mut paint = Paint::default();
-                        paint.set_color(c);
-                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                    }
-                    if let Some(rect) = clipped(rect, frame.bounds.clip) {
-                        if let Some(clip) = &pixmap.active_clip {
-                            hit_clips.insert(hit_regions.len(), clip.clone());
-                        }
-                        hit_regions.push((
-                            node,
-                            BoxRect {
-                                x: rect.x(),
-                                y: rect.y(),
-                                width: rect.width(),
-                                height: rect.height(),
-                            },
-                        ));
-                    }
-                }
-            }
-            let mut colors = BTreeMap::new();
-            paint_shaped_with(
-                &mut pixmap,
-                &frame.shaped.layout,
-                frame.bounds,
-                |owner| {
-                    if let Some(c) = colors.get(&owner) {
-                        return Ok(*c);
-                    }
-                    let c =
-                        current_color(tree, &env, owner).ok_or(PaintError::Unsupported(owner))?;
-                    colors.insert(owner, c);
-                    Ok(c)
-                },
-                id,
-                &mut text_work,
-                Some(frame),
-            )?;
-        } else if element.tag != Tag::Select {
-            pending.extend(node.children.iter().rev().map(|id| (*id, false)));
+        if matches!(phase, order::Phase::Context | order::Phase::Atomic) {
+            pending.finish_after_children(id, phase);
+        } else {
+            pending.outline(id);
+        }
+        if flows.contains_key(&id)
+            || matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
+        {
+            pending.content(id);
+        }
+        if !flows.contains_key(&id) && element.tag != Tag::Select {
+            pending.children(&node.children);
         }
     }
     pixmap.active_clip = None;
@@ -2408,6 +2663,7 @@ mod retained_tests {
                 groups: Vec::new(),
                 relative_clips: BTreeMap::new(),
                 isolation_required: false,
+                capture: None,
             };
             let mut reference = Surface {
                 glyphs: None,
@@ -2422,6 +2678,7 @@ mod retained_tests {
                 groups: Vec::new(),
                 relative_clips: BTreeMap::new(),
                 isolation_required: false,
+                capture: None,
             };
             if complex {
                 let bounds = BoxRect {

@@ -2,11 +2,17 @@
 
 ## Status
 
-Updated 2026-11-04 after native range commit `2400dbf`: the native accessibility
-foundation, bounded descriptions, painted text ranges, assistive scrolling and
-live-announcement implementation pass the consolidated batch gate. The preceding
-renderer batch includes CPU rendering, pointer-state, TSX Showcase and optional
-native GPU work. The
+Updated 2026-11-04 after native painting commit `54585e3f`: rounded clipping,
+text/assistive geometry, isolated opacity and mixed-border CPU composition pass
+the consolidated batch gate. The native accessibility, clipboard, retained
+renderer, pointer-state, TSX Showcase and optional GPU foundations are integrated.
+Working-tree follow-ups add sliced inline backgrounds/opacity, independent logical
+clips, normal paint/hit phases and vertical paragraph paint-origin alignment.
+Their scoped evidence is below. Native macOS glyph coverage now resolves the
+sampled dense-text raster mismatch; portable outlines retain their explicit
+platform-smoothing difference and broader typography acceptance stays open.
+The scoped CPU follow-up below addresses the measured Debug mixed-border blocker; it
+does not close whole-application or platform acceptance. The
 browser geometry/timing increment and Metal prototype are recorded below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
@@ -19,7 +25,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Native rounded clipping, text/assistive geometry, iterative layout, isolated opacity and mixed-border CPU painting after `22b02d0c` (2026-11-04, macOS arm64): **3393 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-083445-nlyqugwi/report.json`; source SHA-256 `4bfd91cb3b2fe8c9b96ed662c3bf443fb38476af01c9b4f0ac465a6f21edfe92`. Final affected GPU all-target Clippy passes; Debug/Release probes each cover60 actual GPU +20 explicit CPU-fallback observations. This verifies implementation, not general smoothness, actual system clipboard/IME/VoiceOver, application windows, browser/pilot, Linux/Windows/Pi or full release acceptance. Only documentation annotations follow this gate. [Procedure](verification.md#full-gate) |
+| Last committed full gate | Native inline paint ordering/opacity/radii, host glyph coverage, solid underlines, fragmented outlines and vertical inline spacing after `54585e3f` (2026-11-04, macOS arm64): **3473 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-161029-qyx08oka/report.json`; source SHA-256 `22ba2807b47b0ab666df1b89bd0bc57a6b1d96ed5a55b2f9650d474b7478ad71`. Strict affected GPU Clippy passes; Debug/Release each cover92 actual GPU +28 explicit CPU-fallback observations across30 scenes. Only result/status documentation annotations follow the gate. Real-font/window/system-input/VoiceOver, other-platform, broader core/pilot and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -28,6 +34,378 @@ ECMAScript, Node or npm compatibility.
 | GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
+
+### Native border CPU follow-up — scoped 2026-11-04
+
+Implemented in the working tree after `54585e3f`: opposing-front ownership stops
+when exactly one contour has arrived; uniform blocks use certified arrival
+intervals, and the existing contour mask restricts work to whole covered pixels.
+The remaining Debug hotspot was identified with a repeated CPU prepare fixture:
+owning array iterators dominated the per-pixel side scan. Indexed side traversal,
+borrowed seam offsets/candidate references and explicit premultiplied channel
+accumulation avoid that bookkeeping. The tiny ellipse predicate is inlined in
+Debug too. Bounds checks, assertions, arithmetic, sample order, source/cache/GPU
+ceilings and build profiles stay unchanged; no unsafe path is added.
+
+Three alternating before/current runs on the same M1 Max compare retained
+pre-commit binaries with current Debug/Release builds. Median CPU preparation for
+the cold 2× scenes is:
+
+| Scene | Debug before → current | Release before → current |
+| --- | --- | --- |
+| Mixed border | 29.602 → 10.432 ms | 2.336 → 2.359 ms |
+| Oversized mixed corner | 18.755 → 7.212 ms | 1.372 → 1.340 ms |
+| Opposing mixed corners | 66.357 → 12.866 ms | 7.517 → 2.798 ms |
+
+Across the three mixed scenes at both scales and cold/changed states, current
+median preparation spans 2.199–12.866 ms Debug and 0.365–2.798 ms Release. The
+36 individual samples per profile span 2.193–13.021 ms and 0.354–2.976 ms,
+respectively. Short ordinary Release cases are roughly unchanged in these three
+samples; no uniform speedup is claimed. The measured Debug cases now fit the
+16.7 ms frame interval, but these are host-owned offscreen fixtures, not
+whole-application latency or general smoothness acceptance.
+
+Final scoped checks pass 83 View library +265 integration cases, strict View
+all-target Clippy and optional GPU example builds in both profiles. New geometry
+checks cover close opposing arrivals, whole-block separation and translated
+elliptical fronts against independent inset membership. All 80 images match the
+previous binary byte-for-byte in each of three pairs per profile (480 total image
+comparisons). Each probe run still has 60 actual GPU observations and 20 explicit
+CPU fallbacks; groups and mixed fields have not acquired direct GPU support.
+Evidence, exact source inputs, binaries and samples:
+`target/paint-next-stage/border-speed-profiled/checkpoint.json`.
+
+The earlier `border-speed/` and `border-speed-final/` checkpoints verify their
+earlier inputs. A circular-root proposal in the latter showed no additional
+measured gain and was removed. This follow-up has scoped acceptance only; the
+3393-test full gate above continues to verify the committed painting inputs.
+Continue rounded inline decoration/own opacity, direct GPU fields/groups and
+application/platform/pilot/release acceptance. Do not close CORE-16/18 or the whole
+plan from this fixture improvement.
+
+### Native inline slice backgrounds — scoped 2026-11-04
+
+Implemented after the CPU follow-up: native inline backgrounds now admit the
+existing radius grammar with default slice decoration across wrapped and bidi
+fragments. Radius normalization uses each fragment's dimensions, while its
+background is clipped from a continuous visual-order strip. Shared f64 radius/arc
+generation avoids losing a narrow tail after a very wide composite. Own font-box
+hits follow the curve; independent descendant text hits and glyph ink remain
+unclipped. Retained, stateless and neutral-vector consumers agree. Transparent
+backgrounds and zero-opacity ancestors avoid contour work while retaining input
+metadata. New contour reservations share the unchanged text paint allowance;
+overlapping nested fragment backgrounds cannot renew that allowance per node.
+
+Final scoped acceptance passes **85 View library +272 integration cases**, strict
+View/Desktop all-target Clippy with GPU, Debug/Release GPU probes and **4344
+Native/Chrome geometry, hit and pixel checks** over21 cases. Eight new browser
+scenes cover wrapping, percentages/rem/asymmetric radii, bidi discontinuities,
+smaller descendants and translucent nested backgrounds. Their foreground is
+transparent to isolate decoration pixels; existing exact glyph samples remain.
+ROI RGB means are0.3625–1.50625/255 under the unchanged2/255 bound; largest channel
+delta40. Three deliberate bad-image/bad-size/legacy-ink inputs are correctly
+rejected by the comparison harness.
+
+The GPU probe now has21 scenes: each build records64 actual GPU observations and
+20 explicit CPU fallbacks. The new rounded-inline scene supplies four actual GPU
+observations per build; opacity/mixed fields remain CPU fallbacks. All80 older
+images per build remain byte-identical to the CPU-optimization checkpoint. Exact
+source/binary/image hashes and logs are under
+`target/paint-next-stage/inline-next/final/checkpoint.json`. This is scoped evidence,
+not a new full-workspace gate or whole-application/platform acceptance.
+
+Chrome156 and WebKit26.5 independently agree on fragment-relative percentage
+radii. WebKit differs on the tested own-font-box corner hit with a smaller text
+descendant; native follows CSS curved-border hits and the sampled Chrome result.
+Firefox could not be admitted to the diagnostic: the cached build times out in
+its compositor, and a fresh matched build cannot access either temporary or
+owned test profiles. No Firefox or full three-engine parity is claimed.
+
+The next static-box context-placement follow-up addresses the reproduced
+source-order overlap gap below. Own inline opacity remains open.
+The Chrome diagnostic also confirms unchanged cross-span ligature geometry when
+opacity changes. Preserve shared shaping/first-source glyph ownership and group
+the whole inline subtree, rather than scaling each fragment or glyph. Inline
+edges/borders/outlines and the wider platform/pilot/release plan remain open.
+
+### Native static opacity context placement — scoped 2026-11-04
+
+The reproduced red-opacity/blue-sibling discrepancy is fixed in the working tree.
+An iterative source scheduler delays each nonunit-opacity box subtree until
+ordinary content in its nearest root/opacity context has painted, then paints
+peer contexts in source order. This also orders pointer hits: opacity0 keeps
+its context priority. Contexts lift through nonisolating block/flex/grid ancestors
+with their original clipping and remain atomic inside an opacity ancestor.
+Layout and shaping are not repeated; source, scene-cache and compositor ceilings
+remain unchanged. Context creation/removal may conservatively invalidate input
+metadata reuse, even for disjoint boxes.
+
+The package adds independent overlap, nested curved-clip and retained mutation/
+vector-recovery regressions. `native_opacity_probe` feeds11 overlapping scenes
+to the existing Chrome geometry/hit/pixel oracle, with the same2/255 RGB mean
+bound and boundary-hit convention. Scoped checks pass **85 View library +275
+integration cases**, strict View all-target Clippy and **1971 Native/Chrome
+checks**. Overlap ROI means span0–0.4325/255; the largest channel delta is16
+at the curve. Evidence is under
+`target/paint-next-stage/opacity-context/`; this is scoped follow-up work, not a
+new consolidated full gate or whole-application/platform acceptance.
+
+Next: whole inline-subtree opacity with shared glyph shaping and first-source
+ligature ownership; independently investigate ordinary block-background versus
+inline-content paint phases before claiming general CSS stacking parity.
+Inline edges/borders/outlines, direct GPU fields/groups and the full accepted
+platform/pilot/core/release plan remain open.
+
+### Native inline opacity — implementation, acceptance in progress 2026-11-04
+
+The working tree now admits inline opacity through whole-subtree isolation,
+not per-glyph/fragment alpha. A flow with nonunit inline opacity captures source
+draws once after shared shaping, retains first-source ligature ownership and
+joins the nearest root/opacity context's deferred queue. Fragment line identities
+and source ordinals preserve overlapping-line paint/hit order. Original clip
+geometry is retained until replay; text work is charged once and the existing
+source-derived temporary-program and retained-cache ceilings are unchanged.
+
+Public regressions cover shared ligatures, wrapped backgrounds/ink, nested
+contexts and pointer priority, retained mutation/vector recovery, inherited
+fractional curve coverage applied once, shared contour refusal and a65,536-glyph
+capture crossing the retained command ceiling followed by cache recovery. The
+last fixture splits text across admitted source nodes rather than enlarging the
+wire string limit.
+
+Frozen-source scoped checks pass85 View library +283 integration cases and strict
+View all-target Clippy. The all-scene diagnostic records31/33 Chrome cases passing
+and two failures; the full strict command still exits1. The preceding static-box
+opacity oracle is rerun and passes1971 checks. No current-source actual GPU or
+full-workspace pass is claimed for this increment.
+
+That checkpoint retained two fractional curved-background/ink failures in the
+expanded33-scene strict browser probe under the unchanged2/255 mean bound.
+Its overlapping-line failure was fixed by ordering line fragments before
+applying group opacity. Independent Chrome pixels at3px,3.25px and3.49px offsets
+are identical;3.51px changes them. Blink uses a pixel-snapped rounded paint clip
+separately from layout geometry. The following paint-rounding increment fixes
+those original1× failures while preserving logical geometry. Earlier evidence
+and unhidden failures remain under `target/paint-next-stage/inline-own-opacity/`.
+
+The completed delivery batch remains open: paint rounding and the normal
+block/inline phase fix below have scoped evidence; finish remaining text-raster
+acceptance and consolidate the full gate at the delivery boundary.
+Direct GPU groups/fields, native window/platform, pilot, core and release
+requirements remain part of the same accepted plan.
+
+### Decoration paint rounding — scoped 2026-11-04
+
+Box and inline backgrounds, border/outline boxes and curved clipping now share
+paint-edge rounding before DPI scaling, with separately retained logical input
+geometry. Paint radii retain logical percentage references with snapped extent
+constraints; broken-inline paint radii use floored fragment dimensions. Wide
+slice construction stays f64 until local clipping. A positive logical clip can
+retain pointer/text visibility even when its painted path collapses. Glyph
+positions and raw styles stay fractional, and the implicit canvas preserves its
+actual physical far edges at nonintegral scales. No source/cache/GPU limits grow.
+
+Frozen-source native checks pass86 View library +287 integration +78 Desktop
+GPU-feature tests, plus strict affected all-target Clippy. Both Debug and Release
+probes cover22 scenes with64 actual GPU observations and24 explicit CPU fallbacks
+per build; inline opacity remains CPU composition. Four corrupted oracle inputs
+(image, length, legacy ink and scale) are rejected with their required diagnostics.
+An initial GPU-fixture stateless comparison omitted its font; the fixed probe
+retains that comparison with the correct explicit font, and the failed log remains.
+
+New public regressions compare3px/3.25px/3.49px decoration pixels at1×/1.25×/2×,
+while checking distinct logical bounds/targets, subpixel glyph positions, empty
+paint versus nonempty logical clips, and full-canvas coverage at1.3×/1.7×/2.3×.
+The original33-scene Chrome oracle now passes at1×; the20 decoration scenes pass
+at2× (6767 and4043 checks, respectively). At1.25×,19/20 complete and the ink/curve
+case still fails at mean2.248197/255, maximum98, against the original2/255 mean
+bound. It remains an explicit acceptance gap. This does not establish
+full typography, app-window or platform acceptance.
+
+### Ordinary block and inline paint phases — scoped 2026-11-04
+
+The reproduced negative-margin overlap is fixed in both pixels and input targets.
+A bounded iterative scheduler separates ordinary descendant block backgrounds,
+content, zero-level contexts and outlines. Flex/grid items and replaced controls
+are atomic pseudo contexts; opacity descendants lift to the nearest real context
+with their original ancestor clips. Anonymous text contributes actual occupied
+font-box line fragments, so blank block width no longer intercepts later targets.
+Background-decorated inline flows use one source capture even at opacity1;
+undecorated glyphs keep the direct path while hits use line/source order.
+
+Scoped checks pass86 library +291 integration +78 Desktop GPU-feature tests and
+strict affected all-target Clippy. A cache-overflow regression now checks all
+14,400 viewport hit positions and unchanged node bounds instead of requiring
+identical internal metadata order across a real context change. Source/cache/GPU
+budgets are unchanged. Debug and Release Metal probes each pass88 observations:
+64 actual GPU draws and24 explicit CPU fallbacks, maximum RGB mean0.1472.
+Inline opacity remains CPU composition. The old full gate remains historical.
+
+The browser corpus grows from33 to59 cases. All24 new block/flex/grid cases
+(plain text, inline opacity1/0.5/0 and nested ancestors) pass at1×/1.25×/2×,
+including geometry, targets and the original pixel bound. The all-case diagnostic
+passes58/59 at1× and2×,57/59 at1.25×; the strict commands still exit1. Dense
+undecorated overlapping text reveals a new raster mismatch at all three scales
+(mean5.388889/3.940351/5.369444, respectively), while the previous125% ink/curve
+failure stays mean2.248197. No assertion or2/255 threshold is weakened.
+Evidence: `target/paint-next-stage/paint-phases/`.
+
+An independent axis-only Chrome experiment retains horizontal subpixel changes
+but finds vertical paint-origin rounding before DPI. Blink's
+[physical text geometry code](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/paint/text_fragment_painter.cc)
+rounds the containing line origin while retaining the unrounded selection offset.
+This corrects the earlier overly broad inference from diagonal-margin probes:
+x/y must be tested separately. The next text increment must preserve logical
+input/selection geometry and horizontal subpixels while aligning the vertical
+paint origin; dense-text raster differences still need their own explanation.
+Remaining inline styles, direct GPU groups/fields and the full accepted
+core/pilot/platform/release plan remain active. General positioned/z-index
+painting and native-window/platform acceptance are not established here.
+
+### Paragraph vertical paint origin — scoped 2026-11-04
+
+Plain and rich paragraph text now round only the containing vertical paint
+origin before DPI. Horizontal glyph positioning and intrinsic line/font offsets
+remain fractional; logical layout, hit rectangles, selection geometry and raw
+styles do not round. The existing outline cache remains independent of position
+and DPI, and native editable fields retain their direct shaped-control path.
+A new regression isolates the axes for plain/rich paragraphs at1×/1.25×/2×,
+checks fractional logical bounds and snapshots, and compares retained/vector
+output. The first test attempt's exact-float assertion was corrected to allow
+normal f32 layout arithmetic; no raster acceptance threshold changed.
+
+Current scoped checks pass86 View library +292 integration +78 Desktop
+GPU-feature tests (456 total), with strict affected all-target Clippy. Current
+Debug/Release Metal probes each retain64 actual GPU +24 CPU-fallback observations
+and maximum RGB mean0.1472; inline opacity remains CPU composition.
+The original125% opacity/curve scene now passes with RGB mean1.925481/255,
+maximum66 (previously2.248197,max98). All59-scene browser diagnostics now complete
+58/59 cases at every scale, with10104 successful assertions each. The remaining
+dense undecorated overlapping-text raster mismatch is still explicit and all
+strict commands still exit1. Evidence: `target/paint-next-stage/text-origin/`.
+The wider accepted plan and remaining typography/GPU/platform/pilot/release
+acceptance remain active; this is not full CSS or platform readiness.
+
+### Native glyph coverage — 2026-11-04
+
+The dense-text mismatch is now traced to macOS font smoothing, independently
+isolating standard/antialiased modes and raw CoreText output. The host rasterizer
+interface preserves explicit font selection, shared Parley shaping and logical
+geometry while providing platform coverage. The macOS preview installs CoreText;
+coverage becomes disjoint rectangles for both CPU and actual GPU, sharing the
+old glyph cache and paint/scene budgets. The portable reference remains available.
+The pinned desktop-only CoreText wrapper adds one locked package, reusing the
+existing CoreGraphics/CoreFoundation versions; no engine dependency or Wasm ABI
+changes. Provider refusal, invalid masks, replacement, phases, byte ceilings,
+hidden groups and hit/selection invariants have targeted coverage.
+
+The same59-scene strict Chrome corpus passes10105 assertions at each of
+1×/1.25×/2× using native coverage. Dense-text mean errors improve from
+5.388889/3.940351/5.369444 to0.644444/0.221053/0.597222, respectively, under the
+unchanged2/255 bound. The portable outline command retains its platform-smoothing
+failure; no case or original assertion is removed. Native statistics record
+actual coverage preparation so a silently substituted portable path cannot
+count as native acceptance. The GPU corpus adds clipped dense text and a native
+editable field, requiring actual coverage and ordinary vector output.
+Evidence: `target/paint-next-stage/glyph-raster/`.
+
+The completed painting package passes the one consolidated full gate:3434 tests,
+0 failures,16 ignored, all eight commands with unchanged inputs. Baseline
+conformance remains123 passed/4 known unsupported of127, no regressions or
+infrastructure failures. Scoped native checks pass90 View library +296 integration
++78 Desktop tests; strict affected GPU Clippy passes. Each Debug/Release Metal
+probe covers24 scenes with72 actual GPU and24 explicit CPU-fallback observations,
+including required native coverage in clipped dense text and a native field;
+maximum mean GPU/CPU RGB delta0.1472. Only result annotations follow the gate.
+
+Collection members beyond index0, variable/color font instances and unsupported
+native cases retain portable outlines. Other platform glyph rasterizers, full
+font/IME/window/accessibility acceptance, remaining inline borders,
+direct GPU groups/color fields and the full core/pilot/platform/release plan
+remain open. Current local success is not whole-plan or cross-target acceptance.
+
+Solid underline now propagates decorating-box color/thickness through nested
+text, supports nested lines and own field decoration, and uses bounded unhinted
+quadratic/cubic ink interception with CJK exclusions. Per-line/source ordering
+preserves backgrounds, overhangs and opacity. The independent original-font
+Chrome corpus passes26 scenes/222 checks at each of1×/1.25×/2× under the unchanged
+2/255 bound (maximum mean0.635532 across the three runs). It includes fractional
+font boxes/baselines, wrapping, bidi, CJK, curves, clips, overhangs and overlapping
+lines. Paragraph ascent/descent rounding is corrected without rounding horizontal
+advances or containing line heights. The completed underline delivery gate is
+`target/verification/20261104-142517-oo4etf6x/report.json`: all8 commands pass,
+3448 tests/0 failures/16 ignored, with unchanged source SHA-256
+`fbd84faf854f41f0802aec9f2dc6525c82be4fe87fc6ad843e54fb96b10af02d`.
+View has93 library +307 integration tests; Desktop GPU-feature tests pass78.
+Fresh post-gate native probes retain all26+59 scenes at each DPI, with actual
+coverage/no outline substitution. Each25-scene Debug/Release GPU run passes76
+actual GPU +24 explicit CPU fallbacks (maximum mean0.1472). The portable and
+native decoration examples have distinct workspace output names. Only result
+annotations follow this gate; outline work continues separately and is not covered
+by that frozen source. These fixtures do not replace real-font, native-window,
+control/system-input, other-platform or full-plan acceptance.
+
+The open inline family batch now implements square and rounded fragmented
+outlines, outer-union/inset geometry, folded inner contours and descendant-first
+outline ordering. Fractional width/offset normalization preserves authored CSS.
+Scoped checks pass104 View library +315 integration tests and strict affected
+GPU Clippy. The independent Chrome corpus passes33 scenes at1×/1.25×/2×
+(304/300/300 assertions). Debug and Release Metal each pass84 actual GPU +28
+explicit CPU-fallback observations across28 scenes; maximum mean delta0.1472.
+Evidence: `target/paint-next-stage/outline/checkpoint.json`. The3448-test full
+gate above verifies the earlier underline inputs, not these newer changes.
+Continue adjacent inline spacing/border work in the same open batch; real fonts,
+native windows/input/accessibility, other targets and the whole accepted plan
+retain their separate acceptance requirements.
+
+The same open batch now admits non-replaced inline vertical padding in px/rem/%
+and ignored vertical margins, including horizontal `auto` margins. Own background,
+hit and outline fragments expand while content boxes, glyph/underline placement
+and line metrics remain independent. Cascade side overrides/removal reuse the
+existing layout store. All425 View tests pass (104 library +321 integration).
+The new21-scene Chrome probe passes10131 assertions at each of1×/1.25×/2×;
+maximum mean RGB delta0.579711 under the unchanged2/255 bound. Browser hit checks
+exclude one-CSS-pixel boundary neighbourhoods, including curved edges, because
+Chrome samples a pixel footprint while the native API tests an exact point;
+all geometry and pixel comparisons remain enabled. Nonzero horizontal spacing,
+inline borders and the broader acceptance requirements above remain open.
+
+Final affected all-target View/Desktop GPU Clippy passes after replacing retained
+opaque-pointer-capable layout lengths with owned pixel/fraction values. The
+425-test View rerun passes; fresh native outputs are byte-identical to all21
+Chrome-checked fixtures at every DPI. Final Debug/Release Metal runs each pass
+30 scenes/92 actual GPU +28 explicit CPU fallbacks, maximum mean delta0.1472.
+Both new padding scenes require actual vector GPU rendering. The172 pinned
+source/build/fixture/tool inputs remain unchanged through these checks;
+`target/paint-next-stage/spacing/checkpoint.json` records scope and hashes.
+This scoped checkpoint precedes the final commit gate below; horizontal inline
+spacing/borders remain open.
+
+Next within this family: implement owned opening/closing edge records for
+horizontal margin/padding/borders, then slice border painting over the resulting
+fragments. Preserve whitespace collapse, source byte offsets, intrinsic widths,
+natural bidi ordering and existing shaping/fragment/work budgets. The current
+Parley `InFlow` box is not a drop-in edge: its line breaker always permits a break
+after the box. A decoration boundary must retain the text's actual break policy,
+including inside words, plus correct joining/ligature behavior at nonzero inline
+edges ([CSS Text boundary shaping](https://www.w3.org/TR/css-text-3/#boundary-shaping)).
+Verify those cases against the browser before extending native admission; keep
+the family open until the shared boundary/border implementation is ready for its
+single consolidated full gate.
+
+### Native inline painting commit gate — 2026-11-04
+
+The requested commit boundary passes all eight consolidated checks: **3473 tests,
+0 failures,16 ignored**, with unchanged inputs. Report: `target/verification/20261104-161029-qyx08oka/report.json`;
+source SHA-256 `22ba2807b47b0ab666df1b89bd0bc57a6b1d96ed5a55b2f9650d474b7478ad71`.
+The compatibility inventory remains123 passed/4 known unsupported of127, baseline
+matched, with no regressions or infrastructure failures. Current scoped GPU
+checks retain30 scenes/92 actual GPU +28 explicit CPU fallbacks per Debug/Release
+build. The172 pinned engine/build/fixture/tool inputs match those scoped checks.
+Only result/status annotations follow this gate. Incomplete horizontal edge
+shaping and native border/fragment integration are excluded from this commit;
+that prototype is preserved separately. The full accepted core/pilot/platform/
+release plan and the remaining real-font/window/input acceptance stay open.
 
 ### Current UI checkpoint and proposed continuation
 
@@ -503,7 +881,7 @@ guest operation, public drawing primitive, source allowance or cache/GPU ceiling
 The expanded offscreen probe has20 scenes:15 actually render on GPU (60 observations
 per build), while opacity and three mixed-color scenes explicitly return CPU
 fallback (20 observations). Source/fixture failures and the slow initial probe are
-retained under `target/paint-next-stage/`. Current Debug mixed-border preparation
+retained under `target/paint-next-stage/`. At that committed checkpoint, Debug mixed-border preparation
 is still slower than the common-color path, especially opposing large corners;
 no general smoothness or whole-application latency acceptance is claimed. Optimize
 that path further with measured evidence; direct GPU fields/groups, rounded inline
@@ -516,10 +894,11 @@ source SHA-256 `4bfd91cb3b2fe8c9b96ed662c3bf443fb38476af01c9b4f0ac465a6f21edfe92
 Final View coverage is80 library +265 integration cases; final optional GPU Clippy
 and both20-scene probes pass. `native-painting-precommit-checkpoint.json` in
 `target/paint-next-stage/` retains exact inputs, binaries, images and scope.
-Mixed-field preparation spans7.084–66.547ms Debug and0.353–7.616ms Release in
-these single-sample scenes; the slow Debug path remains explicit follow-up work.
-No general UI smoothness or whole-plan completion is inferred. Only documentation
-annotations follow the completed gate; engine/build inputs remain unchanged.
+Mixed-field preparation at that checkpoint spans7.084–66.547ms Debug and
+0.353–7.616ms Release in those single-sample scenes. The scoped CPU follow-up
+above records subsequent working-tree performance. No general UI smoothness or
+whole-plan completion is inferred. Only documentation annotations followed that
+gate before commit `54585e3f`; the later optimization has its own scoped evidence.
 
 The working tree groups the 25 view integration case files into one declared
 Cargo target, retaining per-file modules and adding a missing-file registration

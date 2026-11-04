@@ -37,6 +37,10 @@ skrifa = "=0.44.0"
 unicode-segmentation = "=1.13.3"
 # Native desktop window/input and CPU frame presentation.
 winit = "=0.30.12"
+# Safe CoreText/CoreGraphics wrappers for host-only native glyph coverage.
+# v21 reuses the existing locked CoreGraphics 0.24/CoreFoundation 0.10 stack.
+core-text = "=21.0.0"
+core-graphics = "=0.24.0"
 softbuffer = { version = "=0.4.6", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 # Apache-2.0: semantic tree and native accessibility adapters, desktop only.
 accesskit = "=0.25.2"

@@ -2,7 +2,7 @@
 use crate::Environment;
 use taffy::prelude::{FromLength, FromPercent, LengthPercentageAuto, auto, length, percent};
 
-const MAX_LENGTH: f32 = 1_000_000.0;
+pub(crate) const MAX_LENGTH: f32 = 1_000_000.0;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Units {

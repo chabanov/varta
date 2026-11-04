@@ -19,6 +19,40 @@ fn inside(draw: &Draw, x: u32, y: u32) -> bool {
         && b.right() <= x as f32 + TILE_EDGE as f32 - margin
         && b.bottom() <= y as f32 + TILE_EDGE as f32 - margin
 }
+
+/// A subrectangle of whole pixels, so a uniform proof still includes every
+/// color sample that could affect a nonzero contour-mask pixel.
+fn covered_block(mask: &Mask, stride: u32, x: u32, y: u32, w: u32, h: u32) -> Option<[u32; 4]> {
+    let mut left = x + w;
+    let mut right = x;
+    let mut top = y + h;
+    let mut bottom = y;
+    for py in y..y + h {
+        let start = (py * stride + x) as usize;
+        let row = &mask.data()[start..start + w as usize];
+        let mut first = 0;
+        while first < row.len() && row[first] == 0 {
+            first += 1;
+        }
+        if first == row.len() {
+            continue;
+        }
+        let mut end = row.len();
+        while row[end - 1] == 0 {
+            end -= 1;
+        }
+        left = left.min(x + first as u32);
+        right = right.max(x + end as u32);
+        top = top.min(py);
+        bottom = py + 1;
+    }
+    (left < right).then_some([
+        left,
+        top,
+        right.saturating_sub(left),
+        bottom.saturating_sub(top),
+    ])
+}
 pub(super) struct Raster {
     pub masks: Masks,
     coverage: Option<Mask>,
@@ -249,6 +283,19 @@ impl Raster {
             for bx in (left..right).step_by(COLOR_BLOCK as usize) {
                 let w = COLOR_BLOCK.min(right - bx);
                 let h = COLOR_BLOCK.min(bottom - by);
+                // The contour mask already proves which pixels can contribute.
+                // Empty/hole blocks need no color proof. Tighten partial blocks
+                // to whole covered pixels before testing uniform ownership.
+                let Some([bx, by, w, h]) = covered_block(
+                    self.coverage.as_ref().expect("border coverage exists"),
+                    self.width,
+                    bx,
+                    by,
+                    w,
+                    h,
+                ) else {
+                    continue;
+                };
                 let css_x = (f64::from(bx) - f64::from(draw.transform.tx)) * step;
                 let css_y = (f64::from(by) - f64::from(draw.transform.ty)) * step;
                 let uniform =

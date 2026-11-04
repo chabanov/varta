@@ -32,32 +32,17 @@ struct Active<'a> {
     corner: &'a Corner,
     delta: [f64; 2],
 }
+#[derive(Clone, Copy)]
+struct BlockCorner<'a> {
+    corner: &'a Corner,
+    min: [f64; 2],
+    max: [f64; 2],
+}
 impl Active<'_> {
-    fn arrival(self, limit: f64) -> f64 {
-        if self.value(0.0) >= 1.0 {
-            return 0.0;
-        }
-        let mut high = limit;
-        for axis in 0..2 {
-            if self.corner.widths[axis] > 0.0 {
-                high = high.min(self.corner.radius[axis] / self.corner.widths[axis]);
-            }
-        }
-        if self.value(high) <= 1.0 {
-            return f64::INFINITY;
-        }
-        let mut low = 0.0;
-        for _ in 0..DEPTH_STEPS {
-            let mid = (low + high) * 0.5;
-            if self.value(mid) > 1.0 {
-                high = mid;
-            } else {
-                low = mid;
-            }
-        }
-        high
-    }
-    fn value(self, depth: f64) -> f64 {
+    // This small predicate runs at every search step and color sample. Keep its
+    // arithmetic in the caller in unoptimized builds too; bounds/assertions stay.
+    #[inline(always)]
+    fn value(&self, depth: f64) -> f64 {
         let x = self.delta[0] / (self.corner.radius[0] - depth * self.corner.widths[0]);
         let y = self.delta[1] / (self.corner.radius[1] - depth * self.corner.widths[1]);
         x * x + y * y
@@ -103,6 +88,51 @@ impl Active<'_> {
             }
         };
         if horizontal { c.horizontal } else { c.vertical }
+    }
+}
+impl BlockCorner<'_> {
+    /// Find a depth after this entire block's arrival but before every other
+    /// corner's earliest possible arrival. No accurate root is needed: either
+    /// endpoint proves separation, or overlapping intervals refuse the shortcut.
+    fn separated_arrival(candidates: &[Option<Self>], index: usize, limit: f64) -> Option<f64> {
+        let candidate = candidates[index].expect("candidate exists");
+        let active = Active {
+            corner: candidate.corner,
+            delta: candidate.min,
+        };
+        if candidate.min[0] <= 0.0 || candidate.min[1] <= 0.0 || active.value(limit) <= 1.0 {
+            return None;
+        }
+        let (mut low, mut high) = (0.0, limit);
+        for _ in 0..DEPTH_STEPS {
+            let mut separated = true;
+            for (other_index, other) in candidates.iter().enumerate() {
+                if index == other_index {
+                    continue;
+                }
+                let other = other.expect("candidate exists");
+                let earliest = Active {
+                    corner: other.corner,
+                    delta: other.max,
+                };
+                if earliest.value(low) > 1.0 {
+                    return None;
+                }
+                if earliest.value(high) > 1.0 {
+                    separated = false;
+                }
+            }
+            if separated {
+                return Some(high);
+            }
+            let mid = (low + high) * 0.5;
+            if active.value(mid) > 1.0 {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+        None
     }
 }
 impl Partition {
@@ -161,37 +191,22 @@ impl Partition {
             if within {
                 continue;
             }
-            potential[count] = Some((corner, min, max));
+            potential[count] = Some(BlockCorner { corner, min, max });
             count += 1;
         }
         if count > 1 {
             for index in 0..count {
-                let (corner, min, _) = potential[index].expect("candidate exists");
-                if min.into_iter().any(|v| v <= 0.0) {
-                    continue;
-                }
-                let upper = (Active { corner, delta: min }).arrival(high);
-                if !upper.is_finite() || upper >= low {
-                    continue;
-                }
-                let mut first = true;
-                for (other_index, other) in potential[..count].iter().enumerate() {
-                    if other_index == index {
-                        continue;
+                if let Some(upper) = BlockCorner::separated_arrival(&potential[..count], index, low)
+                {
+                    let corner = potential[index].expect("candidate exists").corner;
+                    if let Some(color) = Self::corner_color(corner, x, y, w, h, upper) {
+                        return Some(color);
                     }
-                    let (corner, _, max) = other.expect("candidate exists");
-                    if upper >= (Active { corner, delta: max }).arrival(high) {
-                        first = false;
-                        break;
-                    }
-                }
-                if first {
-                    return Self::corner_color(corner, x, y, w, h, upper);
                 }
             }
             return None;
         }
-        if let Some((corner, min, _)) = potential[0] {
+        if let Some(BlockCorner { corner, min, .. }) = potential[0] {
             if min.into_iter().any(|v| v <= 0.0)
                 || (Active { corner, delta: min }).value(low) <= 1.0
             {
@@ -228,18 +243,16 @@ impl Partition {
             .then_some(expected)
     }
     fn contains(&self, depth: f64, x: f64, y: f64) -> bool {
-        let [top, right, bottom, left] = std::array::from_fn(|i| {
-            self.edges[i] + depth * self.widths[i] * if i == TOP || i == LEFT { 1.0 } else { -1.0 }
-        });
+        let top = self.edges[TOP] + depth * self.widths[TOP];
+        let right = self.edges[RIGHT] - depth * self.widths[RIGHT];
+        let bottom = self.edges[BOTTOM] - depth * self.widths[BOTTOM];
+        let left = self.edges[LEFT] + depth * self.widths[LEFT];
         if x < left || x >= right || y < top || y >= bottom {
             return false;
         }
         for corner in &self.corners {
-            if corner
-                .radius
-                .into_iter()
-                .zip(corner.widths)
-                .any(|(radius, width)| radius - depth * width <= 0.0)
+            if corner.radius[0] - depth * corner.widths[0] <= 0.0
+                || corner.radius[1] - depth * corner.widths[1] <= 0.0
             {
                 continue;
             }
@@ -247,7 +260,7 @@ impl Partition {
                 (corner.center[0] - x) * corner.direction[0],
                 (corner.center[1] - y) * corner.direction[1],
             ];
-            if delta.into_iter().all(|v| v > 0.0) && (Active { corner, delta }).value(depth) > 1.0 {
+            if delta[0] > 0.0 && delta[1] > 0.0 && (Active { corner, delta }).value(depth) > 1.0 {
                 return false;
             }
         }
@@ -317,26 +330,42 @@ impl Partition {
         ];
         let mut side = TOP;
         let mut limit = f64::INFINITY;
-        for (index, (distance, width)) in distances.into_iter().zip(self.widths).enumerate() {
-            if width > 0.0 && distance / width < limit {
-                limit = distance / width;
-                side = index;
+        // A sampled Debug profile puts much of point ownership in the owning
+        // array iterator's moves/checks. Keep this per-sample scan indexed.
+        let mut index = 0;
+        while index < SIDES {
+            let width = self.widths[index];
+            if width > 0.0 {
+                let arrival = distances[index] / width;
+                if arrival < limit {
+                    limit = arrival;
+                    side = index;
+                }
             }
+            index += 1;
         }
         if limit <= 0.0 {
             return side;
         }
-        let mut candidates = [None; SIDES];
+        // Only the populated prefix is examined. References avoid moving an
+        // Option<Active> payload at every step of the unoptimized search.
+        let mut candidates = [Active {
+            corner: &self.corners[0],
+            delta: [0.0; 2],
+        }; SIDES];
         let mut count = 0;
         for corner in &self.corners {
-            if corner.radius.contains(&0.0) || corner.widths == [0.0; 2] {
+            if corner.radius[0] == 0.0
+                || corner.radius[1] == 0.0
+                || (corner.widths[0] == 0.0 && corner.widths[1] == 0.0)
+            {
                 continue;
             }
             let delta = [
                 (corner.center[0] - x) * corner.direction[0],
                 (corner.center[1] - y) * corner.direction[1],
             ];
-            if delta.into_iter().any(|axis| axis <= 0.0) {
+            if delta[0] <= 0.0 || delta[1] <= 0.0 {
                 continue;
             }
             let active = Active { corner, delta };
@@ -344,14 +373,14 @@ impl Partition {
                 return active.owner(0.0);
             }
             if active.value(limit) > 1.0 {
-                candidates[count] = Some(active);
+                candidates[count] = active;
                 count += 1;
             }
         }
         if count == 0 {
             return side;
         }
-        let first = candidates[0].expect("nonempty candidates");
+        let first = &candidates[0];
         if count == 1 {
             return first.owner_before(limit);
         }
@@ -363,24 +392,33 @@ impl Partition {
         for _ in 0..DEPTH_STEPS {
             let mid = (low + high) * 0.5;
             let mut index = 0;
-            let mut outside = false;
+            let mut outside = 0;
+            let mut first_outside = first;
             while index < count {
-                if candidates[index].expect("candidate exists").value(mid) > 1.0 {
-                    outside = true;
-                    break;
+                let candidate = &candidates[index];
+                if candidate.value(mid) > 1.0 {
+                    first_outside = candidate;
+                    outside += 1;
                 }
                 index += 1;
             }
-            if outside {
+            // Each ellipse value increases up to the rectangular arrival limit.
+            // Exactly one arc has arrived at mid: it must precede every other
+            // candidate, so its analytic angle test can decide the color now.
+            // Close/tied arrivals retain the original bounded search below.
+            if outside == 1 {
+                return first_outside.owner_before(mid);
+            }
+            if outside > 0 {
                 high = mid;
             } else {
                 low = mid;
             }
         }
         let mut winner = first;
-        for candidate in candidates[..count].iter().flatten().skip(1) {
+        for candidate in &candidates[1..count] {
             if candidate.value(high) > winner.value(high) {
-                winner = *candidate;
+                winner = candidate;
             }
         }
         winner.owner(high)

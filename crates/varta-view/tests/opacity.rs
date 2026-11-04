@@ -53,6 +53,92 @@ fn near(actual: [u8; 4], expected: [u8; 4]) {
         "{actual:?} != {expected:?}"
     );
 }
+fn overlap(nested: bool) -> View {
+    let mut b = B::new();
+    b.set_style(1, P::BackgroundColor, "#ffffff");
+    if nested {
+        b.create_element(4, Tag::Div)
+            .insert(1, 4, 0)
+            .set_style(4, P::Width, "40px")
+            .set_style(4, P::Height, "20px");
+    }
+    b.create_element(2, Tag::Div)
+        .insert(if nested { 4 } else { 1 }, 2, 0)
+        .set_style(2, P::Width, "40px")
+        .set_style(2, P::Height, "20px")
+        .set_style(2, P::BackgroundColor, "#ff0000")
+        .set_style(2, P::Opacity, "0.5")
+        .create_element(3, Tag::Div)
+        .insert(1, 3, 0)
+        .set_style(3, P::Width, "40px")
+        .set_style(3, P::Height, "20px")
+        .set_style(3, P::BackgroundColor, "#0000ff")
+        .set_style(3, P::MarginTop, "-20px");
+    let mut v = View::default();
+    commit(&mut v, &b);
+    v
+}
+#[test]
+fn static_opacity_context_paints_and_hits_above_later_ordinary_blocks() {
+    for nested in [false, true] {
+        let mut v = overlap(nested);
+        let before = v.snapshot();
+        let image = v.rasterize_boxes(40, 40).unwrap();
+        near(pixel(&image, 10, 10), [128, 0, 128, 255]);
+        assert_eq!(image.hit_test(10.0, 10.0), Some(2));
+        assert_eq!(v.snapshot(), before);
+        set(&mut v, 2, P::Opacity, "0");
+        let hidden = v.rasterize_boxes(40, 40).unwrap();
+        assert_eq!(pixel(&hidden, 10, 10), [0, 0, 255, 255]);
+        assert_eq!(hidden.hit_test(10.0, 10.0), Some(2));
+        assert!(image.same_input_geometry(&hidden));
+        set(&mut v, 2, P::Opacity, "1");
+        let ordinary = v.rasterize_boxes(40, 40).unwrap();
+        assert_eq!(pixel(&ordinary, 10, 10), [0, 0, 255, 255]);
+        assert_eq!(ordinary.hit_test(10.0, 10.0), Some(3));
+        assert!(!ordinary.same_input_geometry(&hidden));
+    }
+}
+#[test]
+fn context_lifting_preserves_ancestor_curves_and_cannot_escape_an_opacity_context() {
+    let mut v = overlap(true);
+    set(&mut v, 4, P::Overflow, "hidden");
+    set(&mut v, 4, P::BorderRadius, "50%");
+    let image = v.rasterize_boxes(40, 40).unwrap();
+    near(pixel(&image, 20, 10), [128, 0, 128, 255]);
+    assert_eq!(image.hit_test(20.0, 10.0), Some(2));
+    assert_eq!(pixel(&image, 0, 0), [0, 0, 255, 255]);
+    assert_eq!(image.hit_test(0.5, 0.5), Some(3));
+    set(&mut v, 4, P::Opacity, "0.5");
+    // The outer context contains its red context atomically and lifts as one.
+    let nested = v.rasterize_boxes(40, 40).unwrap();
+    near(pixel(&nested, 20, 10), [64, 0, 191, 255]);
+    assert_eq!(nested.hit_test(20.0, 10.0), Some(2));
+    set(&mut v, 3, P::Opacity, "0.5");
+    let later = v.rasterize_boxes(40, 40).unwrap();
+    near(pixel(&later, 20, 10), [127, 95, 223, 255]);
+    assert_eq!(later.hit_test(20.0, 10.0), Some(3));
+}
+#[test]
+fn retained_context_reordering_handles_opacity_changes_and_vector_recovery() {
+    let mut v = overlap(true);
+    let mut renderer = Renderer::new(None, 16.0).unwrap();
+    for alpha in ["0.5", "0", "1", "0.75", "1"] {
+        set(&mut v, 2, P::Opacity, alpha);
+        let expected = v.rasterize_boxes(40, 40).unwrap();
+        assert_eq!(renderer.render(&v, 40, 40, 1.0).unwrap(), expected);
+        assert_eq!(renderer.render(&v, 40, 40, 1.0).unwrap(), expected);
+        assert_eq!(renderer.stats().dirty_pixels, 0);
+        let prepared = renderer.prepare(&v, 40, 40, 1.0).unwrap();
+        let actual = match prepared {
+            varta_view::PreparedFrame::Raster(image) => image,
+            varta_view::PreparedFrame::Vector { metadata, scene } => {
+                scene.rasterize(metadata).unwrap()
+            }
+        };
+        assert_eq!(actual, expected);
+    }
+}
 #[test]
 fn parent_opacity_applies_once_after_opaque_and_translucent_child_overlap() {
     let mut v = boxes();
@@ -285,7 +371,17 @@ fn full_size_fields_overflow_the_command_cache_without_partial_group_alpha_or_lo
     let before = v.snapshot();
     let mut renderer = Renderer::new(Some(field_font()), 20.0).unwrap();
     let actual = renderer.render(&v, 160, 90, 1.0).unwrap();
-    assert!(reference.same_input_geometry(&actual));
+    // Forming a context changes the stored hit order conservatively. These
+    // disjoint fixtures must nevertheless retain every bound and actual target.
+    assert_eq!(reference.node_bounds_map(), actual.node_bounds_map());
+    for y in 0..90 {
+        for x in 0..160 {
+            assert_eq!(
+                reference.hit_test(x as f32 + 0.25, y as f32 + 0.25),
+                actual.hit_test(x as f32 + 0.25, y as f32 + 0.25)
+            );
+        }
+    }
     assert_eq!(v.snapshot(), before);
     for y in 5..75 {
         for x in 0..160 {
@@ -404,7 +500,19 @@ fn an_ordinary_cache_overflow_before_a_later_group_keeps_its_materialized_prefix
     set(&mut v, 5, P::Opacity, "0.5");
     let mut renderer = Renderer::new(Some(field_font()), 20.0).unwrap();
     let actual = renderer.render(&v, 160, 90, 1.0).unwrap();
-    assert!(reference.same_input_geometry(&actual));
+    // A new zero-level context changes metadata ordering: the blue block now
+    // follows the atomic fields. These disjoint boxes still have identical
+    // observable input targets; conservative geometry-cache invalidation is valid.
+    assert!(!reference.same_input_geometry(&actual));
+    assert_eq!(reference.node_bounds_map(), actual.node_bounds_map());
+    for y in 0..90 {
+        for x in 0..160 {
+            assert_eq!(
+                actual.hit_test(x as f32 + 0.25, y as f32 + 0.25),
+                reference.hit_test(x as f32 + 0.25, y as f32 + 0.25)
+            );
+        }
+    }
     for y in 0..65 {
         for x in 0..160 {
             assert_eq!(pixel(&actual, x, y), pixel(&reference, x, y));

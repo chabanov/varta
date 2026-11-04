@@ -409,12 +409,7 @@ fn empty_inline_anchors_follow_ligatures_and_contribute_line_metrics() {
 
 #[test]
 fn unsupported_inline_box_styles_fail_without_changing_the_view() {
-    for (p, value) in [
-        (P::Padding, "1px"),
-        (P::Border, "1px solid #f00"),
-        (P::Opacity, "0.5"),
-        (P::TextDecoration, "underline"),
-    ] {
+    for (p, value) in [(P::Padding, "1px"), (P::Border, "1px solid #f00")] {
         let mut b = base("100px");
         b.create_element(3, Tag::Span)
             .insert(2, 3, 0)

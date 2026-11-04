@@ -24,7 +24,7 @@ impl Clip {
         while let Some(clip) = next {
             work.charge(1)?;
             depth += 1;
-            if clip.bounds.is_none() {
+            if clip.logical_bounds.is_none() {
                 return Ok(None);
             }
             bounds.intersect(clip.rect);

@@ -17,6 +17,8 @@ pub struct RenderStats {
     pub glyph_cache_hits: usize,
     pub dirty_pixels: usize,
     pub drawing_cache_hits: usize,
+    pub raster_glyphs: usize,
+    pub outline_glyphs: usize,
 }
 
 /// A reusable native CPU renderer. Font collection and render caches are local
@@ -47,6 +49,14 @@ impl Renderer {
             stats: RenderStats::default(),
             segments: Default::default(),
         })
+    }
+    /// Replace the host glyph rasterizer, invalidating all retained pixel data.
+    /// `None` restores the portable unhinted outline renderer.
+    pub fn set_glyph_rasterizer(&mut self, provider: Option<Box<dyn crate::GlyphRasterizer>>) {
+        self.glyphs.set_provider(provider);
+        self.scene = scene::Scene::default();
+        self.previous = None;
+        self.stats = RenderStats::default();
     }
     /// Diagnostic work counters for the last successful frame.
     #[must_use]
@@ -125,6 +135,8 @@ impl Renderer {
             .as_ref()
             .map_or((0, 0), TextMeasurer::cache_counts);
         let glyph_hits = self.glyphs.hits;
+        let raster_glyphs = self.glyphs.raster_glyphs;
+        let outline_glyphs = self.glyphs.outline_glyphs;
         let frame = crate::paint::rasterize_retained(
             &prepared,
             &env,
@@ -142,6 +154,8 @@ impl Renderer {
             glyph_cache_hits: self.glyphs.hits.saturating_sub(glyph_hits),
             dirty_pixels: self.scene.dirty_pixels,
             drawing_cache_hits: 0,
+            raster_glyphs: self.glyphs.raster_glyphs.saturating_sub(raster_glyphs),
+            outline_glyphs: self.glyphs.outline_glyphs.saturating_sub(outline_glyphs),
         };
         self.previous = Some(prepared);
         Ok(frame)

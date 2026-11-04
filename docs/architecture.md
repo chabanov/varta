@@ -11769,10 +11769,89 @@ charges inline collection, copied ancestor paths, span styles, line/cluster/glyp
 projection and fragment assignment; geometry and layout-command nesting cannot
 refill it. One geometry request admits at most 65536 fragments. These counters
 are work bounds, not proof of total CPU time/RSS, and no prior ceiling is raised.
-Nonzero inline edges/borders/radii, decoration, mixed block/inline contexts,
+Horizontal inline padding/margins, nonzero inline borders, mixed block/inline contexts,
 mixed whitespace-preservation modes, full inline formatting, platform font
 selection and general typography acceptance remain open; unsupported styles
 fail explicitly.
+
+Native text admits solid `text-decoration: none | underline`. Decoration
+propagates through supported inline/in-flow block descendants; a descendant
+`none` cannot cancel an ancestor's line. Color and auto thickness belong to the
+decorating box, and nested decorations retain outer-to-inner order. Replaced
+fields/selects stop ancestor propagation and admit their own line. Paragraph font
+boxes round CSS ascent/descent before dividing leading (smaller half above),
+while horizontal advances and containing line heights remain fractional. This
+rule is independent of whether text is underlined. Field editing keeps its one
+shared shaped-control geometry.
+
+Underlines paint before each line's text, retaining per-line/source ordering with
+backgrounds, overhanging glyphs, nested opacity and clips. Ink skipping uses the
+selected font's unhinted contours, not a platform-smoothed coverage mask; quadratic
+and cubic stripe intersections use bounded analytic splitting/root refinement.
+CJK auto skipping is excluded. Temporary strokes and interception work consume
+the existing shared text-paint allowance; no glyph-cache, frame, texture or GPU
+layer allowance is added. Both pixel and neutral-vector paths receive ordinary
+rectangle spans. Additional decoration styles, mixed preserved whitespace and
+full real-font/control/platform typography acceptance remain open.
+
+Native inline background radii use the initial `box-decoration-break: slice`
+behavior: positive-width fragments are assembled in visual order into a
+continuous horizontal strip and each fragment paints its slice. No extra rounded
+ends are inserted at a line or bidi break. Radius percentages and side-overlap
+normalization for logical hit regions use the current fragment's font border box before those radii are
+applied to the whole strip. This matches the sampled Chrome/WebKit fragment
+behavior and Blink's explicit flow-box radius reference, rather than resolving
+percentages against the strip's total width. `clone` is not added to the admitted
+native style surface. See [CSS Fragmentation §5.4](https://drafts.csswg.org/css-break/#break-decoration)
+and [Blink's inline background painter](https://github.com/chromium/chromium/blob/main/third_party/blink/renderer/core/paint/inline_box_fragment_painter.cc).
+
+Shared radius normalization and tangent-arc emission retain f64 coordinates until
+the strip contour has been clipped to the local fragment. Converting a wide strip
+to f32 before clipping can erase a narrow trailing fragment. Hit geometry retains
+the same analytic slice for an inline's own font box; descendant text font boxes
+remain independent, including when their visible ink or hits extend through a
+background cutout. Painting never turns a background radius into a glyph clip.
+These records consume the existing aggregate fragment bound. A conservative
+per-fragment contour-work reservation shares the existing text-paint allowance;
+it is charged before generating the path, not renewed for each inline element.
+Zero-alpha backgrounds and descendants of zero-opacity groups skip pixel contour
+work while preserving styles and hit geometry. Horizontal inline spacing/borders
+retain their separate open implementation work; inline opacity's implementation
+and remaining raster interoperability are described below.
+
+Solid inline outlines surround the union of the element's border-box fragments.
+The outer offset rectangles are united before deriving the inset contour, so
+small gaps bridged by the stroke have no internal bars. Negative offsets clamp
+independently on each fragment axis. Rounded contours use the first fragment as
+their radius reference, exchange convex/concave corner radii at inset corners,
+and shorten incident radii when an edge cannot accommodate both. Real cubic
+subcurves survive intersection and local clipping; there is no flattened or
+viewport-sized outline mask. The filled region is outer nonzero winding with
+the inner winding of exactly +1 removed; folded inset contours are not equivalent
+to subtracting every positive winding. Square contours use disjoint spans in one
+path. Thus translucent outlines apply alpha once, including overlaps and folds.
+
+Outline width and offset use signed integral CSS pixels (a nonzero magnitude
+below one becomes one), before host DPI scaling. Authored styles remain intact.
+Outlines paint after descendants in tree postorder, including inline descendants
+and enclosing block outlines, with their original clips and opacity isolation.
+Their geometry consumes the existing shared text-paint allowance and captured
+commands share the existing frame limit. No texture, retained-cache or GPU-layer
+allowance is added. Inline borders and horizontal spacing remain open, as do
+general positioned painting and real-font/platform interoperability.
+
+Non-replaced inline top/bottom padding expands each own fragment's background,
+rounded hit region and outline without moving text or changing line metrics.
+Nested descendants retain their independent font boxes. The public content-box
+union excludes that padding. Pixel/rem lengths and percentages are admitted;
+both percentage sides resolve against the containing block's content width,
+including after wrapping. Top/bottom margins have no effect on line layout;
+horizontal `auto` margins resolve to zero. Cascade expansion, longhand overrides
+and removal use the same geometry declaration store as block layout. Nonzero
+horizontal spacing still fails explicitly. Resolved padding and expanded height
+retain the existing native length limit; fragment/work/cache limits are unchanged.
+See [CSS2 inline height](https://www.w3.org/TR/CSS2/visudet.html#inline-non-replaced)
+and [padding percentages](https://www.w3.org/TR/CSS2/box.html#padding-properties).
 
 Native `rem` resolution uses `Environment::root_font_size`, a host-supplied
 document-root reference in CSS pixels, initially the subset's initial font size.
@@ -11839,7 +11918,8 @@ fields, checkables and collapsed selects clip their content to the inset content
 curve; their backgrounds/borders/outlines retain their own scope. Buttons keep
 visible descendant overflow unless their overflow style clips it. Native field,
 assistive character and IME visibility now use these same closed physical shapes,
-separately from full logical advances. Rounded inline decorations and direct GPU
+separately from full logical advances. Inline backgrounds now have sliced rounded
+contours as above; inline borders/outlines and direct GPU
 group/color-field composition remain open. The Debug Metal fixture
 probe covers boxes and native controls against shared input geometry and the
 existing RGB mean-error threshold; it does not establish application/window/
@@ -11849,11 +11929,74 @@ retain their authored units.
 Native static box opacity is an isolated subtree operation: paint the box's own
 background, border, contents, descendants and outline, then apply its opacity
 once. Overlapping children must not receive that opacity separately. Nested groups
-compose in source paint order. Zero opacity suppresses pixel work while preserving
+compose atomically in their containing context. Zero opacity suppresses pixel work while preserving
 ordinary input/text geometry; root opacity includes the root background. Select
-popups retain their established top-layer scope. Inline elements' own opacity is
-still outside the native inline painter's admitted subset; an outer box group can
-contain rich inline content.
+popups retain their established top-layer scope.
+Each static box with opacity below1 creates a zero-level context. An iterative
+source traversal postpones that whole subtree until ordinary content in its
+nearest root/opacity context has painted; sibling contexts then paint in source
+order. Descendant contexts lift through nonisolating block/flex/grid ancestors,
+retaining those ancestors' original rectangular/curved clips, and never escape
+an opacity context. The same traversal orders hit regions, including invisible
+zero-opacity contexts. Creating/removing a context can conservatively invalidate
+`same_input_geometry` even when its boxes do not overlap. This follows the
+[CSS Color4 context placement rule](https://www.w3.org/TR/css-color-4/#transparency).
+An explicit bounded paint-phase scheduler draws ordinary descendant block
+backgrounds before inline content, then zero-level contexts and outlines. Flex/grid
+items and replaced controls paint atomically in the content phase; these pseudo
+contexts let descendant opacity contexts join the nearest real context. Original
+ancestor clips survive deferral. Text pointer regions use occupied line fragments,
+including their font-box height, rather than the anonymous block's available width.
+Full CSS painting remains open for general positioned/z-index content.
+Paragraph text paints with its containing vertical origin rounded in CSS paint
+pixels before DPI scaling. Horizontal positions and intrinsic per-line/font/glyph
+offsets remain fractional. This is a paint-only adjustment: logical bounds,
+fragment hits and selection geometry retain their authored fractional positions.
+The position-independent unhinted outline cache is unchanged. Native field ink
+keeps its existing direct shaped-control path.
+Native inline opacity now uses the same isolated-subtree compositor. Rich text is
+shaped once across opacity boundaries; a cross-source ligature retains its first
+source owner. Flows with nonunit inline opacity or painted inline backgrounds
+capture a temporary source program; undecorated text keeps its direct glyph path.
+Ordinary hit fragments are sorted by line and source even on that direct path. Capture retains logical rectangle clips and original physical clip
+chains; scope removal happens when its context paints, so inherited clips apply
+to the completed group once. Each glyph outline is prepared once, and source work
+is charged during preparation, never renewed for a context. The source-derived
+frame-command ceiling also bounds capture; the retained cache is unchanged.
+
+Fragment line identities and source-node ordinals order backgrounds, glyphs and
+hits within each context. This preserves later-line backgrounds covering earlier
+ink when line boxes overlap. Inline contexts join their nearest root/opacity
+context's deferred queue, including through nonisolating block ancestors; nested
+inline contexts remain atomic. Opacity0 retains targets while skipping contour/
+glyph pixel work. A large captured program takes temporary CPU replay, then a
+smaller frame recovers ordinary cache reuse and vector output when isolation is
+removed. Direct GPU group composition remains open.
+
+Native decoration now rounds paint edges separately from layout. Box backgrounds,
+borders, outlines and curved overflow share the snapped box; percentage radii
+still resolve against the logical box before normalization against paint extents.
+Broken inline decorations take paint radii from the floored fragment dimensions
+and install them on the snapped continuous strip, matching Blink's
+[contoured border construction](https://github.com/chromium/chromium/blob/main/third_party/blink/renderer/core/paint/contoured_border_geometry.cc)
+and inline fragment override. Wide strip coordinates remain f64 through local
+clipping. Paint rounding occurs in CSS paint pixels **before DPI scaling**;
+Chrome diagnostics at1×/1.25×/2× confirm identical background pixels at3px,3.25px
+and3.49px offsets, then changed pixels at3.51px. The tiny positive paint-size
+floor affects rasterization, never source admission or layout dimensions.
+
+Clip chains retain independent logical bounds/curves and physical paint paths.
+Pointer, text-range, IME and assistive queries use logical geometry even when a
+tiny positive source clip has no painted pixel. Pixel consumers and neutral GPU
+commands use the snapped paths; mask-elision safety margins remain conservative.
+Glyph coordinates keep their subpixel offsets. The implicit canvas retains its
+physical far edges at nonintegral DPI, so rounding a CSS viewport dimension does
+not leave an unpainted last row or column. Raw authored styles remain unchanged.
+
+The original33-scene Chrome comparison at1× now passes its unchanged2/255 mean
+bound, including the earlier fractional curves. Broader DPI/text raster parity
+remains separate acceptance work; neither glyph coordinates nor thresholds are
+changed to hide remaining font/clip differences at fractional DPI.
 
 The private software program has balanced enter/exit markers checked before any
 destination effect. An explicit stack and reusable 128×128 RGBA tiles bound pixel
@@ -11895,9 +12038,18 @@ choice within CSS Backgrounds3§4.4's underdefined transition mapping, not a cla
 of pixel identity with a particular browser. Large asymmetric corners compare
 actual curved fronts with opposite edges; whole-ring weighted nearest-edge and
 midpoint-only partitions are insufficient. Ordinary one-corner ownership uses an
-analytic sign test. Opposing corner fronts use a fixed bounded search.
+analytic sign test. Opposing corner fronts use a search bounded by48 steps.
+If exactly one front has arrived at a tested depth, it is already proven first
+and its analytic angle test decides ownership immediately. Close or tied fronts
+retain the bounded search. Uniform-block interval checks likewise stop as soon
+as separation is proved or overlapping arrival intervals disprove that shortcut;
+they do not approximate roots to a smaller fixed iteration count.
 
-Color blocks are filled uniformly only after interval bounds prove their owner;
+The existing contour mask skips empty color blocks and restricts partial blocks
+to the bounding rectangle of whole nonzero-mask pixels before testing ownership.
+This adds no mask or retained storage and includes the full sampling area of
+every contributing pixel. Color blocks are filled uniformly only after interval
+bounds prove their owner;
 remaining pixels use center/corner color probes, with differing probes triggering
 a fixed rotated16-sample pattern near color seams. This is a fixed native AA policy,
 not exact analytic color integration or a particular browser's raster. Samples are
@@ -12112,7 +12264,8 @@ Hosts can instead keep a `varta_view::Renderer` and call
 `Application::view_render` between turns. The desktop preview uses this path.
 It owns explicit fonts, memoizes computed style reads, expanded geometry
 declarations, border widths and shaped text, retains
-unhinted glyph outlines and a bounded display list, and replays changed pixel
+portable unhinted glyph outlines, optional host glyph coverage and a bounded
+display list, and replays changed pixel
 bounds. Hit, focus, selection and IME metadata are rebuilt for each frame even
 when its pixels do not change. Media conditions, style sources, element
 identity/parentage, inline side precedence, focus, pointer, checked and disabled states invalidate style reads;
@@ -12122,7 +12275,8 @@ remain available as reference paths. Both paths route narrow rectangles through
 the path converter to handle fractional one-pixel carets without a debug assertion.
 
 Renderer cache bounds are 128 shaped requests with 2 MiB of key payload and
-65,536 glyphs, 4,096 glyph-outline entries with 8 MiB of estimated payload,
+65,536 glyphs, 4,096 shared glyph entries with 8 MiB of estimated payload
+(including outlines, coverage rectangles and host-retained font bytes),
 4,096 pure CSS validation/variable-detection entries with 2 MiB of string
 payload, and 65,536 display-list commands with 16 MiB of estimated payload.
 Eviction or a display-list overflow changes reuse, not admission; an overflow
@@ -12141,6 +12295,43 @@ and unoptimized engine code while optimizing the tiny-skia graphics dependencies
 and enabling their portable SIMD paths. The small desktop host uses dev opt-level
 3 for its RGB packing loop, with debug assertions and debug information retained;
 the compiler, runtime and view engine remain at dev opt-level 0.
+Hosts may install a `GlyphRasterizer` with `Renderer::set_glyph_rasterizer`;
+replacement clears retained pixels and glyph data. The stateless reference APIs
+and a new renderer without a provider keep the portable outline path. Shaping,
+font selection, glyph identifiers, advances, bidi and logical hit/selection data
+remain in Varta. Requests carry the selected immutable font bytes, collection
+index, normalized coordinates, physical size, horizontal quarter-pixel phase
+and existing resource allowances. The baseline for coverage is integer-aligned
+in physical pixels; paragraph-origin rounding remains a separate earlier step.
+A provider may decline; it must not substitute a font or glyph.
+
+A host returns checked integer ink bounds, followed by one-byte grayscale
+coverage. Varta validates dimensions, length, offset arithmetic and the existing
+one-million-cell text preparation bound before producing commands. Disjoint
+coverage runs merge vertically only when their x extent and alpha agree. They
+use existing physical rectangle commands, clips and isolated composition: no
+new image/GPU texture resource or display-list allowance is introduced. Visible
+coverage cells debit the shared text work identically on cache hits and misses;
+nonintersecting glyph bounds skip pixel preparation without erasing logical hits.
+An unaffordable optional coverage request selects the original outline path
+without renewing that allowance. Hidden groups request no host ink. Provider
+font bytes share the existing glyph-cache ceiling, and an oversized provider is
+dropped. These remain logical cache estimates, not OS font-cache/RSS quotas.
+`RenderStats::raster_glyphs` and `outline_glyphs` distinguish preparation paths;
+neither counts actual GPU presentation.
+
+The macOS preview installs the host-only CoreText adapter. It creates faces from
+the supplied bytes without system discovery or process-wide registration, keeps
+bounded face data, renders monochrome glyph coverage with platform smoothing,
+and preserves the existing outline fallback for nonzero collection members,
+variable and color fonts, resource refusal or unsupported platform instances.
+The safe pinned `core-text=21.0.0` wrapper reuses the locked CoreGraphics0.24 and
+CoreFoundation0.10 stack; only the desktop host depends on it. This implements
+the platform raster distinction visible in
+[Skia's CoreText scaler](https://raw.githubusercontent.com/google/skia/main/src/ports/SkScalerContext_mac_ct.cpp).
+The same optional interface can serve other platform adapters; they are not
+implemented by the macOS adapter. No Wasm ABI or capability grant changes.
+
 Characters typed immediately after pointer activation wait in the bounded input
 FIFO for its resulting focus frame, just as they wait for a preceding key turn.
 Trusted embedders can call `View::set_pointer_state` or

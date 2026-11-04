@@ -137,6 +137,12 @@ python3 scripts/verify.py full
 python3 scripts/verify.py --plan full   # print commands only
 ```
 
+The project-local Zed setting uses rust-analyzer `check.workspace: false`, so
+save-time diagnostics select the changed package rather than checking every
+workspace target after each edit. This does not alter the manual verification
+gates below. See the [Zed Rust configuration](https://zed.dev/docs/languages/rust#manual-cargo-diagnostics-fetch)
+and [rust-analyzer setting](https://rust-analyzer.github.io/book/configuration.html#rust-analyzer.check.workspace).
+
 Local runs check one crate and execute its selected tests. Feature runs cover the
 matching runtime unit, public engine API and CLI artifact tests; use direct Cargo
 commands when a feature uses different test names. A zero-test selection is not

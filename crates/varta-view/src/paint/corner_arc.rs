@@ -3,7 +3,7 @@ use tiny_skia::PathBuilder;
 
 const QUARTER_ERROR_BOUND: f64 = 0.000_273;
 const TARGET_ERROR_CSS: f64 = 0.005;
-const MAX_QUARTER_SEGMENTS: u32 = 8;
+pub(super) const MAX_QUARTER_SEGMENTS: u32 = 8;
 #[derive(Clone, Copy)]
 pub(super) enum Quarter {
     TopRight,
@@ -31,7 +31,24 @@ fn direction(index: u32, count: u32) -> (f64, f64) {
     }
 }
 pub(super) fn append(path: &mut PathBuilder, center: [f64; 2], radius: [f32; 2], quarter: Quarter) {
-    let [rx, ry] = radius.map(f64::from);
+    cubics(center, radius.map(f64::from), quarter, |[_, a, b, end]| {
+        path.cubic_to(
+            a[0] as f32,
+            a[1] as f32,
+            b[0] as f32,
+            b[1] as f32,
+            end[0] as f32,
+            end[1] as f32,
+        );
+    });
+}
+pub(super) fn cubics(
+    center: [f64; 2],
+    radius: [f64; 2],
+    quarter: Quarter,
+    mut emit: impl FnMut([[f64; 2]; 4]),
+) {
+    let [rx, ry] = radius;
     let maximum = rx.max(ry);
     // Subdividing an existing cubic would retain its old circle error. Emit
     // separate circle-tangent cubics instead. Beyond the target, source f32
@@ -50,12 +67,7 @@ pub(super) fn append(path: &mut PathBuilder, center: [f64; 2], radius: [f32; 2],
         let (start, start_tangent) = quarter.unit(sin, cos);
         let (sin, cos) = direction(index + 1, count);
         let (end, end_tangent) = quarter.unit(sin, cos);
-        let point = |unit: [f64; 2]| {
-            [
-                (center[0] + rx * unit[0]) as f32,
-                (center[1] + ry * unit[1]) as f32,
-            ]
-        };
+        let point = |unit: [f64; 2]| [center[0] + rx * unit[0], center[1] + ry * unit[1]];
         let first = point([
             start[0] + tangent * start_tangent[0],
             start[1] + tangent * start_tangent[1],
@@ -65,6 +77,6 @@ pub(super) fn append(path: &mut PathBuilder, center: [f64; 2], radius: [f32; 2],
             end[1] - tangent * end_tangent[1],
         ]);
         let end = point(end);
-        path.cubic_to(first[0], first[1], second[0], second[1], end[0], end[1]);
+        emit([point(start), first, second, end]);
     }
 }

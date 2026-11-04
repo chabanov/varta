@@ -89,9 +89,18 @@ fn rotation_preserves_curved_ownership_including_the_oversized_inset_counterexam
 // then identify the one constraint that excludes the point just beyond it.
 // Production uses analytic sign tests for ordinary single-corner ownership.
 fn oracle(widths: [f32; 4], corners: Corners, point: [f32; 2]) -> Option<usize> {
-    let at = |t: f32| corners.inset(bounds(), widths.map(|w| w * t));
+    oracle_in_box(bounds(), widths, corners, point)
+}
+
+fn oracle_in_box(
+    bounds: BoxRect,
+    widths: [f32; 4],
+    corners: Corners,
+    point: [f32; 2],
+) -> Option<usize> {
+    let at = |t: f32| corners.inset(bounds, widths.map(|w| w * t));
     let (hole, inner) = at(1.0);
-    if !corners.contains(bounds(), point[0], point[1]) || inner.contains(hole, point[0], point[1]) {
+    if !corners.contains(bounds, point[0], point[1]) || inner.contains(hole, point[0], point[1]) {
         return None;
     }
     let (mut low, mut high) = (0.0, 1.0);
@@ -155,6 +164,45 @@ fn oracle(widths: [f32; 4], corners: Corners, point: [f32; 2]) -> Option<usize> 
 }
 
 #[test]
+fn translated_elliptical_fronts_keep_independent_inset_ownership() {
+    let bounds = BoxRect {
+        x: 12.25,
+        y: -3.5,
+        width: 200.0,
+        height: 100.0,
+    };
+    let units = Units::new(&Environment::default()).unwrap();
+    let mut checked = 0;
+    for raw in ["90% 0 90% 0", "0 100% 0 75%", "60% 40% 80% 10%"] {
+        let corners = Corners::resolve(raw, bounds, units).unwrap();
+        for widths in [
+            [30.0; SIDES],
+            [20.0, 40.0, 10.0, 30.0],
+            [25.0, 0.0, 35.0, 0.0],
+        ] {
+            let p = Partition::new(bounds, widths, corners);
+            for y in 0..40 {
+                for x in 0..80 {
+                    let point = [
+                        bounds.x + (x as f32 + 0.37) * bounds.width / 80.0,
+                        bounds.y + (y as f32 + 0.43) * bounds.height / 40.0,
+                    ];
+                    if let Some(expected) = oracle_in_box(bounds, widths, corners, point) {
+                        assert_eq!(
+                            p.owner(f64::from(point[0]), f64::from(point[1])),
+                            expected,
+                            "{raw}, {widths:?}, {point:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(checked > 2000, "elliptical ring coverage was {checked}");
+}
+
+#[test]
 fn analytic_partition_matches_independent_inset_membership_for_asymmetric_and_colliding_corners() {
     let mut state = 771_u32;
     let mut next = || {
@@ -195,6 +243,53 @@ fn analytic_partition_matches_independent_inset_membership_for_asymmetric_and_co
         checked > 2000,
         "reference must exercise actual border points: {checked}"
     );
+}
+
+#[test]
+fn opposing_arc_arrival_selects_the_first_contour_on_both_sides_of_a_tie() {
+    // Opposite 100px corners overlap while their adjacent corners are square.
+    // The two inward fronts meet at x+y=100. Samples approach that boundary
+    // closely enough that an early fixed iteration cutoff would lose its side.
+    for turn in 0..SIDES {
+        let mut corners = radii("100px 0 100px 0");
+        corners.0.rotate_right(turn);
+        for _ in 0..turn {
+            for radius in &mut corners.0 {
+                radius.swap(0, 1);
+            }
+        }
+        let p = Partition::new(bounds(), [30.0; SIDES], corners);
+        for distance in [1.0, 0.01, 0.000001, 0.000000001] {
+            for (mut point, side) in [
+                ([50.0 - distance, 50.0], LEFT),
+                ([50.0 + distance, 50.0], RIGHT),
+                ([50.0, 50.0 - distance], TOP),
+                ([50.0, 50.0 + distance], BOTTOM),
+            ] {
+                for _ in 0..turn {
+                    point = [100.0 - point[1], point[0]];
+                }
+                assert_eq!(p.owner(point[0], point[1]), (side + turn) % SIDES);
+            }
+        }
+    }
+}
+
+#[test]
+fn opposing_arc_blocks_require_separation_over_the_whole_rectangle() {
+    let p = Partition::new(bounds(), [30.0; SIDES], radii("100px 0 100px 0"));
+    assert_eq!(p.uniform(49.9, 49.9, 0.2, 0.2), None);
+    for gap in [1.0, 0.01, 0.000001] {
+        let size = gap * 0.125;
+        for (x, y, side) in [
+            (50.0 - gap, 50.0 - size, LEFT),
+            (50.0 + gap, 50.0 - size, RIGHT),
+            (50.0 - size, 50.0 - gap, TOP),
+            (50.0 - size, 50.0 + gap, BOTTOM),
+        ] {
+            assert_eq!(p.uniform(x, y, size, size), Some(side));
+        }
+    }
 }
 
 #[test]

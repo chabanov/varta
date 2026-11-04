@@ -38,3 +38,8 @@ pollster = { workspace = true, optional = true }
 # Exercise the same safe live planner compiled by the patched platform adapter.
 accesskit_consumer = "=0.39.2"
 sha2.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text.workspace = true
+core-graphics.workspace = true

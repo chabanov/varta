@@ -8,6 +8,7 @@ pub(crate) struct Clip {
     pub parent: Option<Arc<Self>>,
     pub path: Option<Arc<Path>>,
     pub bounds: Option<Rect>,
+    pub(super) logical_bounds: Option<Rect>,
     pub(super) rect: BoxRect,
     pub(super) corners: Corners,
     pub bytes: usize,
@@ -16,6 +17,7 @@ impl PartialEq for Clip {
     fn eq(&self, other: &Self) -> bool {
         self.rect == other.rect
             && self.corners == other.corners
+            && self.logical_bounds == other.logical_bounds
             && (match (&self.path, &other.path) {
                 (None, None) => true,
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
@@ -44,10 +46,14 @@ impl Clip {
                 .as_ref()
                 .map_or(0, |p| std::mem::size_of_val(p.points()) + p.verbs().len())
             + parent.as_ref().map_or(0, |p| p.bytes);
+        let logical = source
+            .logical_bounds
+            .and_then(|_| logical_bounds(&parent, source.rect));
         Arc::new(Self {
             parent,
             path: source.path.clone(),
             bounds,
+            logical_bounds: logical,
             rect: source.rect,
             corners: source.corners,
             bytes,
@@ -59,11 +65,31 @@ impl Clip {
         rect: BoxRect,
         corners: Corners,
     ) -> Arc<Self> {
+        let logical = path.as_ref().and_then(|_| logical_bounds(&parent, rect));
+        Self::build(parent, path, rect, corners, logical)
+    }
+    pub(crate) fn with_paint(
+        parent: Option<Arc<Self>>,
+        path: Option<Path>,
+        rect: BoxRect,
+        corners: Corners,
+    ) -> Arc<Self> {
+        let logical = logical_bounds(&parent, rect);
+        Self::build(parent, path, rect, corners, logical)
+    }
+    fn build(
+        parent: Option<Arc<Self>>,
+        path: Option<Path>,
+        rect: BoxRect,
+        corners: Corners,
+        logical: Option<Rect>,
+    ) -> Arc<Self> {
         // Repeating the same geometric intersection is idempotent. Reusing the
         // scope also avoids multiplying identical AA fringes and observer work.
         if let Some(previous) = &parent
             && previous.rect == rect
             && previous.corners == corners
+            && previous.logical_bounds == logical
             && previous.path.as_deref() == path.as_ref()
         {
             return previous.clone();
@@ -81,6 +107,7 @@ impl Clip {
             parent,
             path: path.map(Arc::new),
             bounds,
+            logical_bounds: logical,
             rect,
             corners,
             bytes,
@@ -123,7 +150,7 @@ impl Clip {
         true
     }
     pub fn contains(&self, x: f32, y: f32) -> bool {
-        if self.bounds.is_none() {
+        if self.logical_bounds.is_none() {
             return false;
         }
         let mut current = Some(self);
@@ -134,6 +161,13 @@ impl Clip {
             current = clip.parent.as_deref();
         }
         true
+    }
+}
+fn logical_bounds(parent: &Option<Arc<Clip>>, rect: BoxRect) -> Option<Rect> {
+    let rect = Rect::from_xywh(rect.x, rect.y, rect.width, rect.height)?;
+    match parent {
+        Some(parent) => parent.logical_bounds.and_then(|p| p.intersect(&rect)),
+        None => Some(rect),
     }
 }
 

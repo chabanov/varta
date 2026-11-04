@@ -98,13 +98,14 @@ fn label_shape(
 }
 fn label(
     surface: &mut Surface,
-    font: &mut TextMeasurer,
+    font: (&mut TextMeasurer, &Tree, &Environment),
     shape: &TextShape,
     bounds: (BoxRect, BoxRect),
     color: Color,
     id: u32,
     work: &mut usize,
 ) -> Result<(), PaintError> {
+    let (font, tree, env) = font;
     let (rect, clip) = bounds;
     if shape.text.is_empty() || rect.width <= 0.0 || rect.height <= 0.0 {
         return Ok(());
@@ -125,10 +126,11 @@ fn label(
             scroll: None,
             programmatic_scroll: None,
         },
-        color,
+        underline::Style::resolve(tree, env, id, true, color)?,
         id,
         work,
     )
+    .map(|_| ())
 }
 pub(super) fn paint_control(
     surface: &mut Surface,
@@ -165,7 +167,7 @@ pub(super) fn paint_control(
     };
     label(
         surface,
-        font,
+        (font, tree, env),
         &shape,
         (text_box, layout::intersect(bounds.clip, text_box)),
         color,
@@ -347,7 +349,15 @@ pub(super) fn paint_menu(
             width: (row.width - 2.0 * MENU_PADDING).max(0.0),
             ..row
         };
-        label(surface, font, shape, (text, row), color, id, work)?;
+        label(
+            surface,
+            (font, tree, env),
+            shape,
+            (text, row),
+            color,
+            id,
+            work,
+        )?;
         rows.push((*option, scaled_rect(row, surface.scale), disabled));
     }
     paint_border(

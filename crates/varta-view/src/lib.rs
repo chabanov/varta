@@ -18,6 +18,7 @@
 mod accessibility;
 mod drawing;
 mod events;
+mod glyph_raster;
 mod inline;
 mod layout;
 mod name;
@@ -47,6 +48,9 @@ pub use events::{
     ClipboardAction, ClipboardData, ClipboardError, ClipboardKey, ClipboardTarget, ClipboardTask,
     ClipboardToken, HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep,
     Target,
+};
+pub use glyph_raster::{
+    GlyphRasterBounds, GlyphRasterError, GlyphRasterMask, GlyphRasterRequest, GlyphRasterizer,
 };
 pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
 pub use paint::{

@@ -9,11 +9,18 @@ mod checkables;
 mod clipboard;
 mod expansion_work;
 mod fields;
+mod glyph_raster;
 mod headless;
 mod inline;
+mod inline_opacity;
+mod inline_outline;
+mod inline_round;
+mod inline_spacing;
 mod lengths;
 mod naming_work;
 mod opacity;
+mod paint_order;
+mod paint_snap;
 mod paragraphs;
 mod pointer;
 mod renderer;
@@ -26,6 +33,7 @@ mod style_work;
 mod text;
 mod text_geometry;
 mod tree_depth;
+mod underline;
 mod variables;
 
 #[test]

@@ -18,9 +18,22 @@ pub(super) struct Scope {
     pub hidden: bool,
 }
 impl Surface<'_> {
+    fn paint_clip(&self, clip: BoxRect) -> BoxRect {
+        let mut paint = snap::rect(clip);
+        if clip.width > 0.0 && clip.x + clip.width == self.width as f32 / self.scale {
+            paint.width = (clip.x + clip.width - paint.x).max(0.0);
+        }
+        if clip.height > 0.0 && clip.y + clip.height == self.height as f32 / self.scale {
+            paint.height = (clip.y + clip.height - paint.y).max(0.0);
+        }
+        paint
+    }
     pub(super) fn local_clip(&self, clip: BoxRect) -> BoxRect {
-        let Some(scope) = self.groups.last() else {
+        if self.capture.is_some() {
             return clip;
+        }
+        let Some(scope) = self.groups.last() else {
+            return self.paint_clip(clip);
         };
         let base = scope.inherited;
         let left = if clip.x == base.x { 0.0 } else { clip.x };
@@ -35,12 +48,12 @@ impl Surface<'_> {
         } else {
             clip.y + clip.height
         };
-        BoxRect {
+        self.paint_clip(BoxRect {
             x: left,
             y: top,
             width: (right - left).max(0.0),
             height: (bottom - top).max(0.0),
-        }
+        })
     }
     pub(super) fn relative_clip(
         &mut self,
@@ -280,6 +293,7 @@ mod tests {
             groups: Vec::new(),
             relative_clips: BTreeMap::new(),
             isolation_required: false,
+            capture: None,
         };
         let bounds = BoxRect {
             x: 0.0,
@@ -287,7 +301,14 @@ mod tests {
             width: 24.0,
             height: 24.0,
         };
-        surface.push_clip(bounds, Corners([[12.0; 2]; 4])).unwrap();
+        surface
+            .push_clip(
+                bounds,
+                Corners([[12.0; 2]; 4]),
+                bounds,
+                Corners([[12.0; 2]; 4]),
+            )
+            .unwrap();
         let base = Arc::downgrade(surface.active_clip.as_ref().unwrap());
         surface.begin_group(2, 0.5, bounds).unwrap();
         let inner = BoxRect {
@@ -296,7 +317,14 @@ mod tests {
             width: 22.0,
             height: 22.0,
         };
-        surface.push_clip(inner, Corners([[11.0; 2]; 4])).unwrap();
+        surface
+            .push_clip(
+                inner,
+                Corners([[11.0; 2]; 4]),
+                inner,
+                Corners([[11.0; 2]; 4]),
+            )
+            .unwrap();
         let source = Arc::downgrade(surface.active_clip.as_ref().unwrap());
         let relative = surface
             .relative_clip(surface.active_clip.clone())

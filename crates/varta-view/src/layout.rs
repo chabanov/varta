@@ -512,6 +512,59 @@ fn layout_properties(
     Ok(result)
 }
 
+/// Non-replaced inline vertical margins do not affect line metrics. Vertical
+/// padding paints outside the font box; horizontal spacing still needs shaping
+/// boundary items and is refused until that separate path is implemented.
+pub(crate) fn inline_vertical_padding(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+) -> Result<[LengthPercentage; 2], LayoutError> {
+    let units = Units::new(env).ok_or(LayoutError::RootFont)?;
+    let properties = layout_properties(tree, env, id)?;
+    let mut padding = [LengthPercentage::length(0.0); 2];
+    for property in [
+        CssProperty::MarginTop,
+        CssProperty::MarginRight,
+        CssProperty::MarginBottom,
+        CssProperty::MarginLeft,
+    ] {
+        let Some(raw) = properties.get(&property) else {
+            continue;
+        };
+        let value = units.margin(raw).ok_or(LayoutError::Unsupported(id))?;
+        if matches!(property, CssProperty::MarginRight | CssProperty::MarginLeft)
+            && value.resolve_to_option(1.0, |_, _| 0.0).unwrap_or(0.0) != 0.0
+        {
+            return Err(LayoutError::Unsupported(id));
+        }
+    }
+    for property in [
+        CssProperty::PaddingTop,
+        CssProperty::PaddingRight,
+        CssProperty::PaddingBottom,
+        CssProperty::PaddingLeft,
+    ] {
+        let Some(raw) = properties.get(&property) else {
+            continue;
+        };
+        let value = units
+            .length::<LengthPercentage>(raw, false)
+            .ok_or(LayoutError::Unsupported(id))?;
+        match property {
+            CssProperty::PaddingTop => padding[0] = value,
+            CssProperty::PaddingBottom => padding[1] = value,
+            _ if value != LengthPercentage::length(0.0)
+                && value != LengthPercentage::percent(0.0) =>
+            {
+                return Err(LayoutError::Unsupported(id));
+            }
+            _ => {}
+        }
+    }
+    Ok(padding)
+}
+
 fn alignment(value: &str) -> Option<AlignItems> {
     Some(match value {
         "stretch" => AlignItems::STRETCH,

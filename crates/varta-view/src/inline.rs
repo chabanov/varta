@@ -9,6 +9,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+use taffy::style::{ExpandedLengthPercentage, LengthPercentage};
 use varta_common::view::{CssProperty as P, ROOT_NODE, Tag};
 
 pub(crate) const MAX_FRAGMENT_COUNT: usize = 65_536;
@@ -45,10 +46,11 @@ struct Vertical {
 impl Vertical {
     fn run(run: &parley::Run<'_, u32>) -> Self {
         let m = run.metrics();
-        let half = (m.line_height - m.ascent - m.descent) * 0.5;
+        let above = m.ascent.round()
+            + ((m.line_height - m.ascent.round() - m.descent.round()) * 0.5).floor();
         Self {
-            above: m.ascent + half,
-            below: m.descent + half,
+            above,
+            below: m.line_height - above,
         }
     }
 }
@@ -57,10 +59,19 @@ pub(crate) struct ContentFlow {
     spans: Vec<TextSpan>,
     paths: BTreeMap<u32, Vec<u32>>,
     pub nodes: Vec<u32>,
+    pub needs_paint_order: bool,
     hidden: BTreeSet<u32>,
     strut: Vertical,
     font_boxes: BTreeMap<u32, FontBox>,
     empty: BTreeMap<usize, Vec<u32>>,
+}
+impl ContentFlow {
+    pub(crate) fn decoration_metrics(&self, id: u32) -> Option<(f32, f32)> {
+        self.font_boxes.get(&id).map(|f| (f.size, f.ascent))
+    }
+    pub(crate) fn hidden(&self, id: u32) -> bool {
+        self.hidden.contains(&id)
+    }
 }
 pub(crate) struct ShapedFlow {
     pub layout: Layout<u32>,
@@ -68,10 +79,54 @@ pub(crate) struct ShapedFlow {
     pub metrics: TextMetrics,
 }
 #[derive(Clone, Copy)]
+enum PaddingLength {
+    Pixels(f32),
+    Fraction(f32),
+}
+impl From<LengthPercentage> for PaddingLength {
+    fn from(value: LengthPercentage) -> Self {
+        match value.expand() {
+            ExpandedLengthPercentage::Length(value) => Self::Pixels(value),
+            ExpandedLengthPercentage::Percent(value) => Self::Fraction(value),
+        }
+    }
+}
+#[derive(Clone, Copy)]
 struct FontBox {
+    size: f32,
     ascent: f32,
     descent: f32,
     vertical: Vertical,
+    // Keep plain owned lengths in the shared flow. Taffy's compact layout type
+    // can contain an opaque pointer and must not enter the retained Arc.
+    padding: [PaddingLength; 2],
+}
+impl FontBox {
+    fn padding(self, width: f32) -> Result<[f32; 2], LayoutError> {
+        let mut padding = [0.0; 2];
+        for (out, value) in padding.iter_mut().zip(self.padding) {
+            *out = match value {
+                PaddingLength::Pixels(value) => value,
+                PaddingLength::Fraction(value) => value * width,
+            };
+            if !out.is_finite() || !(0.0..=crate::units::MAX_LENGTH).contains(out) {
+                return Err(LayoutError::Limit);
+            }
+        }
+        Ok(padding)
+    }
+    fn padded(self, mut piece: BoxRect, width: f32) -> Result<BoxRect, LayoutError> {
+        let padding = self.padding(width)?;
+        piece.y -= padding[0];
+        piece.height += padding[0] + padding[1];
+        if !piece.y.is_finite()
+            || !piece.height.is_finite()
+            || piece.height > crate::units::MAX_LENGTH
+        {
+            return Err(LayoutError::Limit);
+        }
+        Ok(piece)
+    }
 }
 #[derive(Clone, Copy)]
 struct ClusterGroup {
@@ -84,6 +139,7 @@ pub(crate) struct Frame {
     pub shaped: ShapedFlow,
     pub bounds: BoxGeometry,
     pub fragments: BTreeMap<u32, Vec<BoxRect>>,
+    pub fragment_lines: BTreeMap<u32, Vec<usize>>,
     pub glyph_owners: Vec<Vec<u32>>,
 }
 
@@ -124,7 +180,7 @@ fn is_inline(tree: &Tree, env: &Environment, id: u32) -> bool {
     }
 }
 
-fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> {
+fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<[LengthPercentage; 2], LayoutError> {
     let properties = tree.computed_read(id, env);
     for (&property, value) in properties.iter() {
         let supported = match property {
@@ -138,11 +194,15 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> 
             | P::OverflowWrap
             | P::Color
             | P::Cursor
+            | P::BorderRadius
             | P::BackgroundColor => true,
-            P::TextDecoration => value == "none",
+            P::TextDecoration => matches!(value.as_str(), "none" | "underline"),
             P::Position => value == "static",
             P::ZIndex => value == "auto",
-            P::Opacity => value.parse::<f32>().ok() == Some(1.0),
+            P::Opacity => value
+                .parse::<f32>()
+                .ok()
+                .is_some_and(|a| a.is_finite() && (0.0..=1.0).contains(&a)),
             // Non-replaced inline boxes ignore these dimensions/flex properties.
             P::Width
             | P::Height
@@ -154,8 +214,7 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> 
             | P::FlexShrink
             | P::FlexBasis
             | P::AlignSelf => true,
-            P::BorderRadius
-            | P::Margin
+            P::Margin
             | P::MarginTop
             | P::MarginRight
             | P::MarginBottom
@@ -164,9 +223,7 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> 
             | P::PaddingTop
             | P::PaddingRight
             | P::PaddingBottom
-            | P::PaddingLeft => value.split_ascii_whitespace().all(|v| {
-                crate::units::Units::new(env).and_then(|u| u.pixels(v, true)) == Some(0.0)
-            }),
+            | P::PaddingLeft => true, // Resolved together in cascade order below.
             P::Border
             | P::BorderTop
             | P::BorderRight
@@ -177,13 +234,16 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> 
             | P::BorderColor => layout::border_widths(tree, env, id)?
                 .iter()
                 .all(|&w| w == 0.0),
-            P::Outline | P::OutlineStyle => value == "none",
+            P::Outline | P::OutlineWidth | P::OutlineStyle | P::OutlineColor | P::OutlineOffset => {
+                true
+            }
             _ => false,
         };
         if !supported {
             return Err(LayoutError::Unsupported(id));
         }
     }
+    let padding = layout::inline_vertical_padding(tree, env, id)?;
     if tree.element(id).is_some_and(|e| {
         e.tag == Tag::A
             && e.attributes
@@ -191,11 +251,11 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<(), LayoutError> 
     }) && (!properties.contains_key(&P::Color)
         || properties
             .get(&P::TextDecoration)
-            .is_none_or(|v| v != "none"))
+            .is_none_or(|v| !matches!(v.as_str(), "none" | "underline")))
     {
         return Err(LayoutError::Unsupported(id));
     }
-    Ok(())
+    Ok(padding)
 }
 
 pub(crate) fn collect(
@@ -239,6 +299,11 @@ pub(crate) fn collect(
     let mut spans = Vec::<TextSpan>::new();
     let mut paths = BTreeMap::new();
     let mut nodes = Vec::new();
+    let mut needs_paint_order = tree.path(root).into_iter().any(|id| {
+        tree.computed_property(id, env, P::TextDecoration)
+            .as_deref()
+            == Some("underline")
+    });
     let mut font_boxes = BTreeMap::new();
     let mut anchors = BTreeMap::new();
     let mut pending: Vec<_> = node
@@ -277,7 +342,21 @@ pub(crate) fn collect(
                 if !is_inline(tree, env, id) {
                     return Err(LayoutError::Unsupported(id));
                 }
-                validate(tree, env, id)?;
+                let padding = validate(tree, env, id)?;
+                needs_paint_order |= tree
+                    .computed_property(id, env, P::Opacity)
+                    .is_some_and(|raw| raw.parse::<f32>().ok() != Some(1.0));
+                needs_paint_order |= tree
+                    .computed_property(id, env, P::BackgroundColor)
+                    .is_some_and(|raw| raw != "transparent");
+                needs_paint_order |= tree
+                    .computed_property(id, env, P::TextDecoration)
+                    .as_deref()
+                    == Some("underline");
+                needs_paint_order |= [P::Outline, P::OutlineStyle].into_iter().any(|p| {
+                    tree.computed_property(id, env, p)
+                        .is_some_and(|v| v != "none")
+                });
                 anchors.insert(id, text.len() + usize::from(whitespace.is_some()));
                 let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
                 let (_, sample) = measurer
@@ -287,9 +366,11 @@ pub(crate) fn collect(
                     font_boxes.insert(
                         id,
                         FontBox {
-                            ascent: run.metrics().ascent,
-                            descent: run.metrics().descent,
+                            size: run.font_size(),
+                            ascent: run.metrics().ascent.round(),
+                            descent: run.metrics().descent.round(),
                             vertical: Vertical::run(&run),
+                            padding: padding.map(PaddingLength::from),
                         },
                     );
                 }
@@ -370,11 +451,21 @@ pub(crate) fn collect(
         let (_, layout) = measurer
             .shape_styled(" ", None, &families, options)
             .map_err(|e| LayoutError::Text(e.to_string()))?;
-        layout
-            .lines()
-            .next()
-            .and_then(|line| line.runs().next())
-            .map_or(Vertical::default(), |run| Vertical::run(&run))
+        if let Some(run) = layout.lines().next().and_then(|line| line.runs().next()) {
+            font_boxes.insert(
+                root,
+                FontBox {
+                    size: run.font_size(),
+                    ascent: run.metrics().ascent.round(),
+                    descent: run.metrics().descent.round(),
+                    vertical: Vertical::run(&run),
+                    padding: [PaddingLength::Pixels(0.0); 2],
+                },
+            );
+            Vertical::run(&run)
+        } else {
+            Vertical::default()
+        }
     };
     let mut occupied = BTreeSet::new();
     for span in &spans {
@@ -397,6 +488,7 @@ pub(crate) fn collect(
         spans,
         paths,
         nodes,
+        needs_paint_order,
         hidden: hidden_nodes,
         strut,
         font_boxes,
@@ -522,6 +614,7 @@ impl ContentFlow {
         fragments_left: &mut usize,
     ) -> Result<Frame, LayoutError> {
         let mut fragments = BTreeMap::<u32, Vec<BoxRect>>::new();
+        let mut fragment_lines = BTreeMap::<u32, Vec<usize>>::new();
         let mut glyph_owners = Vec::new();
         for (index, line) in shaped.layout.lines().enumerate() {
             let mut line_owners = Vec::new();
@@ -605,12 +698,10 @@ impl ContentFlow {
                         measurer
                             .charge_inline_work(1)
                             .map_err(|_| LayoutError::Limit)?;
-                        let (ascent, descent) = self
-                            .font_boxes
-                            .get(&id)
-                            .map_or((run.metrics().ascent, run.metrics().descent), |font| {
-                                (font.ascent, font.descent)
-                            });
+                        let (ascent, descent) = self.font_boxes.get(&id).map_or(
+                            (run.metrics().ascent.round(), run.metrics().descent.round()),
+                            |font| (font.ascent, font.descent),
+                        );
                         let piece = BoxRect {
                             x: bounds.rect.x + position,
                             y: bounds.rect.y + line.metrics().baseline + shaped.offsets[index]
@@ -618,9 +709,16 @@ impl ContentFlow {
                             width,
                             height: ascent + descent,
                         };
+                        let piece = if let Some(font) = self.font_boxes.get(&id) {
+                            font.padded(piece, bounds.rect.width)?
+                        } else {
+                            piece
+                        };
                         let items = fragments.entry(id).or_default();
+                        let lines = fragment_lines.entry(id).or_default();
                         if let Some(last) = items.last_mut().filter(|last| {
-                            last.y == piece.y
+                            lines.last() == Some(&index)
+                                && last.y == piece.y
                                 && last.height == piece.height
                                 && (last.x + last.width - piece.x).abs() < 0.001
                         }) {
@@ -629,6 +727,7 @@ impl ContentFlow {
                             *fragments_left =
                                 fragments_left.checked_sub(1).ok_or(LayoutError::Limit)?;
                             items.push(piece);
+                            lines.push(index);
                         }
                     }
                     let range = cluster.text_range();
@@ -649,13 +748,20 @@ impl ContentFlow {
                             };
                             *fragments_left =
                                 fragments_left.checked_sub(1).ok_or(LayoutError::Limit)?;
-                            fragments.entry(id).or_default().push(BoxRect {
-                                x: bounds.rect.x + at,
-                                y: bounds.rect.y + line.metrics().baseline + shaped.offsets[index]
-                                    - font.ascent,
-                                width: 0.0,
-                                height: font.ascent + font.descent,
-                            });
+                            let piece = font.padded(
+                                BoxRect {
+                                    x: bounds.rect.x + at,
+                                    y: bounds.rect.y
+                                        + line.metrics().baseline
+                                        + shaped.offsets[index]
+                                        - font.ascent,
+                                    width: 0.0,
+                                    height: font.ascent + font.descent,
+                                },
+                                bounds.rect.width,
+                            )?;
+                            fragments.entry(id).or_default().push(piece);
+                            fragment_lines.entry(id).or_default().push(index);
                         }
                     }
                     if !collapsed {
@@ -670,6 +776,7 @@ impl ContentFlow {
             shaped,
             bounds,
             fragments,
+            fragment_lines,
         })
     }
 }
@@ -736,11 +843,20 @@ pub(crate) fn frames(
             } else {
                 clip
             };
+            let mut content = union;
+            if !rich.hidden.contains(&node)
+                && pieces.is_some_and(|pieces| !pieces.is_empty())
+                && let Some(font) = rich.font_boxes.get(&node)
+            {
+                let [top, bottom] = font.padding(rect.width)?;
+                content.y += top;
+                content.height = (content.height - top - bottom).max(0.0);
+            }
             geometry.insert(
                 node,
                 BoxGeometry {
                     rect: union,
-                    content: union,
+                    content,
                     clip,
                     ..bounds
                 },

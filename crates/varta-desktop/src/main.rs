@@ -207,6 +207,10 @@ fn worker(
             .transpose()?;
         let mut renderer =
             varta_view::Renderer::new(render_font, 16.0).map_err(|e| e.to_string())?;
+        #[cfg(target_os = "macos")]
+        renderer.set_glyph_rasterizer(Some(Box::new(
+            varta_desktop::text_raster::CoreTextRasterizer::default(),
+        )));
         let mut rgb = Vec::new();
         let runtime = VartaRuntime::new();
         let initial_dark = dark.load(Ordering::Acquire);

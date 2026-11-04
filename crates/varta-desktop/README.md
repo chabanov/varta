@@ -179,22 +179,89 @@ threshold stays the original probe's 2/255; maximum differences are reported,
 including AA edge differences. CPU preparation timing covers only these small
 host fixtures, not guest execution, event queuing or physical presentation. GPU
 buffer/dimension caps and disabled intermediate layer textures stay unchanged.
-Fifteen scenes still exercise actual GPU drawing (60 observations); the two
+At that committed checkpoint, fifteen scenes exercise actual GPU drawing (60 observations); the two
 opacity and three mixed-border scenes use explicit CPU fallback (20 observations), compared with retained
 and fresh stateless pixels. Their rows say `gpu_rendered:false`. Repeated group
 preparation must have zero dirty pixels, while a local mutation retains damage
 reuse. `cpu_prepare_ms`/`dirty_pixels` describe the CPU reference renderer;
 `prepare_ms`/`prepare_dirty_pixels` and `unchanged_prepare_ms` describe fallback
 preparation separately. No speed ratio or direct GPU group support is inferred.
-Final macOS Debug/Release logs are
+The committed painting checkpoint's macOS Debug/Release logs are
 `target/paint-next-stage/native-painting-precommit-debug.log` and
 `native-painting-precommit-release.log`; `native-painting-precommit-checkpoint.json`
 records source/binary/image hashes and samples in that directory. Earlier opacity
 and geometry checkpoints remain separate historical inputs. Mixed-field preparation
 spans7.084–66.547ms Debug and0.353–7.616ms Release in these single-sample scenes;
-complex Debug corners still need optimization. These are offscreen observations,
+complex Debug corners required further optimization at that checkpoint. These are offscreen observations,
 not general UI smoothness, direct GPU group/color-field composition or actual
 application/window acceptance.
+
+The subsequent scoped CPU follow-up is recorded in
+`target/paint-next-stage/border-speed-profiled/checkpoint.json`. Three alternating
+before/current pairs per profile preserve all 80 images byte-for-byte each time.
+Mixed-scene preparation medians span 2.199–12.866 ms Debug and 0.365–2.798 ms
+Release; the cold2× opposing-corner scene moves from66.357 to12.866 ms Debug and
+7.517 to2.798 ms Release. These are host-owned offscreen timings; the CPU fallback
+contract and application/platform acceptance limits above remain. Final scoped
+checks cover 83 View library +265 integration cases, strict View all-target
+Clippy and both optional GPU example builds/probes, not a new full-workspace pass.
+
+The subsequent inline-background follow-up adds default sliced radii across
+wrapped/bidi fragments, per-fragment radius resolution and independent glyph/hit
+geometry. That checkpoint probe has21 scenes:64 actual GPU observations and20 explicit
+CPU fallbacks per build. Rounded inline backgrounds use the existing vector path;
+groups and mixed-color fields remain software fallbacks. Both Debug/Release probes
+pass, with all80 earlier images per profile byte-identical. Scoped evidence is in
+`target/paint-next-stage/inline-next/final/checkpoint.json`:85 View library +272
+integration cases, strict affected all-target GPU Clippy and4344 Chrome checks.
+That earlier checkpoint left inline opacity/context ordering, inline edges/
+borders/outlines and real application/platform acceptance as separate work.
+Firefox launch/profile failures and the sampled WebKit corner-hit difference
+remain explicit; no full cross-target parity is inferred from these offscreen
+checks.
+
+The subsequent paint-rounding/inline-opacity implementation has scoped evidence
+at `target/paint-next-stage/pixel-snapping/checkpoint.json`:86 View library +287
+integration +78 Desktop GPU-feature tests pass, with strict affected all-target
+Clippy. Both Debug and Release probes now have22 scenes, each with64 actual GPU
+observations and24 explicit CPU fallbacks. Own inline opacity uses CPU isolation;
+its stateless comparison includes the same explicit font. The original33-scene
+Chrome probe passes at1× and20 decoration scenes pass at2×. At1.25×,19/20 pass;
+the remaining ink/curve scene exceeds the unchanged2/255 mean bound. Pixel
+rounding preserves logical input/text geometry and subpixel glyph positions.
+That historical checkpoint independently reproduced normal block/inline phase
+ordering as a pixel/target gap. The following phase scheduler fixes it with scoped
+86 library +291 integration +78 Desktop tests and strict affected GPU Clippy.
+All24 new block/flex/grid browser cases pass at1×/1.25×/2×; the expanded59-case
+corpus retains dense overlapping-text raster failures and the125% curved-text
+failure. See `target/paint-next-stage/paint-phases/`. No full-workspace, app-window,
+system input or platform acceptance is claimed for these scoped increments.
+
+The following vertical-paragraph-origin increment has456 passing scoped tests
+(86 library,292 integration,78 Desktop) and strict affected GPU Clippy.
+It preserves horizontal/logical fractional geometry while fixing the125% curved
+text scene under the same2/255 mean bound. The59-case browser corpus now completes
+58/59 at each scale; dense overlapping text still fails. Current evidence lives
+in `target/paint-next-stage/text-origin/`.
+
+The macOS preview now installs CoreText glyph coverage from the same explicit
+font bytes selected by the shared shaper. Existing CPU/GPU rectangle commands,
+clips, opacity and cache ceilings remain in use; unsupported collection members,
+variable/color fonts and resource refusal preserve portable outlines. The native
+59-case Chrome corpus passes10105 checks at1×/1.25×/2× under the unchanged bound.
+Use `native_text_probe` for that host path and `native_inline_probe` for the
+portable outline reference, whose smoothing difference stays explicit. New
+`system-text`/`system-field` GPU scenes require actual native coverage. Evidence:
+`target/paint-next-stage/glyph-raster/`. This does not establish application-window
+or cross-platform typography acceptance.
+
+The consolidated painting/glyph package passes3434 workspace tests with16 ignored
+and all8 full-gate checks on unchanged source; strict GPU Clippy also passes.
+Current Debug/Release Metal probes each have24 scenes:72 actual GPU observations
+and24 explicit CPU fallbacks, max mean0.1472. New native scenes use coverage for
+12 dense-text glyphs and13 field glyphs and require no outline substitution.
+Report: `target/verification/20261104-131013-v4eh1yvu/report.json`.
+
 
 ## Software preview usage
 
@@ -354,8 +421,15 @@ and does not accept a package manifest or embedded artifact.
 The text-aware renderer also admits inline-only paragraphs with adjacent text,
 nested semantic inline tags, shared shaping, inherited styles and fragment hits.
 Flex/grid children are blockified by their parent. Fonts remain explicit; mixed
-block/inline content, nonzero inline edges/decoration and full typography are
-outside this experimental subset. Element geometry unions do not make the gaps
+block/inline content, nonzero horizontal spacing/borders and full typography are
+outside this experimental subset. Solid underlines propagate through inline
+text, retain decorating-box color/thickness and skip intersecting unhinted ink.
+Solid outlines surround joined fragment contours, including rounded corners,
+and paint after descendants with the original clips and opacity.
+Vertical inline padding expands the background/hit region without changing
+line height; percentage padding uses the containing block's content width.
+Top/bottom margins do not move inline text, and horizontal auto margins are zero.
+Element geometry unions do not make the gaps
 between wrapped fragments clickable. See the native layout contract for scope.
 
 ## Local frame timing

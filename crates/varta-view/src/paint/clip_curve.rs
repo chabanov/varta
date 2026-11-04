@@ -1,7 +1,7 @@
 //! Shared bounded line/cubic clipping operations; never flatten generated arcs.
 use tiny_skia::{Path, PathBuilder, PathSegment};
 
-const ROOT_STEPS: usize = 48;
+pub(super) const ROOT_STEPS: usize = 48;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Point(pub [f64; 2]);
 impl Point {
@@ -97,7 +97,7 @@ impl Segment {
     }
     /// Caller first splits at every projected derivative root. The resulting
     /// segment is monotone for this plane and has at most one crossing.
-    fn crossing(self, plane: Plane) -> (Self, Self) {
+    pub(super) fn crossing(self, plane: Plane) -> (Self, Self) {
         let increasing = plane.value(self.start()) < plane.value(self.end());
         let (mut low, mut high) = (0.0, 1.0);
         for _ in 0..ROOT_STEPS {
@@ -127,7 +127,7 @@ impl Segment {
             ),
         }
     }
-    fn projected_extrema(self, plane: Plane) -> ([f64; 2], usize) {
+    pub(super) fn projected_extrema(self, plane: Plane) -> ([f64; 2], usize) {
         let Self::Cubic(p) = self else {
             return ([0.0; 2], 0);
         };

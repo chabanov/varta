@@ -77,7 +77,8 @@ impl Draw {
 const TEXT_DRAWS_PER_WORK_UNIT: usize = 4;
 const BOX_DRAWS_AND_MARKERS: usize = 16;
 const FRAME_AUXILIARY_DRAWS: usize = 1;
-const MAX_FRAME_COMMANDS: usize = TEXT_DRAWS_PER_WORK_UNIT * crate::paint::MAX_TEXT_PAINT_WORK
+pub(crate) const MAX_FRAME_COMMANDS: usize = TEXT_DRAWS_PER_WORK_UNIT
+    * crate::paint::MAX_TEXT_PAINT_WORK
     + crate::inline::MAX_FRAGMENT_COUNT
     + BOX_DRAWS_AND_MARKERS * crate::layout::MAX_LAYOUT_NODES
     + FRAME_AUXILIARY_DRAWS;

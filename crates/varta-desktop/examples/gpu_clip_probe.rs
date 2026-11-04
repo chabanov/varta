@@ -44,6 +44,18 @@ enum Case {
     Button,
     Check,
     Radio,
+    Underline,
+    InlineOutline,
+    InlineRoundedOutline,
+    InlineOutlineOpacity,
+    InlinePadding,
+    InlineRoundedPadding,
+    InlineRound,
+    InlineOpacity,
+    #[cfg(target_os = "macos")]
+    SystemText,
+    #[cfg(target_os = "macos")]
+    SystemField,
 }
 impl Case {
     fn label(self) -> &'static str {
@@ -68,18 +80,82 @@ impl Case {
             Self::Button => "button",
             Self::Check => "check",
             Self::Radio => "radio",
+            Self::Underline => "underline",
+            Self::InlineOutline => "inline-outline",
+            Self::InlineRoundedOutline => "inline-rounded-outline",
+            Self::InlineOutlineOpacity => "inline-outline-opacity",
+            Self::InlinePadding => "inline-padding",
+            Self::InlineRoundedPadding => "inline-rounded-padding",
+            Self::InlineRound => "inline-rounded",
+            Self::InlineOpacity => "inline-opacity",
+            #[cfg(target_os = "macos")]
+            Self::SystemText => "system-text",
+            #[cfg(target_os = "macos")]
+            Self::SystemField => "system-field",
         }
     }
+    fn system_text(self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            matches!(self, Self::SystemText)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+    fn system_field(self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            matches!(self, Self::SystemField)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+    fn renderer(self) -> Result<Renderer, Box<dyn std::error::Error>> {
+        let renderer = Renderer::new(self.font()?, 16.0)?;
+        #[cfg(target_os = "macos")]
+        let renderer = {
+            let mut renderer = renderer;
+            if self.system_text() || self.system_field() {
+                renderer.set_glyph_rasterizer(Some(Box::new(
+                    varta_desktop::text_raster::CoreTextRasterizer::default(),
+                )));
+            }
+            renderer
+        };
+        Ok(renderer)
+    }
     fn control(self) -> bool {
+        self.system_field()
+            || matches!(
+                self,
+                Self::Field
+                    | Self::Password
+                    | Self::Select
+                    | Self::Button
+                    | Self::Check
+                    | Self::Radio
+            )
+    }
+    fn inline_outline(self) -> bool {
         matches!(
             self,
-            Self::Field | Self::Password | Self::Select | Self::Button | Self::Check | Self::Radio
+            Self::InlineOutline
+                | Self::InlineRoundedOutline
+                | Self::InlineOutlineOpacity
+                | Self::InlinePadding
+                | Self::InlineRoundedPadding
         )
     }
     fn software(self) -> bool {
         matches!(
             self,
             Self::Opacity
+                | Self::InlineOutlineOpacity
+                | Self::InlineOpacity
                 | Self::NestedOpacity
                 | Self::MixedBorder
                 | Self::MixedCorner
@@ -87,6 +163,24 @@ impl Case {
         )
     }
     fn font(self) -> Result<Option<TextMeasurer>, Box<dyn std::error::Error>> {
+        if matches!(self, Self::Underline) || self.inline_outline() {
+            return Ok(Some(TextMeasurer::new(
+                include_bytes!("../../varta-view/tests/fixtures/decoration.ttf").to_vec(),
+                "Varta Decoration Fixture",
+            )?));
+        }
+        if self.system_text() {
+            return Ok(Some(TextMeasurer::new(
+                include_bytes!("../../varta-view/tests/fixtures/inline.ttf").to_vec(),
+                "Varta Inline Fixture",
+            )?));
+        }
+        if matches!(self, Self::InlineRound | Self::InlineOpacity) {
+            return Ok(Some(TextMeasurer::new(
+                include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf").to_vec(),
+                "Varta Fixture 400",
+            )?));
+        }
         if !self.control() {
             return Ok(None);
         }
@@ -191,6 +285,127 @@ fn control_fixture(case: Case) -> Result<View, Box<dyn std::error::Error>> {
     Ok(view)
 }
 fn fixture(case: Case) -> Result<View, Box<dyn std::error::Error>> {
+    if case.inline_outline() {
+        let mut b = B::new();
+        b.set_style(1, P::BackgroundColor, "#ffffff")
+            .create_element(PANEL, Tag::Div)
+            .insert(1, PANEL, 0)
+            .set_style(PANEL, P::Width, "32px")
+            .set_style(PANEL, P::Height, "72px")
+            .set_style(PANEL, P::Margin, "12.25px")
+            .set_style(PANEL, P::Overflow, "hidden")
+            .set_style(PANEL, P::BorderRadius, "14px")
+            .set_style(PANEL, P::FontFamily, "\"Varta Decoration Fixture\"")
+            .set_style(PANEL, P::FontSize, "20px")
+            .set_style(PANEL, P::LineHeight, "24px")
+            .set_style(PANEL, P::Color, "transparent")
+            .create_element(FILL, Tag::Span)
+            .insert(PANEL, FILL, 0)
+            .set_style(FILL, P::Outline, "2px solid #ff0000")
+            .set_style(
+                FILL,
+                P::BorderRadius,
+                if matches!(case, Case::InlineOutline | Case::InlinePadding) {
+                    "0"
+                } else {
+                    "10px"
+                },
+            )
+            .create_text(MARK, "A A A A A")
+            .insert(FILL, MARK, 0);
+        if matches!(case, Case::InlineOutlineOpacity) {
+            b.set_style(FILL, P::Opacity, "0.5");
+        }
+        if matches!(case, Case::InlinePadding | Case::InlineRoundedPadding) {
+            b.set_style(FILL, P::Padding, "12.5% 0 4px").set_style(
+                FILL,
+                P::BackgroundColor,
+                "#00a08080",
+            );
+        }
+        let mut view = View::default();
+        view.commit(&b.finish(), false, &mut Denied)?;
+        return Ok(view);
+    }
+    if matches!(case, Case::Underline) {
+        let mut b = B::new();
+        b.set_style(1, P::BackgroundColor, "#ffffff")
+            .create_element(PANEL, Tag::Div)
+            .insert(1, PANEL, 0)
+            .set_style(PANEL, P::Width, "24px")
+            .set_style(PANEL, P::Height, "56px")
+            .set_style(PANEL, P::Margin, "12.25px")
+            .set_style(PANEL, P::Overflow, "hidden")
+            .set_style(PANEL, P::BorderRadius, "12px")
+            .set_style(PANEL, P::FontFamily, "\"Varta Decoration Fixture\"")
+            .set_style(PANEL, P::FontSize, "20px")
+            .set_style(PANEL, P::LineHeight, "24px")
+            .set_style(PANEL, P::TextDecoration, "underline")
+            .set_style(PANEL, P::Color, "#ff0000")
+            .create_element(FILL, Tag::Span)
+            .insert(PANEL, FILL, 0)
+            .set_style(FILL, P::Color, "#0000ff")
+            .create_text(MARK, "A g A g A")
+            .insert(FILL, MARK, 0);
+        let mut view = View::default();
+        view.commit(&b.finish(), false, &mut Denied)?;
+        return Ok(view);
+    }
+    if case.system_field() {
+        return control_fixture(Case::Field);
+    }
+    if case.system_text() {
+        let mut b = B::new();
+        b.set_style(1, P::BackgroundColor, "#ffffff")
+            .create_element(PANEL, Tag::Div)
+            .insert(1, PANEL, 0)
+            .set_style(PANEL, P::Width, "48px")
+            .set_style(PANEL, P::Height, "56px")
+            .set_style(PANEL, P::Margin, "12.25px")
+            .set_style(PANEL, P::Overflow, "hidden")
+            .set_style(PANEL, P::BorderRadius, "28px")
+            .set_style(PANEL, P::BackgroundColor, "#ccffcc")
+            .set_style(PANEL, P::FontFamily, "\"Varta Inline Fixture\"")
+            .set_style(PANEL, P::FontSize, "20px")
+            .set_style(PANEL, P::LineHeight, "12px")
+            .create_element(FILL, Tag::Span)
+            .insert(PANEL, FILL, 0)
+            .set_style(FILL, P::Color, "#000000")
+            .create_text(MARK, "A A A A A A A A A A A A")
+            .insert(FILL, MARK, 0);
+        let mut view = View::default();
+        view.commit(&b.finish(), false, &mut Denied)?;
+        return Ok(view);
+    }
+    if matches!(case, Case::InlineRound | Case::InlineOpacity) {
+        let mut b = B::new();
+        b.set_style(1, P::BackgroundColor, "#ffffff")
+            .create_element(PANEL, Tag::Div)
+            .insert(1, PANEL, 0)
+            .set_style(PANEL, P::Width, "24px")
+            .set_style(PANEL, P::Margin, "12px")
+            .set_style(PANEL, P::FontFamily, "\"Varta Fixture 400\"")
+            .set_style(PANEL, P::FontSize, "20px")
+            .set_style(PANEL, P::LineHeight, "20px")
+            .set_style(PANEL, P::Color, "transparent")
+            .create_element(FILL, Tag::Span)
+            .insert(PANEL, FILL, 0)
+            .set_style(FILL, P::BorderRadius, "50%")
+            .set_style(FILL, P::BackgroundColor, "#0000ff80")
+            .create_text(MARK, "A A A A")
+            .insert(FILL, MARK, 0);
+        if matches!(case, Case::InlineOpacity) {
+            b.set_style(PANEL, P::Margin, "12.25px")
+                .set_style(PANEL, P::Height, "40px")
+                .set_style(PANEL, P::BorderRadius, "50%")
+                .set_style(PANEL, P::Overflow, "hidden")
+                .set_style(FILL, P::Color, "#000000")
+                .set_style(FILL, P::Opacity, "0.5");
+        }
+        let mut view = View::default();
+        view.commit(&b.finish(), false, &mut Denied)?;
+        return Ok(view);
+    }
     if case.control() {
         return control_fixture(case);
     }
@@ -385,15 +600,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Case::Button,
             Case::Check,
             Case::Radio,
+            Case::Underline,
+            Case::InlineOutline,
+            Case::InlineRoundedOutline,
+            Case::InlineOutlineOpacity,
+            Case::InlinePadding,
+            Case::InlineRoundedPadding,
+            Case::InlineRound,
+            Case::InlineOpacity,
+            #[cfg(target_os = "macos")]
+            Case::SystemText,
+            #[cfg(target_os = "macos")]
+            Case::SystemField,
         ] {
             let mut view = fixture(case)?;
-            let mut cpu = Renderer::new(case.font()?, 16.0)?;
-            let mut vector = Renderer::new(case.font()?, 16.0)?;
+            let mut cpu = case.renderer()?;
+            let mut vector = case.renderer()?;
             let mut previous_pixels: Option<Vec<u8>> = None;
             for changed in [false, true] {
                 if changed {
                     let mut b = B::new();
-                    if matches!(case, Case::MixedCorner) {
+                    if case.inline_outline() {
+                        b.set_style(FILL, P::OutlineOffset, "-3px").set_style(
+                            FILL,
+                            P::OutlineColor,
+                            "#0060ff",
+                        );
+                        if matches!(case, Case::InlinePadding | Case::InlineRoundedPadding) {
+                            b.set_style(FILL, P::Padding, "1.5px 0 6.25px");
+                        }
+                    } else if matches!(case, Case::Underline) {
+                        b.set_style(PANEL, P::TextDecoration, "none");
+                    } else if case.system_text() {
+                        b.set_style(FILL, P::Color, "#0060ff");
+                    } else if matches!(case, Case::InlineRound | Case::InlineOpacity) {
+                        b.set_style(FILL, P::BackgroundColor, "#ff000080");
+                    } else if matches!(case, Case::MixedCorner) {
                         b.set_style(PANEL, P::BorderBottom, "30px solid #ff00ff80");
                     } else if matches!(case, Case::MixedBorder | Case::MixedCollision) {
                         let width = if matches!(case, Case::MixedCollision) {
@@ -413,6 +655,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let start = Instant::now();
                 let reference = cpu.render(&view, width, height, scale)?;
                 let cpu_ms = start.elapsed().as_secs_f64() * 1000.0;
+                let raster_glyphs = cpu.stats().raster_glyphs;
+                if case.system_text() || case.system_field() {
+                    assert!(
+                        raster_glyphs > 0,
+                        "native provider must supply actual coverage"
+                    );
+                    assert_eq!(
+                        cpu.stats().outline_glyphs,
+                        0,
+                        "this scene must not silently use portable outlines"
+                    );
+                }
                 let dirty_pixels = cpu.stats().dirty_pixels;
                 if changed {
                     assert!(
@@ -450,9 +704,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "explicit CPU fallback changed pixels or input geometry"
                         );
                         assert_eq!(view.snapshot(), snapshot, "fallback changed the view");
+                        let mut stateless_font = case.font()?;
                         assert_eq!(
                             frame,
-                            view.rasterize_scaled(width, height, scale, None)?,
+                            view.rasterize_scaled(
+                                width,
+                                height,
+                                scale,
+                                stateless_font.as_mut().map(|font| (font, 16.0))
+                            )?,
                             "fallback must also match a fresh stateless frame"
                         );
                         assert_eq!(prepare_dirty_pixels, dirty_pixels);
@@ -564,7 +824,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .filter(|draw| draw.clips.is_some())
                     .count();
                 println!(
-                    "{{\"case\":\"{label}\",\"scale\":{scale},\"changed\":{changed},\"cpu_prepare_ms\":{cpu_ms:.3},\"dirty_pixels\":{dirty_pixels},\"clipped_draws\":{clips},\"mode\":\"vector\",\"gpu_rendered\":true,\"mean_rgb_delta\":{mean:.4},\"max_rgb_delta\":{maximum}}}"
+                    "{{\"case\":\"{label}\",\"scale\":{scale},\"changed\":{changed},\"cpu_prepare_ms\":{cpu_ms:.3},\"dirty_pixels\":{dirty_pixels},\"clipped_draws\":{clips},\"raster_glyphs\":{raster_glyphs},\"mode\":\"vector\",\"gpu_rendered\":true,\"mean_rgb_delta\":{mean:.4},\"max_rgb_delta\":{maximum}}}"
                 );
                 std::fs::write(
                     format!("{}-{label}-{scale}-{changed}.rgba", args[0]),
