@@ -2,18 +2,20 @@
 
 ## Status
 
-Updated 2026-11-04 after native painting commit `54585e3f`: rounded clipping,
-text/assistive geometry, isolated opacity and mixed-border CPU composition pass
-the consolidated batch gate. The native accessibility, clipboard, retained
-renderer, pointer-state, TSX Showcase and optional GPU foundations are integrated.
-Working-tree follow-ups add sliced inline backgrounds/opacity, independent logical
-clips, normal paint/hit phases and vertical paragraph paint-origin alignment.
-Their scoped evidence is below. Native macOS glyph coverage now resolves the
-sampled dense-text raster mismatch; portable outlines retain their explicit
-platform-smoothing difference and broader typography acceptance stays open.
-The scoped CPU follow-up below addresses the measured Debug mixed-border blocker; it
-does not close whole-application or platform acceptance. The
-browser geometry/timing increment and Metal prototype are recorded below. Varta is an experimental
+Updated 2026-11-04 after native inline painting commit `ed77739e`. It commits
+the mixed-border CPU follow-up, sliced inline backgrounds and whole-subtree
+inline opacity, static opacity context placement, paint-edge rounding, ordinary
+block/inline paint phases, vertical paragraph paint origins, host glyph
+coverage (CoreText on macOS), solid underlines, fragmented outlines and vertical
+inline spacing. The consolidated gate below verified exactly these code inputs;
+only documentation annotations changed between that gate and the commit. The
+earlier rounded clipping/composition (`54585e3f`), clipboard (`22b02d0c`),
+accessibility (`5a521250`, `2400dbfe`), retained renderer, TSX Showcase and
+optional GPU (`be85c981`) foundations are integrated. The working tree is clean;
+the unfinished horizontal inline edge-shaping prototype exists only as local
+stash `WIP inline edge shaping foundation`, not in `main`. Portable outlines
+retain their explicit platform-smoothing difference, and broader typography,
+whole-application and platform acceptance stay open. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
 profiles; K4 and the platform work are integrated through v38 and remain in
@@ -25,7 +27,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last committed full gate | Native inline paint ordering/opacity/radii, host glyph coverage, solid underlines, fragmented outlines and vertical inline spacing after `54585e3f` (2026-11-04, macOS arm64): **3473 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-161029-qyx08oka/report.json`; source SHA-256 `22ba2807b47b0ab666df1b89bd0bc57a6b1d96ed5a55b2f9650d474b7478ad71`. Strict affected GPU Clippy passes; Debug/Release each cover92 actual GPU +28 explicit CPU-fallback observations across30 scenes. Only result/status documentation annotations follow the gate. Real-font/window/system-input/VoiceOver, other-platform, broader core/pilot and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last committed full gate | Native inline paint ordering/opacity/radii, host glyph coverage, solid underlines, fragmented outlines and vertical inline spacing, committed as `ed77739e` (gate run on 2026-11-04, macOS arm64, over the pre-commit tree on `54585e3f`): **3473 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-161029-qyx08oka/report.json`; source SHA-256 `22ba2807b47b0ab666df1b89bd0bc57a6b1d96ed5a55b2f9650d474b7478ad71`. Strict affected GPU Clippy passes; Debug/Release each cover92 actual GPU +28 explicit CPU-fallback observations across30 scenes. Only result/status documentation annotations follow the gate. Real-font/window/system-input/VoiceOver, other-platform, broader core/pilot and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -37,7 +39,7 @@ ECMAScript, Node or npm compatibility.
 
 ### Native border CPU follow-up — scoped 2026-11-04
 
-Implemented in the working tree after `54585e3f`: opposing-front ownership stops
+Implemented after `54585e3f`, committed in `ed77739e`: opposing-front ownership stops
 when exactly one contour has arrived; uniform blocks use certified arrival
 intervals, and the existing contour mask restricts work to whole covered pixels.
 The remaining Debug hotspot was identified with a repeated CPU prepare fixture:
@@ -78,7 +80,8 @@ Evidence, exact source inputs, binaries and samples:
 The earlier `border-speed/` and `border-speed-final/` checkpoints verify their
 earlier inputs. A circular-root proposal in the latter showed no additional
 measured gain and was removed. This follow-up has scoped acceptance only; the
-3393-test full gate above continues to verify the committed painting inputs.
+3393-test gate verified the earlier `54585e3f` inputs; the 3473-test
+[commit gate](#native-inline-painting-commit-gate--2026-11-04) covers this follow-up.
 Continue rounded inline decoration/own opacity, direct GPU fields/groups and
 application/platform/pilot/release acceptance. Do not close CORE-16/18 or the whole
 plan from this fixture improvement.
@@ -130,7 +133,7 @@ edges/borders/outlines and the wider platform/pilot/release plan remain open.
 
 ### Native static opacity context placement — scoped 2026-11-04
 
-The reproduced red-opacity/blue-sibling discrepancy is fixed in the working tree.
+The reproduced red-opacity/blue-sibling discrepancy is fixed (committed in `ed77739e`).
 An iterative source scheduler delays each nonunit-opacity box subtree until
 ordinary content in its nearest root/opacity context has painted, then paints
 peer contexts in source order. This also orders pointer hits: opacity0 keeps
@@ -156,9 +159,9 @@ inline-content paint phases before claiming general CSS stacking parity.
 Inline edges/borders/outlines, direct GPU fields/groups and the full accepted
 platform/pilot/core/release plan remain open.
 
-### Native inline opacity — implementation, acceptance in progress 2026-11-04
+### Native inline opacity — committed in `ed77739e`, 2026-11-04
 
-The working tree now admits inline opacity through whole-subtree isolation,
+Varta now admits inline opacity through whole-subtree isolation,
 not per-glyph/fragment alpha. A flow with nonunit inline opacity captures source
 draws once after shared shaping, retains first-source ligature ownership and
 joins the nearest root/opacity context's deferred queue. Fragment line identities
@@ -402,9 +405,10 @@ The compatibility inventory remains123 passed/4 known unsupported of127, baselin
 matched, with no regressions or infrastructure failures. Current scoped GPU
 checks retain30 scenes/92 actual GPU +28 explicit CPU fallbacks per Debug/Release
 build. The172 pinned engine/build/fixture/tool inputs match those scoped checks.
-Only result/status annotations follow this gate. Incomplete horizontal edge
-shaping and native border/fragment integration are excluded from this commit;
-that prototype is preserved separately. The full accepted core/pilot/platform/
+Only result/status annotations follow this gate; the gated code was committed
+unchanged as `ed77739e`. Incomplete horizontal edge shaping and native
+border/fragment integration are excluded from that commit; the prototype is
+kept only as the local stash `WIP inline edge shaping foundation`. The full accepted core/pilot/platform/
 release plan and the remaining real-font/window/input acceptance stay open.
 
 ### Current UI checkpoint and proposed continuation
@@ -412,7 +416,7 @@ release plan and the remaining real-font/window/input acceptance stay open.
 **Active package UI-2 — native accessibility foundation, after `be85c981`.**
 Shared flat semantic snapshots, native AccessKit roles/names/states, stable
 nonrecycled platform IDs and presented-frame physical bounds are implemented
-in the working tree. Focus, Click, string SetValue and ReplaceSelectedText route
+(committed in `5a521250`). Focus, Click, string SetValue and ReplaceSelectedText route
 through bounded host queues and ordinary input/broker/event paths, with source
 identity and frame guards. Inactive rendering avoids semantic projection.
 The existing headless JSON contract, Wasm ABI and production guest budgets stay
@@ -473,7 +477,7 @@ The full workspace gate remains a pre-commit
 batch-boundary check. Text ranges/line data, assistive scrolling/announcements and
 VoiceOver/other-target acceptance remain open.
 
-**UI-2.2 — logical field ranges and checked selection.** The working tree adds
+**UI-2.2 — logical field ranges and checked selection.** Committed work adds
 scalar/CRLF text units, Unicode word starts, hard lines and directional selection
 to the native observer. AccessKit receives chunks of at most 255 units with
 same-line links and exact UTF-8 source mapping held in the host. Password runs
@@ -896,11 +900,11 @@ and both20-scene probes pass. `native-painting-precommit-checkpoint.json` in
 `target/paint-next-stage/` retains exact inputs, binaries, images and scope.
 Mixed-field preparation at that checkpoint spans7.084–66.547ms Debug and
 0.353–7.616ms Release in those single-sample scenes. The scoped CPU follow-up
-above records subsequent working-tree performance. No general UI smoothness or
+above records the subsequent performance work, committed in `ed77739e`. No general UI smoothness or
 whole-plan completion is inferred. Only documentation annotations followed that
 gate before commit `54585e3f`; the later optimization has its own scoped evidence.
 
-The working tree groups the 25 view integration case files into one declared
+Commit `54585e3f` groups the 25 view integration case files into one declared
 Cargo target, retaining per-file modules and adding a missing-file registration
 guard. Standalone comparison proves the same 233 original cases and passes all
 of them in one process (9.7 s including startup on this host). This reduces repeated
@@ -3978,7 +3982,7 @@ memory, frame time for the 50-row list and keystroke-to-frame latency.
 
 #### GPU and game graphics: future direction
 
-**Recorded 2026-11-03; P13a optional prototype implemented in the working tree,
+**Recorded 2026-11-03; P13a optional prototype committed in `be85c981`,
 P13b/P13c planned.** Separate three increments:
 GPU acceleration of the existing UI, a typed graphics API for Wasm applications,
 and library compatibility. The [architecture contract](architecture.md#planned-gpu-rendering-and-application-graphics)

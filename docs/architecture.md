@@ -12224,9 +12224,9 @@ native platform-default disabled styling is not supplied.
 For a focused input that subsequently becomes disabled, Varta can still deliver
 keydown but Enter does not submit its form. In a focused test Chrome did not
 submit, whereas WebKit submitted; complete cross-browser parity remains open.
-The experimental desktop preview uses these CPU images. Its current uncommitted
-retained-renderer/pointer implementation and the TSX Showcase have scoped local
-verification; the native-text full gate at `1259eb8` predates those changes.
+The experimental desktop preview uses these CPU images. Its retained-renderer/
+pointer implementation and the TSX Showcase are committed in `be85c981` with
+scoped local verification; later consolidated gates cover their code inputs.
 See the [current UI checkpoint](development-plan.md#current-ui-checkpoint-and-proposed-continuation)
 for evidence and remaining acceptance. The browser/native Showcase comparison
 also records root/control sizing and OS accessibility gaps; a shared patch stream
@@ -13204,7 +13204,7 @@ the portable artifact format and ABI are unchanged.
 
 ### Planned GPU rendering and application graphics
 
-**Direction recorded 2026-11-03; optional UI prototype implemented in the working tree.**
+**Direction recorded 2026-11-03; optional UI prototype committed in `be85c981`.**
 GPU rendering of Varta UI, a guest graphics API for games, and compatibility with Three.js are
 three separate deliverables. This direction extends the native renderer design
 without expanding the current L0 subset or admitting new host imports. Delivery

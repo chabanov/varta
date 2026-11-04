@@ -24,11 +24,13 @@ measurements and release/security acceptance remain open. See the
 [current queue](docs/development-plan.md#next-delivery-batches) and
 [CORE ledger](docs/development-plan.md#core-completion-ledger).
 
-The current UI working tree adds retained CPU rendering, hover/active feedback
+The native UI adds retained CPU rendering, hover/active feedback
 and a [TSX Showcase](examples/native-showcase/README.md) with external CSS,
-native macOS bundles and official browser dev support. Scoped checks and pinned
+native macOS bundles and official browser dev support. Later commits add bounded
+native accessibility, host-owned clipboard, rounded clipping and inline
+decorations/opacity with host glyph coverage. Scoped checks and pinned
 frame benchmarks are recorded in the [UI checkpoint](docs/development-plan.md#current-ui-checkpoint-and-proposed-continuation);
-the consolidated gate passes 3202 tests with unchanged code/build inputs. Standalone browser root and
+the latest consolidated gate is in the [status summary](docs/development-plan.md#status). Standalone browser root and
 control geometry now match the native sizing rules; bounded opt-in timing covers
 both hosts with explicitly different presentation boundaries. An optional native
 Metal/wgpu UI prototype consumes shared vector scenes and recovers to CPU without
