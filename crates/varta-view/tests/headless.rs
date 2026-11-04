@@ -2688,10 +2688,16 @@ fn cpu_raster_paints_uniform_borders_and_honors_color_cascade() {
     let mut mismatch = BatchWriter::new();
     mismatch.set_style(2, CssProperty::BorderTop, "4px solid #f00");
     commit(&mut view, &mismatch).unwrap();
-    assert!(matches!(
-        view.rasterize_boxes(40, 40),
-        Err(varta_view::PaintError::Unsupported(2))
-    ));
+    let image = view.rasterize_boxes(40, 40).unwrap();
+    for (x, y, color) in [
+        (10, 1, [255, 0, 0, 255]),
+        (1, 10, [0, 0, 255, 255]),
+        (5, 5, [255, 0, 0, 255]),
+    ] {
+        let at = (y * 40 + x) * 4;
+        assert_eq!(&image.pixels[at..at + 4], &color);
+        assert_eq!(image.hit_test(x as f32, y as f32), Some(2));
+    }
 }
 
 #[test]
@@ -2738,10 +2744,17 @@ fn cpu_raster_paints_backgrounds_and_clips_descendants() {
     let mut change = BatchWriter::new();
     change.set_style(3, CssProperty::Opacity, "0.5");
     commit(&mut view, &change).unwrap();
-    assert!(matches!(
-        view.rasterize_boxes(40, 40),
-        Err(varta_view::PaintError::Unsupported(3))
-    ));
+    let image = view.rasterize_boxes(40, 40).unwrap();
+    assert_eq!(
+        &image.pixels[(15 * 40 + 15) * 4..(15 * 40 + 16) * 4],
+        &[191, 0, 64, 255]
+    );
+    assert_eq!(image.hit_test(15.0, 15.0), Some(3));
+    assert_eq!(
+        &image.pixels[(15 * 40 + 25) * 4..(15 * 40 + 26) * 4],
+        &[0; 4],
+        "opacity must preserve ancestor clipping"
+    );
     let mut hidden = BatchWriter::new();
     hidden.set_style(3, CssProperty::Display, "none");
     commit(&mut view, &hidden).unwrap();

@@ -93,12 +93,17 @@ fn depth_boundary_survives_snapshot_naming_serialization_and_drop() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "depth_boundary_survives_snapshot_naming_serialization_and_drop",
+            "tree_depth::depth_boundary_survives_snapshot_naming_serialization_and_drop",
             "--nocapture",
         ])
         .env(CHILD, "1")
         .output()
         .unwrap();
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "subprocess must execute its exact case: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     assert!(
         output.status.success(),
         "depth boundary must not abort its host: {}\n{}\n{}",

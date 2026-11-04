@@ -161,6 +161,41 @@ readback timings; readback is diagnostic and is never used for window presentati
 cargo run -p varta-desktop --features gpu --example gpu_probe --locked -- app.wasm font.ttf Arial target/gpu-frame
 ```
 
+The `gpu_clip_probe` diagnostic uses host-owned box/control fixtures, including
+rounded/nested clips, translucent fills, borders, oversized asymmetric inner
+arcs, fractional edges, offsets, textarea, password,
+select, button, checkbox and radio. Its text cases use the deterministic test
+font; it needs no Wasm/font arguments and does not open a window:
+
+```sh
+mkdir -p target/clip-probe
+cargo run -p varta-desktop --features gpu --example gpu_clip_probe --locked -- target/clip-probe/frame
+```
+
+Twenty scenes at 1×/2× each compare a cold frame and a visible interior color
+change with CPU pixels and identical input metadata. Partial dirty regions must
+be nonzero and smaller than the frame; images are saved as `.rgba`. The mean RGB
+threshold stays the original probe's 2/255; maximum differences are reported,
+including AA edge differences. CPU preparation timing covers only these small
+host fixtures, not guest execution, event queuing or physical presentation. GPU
+buffer/dimension caps and disabled intermediate layer textures stay unchanged.
+Fifteen scenes still exercise actual GPU drawing (60 observations); the two
+opacity and three mixed-border scenes use explicit CPU fallback (20 observations), compared with retained
+and fresh stateless pixels. Their rows say `gpu_rendered:false`. Repeated group
+preparation must have zero dirty pixels, while a local mutation retains damage
+reuse. `cpu_prepare_ms`/`dirty_pixels` describe the CPU reference renderer;
+`prepare_ms`/`prepare_dirty_pixels` and `unchanged_prepare_ms` describe fallback
+preparation separately. No speed ratio or direct GPU group support is inferred.
+Final macOS Debug/Release logs are
+`target/paint-next-stage/native-painting-precommit-debug.log` and
+`native-painting-precommit-release.log`; `native-painting-precommit-checkpoint.json`
+records source/binary/image hashes and samples in that directory. Earlier opacity
+and geometry checkpoints remain separate historical inputs. Mixed-field preparation
+spans7.084–66.547ms Debug and0.353–7.616ms Release in these single-sample scenes;
+complex Debug corners still need optimization. These are offscreen observations,
+not general UI smoothness, direct GPU group/color-field composition or actual
+application/window acceptance.
+
 ## Software preview usage
 
 `varta-preview` opens a native CPU-rendered window for a precompiled v38 view
@@ -242,7 +277,8 @@ cargo run -p varta-desktop --bin varta-preview -- crates/varta-desktop/examples/
 Space toggles the checkbox. Tab visits a radio group once; arrow keys move its
 selection. The bottom radio belongs to a separate form and stays selected when
 the upper group changes. Checked marks use the supplied foreground color inside
-explicit rectangular control boxes; platform-native control themes are not supplied.
+explicit control content boxes, clipped by an authored inset corner curve when
+present; platform-native control themes are not supplied.
 
 The single-select fixture includes its own deterministic font:
 

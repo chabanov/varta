@@ -1,15 +1,24 @@
 //! Bounded CPU painting for an explicitly limited subset of the view tree.
+pub(crate) mod border;
+mod border_partition;
+mod clip_curve;
+mod corner_arc;
+mod corner_clip;
+pub(crate) mod corners;
+mod groups;
 mod scroll;
 mod select;
 mod text_geometry;
 use crate::TextMeasurer;
 use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
+use crate::render::clips::{Clip, MaskCache};
 use crate::render::glyphs::{self, Glyphs};
 use crate::render::scene::{self, Draw, Primitive, Recording, Scene};
 use crate::style::{self, Environment, Name};
 use crate::text::{TextSource, WhiteSpaceMode, field_display};
 use crate::tree::{Content, Tree, border_color_sides, outline_components};
 use crate::units::Units;
+use corners::Corners;
 use parley::{Affinity, Cursor, Layout, PositionedLayoutItem, Selection};
 pub use select::{SelectHit, SelectMenuMetrics};
 use skrifa::{
@@ -50,6 +59,10 @@ pub struct FrameMetadata {
     pub height: u32,
     scale: f32,
     hit_regions: Vec<(u32, BoxRect)>,
+    // Only the element's own border-box hit is rounded. Visible overflowing
+    // descendant/text fragments retain their independent hit rectangles.
+    rounded_regions: BTreeMap<usize, (BoxRect, Corners)>,
+    hit_clips: BTreeMap<usize, std::sync::Arc<Clip>>,
     ancestors: BTreeMap<u32, Option<u32>>,
     scrolls: BTreeMap<u32, ScrollMetrics>,
     focused: Option<u32>,
@@ -76,6 +89,7 @@ struct TextHit {
     identity: crate::NodeIdentity,
     revision: crate::AccessibilityTextRevision,
     clip: BoxRect,
+    clips: Option<std::sync::Arc<Clip>>,
     selection_carets: [BoxRect; 2],
     clusters: Vec<FieldTextCluster>,
     end: usize,
@@ -124,6 +138,8 @@ impl FrameMetadata {
             && self.height == other.height
             && self.scale == other.scale
             && self.hit_regions == other.hit_regions
+            && self.rounded_regions == other.rounded_regions
+            && self.hit_clips == other.hit_clips
             && self.ancestors == other.ancestors
             && self.scrolls == other.scrolls
             && self.focused == other.focused
@@ -312,10 +328,25 @@ impl FrameMetadata {
         if !x.is_finite() || !y.is_finite() {
             return None;
         }
-        self.hit_regions.iter().rev().find_map(|(id, rect)| {
-            (x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height)
+        self.hit_regions
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, (id, rect))| {
+                (x >= rect.x
+                    && y >= rect.y
+                    && x < rect.x + rect.width
+                    && y < rect.y + rect.height
+                    && self
+                        .rounded_regions
+                        .get(&index)
+                        .is_none_or(|(bounds, radii)| radii.contains(*bounds, x, y))
+                    && self
+                        .hit_clips
+                        .get(&index)
+                        .is_none_or(|clip| clip.contains(x, y)))
                 .then_some(*id)
-        })
+            })
     }
 
     /// Pick the closest ancestor by physical coordinates; delta and returned
@@ -343,6 +374,9 @@ impl FrameMetadata {
     }
 }
 
+// Existing native preparation allowance, shared by every text paint in a frame.
+pub(crate) const MAX_TEXT_PAINT_WORK: usize = 1_000_000;
+
 /// Painting rejects effects and content it cannot reproduce.
 #[derive(Debug, thiserror::Error)]
 pub enum PaintError {
@@ -366,29 +400,55 @@ struct Surface<'a> {
     height: u32,
     scale: f32,
     commands: Option<Recording>,
+    active_clip: Option<std::sync::Arc<Clip>>,
+    clip_masks: Option<MaskCache>,
     failure: Option<PaintError>,
+    groups: Vec<groups::Scope>,
+    relative_clips: BTreeMap<(usize, usize), groups::RelativeClip>,
+    isolation_required: bool,
 }
 impl Surface<'_> {
+    fn push_clip(&mut self, rect: BoxRect, corners: Corners) -> Result<(), PaintError> {
+        let path = corners
+            .clipped_path(rect)
+            .map(|path| {
+                path.transform(Transform::from_scale(self.scale, self.scale))
+                    .ok_or(PaintError::Dimensions)
+            })
+            .transpose()?;
+        self.active_clip = Some(Clip::new(
+            self.active_clip.clone(),
+            path,
+            scaled_rect(rect, self.scale),
+            corners.scaled(self.scale),
+        ));
+        Ok(())
+    }
     fn width(&self) -> u32 {
         self.width
     }
     fn height(&self) -> u32 {
         self.height
     }
+    fn rectangle_mask(&self, rect: Rect) -> Result<ClipMask, PaintError> {
+        let mut image = Mask::new(self.width, self.height).ok_or(PaintError::Dimensions)?;
+        image.fill_path(
+            &PathBuilder::from_rect(rect),
+            FillRule::Winding,
+            true,
+            Transform::from_scale(self.scale, self.scale),
+        );
+        Ok(ClipMask {
+            rect,
+            image: Some(image),
+        })
+    }
     fn mask(&self, rect: Rect) -> Result<ClipMask, PaintError> {
-        let image = if self.commands.is_some() {
-            None
+        if self.commands.is_some() || self.active_clip.is_some() {
+            Ok(ClipMask { rect, image: None })
         } else {
-            let mut image = Mask::new(self.width, self.height).ok_or(PaintError::Dimensions)?;
-            image.fill_path(
-                &PathBuilder::from_rect(rect),
-                FillRule::Winding,
-                true,
-                Transform::from_scale(self.scale, self.scale),
-            );
-            Some(image)
-        };
-        Ok(ClipMask { rect, image })
+            self.rectangle_mask(rect)
+        }
     }
     fn record(
         &mut self,
@@ -397,7 +457,13 @@ impl Surface<'_> {
         transform: Transform,
         mask: Option<&ClipMask>,
     ) {
-        if self.failure.is_some() {
+        if self.failure.is_some()
+            || self.groups.last().is_some_and(|scope| scope.hidden)
+            || self
+                .active_clip
+                .as_ref()
+                .is_some_and(|clip| clip.bounds.is_none())
+        {
             return;
         }
         let Shader::SolidColor(color) = paint.shader else {
@@ -407,6 +473,10 @@ impl Surface<'_> {
         let bounds = match &primitive {
             Primitive::Rect(rect) => *rect,
             Primitive::Path(path, _) => path.bounds(),
+            Primitive::Border(border) => border.path.bounds(),
+            Primitive::BeginGroup { .. } | Primitive::EndGroup => {
+                unreachable!("group markers are recorded by scope")
+            }
         };
         let transform = transform.post_scale(self.scale, self.scale);
         let Some(bounds) = bounds.transform(transform) else {
@@ -417,22 +487,28 @@ impl Surface<'_> {
             m.rect
                 .transform(Transform::from_scale(self.scale, self.scale))
         });
+        let relative = match self.relative_clip(self.active_clip.clone()) {
+            Ok(clip) => clip,
+            Err(error) => {
+                self.failure = Some(error);
+                return;
+            }
+        };
         let draw = Draw {
             primitive,
             color,
             transform,
             clip,
+            clips: relative.filter(|clip| !clip.contains_rect(bounds)),
             bounds,
         };
-        if let Some(recording) = self.commands.as_mut() {
-            let bytes = draw.bytes();
-            if recording.commands.len() < scene::MAX_SCENE_COMMANDS
-                && recording.bytes.saturating_add(bytes) <= scene::MAX_SCENE_BYTES
-            {
-                recording.bytes += bytes;
-                recording.commands.push(draw);
-                return;
+        if let Some(recording) = self.commands.as_mut()
+            && (self.isolation_required || recording.fits(&draw))
+        {
+            if let Err(error) = recording.push(draw) {
+                self.failure = Some(error);
             }
+            return;
         }
         // Cache capacity never changes content admission. A large scene flushes
         // to the ordinary full-frame path instead of retaining an unbounded list.
@@ -456,7 +532,7 @@ impl Surface<'_> {
         // A mask may have been created before a recording overflow. Subsequent
         // ordinary draws must materialize that same clip rather than drop it.
         mask.filter(|mask| mask.image.is_none())
-            .map(|mask| self.mask(mask.rect))
+            .map(|mask| self.rectangle_mask(mask.rect))
             .transpose()
     }
     fn fill_rect(
@@ -466,11 +542,48 @@ impl Surface<'_> {
         transform: Transform,
         mask: Option<&ClipMask>,
     ) {
-        if self.failure.is_some() {
+        if self.failure.is_some() || self.groups.last().is_some_and(|scope| scope.hidden) {
             return;
         }
         if self.commands.is_some() {
             self.record(Primitive::Rect(rect), paint, transform, mask);
+        } else if let Some(chain) = self
+            .active_clip
+            .as_ref()
+            .filter(|clip| {
+                !rect
+                    .transform(transform.post_scale(self.scale, self.scale))
+                    .is_some_and(|bounds| clip.contains_rect(bounds))
+            })
+            .cloned()
+        {
+            if self.clip_masks.is_none() {
+                match MaskCache::new(self.width, self.height) {
+                    Ok(cache) => self.clip_masks = Some(cache),
+                    Err(error) => {
+                        self.failure = Some(error);
+                        return;
+                    }
+                }
+            }
+            let rectangle = mask.and_then(|mask| {
+                mask.rect
+                    .transform(Transform::from_scale(self.scale, self.scale))
+            });
+            let mask = self
+                .clip_masks
+                .as_mut()
+                .expect("clip scratch was prepared")
+                .mask(&chain, rectangle);
+            if let Some(pixels) = self.pixels.as_mut() {
+                scene::fill_rect(
+                    pixels,
+                    rect,
+                    paint,
+                    transform.post_scale(self.scale, self.scale),
+                    Some(mask),
+                );
+            }
         } else {
             let materialized = match self.fallback_mask(mask) {
                 Ok(mask) => mask,
@@ -500,7 +613,7 @@ impl Surface<'_> {
         transform: Transform,
         mask: Option<&ClipMask>,
     ) {
-        if self.failure.is_some() {
+        if self.failure.is_some() || self.groups.last().is_some_and(|scope| scope.hidden) {
             return;
         }
         if self.commands.is_some() {
@@ -510,6 +623,44 @@ impl Surface<'_> {
                 transform,
                 mask,
             );
+        } else if let Some(chain) = self
+            .active_clip
+            .as_ref()
+            .filter(|clip| {
+                !path
+                    .bounds()
+                    .transform(transform.post_scale(self.scale, self.scale))
+                    .is_some_and(|bounds| clip.contains_rect(bounds))
+            })
+            .cloned()
+        {
+            if self.clip_masks.is_none() {
+                match MaskCache::new(self.width, self.height) {
+                    Ok(cache) => self.clip_masks = Some(cache),
+                    Err(error) => {
+                        self.failure = Some(error);
+                        return;
+                    }
+                }
+            }
+            let rectangle = mask.and_then(|mask| {
+                mask.rect
+                    .transform(Transform::from_scale(self.scale, self.scale))
+            });
+            let mask = self
+                .clip_masks
+                .as_mut()
+                .expect("clip scratch was prepared")
+                .mask(&chain, rectangle);
+            if let Some(pixels) = self.pixels.as_mut() {
+                pixels.fill_path(
+                    path,
+                    paint,
+                    rule,
+                    transform.post_scale(self.scale, self.scale),
+                    Some(mask),
+                );
+            }
         } else {
             let materialized = match self.fallback_mask(mask) {
                 Ok(mask) => mask,
@@ -531,18 +682,30 @@ impl Surface<'_> {
             );
         }
     }
-    fn finish(mut self, scene: Option<&mut Scene>) -> Result<Vec<u8>, PaintError> {
+    fn finish(mut self, mut scene: Option<&mut Scene>) -> Result<Vec<u8>, PaintError> {
         if let Some(error) = self.failure {
             return Err(error);
         }
-        if let Some(recording) = self.commands.take()
-            && let Some(scene) = scene
-        {
-            if scene.record_only {
-                scene.record(recording.commands);
-                return Ok(Vec::new());
+        if let Some(recording) = self.commands.take() {
+            if recording.cacheable
+                && self.pixels.is_none()
+                && let Some(scene) = scene.as_deref_mut()
+            {
+                return scene.prepare(recording.commands, self.width, self.height);
             }
-            return scene.update(recording.commands, self.width, self.height);
+            let mut pixels = self
+                .pixels
+                .take()
+                .or_else(|| Pixmap::new(self.width, self.height))
+                .ok_or(PaintError::Dimensions)?;
+            // The materialized prefix already contains its clips; release its
+            // scratch masks before allocating the suffix compositor's masks.
+            self.clip_masks = None;
+            scene::replay(&mut pixels, &recording.commands)?;
+            if let Some(scene) = scene.as_deref_mut() {
+                scene.reset(self.width, self.height);
+            }
+            return Ok(pixels.take());
         }
         if let Some(scene) = scene {
             scene.reset(self.width, self.height);
@@ -657,12 +820,12 @@ fn shorthand_color(value: &str) -> &str {
     "currentcolor"
 }
 
-fn border_color(
+fn border_colors(
     tree: &Tree,
     env: &Environment,
     id: u32,
     widths: [f32; 4],
-) -> Result<Option<Color>, PaintError> {
+) -> Result<Option<[Color; 4]>, PaintError> {
     if widths.iter().all(|width| *width == 0.0) {
         return Ok(None);
     }
@@ -694,8 +857,8 @@ fn border_color(
     {
         set(&mut values, *property, raw, &[side]);
     }
-    let mut result = None;
-    for (width, value) in widths.into_iter().zip(values) {
+    let mut result = [Color::TRANSPARENT; 4];
+    for (index, (width, value)) in widths.into_iter().zip(values).enumerate() {
         if width == 0.0 {
             continue;
         }
@@ -705,12 +868,9 @@ fn border_color(
             color(&value)
         }
         .ok_or(PaintError::Unsupported(id))?;
-        if result.is_some_and(|previous| previous != next) {
-            return Err(PaintError::Unsupported(id));
-        }
-        result = Some(next);
+        result[index] = next;
     }
-    Ok(result)
+    Ok(Some(result))
 }
 
 fn outline(
@@ -805,8 +965,10 @@ fn paint_border(
     bounds: BoxRect,
     clip: BoxRect,
     widths: [f32; 4],
-    color: Color,
+    radii: Corners,
+    colors: [Color; 4],
 ) -> Result<(), PaintError> {
+    let clip = pixmap.local_clip(clip);
     let Some(outer) = Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height) else {
         return Ok(());
     };
@@ -814,14 +976,26 @@ fn paint_border(
         return Ok(());
     }
     let mut path = PathBuilder::new();
-    path.push_rect(outer);
-    if let Some(inner) = Rect::from_xywh(
-        bounds.x + widths[3],
-        bounds.y + widths[0],
-        bounds.width - widths[3] - widths[1],
-        bounds.height - widths[0] - widths[2],
-    ) {
-        path.push_rect(inner);
+    if radii.is_square() {
+        // Preserve the established rectangular path and raster rounding.
+        path.push_rect(outer);
+        if let Some(inner) = Rect::from_xywh(
+            bounds.x + widths[3],
+            bounds.y + widths[0],
+            bounds.width - widths[3] - widths[1],
+            bounds.height - widths[0] - widths[2],
+        ) {
+            path.push_rect(inner);
+        }
+    } else {
+        let Some(contour) = radii.clipped_path(bounds) else {
+            return Ok(());
+        };
+        path.push_path(&contour);
+        let (inner, inner_radii) = radii.inset(bounds, widths);
+        if let Some(hole) = inner_radii.clipped_path(inner) {
+            path.push_path(&hole);
+        }
     }
     let Some(path) = path.finish() else {
         return Ok(());
@@ -839,14 +1013,39 @@ fn paint_border(
         Some(pixmap.mask(clip_rect)?)
     };
     let mut paint = Paint::default();
-    paint.set_color(color);
-    pixmap.fill_path(
-        &path,
-        &paint,
-        FillRule::EvenOdd,
-        Transform::identity(),
-        mask.as_ref(),
-    );
+    let common = widths
+        .into_iter()
+        .zip(colors)
+        .find_map(|(width, color)| (width > 0.0).then_some(color));
+    let Some(common) = common else {
+        return Ok(());
+    };
+    paint.set_color(common);
+    if widths
+        .into_iter()
+        .zip(colors)
+        .all(|(width, color)| width == 0.0 || color == common)
+    {
+        pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::EvenOdd,
+            Transform::identity(),
+            mask.as_ref(),
+        );
+    } else if !pixmap.groups.last().is_some_and(|scope| scope.hidden) {
+        // Keep a streamed ordinary prefix, then capture this bounded software
+        // operation and following draws exactly as for isolated subtrees.
+        pixmap.isolation_required = true;
+        pixmap.commands.get_or_insert_with(Recording::default);
+        let border = border::Border::new(path, bounds, widths, radii, colors);
+        pixmap.record(
+            Primitive::Border(std::sync::Arc::new(border)),
+            &paint,
+            Transform::identity(),
+            mask.as_ref(),
+        );
+    }
     Ok(())
 }
 
@@ -948,6 +1147,10 @@ fn paint_shaped_with(
     work: &mut usize,
     flow: Option<&crate::inline::Frame>,
 ) -> Result<(), PaintError> {
+    let bounds = layout::BoxGeometry {
+        clip: pixmap.local_clip(bounds.clip),
+        ..bounds
+    };
     let Some(clip) = Rect::from_xywh(
         bounds.clip.x,
         bounds.clip.y,
@@ -1058,7 +1261,7 @@ fn paint_shaped_with(
                     result
                 };
                 *work = work.saturating_add(outline.commands.saturating_add(1));
-                if *work > 1_000_000 {
+                if *work > MAX_TEXT_PAINT_WORK {
                     return Err(PaintError::Unsupported(id));
                 }
                 if let Some(path) = outline.path {
@@ -1098,6 +1301,10 @@ fn paint_checkable(
     color: Color,
     radio: bool,
 ) -> Result<(), PaintError> {
+    let bounds = layout::BoxGeometry {
+        clip: surface.local_clip(bounds.clip),
+        ..bounds
+    };
     let size = bounds.content.width.min(bounds.content.height);
     if size <= 0.0 {
         return Ok(());
@@ -1174,7 +1381,7 @@ fn paint_input(
             .as_ref()
             .map_or(0, |value| value.text.len()),
     );
-    if *work > 1_000_000 {
+    if *work > MAX_TEXT_PAINT_WORK {
         return Err(PaintError::Unsupported(id));
     }
     if tree.path(id).into_iter().any(|ancestor| {
@@ -1232,7 +1439,7 @@ fn paint_input(
             preedit_range.map(|(start, end)| (map.display_floor(start), display_position(end)));
         display = Cow::Owned(text);
         *work = work.saturating_add(display.len());
-        if *work > 1_000_000 {
+        if *work > MAX_TEXT_PAINT_WORK {
             return Err(PaintError::Unsupported(id));
         }
         Some(map)
@@ -1264,7 +1471,8 @@ fn paint_input(
             options,
         )
         .map_err(|error| PaintError::Layout(LayoutError::Text(error.to_string())))?;
-    let clip = layout::intersect(bounds.clip, content);
+    let source_clip = layout::intersect(bounds.clip, content);
+    let clip = layout::intersect(pixmap.local_clip(bounds.clip), content);
     let width = if display.is_empty() {
         0.0
     } else {
@@ -1412,7 +1620,7 @@ fn paint_input(
             return Err(PaintError::Unsupported(id));
         }
         *work = work.saturating_add(placeholder.len());
-        if *work > 1_000_000 {
+        if *work > MAX_TEXT_PAINT_WORK {
             return Err(PaintError::Unsupported(id));
         }
         let (_, placeholder_layout) = measurer
@@ -1499,7 +1707,8 @@ fn paint_input(
             token: tree.nodes[&id].identity.clone(),
         },
         revision: crate::AccessibilityTextRevision::new(&tree.nodes[&id], element),
-        clip,
+        clip: source_clip,
+        clips: pixmap.active_clip.clone(),
         selection_carets: [
             BoxRect {
                 x: x + anchor_bounds.x0 as f32,
@@ -1531,7 +1740,7 @@ fn paint_input(
             max: text_max_scroll,
             viewport: scrollport,
         }),
-        caret_area: clipped(caret_rect, clip).map(|rect| BoxRect {
+        caret_area: clipped(caret_rect, source_clip).map(|rect| BoxRect {
             x: rect.x(),
             y: rect.y(),
             width: rect.width(),
@@ -1681,29 +1890,68 @@ fn rasterize_inner_scoped(
         height,
         scale,
         commands: retained.then(Recording::default),
+        active_clip: None,
+        clip_masks: None,
         failure: None,
+        groups: Vec::new(),
+        relative_clips: BTreeMap::new(),
+        isolation_required: false,
     };
     let mut pending = vec![(ROOT_NODE, false)];
     let mut text_work = 0usize;
     let mut hit_regions = Vec::new();
+    let mut rounded_regions = BTreeMap::new();
+    let mut hit_clips = BTreeMap::new();
+    let mut inherited_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
+    let mut children_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
     let mut ancestors = BTreeMap::new();
     let mut scrolls = BTreeMap::new();
     let mut text_hits = BTreeMap::new();
     let mut menu_control = None;
     let mut cursors = BTreeMap::new();
     while let Some((id, outline_phase)) = pending.pop() {
+        pixmap.active_clip = if outline_phase {
+            inherited_clips.get(&id).cloned()
+        } else {
+            tree.nodes[&id]
+                .parent
+                .and_then(|parent| children_clips.get(&parent).cloned())
+        };
+        if !outline_phase && let Some(clip) = &pixmap.active_clip {
+            inherited_clips.insert(id, clip.clone());
+        }
         if outline_phase {
             if let Some((width, offset, color)) = outline(tree, &env, id)? {
                 let bounds = geometry[&id];
-                let expansion = width + offset;
+                // CSS UI4 keeps an outline visible even when a very negative
+                // offset would otherwise collapse it; clamp the axes separately.
+                let expansion_x = (width + offset).max(width - bounds.rect.width * 0.5);
+                let expansion_y = (width + offset).max(width - bounds.rect.height * 0.5);
                 let rect = BoxRect {
-                    x: bounds.rect.x - expansion,
-                    y: bounds.rect.y - expansion,
-                    width: bounds.rect.width + 2.0 * expansion,
-                    height: bounds.rect.height + 2.0 * expansion,
+                    x: bounds.rect.x - expansion_x,
+                    y: bounds.rect.y - expansion_y,
+                    width: bounds.rect.width + 2.0 * expansion_x,
+                    height: bounds.rect.height + 2.0 * expansion_y,
                 };
-                paint_border(&mut pixmap, rect, bounds.clip, [width; 4], color)?;
+                let radii = tree
+                    .computed_read(id, &env)
+                    .get(&CssProperty::BorderRadius)
+                    .map(|raw| {
+                        Corners::resolve(raw, bounds.rect, units).ok_or(PaintError::Unsupported(id))
+                    })
+                    .transpose()?
+                    .unwrap_or_default()
+                    .outset(expansion_x, expansion_y);
+                paint_border(
+                    &mut pixmap,
+                    rect,
+                    bounds.clip,
+                    [width; 4],
+                    radii,
+                    [color; 4],
+                )?;
             }
+            pixmap.end_group(id)?;
             continue;
         }
         let node = &tree.nodes[&id];
@@ -1729,6 +1977,9 @@ fn rasterize_inner_scoped(
                 &mut text_work,
             )?;
             if let Some(rect) = clipped(geometry[&id].rect, geometry[&id].clip) {
+                if let Some(clip) = &pixmap.active_clip {
+                    hit_clips.insert(hit_regions.len(), clip.clone());
+                }
                 hit_regions.push((
                     parent,
                     BoxRect {
@@ -1761,13 +2012,7 @@ fn rasterize_inner_scoped(
                 && properties.contains_key(&CssProperty::Color)
                 && (properties.contains_key(&CssProperty::Outline)
                     || properties.contains_key(&CssProperty::OutlineStyle))
-                && properties
-                    .get(&CssProperty::BorderRadius)
-                    .is_some_and(|value| {
-                        value
-                            .split_ascii_whitespace()
-                            .all(|part| units.pixels(part, false) == Some(0.0))
-                    }));
+                && properties.contains_key(&CssProperty::BorderRadius));
         let input_ready = !matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
             || ([CssProperty::BackgroundColor, CssProperty::Color]
                 .iter()
@@ -1784,13 +2029,16 @@ fn rasterize_inner_scoped(
                     .all(|property| properties.contains_key(property)))
                 && (properties.contains_key(&CssProperty::Outline)
                     || properties.contains_key(&CssProperty::OutlineStyle))
-                && properties
-                    .get(&CssProperty::BorderRadius)
-                    .is_some_and(|value| {
-                        value
-                            .split_ascii_whitespace()
-                            .all(|part| units.pixels(part, false) == Some(0.0))
-                    }));
+                && properties.contains_key(&CssProperty::BorderRadius));
+        let radii = properties
+            .get(&CssProperty::BorderRadius)
+            .map(|value| {
+                Corners::resolve(value, geometry[&id].rect, units)
+                    .ok_or(PaintError::Unsupported(id))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let widths = layout::border_widths(tree, &env, id)?;
         if !input_ready
             || !button_ready
             || properties
@@ -1799,22 +2047,34 @@ fn rasterize_inner_scoped(
             || properties
                 .get(&CssProperty::ZIndex)
                 .is_some_and(|v| v != "auto")
-            || properties
-                .get(&CssProperty::Opacity)
-                .is_some_and(|v| v.parse::<f32>().ok() != Some(1.0))
-            || properties
-                .get(&CssProperty::BorderRadius)
-                .is_some_and(|value| {
-                    !value
-                        .split_ascii_whitespace()
-                        .all(|part| units.pixels(part, false) == Some(0.0))
-                })
         {
             return Err(PaintError::Unsupported(id));
+        }
+        let opacity = properties
+            .get(&CssProperty::Opacity)
+            .map(|raw| {
+                raw.parse::<f32>()
+                    .ok()
+                    .filter(|a| a.is_finite() && (0.0..=1.0).contains(a))
+                    .ok_or(PaintError::Unsupported(id))
+            })
+            .transpose()?
+            .unwrap_or(1.0);
+        if opacity != 1.0 {
+            pixmap.begin_group(id, opacity, geometry[&id].clip)?;
         }
         if id != ROOT_NODE
             && let Some(rect) = clipped(geometry[&id].rect, geometry[&id].clip)
         {
+            if !radii.is_square() {
+                rounded_regions.insert(
+                    hit_regions.len(),
+                    (scaled_rect(geometry[&id].rect, scale), radii.scaled(scale)),
+                );
+            }
+            if let Some(clip) = &pixmap.active_clip {
+                hit_clips.insert(hit_regions.len(), clip.clone());
+            }
             hit_regions.push((
                 id,
                 BoxRect {
@@ -1833,16 +2093,55 @@ fn rasterize_inner_scoped(
             }
             .ok_or(PaintError::Unsupported(id))?;
             let bounds = geometry[&id];
-            if let Some(rect) = clipped(bounds.rect, bounds.clip) {
+            if let Some(rect) = clipped(bounds.rect, pixmap.local_clip(bounds.clip)) {
                 let mut paint = Paint::default();
                 paint.set_color(color);
-                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                if radii.is_square() {
+                    pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                } else if let Some(path) = radii.path(bounds.rect) {
+                    let mask = pixmap.mask(rect)?;
+                    pixmap.fill_path(
+                        &path,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        Some(&mask),
+                    );
+                }
             }
         }
-        let widths = layout::border_widths(tree, &env, id)?;
-        if let Some(color) = border_color(tree, &env, id, widths)? {
+        if let Some(colors) = border_colors(tree, &env, id, widths)? {
             let bounds = geometry[&id];
-            paint_border(&mut pixmap, bounds.rect, bounds.clip, widths, color)?;
+            paint_border(&mut pixmap, bounds.rect, bounds.clip, widths, radii, colors)?;
+        }
+        if !radii.is_square()
+            && properties
+                .get(&CssProperty::Overflow)
+                .is_some_and(|value| value != "visible")
+        {
+            let (padding, inner) = radii.inset(geometry[&id].rect, widths);
+            if !inner.is_square() || padding.width == 0.0 || padding.height == 0.0 {
+                pixmap.push_clip(padding, inner)?;
+            }
+        }
+        if let Some(clip) = &pixmap.active_clip {
+            children_clips.insert(id, clip.clone());
+        }
+        let content_scope = pixmap.active_clip.clone();
+        if matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select) && !radii.is_square() {
+            let bounds = geometry[&id];
+            let content = bounds.content;
+            let insets = [
+                content.y - bounds.rect.y,
+                bounds.rect.x + bounds.rect.width - content.x - content.width,
+                bounds.rect.y + bounds.rect.height - content.y - content.height,
+                content.x - bounds.rect.x,
+            ]
+            .map(|inset| inset.max(0.0));
+            let (content, inner) = radii.inset(bounds.rect, insets);
+            if !inner.is_square() || content.width == 0.0 || content.height == 0.0 {
+                pixmap.push_clip(content, inner)?;
+            }
         }
         if element.tag == Tag::Select {
             let (measurer, size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
@@ -1887,6 +2186,7 @@ fn rasterize_inner_scoped(
             }
             text_hits.insert(id, hit);
         }
+        pixmap.active_clip = content_scope;
         pending.push((id, true));
         if let Some(frame) = flows.get(&id) {
             let shape = shapes
@@ -1899,6 +2199,9 @@ fn rasterize_inner_scoped(
                 if matches!(tree.nodes[&child].content, Content::Text(_)) {
                     for &piece in frame.fragments.get(&child).into_iter().flatten() {
                         if let Some(rect) = clipped(piece, frame.bounds.clip) {
+                            if let Some(clip) = &pixmap.active_clip {
+                                hit_clips.insert(hit_regions.len(), clip.clone());
+                            }
                             hit_regions.push((
                                 id,
                                 BoxRect {
@@ -1931,7 +2234,17 @@ fn rasterize_inner_scoped(
                     })
                     .transpose()?;
                 for &rect in frame.fragments.get(&node).into_iter().flatten() {
+                    if let Some(c) = background
+                        && let Some(rect) = clipped(rect, pixmap.local_clip(frame.bounds.clip))
+                    {
+                        let mut paint = Paint::default();
+                        paint.set_color(c);
+                        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                    }
                     if let Some(rect) = clipped(rect, frame.bounds.clip) {
+                        if let Some(clip) = &pixmap.active_clip {
+                            hit_clips.insert(hit_regions.len(), clip.clone());
+                        }
                         hit_regions.push((
                             node,
                             BoxRect {
@@ -1941,11 +2254,6 @@ fn rasterize_inner_scoped(
                                 height: rect.height(),
                             },
                         ));
-                        if let Some(c) = background {
-                            let mut paint = Paint::default();
-                            paint.set_color(c);
-                            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-                        }
                     }
                 }
             }
@@ -1971,6 +2279,7 @@ fn rasterize_inner_scoped(
             pending.extend(node.children.iter().rev().map(|id| (*id, false)));
         }
     }
+    pixmap.active_clip = None;
     let select_menu = if let Some((id, bounds)) = menu_control {
         let (measurer, size) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
         Some(Box::new(select::paint_menu(
@@ -2011,6 +2320,20 @@ fn rasterize_inner_scoped(
             line.bounds = scaled_rect(line.bounds, scale);
         }
     }
+    // Only the focused editable field can supply IME geometry. One bounded
+    // query avoids repeating curved searches for every unfocused field.
+    if let Some(hit) = editable.and_then(|id| text_hits.get_mut(&id)) {
+        hit.caret_area = hit.caret_area.and_then(|rect| {
+            text_geometry::visible_bounds(
+                rect,
+                hit.clip,
+                hit.clips.as_deref(),
+                &mut crate::AccessibilityWork::default(),
+            )
+            .ok()
+            .flatten()
+        });
+    }
     let pixels = pixmap.finish(scene)?;
     Ok(RasterImage {
         pixels,
@@ -2019,6 +2342,8 @@ fn rasterize_inner_scoped(
             height,
             scale,
             hit_regions,
+            rounded_regions,
+            hit_clips,
             ancestors,
             scrolls,
             focused,
@@ -2055,6 +2380,7 @@ mod retained_tests {
             color: Color::from_rgba8(0, 0, 255, 255),
             transform: Transform::identity(),
             clip: None,
+            clips: None,
             bounds: rect,
         };
         let mut scene = Scene::default();
@@ -2068,7 +2394,7 @@ mod retained_tests {
     }
     #[test]
     fn recording_overflow_preserves_existing_clips_and_following_draws() {
-        for record_only in [false, true] {
+        for (record_only, complex) in [(false, false), (true, false), (false, true), (true, true)] {
             let mut retained = Surface {
                 glyphs: None,
                 pixels: None,
@@ -2076,7 +2402,12 @@ mod retained_tests {
                 height: 12,
                 scale: 1.25,
                 commands: Some(Recording::default()),
+                active_clip: None,
+                clip_masks: None,
                 failure: None,
+                groups: Vec::new(),
+                relative_clips: BTreeMap::new(),
+                isolation_required: false,
             };
             let mut reference = Surface {
                 glyphs: None,
@@ -2085,8 +2416,25 @@ mod retained_tests {
                 height: 12,
                 scale: 1.25,
                 commands: None,
+                active_clip: None,
+                clip_masks: None,
                 failure: None,
+                groups: Vec::new(),
+                relative_clips: BTreeMap::new(),
+                isolation_required: false,
             };
+            if complex {
+                let bounds = BoxRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 12.0,
+                    height: 12.0,
+                };
+                let radii = Corners([[6.0; 2]; 4]);
+                let clip = Clip::new(None, radii.path(bounds), bounds, radii);
+                retained.active_clip = Some(clip.clone());
+                reference.active_clip = Some(clip);
+            }
             let rect = Rect::from_xywh(0.0, 0.0, 9.0, 9.0).unwrap();
             let clip = Rect::from_xywh(1.25, 2.25, 4.5, 3.5).unwrap();
             let deferred = retained.mask(clip).unwrap();

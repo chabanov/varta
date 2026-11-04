@@ -188,13 +188,16 @@ fn refused_frame_does_not_publish_or_poison_the_retained_scene() {
     let mut renderer = Renderer::new(Some(font()), 20.0).unwrap();
     equivalent(&v, &mut renderer, 140, 110, 1.0);
     let mut b = B::new();
-    b.set_style(2, P::Opacity, "0.5");
+    b.set_style(2, P::Position, "relative");
     v.commit(&b.finish(), false, &mut Denied).unwrap();
     let snapshot = v.snapshot();
-    assert!(renderer.render(&v, 140, 110, 1.0).is_err());
+    assert!(matches!(
+        renderer.render(&v, 140, 110, 1.0),
+        Err(varta_view::PaintError::Unsupported(2))
+    ));
     assert_eq!(v.snapshot(), snapshot);
     let mut b = B::new();
-    b.remove_style(2, P::Opacity).set_text(3, "AAA ");
+    b.remove_style(2, P::Position).set_text(3, "AAA ");
     v.commit(&b.finish(), false, &mut Denied).unwrap();
     equivalent(&v, &mut renderer, 140, 110, 1.0);
 }
@@ -324,4 +327,91 @@ fn inline_pointer_cursor_and_hover_keep_fragment_hit_geometry() {
     let after = renderer.render(&v, 140, 110, 1.0).unwrap();
     assert!(before.same_input_geometry(&after));
     assert!(before.pixels != after.pixels);
+}
+
+#[test]
+fn native_layout_depth_boundary_fits_the_normal_thread_stack() {
+    const CHILD: &str = "VARTA_NATIVE_LAYOUT_DEPTH_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                for depth in [128u32, 129u32] {
+                    let mut view = View::default();
+                    let mut batch = B::new();
+                    for id in 2..=depth + 1 {
+                        batch
+                            .create_element(id, Tag::Div)
+                            .insert(id - 1, id, 0)
+                            .set_style(id, P::Width, "20px")
+                            .set_style(id, P::Height, "20px")
+                            .set_style(id, P::BackgroundColor, "#0000ff");
+                    }
+                    view.commit(&batch.finish(), false, &mut Denied).unwrap();
+                    let actual = view.rasterize_boxes(32, 32);
+                    if depth == 128 {
+                        let actual = actual.unwrap();
+                        assert_eq!(actual.hit_test(10.0, 10.0), Some(depth + 1));
+                        let mut renderer = Renderer::new(None, 16.0).unwrap();
+                        assert_eq!(renderer.render(&view, 32, 32, 1.0).unwrap(), actual);
+                        let varta_view::PreparedFrame::Vector { metadata, scene } =
+                            renderer.prepare(&view, 32, 32, 1.0).unwrap()
+                        else {
+                            panic!("bounded deep vector scene")
+                        };
+                        assert_eq!(scene.rasterize(metadata).unwrap(), actual);
+                        let mut opacity = B::new();
+                        for id in 1..=depth + 1 {
+                            opacity.set_style(id, P::Opacity, "0.5");
+                        }
+                        view.commit(&opacity.finish(), false, &mut Denied).unwrap();
+                        let faded = view.rasterize_boxes(32, 32).unwrap();
+                        assert!(faded.same_input_geometry(&actual));
+                        let offset = (10 * 32 + 10) * 4;
+                        assert_eq!(&faded.pixels[offset..offset + 4], &[0, 0, 64, 64]);
+                        assert_eq!(renderer.render(&view, 32, 32, 1.0).unwrap(), faded);
+                        let varta_view::PreparedFrame::Raster(prepared) =
+                            renderer.prepare(&view, 32, 32, 1.0).unwrap()
+                        else {
+                            panic!("maximum native opacity depth uses explicit raster fallback")
+                        };
+                        assert_eq!(prepared, faded);
+                        let mut border = B::new();
+                        border
+                            .set_style(depth + 1, P::Border, "1px solid #ff000080")
+                            .set_style(depth + 1, P::BorderRight, "1px solid #0000ff80");
+                        view.commit(&border.finish(), false, &mut Denied).unwrap();
+                        let colored = view.rasterize_boxes(32, 32).unwrap();
+                        assert_eq!(renderer.render(&view, 32, 32, 1.0).unwrap(), colored);
+                    } else {
+                        assert!(matches!(
+                            actual,
+                            Err(varta_view::PaintError::Layout(
+                                varta_view::LayoutError::Limit
+                            ))
+                        ));
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "renderer::native_layout_depth_boundary_fits_the_normal_thread_stack",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "normal-stack layout must run and pass its exact subprocess: {}\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

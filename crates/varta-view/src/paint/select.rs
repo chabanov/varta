@@ -74,7 +74,7 @@ fn label_shape(
     work: &mut usize,
 ) -> Result<TextShape, PaintError> {
     *work = work.saturating_add(label.len());
-    if *work > 1_000_000 || label.chars().any(char::is_control) {
+    if *work > MAX_TEXT_PAINT_WORK || label.chars().any(char::is_control) {
         return Err(PaintError::Unsupported(id));
     }
     let (mut options, families) = layout::text_style(tree, env, id, size, font)?;
@@ -140,6 +140,10 @@ pub(super) fn paint_control(
     work: &mut usize,
 ) -> Result<(), PaintError> {
     let (font, size) = font;
+    let bounds = layout::BoxGeometry {
+        clip: surface.local_clip(bounds.clip),
+        ..bounds
+    };
     for option in tree.select_options(id) {
         if tree
             .computed_read(option, env)
@@ -351,7 +355,8 @@ pub(super) fn paint_menu(
         menu,
         menu,
         [1.0; 4],
-        current_color(tree, env, id).ok_or(PaintError::Unsupported(id))?,
+        Corners::default(),
+        [current_color(tree, env, id).ok_or(PaintError::Unsupported(id))?; 4],
     )?;
     Ok(SelectMenu {
         metrics: SelectMenuMetrics {

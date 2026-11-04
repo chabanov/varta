@@ -26,6 +26,200 @@ tests and CLI smoke tests. Each selected suite must execute passing tests; a typ
 that matches zero tests fails. Where names differ, run explicit Cargo commands
 with the appropriate filters instead of widening a filter until it happens to pass.
 
+## View integration cases
+
+`varta-view` now declares one `integration` target with the original case files as
+modules. Select a family by its module prefix:
+
+```sh
+cargo test -p varta-view --test integration --locked clipboard::
+cargo test -p varta-view --test integration --locked renderer::
+cargo test -p varta-view --test integration --locked every_case_file_is_registered
+```
+
+Full workspace tests still run every original case. The registration guard fails
+when a Rust case file is missing from the module list. Earlier dated checkpoint
+commands naming separate `--test` targets describe the original layout; use the
+module-prefix form for the current tree. Grouping preserves all 233 original
+integration cases from the 3323-test clipboard gate. The standalone preparation
+passes all 233, and its inventory exactly matches those original cases
+(`target/view-test-grouping/inventory-comparison.json`); the applied Cargo target
+passes 234 cases before painting changes (`target/view-test-grouping/applied-tests.log`).
+The subsequent corner integration passes 50 library cases and 238 integration
+cases (`target/paint-next-stage/applied-view-tests-fixed.log`). Ordinary module
+declarations keep recursive formatting coverage; the registration guard checks
+those declarations against all Rust case files. No timing ratio is inferred from
+overlapping runs. This is scoped verification of the open painting batch, not a
+new full gate.
+
+The following border/outline checkpoint passes 52 library + 242 integration cases
+(`target/paint-next-stage/border-outline-view-tests-coverage.log`). After bounded
+large-radius arc refinement, final affected cases pass:
+
+```sh
+cargo test -p varta-view --lib --locked paint::corners::tests
+cargo test -p varta-view --test integration --locked rounded::
+```
+
+Nine unit and eight integration cases pass in
+`target/paint-next-stage/adaptive-corner-unit.log` and
+`target/paint-next-stage/adaptive-rounded-integration.log`. These overlap the
+preceding cases; a full run on these newer inputs is still pending at the open
+painting-batch boundary. No actual GPU/native-window result is inferred.
+
+The rounded clip-chain step then passes 57 library + 246 integration cases
+(`target/paint-next-stage/clip-pipeline-view-tests-final.log`). Coverage includes
+SDK intersection parity, mask reuse/reset, maximum depth, empty clips, interior
+mask elision, post-overflow ordinary raster, nested hits, sibling/popup scope and
+style transitions. The failed earlier style-transition assertion is retained in
+`target/paint-next-stage/clip-pipeline-view-tests.log`; corrected expectations do
+not change auto/hidden scrolling behavior.
+
+The new Debug GPU fixture probe passes 28 actual Metal frames, including visible
+mutations and partial damage. Run it with the command in the desktop README.
+The original mean RGB threshold2/255 and GPU resource limits stay unchanged;
+max per-channel differences remain reported rather than hidden. Exact code,
+binary/image hashes, samples and scope are in
+`target/paint-next-stage/clip-pipeline-checkpoint.json`. Earlier 28-frame output
+had an invisible nested mutation, so the fresh probe adds visibility/damage
+assertions and retains its own images/log. This is not a full gate or native
+window/VoiceOver/field-text/Release/cross-target acceptance.
+
+
+The text/control and stack-safety checkpoint then passes **64 library + 249
+integration** View cases and **78 desktop GPU-enabled unit** cases:
+
+```sh
+cargo test -p varta-view --lib --test integration --locked
+cargo test -p varta-desktop --bin varta-preview --features gpu --locked
+cargo run -p varta-desktop --features gpu --example gpu_clip_probe --locked -- target/paint-next-stage/gpu-controls-layout
+```
+
+The output prefix's directory must exist. Logs are
+`target/paint-next-stage/text-control-layout-view-tests.log`,
+`target/paint-next-stage/text-control-desktop-gpu-tests.log` and
+`target/paint-next-stage/gpu-controls-layout.log`. The actual Metal probe passes
+52 frames, now including six native-control scenes at both scales and visible
+mutations. `text-control-checkpoint.json` in that directory records exact source,
+retained binary/image hashes, samples and failure scope. Earlier 28/52 probes
+remain distinct observations, not cumulative independent frame counts.
+
+Coverage includes analytic curved text/caret visibility, full source advances,
+revision/IME guards, shared preflight/geometry work refusal and action recovery,
+all explicit controls, repeated-clip idempotence and iterative native layout.
+The deep stress fixture first exceeded the unchanged native depth bound, then
+revealed a real recursive style-frame stack abort at an admitted depth. The
+explicit enter/exit construction fixes it; a normal2MiB subprocess verifies
+native depth128 success and depth129 refusal. Two pre-existing grouped subprocess
+selectors are qualified and now require one executed case; earlier outer test
+counts did not prove those child bodies ran. The final affected run executes all
+three subprocess tests successfully. Fixture failures are retained in the
+checkpoint, including missing explicit button alignment and a field-only setter
+on a non-field. No guest budget, stack size, GPU threshold or resource cap was
+raised. Full gate, Clippy consolidation and final application/native acceptance
+remain at the still-open painting family boundary.
+
+
+The diagonal contour foundation subsequently passes **69 View library + 249
+integration + 78 desktop GPU-enabled** tests with:
+
+```sh
+cargo test -p varta-view -p varta-desktop --features varta-desktop/gpu --locked
+```
+
+`target/paint-next-stage/diagonal-clip-affected-tests.log` records that affected
+run. A final validation-only refinement and stronger two-crossing assertions
+pass five overlapping helper cases in `diagonal-clip-final-tests.log`:
+
+```sh
+cargo test -p varta-view --lib --locked paint::clip_curve::
+```
+
+The final actual Metal probe passes60 frames (15 common-color box/control
+scenes at1×/2× and cold/change), adding asymmetric oversized inner arcs and
+fractional geometry. `gpu-diagonal-final.log` and `diagonal-clip-checkpoint.json`
+in the same directory retain source/binary/image fingerprints, all samples and
+unchanged limits/threshold. Mean RGB error is0–0.1472/255; maximum single-channel
+error77 stays reported. Earlier52/60 runs are separate evidence, not cumulative
+new cases. Diagonal cutting itself has software geometry coverage; the live GPU
+fixtures still exercise common-color padding/border/control paths. Mixed-color
+corner painting, correct isolated seam/subtree opacity, inline rounding and the
+final family/full gate remain open. The independent nearest-side counterexample
+is design evidence against a rejected algorithm, not a current passing mixed
+border raster case.
+
+The isolated box-opacity implementation now has a final affected selection:
+
+```sh
+cargo test -p varta-view -p varta-desktop --features varta-desktop/gpu --locked
+cargo clippy -p varta-view -p varta-desktop --all-targets --features varta-desktop/gpu --locked -- -D warnings
+cargo run -p varta-desktop --features gpu --example gpu_clip_probe --locked -- target/paint-next-stage/group-final-debug
+cargo run --release -p varta-desktop --features gpu --example gpu_clip_probe --locked -- target/paint-next-stage/group-final-release
+```
+
+The output directory must exist. Logs `group-final-affected-tests.log`,
+`group-affected-clippy-final.log`, `group-final-debug.log` and
+`group-final-release.log` live under `target/paint-next-stage/`;
+`group-opacity-checkpoint.json` records their exact inputs, binaries, images and
+scope. The final selection passes74 View library +260 integration +78 desktop
+GPU-enabled cases. The affected cases cover overlap/root/nested/zero alpha, rounded/fractional
+clip application, selection/IME geometry, retained damage, vector/raster switches,
+both cache-overflow forms, late capture after a streamed prefix, and maximum native
+opacity depth on a normal2MiB stack. A source-ownership unit case retains temporary
+control-scope pointer keys until their memo entries drop. The independent full-layer
+comparison keeps its maximum2-channel tolerance after a real tile-edge AA failure;
+the tolerance was not relaxed. Two old opacity-refusal tests were updated for the
+new painter, retaining positioned-paint refusal/recovery coverage. Initial failure
+and intermediate logs remain alongside the final results.
+
+Each final Debug/Release probe contains **60 actual Metal observations +8 explicit
+CPU-fallback observations**. Those are separate profiles, not136 GPU frames.
+The unchanged mean RGB threshold is2/255; observed maximum mean error0.1472/255
+and maximum channel difference77 are reported. CPU-fallback scenes compare against
+both retained and fresh stateless pixels, then require zero dirty pixels for an
+unchanged preparation. Small local changes retain partial damage. Final single-sample
+group preparation spans0.701–7.105ms Debug and0.259–2.044ms Release; unchanged
+preparation spans0.098–0.204ms and0.015–0.050ms respectively. These host-fixture
+times omit guest execution, events and physical presentation; they establish no
+whole-application latency or before/after speed ratio. Mixed border colors, own
+inline opacity/rounding, direct GPU groups, actual windows/VoiceOver/IME and the
+target matrix remain open. The last full3323 gate still verifies only the older
+clipboard inputs; no full family gate/commit is claimed here.
+
+The following mixed-side increment adds independent inverse-inset, zero-width,
+rotation and uniform-block ownership checks, plus actual colored-ring integration
+cases for transparent holes, common-contour alpha at1×/1.25×/2×, distinct side
+alpha at a diagonal seam, retained mutations and vector recovery. The initial
+far-edge failure is retained in `border-alpha-diagnostic.log`; a unit regression
+also checks shared mask/color coverage of that last partial row. The source fix
+encloses four edges separately instead of trusting origin-floor/size-ceil.
+
+```sh
+cargo test -p varta-view --lib --test integration --locked border_
+cargo test -p varta-view --lib --locked fractional_ring_coverage
+```
+
+The broader affected selection first found one stale distinct-color refusal test
+(`mixed-border-affected-final.log`); its desktop78 and View80 library cases passed,
+but its integration selection was not a passing checkpoint. After updating that
+assertion to real side-color/hit checks, the final complete View selection passes
+80 library +265 integration cases (`native-painting-precommit-view.log`). Final
+all-target affected GPU Clippy is in `native-painting-precommit-clippy.log`. The expanded probe uses the same command with
+new output prefixes:20 scenes produce60 actual GPU observations and20 explicit
+CPU-fallback observations per profile, not80 GPU frames. Host preparation time for
+complex mixed corners remains a performance gap, independently of pixel correctness.
+Do not infer application/window, platform or full-plan completion from these checks.
+
+The final pre-commit full gate passes3393 cases,0 failures,16 ignored and all eight
+commands with unchanged source inputs. Authoritative report:
+`target/verification/20261104-083445-nlyqugwi/report.json`; source SHA-256
+`4bfd91cb3b2fe8c9b96ed662c3bf443fb38476af01c9b4f0ac465a6f21edfe92`.
+`target/paint-next-stage/native-painting-precommit-checkpoint.json` records the final
+Debug/Release probes and their source/binary/image hashes. The full run supersedes
+the older clipboard-only gate for this code. Interrupted pre-commit attempts remain
+in their logs; only this final eight-command report is full-pass evidence. Subsequent
+documentation annotations do not change engine/build inputs.
+
 ## Change-to-check map
 
 | Change | During implementation | At the feature/batch boundary |

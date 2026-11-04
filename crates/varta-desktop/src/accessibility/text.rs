@@ -2,7 +2,10 @@
 use super::{text_layout, tree::ProjectionError};
 use accesskit::{Node, NodeId, Role, TextDirection, TextPosition, TextSelection};
 use std::{collections::BTreeMap, ops::Range, sync::Arc};
-use varta_view::{AccessibilityNode, AccessibilityText, AccessibilityTextRevision, FrameMetadata};
+use varta_view::{
+    AccessibilityNode, AccessibilityText, AccessibilityTextRevision, AccessibilityWork, BoxRect,
+    FrameMetadata,
+};
 
 pub(super) struct TextSlot {
     pub revision: AccessibilityTextRevision,
@@ -96,18 +99,23 @@ fn position(
     })
 }
 
+pub(super) struct TextBudget<'a> {
+    pub runs: usize,
+    pub work: &'a mut AccessibilityWork,
+}
+
 pub(super) fn project(
     source: &AccessibilityNode,
     owner: NodeId,
     old: Option<&TextSlot>,
     next: &mut u64,
     metadata: &FrameMetadata,
-    remaining: usize,
+    budget: TextBudget<'_>,
 ) -> Result<TextPublication, ProjectionError> {
     let text = source.text.as_ref().expect("text field projection");
     let value = source.value.as_deref().expect("text field value");
-    let plans =
-        text_layout::plan(source, metadata, remaining).map_err(ProjectionError::Observer)?;
+    let plans = text_layout::plan(source, metadata, budget.runs, budget.work)
+        .map_err(ProjectionError::Observer)?;
     let reusable = old
         .filter(|old| old.revision == text.revision)
         .map(|old| {
@@ -190,35 +198,38 @@ pub(super) fn project(
         );
         byte = end;
     }
+    let mut preferred = [None; 2];
+    if let Some(geometry) = metadata.field_text_geometry(&source.identity, &text.revision) {
+        for (index, caret) in geometry.selection_carets.into_iter().enumerate() {
+            let clip = geometry.clip;
+            let x = caret.x.clamp(clip.x, clip.x + clip.width);
+            let top = caret.y.clamp(clip.y, clip.y + clip.height);
+            let bottom = (caret.y + caret.height).clamp(clip.y, clip.y + clip.height);
+            preferred[index] = geometry
+                .visible_bounds(
+                    BoxRect {
+                        x,
+                        y: top,
+                        width: 0.0,
+                        height: bottom - top,
+                    },
+                    budget.work,
+                )
+                .map_err(ProjectionError::Observer)?
+                .map(|bounds| {
+                    (
+                        f64::from(bounds.x),
+                        f64::from(bounds.y + bounds.height / 2.0),
+                    )
+                });
+        }
+    }
     let selection = text.selection.and_then(|selection| {
-        let preferred = metadata
-            .field_text_geometry(&source.identity, &text.revision)
-            .map(|geometry| {
-                geometry.selection_carets.map(|caret| {
-                    let clip = geometry.clip;
-                    let x = caret.x.clamp(clip.x, clip.x + clip.width);
-                    let top = caret.y.clamp(clip.y, clip.y + clip.height);
-                    let bottom = (caret.y + caret.height).clamp(clip.y, clip.y + clip.height);
-                    (f64::from(x), f64::from((top + bottom) / 2.0))
-                })
-            });
-        let focus = position(
-            text,
-            &plans,
-            &runs,
-            selection.focus,
-            preferred.map(|p| p[1]),
-        )?;
+        let focus = position(text, &plans, &runs, selection.focus, preferred[1])?;
         let anchor = if selection.anchor == selection.focus {
             focus
         } else {
-            position(
-                text,
-                &plans,
-                &runs,
-                selection.anchor,
-                preferred.map(|p| p[0]),
-            )?
+            position(text, &plans, &runs, selection.anchor, preferred[0])?
         };
         Some(TextSelection { anchor, focus })
     });

@@ -11800,9 +11800,117 @@ property's signed/nonnegative rule. Grid dimensions are converted as complete
 tokens before the bounded track parser, including nested minmax/repeat tracks.
 Geometry, font sizes, absolute line heights, border widths, outline widths and
 signed outline offsets use the same host reference; DPI scaling follows logical
-CSS conversion. Zero rem radii use the existing rectangular paint path; nonzero
-rounded painting and other unsupported styles remain explicit errors. Raw view
-styles/custom values and snapshots retain their authored units.
+CSS conversion. Zero radii use the existing rectangular paint path. The open
+native painting batch adds rounded backgrounds and common-color borders/outline
+contours for static boxes with
+visible descendant overflow (or no descendants), while existing rectangular
+ancestor clips still apply. One-to-four px/rem/percentage radii share the CSS
+side-overlap normalization; large finite values normalize before multiplication.
+Only the element's own border-box hit region uses its rounded contour: visible
+text/descendant fragments keep their independent hits. The same neutral cubic
+path is used by ordinary, retained and vector software consumers. Padding-edge
+radii subtract adjacent border widths without a second normalization. If an
+inner arc extends past the opposite padding edge, four axis half-plane
+passes clip its contour to that rectangle, preserving cubic segments. The shared
+line/cubic clipper also supports diagonal planes: it splits a projected cubic at
+its derivative roots before a fixed48-step crossing search, including two
+crossings when the arc endpoints lie on the same side. Monotone control values
+skip that root analysis. Plane normalization rejects nonfinite coefficients;
+closed outer/hole components stay separate under the caller's fill rule. This
+geometry is shared with mixed side colors, whose native CPU painter is described
+below. The
+border uses an even-odd outer/inner path, retaining transparent holes. Outline
+radii follow the border curve; very negative offsets retain an outer width and
+height of at least twice the outline width, independently per axis. Large-radius
+quarter ellipses use up to eight tangent cubics, with an error target and a source
+f32 precision floor. These are host geometry choices, not new guest limits.
+Rounded overflow padding edges now form closed physical clip chains for static
+box descendants. CPU reference, retained replay and the neutral drawing data
+carry the same paths; `DrawClip` exposes immutable segments/parents to the GPU
+consumer. Per-region hit records retain their proper inherited/content chain,
+while outlines and top-layer select popups restore the intended scope. Empty
+clips paint and hit nothing. Reusable software masking reserves three viewport
+buffers, independent of depth; existing rectangle-only paths stay separate.
+Strictly interior primitives/damage omit complex masks with an AA/coordinate
+rounding safety margin. A cache-capacity overflow preserves the same clips when
+flushing and continuing ordinary rasterization. Repeating an identical immediate
+clip reuses its scope rather than multiplying the same AA fringe again. Native
+fields, checkables and collapsed selects clip their content to the inset content
+curve; their backgrounds/borders/outlines retain their own scope. Buttons keep
+visible descendant overflow unless their overflow style clips it. Native field,
+assistive character and IME visibility now use these same closed physical shapes,
+separately from full logical advances. Rounded inline decorations and direct GPU
+group/color-field composition remain open. The Debug Metal fixture
+probe covers boxes and native controls against shared input geometry and the
+existing RGB mean-error threshold; it does not establish application/window/
+VoiceOver or other-target acceptance. Raw view styles/custom values and snapshots
+retain their authored units.
+
+Native static box opacity is an isolated subtree operation: paint the box's own
+background, border, contents, descendants and outline, then apply its opacity
+once. Overlapping children must not receive that opacity separately. Nested groups
+compose in source paint order. Zero opacity suppresses pixel work while preserving
+ordinary input/text geometry; root opacity includes the root background. Select
+popups retain their established top-layer scope. Inline elements' own opacity is
+still outside the native inline painter's admitted subset; an outer box group can
+contain rich inline content.
+
+The private software program has balanced enter/exit markers checked before any
+destination effect. An explicit stack and reusable 128×128 RGBA tiles bound pixel
+layers by the existing native box depth plus the root (less than9MiB of layer
+payload), independently of viewport dimensions. This is not a total renderer/RSS
+bound: source commands, retained images, a reusable path-coverage mask and the
+existing clip masks remain separate. Paths crossing tiles use global physical AA
+coverage to avoid tile-local curve seams. Ancestor rectangular/curved scopes apply
+when the completed layer is composited; child draws carry only scopes introduced
+inside it. Raw source clips still define hit/text/IME metadata. Pointer-keyed
+relative-scope memo entries retain their source chains, including the validated
+base, until the frame cache is dropped; freed addresses must never identify a
+different scope. Separate additive groups can accumulate complementary AA pieces
+before ordinary source-over composition, without an opaque under-paint; this is
+foundation retained separately from the single-field side-color painter below.
+
+The retained scene limits remain65536 commands/16MiB. If an isolated frame exceeds
+them, a fallibly allocated temporary program is bounded by the unchanged native
+text-work, box and inline-fragment ceilings, rendered once and dropped. It is not
+a larger retained cache. Ordinary earlier pixels survive if recording starts
+after a streamed prefix; following draws and masks stay ordered. Source execution,
+layout and shaping are not repeated to build layers. A subsequent small frame
+recovers normal retention. Group preparation returns explicit software pixels
+under the existing vector/GPU contract; repeated preparation retains those CPU
+pixels and local mutations replay their damage. Switching back to vector commands
+invalidates old CPU pixels. The desktop's existing raster fallback disables GPU
+presentation; no layer textures, larger GPU allowance or direct GPU group support
+is inferred. Actual window, platform accessibility and release acceptance remain
+separate requirements.
+
+Distinct native border-side colors use one premultiplied color field over the
+same closed even-odd ring; the outer edge and hole coverage are applied once.
+There is no opaque under-paint or repeated source-over at internal color seams.
+The existing one-color path remains the fast vector path. Color ownership follows
+the first inward-moving padding edge/arc to reach a point, using the admitted
+inset radii without re-normalization. Within a corner the angle split is monotone
+in the adjacent width ratio, with exact zero-width donation. This is the native
+choice within CSS Backgrounds3§4.4's underdefined transition mapping, not a claim
+of pixel identity with a particular browser. Large asymmetric corners compare
+actual curved fronts with opposite edges; whole-ring weighted nearest-edge and
+midpoint-only partitions are insufficient. Ordinary one-corner ownership uses an
+analytic sign test. Opposing corner fronts use a fixed bounded search.
+
+Color blocks are filled uniformly only after interval bounds prove their owner;
+remaining pixels use center/corner color probes, with differing probes triggering
+a fixed rotated16-sample pattern near color seams. This is a fixed native AA policy,
+not exact analytic color integration or a particular browser's raster. Samples are
+averaged in premultiplied space and normalized over the ring; curve coverage
+still comes from the shared raster path, not sampled replacement geometry. Global
+physical coordinates preserve tile phase. The private color-field command uses
+one reusable extra128×128 RGBA tile, independent of depth, and the existing global
+coverage/clip masks. It shares retained damage, source-derived overflow/prefix
+handling and explicit CPU fallback with groups. Cache, source, image and GPU limits
+stay unchanged; public drawing commands and guest ABI acquire no new operation.
+Fractional pixel bounds enclose each edge independently: flooring the origin and
+ceiling only the width/height can omit the last partial row/column.
+
 `overflow-wrap: normal` and `anywhere` inherit and participate in line breaking
 and flex/grid minimum-content sizing; `nowrap` still suppresses soft breaks.
 For a supported `p`, default vertical margins are one supplied-font em unless
@@ -11819,6 +11927,12 @@ viewport and containing-block clip chains. These bounds are for a host renderer:
 they do not paint, model rounded clips, or implement hit testing. Geometry uses
 overlay scrollbars and does not implement horizontal scrolling; it does not
 change the stored scroll state or snapshots.
+Native layout construction uses an explicit enter/exit work list, resolving one
+node's styles before visiting the next and attaching ordered native children on
+exit. It keeps the existing 128-depth/4096-box limits and prunes hidden/rich-text/
+select contents as before; it does not retain large recursive style frames or
+increase host thread stacks. Scheduling is bounded before extending the list.
+
 The experimental `rasterize_boxes` API uses a bounded, transparent CPU image
 with premultiplied RGBA8 pixels. It paints solid CSS background colors for the
 supported unpositioned box tree in document order, respecting rectangular
@@ -11828,7 +11942,7 @@ shorthand resets. `rasterize_with_text` also paints the supported shaped text
 using the host's explicit fonts and bounded unhinted glyph outlines; it shares
 the text layout restrictions and rejects synthetic font styling and decoration.
 The box-only variant rejects text. A button, text/search/password input or textarea is paintable
-with explicit box, font, foreground and background styles, zero radius and
+with explicit box, font, foreground and background styles, an admitted radius and
 an explicit outline style; buttons also require explicit flex alignment. Text inputs paint
 their value, keyboard selection and a non-blinking caret; missing glyphs use the supplied font's
 `.notdef` outline. Each nonempty field reuses one shaped layout for glyph painting,
@@ -11884,8 +11998,9 @@ needed. The charged meter still excludes some parser/Unicode-analysis/plan work;
 no complete RSS or wall-clock deadline guarantee follows. Fonts with excessive
 glyph/outline expansion can still hit the resource budgets; complete backend
 memory/platform acceptance remains open.
-Other controls, differently colored border sides, positioned elements, stacking
-effects and rounded corners fail explicitly.
+Other controls, differently colored border sides, positioned elements and stacking
+effects still fail explicitly. Static rounded boxes and the explicit controls
+above use the shared corner/clip pipeline described earlier.
 Password painting shapes one `•` per extended grapheme, including transient
 preedit, with source-byte positions retained for hit testing and selection.
 Guest values and input events retain the original text. Selection, caret,
@@ -12209,6 +12324,18 @@ Guest commit admission, its name-work recurrence, wire budgets and the existing
 browser contract remain unchanged. Trusted action validation reads interaction
 flags and visibility without evaluating a name or description.
 
+The native snapshot carries the remaining preflight allowance into desktop
+projection as `AccessibilityWork`; fields do not each receive a fresh allowance.
+Curved visibility queries charge shape visits and reserve their maximum bounded
+search work before searching. The solver intersects convex rounded rectangles
+analytically: fixed-position cross sections define a convex feasibility gap,
+followed by fixed ternary/binary searches for both projected extrema. Interior
+queries use four-vertex containment. It allocates no viewport mask or shaped
+layout. Zero-width carets and empty intersections are explicit. These potential
+work units are not an instruction count or CPU-time guarantee. The focused
+editable IME caret uses one independently bounded host query per frame, rather
+than searching the carets of all unfocused fields.
+
 The desktop host continues ordinary rendering/input after observer refusal.
 At matching frame presentation it replaces the old native guest tree with a
 host-owned static-text explanation, clears queued assistive actions and bindings,
@@ -12251,13 +12378,19 @@ visual lines and content clip in physical pixels. Cluster ranges still address
 original UTF-8, including for password masks. This data also drives ordinary
 pointer navigation; the observer does not reshape text. The getter requires
 matching opaque source and content identities and refuses transient IME display.
-Bounds retain full advances while the content clip describes visibility. CRLF
+Bounds retain full advances while the content clip describes visibility.
+`FieldTextGeometry::visible_bounds` intersects a physical query with the field
+content rectangle and its curved ancestor/content chain under one caller-supplied
+observer allowance. The getter retains source identity/revision/composition
+checks. Text reveal continues to use full logical bounds rather than losing
+unseen source ranges. CRLF
 textareas retain the source pair and place keyboard End before the whole pair.
 The desktop adapter splits source-ordered native runs by visual line, direction
-and the character-index bound, with previous/next-on-line links. Run bounds,
+the character-index bound and differing clipped vertical extents, with
+previous/next-on-line links. Run bounds,
 character positions and widths come from these clusters, clipped to the same
-content viewport as painting. Fully clipped units have zero-area geometry at
-the clip edge; this describes visible fragments rather than unbounded offscreen
+content rectangle/curved shapes as painting. Fully clipped units keep zero-area
+geometry and their complete source mapping; this describes visible fragments rather than unbounded offscreen
 glyph boxes. Combining-scalar interiors share the cluster's leading caret and
 its final scalar advances to the trailing caret, matching painted byte-index
 cursor snapping. Password spans additionally split whenever clipped widths or

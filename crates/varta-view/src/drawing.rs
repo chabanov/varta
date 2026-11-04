@@ -1,4 +1,5 @@
 //! Host-owned, bounded drawing data shared by software and GPU consumers.
+use crate::render::clips::Clip;
 use crate::render::scene::{self, Draw, Primitive};
 use crate::{BoxRect, FrameMetadata, PaintError, RasterImage};
 use std::{collections::BTreeMap, sync::Arc};
@@ -19,6 +20,28 @@ pub enum DrawPrimitive {
         even_odd: bool,
     },
 }
+/// One closed, host-validated physical clipping path. Parent paths intersect
+/// in tree order; the primitive transform does not transform these paths.
+#[derive(Debug, Clone)]
+pub struct DrawClip {
+    segments: Arc<[PathSegment]>,
+    parent: Option<Arc<Self>>,
+    source: Arc<Clip>,
+}
+impl PartialEq for DrawClip {
+    fn eq(&self, other: &Self) -> bool {
+        (Arc::ptr_eq(&self.source, &other.source) || self.source == other.source)
+            && (Arc::ptr_eq(&self.segments, &other.segments) || self.segments == other.segments)
+    }
+}
+impl DrawClip {
+    pub fn segments(&self) -> &[PathSegment] {
+        &self.segments
+    }
+    pub fn parent(&self) -> Option<&Self> {
+        self.parent.as_deref()
+    }
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct DrawCommand {
     pub primitive: DrawPrimitive,
@@ -28,6 +51,7 @@ pub struct DrawCommand {
     pub transform: [f32; 6],
     /// Physical-pixel clip, applied after the primitive transform.
     pub clip: Option<BoxRect>,
+    pub clips: Option<Arc<DrawClip>>,
 }
 #[derive(Debug, Clone)]
 pub struct DisplayList {
@@ -38,7 +62,7 @@ pub enum PreparedFrame {
         metadata: FrameMetadata,
         scene: DisplayList,
     },
-    /// Recording overflow preserves the original software admission behavior.
+    /// Software-only operations and recording overflow preserve pixel/metadata behavior.
     Raster(RasterImage),
 }
 impl SegmentCache {
@@ -67,6 +91,62 @@ pub(crate) struct SegmentCache {
     entries: BTreeMap<usize, CachedPath>,
     pub hits: usize,
 }
+fn segments(path: &tiny_skia::Path) -> Arc<[PathSegment]> {
+    let point = |p: tiny_skia::Point| [p.x, p.y];
+    path.segments()
+        .map(|segment| match segment {
+            tiny_skia::PathSegment::MoveTo(p) => PathSegment::Move(point(p)),
+            tiny_skia::PathSegment::LineTo(p) => PathSegment::Line(point(p)),
+            tiny_skia::PathSegment::QuadTo(a, b) => PathSegment::Quad(point(a), point(b)),
+            tiny_skia::PathSegment::CubicTo(a, b, c) => {
+                PathSegment::Cubic(point(a), point(b), point(c))
+            }
+            tiny_skia::PathSegment::Close => PathSegment::Close,
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+fn convert_clip(
+    source: &Arc<Clip>,
+    cache: &mut BTreeMap<usize, Arc<DrawClip>>,
+    bytes: &mut usize,
+) -> Option<Arc<DrawClip>> {
+    let key = |clip: &Arc<Clip>| Arc::as_ptr(clip) as usize;
+    let mut missing = Vec::new();
+    let mut current = Some(source);
+    while let Some(clip) = current {
+        if cache.contains_key(&key(clip)) {
+            break;
+        }
+        missing.push(clip.clone());
+        current = clip.parent.as_ref();
+    }
+    for clip in missing.into_iter().rev() {
+        let path = clip.path.as_ref()?;
+        *bytes = bytes
+            .checked_add(std::mem::size_of::<DrawClip>())?
+            .checked_add(
+                path.verbs()
+                    .len()
+                    .checked_mul(std::mem::size_of::<PathSegment>())?,
+            )?;
+        if *bytes > scene::MAX_SCENE_BYTES {
+            return None;
+        }
+        let parent = clip
+            .parent
+            .as_ref()
+            .and_then(|parent| cache.get(&key(parent)).cloned());
+        let neutral = Arc::new(DrawClip {
+            segments: segments(path),
+            parent,
+            source: clip.clone(),
+        });
+        // Holding source Arcs prevents address reuse for this conversion cache.
+        cache.insert(key(&clip), neutral);
+    }
+    cache.get(&key(source)).cloned()
+}
 impl DisplayList {
     pub fn commands(&self) -> &[DrawCommand] {
         &self.commands
@@ -76,9 +156,24 @@ impl DisplayList {
         let mut bytes = 0usize;
         let mut next = BTreeMap::new();
         let mut cache_bytes = 0usize;
+        let mut clips = BTreeMap::new();
         for (index, draw) in draws.iter().enumerate() {
             bytes = bytes.checked_add(std::mem::size_of::<DrawCommand>())?;
+            if draw
+                .clips
+                .as_ref()
+                .is_some_and(|clip| clip.bounds.is_none())
+            {
+                continue;
+            }
+            let clip = match &draw.clips {
+                Some(clip) => Some(convert_clip(clip, &mut clips, &mut bytes)?),
+                None => None,
+            };
             let primitive = match &draw.primitive {
+                Primitive::BeginGroup { .. } | Primitive::EndGroup | Primitive::Border(_) => {
+                    return None;
+                }
                 Primitive::Rect(r) => DrawPrimitive::Rect(rect(*r)),
                 Primitive::Path(path, rule) => {
                     // Charge the full output before allocating its segment array.
@@ -90,7 +185,6 @@ impl DisplayList {
                     if bytes > scene::MAX_SCENE_BYTES {
                         return None;
                     }
-                    let point = |p: tiny_skia::Point| [p.x, p.y];
                     let segments: Arc<[PathSegment]> = if let Some(old) = cache
                         .entries
                         .get(&index)
@@ -99,20 +193,7 @@ impl DisplayList {
                         cache.hits = cache.hits.saturating_add(1);
                         old.segments.clone()
                     } else {
-                        path.segments()
-                            .map(|s| match s {
-                                tiny_skia::PathSegment::MoveTo(p) => PathSegment::Move(point(p)),
-                                tiny_skia::PathSegment::LineTo(p) => PathSegment::Line(point(p)),
-                                tiny_skia::PathSegment::QuadTo(a, b) => {
-                                    PathSegment::Quad(point(a), point(b))
-                                }
-                                tiny_skia::PathSegment::CubicTo(a, b, c) => {
-                                    PathSegment::Cubic(point(a), point(b), point(c))
-                                }
-                                tiny_skia::PathSegment::Close => PathSegment::Close,
-                            })
-                            .collect::<Vec<_>>()
-                            .into()
+                        segments(path)
                     };
                     let entry_bytes = std::mem::size_of::<CachedPath>()
                         + std::mem::size_of::<usize>()
@@ -149,6 +230,7 @@ impl DisplayList {
                 ],
                 transform: [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty],
                 clip: draw.clip.map(rect),
+                clips: clip,
             });
         }
         cache.entries = next;
@@ -188,6 +270,9 @@ impl DisplayList {
             let bounds = match &primitive {
                 Primitive::Rect(r) => *r,
                 Primitive::Path(p, _) => p.bounds(),
+                Primitive::BeginGroup { .. } | Primitive::EndGroup | Primitive::Border(_) => {
+                    unreachable!("public drawing primitives exclude groups")
+                }
             };
             let transform = tiny_skia::Transform::from_row(xx, yx, xy, yy, dx, dy);
             draws.push(Draw {
@@ -201,6 +286,7 @@ impl DisplayList {
                 .ok_or(PaintError::Dimensions)?,
                 transform,
                 clip: draw.clip.map(tiny_rect).transpose()?,
+                clips: draw.clips.as_ref().map(|clip| clip.source.clone()),
                 bounds: bounds.transform(transform).ok_or(PaintError::Dimensions)?,
             });
         }

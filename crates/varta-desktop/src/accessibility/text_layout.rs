@@ -2,7 +2,8 @@
 use accesskit::Rect;
 use std::ops::Range;
 use varta_view::{
-    AccessibilityError, AccessibilityNode, AccessibilityText, FieldTextGeometry, FrameMetadata,
+    AccessibilityError, AccessibilityNode, AccessibilityText, AccessibilityWork, BoxRect,
+    FieldTextGeometry, FrameMetadata,
 };
 
 pub(super) struct Metrics {
@@ -32,13 +33,35 @@ impl Unit {
     fn trailing(self) -> f32 {
         if self.rtl { self.left } else { self.right }
     }
-    fn clipped(mut self, geometry: &FieldTextGeometry<'_>) -> Self {
+    fn clipped(
+        mut self,
+        geometry: &FieldTextGeometry<'_>,
+        work: &mut AccessibilityWork,
+    ) -> Result<Self, AccessibilityError> {
         let clip = geometry.clip;
         self.left = self.left.clamp(clip.x, clip.x + clip.width);
         self.right = self.right.clamp(clip.x, clip.x + clip.width);
         self.top = self.top.clamp(clip.y, clip.y + clip.height);
         self.bottom = self.bottom.clamp(clip.y, clip.y + clip.height);
-        self
+        let bounds = geometry.visible_bounds(
+            BoxRect {
+                x: self.left,
+                y: self.top,
+                width: self.right - self.left,
+                height: self.bottom - self.top,
+            },
+            work,
+        )?;
+        if let Some(bounds) = bounds {
+            self.left = bounds.x;
+            self.right = bounds.x + bounds.width;
+            self.top = bounds.y;
+            self.bottom = bounds.y + bounds.height;
+        } else {
+            self.right = self.left;
+            self.bottom = self.top;
+        }
+        Ok(self)
     }
 }
 fn push(runs: &mut Vec<Run>, run: Run, remaining: usize) -> Result<(), AccessibilityError> {
@@ -51,7 +74,11 @@ fn push(runs: &mut Vec<Run>, run: Run, remaining: usize) -> Result<(), Accessibi
     Ok(())
 }
 
-fn units(text: &AccessibilityText, geometry: &FieldTextGeometry<'_>) -> Vec<Unit> {
+fn units(
+    text: &AccessibilityText,
+    geometry: &FieldTextGeometry<'_>,
+    work: &mut AccessibilityWork,
+) -> Result<Vec<Unit>, AccessibilityError> {
     let count = text.character_lengths.len();
     let mut units = vec![None; count];
     for (line_index, line) in geometry.lines.iter().enumerate() {
@@ -126,7 +153,7 @@ fn units(text: &AccessibilityText, geometry: &FieldTextGeometry<'_>) -> Vec<Unit
         .into_iter()
         .map(|unit| {
             unit.expect("every source unit has a caret")
-                .clipped(geometry)
+                .clipped(geometry, work)
         })
         .collect()
 }
@@ -135,6 +162,7 @@ pub(super) fn plan(
     source: &AccessibilityNode,
     metadata: &FrameMetadata,
     remaining: usize,
+    work: &mut AccessibilityWork,
 ) -> Result<Vec<Run>, AccessibilityError> {
     let text = source.text.as_ref().expect("text field projection");
     let Some(geometry) = metadata.field_text_geometry(&source.identity, &text.revision) else {
@@ -160,16 +188,16 @@ pub(super) fn plan(
     }
     if text.character_lengths.is_empty() {
         let line = &geometry.lines[0];
-        let x = line
-            .bounds
-            .x
-            .clamp(geometry.clip.x, geometry.clip.x + geometry.clip.width);
-        let top = line
-            .bounds
-            .y
-            .clamp(geometry.clip.y, geometry.clip.y + geometry.clip.height);
-        let bottom = (line.bounds.y + line.bounds.height)
-            .clamp(geometry.clip.y, geometry.clip.y + geometry.clip.height);
+        let caret = Unit {
+            left: line.bounds.x,
+            right: line.bounds.x,
+            top: line.bounds.y,
+            bottom: line.bounds.y + line.bounds.height,
+            rtl: false,
+            line: 0,
+        }
+        .clipped(&geometry, work)?;
+        let (x, top, bottom) = (caret.left, caret.top, caret.bottom);
         push(
             &mut runs,
             Run {
@@ -186,7 +214,7 @@ pub(super) fn plan(
         )?;
         return Ok(runs);
     }
-    let units = units(text, &geometry);
+    let units = units(text, &geometry, work)?;
     let mut start = 0;
     while start < units.len() {
         let first = units[start];
@@ -194,7 +222,9 @@ pub(super) fn plan(
         while end < units.len() && end - start < varta_view::ACCESSIBILITY_TEXT_RUN_CHARACTERS {
             let unit = units[end];
             let previous = units[end - 1];
-            if unit.line != first.line
+            if unit.top != first.top
+                || unit.bottom != first.bottom
+                || unit.line != first.line
                 || unit.rtl != first.rtl
                 || if unit.rtl {
                     unit.leading() > previous.leading()
@@ -261,16 +291,16 @@ pub(super) fn plan(
         let index = text
             .source_offsets
             .partition_point(|byte| *byte < line.source.start);
-        let x = line
-            .bounds
-            .x
-            .clamp(geometry.clip.x, geometry.clip.x + geometry.clip.width);
-        let top = line
-            .bounds
-            .y
-            .clamp(geometry.clip.y, geometry.clip.y + geometry.clip.height);
-        let bottom = (line.bounds.y + line.bounds.height)
-            .clamp(geometry.clip.y, geometry.clip.y + geometry.clip.height);
+        let caret = Unit {
+            left: line.bounds.x,
+            right: line.bounds.x,
+            top: line.bounds.y,
+            bottom: line.bounds.y + line.bounds.height,
+            rtl: false,
+            line: 0,
+        }
+        .clipped(&geometry, work)?;
+        let (x, top, bottom) = (caret.left, caret.top, caret.bottom);
         push(
             &mut runs,
             Run {

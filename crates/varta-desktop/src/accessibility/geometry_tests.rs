@@ -62,8 +62,13 @@ fn native_spans_cover_visual_lines_bidi_and_clipping_without_losing_text() {
     let geometry = metadata
         .field_text_geometry(&source.identity, &source.text.as_ref().unwrap().revision)
         .unwrap();
-    let plans =
-        text_layout::plan(&source, &metadata, varta_view::ACCESSIBILITY_TEXT_RUN_LIMIT).unwrap();
+    let plans = text_layout::plan(
+        &source,
+        &metadata,
+        varta_view::ACCESSIBILITY_TEXT_RUN_LIMIT,
+        &mut varta_view::AccessibilityWork::default(),
+    )
+    .unwrap();
     let native = runs(&bridge, field);
     assert_eq!(
         native
@@ -224,8 +229,13 @@ fn wrapped_end_selection_keeps_the_painted_upstream_caret() {
     .unwrap();
     let metadata = render(&view);
     let source = view.accessibility_tree().unwrap().nodes[&2].clone();
-    let plans =
-        text_layout::plan(&source, &metadata, varta_view::ACCESSIBILITY_TEXT_RUN_LIMIT).unwrap();
+    let plans = text_layout::plan(
+        &source,
+        &metadata,
+        varta_view::ACCESSIBILITY_TEXT_RUN_LIMIT,
+        &mut varta_view::AccessibilityWork::default(),
+    )
+    .unwrap();
     bridge
         .publish(
             2,
@@ -418,4 +428,157 @@ fn password_native_metrics_follow_uniform_rendered_grapheme_masks() {
             .windows(2)
             .all(|pair| pair[1] - pair[0] == widths[0])
     );
+}
+
+fn rounded_ancestors(view: &mut View, count: u32) {
+    let mut batch = B::new();
+    let mut parent = 1;
+    for id in 3..3 + count {
+        batch
+            .create_element(id, Tag::Div)
+            .set_style(id, P::Display, "block")
+            .set_style(id, P::Width, "130px")
+            .set_style(id, P::Height, "90px")
+            .set_style(id, P::Overflow, "hidden")
+            .set_style(
+                id,
+                P::BorderRadius,
+                &format!("{}%", 50.0 - (id - 3) as f32 / 1000.0),
+            )
+            .insert(parent, id, 0);
+        parent = id;
+    }
+    batch.insert(parent, 2, 0);
+    commit(view, &batch);
+}
+
+#[test]
+fn curved_native_spans_keep_source_ranges_and_use_individual_visible_heights() {
+    let (bridge, mut view, _, version, field) = setup(Tag::Textarea, "AAAA AAAA AAAA", 120);
+    rounded_ancestors(&mut view, 1);
+    let metadata = render(&view);
+    let source = view.accessibility_tree().unwrap();
+    let field_source = &source.nodes[&2];
+    let geometry = metadata
+        .field_text_geometry(
+            &field_source.identity,
+            &field_source.text.as_ref().unwrap().revision,
+        )
+        .unwrap();
+    assert!(
+        geometry.clusters[0].bounds.x < 10.0,
+        "logical geometry remains untrimmed"
+    );
+    let mut work = source.observer_work();
+    let plans = text_layout::plan(
+        field_source,
+        &metadata,
+        varta_view::ACCESSIBILITY_TEXT_RUN_LIMIT,
+        &mut work,
+    )
+    .unwrap();
+    bridge
+        .publish(
+            2,
+            &Ok(source),
+            &metadata,
+            Version {
+                revision: 2,
+                ..version
+            },
+            "geometry",
+        )
+        .unwrap();
+    let native = runs(&bridge, field);
+    assert_eq!(
+        native
+            .iter()
+            .map(|(_, node)| node.value().unwrap())
+            .collect::<String>(),
+        "AAAA AAAA AAAA"
+    );
+    assert_eq!(native.len(), plans.len());
+    assert!(plans.windows(2).any(|pair| pair[0].line == pair[1].line
+        && pair[0].metrics.as_ref().unwrap().bounds.y0
+            != pair[1].metrics.as_ref().unwrap().bounds.y0));
+    for ((_, node), plan) in native.iter().zip(&plans) {
+        assert_eq!(node.bounds(), Some(plan.metrics.as_ref().unwrap().bounds));
+        assert_eq!(
+            node.character_positions().unwrap().len(),
+            plan.characters.len()
+        );
+    }
+}
+
+#[test]
+fn curved_geometry_work_refusal_clears_actions_and_recovers_without_a_guest_failure() {
+    let (bridge, mut view, _, version, field) = setup(Tag::Textarea, &"A".repeat(16_000), 600);
+    rounded_ancestors(&mut view, 125);
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: 0,
+            activate: false,
+        },
+        &mut Deny,
+    )
+    .unwrap();
+    let metadata = render(&view);
+    let source = view.accessibility_tree().unwrap();
+    let before = view.snapshot();
+    let mut work = source.observer_work();
+    let refusal = text_layout::plan(
+        &source.nodes[&2],
+        &metadata,
+        varta_view::ACCESSIBILITY_TEXT_RUN_LIMIT,
+        &mut work,
+    )
+    .err();
+    assert_eq!(
+        refusal,
+        Some(varta_view::AccessibilityError::WorkLimit {
+            limit: varta_view::ACCESSIBILITY_TEXT_WORK_LIMIT
+        }),
+        "one publication shares preflight and geometry allowance: {work:?}"
+    );
+    bridge.enqueue(request(field, Action::Focus, None));
+    let update = bridge
+        .publish(
+            2,
+            &Ok(source),
+            &metadata,
+            Version {
+                revision: 2,
+                ..version
+            },
+            "geometry",
+        )
+        .unwrap();
+    assert!(
+        update
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == Role::Label)
+    );
+    assert!(bridge.state.lock().unwrap().text_runs.is_empty());
+    assert!(bridge.take().is_none());
+    assert_eq!(view.snapshot(), before);
+    let mut batch = B::new();
+    batch.set_value(2, "ok", 0);
+    commit(&mut view, &batch);
+    let update = bridge
+        .publish(
+            3,
+            &view.accessibility_tree(),
+            &render(&view),
+            Version {
+                revision: 3,
+                ..version
+            },
+            "geometry",
+        )
+        .unwrap();
+    assert!(update.nodes.iter().all(|(id, _)| *id != field));
+    assert!(!bridge.state.lock().unwrap().text_runs.is_empty());
 }

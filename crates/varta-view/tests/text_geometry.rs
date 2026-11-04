@@ -26,7 +26,11 @@ fn font() -> TextMeasurer {
 fn field(tag: Tag, value: &str) -> View {
     let mut b = B::new();
     b.stylesheet(1, ".field {display:block; width:60px; height:60px; min-width:0; min-height:0; padding:4px; border:1px solid #000; border-radius:0; outline:none; background-color:#fff; color:#000; font-family:\"Varta Password Fixture\"; font-size:20px; font-weight:400; font-style:normal; line-height:20px}")
-        .create_element(2, tag).set_class(2,"field").set_value(2,value,0).insert(1,2,0);
+        .create_element(2, tag).set_class(2,"field");
+    if matches!(tag, Tag::Input | Tag::Textarea) {
+        b.set_value(2, value, 0);
+    }
+    b.insert(1, 2, 0);
     let mut v = View::default();
     commit(&mut v, &b);
     v
@@ -280,4 +284,151 @@ fn password_geometry_matches_masks_even_for_combining_and_joined_emoji() {
             .field_text_geometry(&source.identity, &text.revision)
             .is_some()
     );
+}
+
+#[test]
+fn curved_ancestor_visibility_preserves_full_advances_and_clips_ime_in_physical_pixels() {
+    let mut view = field(Tag::Textarea, "AAAA");
+    let mut batch = B::new();
+    batch
+        .create_element(3, Tag::Div)
+        .set_style(3, P::Display, "block")
+        .set_style(3, P::Width, "80px")
+        .set_style(3, P::Height, "80px")
+        .set_style(3, P::Overflow, "hidden")
+        .set_style(3, P::BorderRadius, "50%")
+        .insert(1, 3, 0)
+        .insert(3, 2, 0)
+        .set_style(2, P::Width, "80px")
+        .set_style(2, P::Height, "80px")
+        .set_style(2, P::Padding, "0")
+        .set_style(2, P::Border, "0 solid #000");
+    commit(&mut view, &batch);
+    view.input(
+        &Input::TextSelect {
+            target: Target::Node(2),
+            anchor: 0,
+            focus: 0,
+            activate: false,
+        },
+        &mut Deny,
+    )
+    .unwrap();
+    let source = view.accessibility_tree().unwrap();
+    let field = &source.nodes[&2];
+    let revision = &field.text.as_ref().unwrap().revision;
+    let before = view.snapshot();
+    for scale in [1.0, 2.0] {
+        let image = view
+            .rasterize_scaled(
+                (140.0 * scale) as u32,
+                (120.0 * scale) as u32,
+                scale,
+                Some((&mut font(), 20.0)),
+            )
+            .unwrap();
+        let geometry = image
+            .field_text_geometry(&field.identity, revision)
+            .unwrap();
+        let mut work = source.observer_work();
+        let full = geometry.clusters[0].bounds;
+        let visible = geometry.visible_bounds(full, &mut work).unwrap().unwrap();
+        assert_eq!(full.x, 0.0);
+        assert!(visible.x > full.x && visible.y > full.y);
+        assert!(visible.width < full.width && visible.height < full.height);
+        assert!(
+            geometry
+                .visible_bounds(
+                    varta_view::BoxRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 2.0 * scale,
+                        height: 2.0 * scale
+                    },
+                    &mut work
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            image.ime_cursor_area().is_none(),
+            "left edge caret is fully cut by the curved ancestor"
+        );
+        assert_eq!(geometry.clusters[0].bounds, full);
+    }
+    assert_eq!(view.snapshot(), before);
+}
+
+#[test]
+fn rounded_native_controls_share_content_clips_across_reference_retained_and_vector_frames() {
+    for (tag, kind) in [
+        (Tag::Input, "text"),
+        (Tag::Textarea, ""),
+        (Tag::Input, "checkbox"),
+        (Tag::Input, "radio"),
+        (Tag::Select, ""),
+        (Tag::Button, ""),
+    ] {
+        let mut view = field(tag, "AAAA");
+        let mut batch = B::new();
+        batch
+            .set_style(1, P::BackgroundColor, "#00ff00")
+            .set_style(2, P::BorderRadius, "50%");
+        if !kind.is_empty() {
+            batch.set_attribute(2, A::Type, kind);
+        }
+        if matches!(kind, "checkbox" | "radio") {
+            batch.set_checked(2, 1, 0);
+        }
+        if tag == Tag::Button {
+            batch
+                .set_style(2, P::Display, "flex")
+                .set_style(2, P::JustifyContent, "flex-start")
+                .set_style(2, P::AlignItems, "flex-start")
+                .create_text(3, "A")
+                .insert(2, 3, 0);
+        }
+        if tag == Tag::Select {
+            batch
+                .create_element(3, Tag::Option)
+                .create_text(4, "A")
+                .insert(3, 4, 0)
+                .insert(2, 3, 0);
+        }
+        commit(&mut view, &batch);
+        let before = view.snapshot();
+        let mut renderer = varta_view::Renderer::new(Some(font()), 20.0).unwrap();
+        for scale in [1.0, 2.0] {
+            let (width, height) = ((140.0 * scale) as u32, (120.0 * scale) as u32);
+            let expected = view
+                .rasterize_scaled(width, height, scale, Some((&mut font(), 20.0)))
+                .unwrap_or_else(|error| panic!("{tag:?}/{kind} at {scale}: {error:?}"));
+            assert_eq!(&expected.pixels[0..4], &[0, 255, 0, 255]);
+            assert_eq!(expected.hit_test(scale, scale), None);
+            assert_eq!(
+                renderer.render(&view, width, height, scale).unwrap(),
+                expected
+            );
+            let varta_view::PreparedFrame::Vector { metadata, scene } =
+                renderer.prepare(&view, width, height, scale).unwrap()
+            else {
+                panic!("bounded rounded control vector scene")
+            };
+            assert_eq!(scene.rasterize(metadata).unwrap(), expected);
+            if tag == Tag::Textarea {
+                let source = view.accessibility_tree().unwrap();
+                let source = &source.nodes[&2];
+                let geometry = expected
+                    .field_text_geometry(&source.identity, &source.text.as_ref().unwrap().revision)
+                    .unwrap();
+                let full = geometry.clusters[0].bounds;
+                let visible = geometry
+                    .visible_bounds(full, &mut varta_view::AccessibilityWork::default())
+                    .unwrap()
+                    .unwrap();
+                assert!(visible.x > full.x && visible.y > full.y);
+            }
+        }
+        assert_eq!(view.snapshot(), before);
+    }
 }

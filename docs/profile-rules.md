@@ -4133,6 +4133,73 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
 - The headless renderer (`varta-view`) stays free of Wasm, I/O and clocks;
   host decisions reach it through `Broker`. Production budgets never change
   for views; every view turn has its own per-turn allowance.
+- Native corner geometry uses the admitted radius grammar and one common
+  side-overlap factor. Normalize finite magnitudes before axis multiplication;
+  do not invent a smaller guest style-admission limit to avoid overflow. Preserve
+  rectangular zero-radius behavior and raw snapshot styles. Round only a box's
+  own hit region; radius alone never clips visible descendant/text fragments.
+  Rounded overflow requires matching paint, hit and text geometry, not just a
+  curved background. Padding radii subtract adjacent border widths without
+  re-normalization; clip oversized inner arcs to the padding rectangle rather
+  than shrinking them. Corner clipping accepts generated closed line/cubic
+  contours; retain winding when oversized inset arcs backtrack outside the
+  padding rectangle. Keep hole components separate under the caller's fill rule.
+  For arbitrary half-planes, split at the at-most-two projected derivative roots
+  before each bounded crossing solve; a diagonal can enter and leave one arc
+  even with both endpoints on the same side. Normalize finite plane coefficients
+  before products and reject NaN/Inf explicitly. Preserve the inexpensive
+  monotone-control path for the existing four axis planes. Large arcs
+  require geometric-error-controlled tangent cubics, not subdivision of an
+  already approximate cubic. Preserve transparent even-odd border holes and
+  the per-axis minimum for negative outline offsets. Keep remaining inline/
+  control/clip/color gaps explicit. Shared neutral paths must agree in reference,
+  retained and vector software output before actual GPU/native acceptance.
+- Mixed border colors must retain zero-width corner ownership and transparent
+  premultiplied coverage. A whole-ring nearest-normalized-edge partition can
+  miscolor oversized inset corners. Repeated SrcOver of separately antialiased
+  pieces loses seam coverage; a solid under-paint is not a translucent-color fix.
+  The CPU side painter uses one premultiplied field over shared ring coverage.
+  Preserve its inward-front ownership, exact zero-width donation, analytic ordinary
+  angle comparison and bounded opposing-corner solve. Interval-proven solid color
+  blocks may avoid point work; uncertain blocks must retain sampling. Average
+  seam colors before source-over and apply contour alpha once. Enclose fractional
+  far edges explicitly; origin-floor/size-ceil is not a containing pixel bound.
+  Direct GPU color fields remain separate acceptance work.
+- Static box opacity isolates the whole painted subtree, including its outline;
+  never scale overlapping child draw alpha independently. Keep zero-opacity input
+  geometry and top-layer popup scope. Use explicit bounded group replay with
+  reusable tiles; do not allocate one viewport layer per source depth. Paths that
+  cross tile edges need shared physical AA coverage. Strip inherited scopes only
+  from pixel commands and composite them once; source text/hit/IME clips stay raw.
+  Relative-scope pointer keys must retain their original source allocations (and
+  thus the validated base ancestors), including temporary control scopes.
+  The source-derived overflow program is temporary, fallibly allocated and dropped
+  after replay; it must not enlarge the retained65536-command/16MiB cache or renew
+  preparation work by rerunning layout/shaping/guest code. Preserve streamed
+  prefixes, following draws and cache recovery. Grouped CPU preparation must keep
+  retained damage reuse across unchanged/changed frames; report fallback honestly
+  rather than counting it as GPU composition. Inline opacity and direct GPU groups
+  remain separate acceptance work.
+- Rounded overflow paths are physical and closed; preserve the inherited scope
+  for each primitive and independent hit region. Own borders/outlines are not
+  clipped by their own overflow; children use the padding curve and select popups
+  restore top-layer scope. Charge shared source/neutral path storage before
+  allocation within the existing scene/cache allowances. Cache refusal must
+  preserve ordinary raster fallback, including subsequent draws and masks.
+  Reuse bounded mask buffers rather than allocating one viewport per depth.
+  Elide complex masks only when a conservative safety rectangle is inside every
+  clip, including coordinate/AA margin; interior dirty replay must not copy
+  unmasked temporary pixels outside the dirty region into the retained image.
+  Do not claim native text-range visibility from pointer or box GPU tests.
+  Reuse an identical immediate shape scope rather than squaring its AA fringe.
+  Controls inset border radii by their content edges for native contents; own
+  backgrounds/borders and button visible descendants keep their proper scope.
+- Native layout style resolution must return before visiting another source
+  node. Use an explicit bounded enter/exit list and preserve the 128-depth/
+  4096-box native limits; increasing thread stacks is not a depth regression fix.
+  Hidden nodes, rich inline roots and collapsed options retain their pruning.
+  Grouped subprocess tests must use their qualified case names and assert that
+  the child executed a case, not merely that the process exited successfully.
 - Native text-alternative observers preflight names, actionable generic names
   and `aria-describedby` with shared numeric name summaries before allocating
   strings. Keep the fixed observer allowance separate from guest admission;
@@ -4154,7 +4221,14 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   lines, guarded by both source identity and content revision. Do not reshape for
   accessibility or match retained geometry by numeric node ID alone. Keep full
   advances distinct from the visible content clip, scale both to physical pixels
-  and refuse transient composition. A layout split may reuse native text IDs
+  and refuse transient composition. Carry preflight's remaining observer work
+  through all desktop fields and curved queries; never reset it per field.
+  Analytic convex clip bounds use fixed searches with worst-case work reserved
+  first, no viewport-mask allocation, and explicit degenerate/empty results.
+  Different clipped heights require distinct native spans. IME needs only the
+  focused editable caret; do not search every inactive field. Keep logical
+  source/reveal ranges intact when visibility becomes empty.
+  A layout split may reuse native text IDs
   only while their source ranges retain the same meaning.
 - Assistive scrolling uses acknowledged frame geometry and the same model/
   viewport/theme/scale guards as other desktop input. Native offsets and bounds

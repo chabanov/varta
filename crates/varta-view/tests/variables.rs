@@ -138,7 +138,7 @@ fn empty_reference_fanout_remains_valid_and_renders_without_expansion_work() {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "empty_reference_fanout_remains_valid_and_renders_without_expansion_work",
+                "variables::empty_reference_fanout_remains_valid_and_renders_without_expansion_work",
                 "--nocapture",
             ])
             .env(CHILD, "1")
@@ -159,6 +159,11 @@ fn empty_reference_fanout_remains_valid_and_renders_without_expansion_work() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let output = child.wait_with_output().unwrap();
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "subprocess must execute its exact case: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         assert!(
             output.status.success(),
             "{}\n{}",

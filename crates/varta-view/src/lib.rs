@@ -40,9 +40,9 @@ pub use accessibility::{
     AccessibilityAction, AccessibilityError, AccessibilityNode, AccessibilityScrollAction,
     AccessibilityScrollHint, AccessibilityScrollOffset, AccessibilityScrollUnit,
     AccessibilitySelection, AccessibilityState, AccessibilityText, AccessibilityTextRevision,
-    AccessibilityTextRun, AccessibilityTree,
+    AccessibilityTextRun, AccessibilityTree, AccessibilityWork,
 };
-pub use drawing::{DisplayList, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame};
+pub use drawing::{DisplayList, DrawClip, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame};
 pub use events::{
     ClipboardAction, ClipboardData, ClipboardError, ClipboardKey, ClipboardTarget, ClipboardTask,
     ClipboardToken, HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep,

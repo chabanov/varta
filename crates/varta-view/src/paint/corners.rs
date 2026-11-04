@@ -1,0 +1,218 @@
+//! CSS border-box corner geometry shared by native painting and hit testing.
+//! Source: CSS Backgrounds 3, sections 4.1 and 4.5.
+use crate::{BoxRect, units::Units};
+
+const CORNERS: usize = 4;
+const TOP_LEFT: usize = 0;
+const TOP_RIGHT: usize = 1;
+const BOTTOM_RIGHT: usize = 2;
+const BOTTOM_LEFT: usize = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct Corners(pub [[f32; 2]; CORNERS]);
+impl Corners {
+    pub fn resolve(raw: &str, bounds: BoxRect, units: Units) -> Option<Self> {
+        if ![bounds.x, bounds.y, bounds.width, bounds.height]
+            .into_iter()
+            .all(f32::is_finite)
+            || bounds.width < 0.0
+            || bounds.height < 0.0
+        {
+            return None;
+        }
+        // Normalize magnitudes before applying axis factors. Even very large
+        // finite percentages/lengths reduce to a bounded contour without an
+        // overflowing intermediate or an arbitrary radius-admission ceiling.
+        let mut parsed = [(0.0_f64, [1.0_f64; 2]); CORNERS];
+        let mut count = 0;
+        let mut maximum = 0.0_f64;
+        for value in raw.split_ascii_whitespace() {
+            if count == CORNERS {
+                return None;
+            }
+            let (number, factors) = if value == "0" {
+                ("0", [1.0; 2])
+            } else if let Some(number) = value.strip_suffix('%') {
+                (
+                    number,
+                    [
+                        f64::from(bounds.width) / 100.0,
+                        f64::from(bounds.height) / 100.0,
+                    ],
+                )
+            } else if let Some(number) = value.strip_suffix("px") {
+                (number, [1.0; 2])
+            } else {
+                (
+                    value.strip_suffix("rem")?,
+                    [f64::from(units.pixels("1rem", false)?); 2],
+                )
+            };
+            let number = number.parse::<f64>().ok()?;
+            if !number.is_finite() || number < 0.0 {
+                return None;
+            }
+            parsed[count] = (number, factors);
+            maximum = maximum.max(number);
+            count += 1;
+        }
+        parsed = match count {
+            1 => [parsed[0]; CORNERS],
+            2 => [parsed[0], parsed[1], parsed[0], parsed[1]],
+            3 => [parsed[0], parsed[1], parsed[2], parsed[1]],
+            4 => parsed,
+            _ => return None,
+        };
+        if maximum == 0.0 {
+            return Some(Self::default());
+        }
+        let values =
+            parsed.map(|(number, factors)| factors.map(|factor| number / maximum * factor));
+        let mut pixel_scale = maximum;
+        for (extent, sum) in [
+            (bounds.width, values[TOP_LEFT][0] + values[TOP_RIGHT][0]),
+            (
+                bounds.width,
+                values[BOTTOM_LEFT][0] + values[BOTTOM_RIGHT][0],
+            ),
+            (bounds.height, values[TOP_LEFT][1] + values[BOTTOM_LEFT][1]),
+            (
+                bounds.height,
+                values[TOP_RIGHT][1] + values[BOTTOM_RIGHT][1],
+            ),
+        ] {
+            if sum > 0.0 {
+                pixel_scale = pixel_scale.min(f64::from(extent) / sum);
+            }
+        }
+        Some(Self(values.map(|radius| {
+            radius.map(|axis| (axis * pixel_scale) as f32)
+        })))
+    }
+    pub fn is_square(self) -> bool {
+        self.0.into_iter().all(|[x, y]| x == 0.0 || y == 0.0)
+    }
+    pub fn scaled(self, scale: f32) -> Self {
+        Self(self.0.map(|radius| radius.map(|axis| axis * scale)))
+    }
+    pub fn path(self, bounds: BoxRect) -> Option<tiny_skia::Path> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return None;
+        }
+        let [tl, tr, br, bl] = self.0.map(|[rx, ry]| {
+            if rx == 0.0 || ry == 0.0 {
+                [0.0, 0.0]
+            } else {
+                [rx, ry]
+            }
+        });
+        use super::corner_arc::{Quarter, append};
+        let left = f64::from(bounds.x);
+        let top = f64::from(bounds.y);
+        let right = f64::from(bounds.x + bounds.width);
+        let bottom = f64::from(bounds.y + bounds.height);
+        let mut path = tiny_skia::PathBuilder::new();
+        path.move_to((left + f64::from(tl[0])) as f32, top as f32);
+        path.line_to((right - f64::from(tr[0])) as f32, top as f32);
+        append(
+            &mut path,
+            [right - f64::from(tr[0]), top + f64::from(tr[1])],
+            tr,
+            Quarter::TopRight,
+        );
+        path.line_to(right as f32, (bottom - f64::from(br[1])) as f32);
+        append(
+            &mut path,
+            [right - f64::from(br[0]), bottom - f64::from(br[1])],
+            br,
+            Quarter::BottomRight,
+        );
+        path.line_to((left + f64::from(bl[0])) as f32, bottom as f32);
+        append(
+            &mut path,
+            [left + f64::from(bl[0]), bottom - f64::from(bl[1])],
+            bl,
+            Quarter::BottomLeft,
+        );
+        path.line_to(left as f32, (top + f64::from(tl[1])) as f32);
+        append(
+            &mut path,
+            [left + f64::from(tl[0]), top + f64::from(tl[1])],
+            tl,
+            Quarter::TopLeft,
+        );
+        path.close();
+        path.finish()
+    }
+    /// CSS padding-edge radii subtract the adjacent widths, without another
+    /// overlap normalization. An oversized remaining arc is clipped to the box.
+    pub fn inset(self, bounds: BoxRect, widths: [f32; 4]) -> (BoxRect, Self) {
+        let [top, right, bottom, left] = widths;
+        let inner = BoxRect {
+            x: bounds.x + left,
+            y: bounds.y + top,
+            width: (bounds.width - left - right).max(0.0),
+            height: (bounds.height - top - bottom).max(0.0),
+        };
+        let reductions = [[left, top], [right, top], [right, bottom], [left, bottom]];
+        let radii = std::array::from_fn(|index| {
+            std::array::from_fn(|axis| (self.0[index][axis] - reductions[index][axis]).max(0.0))
+        });
+        (inner, Self(radii))
+    }
+    pub fn outset(self, x: f32, y: f32) -> Self {
+        Self(self.0.map(|[rx, ry]| {
+            if rx == 0.0 || ry == 0.0 {
+                [0.0; 2]
+            } else {
+                [(rx + x).max(0.0), (ry + y).max(0.0)]
+            }
+        }))
+    }
+    pub fn clipped_path(self, bounds: BoxRect) -> Option<tiny_skia::Path> {
+        let rect = tiny_skia::Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height)?;
+        super::corner_clip::to_rect(self.path(bounds)?, rect)
+    }
+    pub fn contains(self, bounds: BoxRect, x: f32, y: f32) -> bool {
+        if !x.is_finite()
+            || !y.is_finite()
+            || x < bounds.x
+            || y < bounds.y
+            || x >= bounds.x + bounds.width
+            || y >= bounds.y + bounds.height
+        {
+            return false;
+        }
+        let edges = [
+            (bounds.x, bounds.y, 1.0, 1.0),
+            (bounds.x + bounds.width, bounds.y, -1.0, 1.0),
+            (
+                bounds.x + bounds.width,
+                bounds.y + bounds.height,
+                -1.0,
+                -1.0,
+            ),
+            (bounds.x, bounds.y + bounds.height, 1.0, -1.0),
+        ];
+        for ([rx, ry], (edge_x, edge_y, dx, dy)) in self.0.into_iter().zip(edges) {
+            // Either zero axis makes this corner square under CSS.
+            if rx == 0.0 || ry == 0.0 {
+                continue;
+            }
+            let local_x = (x - edge_x) * dx;
+            let local_y = (y - edge_y) * dy;
+            if local_x < rx && local_y < ry {
+                let nx = (local_x - rx) / rx;
+                let ny = (local_y - ry) / ry;
+                if nx * nx + ny * ny > 1.0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+#[path = "corners_tests.rs"]
+mod tests;

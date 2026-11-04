@@ -16,6 +16,10 @@ path = "src/main.rs"
 name = "gpu_probe"
 required-features = ["gpu"]
 
+[[example]]
+name = "gpu_clip_probe"
+required-features = ["gpu"]
+
 [dependencies]
 varta-common = { path = "../varta-common" }
 varta-runtime = { path = "../varta-runtime" }

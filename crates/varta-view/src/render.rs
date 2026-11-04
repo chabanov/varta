@@ -1,4 +1,6 @@
 //! Stateful native rendering, separate from the stateless reference raster APIs.
+mod clip_geometry;
+pub(crate) mod clips;
 pub(crate) mod glyphs;
 pub(crate) mod scene;
 mod styles;
@@ -73,7 +75,8 @@ impl Renderer {
         self.segments.clear();
         self.render_inner(view, width, height, scale)
     }
-    /// Prepare bounded drawing commands and input geometry without software rasterization.
+    /// Prepare bounded drawing commands and input geometry. Unsupported vector
+    /// operations or cache overflow use an explicit software raster fallback.
     pub fn prepare(
         &mut self,
         view: &View,
@@ -97,6 +100,10 @@ impl Renderer {
         } else {
             self.segments.clear();
             let pixels = crate::drawing::software_pixels(&self.scene.commands, width, height)?;
+            // A software fallback is a real full pixel frame even though the
+            // preceding command-only pass did not rasterize a dirty region.
+            self.scene.damage = tiny_skia::Rect::from_xywh(0.0, 0.0, width as f32, height as f32);
+            self.stats.dirty_pixels = width as usize * height as usize;
             Ok(crate::PreparedFrame::Raster(
                 crate::RasterImage::from_parts(metadata, pixels),
             ))

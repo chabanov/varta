@@ -13,6 +13,18 @@ fn rect(r: BoxRect) -> Rect {
 pub(crate) fn populate(scene: &mut vello_gpu::Scene, list: &DisplayList, display_p3: bool) {
     for draw in list.commands() {
         scene.reset_transform();
+        // Physical clip paths use the CPU mask winding rule, independently of
+        // the preceding primitive's even-odd border fill.
+        scene.set_fill_rule(Fill::NonZero);
+        let mut clips = Vec::new();
+        let mut current = draw.clips.as_deref();
+        while let Some(clip) = current {
+            clips.push(clip);
+            current = clip.parent();
+        }
+        for clip in clips.iter().rev() {
+            scene.push_clip_path(&path(clip.segments()));
+        }
         if let Some(clip) = draw.clip {
             scene.push_clip_rect(&rect(clip));
         }
@@ -36,22 +48,29 @@ pub(crate) fn populate(scene: &mut vello_gpu::Scene, list: &DisplayList, display
                 } else {
                     Fill::NonZero
                 });
-                let mut path = BezPath::new();
-                let point = |p: [f32; 2]| (p[0] as f64, p[1] as f64);
-                for s in segments.iter() {
-                    match *s {
-                        PathSegment::Move(p) => path.move_to(point(p)),
-                        PathSegment::Line(p) => path.line_to(point(p)),
-                        PathSegment::Quad(a, b) => path.quad_to(point(a), point(b)),
-                        PathSegment::Cubic(a, b, c) => path.curve_to(point(a), point(b), point(c)),
-                        PathSegment::Close => path.close_path(),
-                    }
-                }
-                scene.fill_path(&path);
+                scene.fill_path(&path(segments));
             }
         }
         if draw.clip.is_some() {
             scene.pop_clip();
         }
+        for _ in &clips {
+            scene.pop_clip();
+        }
     }
+}
+
+fn path(segments: &[PathSegment]) -> BezPath {
+    let mut path = BezPath::new();
+    let point = |p: [f32; 2]| (f64::from(p[0]), f64::from(p[1]));
+    for segment in segments {
+        match *segment {
+            PathSegment::Move(p) => path.move_to(point(p)),
+            PathSegment::Line(p) => path.line_to(point(p)),
+            PathSegment::Quad(a, b) => path.quad_to(point(a), point(b)),
+            PathSegment::Cubic(a, b, c) => path.curve_to(point(a), point(b), point(c)),
+            PathSegment::Close => path.close_path(),
+        }
+    }
+    path
 }

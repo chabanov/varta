@@ -19,7 +19,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Host-owned native clipboard package after `2400dbf` (2026-11-04, macOS arm64): **3323 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-032530-xtwjknm6/report.json`; source SHA-256 `011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced`. Separate optional GPU checks pass 76 desktop cases and strict all-target Clippy. This verifies implementation, not actual system clipboard/IME/VoiceOver, browser/pilot, Linux/Windows/Pi or release acceptance. [Procedure](verification.md#full-gate) |
+| Last full gate | Native rounded clipping, text/assistive geometry, iterative layout, isolated opacity and mixed-border CPU painting after `22b02d0c` (2026-11-04, macOS arm64): **3393 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-083445-nlyqugwi/report.json`; source SHA-256 `4bfd91cb3b2fe8c9b96ed662c3bf443fb38476af01c9b4f0ac465a6f21edfe92`. Final affected GPU all-target Clippy passes; Debug/Release probes each cover60 actual GPU +20 explicit CPU-fallback observations. This verifies implementation, not general smoothness, actual system clipboard/IME/VoiceOver, application windows, browser/pilot, Linux/Windows/Pi or full release acceptance. Only documentation annotations follow this gate. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -295,6 +295,242 @@ and system clipboard behavior remain unconfirmed. Evidence:
 `examples/native-showcase/clipboard-checkpoint-2026-11-04.json`. SDK/OS transient allocation is outside
 retained-response bounds. Current system clipboard/IME/VoiceOver and target
 acceptance remain open. Final full gate: **3323 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-032530-xtwjknm6/report.json`; source SHA-256 `011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced`. Only documentation annotations follow the gate.
+
+**Next native painting batch — open after clipboard commit `22b02d0`.**
+Rounded corners and isolated group opacity remain required by the unchanged UARP
+console, including 50% avatars, 999px pills and 8–16px controls. An outer-corner
+resolver and contour are now connected to borderless static-box backgrounds
+and their own hit regions. Px/rem/percentages normalize before large finite
+magnitudes can overflow. Visible descendant boxes remain independently hittable;
+rectangular ancestor clipping keeps the original contour. Four integration cases
+cover 1×/2× pixels/hits, huge finite percentages, descendants, clipping and dynamic
+radius changes with reference/retained/vector software equality. Six internal
+corner cases cover geometry/path boundaries. At that initial checkpoint,
+rounded borders/outlines, descendant clips, inline fragments/controls, opacity,
+retained fallback and actual GPU/native acceptance remained open; the following
+contour step implements the common-color box borders/outlines. The initial scoped
+view run passes **50 internal + 238 integration**
+cases: `target/paint-next-stage/applied-view-tests-fixed.log`. The first compile
+attempt used a nonexistent convenience method in the new test; the corrected
+public `rasterize_boxes` call passes. No full gate for these newer inputs is claimed.
+
+The next contour step adds common-color rounded borders, including asymmetric
+padding-edge curves clipped to their own rectangle, transparent holes and rounded
+outlines. Very negative outline offsets keep the per-axis minimum visible shape.
+A 100-configuration ellipse oracle checks over one million full-coverage pixel
+locations; edge pixels use a safety square rather than treating AA coverage as a
+binary center test. A diagnostic confirms the original failing edge has the same
+raw/clipped result (aliased alpha 0; AA alpha 128), so the oracle was corrected
+without changing production rasterization (`target/paint-next-stage/corner-alias-diagnostic.log`).
+Before the final large-arc refinement, the affected view run passes **52 internal
++ 242 integration** (`target/paint-next-stage/border-outline-view-tests-coverage.log`).
+Large radii then receive bounded adaptive tangent cubics: the exact final corner
+family passes **nine unit + eight integration** cases, including a radius-500000
+precision probe and 1×/2× reference/retained/vector software equality. Logs:
+`target/paint-next-stage/adaptive-corner-unit.log`,
+`target/paint-next-stage/adaptive-rounded-integration.log`. An independent
+circle-cubic coefficient audit checks the exact radial-error extrema for all
+four allowed subdivision counts (`target/paint-next-stage/arc-error-bound.json`).
+Those overlap the earlier broad cases; they are not additional independent full
+suite counts. Rounded descendant clips, controls/inline, different border-side
+colors, isolated opacity, retained fallback and real GPU/native acceptance remain
+open within the same batch. The initial contour compile attempts used an absent
+helper method and a test-only unadmitted `box-sizing`; direct bounds comparison
+and the existing content-box dimensions correct them without registry changes.
+
+The next clip-chain step now carries rounded ancestor padding clips through
+reference/retained/fallback painting, neutral `DrawClip` data and the desktop GPU
+consumer, with per-region pointer clipping and proper outline/popup scope. The
+mask cache reuses three viewport buffers independent of depth. Interior primitive
+and dirty rectangles skip complex masks conservatively; unrounded trees allocate
+no inherited-clip map entries. Tests cover SDK mask parity/cache resets, maximum
+tree depth, empty masks, capacity fallback, nested clips, borders, siblings and
+dynamic `overflow`. The final scoped view run passes **57 internal + 246
+integration** cases: `target/paint-next-stage/clip-pipeline-view-tests-final.log`.
+An earlier assertion incorrectly equated auto and hidden scroll metadata; it now
+checks restored hidden state separately while preserving actual scroll policy.
+
+The dedicated `gpu_clip_probe` passes **28 Debug Metal frames** on Apple M1 Max:
+seven box scenes × two scales × cold/visible interior mutation. It preserves the
+existing 2/255 mean threshold and disabled layer textures; observed mean RGB
+delta is 0–0.1472/255, with maximum channel delta 68 at AA edges. CPU preparation
+of these small fixtures is 0.561–4.169 ms cold and 0.280–1.070 ms changed; partial
+damage is 64/144 physical pixels. These are one-sample offscreen preparation
+observations, not window/guest/input-latency or browser comparisons. The first
+probe had an invisible nested mutation; the fresh fixture corrects its layout
+and asserts both changed pixels and nonzero partial damage. Evidence, source/
+binary/image hashes and all samples:
+`target/paint-next-stage/clip-pipeline-checkpoint.json` and
+`target/paint-next-stage/gpu-clip-probe-visible.log`. The earlier GPU all-target
+check passes (`target/paint-next-stage/clip-pipeline-check.log`); it precedes later
+performance/probe refinements. Native field/assistive text bounds under curved
+clips, inline/control content, isolated group opacity, side colors, actual window/
+VoiceOver, Release and other-target acceptance remain in the open package. No
+new full gate or code commit closes this intermediate step.
+
+The subsequent text/control step now preserves full shaped advances and reveal
+ranges while `FieldTextGeometry::visible_bounds` computes visibility under the
+same curved ancestor/content clips. A bounded analytic convex-intersection
+solver handles empty intersections and zero-width carets without viewport-mask
+allocation. Native runs split when clipped vertical extents differ; source ranges,
+password masks, selection affinity and revision guards remain intact. Preflight's
+remaining observer allowance is carried through the whole desktop publication,
+including all fields; work refusal clears old actions and recovers with fresh IDs.
+Only the focused editable caret needs an IME visibility query. Rounded fields,
+selects, buttons, checkboxes and radios now paint through the shared pipeline;
+controls inset their content corners, while button visible overflow and popup
+scope retain their CSS behavior. Immediate identical clips reuse one scope.
+
+The stress fixture exposed a real stack abort inside the former recursive native
+layout construction at an admitted native depth. Construction now uses bounded
+enter/exit scheduling without increasing thread stacks or the existing native
+128-depth/4096-box limits. A subprocess checks depth128 at the normal2MiB stack,
+reference/retained/vector equality and depth129 refusal. Both older grouped
+subprocess tests also needed qualified case names; they now assert that a child
+actually executed one test, so the earlier grouped outer-case counts alone do
+not establish that child coverage.
+
+Current affected checks pass **64 View internal + 249 integration + 78 desktop
+GPU-enabled unit tests**. The new control probe passes **52 actual Debug Metal
+frames** (13 scenes × 1×/2× × cold/visible change) on M1 Max, retaining the old
+2/255 mean threshold and GPU caps. Mean RGB delta is0–0.1472/255, maximum channel
+delta68. Current one-sample CPU preparation spans0.623–6.284ms cold and
+0.354–8.998ms changed; these remain fixture preparation, not GUI input latency.
+Logs, source/binary/image hashes, samples and failed-fixture/stack evidence are
+in `target/paint-next-stage/text-control-checkpoint.json`; authoritative logs are
+`text-control-layout-view-tests.log`, `text-control-desktop-gpu-tests.log` and
+`gpu-controls-layout.log` in that directory. Rounded inline decorations, distinct
+border-side colors, isolated subtree opacity, complete capacity/platform
+acceptance and real window/VoiceOver/Release observations remain open. This is
+still the same painting batch; the last full3323 gate verifies committed
+clipboard inputs, and no new full gate/commit or full-plan completion is claimed.
+
+The next geometry increment shares generated closed line/cubic contour clipping
+between the existing padding path and arbitrary diagonal half-planes. Projected
+derivative roots split each arc before the bounded crossing search, covering
+both two-crossing orientations without flattening. Hole components keep their
+fill rule. Coefficients normalize before products and explicitly reject NaN/Inf;
+monotone controls keep a fast path. The affected run passes **69 View internal +
+249 integration + 78 desktop GPU-enabled** tests. A subsequent final five-case
+helper run covers the strengthened dual-case assertions and explicit nonfinite
+normal guard; it overlaps those counts. Logs and exact source/binary/image
+fingerprints: `target/paint-next-stage/diagonal-clip-checkpoint.json`.
+
+The expanded probe passes **60 actual Debug Metal frames**, adding oversized
+asymmetric inner arcs and fractional edges. Mean RGB delta remains0–0.1472/255
+at the unchanged2/255 threshold; maximum channel difference77 is retained in
+the report. Current one-sample preparation ranges are0.580–6.175ms cold and
+0.344–4.989ms changed. These are still common-color box/control fixtures and do
+not prove mixed-color corner commands, group opacity, application/native input
+or Release/cross-platform acceptance. The full painting family remains open.
+
+A numeric corner regression rules out whole-ring nearest-normalized-edge color
+assignment: Top/Bottom30, Left/Right0, TL radius90 on a100x100 border box wrongly
+assigns Bottom to a fully covered pixel inside the TL transition. The staged
+counterexample and next notes are in `target/paint-next-stage/mixed-border-counterexample.json`
+and `mixed-border-next.md`. Colored AA pieces also need correct isolated coverage:
+ordinary repeated SrcOver loses opacity at shared seams. The next implementation
+must finish the side partition; the geometry helper alone does not complete the
+mixed-color painter. The following isolated compositor supplies its coverage
+foundation without claiming that the side painter is implemented.
+
+**Isolated native box opacity — CPU implementation and affected checks; family
+still open (2026-11-04).** Static boxes now composite their own background,
+border, children, content and outline before applying opacity once. Nested groups,
+root alpha and zero-opacity input geometry are covered. The flat program uses an
+explicit stack and reusable128×128 pixel tiles, under9MiB of layer payload at the
+unchanged maximum native depth including the root. That excludes source programs,
+retained images and shared viewport masks; it is not a total-memory claim.
+Global path coverage avoids tile-edge curve seams. Inherited rectangular/rounded
+clips apply once to the completed group while raw clips retain text/hit/IME
+geometry. The implementation includes isolated additive coverage for complementary
+AA pieces; actual mixed border-side painting remains open.
+
+The retained65536-command/16MiB limits stay fixed. An overflow uses a fallibly
+allocated nonretained program derived from existing text-work/box/fragment ceilings,
+preserves an already streamed prefix and following draws, and drops it after
+rendering. No guest/layout/shaping replay or larger cache is introduced. Temporary
+control-scope memo entries now retain their source allocations to prevent pointer
+reuse from returning a different clip. A weak-reference regression verifies this
+lifetime. Grouped `Renderer::prepare` preserves CPU scene/damage reuse: unchanged
+frames rasterize zero dirty pixels, local mutations repaint only damage, and
+switching between ordinary vector and group raster frames preserves pixels.
+This remains explicit CPU fallback; the desktop disables GPU presentation on it
+under the old resource contract. No GPU layer texture allowance is added.
+
+The final affected selection passes **74 View library +260 integration +78 desktop
+GPU-enabled** cases, including11
+opacity cases, full-size fields and both cache-overflow paths, fractional coplanar
+clips, rounded selection/IME geometry and maximum-depth opacity on a normal2MiB
+thread stack. Log: `target/paint-next-stage/group-final-affected-tests.log`.
+The preceding View-only pass is in `group-retained-prepare-view.log`.
+The resumed earlier affected run first found two obsolete tests that still required
+opacity refusal; those now assert the new alpha behavior and preserve genuine
+unsupported-frame recovery via positioned painting. Its failures remain recorded
+in `group-resumed-affected-tests.log`. Scoped results do not replace the full3323
+gate for the older clipboard inputs. Mixed colors, rounded inline decoration/own
+inline opacity, direct GPU groups, final family gate and real window/platform/
+Release application acceptance remain open. Whole-plan completion is not claimed.
+
+Final actual offscreen probes pass in Debug and Release on M1Max/Metal, each with
+**60 GPU +8 explicit CPU-fallback** observations. Both keep the existing2/255 mean
+threshold (observed max mean0.1472, max channel77). Unchanged group preparation
+rasterizes zero pixels; observed single-sample times are0.098–0.204ms Debug and
+0.015–0.050ms Release. Local mutations repaint64/144 pixels in those fixtures.
+These are bounded host scenes, not application/window/input latency. Strict
+all-target affected GPU Clippy passes. Final logs, code/binary/image fingerprints,
+failure history and exact scope are recorded in
+`target/paint-next-stage/group-opacity-checkpoint.json`.
+
+**Mixed border colors — native CPU implementation (2026-11-04).** Distinct side
+colors now paint through one premultiplied color field over the shared closed
+border ring. The ordinary common-color vector path remains available. Point
+ownership uses the inward-moving padding edges/arcs, including oversized inner
+corners and exact zero-width donation; ordinary corner comparisons are analytic,
+with a bounded solve only for opposing curved fronts. Independent inset-membership
+and rotation checks validate the partition. Interval bounds prove uniform color
+blocks; uncertain pixels retain a rotated16-sample pattern. This avoids repeated
+source-over seams and an opaque under-paint, including unequal side alpha.
+
+A real fractional-edge regression found that origin-floor/size-ceil rounding
+omitted the last partial row. Pixel bounds now enclose all four edges separately;
+the regression and a full common-contour alpha comparison at three scales retain
+the original pixel checks. Retained mutation, raster/vector recovery, maximum
+native depth with opacity plus a colored border, input metadata and source snapshots
+remain covered. The private command adds one reusable128×128 RGBA tile and no new
+guest operation, public drawing primitive, source allowance or cache/GPU ceiling.
+
+The expanded offscreen probe has20 scenes:15 actually render on GPU (60 observations
+per build), while opacity and three mixed-color scenes explicitly return CPU
+fallback (20 observations). Source/fixture failures and the slow initial probe are
+retained under `target/paint-next-stage/`. Current Debug mixed-border preparation
+is still slower than the common-color path, especially opposing large corners;
+no general smoothness or whole-application latency acceptance is claimed. Optimize
+that path further with measured evidence; direct GPU fields/groups, rounded inline
+decoration/own opacity and platform/application acceptance remain open. This extends
+the painting package for the requested commit, not full-plan completion.
+
+The final complete gate passes **3393 tests, 0 failures, 16 ignored**, all eight
+commands on unchanged inputs (`target/verification/20261104-083445-nlyqugwi/report.json`;
+source SHA-256 `4bfd91cb3b2fe8c9b96ed662c3bf443fb38476af01c9b4f0ac465a6f21edfe92`).
+Final View coverage is80 library +265 integration cases; final optional GPU Clippy
+and both20-scene probes pass. `native-painting-precommit-checkpoint.json` in
+`target/paint-next-stage/` retains exact inputs, binaries, images and scope.
+Mixed-field preparation spans7.084–66.547ms Debug and0.353–7.616ms Release in
+these single-sample scenes; the slow Debug path remains explicit follow-up work.
+No general UI smoothness or whole-plan completion is inferred. Only documentation
+annotations follow the completed gate; engine/build inputs remain unchanged.
+
+The working tree groups the 25 view integration case files into one declared
+Cargo target, retaining per-file modules and adding a missing-file registration
+guard. Standalone comparison proves the same 233 original cases and passes all
+of them in one process (9.7 s including startup on this host). This reduces repeated
+loader starts without removing cases. The applied Cargo grouping passes 234
+cases before painting integration, then 238 with the four new painting cases.
+Ordinary module declarations preserve recursive formatting; the registration
+check reads those declarations and catches omitted case files. The
+preceding 3323-test full gate verifies the clipboard package, not these newer
+build/painting inputs. No additional full gate is run for this intermediate step.
 
 **Renderer batch based on `1259eb8`; 2026-11-03.** This batch includes renderer
 and pointer changes, new Rust modules/tests, the Showcase and documentation.

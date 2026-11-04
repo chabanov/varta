@@ -23,6 +23,31 @@ pub const ACCESSIBILITY_TEXT_WORK_LIMIT: usize = varta_common::view::DRAFT_MAX_N
 /// Native auxiliary text nodes, separate from guest live-node admission.
 pub const ACCESSIBILITY_TEXT_RUN_LIMIT: usize = 4096;
 
+/// Remaining work for one native observer publication, including its source
+/// preflight. Pass one mutable allowance through all geometry queries.
+#[derive(Debug, Clone)]
+pub struct AccessibilityWork {
+    remaining: usize,
+}
+impl Default for AccessibilityWork {
+    fn default() -> Self {
+        Self {
+            remaining: ACCESSIBILITY_TEXT_WORK_LIMIT,
+        }
+    }
+}
+impl AccessibilityWork {
+    pub(crate) fn charge(&mut self, work: usize) -> Result<(), AccessibilityError> {
+        self.remaining = self
+            .remaining
+            .checked_sub(work)
+            .ok_or(AccessibilityError::WorkLimit {
+                limit: ACCESSIBILITY_TEXT_WORK_LIMIT,
+            })?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AccessibilityError {
     #[error("accessibility text alternatives exceed the observer work limit ({limit})")]
@@ -82,6 +107,7 @@ pub struct AccessibilityTree {
     pub root: u32,
     pub focus: Option<u32>,
     pub nodes: BTreeMap<u32, AccessibilityNode>,
+    observer_work: AccessibilityWork,
 }
 
 /// Trusted assistive input, using the ordinary focus, activation and edit paths.
@@ -340,18 +366,11 @@ fn observer_preflight(
     names: &Names<'_>,
     order: &[u32],
     environment: &Environment,
-) -> Result<(), AccessibilityError> {
+) -> Result<AccessibilityWork, AccessibilityError> {
     let summaries = crate::naming_work::summaries(tree);
-    let mut remaining = ACCESSIBILITY_TEXT_WORK_LIMIT;
+    let mut remaining = AccessibilityWork::default();
     let mut text_runs = 0usize;
-    let mut charge = |work: usize| -> Result<(), AccessibilityError> {
-        remaining = remaining
-            .checked_sub(work)
-            .ok_or(AccessibilityError::WorkLimit {
-                limit: ACCESSIBILITY_TEXT_WORK_LIMIT,
-            })?;
-        Ok(())
-    };
+    let mut charge = |work: usize| -> Result<(), AccessibilityError> { remaining.charge(work) };
     // Full atomic messages include nested live/off content. Charge their
     // possible output/traversal too, separately from guest admission. Root-name
     // costs include external label relations, not merely text descendants.
@@ -422,7 +441,7 @@ fn observer_preflight(
             }
         }
     }
-    Ok(())
+    Ok(remaining)
 }
 
 fn project_impl(
@@ -474,10 +493,17 @@ fn project_impl(
         root: ROOT_NODE,
         focus: tree.focus.filter(|id| nodes.contains_key(id)),
         nodes,
+        observer_work: AccessibilityWork::default(),
     }
 }
 
 impl AccessibilityTree {
+    /// Start platform projection with the allowance left by native preflight,
+    /// rather than granting another full allowance for each field.
+    #[must_use]
+    pub fn observer_work(&self) -> AccessibilityWork {
+        self.observer_work.clone()
+    }
     /// Established headless JSON shape; platform identity and action hints stay private.
     pub(crate) fn snapshot(&self) -> Value {
         let mut order = Vec::new();
@@ -560,14 +586,10 @@ impl View {
     pub fn accessibility_tree(&self) -> Result<AccessibilityTree, AccessibilityError> {
         let names = Names::native(&self.tree, &self.environment);
         let order = visible_order(&self.tree, &names);
-        observer_preflight(&self.tree, &names, &order, &self.environment)?;
-        Ok(project_impl(
-            &self.tree,
-            &names,
-            order,
-            true,
-            &self.environment,
-        ))
+        let observer_work = observer_preflight(&self.tree, &names, &order, &self.environment)?;
+        let mut projected = project_impl(&self.tree, &names, order, true, &self.environment);
+        projected.observer_work = observer_work;
+        Ok(projected)
     }
 
     /// Ignore stale, hidden, disabled or unsupported requests before any effect.
@@ -662,5 +684,24 @@ impl View {
         };
         self.input(&input, broker)?;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod work_tests {
+    use super::*;
+    #[test]
+    fn native_preflight_cost_is_carried_into_platform_geometry_allowance() {
+        let source = View::default().accessibility_tree().unwrap();
+        let mut work = source.observer_work();
+        assert_eq!(
+            work.charge(ACCESSIBILITY_TEXT_WORK_LIMIT),
+            Err(AccessibilityError::WorkLimit {
+                limit: ACCESSIBILITY_TEXT_WORK_LIMIT
+            })
+        );
+        // A failed projection and a fresh publication have independent copies;
+        // neither mutates the established semantic snapshot or guest model.
+        assert!(source.observer_work().charge(1).is_ok());
     }
 }

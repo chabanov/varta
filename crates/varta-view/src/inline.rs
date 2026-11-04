@@ -11,7 +11,7 @@ use std::{
 };
 use varta_common::view::{CssProperty as P, ROOT_NODE, Tag};
 
-const MAX_FRAGMENT_COUNT: usize = 65_536;
+pub(crate) const MAX_FRAGMENT_COUNT: usize = 65_536;
 
 #[derive(Default)]
 pub(crate) struct Inventory {

@@ -1,5 +1,7 @@
 //! The same shaped clusters used for field painting and pointer navigation.
-use crate::{AccessibilityTextRevision, BoxRect, NodeIdentity};
+use crate::{
+    AccessibilityError, AccessibilityTextRevision, AccessibilityWork, BoxRect, NodeIdentity,
+};
 use std::ops::Range;
 
 /// One shaped cluster in visual order. Source ranges address original UTF-8,
@@ -51,6 +53,59 @@ pub struct FieldTextGeometry<'a> {
     pub source_len: usize,
     /// Painted anchor and focus caret locations, including soft-wrap affinity.
     pub selection_carets: [BoxRect; 2],
+    pub(super) clips: Option<&'a crate::render::clips::Clip>,
+}
+
+impl FieldTextGeometry<'_> {
+    /// Visible physical bounds, separate from full shaped advances. Empty
+    /// intersections have no visible bounds, including fully hidden carets.
+    pub fn visible_bounds(
+        &self,
+        bounds: BoxRect,
+        work: &mut AccessibilityWork,
+    ) -> Result<Option<BoxRect>, AccessibilityError> {
+        visible_bounds(bounds, self.clip, self.clips, work)
+    }
+}
+pub(super) fn visible_bounds(
+    bounds: BoxRect,
+    clip: BoxRect,
+    clips: Option<&crate::render::clips::Clip>,
+    work: &mut AccessibilityWork,
+) -> Result<Option<BoxRect>, AccessibilityError> {
+    work.charge(1)?;
+    if ![
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        bounds.x + bounds.width,
+        bounds.y + bounds.height,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
+        || bounds.width < 0.0
+        || bounds.height < 0.0
+    {
+        return Ok(None);
+    }
+    let x = bounds.x.max(clip.x);
+    let y = bounds.y.max(clip.y);
+    let right = (bounds.x + bounds.width).min(clip.x + clip.width);
+    let bottom = (bounds.y + bounds.height).min(clip.y + clip.height);
+    if right < x || bottom < y {
+        return Ok(None);
+    }
+    let bounds = BoxRect {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    };
+    match clips {
+        Some(clips) => clips.visible_bounds(bounds, work),
+        None => Ok(Some(bounds)),
+    }
 }
 
 impl super::FrameMetadata {
@@ -138,6 +193,7 @@ impl super::FrameMetadata {
             clip: hit.clip,
             source_len: hit.end,
             selection_carets: hit.selection_carets,
+            clips: hit.clips.as_deref(),
         })
     }
 }

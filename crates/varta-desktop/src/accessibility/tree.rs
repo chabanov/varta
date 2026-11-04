@@ -120,6 +120,7 @@ impl Projection {
         version: Version,
         title: &str,
     ) -> Result<Publication, ProjectionError> {
+        let mut work = source.observer_work();
         let mut slots = BTreeMap::new();
         for (&id, node) in &source.nodes {
             let native = if let Some(old) = self
@@ -215,8 +216,17 @@ impl Projection {
                     .and_then(|old| old.text.as_ref());
                 let remaining =
                     varta_view::ACCESSIBILITY_TEXT_RUN_LIMIT.saturating_sub(text_runs.len());
-                let text =
-                    super::text::project(source, native, old, &mut self.next, metadata, remaining)?;
+                let text = super::text::project(
+                    source,
+                    native,
+                    old,
+                    &mut self.next,
+                    metadata,
+                    super::text::TextBudget {
+                        runs: remaining,
+                        work: &mut work,
+                    },
+                )?;
                 node.set_children(text.slot.runs.clone());
                 node.set_clips_children();
                 if let Some(selection) = text.selection {

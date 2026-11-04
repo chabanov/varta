@@ -10,6 +10,9 @@ use taffy::prelude::*;
 use taffy::style::{GridPlacement, GridTemplateTracks, Overflow, RepetitionCount};
 use varta_common::view::{CssProperty, ROOT_NODE, Tag};
 
+pub(crate) const MAX_LAYOUT_DEPTH: usize = 128;
+pub(crate) const MAX_LAYOUT_NODES: usize = 4096;
+
 /// A border-box rectangle in viewport-relative CSS pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoxRect {
@@ -684,6 +687,9 @@ pub(crate) fn text_style(
     ))
 }
 
+// Construct each native node before visiting its children, then connect their
+// ordered IDs on exit. Large style-resolution frames never remain on the stack
+// across another source node. The existing native depth/node limits are fixed.
 fn build(
     tree: &Tree,
     env: &Environment,
@@ -693,9 +699,53 @@ fn build(
     location: (u32, usize),
     viewport: (f32, f32),
 ) -> Result<NodeId, LayoutError> {
+    let mut pending = vec![(location.0, location.1, false)];
+    let mut scheduled = 1usize;
+    while let Some((id, depth, finish)) = pending.pop() {
+        if finish {
+            let children = tree.nodes[&id]
+                .children
+                .iter()
+                .map(|child| ids[child])
+                .collect::<Vec<_>>();
+            engine
+                .set_children(ids[&id], &children)
+                .map_err(|error| LayoutError::Engine(error.to_string()))?;
+            continue;
+        }
+        let (_, descend) = build_one(tree, env, engine, ids, text_metrics, (id, depth), viewport)?;
+        if descend {
+            let children = &tree.nodes[&id].children;
+            scheduled = scheduled
+                .checked_add(children.len())
+                .ok_or(LayoutError::Limit)?;
+            if scheduled > MAX_LAYOUT_NODES {
+                return Err(LayoutError::Limit);
+            }
+            pending.push((id, depth, true));
+            pending.extend(
+                children
+                    .iter()
+                    .rev()
+                    .map(|child| (*child, depth + 1, false)),
+            );
+        }
+    }
+    Ok(ids[&location.0])
+}
+
+fn build_one(
+    tree: &Tree,
+    env: &Environment,
+    engine: &mut TaffyTree<TextShape>,
+    ids: &mut BTreeMap<u32, NodeId>,
+    text_metrics: &BTreeMap<u32, TextShape>,
+    location: (u32, usize),
+    viewport: (f32, f32),
+) -> Result<(NodeId, bool), LayoutError> {
     let (id, depth) = location;
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
-    if depth > 128 || ids.len() >= 4096 {
+    if depth > MAX_LAYOUT_DEPTH || ids.len() >= MAX_LAYOUT_NODES {
         return Err(LayoutError::Limit);
     }
     let node = tree.nodes.get(&id).ok_or(LayoutError::Unsupported(id))?;
@@ -708,7 +758,7 @@ fn build(
             .new_leaf_with_context(Style::default(), metrics)
             .map_err(|e| LayoutError::Engine(e.to_string()))?;
         ids.insert(id, node_id);
-        return Ok(node_id);
+        return Ok((node_id, false));
     };
     // Hidden elements and their descendants contribute no layout, even if
     // their tag or CSS is not supported by the visible layout path.
@@ -725,7 +775,7 @@ fn build(
             })
             .map_err(|e| LayoutError::Engine(e.to_string()))?;
         ids.insert(id, hidden);
-        return Ok(hidden);
+        return Ok((hidden, false));
     }
     if id != ROOT_NODE
         && !(matches!(
@@ -1116,26 +1166,10 @@ fn build(
     if style.display == Display::Grid && node.children.len() > 128 {
         return Err(LayoutError::Limit);
     }
-    // Count before descending, so a deep or wide tree is bounded before allocation.
-    ids.insert(id, NodeId::from(0u64));
-    let children = node
-        .children
-        .iter()
-        .filter(|_| {
-            element.tag != Tag::Select && text_metrics.get(&id).is_none_or(|s| s.rich.is_none())
-        })
-        .map(|child| {
-            build(
-                tree,
-                env,
-                engine,
-                ids,
-                text_metrics,
-                (*child, depth + 1),
-                viewport,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let descend = element.tag != Tag::Select
+        && text_metrics
+            .get(&id)
+            .is_none_or(|shape| shape.rich.is_none());
     let node_id = if text_metrics.get(&id).is_some_and(|s| s.rich.is_some())
         || (element.tag == Tag::Textarea
             && tree
@@ -1146,11 +1180,11 @@ fn build(
         let shape = text_metrics.get(&id).ok_or(LayoutError::Unsupported(id))?;
         engine.new_leaf_with_context(style, shape.clone())
     } else {
-        engine.new_with_children(style, &children)
+        engine.new_leaf(style)
     }
     .map_err(|e| LayoutError::Engine(e.to_string()))?;
     ids.insert(id, node_id);
-    Ok(node_id)
+    Ok((node_id, descend))
 }
 
 pub(crate) fn boxes(
@@ -1542,7 +1576,7 @@ fn boxes_inner(
         0usize,
     )];
     while let Some((id, parent, parent_clip, containing, parent_hidden, depth)) = pending.pop() {
-        if depth > 128 || result.len() >= 4096 {
+        if depth > MAX_LAYOUT_DEPTH || result.len() >= MAX_LAYOUT_NODES {
             return Err(LayoutError::Limit);
         }
         let hidden = parent_hidden
@@ -1669,7 +1703,7 @@ fn boxes_inner(
             // frame-owned geometry exposed separately by the raster image.
             let mut options = tree.nodes[&id].children.clone();
             while let Some(option) = options.pop() {
-                if result.len() >= 4096 {
+                if result.len() >= MAX_LAYOUT_NODES {
                     return Err(LayoutError::Limit);
                 }
                 let zero = BoxRect {
