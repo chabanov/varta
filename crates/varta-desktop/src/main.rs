@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Experimental native preview for an already compiled, unprivileged view module.
 mod accessibility;
+mod clipboard;
 #[cfg(feature = "gpu")]
 mod gpu;
 #[cfg(feature = "gpu")]
@@ -56,6 +57,7 @@ enum GuiEvent {
     Error(String),
 }
 struct PreviewFrame {
+    clipboard_pending: bool,
     accessibility: Option<Result<varta_view::AccessibilityTree, varta_view::AccessibilityError>>,
     image: Arc<FrameMetadata>,
     scene: Option<varta_view::DisplayList>,
@@ -70,6 +72,11 @@ struct PreviewFrame {
     timing: Option<timing::FrameTiming>,
 }
 enum WorkerMessage {
+    Clipboard {
+        key: varta_view::ClipboardKey,
+        trace: Option<timing::InputStamp>,
+        version: accessibility::Version,
+    },
     Accessibility(accessibility::Pending),
     Input {
         input: Input,
@@ -240,10 +247,44 @@ fn worker(
         let mut rendered_accessibility = false;
         let mut pointer_changed = false;
         let mut timing = timing::Pending::default();
+        let mut clipboard = clipboard::Worker::new(wake.clone());
+        let mut clipboard_trace = None;
         loop {
             let observed_wake = wake.snapshot();
             let mut active = false;
             match messages.try_recv() {
+                Ok(WorkerMessage::Clipboard {
+                    key,
+                    trace,
+                    version,
+                }) => {
+                    active = true;
+                    if revision == version.revision
+                        && dimensions.load(Ordering::Acquire) == version.dimensions
+                        && dark.load(Ordering::Acquire) == version.dark
+                        && scale.load(Ordering::Acquire) == version.scale
+                    {
+                        // The model/viewport guard proves this is the presented
+                        // view. Capture its current selection only on the
+                        // shortcut, avoiding a second style walk on every frame.
+                        let deferred = timing::Deferred::capture(trace);
+                        let target = app.view_clipboard_target();
+                        let task = app
+                            .view_begin_clipboard(target.as_ref(), &key)
+                            .map_err(|e| e.to_string())?;
+                        if let Some(task) = task {
+                            clipboard_trace = deferred;
+                            if let Err(completion) = clipboard.submit(task) {
+                                app.view_complete_clipboard(&completion.token, completion.result)
+                                    .map_err(|e| e.to_string())?;
+                                timing.complete(clipboard_trace.take());
+                            }
+                        } else {
+                            timing.accept(trace);
+                        }
+                        revision = revision.checked_add(1).ok_or("view revision exhausted")?;
+                    }
+                }
                 Ok(WorkerMessage::Accessibility(pending)) => {
                     active = true;
                     if revision == pending.version.revision
@@ -294,6 +335,15 @@ fn worker(
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            }
+            if let Some(completion) = clipboard.try_complete() {
+                active = true;
+                let started = Instant::now();
+                app.view_complete_clipboard(&completion.token, completion.result)
+                    .map_err(|e| e.to_string())?;
+                timing.complete(clipboard_trace.take());
+                timing.guest(started.elapsed());
+                revision = revision.checked_add(1).ok_or("view revision exhausted")?;
             }
             if in_flight.is_some_and(|id| presented.load(Ordering::Acquire) >= id) {
                 in_flight = None;
@@ -439,6 +489,7 @@ fn worker(
                 pointer_changed = false;
                 if proxy
                     .send_event(GuiEvent::Frame(Box::new(PreviewFrame {
+                        clipboard_pending: app.view_clipboard_pending() || clipboard.is_pending(),
                         accessibility,
                         image: frame,
                         scene: vector,
@@ -879,8 +930,30 @@ impl Preview {
         let Some(frame) = &self.frame else {
             return Ok(());
         };
+        if frame.clipboard_pending {
+            return Ok(());
+        }
         while let Some(pending) = self.pending_keys.pop_front() {
             let input = match pending {
+                PendingKey::Clipboard(key) => {
+                    self.sender
+                        .try_send(WorkerMessage::Clipboard {
+                            key,
+                            trace: timing::InputStamp::now("clipboard"),
+                            version: accessibility::Version {
+                                revision: frame.revision,
+                                dimensions: frame.dimensions,
+                                dark: frame.dark,
+                                scale: frame.scale,
+                            },
+                        })
+                        .map_err(|_| {
+                            "native input queue is full or the application stopped".to_owned()
+                        })?;
+                    self.wake.notify();
+                    self.key_inflight = Some((frame.revision, frame.dimensions));
+                    break;
+                }
                 PendingKey::SelectClose(node) => {
                     if frame
                         .image
@@ -1263,7 +1336,12 @@ impl ApplicationHandler<GuiEvent> for Preview {
                 is_synthetic: false,
                 ..
             } if event.state == ElementState::Pressed && !self.ime_composing => {
-                let pending = if let Some(key) = supported_key(&event.logical_key) {
+                let pending = if let Some(key) =
+                    clipboard::shortcut(event.physical_key, &event.logical_key, self.modifiers)
+                        .filter(|_| self.window_focused)
+                {
+                    Some(PendingKey::Clipboard(key))
+                } else if let Some(key) = supported_key(&event.logical_key) {
                     Some(PendingKey::Key(key, self.modifiers))
                 } else if let WinitKey::Character(key) = &event.logical_key {
                     if key.is_empty()
@@ -1599,6 +1677,7 @@ mod tests {
     }
     fn present_empty_frame(preview: &mut super::Preview) {
         preview.frame = Some(super::PreviewFrame {
+            clipboard_pending: false,
             accessibility: None,
             timing: None,
             scene: None,
@@ -1721,6 +1800,43 @@ mod tests {
         assert!(
             matches!(preview.pending_keys.pop_front(), Some(PendingKey::Character { text, .. }) if text == "Ш")
         );
+    }
+
+    #[test]
+    fn clipboard_fifo_waits_for_io_completion_before_following_keys() {
+        let (mut preview, receiver) = headless_preview();
+        present_empty_frame(&mut preview);
+        preview
+            .enqueue_key(PendingKey::Clipboard(varta_view::ClipboardKey {
+                action: varta_view::ClipboardAction::Paste,
+                key: "v".into(),
+                shift: false,
+                ctrl: false,
+                alt: false,
+                meta: true,
+            }))
+            .unwrap();
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            super::WorkerMessage::Clipboard { .. }
+        ));
+        preview
+            .enqueue_key(PendingKey::Key("Tab", super::ModifiersState::empty()))
+            .unwrap();
+        preview.key_inflight = None;
+        preview.frame.as_mut().unwrap().clipboard_pending = true;
+        preview.flush_keys().unwrap();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        preview.frame.as_mut().unwrap().clipboard_pending = false;
+        preview.frame.as_mut().unwrap().revision = 2;
+        preview.flush_keys().unwrap();
+        assert!(
+            matches!(receiver.try_recv().unwrap(),super::WorkerMessage::Input { input:varta_view::Input::Key { key,.. },revision:2,.. } if key=="Tab")
+        );
+        assert!(preview.pending_keys.is_empty());
     }
 
     #[test]

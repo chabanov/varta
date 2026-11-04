@@ -8,6 +8,7 @@ pub(super) const MAX_PENDING_TEXT_BYTES: usize = 1024 * 1024;
 pub(super) const MAX_KEY_TEXT_BYTES: usize = 4096;
 
 pub(super) enum PendingKey {
+    Clipboard(varta_view::ClipboardKey),
     SelectClose(u32),
     Key(&'static str, ModifiersState),
     Character {
@@ -33,6 +34,7 @@ pub(super) enum PendingKey {
 impl PendingKey {
     fn text_bytes(&self) -> usize {
         match self {
+            Self::Clipboard(key) => key.key.len(),
             Self::Character { key, text, .. } => key.len().saturating_add(text.len()),
             Self::ImePreedit { text, .. } | Self::ImeCommit { text, .. } => text.len(),
             Self::SelectClose(_) | Self::Key(..) => 0,
@@ -45,6 +47,7 @@ impl PendingKey {
             }
         }
         match self {
+            Self::Clipboard(key) => compact(&mut key.key),
             Self::Character { key, text, .. } => {
                 compact(key);
                 compact(text);
@@ -55,6 +58,7 @@ impl PendingKey {
     }
     fn owned_bytes(&self) -> usize {
         match self {
+            Self::Clipboard(key) => key.key.capacity(),
             Self::Character { key, text, .. } => key.capacity().saturating_add(text.capacity()),
             Self::ImePreedit { text, .. } | Self::ImeCommit { text, .. } => text.capacity(),
             Self::SelectClose(_) | Self::Key(..) => 0,
@@ -254,6 +258,31 @@ mod tests {
         assert!(keys.is_empty());
         keys.push(preedit(1, 0, text(MAX_PENDING_TEXT_BYTES)))
             .unwrap();
+    }
+    #[test]
+    fn clipboard_shortcuts_keep_fifo_and_account_only_the_bounded_logical_key() {
+        let mut keys = PendingKeys::default();
+        let mut key = String::with_capacity(MAX_PENDING_TEXT_BYTES);
+        key.push('с');
+        keys.push(PendingKey::Clipboard(varta_view::ClipboardKey {
+            action: varta_view::ClipboardAction::Copy,
+            key,
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: true,
+        }))
+        .unwrap();
+        assert_eq!(keys.bytes, "с".len());
+        keys.push(PendingKey::Key("Tab", ModifiersState::empty()))
+            .unwrap();
+        let Some(PendingKey::Clipboard(key)) = keys.pop_front() else {
+            panic!("clipboard FIFO")
+        };
+        assert_eq!(key.key, "с");
+        assert_eq!(key.key.capacity(), key.key.len());
+        assert_eq!(keys.bytes, 0);
+        assert!(matches!(keys.pop_front(), Some(PendingKey::Key("Tab", _))));
     }
     #[test]
     fn full_unicode_commits_are_kept_whole_until_aggregate_capacity_is_exhausted() {

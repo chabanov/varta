@@ -4180,6 +4180,20 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   horizontally clipped text, using acknowledged clipped geometry. Keep unknown
   geometry distinct from a fabricated full-document range. Native page scrolling
   requires a proven public platform route, not guessed private action strings.
+- Native clipboard defaults are trusted host input, not a guest clipboard-read
+  capability. Keep `View` free of OS I/O: return one bounded task after keydown
+  prevention/source checks and complete it between turns using an opaque nonce.
+  Capture a field only on a validated shortcut, not on every painted frame.
+  Bind content and selection, reject stale/foreign/replayed completions, and
+  clear a rightful failed operation without deleting text. Password default
+  copy/cut is refused; readonly copy remains available. Completion input grants
+  no fresh gesture. Preserve normal editor/history/maxlength behavior and the
+  frozen script/guest shapes. The desktop SDK stays outside engine dependencies,
+  is lazy and runs on a dedicated bounded worker. Keep following keys FIFO while
+  I/O is pending; never block the UI/application loop or expand existing budgets.
+  Test I/O with injected providers, never the user's real clipboard. Retained
+  SDK responses must release spare capacity and fit existing field bounds;
+  do not infer total SDK/OS/RSS bounds or native acceptance from mocks.
 - Native live announcements respect explicit inherited `aria-live`, admitted
   alert/status defaults and atomic grouping, and defer busy regions without
   retaining their intermediate history. Separate trigger channels from complete

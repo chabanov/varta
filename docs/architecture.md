@@ -12108,8 +12108,9 @@ displayed without changing the field value; commit replaces the selection and
 dispatches an input event. The preview positions the system candidate window at
 the caret, bounds and validates incoming composition data, and cancels preedit
 on focus changes or a guest view commit. Composition events are not exposed to
-the guest and platform IME acceptance remains unverified. Clipboard, live drag
-highlighting and bidirectional visual navigation are not
+the guest and platform IME acceptance remains unverified. Host-owned native
+clipboard defaults are implemented as described below; system/platform acceptance
+is separate. Live drag highlighting and bidirectional visual navigation are not
 yet provided by this preview. Native accessibility has the bounded foundation
 described below. Firefox can delete
 part of a ZWJ emoji sequence where this editor removes its whole grapheme;
@@ -12128,6 +12129,48 @@ policy, without truncating committed text. Pop, binding-filter retention and
 focus-loss clear all release accounted capacity. Focus-loss cleanup uses the same
 checked enqueue path. Existing per-key and IME value/cursor guards remain in force.
 This is distinct from runtime event queues and whole-backend/RSS accounting.
+
+**Host-owned native clipboard defaults.** The public host APIs
+`View::clipboard_target`, `begin_clipboard` and `complete_clipboard`, and their
+Application wrappers, describe a two-stage copy/cut/paste operation without
+performing I/O in the headless engine. The native worker validates the presented
+model/viewport/theme/scale before capturing the current field; there is no extra
+selection/style projection on every frame. An opaque target binds source
+identity, content revision and directional UTF-8 selection. A private nonce
+admits one outstanding operation and one completion; foreign/replayed results
+cannot consume another operation.
+
+The original logical key and modifiers bubble as a trusted keydown. Static
+`preventDefault` runs before a platform task exists. On a non-field target the
+keydown still bubbles, without clipboard I/O or select typeahead. Disabled,
+closed/hidden and composing fields cannot start I/O. Readonly fields allow copy;
+password fields never offer default copy/cut. Cut deletes only after a successful
+write and a fresh source/selection/focus check. Paste uses the same checks and
+ordinary editor/Undo/maxlength path. Completion input events retain coalescing
+and carry no new user-gesture authority; later guest changes and termination
+invalidate pending edits. Guest `copy_text` retains its existing capability and
+gesture rules. No clipboard-read import or frozen script/guest ABI change is added.
+
+The desktop pins text-only `arboard` 3.7.0 (MIT OR Apache-2.0), with optional
+Wayland data-control support and no image codecs. It is a desktop-only dependency;
+the engine and runtime have no OS clipboard dependency. A lazy dedicated worker
+owns the SDK object and executes one operation at a time through bounded channels.
+The UI/application loops keep running; following keys wait in their existing
+bounded FIFO until the completion frame. OS failures/refused reads preserve the
+field and permit a later attempt. Retained read responses release spare capacity
+and fit the existing field byte/UTF-16 allowance; oversized data is refused whole.
+The SDK/OS transient read allocation is outside this retained-buffer accounting,
+as are whole-backend/RSS guarantees.
+
+Single-line paste trims trailing CR/LF and maps remaining line breaks to spaces;
+textarea paste normalizes CRLF/CR to LF. UTF-16 maxlength truncation preserves
+scalar boundaries. The single-line rule follows Chromium's
+[`TextFieldInputType::FilterBeforeTextInserted`](https://github.com/chromium/chromium/blob/main/third_party/blink/renderer/core/html/forms/text_field_input_type.cc);
+this does not establish browser/platform equivalence. Source copies keep original
+bytes. Physical Command+C/X/V on macOS and Control+C/X/V elsewhere preserve
+shortcuts under non-Latin layouts; Control+Insert and Shift+Insert/Delete are also
+recognized outside macOS. Actual system clipboard and target acceptance require
+separate native observations.
 
 **Native accessibility foundation.** The desktop host pins AccessKit 0.25.2 and
 accesskit_winit 0.34.2 (Apache-2.0), installs the adapter before showing the winit

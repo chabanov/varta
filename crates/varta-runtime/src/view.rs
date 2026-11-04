@@ -70,6 +70,12 @@ impl Session {
     ) -> Result<varta_view::AccessibilityTree, varta_view::AccessibilityError> {
         self.view.accessibility_tree()
     }
+    pub(crate) fn clipboard_target(&self) -> Option<varta_view::ClipboardTarget> {
+        self.view.clipboard_target()
+    }
+    pub(crate) fn clipboard_pending(&self) -> bool {
+        self.view.clipboard_pending()
+    }
     pub(crate) fn title(&self) -> &str {
         self.view.title()
     }
@@ -408,4 +414,42 @@ impl From<InputError> for RuntimeError {
     fn from(error: InputError) -> Self {
         Self::ViewInput(error)
     }
+}
+
+/// Platform clipboard defaults are trusted host input, not a guest clipboard
+/// import. Queue keydown for its usual gesture turn before returning I/O work.
+pub(crate) fn begin_clipboard(
+    context: &mut RuntimeContext,
+    target: Option<&varta_view::ClipboardTarget>,
+    key: &varta_view::ClipboardKey,
+) -> Result<Option<varta_view::ClipboardTask>, RuntimeError> {
+    let task = context
+        .view
+        .view
+        .begin_clipboard(target, key)
+        .map_err(RuntimeError::ViewInput)?;
+    context
+        .view
+        .queue(&mut context.events)
+        .map_err(RuntimeError::View)?;
+    Ok(task)
+}
+
+/// An external completion cannot create a new user-gesture turn. Input records
+/// retain their normal coalescing, capacity and delivery rules.
+pub(crate) fn complete_clipboard(
+    context: &mut RuntimeContext,
+    token: &varta_view::ClipboardToken,
+    result: Result<varta_view::ClipboardData, varta_view::ClipboardError>,
+) -> Result<bool, RuntimeError> {
+    let accepted = context
+        .view
+        .view
+        .complete_clipboard(token, result)
+        .map_err(RuntimeError::ViewInput)?;
+    context
+        .view
+        .queue(&mut context.events)
+        .map_err(RuntimeError::View)?;
+    Ok(accepted)
 }

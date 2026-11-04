@@ -177,6 +177,10 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                     || name == "varta-desktop" && (!dev || target == "accesskit_consumer"),
                 "native accessibility belongs to the desktop host: {name} -> {target}"
             );
+            assert!(
+                !CLIPBOARD_CRATES.contains(&target) || name == "varta-desktop" && !dev,
+                "OS clipboard I/O belongs to the desktop host: {name} -> {target}"
+            );
         }
     }
 }
@@ -189,6 +193,8 @@ const STORAGE_CRATES: [&str; 5] = [
     "libsqlite3-sys",
     "deno_error",
 ];
+
+const CLIPBOARD_CRATES: [&str; 3] = ["arboard", "wl-clipboard-rs", "clipboard-win"];
 
 /// No engine contract, compiler, artifact or intrinsic crate reaches SQLite,
 /// even transitively: only the runtime (and what links it) does.
@@ -290,9 +296,11 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
         let name = names[package.as_str().unwrap()];
         if name != "varta-desktop" {
             assert!(!reaches(name, "accesskit"), "{name} reaches AccessKit");
+            assert!(!reaches(name, "arboard"), "{name} reaches OS clipboard I/O");
         }
     }
     assert!(reaches("varta-desktop", "accesskit"));
+    assert!(reaches("varta-desktop", "arboard"));
 }
 
 /// The target triple of the toolchain running the tests, from `rustc -vV`.

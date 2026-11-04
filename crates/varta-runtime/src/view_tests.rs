@@ -65,6 +65,7 @@ fn clipboard_grants_are_exact_booleans_of_both_parties() {
 }
 
 use crate::VartaRuntime;
+mod native_clipboard;
 mod network;
 use varta_common::language::LanguageProfile as P;
 

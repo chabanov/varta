@@ -1,8 +1,13 @@
 //! The simulated platform side: trusted inputs, event dispatch (bubbling,
 //! key filters, `preventDefault`/`stopPropagation`), default actions, and
 //! the clipboard and system browser of the headless renderer.
+mod clipboard;
 use crate::tree::{Element, Preedit, focus_records};
 use crate::{Access, Broker, EventRecord, InputError, View, ViewError};
+pub use clipboard::{
+    ClipboardAction, ClipboardData, ClipboardError, ClipboardKey, ClipboardTarget, ClipboardTask,
+    ClipboardToken,
+};
 use serde::Deserialize;
 use unicode_segmentation::UnicodeSegmentation;
 use varta_common::scheduler::TIMER_MAX_DELAY_MS;

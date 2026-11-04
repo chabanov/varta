@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-04",
+  "baseCommit": "2400dbfeb75480d719e09be8b9c6d0acb4ab18f0",
+  "scope": "Host-owned text clipboard defaults; implementation full gate complete, actual platform acceptance open",
+  "checks": {
+    "core": {
+      "passed": 15,
+      "log": "target/clipboard-core-final.log"
+    },
+    "application": {
+      "passed": 6,
+      "log": "target/clipboard-runtime-tests.log"
+    },
+    "desktopGpu": {
+      "passed": 76,
+      "log": "target/clipboard-desktop-gpu-updated.log"
+    },
+    "strictAllTargetClippy": {
+      "exitCode": 0,
+      "log": "target/clipboard-clippy-final.log"
+    },
+    "dependencyBoundaries": {
+      "passed": 2,
+      "log": "target/clipboard-boundaries.log"
+    },
+    "showcase": {
+      "trustedInputs": 12,
+      "exitCode": 0,
+      "log": "target/clipboard-showcase.log"
+    }
+  },
+  "bundle": {
+    "path": "/Users/snaga/Developer/Laboratory/varta/dist/Varta Showcase CLIPBOARD Debug.app",
+    "configuration": "CPU Debug",
+    "totalFileBytes": 107016335,
+    "fileCount": 7,
+    "files": {
+      "Contents/Info.plist": "9876f3fbfbae9bd8250e9ed859c5e41e4dbe7633f6f031dc22e15ce50cc6acd4",
+      "Contents/MacOS/launch": "12e1d45f2dc62f719b6d6247fd38196d5073a01c17739e3f76978d6104a5a255",
+      "Contents/MacOS/varta-preview": "b96bb093a610f5fd11aeafb21c0b9918b0a2902d046d8619a10088db5647a36e",
+      "Contents/Resources/Arial.ttf": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+      "Contents/Resources/README.txt": "cef8ba4b622198565656a09b32c6647f1a961085179235948d18ff0991a609f1",
+      "Contents/Resources/showcase.manifest.json": "fe8a6f357d4a406a161b23d863f75dc317a0444a16a337295327eaaf63c9b416",
+      "Contents/Resources/showcase.wasm": "3cf1ddc68beb3d3a716fd6a3b9b3b26cb15733d5950e22ceb5ddc249a2698706"
+    }
+  },
+  "nativeAttempt": {
+    "tool": "cua.getApp",
+    "timeoutMs": 60000,
+    "result": "timeout; kernel reset",
+    "launchConfirmed": false,
+    "systemClipboardAcceptance": false
+  },
+  "limits": [
+    "No system clipboard I/O in automated tests; providers are injected.",
+    "Transient SDK/OS allocations are outside retained-response caps.",
+    "Native IME/VoiceOver, Windows/Linux/Pi and production shell acceptance remain open."
+  ],
+  "fullGate": {
+    "report": "target/verification/20261104-032530-xtwjknm6/report.json",
+    "passedTests": 3323,
+    "ignored": 16,
+    "commands": 8,
+    "sourceUnchanged": true,
+    "sourceSha256": "011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced",
+    "postGateChanges": "documentation annotations and runtime comment clarifying queued keydown; no behavior changes"
+  }
+}

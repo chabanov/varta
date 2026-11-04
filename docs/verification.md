@@ -1197,3 +1197,37 @@ in all eight full-gate commands with unchanged inputs. Report:
 3281-test checkpoint for these newer code inputs. Only documentation annotations
 follow this gate before the package commit. Actual native/VoiceOver, remaining
 page/item/absolute routes and other-platform acceptance remain open.
+
+### Host-owned native clipboard — package after `2400dbf`
+
+Scoped core tests use tasks and injected results, without OS I/O:
+`cargo test -p varta-view --test clipboard --locked` (15 pass,
+`target/clipboard-core-final.log`). Real Wasm/Application coverage checks later
+input delivery, absence of fresh gesture authority, guest changes during I/O,
+termination, failure recovery, prevention and application isolation:
+`cargo test -p varta-runtime --lib --locked view_tests::native_clipboard`
+(six pass, `target/clipboard-runtime-tests.log`).
+
+The desktop GPU regression run passes 76 cases
+(`target/clipboard-desktop-gpu-updated.log`), including nine clipboard/queue
+cases and the deferred-timing case alongside previous regressions. Providers
+are injected; these tests never access the user's clipboard. The initial scoped
+Clippy failure was `items_after_test_module` in the new desktop helper; helpers
+were moved above the tests. Final strict all-target Clippy passes
+(`target/clipboard-clippy-final.log`), as do both direct/transitive dependency
+boundary cases (`target/clipboard-boundaries.log`). The fresh CPU Debug bundle
+builds and the Showcase passes its 12 trusted-input script
+(`target/clipboard-showcase.log`). App selection through Cua times out after
+60 s with kernel reset; current launch and actual system clipboard behavior
+remain unconfirmed. Bundle hashes and scope are recorded in
+`examples/native-showcase/clipboard-checkpoint-2026-11-04.json`. These scoped
+results do not constitute the final package gate.
+
+The first full-gate attempt stopped at formatting before engine checks
+(`target/verification/20261104-032513-0aqoes7o/report.json`); ordering two test
+module declarations fixed it. The final full gate records **3323 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-032530-xtwjknm6/report.json`; source SHA-256 `011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced`.
+This supersedes the preceding 3292-test range checkpoint for the newer clipboard
+inputs. Documentation-only status annotations and a runtime comment correction
+("queue keydown", rather than implying immediate callback delivery) follow the
+gate. Actual system clipboard behavior and the remaining platform matrix stay
+open.

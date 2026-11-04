@@ -3059,3 +3059,21 @@ source SHA-256 `6294ded534da348dc9dc43516e10f0ecd1159e367184dc4462cc79c313823653
 Separate GPU scoped verification passes 66 desktop cases and strict all-target
 Clippy. Native/VoiceOver, page/item/absolute platform routes and the remaining
 whole-plan requirements stay open. Documentation-only annotations follow the gate.
+
+### Host-owned native clipboard defaults — 2026-11-04
+
+View/Application now split trusted copy/cut/paste into a bounded task and an
+opaque source/selection-bound completion between guest turns. Prevention,
+password/readonly rules, stale/replay/foreign responses, failed Cut, normal
+history/maxlength and no-fresh-gesture completion are covered. Desktop owns the
+text-only arboard worker, physical shortcuts and FIFO across deferred I/O; the
+engine remains free of clipboard SDKs and OS I/O. Guest ABI/capabilities, frozen
+script/JSON shapes and production budgets retain their existing meanings.
+
+Final full gate: **3323 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-032530-xtwjknm6/report.json`; source SHA-256 `011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced`.
+Separate scoped checks pass 15 core cases, six real Application/Wasm cases and
+76 desktop GPU cases, strict affected all-target Clippy, both dependency boundary
+cases and the 12-input Showcase script. The fresh CPU Debug bundle builds; Cua
+app selection times out after 60 s, leaving actual launch/system clipboard and
+IME/VoiceOver/other-platform acceptance open. Source comments/documentation-only
+annotations follow verification. No full-plan completion is inferred.

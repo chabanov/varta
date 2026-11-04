@@ -2,7 +2,7 @@
 
 ## Status
 
-Updated 2026-11-04 after renderer commit `be85c981`: the native accessibility
+Updated 2026-11-04 after native range commit `2400dbf`: the native accessibility
 foundation, bounded descriptions, painted text ranges, assistive scrolling and
 live-announcement implementation pass the consolidated batch gate. The preceding
 renderer batch includes CPU rendering, pointer-state, TSX Showcase and optional
@@ -19,11 +19,11 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Native macOS text-range package after `5a52125` (2026-11-04, macOS arm64): **3292 passed**, 0 failures, 16 ignored; all eight commands passed with unchanged inputs. Report: `target/verification/20261104-015702-6g3mx2fb/report.json`; source SHA-256 `6294ded534da348dc9dc43516e10f0ecd1159e367184dc4462cc79c313823653`. Separate optional GPU checks pass 66 desktop cases and strict all-target Clippy. This verifies the range implementation; native window/VoiceOver, remaining page/item/absolute routes, broader browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Host-owned native clipboard package after `2400dbf` (2026-11-04, macOS arm64): **3323 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-032530-xtwjknm6/report.json`; source SHA-256 `011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced`. Separate optional GPU checks pass 76 desktop cases and strict all-target Clippy. This verifies implementation, not actual system clipboard/IME/VoiceOver, browser/pilot, Linux/Windows/Pi or release acceptance. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. The working tree adds lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates and FIFO assistive actions. Full L0 painting, paste/full IME, complete accessibility, production shell and target acceptance remain open. The old UARP node-16 refusal is historical. |
+| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. The old UARP node-16 refusal is historical. |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
@@ -263,6 +263,38 @@ implementation package verified by the final **3292-test full gate**:
 `target/verification/20261104-015702-6g3mx2fb/report.json`, with all eight commands passing and unchanged inputs. This is separate
 from the preceding 3281-test checkpoint. Actual native range/VoiceOver,
 page/item/absolute native routes and other-target acceptance remain open.
+
+**Native clipboard package after `2400dbf` — implementation gate complete; platform acceptance open.**
+Host-only View/Application APIs validate source/content/selection and static
+keydown prevention before returning an opaque copy/cut/paste task. Completion
+runs between turns and rejects stale/replayed/foreign results; failed Cut leaves
+the field intact. Readonly copy is allowed, password default copy/cut refused,
+and ordinary editor history/UTF-16 maxlength rules remain. Paste normalizes
+single-line and textarea line breaks. Physical shortcut mapping keeps non-Latin
+layouts, with non-macOS Insert/Delete alternatives. Non-field keydown still
+bubbles without I/O or select typeahead.
+
+A text-only pinned arboard bridge runs lazily on one bounded desktop I/O worker.
+The UI/application loops remain active and following keys retain their FIFO.
+Existing field/input limits and guest capability/ABI/script meanings stay
+unchanged. Dependency boundaries forbid clipboard SDKs in engine/runtime code.
+A source binding is captured on a validated shortcut, without another per-frame
+style walk. Deferred timing preserves initial acceptance and reports host wait
+separately; completion-frame CPU samples are not whole-operation CPU totals.
+
+Scoped checks so far: 15 core clipboard cases, six real Wasm/Application cases,
+and 76 desktop GPU cases pass, including existing accessibility/geometry/input
+regressions. The first Clippy run found helper items below a test module; they
+were moved. Final strict all-target Clippy and both dependency-boundary tests
+pass. The fresh CPU Debug bundle builds, and its 12-input Showcase script passes.
+A new Cua app-selection attempt times out after 60 s with kernel reset; launch
+and system clipboard behavior remain unconfirmed. Evidence:
+`target/clipboard-core-final.log`, `target/clipboard-runtime-tests.log`,
+`target/clipboard-desktop-gpu-updated.log`, `target/clipboard-clippy-final.log`,
+`target/clipboard-boundaries.log`, `target/clipboard-showcase.log`, and
+`examples/native-showcase/clipboard-checkpoint-2026-11-04.json`. SDK/OS transient allocation is outside
+retained-response bounds. Current system clipboard/IME/VoiceOver and target
+acceptance remain open. Final full gate: **3323 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-032530-xtwjknm6/report.json`; source SHA-256 `011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced`. Only documentation annotations follow the gate.
 
 **Renderer batch based on `1259eb8`; 2026-11-03.** This batch includes renderer
 and pointer changes, new Rust modules/tests, the Showcase and documentation.

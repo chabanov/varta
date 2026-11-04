@@ -1,5 +1,23 @@
 # Experimental desktop preview
 
+## Host-owned copy, cut and paste
+
+The preview implements Command+C/X/V on macOS and Control+C/X/V elsewhere,
+plus Control+Insert and Shift+Insert/Delete outside macOS. Physical shortcuts
+retain the original logical key for guest keydown handlers. Static prevention,
+current field/source/selection, readonly, disabled and composition checks precede
+clipboard work; password default copy/cut is refused. Cut waits for a successful
+write. Paste retains ordinary Undo and UTF-16 maxlength behavior.
+
+Text-only `arboard` 3.7.0 (MIT OR Apache-2.0) supplies the OS bridge. Its context
+is created lazily on a dedicated I/O worker; the UI/application loops continue
+while following keys remain FIFO. One opaque operation binds the completion to
+the original source and selection. Failed or stale results cannot delete or
+overwrite a field. Input/clipboard channels and retained field buffers remain
+bounded. SDK/OS temporary allocation is outside retained-response accounting.
+Tests use injected providers and do not touch the user's clipboard. Actual
+system clipboard, platform and IME acceptance remain separate checks.
+
 ## Native accessibility foundation
 
 The preview installs AccessKit 0.25.2 through accesskit_winit 0.34.2 before
@@ -79,6 +97,11 @@ delivery before queue entry, queued-key waiting before dispatch, GPU completion
 and physical screen scanout. The `guest_ms` phase includes host input handling and application-step work; it
 is not an isolated Wasm CPU timer. Multiple accepted inputs in a frame share
 the first worker-accepted stamp and an explicit input count.
+Deferred clipboard samples preserve initial worker acceptance; `deferred_ms`
+records elapsed host deferral through completion instead of attributing that
+wait to queue time. `guest_ms` describes work in the returned frame and is not
+the total CPU cost of an operation spanning earlier frames. These overlapping
+spans are not an additive decomposition of `total_ms`.
 Pointer-state samples remain coalesced outside the activation FIFO; a generation
 and condition variable wake the worker on pointer/input/frame acknowledgement
 without losing notifications that arrive just before it waits.

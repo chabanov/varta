@@ -44,7 +44,9 @@ pub use accessibility::{
 };
 pub use drawing::{DisplayList, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame};
 pub use events::{
-    HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target,
+    ClipboardAction, ClipboardData, ClipboardError, ClipboardKey, ClipboardTarget, ClipboardTask,
+    ClipboardToken, HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep,
+    Target,
 };
 pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
 pub use paint::{
@@ -307,6 +309,7 @@ pub struct View {
     /// Batches applied so far (for diagnostics and snapshots).
     commits: usize,
     history: VecDeque<events::HistoryEntry>,
+    pending_clipboard: Option<ClipboardToken>,
 }
 
 impl View {

@@ -536,6 +536,53 @@ impl Application {
         Ok(())
     }
 
+    /// Capture the current field for host-owned copy/cut/paste. The binding holds
+    /// source/selection identities, never clipboard contents or password text.
+    pub fn view_clipboard_target(&self) -> Option<varta_view::ClipboardTarget> {
+        (self.state == InstanceState::Running)
+            .then(|| self.execution.store.data().view.clipboard_target())
+            .flatten()
+    }
+    pub fn view_clipboard_pending(&self) -> bool {
+        self.execution.store.data().view.clipboard_pending()
+    }
+    /// Produce bounded platform work after default-action/target validation.
+    /// Perform the I/O outside the application/UI loop, then complete below.
+    pub fn view_begin_clipboard(
+        &mut self,
+        target: Option<&varta_view::ClipboardTarget>,
+        key: &varta_view::ClipboardKey,
+    ) -> Result<Option<varta_view::ClipboardTask>, ApplicationError> {
+        if self.state != InstanceState::Running {
+            return Err(ApplicationError::Terminated);
+        }
+        match crate::view::begin_clipboard(self.execution.store.data_mut(), target, key) {
+            Ok(task) => Ok(task),
+            Err(error) => {
+                self.fail(error);
+                Err(ApplicationError::Terminated)
+            }
+        }
+    }
+    /// Complete once between turns. Failed/stale I/O cannot mutate a field and
+    /// resulting input events carry no new gesture authority.
+    pub fn view_complete_clipboard(
+        &mut self,
+        token: &varta_view::ClipboardToken,
+        result: Result<varta_view::ClipboardData, varta_view::ClipboardError>,
+    ) -> Result<bool, ApplicationError> {
+        if self.state != InstanceState::Running {
+            return Err(ApplicationError::Terminated);
+        }
+        match crate::view::complete_clipboard(self.execution.store.data_mut(), token, result) {
+            Ok(accepted) => Ok(accepted),
+            Err(error) => {
+                self.fail(error);
+                Err(ApplicationError::Terminated)
+            }
+        }
+    }
+
     /// Apply an experimental host scroll between turns and queue its view events.
     pub fn view_scroll_into_view(
         &mut self,

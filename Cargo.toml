@@ -41,6 +41,9 @@ softbuffer = { version = "=0.4.6", default-features = false, features = ["x11", 
 # Apache-2.0: semantic tree and native accessibility adapters, desktop only.
 accesskit = "=0.25.2"
 accesskit_winit = "=0.34.2"
+# MIT OR Apache-2.0; text-only OS clipboard on a bounded desktop I/O worker.
+# Wayland data-control is optional at runtime; no image codecs are enabled.
+arboard = { version = "=3.7.0", default-features = false, features = ["wayland-data-control"] }
 # Optional desktop GPU backend only; no GPU imports in the guest/runtime.
 # MIT OR Apache-2.0; wgpu validates native graphics operations, Vello GPU draws
 # the host-owned bounded 2D scene, pollster drives device initialization.
