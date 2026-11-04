@@ -1683,7 +1683,7 @@ zero regressions and zero infrastructure failures. Current affected GPU Clippy,
 fallbacks per build) and21-scene Chrome comparisons retain their separately
 pinned scope above. All172 relevant code/build/fixture/tool inputs still match.
 Only documentation result/status annotations follow the full gate. The incomplete
-horizontal-edge prototype is kept only as a local stash and excluded from commit `ed77739e`;
+horizontal-edge prototype is kept only on the local branch `wip/inline-edge-shaping` and excluded from commit `ed77739e`;
 no horizontal spacing/border, real-window, other-platform or whole-plan acceptance
 is inferred. Evidence: `target/paint-next-stage/spacing/full-gate-checkpoint.json`.
 

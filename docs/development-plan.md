@@ -12,8 +12,8 @@ only documentation annotations changed between that gate and the commit. The
 earlier rounded clipping/composition (`54585e3f`), clipboard (`22b02d0c`),
 accessibility (`5a521250`, `2400dbfe`), retained renderer, TSX Showcase and
 optional GPU (`be85c981`) foundations are integrated. The working tree is clean;
-the unfinished horizontal inline edge-shaping prototype exists only as local
-stash `WIP inline edge shaping foundation`, not in `main`. Portable outlines
+the unfinished horizontal inline edge-shaping prototype exists only on the local
+branch `wip/inline-edge-shaping`, not in `main`. Portable outlines
 retain their explicit platform-smoothing difference, and broader typography,
 whole-application and platform acceptance stay open. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
@@ -408,7 +408,7 @@ build. The172 pinned engine/build/fixture/tool inputs match those scoped checks.
 Only result/status annotations follow this gate; the gated code was committed
 unchanged as `ed77739e`. Incomplete horizontal edge shaping and native
 border/fragment integration are excluded from that commit; the prototype is
-kept only as the local stash `WIP inline edge shaping foundation`. The full accepted core/pilot/platform/
+kept only on the local branch `wip/inline-edge-shaping`. The full accepted core/pilot/platform/
 release plan and the remaining real-font/window/input acceptance stay open.
 
 ### Current UI checkpoint and proposed continuation
