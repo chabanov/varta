@@ -409,7 +409,9 @@ fn empty_inline_anchors_follow_ligatures_and_contribute_line_metrics() {
 
 #[test]
 fn unsupported_inline_box_styles_fail_without_changing_the_view() {
-    for (p, value) in [(P::Padding, "1px"), (P::Border, "1px solid #f00")] {
+    // Horizontal percentages need a definite containing width in intrinsic
+    // sizing.
+    for (p, value) in [(P::Padding, "1%"), (P::Margin, "0 -1%")] {
         let mut b = base("100px");
         b.create_element(3, Tag::Span)
             .insert(2, 3, 0)

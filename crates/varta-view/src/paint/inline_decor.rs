@@ -11,6 +11,8 @@ use tiny_skia::{Path, PathBuilder, Rect};
 // Four arcs/straight edges, up to four clipping caps, move/close: reserve before
 // generating a fragment contour, within the existing shared text paint work.
 pub(super) const SLICE_PAINT_WORK: usize = 4 * (corner_arc::MAX_QUARTER_SEGMENTS as usize + 2) + 3;
+/// A border ring clips an outer and an inner contour.
+pub(super) const RING_PAINT_WORK: usize = 2 * SLICE_PAINT_WORK;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Shape {
@@ -21,9 +23,11 @@ pub(super) struct Decoration<'a> {
     raw: &'a str,
     units: Units,
     size: [f64; 2],
-    shapes: BTreeMap<[u32; 2], Arc<Shape>>,
-    paint_shapes: BTreeMap<[u64; 4], Arc<Shape>>,
+    shapes: BTreeMap<([u32; 2], [bool; 2]), Arc<Shape>>,
+    paint_shapes: BTreeMap<([u64; 4], [bool; 2]), Arc<Shape>>,
     broken: bool,
+    /// Borders slice a square strip too; backgrounds only need curved ones.
+    square: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Slice {
@@ -56,6 +60,24 @@ impl<'a> Decoration<'a> {
         units: Units,
         node: u32,
     ) -> Result<Option<Self>, PaintError> {
+        Self::build(raw, pieces, units, node, false)
+    }
+    /// A strip whose slices exist for square radii as well, for border rings.
+    pub fn strip(
+        raw: &'a str,
+        pieces: &[BoxRect],
+        units: Units,
+        node: u32,
+    ) -> Result<Self, PaintError> {
+        Self::build(raw, pieces, units, node, true)?.ok_or(PaintError::Unsupported(node))
+    }
+    fn build(
+        raw: &'a str,
+        pieces: &[BoxRect],
+        units: Units,
+        node: u32,
+        square: bool,
+    ) -> Result<Option<Self>, PaintError> {
         let mut width = 0.0;
         let mut height = None;
         for piece in pieces {
@@ -77,7 +99,7 @@ impl<'a> Decoration<'a> {
         let size = [width, f64::from(height.unwrap_or(0.0))];
         let radii =
             super::corners::resolve_radii(raw, size, units).ok_or(PaintError::Unsupported(node))?;
-        if radii.iter().all(|r| r[0] == 0.0 || r[1] == 0.0) {
+        if !square && radii.iter().all(|r| r[0] == 0.0 || r[1] == 0.0) {
             return Ok(None);
         }
         Ok(Some(Self {
@@ -87,6 +109,7 @@ impl<'a> Decoration<'a> {
             shapes: BTreeMap::new(),
             paint_shapes: BTreeMap::new(),
             broken: pieces.len() > 1,
+            square,
         }))
     }
     pub fn slice(
@@ -95,19 +118,23 @@ impl<'a> Decoration<'a> {
         offset: f64,
         node: u32,
     ) -> Result<Option<Slice>, PaintError> {
-        let key = [rect.width.to_bits(), rect.height.to_bits()];
+        // The strip's left corners belong to its first fragment and its right
+        // corners to its last; a fragment without them treats them as square.
+        let edges = [
+            offset <= 0.0,
+            offset + f64::from(rect.width) >= self.size[0],
+        ];
+        let key = ([rect.width.to_bits(), rect.height.to_bits()], edges);
         let shape = if let Some(shape) = self.shapes.get(&key) {
             shape.clone()
         } else {
             // Radius percentages and overlap normalization use the current
             // fragment's border box; painting still spans the whole strip.
-            let radii = super::corners::resolve_radii(
-                self.raw,
-                [f64::from(rect.width), f64::from(rect.height)],
-                self.units,
-            )
-            .ok_or(PaintError::Unsupported(node))?;
-            if radii.iter().all(|r| r[0] == 0.0 || r[1] == 0.0) {
+            let size = [f64::from(rect.width), f64::from(rect.height)];
+            let radii =
+                super::corners::resolve_slice_radii(self.raw, size, size, self.units, edges)
+                    .ok_or(PaintError::Unsupported(node))?;
+            if !self.square && radii.iter().all(|r| r[0] == 0.0 || r[1] == 0.0) {
                 return Ok(None);
             }
             let shape = Arc::new(Shape {
@@ -119,12 +146,15 @@ impl<'a> Decoration<'a> {
         };
         let (left, width) = super::snap::axis(f64::from(rect.x) - offset, self.size[0]);
         let (top, height) = super::snap::axis(f64::from(rect.y), self.size[1]);
-        let paint_key = [
-            u64::from(rect.width.to_bits()),
-            u64::from(rect.height.to_bits()),
-            width.to_bits(),
-            height.to_bits(),
-        ];
+        let paint_key = (
+            [
+                u64::from(rect.width.to_bits()),
+                u64::from(rect.height.to_bits()),
+                width.to_bits(),
+                height.to_bits(),
+            ],
+            edges,
+        );
         let paint_shape = if let Some(shape) = self.paint_shapes.get(&paint_key) {
             shape.clone()
         } else {
@@ -142,8 +172,9 @@ impl<'a> Decoration<'a> {
                     [width, height],
                 )
             };
-            let radii = super::corners::resolve_radii_in(self.raw, basis, limit, self.units)
-                .ok_or(PaintError::Unsupported(node))?;
+            let radii =
+                super::corners::resolve_slice_radii(self.raw, basis, limit, self.units, edges)
+                    .ok_or(PaintError::Unsupported(node))?;
             let shape = Arc::new(Shape {
                 size: [width, height],
                 radii,
@@ -217,24 +248,62 @@ impl Shape {
         result
     }
 }
+impl Shape {
+    /// The padding-edge contour: inset by the border widths (top, right,
+    /// bottom, left), with each radius reduced by its adjacent widths.
+    fn inset(&self, widths: [f64; 4]) -> Option<Self> {
+        let [top, right, bottom, left] = widths;
+        let size = [self.size[0] - left - right, self.size[1] - top - bottom];
+        if !(size[0] > 0.0 && size[1] > 0.0) {
+            return None;
+        }
+        let sides = [[left, top], [right, top], [right, bottom], [left, bottom]];
+        let mut radii = self.radii;
+        for (radius, [x, y]) in radii.iter_mut().zip(sides) {
+            *radius = [(radius[0] - x).max(0.0), (radius[1] - y).max(0.0)];
+        }
+        Some(Self { size, radii })
+    }
+}
+fn clip_to(mut segments: Vec<Segment>, clip: Rect, path: &mut PathBuilder) -> Option<()> {
+    for plane in [
+        Plane::new([1.0, 0.0], f64::from(clip.left()))?,
+        Plane::new([-1.0, 0.0], -f64::from(clip.right()))?,
+        Plane::new([0.0, 1.0], f64::from(clip.top()))?,
+        Plane::new([0.0, -1.0], -f64::from(clip.bottom()))?,
+    ] {
+        segments = clip_curve::half_plane(segments, plane);
+    }
+    let start = segments.first()?.start();
+    path.move_to(start.0[0] as f32, start.0[1] as f32);
+    for segment in segments {
+        segment.emit(path);
+    }
+    path.close();
+    Some(())
+}
 impl Slice {
     pub fn path(&self, clip: Rect) -> Option<Path> {
-        let mut segments = self.paint_shape.contour(self.paint_origin);
-        for plane in [
-            Plane::new([1.0, 0.0], f64::from(clip.left()))?,
-            Plane::new([-1.0, 0.0], -f64::from(clip.right()))?,
-            Plane::new([0.0, 1.0], f64::from(clip.top()))?,
-            Plane::new([0.0, -1.0], -f64::from(clip.bottom()))?,
-        ] {
-            segments = clip_curve::half_plane(segments, plane);
-        }
-        let start = segments.first()?.start();
         let mut path = PathBuilder::new();
-        path.move_to(start.0[0] as f32, start.0[1] as f32);
-        for segment in segments {
-            segment.emit(&mut path);
+        clip_to(self.paint_shape.contour(self.paint_origin), clip, &mut path)?;
+        path.finish()
+    }
+    /// This fragment's part of the whole strip's border ring, to fill even-odd.
+    /// Both contours stay in f64 until clipped to the local fragment.
+    pub fn ring(&self, clip: Rect, widths: [f64; 4]) -> Option<Path> {
+        let mut path = PathBuilder::new();
+        clip_to(self.paint_shape.contour(self.paint_origin), clip, &mut path)?;
+        if let Some(inner) = self.paint_shape.inset(widths) {
+            let origin = [
+                self.paint_origin[0] + widths[3],
+                self.paint_origin[1] + widths[0],
+            ];
+            // An inner contour wholly outside this slice adds nothing: the
+            // slice is then entirely border.
+            if clip_to(inner.contour(origin), clip, &mut path).is_none() {
+                return path.finish();
+            }
         }
-        path.close();
         path.finish()
     }
     fn contains(&self, x: f64, y: f64) -> bool {
@@ -354,7 +423,7 @@ mod tests {
             },
         ];
         let mut shape = Decoration::new(
-            "10px 0 0 10px",
+            "0 1px 1px 0",
             &pieces,
             Units::new(&Environment::default()).unwrap(),
             2,
@@ -379,6 +448,12 @@ mod tests {
             tiny_skia::Transform::from_translate(-2.0, -40.0),
             None,
         );
-        assert!(image.pixels().iter().all(|p| p.alpha() == 255));
+        // The tail is the strip's last fragment: its right corners curve,
+        // every row between them is fully covered.
+        assert!(
+            image.pixels()[3..57].iter().all(|p| p.alpha() == 255),
+            "interior rows"
+        );
+        assert!(image.pixels()[2].alpha() < 255, "top-right corner");
     }
 }

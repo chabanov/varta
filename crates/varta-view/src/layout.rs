@@ -512,31 +512,55 @@ fn layout_properties(
     Ok(result)
 }
 
-/// Non-replaced inline vertical margins do not affect line metrics. Vertical
-/// padding paints outside the font box; horizontal spacing still needs shaping
-/// boundary items and is refused until that separate path is implemented.
-pub(crate) fn inline_vertical_padding(
+/// Resolved spacing of a non-replaced inline box.
+pub(crate) struct InlineSpacing {
+    /// Top and bottom padding; it paints outside the font box without
+    /// changing line metrics. Percentages use the containing block width.
+    pub vertical: [LengthPercentage; 2],
+    /// Physical left/right margins. Signed; `auto` computes to zero.
+    pub margin: [f32; 2],
+    /// Physical left/right padding.
+    pub padding: [f32; 2],
+    /// Solid border widths in top/right/bottom/left order; zero for `none`.
+    pub border: [f32; 4],
+}
+
+/// Non-replaced inline vertical margins do not affect line metrics. Horizontal
+/// margins/borders/padding become shaping boundary edges; vertical borders and
+/// padding paint outside the line. Nonzero horizontal percentages
+/// would need a containing-block width inside intrinsic sizing and are refused.
+pub(crate) fn inline_spacing(
     tree: &Tree,
     env: &Environment,
     id: u32,
-) -> Result<[LengthPercentage; 2], LayoutError> {
+) -> Result<InlineSpacing, LayoutError> {
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     let properties = layout_properties(tree, env, id)?;
-    let mut padding = [LengthPercentage::length(0.0); 2];
-    for property in [
-        CssProperty::MarginTop,
-        CssProperty::MarginRight,
-        CssProperty::MarginBottom,
-        CssProperty::MarginLeft,
+    let mut spacing = InlineSpacing {
+        vertical: [LengthPercentage::length(0.0); 2],
+        margin: [0.0; 2],
+        padding: [0.0; 2],
+        border: border_widths(tree, env, id)?,
+    };
+    let fixed = |value: Option<f32>| value.ok_or(LayoutError::Unsupported(id));
+    for (property, side) in [
+        (CssProperty::MarginTop, None),
+        (CssProperty::MarginRight, Some(1)),
+        (CssProperty::MarginBottom, None),
+        (CssProperty::MarginLeft, Some(0)),
     ] {
         let Some(raw) = properties.get(&property) else {
             continue;
         };
         let value = units.margin(raw).ok_or(LayoutError::Unsupported(id))?;
-        if matches!(property, CssProperty::MarginRight | CssProperty::MarginLeft)
-            && value.resolve_to_option(1.0, |_, _| 0.0).unwrap_or(0.0) != 0.0
-        {
-            return Err(LayoutError::Unsupported(id));
+        if let Some(side) = side {
+            use taffy::style::ExpandedLengthPercentageAuto as E;
+            let value = match value.expand() {
+                E::Length(value) => Some(LengthPercentage::length(value)),
+                E::Percent(value) => Some(LengthPercentage::percent(value)),
+                E::Auto => None,
+            };
+            spacing.margin[side] = fixed(horizontal(value))?;
         }
     }
     for property in [
@@ -552,17 +576,25 @@ pub(crate) fn inline_vertical_padding(
             .length::<LengthPercentage>(raw, false)
             .ok_or(LayoutError::Unsupported(id))?;
         match property {
-            CssProperty::PaddingTop => padding[0] = value,
-            CssProperty::PaddingBottom => padding[1] = value,
-            _ if value != LengthPercentage::length(0.0)
-                && value != LengthPercentage::percent(0.0) =>
-            {
-                return Err(LayoutError::Unsupported(id));
-            }
-            _ => {}
+            CssProperty::PaddingTop => spacing.vertical[0] = value,
+            CssProperty::PaddingBottom => spacing.vertical[1] = value,
+            CssProperty::PaddingLeft => spacing.padding[0] = fixed(horizontal(Some(value)))?,
+            _ => spacing.padding[1] = fixed(horizontal(Some(value)))?,
         }
     }
-    Ok(padding)
+    Ok(spacing)
+}
+
+/// A fixed horizontal inline length; `None` input is `auto` (zero). Nonzero
+/// percentages are refused rather than resolved against an unknown width.
+fn horizontal(value: Option<LengthPercentage>) -> Option<f32> {
+    let Some(value) = value else {
+        return Some(0.0);
+    };
+    match value.expand() {
+        taffy::style::ExpandedLengthPercentage::Length(value) => Some(value),
+        taffy::style::ExpandedLengthPercentage::Percent(value) => (value == 0.0).then_some(0.0),
+    }
 }
 
 fn alignment(value: &str) -> Option<AlignItems> {

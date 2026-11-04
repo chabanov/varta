@@ -4198,8 +4198,7 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   descendant glyphs or their independent font-box hits. Charge contour work to
   the shared existing text paint allowance before generation, across all inline
   nodes; zero-alpha/hidden-group pixels skip that work without erasing metadata.
-  Horizontal inline spacing and nonzero borders require their remaining
-  implementations. Inline opacity uses one source capture with original clips,
+  Inline borders paint the strip's ring per fragment (see below). Inline opacity uses one source capture with original clips,
   shared shaping/first-source glyph ownership, per-line source ordering and whole
   subtree isolation. Never renew text work or retained cache allowances per
   context; overflow capture is temporary, and hidden contexts preserve hits.
@@ -4257,10 +4256,38 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   containing block content width, not a fragment or line width. Reuse the existing
   cascade-ordered geometry side store, including variable resolution and CSSOM
   removal. Vertical margins have no line-layout effect; horizontal auto is zero.
-  Refuse nonzero horizontal spacing until shaping boundary support exists. Keep
-  the existing used-length, aggregate fragment/work and retained-cache limits.
+  Keep the existing used-length, aggregate fragment/work and retained-cache limits.
   Retain owned pixel/fraction values in shared flows, not opaque-pointer-capable
   layout dimensions; preserve the flow's `Send`/`Sync` properties.
+- Horizontal inline margins/padding are `TextEdge` records shaped as Parley
+  `InlineStart`/`InlineEnd` boxes, never inserted characters or `InFlow` boxes
+  (those add a break after themselves). An edge's advance is margin + border +
+  padding. Emit an edge only for a side with a nonzero margin, border or padding, so zero sides keep shaping/ligatures continuous.
+  Preserve source text and byte offsets. Resolve an edge recorded while a
+  collapsible space is pending only when that space is emitted; a forced break
+  or the end drops the space and leaves the edge before it. Project fragments
+  from `Line::items_unpositioned` in visual order: the owner's piece covers its
+  border and padding (opening piece starts after the margin), enclosing boxes take the
+  whole signed advance, and fragment widths are clamped at zero only after the
+  line is projected. Elements with edges are placed by their edges, not by the
+  empty-anchor path. Glyph and underline loops skip decoration-edge items; any
+  other inline box remains unsupported. Refuse nonzero horizontal percentages,
+  spacing on `<br>`, and edges in a flow with right-to-left runs. Edges share the
+  inline-work, glyph-slot, shaping-operation and fragment ceilings and the shape
+  memo key. Compare changes with `portable_edge_probe` in Chrome at 1×/1.25×/2×.
+- Rich-flow hits insert, for each line after the first, block hit regions for
+  the horizontal gaps between that line's visible fragments over its line box
+  (`ShapedFlow::line_boxes`), ordered after earlier lines and before the line's
+  own fragments, in both ordinary and opacity-context programs. Do not capture
+  the whole line union: Chrome lets a point inside a later fragment's rectangle
+  but outside its curve reach earlier lines.
+- Inline borders: only solid styles and one visible color (refuse others at
+  paint). Vertical borders extend fragments like vertical padding. Paint each
+  fragment's ring after its background from a square-capable
+  `Decoration::strip`, clipped in f64 (`Slice::ring`, even-odd), charging
+  `RING_PAINT_WORK`. Resolve slice radii with absent-edge corners zeroed before
+  normalization (`resolve_slice_radii`); middle fragments are square. Keep border
+  widths unsnapped like block boxes.
 - Optional native glyph coverage is a host input, never an engine OS/font lookup.
   Keep selected bytes/index/coordinates and shaped glyph IDs/advances unchanged.
   Validate mask extents, arithmetic and byte length before conversion; return to

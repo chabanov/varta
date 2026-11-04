@@ -50,6 +50,10 @@ enum Case {
     InlineOutlineOpacity,
     InlinePadding,
     InlineRoundedPadding,
+    InlineEdges,
+    InlineRoundedEdges,
+    InlineBorder,
+    InlineRoundedBorder,
     InlineRound,
     InlineOpacity,
     #[cfg(target_os = "macos")]
@@ -86,6 +90,10 @@ impl Case {
             Self::InlineOutlineOpacity => "inline-outline-opacity",
             Self::InlinePadding => "inline-padding",
             Self::InlineRoundedPadding => "inline-rounded-padding",
+            Self::InlineEdges => "inline-edges",
+            Self::InlineRoundedEdges => "inline-rounded-edges",
+            Self::InlineBorder => "inline-border",
+            Self::InlineRoundedBorder => "inline-rounded-border",
             Self::InlineRound => "inline-rounded",
             Self::InlineOpacity => "inline-opacity",
             #[cfg(target_os = "macos")]
@@ -148,6 +156,10 @@ impl Case {
                 | Self::InlineOutlineOpacity
                 | Self::InlinePadding
                 | Self::InlineRoundedPadding
+                | Self::InlineEdges
+                | Self::InlineRoundedEdges
+                | Self::InlineBorder
+                | Self::InlineRoundedBorder
         )
     }
     fn software(self) -> bool {
@@ -305,7 +317,13 @@ fn fixture(case: Case) -> Result<View, Box<dyn std::error::Error>> {
             .set_style(
                 FILL,
                 P::BorderRadius,
-                if matches!(case, Case::InlineOutline | Case::InlinePadding) {
+                if matches!(
+                    case,
+                    Case::InlineOutline
+                        | Case::InlinePadding
+                        | Case::InlineEdges
+                        | Case::InlineBorder
+                ) {
                     "0"
                 } else {
                     "10px"
@@ -322,6 +340,16 @@ fn fixture(case: Case) -> Result<View, Box<dyn std::error::Error>> {
                 P::BackgroundColor,
                 "#00a08080",
             );
+        }
+        if matches!(case, Case::InlineEdges | Case::InlineRoundedEdges) {
+            b.set_style(FILL, P::Padding, "4px 6px")
+                .set_style(FILL, P::Margin, "0 3px")
+                .set_style(FILL, P::BackgroundColor, "#00a08080");
+        }
+        if matches!(case, Case::InlineBorder | Case::InlineRoundedBorder) {
+            b.set_style(FILL, P::Padding, "2px 4px")
+                .set_style(FILL, P::Border, "3px solid #0000ff80")
+                .set_style(FILL, P::BackgroundColor, "#00a08080");
         }
         let mut view = View::default();
         view.commit(&b.finish(), false, &mut Denied)?;
@@ -606,6 +634,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Case::InlineOutlineOpacity,
             Case::InlinePadding,
             Case::InlineRoundedPadding,
+            Case::InlineEdges,
+            Case::InlineRoundedEdges,
+            Case::InlineBorder,
+            Case::InlineRoundedBorder,
             Case::InlineRound,
             Case::InlineOpacity,
             #[cfg(target_os = "macos")]
@@ -628,6 +660,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                         if matches!(case, Case::InlinePadding | Case::InlineRoundedPadding) {
                             b.set_style(FILL, P::Padding, "1.5px 0 6.25px");
+                        }
+                        if matches!(case, Case::InlineEdges | Case::InlineRoundedEdges) {
+                            b.set_style(FILL, P::Padding, "1.5px 2.5px 6.25px")
+                                .set_style(FILL, P::Margin, "0 -2px");
+                        }
+                        if matches!(case, Case::InlineBorder | Case::InlineRoundedBorder) {
+                            b.set_style(FILL, P::BorderLeft, "6px solid #0000ff80")
+                                .set_style(FILL, P::BorderBottom, "1px solid #0000ff80");
                         }
                     } else if matches!(case, Case::Underline) {
                         b.set_style(PANEL, P::TextDecoration, "none");

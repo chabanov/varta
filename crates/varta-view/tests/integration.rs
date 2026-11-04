@@ -12,6 +12,8 @@ mod fields;
 mod glyph_raster;
 mod headless;
 mod inline;
+mod inline_border;
+mod inline_edges;
 mod inline_opacity;
 mod inline_outline;
 mod inline_round;

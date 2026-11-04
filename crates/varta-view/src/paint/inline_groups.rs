@@ -303,6 +303,65 @@ pub(super) struct Flow<'a> {
     pub units: Units,
 }
 impl Flow<'_> {
+    /// A fragment's paint window and, inside a deferred context, the mask of
+    /// the flow's inherited clip. `None` when the fragment is clipped away.
+    fn window(
+        &self,
+        pixmap: &mut Surface,
+        piece: BoxRect,
+    ) -> Result<Option<(Rect, Option<ClipMask>)>, PaintError> {
+        // A deferred context must apply its inherited clip once, after
+        // isolation. Keep source geometry uncut by that clip.
+        let clip = pixmap.local_clip(self.frame.bounds.clip);
+        let paint_piece = snap::rect(piece);
+        if pixmap.capture.is_none() {
+            return Ok(clipped(paint_piece, clip).map(|rect| (rect, None)));
+        }
+        let Some(rect) = Rect::from_xywh(
+            paint_piece.x,
+            paint_piece.y,
+            paint_piece.width,
+            paint_piece.height,
+        ) else {
+            return Ok(None);
+        };
+        let mask = Rect::from_xywh(clip.x, clip.y, clip.width, clip.height)
+            .map(|r| pixmap.mask(r))
+            .transpose()?;
+        Ok(Some((rect, mask)))
+    }
+    /// A solid inline border: its continuous strip, widths and the one color
+    /// of its visible sides. Distinct side colors are not admitted inline.
+    fn border<'p>(
+        &self,
+        node: u32,
+        pieces: &[BoxRect],
+        properties: &'p BTreeMap<CssProperty, String>,
+    ) -> Result<Option<(inline_decor::Decoration<'p>, [f64; 4], Color)>, PaintError> {
+        let widths = layout::border_widths(self.tree, self.env, node)
+            .map_err(|_| PaintError::Unsupported(node))?;
+        let Some(colors) = border_colors(self.tree, self.env, node, widths)? else {
+            return Ok(None);
+        };
+        let mut visible = widths
+            .into_iter()
+            .zip(colors)
+            .filter_map(|(width, color)| (width > 0.0).then_some(color));
+        let Some(color) = visible.next() else {
+            return Ok(None);
+        };
+        if visible.any(|other| other != color) {
+            return Err(PaintError::Unsupported(node));
+        }
+        if color.alpha() == 0.0 {
+            return Ok(None);
+        }
+        let raw = properties
+            .get(&CssProperty::BorderRadius)
+            .map_or("0", String::as_str);
+        let strip = inline_decor::Decoration::strip(raw, pieces, self.units, node)?;
+        Ok(Some((strip, widths.map(f64::from), color)))
+    }
     pub fn paint(
         &self,
         pixmap: &mut Surface,
@@ -329,6 +388,38 @@ impl Flow<'_> {
             });
         }
         let mut ordinary_hits = Vec::new();
+        // Browsers hit-test line boxes last to first. Inside a later line box,
+        // a point between that line's fragments hits the block even where an
+        // earlier line's decorated fragment overlaps it; a point within a
+        // fragment's rectangle (even outside its curve) is left to the
+        // fragments. Insert those gaps after earlier lines, before this one.
+        for (line, gap) in line_gaps(self.frame, self.shape) {
+            let Some(rect) = clipped(gap, self.frame.bounds.clip) else {
+                continue;
+            };
+            let hit = Hit {
+                target: self.id,
+                rect: BoxRect {
+                    x: rect.x(),
+                    y: rect.y(),
+                    width: rect.width(),
+                    height: rect.height(),
+                },
+                rounded: None,
+                clips: hit_scope.clone(),
+            };
+            if let Some(contexts) = contexts.as_mut() {
+                let program = contexts.program(self.id)?;
+                let sequence = program.hits.len();
+                program.hits.push(((line, 0, sequence), hit));
+            } else {
+                ordinary_hits
+                    .try_reserve(1)
+                    .map_err(|_| PaintError::Dimensions)?;
+                let sequence = ordinary_hits.len();
+                ordinary_hits.push(((line, 0, sequence), hit));
+            }
+        }
         for (source_order, &node) in self.shape.nodes.iter().enumerate() {
             if let Some(capture) = pixmap.capture.as_mut() {
                 capture.owner = node;
@@ -401,6 +492,7 @@ impl Flow<'_> {
                 .map(|raw| inline_decor::Decoration::new(raw, pieces, self.units, node))
                 .transpose()?
                 .flatten();
+            let mut border = self.border(node, pieces, &properties)?;
             let hidden = hidden
                 || pixmap
                     .capture
@@ -417,51 +509,50 @@ impl Flow<'_> {
                     .map(|shape| shape.slice(piece, offset, node))
                     .transpose()?
                     .flatten();
-                if let Some(c) = background
-                    && c.alpha() > 0.0
+                let ring = border
+                    .as_mut()
+                    .map(|(strip, _, _)| strip.slice(piece, offset, node))
+                    .transpose()?
+                    .flatten();
+                let fill = background.filter(|c| c.alpha() > 0.0);
+                if (fill.is_some() || ring.is_some())
                     && !hidden
                     && clipped(piece, self.frame.bounds.clip).is_some()
+                    && let Some((rect, mask)) = self.window(pixmap, piece)?
                 {
-                    // A deferred context must apply its inherited clip once,
-                    // after isolation. Keep source geometry uncut by that clip.
-                    let clip = pixmap.local_clip(self.frame.bounds.clip);
-                    let paint_piece = snap::rect(piece);
-                    let rect = if pixmap.capture.is_some() {
-                        Rect::from_xywh(
-                            paint_piece.x,
-                            paint_piece.y,
-                            paint_piece.width,
-                            paint_piece.height,
-                        )
-                    } else {
-                        clipped(paint_piece, clip)
-                    };
-                    let Some(rect) = rect else { continue };
-                    let mask = if pixmap.capture.is_some() {
-                        Rect::from_xywh(clip.x, clip.y, clip.width, clip.height)
-                            .map(|r| pixmap.mask(r))
-                            .transpose()?
-                    } else {
-                        None
-                    };
-                    let mut paint = Paint::default();
-                    paint.set_color(c);
-                    if let Some(slice) = &slice {
-                        *work = work.saturating_add(inline_decor::SLICE_PAINT_WORK);
-                        if *work > MAX_TEXT_PAINT_WORK {
-                            return Err(PaintError::Unsupported(node));
+                    if let Some(c) = fill {
+                        let mut paint = Paint::default();
+                        paint.set_color(c);
+                        if let Some(slice) = &slice {
+                            charge_paint(work, inline_decor::SLICE_PAINT_WORK, node)?;
+                            if let Some(path) = slice.path(rect) {
+                                pixmap.fill_path(
+                                    &path,
+                                    &paint,
+                                    FillRule::Winding,
+                                    Transform::identity(),
+                                    mask.as_ref(),
+                                );
+                            }
+                        } else {
+                            pixmap.fill_rect(rect, &paint, Transform::identity(), mask.as_ref());
                         }
-                        if let Some(path) = slice.path(rect) {
+                    }
+                    // CSS paints each fragment's border over its own background,
+                    // before content. The ring is the strip's, sliced here.
+                    if let (Some(ring), Some((_, widths, color))) = (&ring, &border) {
+                        charge_paint(work, inline_decor::RING_PAINT_WORK, node)?;
+                        if let Some(path) = ring.ring(rect, *widths) {
+                            let mut paint = Paint::default();
+                            paint.set_color(*color);
                             pixmap.fill_path(
                                 &path,
                                 &paint,
-                                FillRule::Winding,
+                                FillRule::EvenOdd,
                                 Transform::identity(),
                                 mask.as_ref(),
                             );
                         }
-                    } else {
-                        pixmap.fill_rect(rect, &paint, Transform::identity(), mask.as_ref());
                     }
                 }
                 hit(node, piece, slice.map(inline_decor::Region::Slice), line)?;
@@ -552,4 +643,64 @@ impl Flow<'_> {
         pixmap.active_clip = hit_scope;
         Ok(())
     }
+}
+
+/// For each line after the first, the parts of its line box between the
+/// horizontal extents of its visible fragments, within their overall extent.
+/// Bounded by the fragment count: each fragment adds at most one gap.
+fn line_gaps(
+    frame: &crate::inline::Frame,
+    shape: &crate::inline::ContentFlow,
+) -> Vec<(usize, BoxRect)> {
+    let mut spans = BTreeMap::<usize, Vec<[f32; 2]>>::new();
+    for &node in &shape.nodes {
+        if shape.hidden(node) {
+            continue;
+        }
+        let (Some(pieces), Some(lines)) =
+            (frame.fragments.get(&node), frame.fragment_lines.get(&node))
+        else {
+            continue;
+        };
+        for (piece, &line) in pieces.iter().zip(lines) {
+            if line > 0 && piece.width > 0.0 {
+                spans
+                    .entry(line)
+                    .or_default()
+                    .push([piece.x, piece.x + piece.width]);
+            }
+        }
+    }
+    let mut gaps = Vec::new();
+    for (line, mut spans) in spans {
+        let Some(&[top, bottom]) = frame.shaped.line_boxes.get(line) else {
+            continue;
+        };
+        spans.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        let mut reach = spans[0][1];
+        for &[left, right] in &spans[1..] {
+            if left > reach {
+                gaps.push((
+                    line,
+                    BoxRect {
+                        x: reach,
+                        y: frame.bounds.rect.y + top,
+                        width: left - reach,
+                        height: bottom - top,
+                    },
+                ));
+            }
+            reach = reach.max(right);
+        }
+    }
+    gaps
+}
+
+/// Reserve contour work against the shared text paint allowance.
+fn charge_paint(work: &mut usize, amount: usize, node: u32) -> Result<(), PaintError> {
+    *work = work.saturating_add(amount);
+    if *work > MAX_TEXT_PAINT_WORK {
+        return Err(PaintError::Unsupported(node));
+    }
+    Ok(())
 }

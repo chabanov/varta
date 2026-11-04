@@ -1,13 +1,12 @@
 --- a/src/analysis/cluster.rs
 +++ b/src/analysis/cluster.rs
-@@ -5,15 +5,12 @@
- use icu_normalizer::properties::Decomposed;
+@@ -6,14 +6,11 @@
  
  use crate::analysis::AnalysisDataSources;
--
+ 
 -/// The maximum number of characters in a single cluster.
 -const MAX_CLUSTER_SIZE: usize = 32;
- 
+-
  #[derive(Debug, Default)]
  pub(crate) struct CharCluster {
      pub chars: Vec<Char>,
@@ -169,7 +168,23 @@
  
  /// Builder for constructing a text layout with ranged attributes.
  #[must_use]
-@@ -344,6 +344,13 @@
+@@ -290,6 +290,15 @@
+     fcx: &mut FontContext,
+     line_break_override: Option<&LineBreakOverrideFn>,
+ ) {
++    // Refuse oversized edge/box programs before sorting or shaping. Their output
++    // slots and sorting/visitation work share the existing configured ceilings.
++    if !lcx.scx.admits_inline_boxes(lcx.inline_boxes.len()) {
++        lcx.scx.failed = true;
++        lcx.scx.ops_used = 0;
++        layout.data.clear();
++        lcx.inline_boxes.clear();
++        return;
++    }
+     if text.is_empty() && lcx.style_runs.is_empty() {
+         lcx.style_table.push(ResolvedStyle::default());
+         lcx.style_runs.push(StyleRun {
+@@ -344,6 +353,13 @@
          );
      }
  
@@ -264,13 +279,36 @@
      fn clone(&self) -> Self {
 -        // None of the internal state is visible so just return a new instance.
 -        Self::new()
--    }
--}
 +        // Scratch/cache state is not cloned, but the caller's resource policy is.
 +        let mut context = Self::new();
 +        context.scx.limits = self.scx.limits;
 +        context.scx.operation_ceiling = self.scx.operation_ceiling;
 +        context
+     }
+ }
+--- a/src/inline_box.rs
++++ b/src/inline_box.rs
+@@ -26,6 +26,12 @@
+     ///
+     /// They correspond to `display: inline-block` boxes in CSS.
+     InFlow,
++    /// Opening decoration edge of a non-replaced inline. Takes signed width
++    /// without introducing a break; an existing text boundary moves before it.
++    InlineStart,
++    /// Closing decoration edge. Stays with the preceding text, introduces no
++    /// break and contributes no vertical metrics. Width may include signed margin.
++    InlineEnd,
+     /// `OutOfFlow` boxes are assigned a position as if they were a zero-sized inline box, but
+     /// do not take up space in the layout.
+     ///
+@@ -38,3 +44,9 @@
+     /// They can be used to implement advanced layout modes such as CSS's `float`
+     CustomOutOfFlow,
+ }
++
++impl InlineBoxKind {
++    pub(crate) fn advances(self) -> bool {
++        matches!(self, Self::InFlow | Self::InlineStart | Self::InlineEnd)
 +    }
 +}
 --- a/src/layout/cluster.rs
@@ -337,7 +375,22 @@
                          let start = run.glyph_start + cluster.glyph_offset as usize;
                          let end = start + cluster.glyph_len as usize;
                          let glyphs = &mut self.glyphs[start..end];
-@@ -924,23 +925,23 @@
+@@ -552,6 +553,14 @@
+ 
+     // TODO: this method does not handle mixed direction text at all.
+     pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
++        if self.inline_boxes.iter().any(|b| {
++            matches!(
++                b.kind,
++                InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
++            )
++        }) {
++            return self.inline_edge_widths();
++        }
+         fn whitespace_advance(cluster: Option<&ClusterData>) -> f32 {
+             cluster
+                 .filter(|cluster| cluster.info.whitespace().is_space_or_nbsp())
+@@ -924,23 +933,23 @@
      cluster_type: ClusterType,
      inline_glyph_id: Option<u32>,
  ) {
@@ -365,7 +418,7 @@
          }
          ClusterType::Regular | ClusterType::LigatureStart => {
              // Regular and ligature start clusters maintain their glyphs and advance.
-@@ -956,7 +957,7 @@
+@@ -956,7 +965,7 @@
          glyph_len: final_glyph_len,
          text_len: cluster_start_char.1.len_utf8() as u8,
          glyph_offset: final_glyph_offset,
@@ -374,6 +427,379 @@
          advance: final_advance,
      });
  }
+--- a/src/layout/inline_edges.rs
++++ b/src/layout/inline_edges.rs
+@@ -0,0 +1,89 @@
++// Copyright 2026 the Varta Authors
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++//! Decoration edges contribute advance without becoming independent words.
++use super::{
++    data::{LayoutData, LayoutItemKind},
++    ContentWidths,
++};
++use crate::{analysis::Boundary, style::Brush, InlineBoxKind, OverflowWrap, TextWrapMode};
++
++impl<B: Brush> LayoutData<B> {
++    pub(crate) fn inline_edge_widths(&self) -> ContentWidths {
++        let mut min = 0.0_f32;
++        let mut max = 0.0_f32;
++        let mut word = 0.0;
++        let mut line = 0.0;
++        let mut opening = 0.0;
++        let mut whitespace = 0.0;
++        let mut wrap = TextWrapMode::Wrap;
++        for item in &self.items {
++            match item.kind {
++                LayoutItemKind::TextRun => {
++                    let run = &self.runs[item.index];
++                    for cluster in &self.clusters[run.cluster_range.clone()] {
++                        let style = &self.styles[cluster.style_index as usize];
++                        let boundary = cluster.info.boundary();
++                        if boundary == Boundary::Mandatory
++                            || (wrap == TextWrapMode::Wrap
++                                && (boundary == Boundary::Line
++                                    || style.overflow_wrap == OverflowWrap::Anywhere))
++                        {
++                            min = min.max(word - whitespace);
++                            word = 0.0;
++                            if boundary == Boundary::Mandatory {
++                                max = max.max(line - opening - whitespace);
++                                line = opening;
++                            }
++                        }
++                        word += opening + cluster.advance;
++                        opening = 0.0;
++                        line += cluster.advance;
++                        whitespace = if cluster.info.whitespace().is_space_or_nbsp() {
++                            cluster.advance
++                        } else {
++                            0.0
++                        };
++                        wrap = style.text_wrap_mode;
++                    }
++                }
++                LayoutItemKind::InlineBox => {
++                    let edge = &self.inline_boxes[item.index];
++                    match edge.kind {
++                        InlineBoxKind::InlineStart => {
++                            opening += edge.width;
++                            line += edge.width;
++                        }
++                        InlineBoxKind::InlineEnd => {
++                            word += opening + edge.width;
++                            opening = 0.0;
++                            line += edge.width;
++                            whitespace = 0.0;
++                        }
++                        InlineBoxKind::InFlow => {
++                            word += opening;
++                            opening = 0.0;
++                            line += edge.width;
++                            if wrap == TextWrapMode::Wrap {
++                                min = min.max(word - whitespace).max(edge.width);
++                                word = 0.0;
++                            } else {
++                                word += edge.width;
++                            }
++                            whitespace = 0.0;
++                        }
++                        _ => {}
++                    }
++                }
++            }
++        }
++        // A final empty inline with opening width is visible content, rather
++        // than trailing collapsible text. Negative ends must be included before
++        // committing an unbreakable width, not after an earlier maximum.
++        let trailing = if opening != 0.0 { 0.0 } else { whitespace };
++        ContentWidths {
++            min: min.max(word + opening - trailing),
++            max: max.max(line - trailing),
++        }
++    }
++}
+--- a/src/layout/line.rs
++++ b/src/layout/line.rs
+@@ -93,6 +93,12 @@
+             })
+     }
+ 
++    /// Varta: visual-order runs and inline boxes, one item per layout item.
++    /// Unlike [`Self::items`], a run is not split at style boundaries.
++    pub fn items_unpositioned(&self) -> impl Iterator<Item = LineItem<'a, B>> + Clone {
++        self.items_nonpositioned()
++    }
++
+     /// Returns an iterator over the glyph runs for the line.
+     pub fn items(&self) -> impl Iterator<Item = PositionedLayoutItem<'a, B>> + 'a + Clone {
+         GlyphRunIter {
+@@ -152,7 +158,8 @@
+ 
+ /// A line item and its corresponding data (a run or inline box). Unlike a
+ /// [`PositionedLayoutItem`], runs are not guaranteed to be split by style.
+-pub(crate) enum LineItem<'a, B: Brush> {
++/// A run or inline box of a line, in visual order.
++pub enum LineItem<'a, B: Brush> {
+     Run(Run<'a, B>),
+     InlineBox(&'a InlineBox),
+ }
+@@ -266,7 +273,7 @@
+ 
+                     self.item_index += 1;
+                     self.glyph_start = 0;
+-                    if inline_box.kind == InlineBoxKind::InFlow {
++                    if inline_box.kind.advances() {
+                         self.offset += inline_box.width;
+                     }
+                     return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {
+--- a/src/layout/line_break.rs
++++ b/src/layout/line_break.rs
+@@ -167,6 +167,9 @@
+     prev_boundary: Option<PrevBoundaryState>,
+     /// Saved breaker state for the last emergency line-breaking opportunity
+     emergency_boundary: Option<PrevBoundaryState>,
++    // Snapshot before consecutive opening decoration edges. The text's next
++    // real break opportunity belongs here, never between the edge and its text.
++    inline_start: Option<PrevBoundaryState>,
+ }
+ 
+ impl Default for BreakerState {
+@@ -185,6 +188,7 @@
+             line: LineState::default(),
+             prev_boundary: None,
+             emergency_boundary: None,
++            inline_start: None,
+         }
+     }
+ }
+@@ -192,6 +196,7 @@
+ impl BreakerState {
+     /// Add the cluster(s) currently being evaluated to the current line
+     pub fn append_cluster_to_line(&mut self, next_x: f32, clusters_height: f32) {
++        self.inline_start = None;
+         self.line.items.end = self.item_idx + 1;
+         self.line.clusters.end = self.cluster_idx + 1;
+         self.cluster_idx += 1;
+@@ -218,19 +223,31 @@
+         });
+     }
+ 
+-    /// Store the current iteration state so that we can revert to it if we later want to take
+-    /// an *emergency* line breaking opportunity at this point.
+-    fn mark_emergency_break_opportunity(&mut self) {
+-        self.emergency_boundary = Some(PrevBoundaryState {
+-            item_idx: self.item_idx,
+-            run_idx: self.run_idx,
+-            cluster_idx: self.cluster_idx,
+-            state: self.line.clone(),
+-        });
++    fn mark_text_boundary(&mut self, emergency: bool) {
++        let boundary = self
++            .inline_start
++            .clone()
++            .unwrap_or_else(|| PrevBoundaryState {
++                item_idx: self.item_idx,
++                run_idx: self.run_idx,
++                cluster_idx: self.cluster_idx,
++                state: self.line.clone(),
++            });
++        // A line containing only opening edges must not create an empty line
++        // before its overflowing first word.
++        if boundary.state.x == 0.0 {
++            return;
++        }
++        if emergency {
++            self.emergency_boundary = Some(boundary);
++        } else {
++            self.prev_boundary = Some(boundary);
++        }
+     }
+ 
+     /// Revert boundary state to prev state
+     fn reset_to(&mut self, prev_state: PrevBoundaryState) {
++        self.inline_start = None;
+         self.item_idx = prev_state.item_idx;
+         self.run_idx = prev_state.run_idx;
+         self.cluster_idx = prev_state.cluster_idx;
+@@ -350,6 +367,7 @@
+         self.state.line.running_line_height = 0.;
+         self.state.prev_boundary = None;
+         self.state.emergency_boundary = None;
++        self.state.inline_start = None;
+ 
+         self.finish_line(self.lines.lines.len() - 1, line_height);
+ 
+@@ -493,9 +511,53 @@
+             match item.kind {
+                 LayoutItemKind::InlineBox => {
+                     let inline_box = &self.layout.data.inline_boxes[item.index];
++
++                    if matches!(
++                        inline_box.kind,
++                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
++                    ) {
++                        if inline_box.kind == InlineBoxKind::InlineStart {
++                            self.state
++                                .inline_start
++                                .get_or_insert_with(|| PrevBoundaryState {
++                                    item_idx: self.state.item_idx,
++                                    run_idx: self.state.run_idx,
++                                    cluster_idx: self.state.cluster_idx,
++                                    state: self.state.line.clone(),
++                                });
++                        } else {
++                            self.state.inline_start = None;
++                        }
++                        let next_x = self.state.line.x + inline_box.width;
++                        // Opening edges wait for their text before deciding to
++                        // wrap. Closing edges participate in the current word.
++                        if inline_box.kind == InlineBoxKind::InlineEnd
++                            && next_x > max_advance
++                            && self.state.line.text_wrap_mode == TextWrapMode::Wrap
++                        {
++                            if let Some(boundary) = self
++                                .state
++                                .prev_boundary
++                                .take()
++                                .or_else(|| self.state.emergency_boundary.take())
++                            {
++                                self.state.reset_to(boundary);
++                                return self.start_new_line(
++                                    BreakReason::Regular,
++                                    max_advance,
++                                    line_indent,
++                                );
++                            }
++                        }
++                        self.state.append_inline_box_to_line(next_x, 0.0);
++                        continue;
++                    }
+ 
+                     let (width_contribution, height_contribution) = match inline_box.kind {
+                         InlineBoxKind::InFlow => (inline_box.width, inline_box.height),
++                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd => {
++                            (inline_box.width, 0.0)
++                        }
+                         InlineBoxKind::OutOfFlow => (0.0, 0.0),
+                         // If the box is a `CustomOutOfFlow` box then we yield control flow back to the caller.
+                         // It is then the caller's responsibility to handle placement of the box.
+@@ -577,7 +639,7 @@
+                             // We also don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
+                             // line breaks. We should accept the overflowing fragment in that scenario.
+                             if !is_ligature_continuation && self.state.line.x != 0.0 {
+-                                self.state.mark_line_break_opportunity();
++                                self.state.mark_text_boundary(false);
+                                 // break_opportunity = true;
+                             }
+                         } else if is_newline {
+@@ -598,7 +660,7 @@
+                         // If we're at the start of the line, this particular cluster will never fit, so it's not a valid emergency break opportunity.
+                         && self.state.line.x != 0.0
+                         {
+-                            self.state.mark_emergency_break_opportunity();
++                            self.state.mark_text_boundary(true);
+                         }
+ 
+                         // If current cluster is the start of a ligature, then advance state to include
+@@ -617,13 +679,28 @@
+ 
+                         // Compute the x position of the content being currently processed
+                         let next_x = self.state.line.x + advance;
++                        let mut closing_width = 0.0;
++                        let mut closing_edges = false;
++                        if self.state.cluster_idx + 1 == cluster_end {
++                            for item in &self.layout.data.items[self.state.item_idx + 1..] {
++                                if item.kind != LayoutItemKind::InlineBox {
++                                    break;
++                                }
++                                let edge = &self.layout.data.inline_boxes[item.index];
++                                if edge.kind != InlineBoxKind::InlineEnd {
++                                    break;
++                                }
++                                closing_edges = true;
++                                closing_width += edge.width;
++                            }
++                        }
+ 
+                         // println!("Cluster {} next_x: {}", self.state.cluster_idx, next_x);
+ 
+                         // If the content fits (the x position does NOT exceed max_advance)
+                         //
+                         // We simply append the cluster(s) to the current line
+-                        if next_x <= max_advance {
++                        if next_x + closing_width <= max_advance {
+                             if max_height_exceeded {
+                                 return self.max_height_break_data(line_height);
+                             }
+@@ -641,7 +718,7 @@
+                             // Case: cluster is a space character (and wrapping is enabled)
+                             //
+                             // We hang any overflowing whitespace and then line-break.
+-                            if is_space && text_wrap_mode == TextWrapMode::Wrap {
++                            if is_space && !closing_edges && text_wrap_mode == TextWrapMode::Wrap {
+                                 if max_height_exceeded {
+                                     return self.max_height_break_data(line_height);
+                                 }
+@@ -734,6 +811,14 @@
+                 LayoutItemKind::InlineBox => {
+                     let inline_box = &self.layout.data.inline_boxes[item.index];
+ 
++                    if matches!(
++                        inline_box.kind,
++                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
++                    ) {
++                        let next_x = self.state.line.x + inline_box.width;
++                        self.state.append_inline_box_to_line(next_x, 0.0);
++                        continue;
++                    }
+                     if inline_box.kind != InlineBoxKind::InFlow {
+                         self.state.append_inline_box_to_line(self.state.line.x, 0.0);
+                         continue;
+@@ -924,6 +1009,15 @@
+             match line_item.kind {
+                 LayoutItemKind::InlineBox => {
+                     let item = &self.layout.data.inline_boxes[line_item.index];
++                    if matches!(
++                        item.kind,
++                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
++                    ) {
++                        line.text_range.start = line.text_range.start.min(item.index);
++                        line.text_range.end = line.text_range.end.max(item.index);
++                        have_metrics = true;
++                        needs_reorder |= line_item.bidi_level != 0;
++                    }
+ 
+                     // Advance is already computed in "commit line" for items
+                     if item.kind == InlineBoxKind::InFlow {
+--- a/src/layout/mod.rs
++++ b/src/layout/mod.rs
+@@ -8,6 +8,7 @@
+ mod alignment;
+ mod cluster;
+ mod glyph;
++mod inline_edges;
+ mod line;
+ mod line_break;
+ mod run;
+@@ -28,14 +29,15 @@
+ pub use data::BreakReason;
+ pub use glyph::Glyph;
+ pub use layout::Layout;
+-pub use line::{GlyphRun, Line, LineMetrics, PositionedInlineBox, PositionedLayoutItem};
++pub use line::{
++    GlyphRun, Line, LineItem, LineMetrics, PositionedInlineBox, PositionedLayoutItem,
++};
+ pub use line_break::{
+     BoxBreakData, BreakLines, BreakerState, LineBreakData, MaxHeightBreakData, YieldData,
+ };
+ pub use run::{Run, RunMetrics};
+ 
+ pub(crate) use data::{LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData};
+-pub(crate) use line::LineItem;
+ 
+ // TODO - Deprecation not yet active to ease internal code migration.
+ #[deprecated(since = "TBD", note = "Access from the `editing` module instead.")]
 --- a/src/shape/mod.rs
 +++ b/src/shape/mod.rs
 @@ -18,7 +18,7 @@
@@ -385,7 +811,7 @@
  use fontique::Language;
  use icu_properties::props::Script;
  
-@@ -27,6 +27,13 @@
+@@ -27,18 +27,55 @@
  mod cache;
  
  pub(crate) struct ShapeContext {
@@ -399,18 +825,34 @@
      shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
      shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
      shape_plan_cache: LruCache<cache::ShapePlanId, harfrust::ShapePlan>,
-@@ -35,10 +42,25 @@
+     unicode_buffer: Option<harfrust::UnicodeBuffer>,
+     features: Vec<harfrust::Feature>,
      char_cluster: CharCluster,
- }
- 
++}
++
 +impl ShapeContext {
++    pub(crate) fn inline_box_work(count: usize) -> usize {
++        count.saturating_mul(if count > 1 {
++            count.ilog2() as usize + 2
++        } else {
++            1
++        })
++    }
++    pub(crate) fn admits_inline_boxes(&self, count: usize) -> bool {
++        let work = Self::inline_box_work(count);
++        self.limits
++            .is_none_or(|limits| count <= limits.0 && work <= limits.2 as usize)
++            && self
++                .operation_ceiling
++                .is_none_or(|ceiling| work <= ceiling as usize)
++    }
 +    pub(crate) fn buffer_capacities(&self) -> (usize, usize) {
 +        self.unicode_buffer
 +            .as_ref()
 +            .map_or((0, 0), |buffer| buffer.buffer_capacities())
 +    }
-+}
-+
+ }
+ 
  impl Default for ShapeContext {
      fn default() -> Self {
          const MAX_ENTRIES: usize = 16;
@@ -425,7 +867,7 @@
              shape_data_cache: LruCache::new(MAX_ENTRIES),
              shape_instance_cache: LruCache::new(MAX_ENTRIES),
              shape_plan_cache: LruCache::new(MAX_ENTRIES),
-@@ -74,6 +96,14 @@
+@@ -74,6 +111,24 @@
      layout: &mut Layout<B>,
      analysis_data_sources: &AnalysisDataSources,
  ) {
@@ -437,10 +879,20 @@
 +        .min(scx.operation_ceiling.unwrap_or(u32::MAX));
 +    scx.ops_used = 0;
 +    scx.peak_slots = (0, 0);
++    let box_work = ShapeContext::inline_box_work(inline_boxes.len());
++    if !scx.admits_inline_boxes(inline_boxes.len()) {
++        scx.failed = true;
++        return;
++    }
++    scx.glyphs_remaining = scx.glyphs_remaining.saturating_sub(inline_boxes.len());
++    scx.ops_remaining = scx
++        .ops_remaining
++        .saturating_sub(box_work.min(u32::MAX as usize) as u32);
++    scx.ops_used = box_work as u64;
      // If we have both empty text and no inline boxes, shape with a fake space
      // to generate metrics that can be used to size a cursor.
      if text.is_empty() && inline_boxes.is_empty() {
-@@ -177,6 +207,9 @@
+@@ -177,6 +232,9 @@
                  layout,
                  analysis_data_sources,
              );
@@ -450,7 +902,7 @@
              item.size = style.font_size;
              item.level = level;
              item.script = script;
-@@ -237,7 +270,7 @@
+@@ -237,7 +295,7 @@
  
      let mut force_normalize = false;
      let mut is_emoji_or_pictograph = false;
@@ -459,7 +911,7 @@
      let start = *code_unit_offset_in_string as u32;
  
      for ((_, ch), (info, style_index)) in segment_text.char_indices().zip(item_infos_iter.by_ref())
-@@ -315,6 +348,9 @@
+@@ -315,6 +373,9 @@
      let mut code_unit_offset_in_string = text_range.start;
      let char_cluster = &mut scx.char_cluster;
  
@@ -469,20 +921,19 @@
      // Build an iterator of boundaries and consume the first segment to seed the loop
      let mut boundaries_iter = grapheme_cluster_boundaries.skip(1);
      let mut last_boundary = 0_usize;
-@@ -439,10 +475,18 @@
+@@ -439,10 +500,18 @@
  
          // Prepare harfrust buffer
          let mut buffer = mem::take(&mut scx.unicode_buffer).unwrap();
 -        buffer.clear();
--
--        // Use the entire segment text including newlines
--        buffer.reserve(segment_text.len());
 +        if let Some(limits) = scx.limits {
 +            buffer.clear_with_buffer_limit(limits.1);
 +        } else {
 +            buffer.clear();
 +        }
-+
+ 
+-        // Use the entire segment text including newlines
+-        buffer.reserve(segment_text.len());
 +        // Reserve glyph slots for source scalars, not UTF-8 storage bytes.
 +        if !buffer.reserve(segment_text.chars().count()) {
 +            scx.failed = true;
@@ -492,7 +943,7 @@
          for (i, ch) in segment_text.chars().enumerate() {
              // Ensure that each cluster's index matches the index into `infos`. This is required
              // for efficient cluster lookup within `data.rs`.
-@@ -462,13 +506,26 @@
+@@ -462,13 +531,26 @@
              buffer.set_language(lang);
          }
  
@@ -526,7 +977,7 @@
  
          // Extract relevant CharInfo slice for this segment
          let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
-@@ -494,8 +551,17 @@
+@@ -494,8 +576,17 @@
              harf_shaper.coords(),
          );
  

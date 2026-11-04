@@ -43,6 +43,21 @@ pub(crate) struct ShapeContext {
 }
 
 impl ShapeContext {
+    pub(crate) fn inline_box_work(count: usize) -> usize {
+        count.saturating_mul(if count > 1 {
+            count.ilog2() as usize + 2
+        } else {
+            1
+        })
+    }
+    pub(crate) fn admits_inline_boxes(&self, count: usize) -> bool {
+        let work = Self::inline_box_work(count);
+        self.limits
+            .is_none_or(|limits| count <= limits.0 && work <= limits.2 as usize)
+            && self
+                .operation_ceiling
+                .is_none_or(|ceiling| work <= ceiling as usize)
+    }
     pub(crate) fn buffer_capacities(&self) -> (usize, usize) {
         self.unicode_buffer
             .as_ref()
@@ -104,6 +119,16 @@ pub(crate) fn shape_text<'a, B: Brush>(
         .min(scx.operation_ceiling.unwrap_or(u32::MAX));
     scx.ops_used = 0;
     scx.peak_slots = (0, 0);
+    let box_work = ShapeContext::inline_box_work(inline_boxes.len());
+    if !scx.admits_inline_boxes(inline_boxes.len()) {
+        scx.failed = true;
+        return;
+    }
+    scx.glyphs_remaining = scx.glyphs_remaining.saturating_sub(inline_boxes.len());
+    scx.ops_remaining = scx
+        .ops_remaining
+        .saturating_sub(box_work.min(u32::MAX as usize) as u32);
+    scx.ops_used = box_work as u64;
     // If we have both empty text and no inline boxes, shape with a fake space
     // to generate metrics that can be used to size a cursor.
     if text.is_empty() && inline_boxes.is_empty() {

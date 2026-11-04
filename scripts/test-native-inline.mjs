@@ -25,10 +25,17 @@ await withBrowserPage('about:blank',async call=>{
       const box=r=>({x:r.x,y:r.y,width:r.width,height:r.height}),boxes={};
       for(const [id,e]of nodes)if(e.nodeType===1&&id!==1&&e.tagName!=='BR')boxes[id]=box(e.getBoundingClientRect());
       const rects=[...nodes.values()].filter(e=>e.nodeType===1).flatMap(e=>[...e.getClientRects()]);
+      // Chrome's footprint also differs in the one-pixel band just above a line
+      // box, where an earlier line's decorated fragment overlaps it.
+      // Approximate each line box by its text fragments' common vertical extent
+      // and their horizontal hull.
+      const lines=new Map();
+      for(const e of nodes.values())if(e.nodeType===3){const r=document.createRange();r.selectNodeContents(e);for(const t of r.getClientRects()){const k=t.top+':'+t.bottom,l=lines.get(k);lines.set(k,l?{top:t.top,bottom:t.bottom,left:Math.min(l.left,t.left),right:Math.max(l.right,t.right)}:{top:t.top,bottom:t.bottom,left:t.left,right:t.right});}}
       const hits=${JSON.stringify(fixture.hits)}.map(p=>{const x=p.x+.25,y=p.y+.25;
         // Chrome tests a physical pixel footprint at fractional coordinates.
         // Compare interiors here; native tests separately check exact edges.
-        const edge=rects.some(r=>x>=r.left-1&&x<=r.right+1&&y>=r.top-1&&y<=r.bottom+1&&Math.min(Math.abs(x-r.left),Math.abs(x-r.right),Math.abs(y-r.top),Math.abs(y-r.bottom))<=1);
+        const edge=rects.some(r=>x>=r.left-1&&x<=r.right+1&&y>=r.top-1&&y<=r.bottom+1&&Math.min(Math.abs(x-r.left),Math.abs(x-r.right),Math.abs(y-r.top),Math.abs(y-r.bottom))<=1)
+          ||[...lines.values()].some(l=>x>=l.left-1&&x<=l.right+1&&y>=l.top-1&&y<l.top);
         return {x:p.x,y:p.y,id:Number(document.elementFromPoint(x,y)?.dataset.node)||null,edge};});
       return {boxes,hits};
     })()`);

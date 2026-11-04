@@ -98,6 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let output = serde_json::to_vec(&serde_json::json!({
         "family":"Varta Inline Fixture",
+        "viewport":{"width":WIDTH,"height":HEIGHT},
         "font":include_bytes!("../tests/fixtures/inline.ttf").as_slice(),"cases":cases
     }))?;
     use std::io::Write;

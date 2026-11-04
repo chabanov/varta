@@ -167,6 +167,9 @@ pub struct BreakerState {
     prev_boundary: Option<PrevBoundaryState>,
     /// Saved breaker state for the last emergency line-breaking opportunity
     emergency_boundary: Option<PrevBoundaryState>,
+    // Snapshot before consecutive opening decoration edges. The text's next
+    // real break opportunity belongs here, never between the edge and its text.
+    inline_start: Option<PrevBoundaryState>,
 }
 
 impl Default for BreakerState {
@@ -185,6 +188,7 @@ impl Default for BreakerState {
             line: LineState::default(),
             prev_boundary: None,
             emergency_boundary: None,
+            inline_start: None,
         }
     }
 }
@@ -192,6 +196,7 @@ impl Default for BreakerState {
 impl BreakerState {
     /// Add the cluster(s) currently being evaluated to the current line
     pub fn append_cluster_to_line(&mut self, next_x: f32, clusters_height: f32) {
+        self.inline_start = None;
         self.line.items.end = self.item_idx + 1;
         self.line.clusters.end = self.cluster_idx + 1;
         self.cluster_idx += 1;
@@ -218,19 +223,31 @@ impl BreakerState {
         });
     }
 
-    /// Store the current iteration state so that we can revert to it if we later want to take
-    /// an *emergency* line breaking opportunity at this point.
-    fn mark_emergency_break_opportunity(&mut self) {
-        self.emergency_boundary = Some(PrevBoundaryState {
-            item_idx: self.item_idx,
-            run_idx: self.run_idx,
-            cluster_idx: self.cluster_idx,
-            state: self.line.clone(),
-        });
+    fn mark_text_boundary(&mut self, emergency: bool) {
+        let boundary = self
+            .inline_start
+            .clone()
+            .unwrap_or_else(|| PrevBoundaryState {
+                item_idx: self.item_idx,
+                run_idx: self.run_idx,
+                cluster_idx: self.cluster_idx,
+                state: self.line.clone(),
+            });
+        // A line containing only opening edges must not create an empty line
+        // before its overflowing first word.
+        if boundary.state.x == 0.0 {
+            return;
+        }
+        if emergency {
+            self.emergency_boundary = Some(boundary);
+        } else {
+            self.prev_boundary = Some(boundary);
+        }
     }
 
     /// Revert boundary state to prev state
     fn reset_to(&mut self, prev_state: PrevBoundaryState) {
+        self.inline_start = None;
         self.item_idx = prev_state.item_idx;
         self.run_idx = prev_state.run_idx;
         self.cluster_idx = prev_state.cluster_idx;
@@ -350,6 +367,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         self.state.line.running_line_height = 0.;
         self.state.prev_boundary = None;
         self.state.emergency_boundary = None;
+        self.state.inline_start = None;
 
         self.finish_line(self.lines.lines.len() - 1, line_height);
 
@@ -494,8 +512,52 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 LayoutItemKind::InlineBox => {
                     let inline_box = &self.layout.data.inline_boxes[item.index];
 
+                    if matches!(
+                        inline_box.kind,
+                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
+                    ) {
+                        if inline_box.kind == InlineBoxKind::InlineStart {
+                            self.state
+                                .inline_start
+                                .get_or_insert_with(|| PrevBoundaryState {
+                                    item_idx: self.state.item_idx,
+                                    run_idx: self.state.run_idx,
+                                    cluster_idx: self.state.cluster_idx,
+                                    state: self.state.line.clone(),
+                                });
+                        } else {
+                            self.state.inline_start = None;
+                        }
+                        let next_x = self.state.line.x + inline_box.width;
+                        // Opening edges wait for their text before deciding to
+                        // wrap. Closing edges participate in the current word.
+                        if inline_box.kind == InlineBoxKind::InlineEnd
+                            && next_x > max_advance
+                            && self.state.line.text_wrap_mode == TextWrapMode::Wrap
+                        {
+                            if let Some(boundary) = self
+                                .state
+                                .prev_boundary
+                                .take()
+                                .or_else(|| self.state.emergency_boundary.take())
+                            {
+                                self.state.reset_to(boundary);
+                                return self.start_new_line(
+                                    BreakReason::Regular,
+                                    max_advance,
+                                    line_indent,
+                                );
+                            }
+                        }
+                        self.state.append_inline_box_to_line(next_x, 0.0);
+                        continue;
+                    }
+
                     let (width_contribution, height_contribution) = match inline_box.kind {
                         InlineBoxKind::InFlow => (inline_box.width, inline_box.height),
+                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd => {
+                            (inline_box.width, 0.0)
+                        }
                         InlineBoxKind::OutOfFlow => (0.0, 0.0),
                         // If the box is a `CustomOutOfFlow` box then we yield control flow back to the caller.
                         // It is then the caller's responsibility to handle placement of the box.
@@ -577,7 +639,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // We also don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                             // line breaks. We should accept the overflowing fragment in that scenario.
                             if !is_ligature_continuation && self.state.line.x != 0.0 {
-                                self.state.mark_line_break_opportunity();
+                                self.state.mark_text_boundary(false);
                                 // break_opportunity = true;
                             }
                         } else if is_newline {
@@ -598,7 +660,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // If we're at the start of the line, this particular cluster will never fit, so it's not a valid emergency break opportunity.
                         && self.state.line.x != 0.0
                         {
-                            self.state.mark_emergency_break_opportunity();
+                            self.state.mark_text_boundary(true);
                         }
 
                         // If current cluster is the start of a ligature, then advance state to include
@@ -617,13 +679,28 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                         // Compute the x position of the content being currently processed
                         let next_x = self.state.line.x + advance;
+                        let mut closing_width = 0.0;
+                        let mut closing_edges = false;
+                        if self.state.cluster_idx + 1 == cluster_end {
+                            for item in &self.layout.data.items[self.state.item_idx + 1..] {
+                                if item.kind != LayoutItemKind::InlineBox {
+                                    break;
+                                }
+                                let edge = &self.layout.data.inline_boxes[item.index];
+                                if edge.kind != InlineBoxKind::InlineEnd {
+                                    break;
+                                }
+                                closing_edges = true;
+                                closing_width += edge.width;
+                            }
+                        }
 
                         // println!("Cluster {} next_x: {}", self.state.cluster_idx, next_x);
 
                         // If the content fits (the x position does NOT exceed max_advance)
                         //
                         // We simply append the cluster(s) to the current line
-                        if next_x <= max_advance {
+                        if next_x + closing_width <= max_advance {
                             if max_height_exceeded {
                                 return self.max_height_break_data(line_height);
                             }
@@ -641,7 +718,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // Case: cluster is a space character (and wrapping is enabled)
                             //
                             // We hang any overflowing whitespace and then line-break.
-                            if is_space && text_wrap_mode == TextWrapMode::Wrap {
+                            if is_space && !closing_edges && text_wrap_mode == TextWrapMode::Wrap {
                                 if max_height_exceeded {
                                     return self.max_height_break_data(line_height);
                                 }
@@ -734,6 +811,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 LayoutItemKind::InlineBox => {
                     let inline_box = &self.layout.data.inline_boxes[item.index];
 
+                    if matches!(
+                        inline_box.kind,
+                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
+                    ) {
+                        let next_x = self.state.line.x + inline_box.width;
+                        self.state.append_inline_box_to_line(next_x, 0.0);
+                        continue;
+                    }
                     if inline_box.kind != InlineBoxKind::InFlow {
                         self.state.append_inline_box_to_line(self.state.line.x, 0.0);
                         continue;
@@ -924,6 +1009,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             match line_item.kind {
                 LayoutItemKind::InlineBox => {
                     let item = &self.layout.data.inline_boxes[line_item.index];
+                    if matches!(
+                        item.kind,
+                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
+                    ) {
+                        line.text_range.start = line.text_range.start.min(item.index);
+                        line.text_range.end = line.text_range.end.max(item.index);
+                        have_metrics = true;
+                        needs_reorder |= line_item.bidi_level != 0;
+                    }
 
                     // Advance is already computed in "commit line" for items
                     if item.kind == InlineBoxKind::InFlow {

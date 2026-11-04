@@ -11769,7 +11769,8 @@ charges inline collection, copied ancestor paths, span styles, line/cluster/glyp
 projection and fragment assignment; geometry and layout-command nesting cannot
 refill it. One geometry request admits at most 65536 fragments. These counters
 are work bounds, not proof of total CPU time/RSS, and no prior ceiling is raised.
-Horizontal inline padding/margins, nonzero inline borders, mixed block/inline contexts,
+Distinct inline border side colors, non-solid border styles, horizontal
+percentages, decoration edges in bidirectional text, mixed block/inline contexts,
 mixed whitespace-preservation modes, full inline formatting, platform font
 selection and general typography acceptance remain open; unsupported styles
 fail explicitly.
@@ -11815,8 +11816,8 @@ These records consume the existing aggregate fragment bound. A conservative
 per-fragment contour-work reservation shares the existing text-paint allowance;
 it is charged before generating the path, not renewed for each inline element.
 Zero-alpha backgrounds and descendants of zero-opacity groups skip pixel contour
-work while preserving styles and hit geometry. Horizontal inline spacing/borders
-retain their separate open implementation work; inline opacity's implementation
+work while preserving styles and hit geometry. Inline borders are described
+below; inline opacity's implementation
 and remaining raster interoperability are described below.
 
 Solid inline outlines surround the union of the element's border-box fragments.
@@ -11837,7 +11838,7 @@ Outlines paint after descendants in tree postorder, including inline descendants
 and enclosing block outlines, with their original clips and opacity isolation.
 Their geometry consumes the existing shared text-paint allowance and captured
 commands share the existing frame limit. No texture, retained-cache or GPU-layer
-allowance is added. Inline borders and horizontal spacing remain open, as do
+allowance is added. Distinct inline border side colors remain open, as do
 general positioned painting and real-font/platform interoperability.
 
 Non-replaced inline top/bottom padding expands each own fragment's background,
@@ -11847,11 +11848,70 @@ union excludes that padding. Pixel/rem lengths and percentages are admitted;
 both percentage sides resolve against the containing block's content width,
 including after wrapping. Top/bottom margins have no effect on line layout;
 horizontal `auto` margins resolve to zero. Cascade expansion, longhand overrides
-and removal use the same geometry declaration store as block layout. Nonzero
-horizontal spacing still fails explicitly. Resolved padding and expanded height
-retain the existing native length limit; fragment/work/cache limits are unchanged.
+and removal use the same geometry declaration store as block layout. Resolved
+padding and expanded height retain the existing native length limit;
+fragment/work/cache limits are unchanged.
 See [CSS2 inline height](https://www.w3.org/TR/CSS2/visudet.html#inline-non-replaced)
 and [padding percentages](https://www.w3.org/TR/CSS2/box.html#padding-properties).
+
+Non-replaced inline left/right padding, solid borders and margins (signed px/rem
+margins; `auto` is zero) become owned decoration edges in the shaped text: an
+opening edge carries margin+border+padding of the left side at the box's first
+source position, a closing edge those of the right side after its last. Source text and byte offsets are
+unchanged. A side whose margin, border and padding are all zero adds no edge, so
+shaping, ligatures and joining continue across it; a nonzero side separates
+shaping as [CSS Text boundary shaping](https://www.w3.org/TR/css-text-3/#boundary-shaping)
+requires. Edges introduce no break opportunity: an opening edge moves to the
+preceding text break and wraps with the following word, a closing edge stays
+with the preceding word and is fitted together with its last cluster, and
+intrinsic min/max widths use the same rule. A collapsible space pending at a
+boundary keeps its source owner: an edge recorded after it follows the space
+only if the space is emitted, and a forced break or the end of the flow drops
+the space without moving the edge past it. Trailing spaces removed at a line end
+do not separate a closing edge from its word.
+
+Slice decoration applies: the opening edge belongs to the box's first fragment
+and the closing edge to its last; fragments at line breaks receive none. The
+box's own fragment covers its border and padding, while margins extend only
+enclosing fragments. A negative margin moves later content and shortens enclosing
+fragments; no fragment width becomes negative. Backgrounds, slice radii,
+outlines and pointer targets use these fragments; underlines remain under text.
+An empty box with nonzero edges keeps its padding box and line contribution.
+The content box of an unbroken box excludes its horizontal border and padding; a
+broken box's union has no single content edge and keeps only the vertical inset.
+Edges count against the existing fragment/inline-work, glyph-slot and shaping
+operation ceilings and are part of the shape-cache key; no ceiling is raised.
+Nonzero horizontal percentages are refused because intrinsic sizing has no
+definite containing width; `<br>` with nonzero horizontal spacing and edges in
+a flow containing right-to-left runs are refused rather than reordered.
+
+Top/bottom inline borders paint outside the line like vertical padding and add
+to the fragment's vertical extent without changing line metrics; `<br>` with a
+border is refused. Each fragment paints its border right after its own
+background, before content. With `slice` decoration the border ring belongs to
+the continuous visual-order strip, like a rounded background: the first fragment
+shows the left side, the last the right side, every fragment its top and bottom,
+and corner curves appear only at the strip's ends. Outer and inner (padding-edge)
+contours stay f64 until clipped to the local fragment, then fill even-odd. Only
+solid styles are admitted, and all visible sides must share one color; a second
+visible color is refused at paint time rather than approximated. Each ring
+reserves twice the slice contour work from the shared text-paint allowance.
+Border widths follow block boxes: logical CSS pixels, not snapped to device
+pixels (CSS Values 4 border-width snapping remains open for every box).
+
+A broken inline box's fragment resolves its radii with the corners of its absent
+edges zeroed before side-overlap normalization: the first fragment keeps only
+left corners, the last only right corners, middle fragments none. Absent corners
+therefore no longer shrink present ones on a narrow fragment, matching Blink's
+per-fragment rounded border. Middle fragments paint plain rectangles.
+
+Inline pointer hits follow browser line-box order. For each line after the
+first, the horizontal gaps between that line's visible fragments, over the line
+box's vertical extent, become block hit regions placed after every earlier
+line's targets and before the line's own. A point in a later line's margin gap
+therefore hits the block even where an earlier line's decorated fragment
+overlaps it, while a point inside a later fragment's rectangle (even outside its
+curve) or beyond the line's contents still reaches earlier fragments.
 
 Native `rem` resolution uses `Environment::root_font_size`, a host-supplied
 document-root reference in CSS pixels, initially the subset's initial font size.

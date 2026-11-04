@@ -1276,8 +1276,11 @@ fn paint_shaped_with(
         }
         let mut line_glyph = 0usize;
         for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                return Err(PaintError::Unsupported(id));
+            let glyph_run = match item {
+                PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,
+                // Decoration edges only advance; their boxes paint separately.
+                PositionedLayoutItem::InlineBox(edge) if decoration_edge(edge.kind) => continue,
+                PositionedLayoutItem::InlineBox(_) => return Err(PaintError::Unsupported(id)),
             };
             let base_color = color(glyph_run.style().brush)?;
             paint.set_color(base_color);
@@ -2610,6 +2613,14 @@ fn rasterize_inner_scoped(
             scroll_layout: geometry,
         },
     })
+}
+
+/// Inline decoration edges contribute advance but no glyphs.
+pub(crate) fn decoration_edge(kind: parley::InlineBoxKind) -> bool {
+    matches!(
+        kind,
+        parley::InlineBoxKind::InlineStart | parley::InlineBoxKind::InlineEnd
+    )
 }
 
 #[cfg(test)]

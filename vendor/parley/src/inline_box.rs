@@ -26,6 +26,12 @@ pub enum InlineBoxKind {
     ///
     /// They correspond to `display: inline-block` boxes in CSS.
     InFlow,
+    /// Opening decoration edge of a non-replaced inline. Takes signed width
+    /// without introducing a break; an existing text boundary moves before it.
+    InlineStart,
+    /// Closing decoration edge. Stays with the preceding text, introduces no
+    /// break and contributes no vertical metrics. Width may include signed margin.
+    InlineEnd,
     /// `OutOfFlow` boxes are assigned a position as if they were a zero-sized inline box, but
     /// do not take up space in the layout.
     ///
@@ -37,4 +43,10 @@ pub enum InlineBoxKind {
     ///
     /// They can be used to implement advanced layout modes such as CSS's `float`
     CustomOutOfFlow,
+}
+
+impl InlineBoxKind {
+    pub(crate) fn advances(self) -> bool {
+        matches!(self, Self::InFlow | Self::InlineStart | Self::InlineEnd)
+    }
 }

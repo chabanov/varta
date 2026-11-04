@@ -31,6 +31,18 @@ Original crates.io package SHA-256 (from the preceding lockfile):
 - `src/builder.rs` discards incomplete layout contents. Shaping reserves scalar
   slots, applies the HarfRust request limits, checks completion before copying
   glyphs, accounts across runs, and drops refused/oversized reusable buffers.
+  It also refuses an oversized inline-box program before sorting or shaping.
+- Inline decoration edges (`src/inline_box.rs`, `src/layout/line_break.rs`,
+  `src/layout/inline_edges.rs`, `src/layout/data.rs`, `src/layout/line.rs`,
+  `src/shape/mod.rs`): `InlineBoxKind::InlineStart`/`InlineEnd` carry the signed
+  horizontal margin+border+padding of a non-replaced inline box. Unlike `InFlow` boxes
+  they add no break opportunity: an opening edge moves the preceding text
+  boundary before it and a closing edge stays with the preceding word, fitting
+  together with its last cluster. Content widths use the same word rule. Their
+  count and sort/visit work share the existing output/operation ceilings.
+- `src/layout/line.rs`/`src/layout/mod.rs` expose `Line::items_unpositioned`
+  and `LineItem`, visual-order runs and inline boxes without the glyph-run
+  splitting of `Line::items`, for Varta's fragment projection.
 
 The original offset failure caused invalid UTF-8 slice panics. Large combining
 clusters also lost glyphs at the old inline sentinel, overflowed a character
@@ -44,14 +56,18 @@ caches, parser/analysis CPU, allocator overlap or RSS.
 The normalized Cargo manifest, upstream source, README and licenses were copied
 from the release. Registry bookkeeping and its independent lockfile were omitted.
 `VARTA-PATCH.md` and `VARTA-PATCH.diff` are Varta-specific documentation. Only the
-six listed source files differ; package archive and unchanged-file verification
-are recorded in the local verification log. The workspace lockfile retains all
+eleven source files named in the diff differ (one, `src/layout/inline_edges.rs`,
+is new); applying the diff to the release `src/` reproduces the vendored tree
+exactly. Package archive verification is recorded in the local verification log. The workspace lockfile retains all
 existing dependency versions and selects this local patch only for Parley.
 
 Varta's regressions cover maximum Unicode/password field display, source hits,
 IME/textarea/placeholder behavior, public byte-limit isolation, exact glyph
 counts around 255/256, long-cluster fallback coverage and the existing 65536-glyph
-paint boundary with refusal and recovery. Original synthetic fonts and their
+paint boundary with refusal and recovery. Decoration-edge regressions cover
+unbreakable words across edges, opening/closing break placement, negative
+margins, empty boxes, ligature/joining splits, memo invalidation and refusal of
+oversized edge programs; `portable_edge_probe` compares the result with Chrome. Original synthetic fonts and their
 regeneration script live in the repository; no third-party font is copied.
 
 Reassess/remove this patch when an upstream dependency update supplies equivalent

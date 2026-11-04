@@ -270,6 +270,7 @@ fn nested_inline_contexts_share_the_contour_allowance_and_zero_keeps_targets() {
             .insert(parent, id, 0)
             .set_style(id, P::BackgroundColor, "#ff0000")
             .set_style(id, P::BorderRadius, "50%")
+            .set_style(id, P::Border, "1px solid #0000ff")
             .set_style(id, P::Opacity, "0.99");
         parent = id;
     }

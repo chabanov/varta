@@ -185,6 +185,19 @@ pub(super) fn resolve_radii_in(
     limit: [f64; 2],
     units: Units,
 ) -> Option<[[f64; 2]; CORNERS]> {
+    resolve_slice_radii(raw, size, limit, units, [true; 2])
+}
+/// Radii of one `slice` fragment of a broken inline box. Corners on an
+/// excluded left/right edge are zeroed before side-overlap normalization, as
+/// Blink does when it builds a fragment's rounded border, so absent corners do
+/// not shrink the present ones.
+pub(super) fn resolve_slice_radii(
+    raw: &str,
+    size: [f64; 2],
+    limit: [f64; 2],
+    units: Units,
+    [left, right]: [bool; 2],
+) -> Option<[[f64; 2]; CORNERS]> {
     if size
         .into_iter()
         .chain(limit)
@@ -232,7 +245,18 @@ pub(super) fn resolve_radii_in(
     if maximum == 0.0 {
         return Some([[0.0; 2]; CORNERS]);
     }
-    let values = parsed.map(|(number, factors)| factors.map(|factor| number / maximum * factor));
+    let mut values =
+        parsed.map(|(number, factors)| factors.map(|factor| number / maximum * factor));
+    for (corner, present) in [
+        (TOP_LEFT, left),
+        (BOTTOM_LEFT, left),
+        (TOP_RIGHT, right),
+        (BOTTOM_RIGHT, right),
+    ] {
+        if !present {
+            values[corner] = [0.0; 2];
+        }
+    }
     let mut pixel_scale = maximum;
     for (extent, sum) in [
         (limit[0], values[TOP_LEFT][0] + values[TOP_RIGHT][0]),

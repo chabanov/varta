@@ -105,7 +105,7 @@ fn percentages_use_containing_content_width_and_cascade_uses_resolved_sides() {
     // CSSOM removal resets that expanded side; it does not restore an older
     // shorthand declaration that the longhand replaced.
     assert_eq!(boxes(&v), new);
-    apply(&mut v, P::PaddingRight, "1px");
+    apply(&mut v, P::PaddingRight, "1%");
     assert!(
         v.layout_boxes_with_text(100.0, 140.0, &mut font(), 20.0)
             .is_err()
@@ -158,10 +158,10 @@ fn padding_mutations_share_retained_and_vector_geometry_with_clips_radii_and_opa
     }
 }
 #[test]
-fn unsupported_horizontal_spacing_and_excessive_used_padding_fail_explicitly() {
+fn horizontal_percentages_and_excessive_used_padding_fail_explicitly() {
     for (property, value) in [
-        (P::Padding, "0 1px"),
-        (P::Margin, "0 -1px"),
+        (P::Padding, "0 1%"),
+        (P::Margin, "0 -1%"),
         (P::Padding, "1000000px 0"),
     ] {
         let mut v = fixture();

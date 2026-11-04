@@ -275,8 +275,12 @@ impl Plan {
             }
             let mut line_glyph = 0;
             for item in line.items() {
-                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                    return Err(PaintError::Unsupported(id));
+                let glyph_run = match item {
+                    PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,
+                    PositionedLayoutItem::InlineBox(edge) if super::decoration_edge(edge.kind) => {
+                        continue;
+                    }
+                    PositionedLayoutItem::InlineBox(_) => return Err(PaintError::Unsupported(id)),
                 };
                 let run = glyph_run.run();
                 let data = run.font();

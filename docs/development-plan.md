@@ -11,9 +11,12 @@ inline spacing. The consolidated gate below verified exactly these code inputs;
 only documentation annotations changed between that gate and the commit. The
 earlier rounded clipping/composition (`54585e3f`), clipboard (`22b02d0c`),
 accessibility (`5a521250`, `2400dbfe`), retained renderer, TSX Showcase and
-optional GPU (`be85c981`) foundations are integrated. The working tree is clean;
-the unfinished horizontal inline edge-shaping prototype exists only on the local
-branch `wip/inline-edge-shaping`, not in `main`. Portable outlines
+optional GPU (`be85c981`) foundations are integrated. The working tree after
+`219db06` adds horizontal inline padding/margins and solid inline borders as
+shaping edges, built on the former `wip/inline-edge-shaping` prototype, with
+scoped Chrome/GPU evidence
+[below](#native-horizontal-inline-edges-and-borders--scoped-2026-11-04) and a
+passing consolidated full gate. Portable outlines
 retain their explicit platform-smoothing difference, and broader typography,
 whole-application and platform acceptance stay open. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
@@ -27,7 +30,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last committed full gate | Native inline paint ordering/opacity/radii, host glyph coverage, solid underlines, fragmented outlines and vertical inline spacing, committed as `ed77739e` (gate run on 2026-11-04, macOS arm64, over the pre-commit tree on `54585e3f`): **3473 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-161029-qyx08oka/report.json`; source SHA-256 `22ba2807b47b0ab666df1b89bd0bc57a6b1d96ed5a55b2f9650d474b7478ad71`. Strict affected GPU Clippy passes; Debug/Release each cover92 actual GPU +28 explicit CPU-fallback observations across30 scenes. Only result/status documentation annotations follow the gate. Real-font/window/system-input/VoiceOver, other-platform, broader core/pilot and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last committed full gate | Horizontal inline edges and solid inline borders on `219db06` (2026-11-04, macOS arm64): **3495 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-175437-p30mj15f/report.json`; source SHA-256 `ec01855a55530d285d047ade86c1154265f86853c97c4b037ae74c93d352d465`. Conformance 123 passed/4 known unsupported of 127, baseline matched. Strict affected GPU Clippy passes; Debug/Release each cover 108 actual GPU + 28 explicit CPU-fallback observations across 34 scenes. Only result/status documentation annotations follow the gate. Real-font/window/system-input/VoiceOver, other-platform, broader core/pilot and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -394,7 +397,65 @@ including inside words, plus correct joining/ligature behavior at nonzero inline
 edges ([CSS Text boundary shaping](https://www.w3.org/TR/css-text-3/#boundary-shaping)).
 Verify those cases against the browser before extending native admission; keep
 the family open until the shared boundary/border implementation is ready for its
-single consolidated full gate.
+single consolidated full gate. Edges and solid borders are implemented in the
+working tree; see the next section.
+
+### Native horizontal inline edges and borders — scoped 2026-11-04
+
+The working tree after `219db06` admits non-replaced inline left/right padding,
+solid borders and signed px/rem margins (`auto` is zero). The rebased
+`wip/inline-edge-shaping` prototype supplies Parley `InlineStart`/`InlineEnd`
+edges that take advance without a break opportunity; native collection records
+margin+border+padding per nonzero side, resolves edges next to a pending
+collapsible space only when it is emitted, and projects them in visual order.
+The box's first/last fragment receives its opening/closing border and padding,
+enclosing fragments receive margins, negative margins shorten enclosing
+fragments without negative widths, and empty decorated boxes keep their border
+box. Vertical borders extend fragments like vertical padding. Each fragment
+paints its slice of the continuous strip's border ring after its background,
+in f64 until local clipping. Underlines stay under text; glyph loops skip edges.
+Horizontal percentages, spacing or borders on `<br>`, edges in flows with
+right-to-left runs, non-solid styles and distinct visible side colors are
+refused explicitly. No source, fragment, shaping or cache limit grows.
+
+Two corrections came from independent Chrome comparisons. Broken-inline radii now
+zero the corners of a fragment's absent edges before side-overlap normalization
+(Blink's per-fragment rounded border), so a narrow last fragment keeps its full
+right radius and middle fragments are square. Browsers also hit-test line boxes
+last to first: a point in a later line's margin gap hits the block even where an
+earlier line's decorated fragment overlaps it. Rich flows now add those gaps as
+block hit regions between line orders. A first model that captured the whole
+line union was wrong and was replaced after a rounded-corner counterexample.
+Chrome additionally differs in a one-pixel band just above a line box, depending
+on fragment geometry; the shared verifier now treats that band like its existing
+one-pixel rectangle edges.
+
+`portable_edge_probe` has 39 Chrome scenes: 22 for spacing (padding, margins,
+negative/collapsing margins, rem/fractional values, radii, outlines, nested and
+empty boxes, boundary spaces, unbreakable words, opacity, underline, mixed and
+`auto`), 15 for borders (sides, widths, radii, spacing, nesting, empty,
+opacity, alpha, `currentcolor`, rem, vertical-only, outline, unbroken 50%) and
+2 for overlapping lines. Each of 1×/1.25×/2× passes **68837 checks** with maximum
+ROI mean 0.198/255 under the unchanged 2/255 bound. Earlier oracles pass at all
+three scales: native text 10105, native decoration 222, outline 304/300/300 and
+opacity 1971 (after declaring its 40×40 viewport, which the verifier began to
+require in `ed77739e`). Spacing passes 9807 checks: the new band excludes 323
+interior hit samples that also pass under the committed verifier (10130). View
+passes 111 library + 336 integration tests, Desktop GPU-feature tests pass 78,
+and strict all-target Clippy passes for View and Desktop with GPU. Debug/Release
+Metal probes each cover 34 scenes with 108 actual GPU and 28 explicit
+CPU-fallback observations (maximum mean 0.1472); the edge and border scenes
+render on GPU. Evidence: `target/edge-probe/checkpoint.json`.
+
+The consolidated full gate then passes all eight commands with unchanged inputs:
+**3495 tests, 0 failures, 16 ignored**; conformance 123 passed/4 known
+unsupported of 127, baseline matched, no regressions or infrastructure failures
+(`target/verification/20261104-175437-p30mj15f/report.json`, source SHA-256
+`ec01855a55530d285d047ade86c1154265f86853c97c4b037ae74c93d352d465`). Only
+result/status documentation annotations follow it. Distinct border
+side colors and other border styles, device-pixel border-width snapping (open for
+all boxes), bidi edge reordering, horizontal percentages and
+real-font/window/platform acceptance remain open.
 
 ### Native inline painting commit gate — 2026-11-04
 

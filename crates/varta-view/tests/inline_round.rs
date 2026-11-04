@@ -187,6 +187,9 @@ fn overlapping_fragments() -> View {
         b.create_element(node, Tag::Span)
             .insert(node - 1, node, 0)
             .set_style(node, P::BorderRadius, "10px")
+            // Middle fragments of a broken box have no corners; their border
+            // ring slices still consume the shared contour work.
+            .set_style(node, P::Border, "1px solid #0000ff")
             .set_style(node, P::BackgroundColor, "#ff0000");
     }
     b.create_text(10, &"A\n".repeat(3500)).insert(9, 10, 0);
@@ -230,7 +233,8 @@ fn invisible_inline_backgrounds_skip_pixel_work_but_preserve_input_geometry() {
         } else {
             b.set_style(2, P::Color, "transparent");
             for node in 3..=9 {
-                b.set_style(node, P::BackgroundColor, "transparent");
+                b.set_style(node, P::BackgroundColor, "transparent")
+                    .set_style(node, P::BorderColor, "transparent");
             }
         }
         v.commit(&b.finish(), false, &mut Denied).unwrap();

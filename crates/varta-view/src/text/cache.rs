@@ -16,6 +16,7 @@ pub(super) struct Request<'a> {
     pub families: &'a [String],
     pub options: TextOptions,
     pub spans: &'a [TextSpan],
+    pub edges: &'a [super::edges::TextEdge],
 }
 impl Request<'_> {
     fn hash(self) -> u64 {
@@ -46,6 +47,12 @@ impl Request<'_> {
             span.families.hash(&mut h);
             options(span.options, &mut h);
         }
+        for edge in self.edges {
+            edge.owner.hash(&mut h);
+            edge.index.hash(&mut h);
+            edge.opening.hash(&mut h);
+            edge.advance.to_bits().hash(&mut h);
+        }
         h.finish()
     }
 }
@@ -55,6 +62,7 @@ struct Key {
     families: Vec<String>,
     options: TextOptions,
     spans: Vec<TextSpan>,
+    edges: Vec<super::edges::TextEdge>,
 }
 struct Entry {
     hash: u64,
@@ -84,6 +92,7 @@ impl Shaped {
                 && e.key.families == request.families
                 && e.key.options == request.options
                 && e.key.spans == request.spans
+                && e.key.edges == request.edges
         }) else {
             self.misses = self.misses.saturating_add(1);
             return None;
@@ -108,7 +117,8 @@ impl Shaped {
                     std::mem::size_of::<TextSpan>()
                         + s.families.iter().map(String::len).sum::<usize>()
                 })
-                .sum::<usize>();
+                .sum::<usize>()
+            + std::mem::size_of_val(request.edges);
         let glyphs = value
             .1
             .lines()
@@ -117,7 +127,8 @@ impl Shaped {
                     .map(|r| r.clusters().map(|c| c.glyphs().count()).sum::<usize>())
                     .sum::<usize>()
             })
-            .sum::<usize>();
+            .sum::<usize>()
+            + request.edges.len();
         if bytes > MAX_KEY_BYTES || glyphs > MAX_GLYPHS {
             return;
         }
@@ -150,6 +161,7 @@ impl Shaped {
                 families: request.families.to_vec(),
                 options: request.options,
                 spans: request.spans.to_vec(),
+                edges: request.edges.to_vec(),
             },
             value: value.clone(),
             operations,

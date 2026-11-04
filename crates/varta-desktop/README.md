@@ -421,7 +421,7 @@ and does not accept a package manifest or embedded artifact.
 The text-aware renderer also admits inline-only paragraphs with adjacent text,
 nested semantic inline tags, shared shaping, inherited styles and fragment hits.
 Flex/grid children are blockified by their parent. Fonts remain explicit; mixed
-block/inline content, nonzero horizontal spacing/borders and full typography are
+block/inline content, distinct inline border side colors and full typography are
 outside this experimental subset. Solid underlines propagate through inline
 text, retain decorating-box color/thickness and skip intersecting unhinted ink.
 Solid outlines surround joined fragment contours, including rounded corners,
@@ -429,6 +429,13 @@ and paint after descendants with the original clips and opacity.
 Vertical inline padding expands the background/hit region without changing
 line height; percentage padding uses the containing block's content width.
 Top/bottom margins do not move inline text, and horizontal auto margins are zero.
+Horizontal padding, solid borders and signed px/rem margins become shaping
+edges: they move
+later text and wrap with their words without adding a break opportunity, and
+the box's first/last fragment receives the opening/closing border and padding.
+A border ring is sliced across fragments like a rounded background. Horizontal
+percentages, distinct border side colors and edges in right-to-left text are
+refused.
 Element geometry unions do not make the gaps
 between wrapped fragments clickable. See the native layout contract for scope.
 

@@ -93,6 +93,12 @@ impl<'a, B: Brush> Line<'a, B> {
             })
     }
 
+    /// Varta: visual-order runs and inline boxes, one item per layout item.
+    /// Unlike [`Self::items`], a run is not split at style boundaries.
+    pub fn items_unpositioned(&self) -> impl Iterator<Item = LineItem<'a, B>> + Clone {
+        self.items_nonpositioned()
+    }
+
     /// Returns an iterator over the glyph runs for the line.
     pub fn items(&self) -> impl Iterator<Item = PositionedLayoutItem<'a, B>> + 'a + Clone {
         GlyphRunIter {
@@ -152,7 +158,8 @@ impl LineMetrics {
 
 /// A line item and its corresponding data (a run or inline box). Unlike a
 /// [`PositionedLayoutItem`], runs are not guaranteed to be split by style.
-pub(crate) enum LineItem<'a, B: Brush> {
+/// A run or inline box of a line, in visual order.
+pub enum LineItem<'a, B: Brush> {
     Run(Run<'a, B>),
     InlineBox(&'a InlineBox),
 }
@@ -266,7 +273,7 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
 
                     self.item_index += 1;
                     self.glyph_start = 0;
-                    if inline_box.kind == InlineBoxKind::InFlow {
+                    if inline_box.kind.advances() {
                         self.offset += inline_box.width;
                     }
                     return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {

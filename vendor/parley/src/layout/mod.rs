@@ -8,6 +8,7 @@ mod accessibility;
 mod alignment;
 mod cluster;
 mod glyph;
+mod inline_edges;
 mod line;
 mod line_break;
 mod run;
@@ -28,14 +29,15 @@ pub use cluster::{Affinity, Cluster, ClusterPath, ClusterSide};
 pub use data::BreakReason;
 pub use glyph::Glyph;
 pub use layout::Layout;
-pub use line::{GlyphRun, Line, LineMetrics, PositionedInlineBox, PositionedLayoutItem};
+pub use line::{
+    GlyphRun, Line, LineItem, LineMetrics, PositionedInlineBox, PositionedLayoutItem,
+};
 pub use line_break::{
     BoxBreakData, BreakLines, BreakerState, LineBreakData, MaxHeightBreakData, YieldData,
 };
 pub use run::{Run, RunMetrics};
 
 pub(crate) use data::{LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData};
-pub(crate) use line::LineItem;
 
 // TODO - Deprecation not yet active to ease internal code migration.
 #[deprecated(since = "TBD", note = "Access from the `editing` module instead.")]

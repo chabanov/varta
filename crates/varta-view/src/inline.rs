@@ -1,10 +1,10 @@
 //! Bounded rich-text formatting contexts for inline descendants of a box.
 use crate::layout::{self, BoxGeometry, BoxRect, LayoutError, TextShape};
 use crate::style::Environment;
-use crate::text::{TextSpan, WhiteSpaceMode};
+use crate::text::{TextSpan, WhiteSpaceMode, edges::TextEdge};
 use crate::tree::{Content, Tree};
 use crate::{TextMeasureError, TextMeasurer, TextMetrics};
-use parley::Layout;
+use parley::{InlineBoxKind, Layout, LineItem};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -64,6 +64,38 @@ pub(crate) struct ContentFlow {
     strut: Vertical,
     font_boxes: BTreeMap<u32, FontBox>,
     empty: BTreeMap<usize, Vec<u32>>,
+    /// Nonzero horizontal decoration edges in source order, and the physical
+    /// left/right margin and padding of each owning element.
+    edges: Vec<TextEdge>,
+    spacing: BTreeMap<u32, Horizontal>,
+}
+#[derive(Clone, Copy)]
+struct Horizontal {
+    margin: [f32; 2],
+    border: [f32; 2],
+    padding: [f32; 2],
+}
+impl Horizontal {
+    /// The box's own extent on one side: border plus padding.
+    fn inset(self, side: usize) -> f32 {
+        self.border[side] + self.padding[side]
+    }
+    fn advance(self, side: usize) -> f32 {
+        self.margin[side] + self.inset(side)
+    }
+    fn nonzero(self, side: usize) -> bool {
+        self.margin[side] != 0.0 || self.border[side] != 0.0 || self.padding[side] != 0.0
+    }
+}
+/// One traversal step: a node to open or the end of an element's children.
+enum Visit {
+    Open {
+        id: u32,
+        depth: usize,
+        path: Vec<u32>,
+        hidden: bool,
+    },
+    Close(u32),
 }
 impl ContentFlow {
     pub(crate) fn decoration_metrics(&self, id: u32) -> Option<(f32, f32)> {
@@ -76,6 +108,8 @@ impl ContentFlow {
 pub(crate) struct ShapedFlow {
     pub layout: Layout<u32>,
     pub offsets: Vec<f32>,
+    /// Each line box's top and bottom, relative to the flow's content top.
+    pub line_boxes: Vec<[f32; 2]>,
     pub metrics: TextMetrics,
 }
 #[derive(Clone, Copy)]
@@ -100,23 +134,26 @@ struct FontBox {
     // Keep plain owned lengths in the shared flow. Taffy's compact layout type
     // can contain an opaque pointer and must not enter the retained Arc.
     padding: [PaddingLength; 2],
+    /// Top and bottom border widths; like padding they paint outside the line.
+    border: [f32; 2],
 }
 impl FontBox {
-    fn padding(self, width: f32) -> Result<[f32; 2], LayoutError> {
-        let mut padding = [0.0; 2];
-        for (out, value) in padding.iter_mut().zip(self.padding) {
+    /// Top/bottom padding plus border: the border box's extent beyond the font box.
+    fn inset(self, width: f32) -> Result<[f32; 2], LayoutError> {
+        let mut inset = [0.0; 2];
+        for ((out, value), border) in inset.iter_mut().zip(self.padding).zip(self.border) {
             *out = match value {
                 PaddingLength::Pixels(value) => value,
                 PaddingLength::Fraction(value) => value * width,
-            };
+            } + border;
             if !out.is_finite() || !(0.0..=crate::units::MAX_LENGTH).contains(out) {
                 return Err(LayoutError::Limit);
             }
         }
-        Ok(padding)
+        Ok(inset)
     }
     fn padded(self, mut piece: BoxRect, width: f32) -> Result<BoxRect, LayoutError> {
-        let padding = self.padding(width)?;
+        let padding = self.inset(width)?;
         piece.y -= padding[0];
         piece.height += padding[0] + padding[1];
         if !piece.y.is_finite()
@@ -180,7 +217,7 @@ fn is_inline(tree: &Tree, env: &Environment, id: u32) -> bool {
     }
 }
 
-fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<[LengthPercentage; 2], LayoutError> {
+fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<layout::InlineSpacing, LayoutError> {
     let properties = tree.computed_read(id, env);
     for (&property, value) in properties.iter() {
         let supported = match property {
@@ -231,9 +268,7 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<[LengthPercentage
             | P::BorderLeft
             | P::BorderWidth
             | P::BorderStyle
-            | P::BorderColor => layout::border_widths(tree, env, id)?
-                .iter()
-                .all(|&w| w == 0.0),
+            | P::BorderColor => true, // Widths are resolved with spacing below.
             P::Outline | P::OutlineWidth | P::OutlineStyle | P::OutlineColor | P::OutlineOffset => {
                 true
             }
@@ -243,7 +278,18 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<[LengthPercentage
             return Err(LayoutError::Unsupported(id));
         }
     }
-    let padding = layout::inline_vertical_padding(tree, env, id)?;
+    let spacing = layout::inline_spacing(tree, env, id)?;
+    // A line break has no inline box to decorate; refuse rather than ignore.
+    if tree.element(id).is_some_and(|e| e.tag == Tag::Br)
+        && spacing
+            .margin
+            .iter()
+            .chain(&spacing.padding)
+            .chain(&spacing.border)
+            .any(|&v| v != 0.0)
+    {
+        return Err(LayoutError::Unsupported(id));
+    }
     if tree.element(id).is_some_and(|e| {
         e.tag == Tag::A
             && e.attributes
@@ -255,7 +301,7 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<[LengthPercentage
     {
         return Err(LayoutError::Unsupported(id));
     }
-    Ok(padding)
+    Ok(spacing)
 }
 
 pub(crate) fn collect(
@@ -310,12 +356,43 @@ pub(crate) fn collect(
         .children
         .iter()
         .rev()
-        .map(|&id| (id, depth + 1, Vec::<u32>::new(), false))
+        .map(|&id| Visit::Open {
+            id,
+            depth: depth + 1,
+            path: Vec::new(),
+            hidden: false,
+        })
         .collect();
     let mut whitespace = None;
     let mut hidden_nodes = BTreeSet::new();
     let mut previous_cr = false;
-    while let Some((id, depth, mut path, hidden)) = pending.pop() {
+    let mut edges = Vec::<TextEdge>::new();
+    let mut spacing = BTreeMap::<u32, Horizontal>::new();
+    // Edges recorded while a collapsible space is pending follow that space
+    // only if it is emitted; a forced break or the end discards it instead.
+    let mut deferred = Vec::<usize>::new();
+    while let Some(visit) = pending.pop() {
+        let (id, depth, mut path, hidden) = match visit {
+            Visit::Open {
+                id,
+                depth,
+                path,
+                hidden,
+            } => (id, depth, path, hidden),
+            Visit::Close(id) => {
+                let space = spacing.get(&id).copied().ok_or(LayoutError::Limit)?;
+                edge(
+                    &mut edges,
+                    &mut deferred,
+                    &whitespace,
+                    &text,
+                    id,
+                    false,
+                    space,
+                )?;
+                continue;
+            }
+        };
         inventory.node(depth)?;
         measurer
             .charge_inline_work(1)
@@ -328,12 +405,12 @@ pub(crate) fn collect(
                 .is_some_and(|d| d == "none");
         if hidden {
             hidden_nodes.insert(id);
-            pending.extend(
-                node.children
-                    .iter()
-                    .rev()
-                    .map(|&child| (child, depth + 1, Vec::new(), true)),
-            );
+            pending.extend(node.children.iter().rev().map(|&child| Visit::Open {
+                id: child,
+                depth: depth + 1,
+                path: Vec::new(),
+                hidden: true,
+            }));
             continue;
         }
         path.insert(0, id);
@@ -342,7 +419,9 @@ pub(crate) fn collect(
                 if !is_inline(tree, env, id) {
                     return Err(LayoutError::Unsupported(id));
                 }
-                let padding = validate(tree, env, id)?;
+                let resolved = validate(tree, env, id)?;
+                let padding = resolved.vertical;
+                needs_paint_order |= resolved.border.iter().any(|&width| width != 0.0);
                 needs_paint_order |= tree
                     .computed_property(id, env, P::Opacity)
                     .is_some_and(|raw| raw.parse::<f32>().ok() != Some(1.0));
@@ -371,6 +450,7 @@ pub(crate) fn collect(
                             descent: run.metrics().descent.round(),
                             vertical: Vertical::run(&run),
                             padding: padding.map(PaddingLength::from),
+                            border: [resolved.border[0], resolved.border[2]],
                         },
                     );
                 }
@@ -378,12 +458,32 @@ pub(crate) fn collect(
                     measurer
                         .charge_inline_work(node.children.len().saturating_mul(path.len() + 1))
                         .map_err(|_| LayoutError::Limit)?;
-                    pending.extend(
-                        node.children
-                            .iter()
-                            .rev()
-                            .map(|&child| (child, depth + 1, path.clone(), false)),
-                    );
+                    let space = Horizontal {
+                        margin: resolved.margin,
+                        border: [resolved.border[3], resolved.border[1]],
+                        padding: resolved.padding,
+                    };
+                    if space.nonzero(0) || space.nonzero(1) {
+                        needs_paint_order = true;
+                        spacing.insert(id, space);
+                        paths.insert(id, path.clone());
+                        edge(
+                            &mut edges,
+                            &mut deferred,
+                            &whitespace,
+                            &text,
+                            id,
+                            true,
+                            space,
+                        )?;
+                        pending.push(Visit::Close(id));
+                    }
+                    pending.extend(node.children.iter().rev().map(|&child| Visit::Open {
+                        id: child,
+                        depth: depth + 1,
+                        path: path.clone(),
+                        hidden: false,
+                    }));
                     continue;
                 }
                 "\n"
@@ -408,6 +508,7 @@ pub(crate) fn collect(
         let is_break = tree.element(id).is_some_and(|e| e.tag == Tag::Br);
         if is_break {
             whitespace = None;
+            deferred.clear();
             previous_cr = false;
             append(&mut text, &mut spans, index, '\n')?;
             continue;
@@ -433,6 +534,9 @@ pub(crate) fn collect(
             }
             if let Some(owner) = whitespace.take() {
                 append(&mut text, &mut spans, owner, ' ')?;
+                for edge in deferred.drain(..) {
+                    edges[edge].index = text.len();
+                }
             }
             append(&mut text, &mut spans, index, ch)?;
         }
@@ -445,7 +549,7 @@ pub(crate) fn collect(
     {
         return Err(LayoutError::Unsupported(root));
     }
-    let strut = if text.is_empty() {
+    let strut = if text.is_empty() && edges.is_empty() {
         Vertical::default()
     } else {
         let (_, layout) = measurer
@@ -460,6 +564,7 @@ pub(crate) fn collect(
                     descent: run.metrics().descent.round(),
                     vertical: Vertical::run(&run),
                     padding: [PaddingLength::Pixels(0.0); 2],
+                    border: [0.0; 2],
                 },
             );
             Vertical::run(&run)
@@ -493,6 +598,8 @@ pub(crate) fn collect(
         strut,
         font_boxes,
         empty,
+        edges,
+        spacing,
     });
     let mut shape = TextShape {
         text,
@@ -506,10 +613,61 @@ pub(crate) fn collect(
         },
         rich: Some(rich),
     };
-    shape.metrics = shape
-        .measure(measurer, None)
-        .map_err(|e| LayoutError::Text(e.to_string()))?;
+    if let Some(rich) = &shape.rich
+        && let Some(first) = rich.edges.first()
+    {
+        let shaped = rich
+            .shape(&shape, measurer, None)
+            .map_err(|e| LayoutError::Text(e.to_string()))?;
+        // Decoration edges are placed in logical order. Bidi reordering of
+        // a decorated box's fragments is not admitted yet.
+        if shaped
+            .layout
+            .lines()
+            .flat_map(|line| line.runs())
+            .any(|run| run.is_rtl())
+        {
+            return Err(LayoutError::Unsupported(first.owner));
+        }
+        shape.metrics = shaped.metrics;
+    } else {
+        shape.metrics = shape
+            .measure(measurer, None)
+            .map_err(|e| LayoutError::Text(e.to_string()))?;
+    }
     Ok(Some(shape))
+}
+
+/// Records one nonzero opening or closing decoration edge of `owner`.
+fn edge(
+    edges: &mut Vec<TextEdge>,
+    deferred: &mut Vec<usize>,
+    whitespace: &Option<usize>,
+    text: &str,
+    owner: u32,
+    opening: bool,
+    space: Horizontal,
+) -> Result<(), LayoutError> {
+    let side = usize::from(!opening);
+    // CSS shaping continues across a boundary whose margin, border and
+    // padding are all zero; such an edge must not split ligatures/joining.
+    if !space.nonzero(side) {
+        return Ok(());
+    }
+    let advance = space.advance(side);
+    if edges.len() >= crate::text::edges::MAX_EDGES {
+        return Err(LayoutError::Limit);
+    }
+    if whitespace.is_some() {
+        deferred.push(edges.len());
+    }
+    edges.push(TextEdge {
+        owner,
+        index: text.len(),
+        opening,
+        advance,
+    });
+    Ok(())
 }
 
 fn append(
@@ -536,22 +694,25 @@ impl ContentFlow {
         measurer: &mut TextMeasurer,
         width: Option<f32>,
     ) -> Result<ShapedFlow, TextMeasureError> {
-        if shape.text.is_empty() {
+        if shape.text.is_empty() && self.edges.is_empty() {
             return Ok(ShapedFlow {
                 layout: Layout::new(),
                 offsets: Vec::new(),
+                line_boxes: Vec::new(),
                 metrics: shape.metrics,
             });
         }
-        let (mut metrics, layout) = measurer.shape_with_spans(
+        let (mut metrics, layout) = measurer.shape_with_edges(
             &shape.text,
             width,
             &shape.families,
             shape.options,
             &self.spans,
+            &self.edges,
         )?;
         let mut y = 0.0f32;
         let mut offsets = Vec::new();
+        let mut line_boxes = Vec::new();
         for (index, line) in layout.lines().enumerate() {
             measurer.charge_inline_work(1)?;
             if index + 1 == layout.len()
@@ -559,6 +720,7 @@ impl ContentFlow {
                 && shape.text.ends_with('\n')
             {
                 offsets.push(0.0);
+                line_boxes.push([y, y]);
                 continue;
             }
             let mut vertical = self.strut;
@@ -592,6 +754,7 @@ impl ContentFlow {
                 }
             }
             offsets.push(y + vertical.above - line.metrics().baseline);
+            line_boxes.push([y, y + vertical.above + vertical.below]);
             y += vertical.above + vertical.below;
             if !y.is_finite() || y > 1_000_000.0 {
                 return Err(TextMeasureError::Limit);
@@ -601,6 +764,7 @@ impl ContentFlow {
         Ok(ShapedFlow {
             layout,
             offsets,
+            line_boxes,
             metrics,
         })
     }
@@ -613,8 +777,11 @@ impl ContentFlow {
         measurer: &mut TextMeasurer,
         fragments_left: &mut usize,
     ) -> Result<Frame, LayoutError> {
-        let mut fragments = BTreeMap::<u32, Vec<BoxRect>>::new();
-        let mut fragment_lines = BTreeMap::<u32, Vec<usize>>::new();
+        let mut sink = Fragments {
+            fragments: BTreeMap::new(),
+            lines: BTreeMap::new(),
+            left: fragments_left,
+        };
         let mut glyph_owners = Vec::new();
         for (index, line) in shaped.layout.lines().enumerate() {
             let mut line_owners = Vec::new();
@@ -627,7 +794,29 @@ impl ContentFlow {
                 range.start + source.text[range].trim_end_matches([' ', '\n']).len()
             };
             let mut x = line.metrics().offset + line.metrics().inline_min_coord;
-            for run in line.runs() {
+            let top = bounds.rect.y + line.metrics().baseline + shaped.offsets[index];
+            for item in line.items_unpositioned() {
+                let run = match item {
+                    LineItem::Run(run) => run,
+                    LineItem::InlineBox(edge) => {
+                        let opening = match edge.kind {
+                            InlineBoxKind::InlineStart => true,
+                            InlineBoxKind::InlineEnd => false,
+                            _ => return Err(LayoutError::Limit),
+                        };
+                        let owner = u32::try_from(edge.id).map_err(|_| LayoutError::Limit)?;
+                        self.edge(
+                            owner,
+                            opening,
+                            [bounds.rect.x + x, top],
+                            (index, bounds.rect.width),
+                            measurer,
+                            &mut sink,
+                        )?;
+                        x += edge.width;
+                        continue;
+                    }
+                };
                 // Browser fragments assign a shaped cluster to its first source
                 // node. Ligature continuation nodes retain a zero-width box;
                 // caret subdivision is a separate editing concern.
@@ -704,8 +893,7 @@ impl ContentFlow {
                         );
                         let piece = BoxRect {
                             x: bounds.rect.x + position,
-                            y: bounds.rect.y + line.metrics().baseline + shaped.offsets[index]
-                                - ascent,
+                            y: top - ascent,
                             width,
                             height: ascent + descent,
                         };
@@ -714,26 +902,13 @@ impl ContentFlow {
                         } else {
                             piece
                         };
-                        let items = fragments.entry(id).or_default();
-                        let lines = fragment_lines.entry(id).or_default();
-                        if let Some(last) = items.last_mut().filter(|last| {
-                            lines.last() == Some(&index)
-                                && last.y == piece.y
-                                && last.height == piece.height
-                                && (last.x + last.width - piece.x).abs() < 0.001
-                        }) {
-                            last.width += piece.width;
-                        } else {
-                            *fragments_left =
-                                fragments_left.checked_sub(1).ok_or(LayoutError::Limit)?;
-                            items.push(piece);
-                            lines.push(index);
-                        }
+                        sink.push(id, index, piece)?;
                     }
                     let range = cluster.text_range();
                     let end = range.end + usize::from(range.end == source.text.len());
                     for (&byte, ids) in self.empty.range(range.start..end) {
-                        for &id in ids {
+                        // Decorated boxes are placed by their own edges.
+                        for &id in ids.iter().filter(|id| !self.spacing.contains_key(id)) {
                             measurer
                                 .charge_inline_work(1)
                                 .map_err(|_| LayoutError::Limit)?;
@@ -746,22 +921,16 @@ impl ContentFlow {
                             } else {
                                 left + group.advance
                             };
-                            *fragments_left =
-                                fragments_left.checked_sub(1).ok_or(LayoutError::Limit)?;
                             let piece = font.padded(
                                 BoxRect {
                                     x: bounds.rect.x + at,
-                                    y: bounds.rect.y
-                                        + line.metrics().baseline
-                                        + shaped.offsets[index]
-                                        - font.ascent,
+                                    y: top - font.ascent,
                                     width: 0.0,
                                     height: font.ascent + font.descent,
                                 },
                                 bounds.rect.width,
                             )?;
-                            fragments.entry(id).or_default().push(piece);
-                            fragment_lines.entry(id).or_default().push(index);
+                            sink.separate(id, index, piece)?;
                         }
                     }
                     if !collapsed {
@@ -771,6 +940,16 @@ impl ContentFlow {
             }
             glyph_owners.push(line_owners);
         }
+        let Fragments {
+            mut fragments,
+            lines: fragment_lines,
+            ..
+        } = sink;
+        // A negative margin can pull later content before an ancestor
+        // fragment's start; its own inline size does not become negative.
+        for piece in fragments.values_mut().flatten() {
+            piece.width = piece.width.max(0.0);
+        }
         Ok(Frame {
             glyph_owners,
             shaped,
@@ -778,6 +957,86 @@ impl ContentFlow {
             fragments,
             fragment_lines,
         })
+    }
+
+    /// Projects one decoration edge at absolute `[x, line top]`. The owner
+    /// receives its padding; enclosing boxes receive the whole margin box.
+    fn edge(
+        &self,
+        owner: u32,
+        opening: bool,
+        origin: [f32; 2],
+        line: (usize, f32),
+        measurer: &mut TextMeasurer,
+        sink: &mut Fragments<'_>,
+    ) -> Result<(), LayoutError> {
+        let (index, containing_width) = line;
+        let space = self.spacing.get(&owner).ok_or(LayoutError::Limit)?;
+        let side = usize::from(!opening);
+        let [x, top] = origin;
+        let path = self.paths.get(&owner).ok_or(LayoutError::Limit)?;
+        for &id in path {
+            measurer
+                .charge_inline_work(1)
+                .map_err(|_| LayoutError::Limit)?;
+            let font = self.font_boxes.get(&id).ok_or(LayoutError::Limit)?;
+            let (left, width) = if id != owner {
+                (x, space.advance(side))
+            } else if opening {
+                (x + space.margin[0], space.inset(0))
+            } else {
+                (x, space.inset(1))
+            };
+            let piece = font.padded(
+                BoxRect {
+                    x: left,
+                    y: top - font.ascent,
+                    width,
+                    height: font.ascent + font.descent,
+                },
+                containing_width,
+            )?;
+            if id == owner && opening {
+                // The first fragment starts after the opening margin, not
+                // where the preceding content of the line ended.
+                sink.separate(id, index, piece)?;
+            } else {
+                sink.push(id, index, piece)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Inline fragments under construction, with the shared fragment allowance.
+struct Fragments<'a> {
+    fragments: BTreeMap<u32, Vec<BoxRect>>,
+    lines: BTreeMap<u32, Vec<usize>>,
+    left: &'a mut usize,
+}
+impl Fragments<'_> {
+    /// Extends the box's adjacent fragment on this line or starts a new one.
+    /// Widths are signed until projection ends so negative margins shorten
+    /// an enclosing fragment exactly as they move later content.
+    fn push(&mut self, id: u32, line: usize, piece: BoxRect) -> Result<(), LayoutError> {
+        let items = self.fragments.entry(id).or_default();
+        let lines = self.lines.entry(id).or_default();
+        if let Some(last) = items.last_mut().filter(|last| {
+            lines.last() == Some(&line)
+                && last.y == piece.y
+                && last.height == piece.height
+                && (last.x + last.width - piece.x).abs() < 0.001
+        }) {
+            last.width += piece.width;
+            return Ok(());
+        }
+        self.separate(id, line, piece)
+    }
+    fn separate(&mut self, id: u32, line: usize, piece: BoxRect) -> Result<(), LayoutError> {
+        *self.left = self.left.checked_sub(1).ok_or(LayoutError::Limit)?;
+        self.fragments.entry(id).or_default().push(piece);
+        self.lines.entry(id).or_default().push(line);
+        Ok(())
     }
 }
 
@@ -848,9 +1107,18 @@ pub(crate) fn frames(
                 && pieces.is_some_and(|pieces| !pieces.is_empty())
                 && let Some(font) = rich.font_boxes.get(&node)
             {
-                let [top, bottom] = font.padding(rect.width)?;
+                let [top, bottom] = font.inset(rect.width)?;
                 content.y += top;
                 content.height = (content.height - top - bottom).max(0.0);
+                // An unbroken box has one physical padding box; a broken box's
+                // union has no single content edge, so only the vertical inset
+                // applies to it.
+                if let Some(space) = rich.spacing.get(&node)
+                    && pieces.is_some_and(|pieces| pieces.len() == 1)
+                {
+                    content.x += space.inset(0);
+                    content.width = (content.width - space.inset(0) - space.inset(1)).max(0.0);
+                }
             }
             geometry.insert(
                 node,

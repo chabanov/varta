@@ -1672,6 +1672,33 @@ The172 pinned inputs remain unchanged; exact scope, hashes and logs are in
 `target/paint-next-stage/spacing/checkpoint.json`. The earlier3448-test full gate
 still covers its older snapshot, not this open outline/spacing family.
 
+### Horizontal inline edges and borders — open family batch
+
+`cargo test -p varta-view --locked` passes 111 library + 336 integration tests;
+`cargo test -p varta-desktop --features gpu --locked` passes 78. Edge unit
+tests cover Parley break/width/ligature/memo/limit behavior; `inline_edges`
+and `inline_border` cover geometry, pixels and hits of padding, margins and
+borders, slices across lines, empty and rounded boxes, margin-gap line hits,
+slice radius normalization, content boxes, retained/stateless/vector agreement
+at three DPIs and the explicit refusals.
+
+```sh
+cargo run -p varta-view --locked --example portable_edge_probe -- 1.25 > target/native-edges-125.json
+node scripts/test-native-inline.mjs target/native-edges-125.json
+```
+
+Run at 1, 1.25 and 2: each passes 39 scenes/68837 checks, maximum mean RGB delta
+0.198 under the unchanged 2/255 bound. The verifier now also skips hit samples
+in the one-pixel band just above each line box (hull of its text fragments),
+where Chrome's footprint depends on overlapping fragments; box and pixel checks
+are unchanged. Rerun the earlier inline oracles after any change to fragments
+or hit order; `target/edge-probe/regress/run.sh` records the commands used for
+this batch. `native_opacity_probe` takes no scale argument. Debug and Release
+`gpu_clip_probe` each pass 34 scenes (108 actual GPU + 28 explicit CPU-fallback
+observations). The consolidated full gate passes all eight commands: 3495
+tests, 0 failed, 16 ignored, conformance baseline matched
+(`target/verification/20261104-175437-p30mj15f/report.json`).
+
 ### Consolidated native inline painting commit gate — 2026-11-04
 
 `python3 scripts/verify.py full` passes all eight commands: **3473 tests passed,

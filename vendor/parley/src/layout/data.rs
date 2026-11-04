@@ -553,6 +553,14 @@ impl<B: Brush> LayoutData<B> {
 
     // TODO: this method does not handle mixed direction text at all.
     pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
+        if self.inline_boxes.iter().any(|b| {
+            matches!(
+                b.kind,
+                InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
+            )
+        }) {
+            return self.inline_edge_widths();
+        }
         fn whitespace_advance(cluster: Option<&ClusterData>) -> f32 {
             cluster
                 .filter(|cluster| cluster.info.whitespace().is_space_or_nbsp())
