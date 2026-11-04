@@ -3042,3 +3042,20 @@ plan. UI-tool app selection/inventory timed out, so current native/VoiceOver
 acceptance is open. A subsequently reproduced upstream range-overflow and
 missing native visible-range route are tracked for the next implementation
 package; preparatory ignored staging files are outside this checkpoint.
+
+### macOS exact range and reveal package — 2026-11-04
+
+The package after `5a52125` replaces unchecked NSRange end arithmetic with
+checked addition and exact UTF-16 boundary validation. Standard native visible
+range getter/setter and owner reveal route through current source/selection
+maps, preserving focus/value/selection and stale-frame protections. Whole
+vertically visible lines include horizontally clipped text. ScrollView receives
+the public AppKit scroll-area role. The vendor diff and release provenance are
+updated without adding unsafe blocks or changing guest/profile contracts.
+
+Final full gate: **3292 passed, 0 failures, 16 ignored**, all eight commands
+with unchanged inputs. Report: `target/verification/20261104-015702-6g3mx2fb/report.json`;
+source SHA-256 `6294ded534da348dc9dc43516e10f0ecd1159e367184dc4462cc79c313823653`.
+Separate GPU scoped verification passes 66 desktop cases and strict all-target
+Clippy. Native/VoiceOver, page/item/absolute platform routes and the remaining
+whole-plan requirements stay open. Documentation-only annotations follow the gate.

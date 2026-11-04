@@ -1172,3 +1172,28 @@ the earlier UI-tool timeouts is only a hypothesis. Documentation retrieval later
 succeeded, but selecting the current Debug bundle timed out again after 60 s
 with kernel reset (`target/a11y9-native-retry.json`); no native acceptance
 is inferred from this attempt.
+
+### Native macOS range package after `5a52125` — scoped checkpoint
+
+The applied package passes 66 desktop tests with GPU enabled and strict
+all-target desktop GPU Clippy (`target/a11y10-desktop-gpu-tests.log`,
+`target/a11y10-clippy.log`). The exact prepared source also passed 66 CPU desktop
+tests and macOS SDK metadata compilation; those overlap the Cargo cases and are
+not additional independent test counts. Eleven new cases cover exact range
+validation, overflow, Unicode/CRLF, password masks, visible whole lines and
+guarded scroll routing without selection/focus/value mutation.
+
+Formatting passes. The regenerated vendor patch reverses cleanly in check-only
+mode, and provenance is recorded in `target/a11y10-vendor-provenance.json`.
+Whitespace checks exclude the generated nested diff's required context-marker
+spaces; they remain enabled for implementation and documentation. The unchanged
+upstream overflow is reproduced separately by the expected failing extracted
+probe (`target/a11y10-stage/overflow-probe.log`).
+
+The completed range package then passes **3292 tests, 0 failures, 16 ignored**
+in all eight full-gate commands with unchanged inputs. Report:
+`target/verification/20261104-015702-6g3mx2fb/report.json`; source SHA-256
+`6294ded534da348dc9dc43516e10f0ecd1159e367184dc4462cc79c313823653`. This supersedes the preceding
+3281-test checkpoint for these newer code inputs. Only documentation annotations
+follow this gate before the package commit. Actual native/VoiceOver, remaining
+page/item/absolute routes and other-platform acceptance remain open.

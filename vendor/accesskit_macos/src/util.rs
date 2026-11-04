@@ -11,14 +11,7 @@ use objc2_app_kit::*;
 use objc2_foundation::{NSPoint, NSRange, NSRect, NSSize};
 
 pub(crate) fn from_ns_range<'a>(node: &'a NodeRef<'a>, ns_range: NSRange) -> Option<TextRange<'a>> {
-    let pos = node.text_position_from_global_utf16_index(ns_range.location)?;
-    let mut range = pos.to_degenerate_range();
-    if ns_range.length > 0 {
-        let end =
-            node.text_position_from_global_utf16_index(ns_range.location + ns_range.length)?;
-        range.set_end(end);
-    }
-    Some(range)
+    crate::text_scroll::exact_range(node, ns_range.location, ns_range.length)
 }
 
 pub(crate) fn to_ns_range(range: &TextRange) -> NSRange {

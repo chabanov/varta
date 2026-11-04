@@ -4171,6 +4171,15 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   a guest wire field or input event. Ordinary navigation/edits restore caret
   following; equal value echoes preserve panning. Clip offscreen carets honestly.
   Do not claim end-to-end range scrolling from adapter unit tests alone.
+- The pinned macOS adapter validates range addition and exact UTF-16 round trips
+  before any effect; never round surrogate/CRLF interior endpoints silently.
+  Its ScrollIntoView action may carry the existing SetTextSelection payload as a
+  range address. Decode by action as well as payload: this path scrolls and must
+  not select. Validate both endpoints against the same current field/revision.
+  The visible-character getter covers whole vertically visible lines, including
+  horizontally clipped text, using acknowledged clipped geometry. Keep unknown
+  geometry distinct from a fabricated full-document range. Native page scrolling
+  requires a proven public platform route, not guessed private action strings.
 - Native live announcements respect explicit inherited `aria-live`, admitted
   alert/status defaults and atomic grouping, and defer busy regions without
   retaining their intermediate history. Separate trigger channels from complete

@@ -12287,12 +12287,24 @@ viewport, then scrolls ancestors from inside out; vertical notifications retain
 the established scroll metrics and coalescing rules. Geometry stays physical for
 text, CSS for scroll arithmetic, with one explicit scale conversion.
 
-Native text runs advertise reveal only with matching painted geometry and an
-available own/ancestor scroll range. This is the host/adapter contract, not proof
-that every platform exposes range scrolling: the pinned macOS adapter currently
-sends ordinary node ScrollIntoView actions without a range or edge hint. End-to-end
-text-range/VoiceOver acceptance remains open; live-update implementation is
-specified below.
+Native text runs and their field owners advertise reveal only with matching
+painted geometry and an available own/ancestor scroll range. The pinned macOS
+adapter validates NSRange end addition and exact UTF-16 round trips before
+effects; surrogate/CRLF interior boundaries are refused. Its standard visible-range
+setter sends ScrollIntoView with the existing SetTextSelection payload as a
+typed range address. The action selects scrolling, not selection mutation. Both
+endpoints must decode through the same current field and source revision before
+entering the semantic FIFO. Ordinary owner reveal uses its logical selection,
+or the full source when no representable selection is available.
+
+The macOS visible-character getter uses acknowledged clipped run bounds and
+returns whole vertically visible lines, including horizontally clipped text,
+per [Apple's contract](https://developer.apple.com/documentation/appkit/nsaccessibilitystatictext/accessibilityvisiblecharacterrange%28%29).
+Empty/nonprinting lines retain their range; missing geometry does not fabricate
+a full-document range. ScrollView maps to the public AppKit scroll-area role.
+These are implementation contracts, not proof of native/VoiceOver acceptance.
+Page/item/absolute actions still need separately proven native platform routes;
+no private page-action name is invented. Live-update implementation follows.
 
 **Native live updates.** The native projection preserves roleless busy containers
 and root live/busy settings; the frozen headless projection retains its prior

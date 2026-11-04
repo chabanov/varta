@@ -25,3 +25,5 @@ pub use subclass::SubclassingAdapter;
 pub use objc2_foundation::{NSArray, NSObject, NSPoint};
 
 mod live;
+
+mod text_scroll;

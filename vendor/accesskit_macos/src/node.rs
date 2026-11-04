@@ -150,7 +150,7 @@ fn ns_role(node: &NodeRef) -> &'static NSAccessibilityRole {
             Role::Ruby => NSAccessibilityGroupRole,
             Role::RubyAnnotation => NSAccessibilityUnknownRole,
             Role::ScrollBar => NSAccessibilityScrollBarRole,
-            Role::ScrollView => NSAccessibilityUnknownRole,
+            Role::ScrollView => NSAccessibilityScrollAreaRole,
             Role::Search => NSAccessibilityGroupRole,
             Role::Section => NSAccessibilityGroupRole,
             Role::SectionFooter => NSAccessibilityGroupRole,
@@ -1038,6 +1038,24 @@ declare_class!(
             });
         }
 
+        #[method(accessibilityVisibleCharacterRange)]
+        fn visible_character_range(&self) -> NSRange {
+            self.resolve(|node| crate::text_scroll::visible_range(node).map(NSRange::from))
+                .flatten()
+                .unwrap_or_else(|| NSRange::new(0, 0))
+        }
+
+        #[method(setAccessibilityVisibleCharacterRange:)]
+        fn set_visible_character_range(&self, range: NSRange) {
+            self.resolve_with_context(|node, tree, context| {
+                if let Some(request) = crate::text_scroll::range_scroll_request(
+                    node, tree.state(), range.location, range.length,
+                ) {
+                    context.do_action(request);
+                }
+            });
+        }
+
         #[method(isAccessibilityRequired)]
         fn is_required(&self) -> bool {
             self.resolve(|node| node.is_required())
@@ -1211,7 +1229,9 @@ declare_class!(
         fn perform_action(&self, action: &NSString) {
             self.resolve_with_context(|node, tree, context| {
                 if action == ns_string!(SCROLL_TO_VISIBLE_ACTION) {
-                    if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
+                    if let Some(request) = crate::text_scroll::selection_scroll_request(node, tree.state()) {
+                        context.do_action(request);
+                    } else if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
                         context.do_action(ActionRequest {
                             action: Action::ScrollIntoView,
                             target_tree,
@@ -1226,6 +1246,10 @@ declare_class!(
         #[method(isAccessibilitySelectorAllowed:)]
         fn is_selector_allowed(&self, selector: Sel) -> bool {
             self.resolve(|node| {
+                if selector == sel!(setAccessibilityVisibleCharacterRange:) {
+                    return node.supports_text_ranges()
+                        && node.supports_action(Action::ScrollIntoView, &filter);
+                }
                 if selector == sel!(setAccessibilityFocused:) {
                     return node.is_focusable(&filter);
                 }
@@ -1238,7 +1262,8 @@ declare_class!(
                 if selector == sel!(accessibilityPerformDecrement) {
                     return node.supports_decrement(&filter);
                 }
-                if selector == sel!(accessibilityNumberOfCharacters)
+                if selector == sel!(accessibilityVisibleCharacterRange)
+                    || selector == sel!(accessibilityNumberOfCharacters)
                     || selector == sel!(accessibilitySelectedText)
                     || selector == sel!(accessibilitySelectedTextRange)
                     || selector == sel!(accessibilityInsertionPointLineNumber)

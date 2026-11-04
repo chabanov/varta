@@ -47,8 +47,26 @@ those ordinary AccessKit properties without changing its public API:
   trigger planning;
   geometry/selection-only updates do not. Existing focus/value/selection events
   keep their original paths. No new platform `unsafe` block is added.
-- `src/lib.rs` registers the module; `src/node.rs` removes the obsolete private
+- `src/lib.rs` registers the modules; `src/node.rs` removes the obsolete private
   label convenience method formerly used only by the replaced callbacks.
+- `src/text_scroll.rs` validates UTF-16 range ends with checked addition and
+  exact round trips before requests. This replaces the unchecked range-end
+  addition in `src/util.rs` and refuses surrogate/CRLF interior boundaries.
+  The native visible-range setter sends `ScrollIntoView` with the existing
+  `SetTextSelection` payload as a typed range address. This is a private contract
+  of this pinned adapter and Varta's host: the **action** selects scrolling;
+  the payload does not change selection. Both endpoints, owner and current
+  source revision are validated by the host before the bounded FIFO.
+  Ordinary ScrollToVisible uses the current selection when available.
+- `src/node.rs` exposes the standard visible-range getter/setter and maps
+  ScrollView to AppKit's public scroll-area role. The getter uses Varta's
+  already clipped field-run bounds to return complete vertically visible lines,
+  including horizontally clipped characters, as required by
+  [Apple's contract](https://developer.apple.com/documentation/appkit/nsaccessibilitystatictext/accessibilityvisiblecharacterrange%28%29).
+  Empty/nonprinting lines retain their range; absent geometry is unknown.
+  These rules depend on Varta's bounded, clipped producer, rather than arbitrary
+  third-party AccessKit trees. Page/item/absolute core actions still need a
+  separately proven native route; no private page-action string is invented.
 
 The planner is used only by Varta's bounded native observer tree. Projected
 labels/values occur once in a flat fragment buffer, with range indexes for atomic
@@ -68,5 +86,8 @@ assertive alerts, complete nested live/off content, nested atomic ownership,
 changed-channel priority, root/ancestor/descendant busy states, initial busy
 state, cancellation through empty content, empty/removal/replacement updates, password
 masks, and activation baselines. They do not substitute for VoiceOver or other
-platform acceptance. Reassess/remove the patch when an upstream release supplies
+platform acceptance. Range regressions also compile the exact safe text-scroll
+module, validating overflow, Unicode/CRLF, masking, clipped lines and host
+scroll routing without selection/focus/value changes or stale-range acceptance.
+Reassess/remove the patch when an upstream release supplies
 equivalent behavior and passes those regressions. Do not edit the registry cache.

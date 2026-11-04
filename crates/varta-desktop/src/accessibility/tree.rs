@@ -31,6 +31,7 @@ pub(super) struct Binding {
     pub into_view: bool,
     pub scroll_scale: f64,
     pub text_reveal: bool,
+    pub text_range: Option<std::ops::Range<usize>>,
 }
 impl Binding {
     pub fn allows(&self, action: &varta_view::AccessibilityAction) -> bool {
@@ -200,6 +201,12 @@ impl Projection {
                 .text
                 .as_ref()
                 .filter(|_| super::text::text_role(node.role()));
+            let text_reveal = rich_text.is_some_and(|text| {
+                metadata.text_reveal_supported(&source.identity, &text.revision)
+            });
+            if text_reveal {
+                node.add_action(Action::ScrollIntoView);
+            }
             if rich_text.is_some() {
                 let old = self
                     .slots
@@ -235,8 +242,15 @@ impl Projection {
                     scrollable: scroll.is_some(),
                     into_view,
                     scroll_scale: f64::from(metadata.scale()),
-                    text_reveal: rich_text.is_some_and(|text| {
-                        metadata.text_reveal_supported(&source.identity, &text.revision)
+                    text_reveal,
+                    text_range: rich_text.map(|text| {
+                        text.selection.map_or_else(
+                            || 0..text.source_offsets.last().copied().unwrap_or(0),
+                            |selection| {
+                                selection.anchor.min(selection.focus)
+                                    ..selection.anchor.max(selection.focus)
+                            },
+                        )
                     }),
                 },
             );

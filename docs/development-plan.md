@@ -19,7 +19,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | Native accessibility UI-2 implementation batch (2026-11-04, macOS arm64): **3281 passed**, 0 failures, 16 ignored; all eight commands passed with unchanged inputs. Report: `target/verification/20261104-011619-8_yzsx6c/report.json`; source SHA-256 `2ab8cfa1489dc188cae26237c3f9ea5cf2d9b9332e48977199448f47176e62df`. Optional GPU all-target Clippy and 55 desktop GPU tests, the 12-input Showcase scenario and the inspected headless initial frame have separate scoped evidence below. Documentation was updated after the gate; implementation inputs are unchanged. Native VoiceOver/range routing, browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Native macOS text-range package after `5a52125` (2026-11-04, macOS arm64): **3292 passed**, 0 failures, 16 ignored; all eight commands passed with unchanged inputs. Report: `target/verification/20261104-015702-6g3mx2fb/report.json`; source SHA-256 `6294ded534da348dc9dc43516e10f0ecd1159e367184dc4462cc79c313823653`. Separate optional GPU checks pass 66 desktop cases and strict all-target Clippy. This verifies the range implementation; native window/VoiceOver, remaining page/item/absolute routes, broader browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -228,15 +228,41 @@ failed the dependency-boundary test: it rejected the desktop's exact
 desktop tests; AccessKit remains excluded from engine crates. Report:
 `target/verification/20261104-005142-wa0_orw4/report.json` (failed, not a full pass).
 The corrected boundary passes both dependency tests; the consolidated result follows below.
-End-to-end native/VoiceOver acceptance remains open. The pinned macOS range adapter still only emits node ScrollIntoView without a range
-or edge hint; unit-tested text-run requests alone do not close platform range
+End-to-end native/VoiceOver acceptance remains open. At the `5a52125` checkpoint,
+the pinned macOS range adapter only emitted node ScrollIntoView without a range
+or edge hint; unit-tested text-run requests alone did not close platform range
 acceptance. The final consolidated workspace gate passes **3281 tests**, with 16
 ignored and all eight commands successful on unchanged inputs:
-`target/verification/20261104-011619-8_yzsx6c/report.json`. This does not close native range/VoiceOver acceptance.
+`target/verification/20261104-011619-8_yzsx6c/report.json`. This verifies the code
+committed as `5a52125`; it does not close native range/VoiceOver acceptance.
 A separate read-only probe also reproduced unchecked range-end addition in the
 unchanged upstream macOS `from_ns_range` utility. Exact UTF-16 validation and
-native visible-range routing are the next package; their preparatory code/tests
-under ignored `target/a11y10-stage` are outside this gate and commit.
+native visible-range routing were prepared separately under ignored
+`target/a11y10-stage`, outside that gate and commit. Their application follows.
+
+**Native range package after `5a52125` — implementation verified; platform acceptance open.**
+Checked range addition and exact UTF-16 round trips reject
+overflow and surrogate/CRLF interior endpoints before effects. The standard macOS
+visible-range setter and ordinary ScrollToVisible route through typed source
+ranges, preserving field selection, value, focus and acknowledged-frame guards.
+Field owners advertise their own content reveal without requiring a scrollable
+ancestor. The visible-range getter covers whole vertically visible lines,
+including horizontally clipped text, per Apple's contract; ScrollView maps to
+the public scroll-area role. The exact prepared source passed 66 CPU desktop
+tests (including 11 new cases) and macOS SDK metadata compilation before application.
+After application, normal Cargo verification passes **66 desktop GPU tests**,
+strict all-target desktop GPU Clippy, formatting and the exact reverse-patch
+check. Evidence:
+`target/a11y10-stage/staged-inputs.json`,
+`target/a11y10-stage/desktop-regressions.log`, and
+`target/a11y10-stage/stage-check-exact-graph.log`,
+`target/a11y10-desktop-gpu-tests.log`, `target/a11y10-clippy.log`, and
+`target/a11y10-vendor-provenance.json`. The original overflow probe
+fails on the extracted unchanged utility, while the new checks pass. This is an
+implementation package verified by the final **3292-test full gate**:
+`target/verification/20261104-015702-6g3mx2fb/report.json`, with all eight commands passing and unchanged inputs. This is separate
+from the preceding 3281-test checkpoint. Actual native range/VoiceOver,
+page/item/absolute native routes and other-target acceptance remain open.
 
 **Renderer batch based on `1259eb8`; 2026-11-03.** This batch includes renderer
 and pointer changes, new Rust modules/tests, the Showcase and documentation.

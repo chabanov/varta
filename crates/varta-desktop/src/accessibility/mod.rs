@@ -58,6 +58,25 @@ struct State {
     wake_pending: bool,
     observer_warning_emitted: bool,
 }
+impl State {
+    /// Both endpoints must belong to the current owner's immutable source map.
+    fn source_selection(
+        &self,
+        owner: NodeId,
+        selection: &accesskit::TextSelection,
+    ) -> Option<(varta_view::AccessibilityTextRevision, usize, usize)> {
+        let anchor = self.text_runs.get(&selection.anchor.node)?;
+        let focus = self.text_runs.get(&selection.focus.node)?;
+        if anchor.owner != owner || focus.owner != owner || anchor.revision != focus.revision {
+            return None;
+        }
+        Some((
+            anchor.revision.clone(),
+            anchor.source_offset(selection.anchor.character_index)?,
+            focus.source_offset(selection.focus.character_index)?,
+        ))
+    }
+}
 #[derive(Clone)]
 pub(crate) struct Bridge {
     state: Arc<Mutex<State>>,
@@ -253,6 +272,18 @@ impl Bridge {
                         end: range.end,
                         hint,
                     }
+                } else if binding.text_reveal {
+                    let (Some(revision), Some(range)) =
+                        (&binding.text_revision, &binding.text_range)
+                    else {
+                        return;
+                    };
+                    varta_view::AccessibilityScrollAction::TextIntoView {
+                        revision: revision.clone(),
+                        start: range.start,
+                        end: range.end,
+                        hint,
+                    }
                 } else if hint == H::Nearest {
                     varta_view::AccessibilityScrollAction::IntoView
                 } else {
@@ -290,29 +321,30 @@ impl Bridge {
                 };
                 AccessibilityAction::Scroll(varta_view::AccessibilityScrollAction::To(top))
             }
-            (Action::SetTextSelection, Some(ActionData::SetTextSelection(selection))) => {
-                let Some(anchor) = state.text_runs.get(&selection.anchor.node) else {
+            (
+                action @ (Action::SetTextSelection | Action::ScrollIntoView),
+                Some(ActionData::SetTextSelection(selection)),
+            ) => {
+                let Some((revision, anchor, focus)) =
+                    state.source_selection(request.target_node, &selection)
+                else {
                     return;
                 };
-                let Some(focus) = state.text_runs.get(&selection.focus.node) else {
-                    return;
-                };
-                if anchor.owner != request.target_node
-                    || focus.owner != request.target_node
-                    || anchor.revision != focus.revision
-                {
-                    return;
-                }
-                let (Some(anchor_offset), Some(focus_offset)) = (
-                    anchor.source_offset(selection.anchor.character_index),
-                    focus.source_offset(selection.focus.character_index),
-                ) else {
-                    return;
-                };
-                AccessibilityAction::SelectText {
-                    revision: anchor.revision.clone(),
-                    anchor: anchor_offset,
-                    focus: focus_offset,
+                if action == Action::ScrollIntoView {
+                    AccessibilityAction::Scroll(
+                        varta_view::AccessibilityScrollAction::TextIntoView {
+                            revision,
+                            start: anchor.min(focus),
+                            end: anchor.max(focus),
+                            hint: varta_view::AccessibilityScrollHint::Nearest,
+                        },
+                    )
+                } else {
+                    AccessibilityAction::SelectText {
+                        revision,
+                        anchor,
+                        focus,
+                    }
                 }
             }
             (Action::Focus, None) => AccessibilityAction::Focus,
@@ -611,3 +643,9 @@ mod tests {
 mod live_planner;
 #[cfg(test)]
 mod live_tests;
+
+#[cfg(test)]
+mod platform_scroll_tests;
+#[cfg(test)]
+#[path = "../../../../vendor/accesskit_macos/src/text_scroll.rs"]
+mod text_scroll_planner;
