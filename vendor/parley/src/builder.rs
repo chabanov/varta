@@ -290,6 +290,15 @@ fn build_into_layout<B: Brush>(
     fcx: &mut FontContext,
     line_break_override: Option<&LineBreakOverrideFn>,
 ) {
+    // Refuse oversized edge/box programs before sorting or shaping. Their output
+    // slots and sorting/visitation work share the existing configured ceilings.
+    if !lcx.scx.admits_inline_boxes(lcx.inline_boxes.len()) {
+        lcx.scx.failed = true;
+        lcx.scx.ops_used = 0;
+        layout.data.clear();
+        lcx.inline_boxes.clear();
+        return;
+    }
     if text.is_empty() && lcx.style_runs.is_empty() {
         lcx.style_table.push(ResolvedStyle::default());
         lcx.style_runs.push(StyleRun {

@@ -8,6 +8,7 @@ mod accessibility;
 mod alignment;
 mod cluster;
 mod glyph;
+mod inline_edges;
 mod line;
 mod line_break;
 mod run;

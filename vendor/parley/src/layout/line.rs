@@ -1,12 +1,12 @@
 // Copyright 2021 the Parley Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use crate::layout::Style;
 use crate::layout::data::BreakReason;
 use crate::layout::data::{LayoutItemKind, LineData};
 use crate::layout::glyph::Glyph;
 use crate::layout::layout::Layout;
 use crate::layout::run::Run;
+use crate::layout::Style;
 use crate::style::Brush;
 use crate::{InlineBox, InlineBoxKind};
 use core::ops::Range;
@@ -266,7 +266,7 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
 
                     self.item_index += 1;
                     self.glyph_start = 0;
-                    if inline_box.kind == InlineBoxKind::InFlow {
+                    if inline_box.kind.advances() {
                         self.offset += inline_box.width;
                     }
                     return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {

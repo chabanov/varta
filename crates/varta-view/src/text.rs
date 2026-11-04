@@ -1,5 +1,6 @@
 //! Deterministic text shaping using only explicitly supplied fonts.
 mod cache;
+pub(crate) mod edges;
 pub(crate) mod field_display;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{
@@ -445,6 +446,22 @@ impl TextMeasurer {
         options: TextOptions,
         spans: &[TextSpan],
     ) -> Result<(TextMetrics, Layout<u32>), TextMeasureError> {
+        self.shape_with_edges(text, max_width, families, options, spans, &[])
+    }
+
+    pub(crate) fn shape_with_edges(
+        &mut self,
+        text: &str,
+        max_width: Option<f32>,
+        families: &[String],
+        options: TextOptions,
+        spans: &[TextSpan],
+        edges: &[edges::TextEdge],
+    ) -> Result<(TextMetrics, Layout<u32>), TextMeasureError> {
+        let edge_work = edges::validate(text, edges)?;
+        if edge_work != 0 {
+            self.charge_inline_work(edge_work)?;
+        }
         if !options.source.admits(text)
             || !options.size.is_finite()
             || !(0.01..=4096.0).contains(&options.size)
@@ -475,6 +492,7 @@ impl TextMeasurer {
             families,
             options,
             spans,
+            edges,
         };
         let remaining = self.view_shaping.remaining.load(Ordering::Relaxed);
         let scoped = remaining != NO_VIEW_REQUEST;
@@ -524,6 +542,9 @@ impl TextMeasurer {
         }
         if let Some(line_height) = options.line_height {
             builder.push_default(StyleProperty::LineHeight(line_height));
+        }
+        for edge in edges {
+            builder.push_inline_box(edge.inline_box());
         }
         for span in spans {
             if span.range.is_empty() {
