@@ -24,7 +24,7 @@ function CounterCard(props: CardProps): number {
     <div class={highlighted.get() ? 'card selected' : 'card'}>
       <div class="heading">{'01 / Стан і події'}</div>
       <div class="muted">Кнопки змінюють стан усередині Wasm.</div>
-      <div class="counter">{count.get()}</div>
+      <div class="counter" role="status" aria-label="Лічильник">{count.get()}</div>
       <div class="row">
         <button id="decrement" type="button" class="button" aria-label="Зменшити"
           onClick={() => count.set(count.get() - step.get())}>−</button>
@@ -59,12 +59,12 @@ function EditorCard(props: CardProps): number {
   return (
     <div class="card">
       <div class="heading">{'02 / Редагування'}</div>
-      <input id="name" type="text" class="field" placeholder="Як вас звати?" aria-label="Ваше ім’я"
+      <input id="name" type="text" class="field" placeholder="Як вас звати?" aria-label="Ваше ім’я" aria-describedby="name-help"
         value={name.get()} onInput={(event: ViewEvent) => name.set(event.value)} />
-      <div class="muted">{name.get() === '' ? 'Вітаю! Спробуйте ввести своє ім’я.' : `Вітаю, ${name.get()}!`}</div>
-      <textarea id="editor" class="field editor" aria-label="Нотатка" value={note.get()}
+      <div id="name-help" class="muted">{name.get() === '' ? 'Вітаю! Спробуйте ввести своє ім’я.' : `Вітаю, ${name.get()}!`}</div>
+      <textarea id="editor" class="field editor" aria-label="Нотатка" aria-describedby="editor-help" value={note.get()}
         onInput={(event: ViewEvent) => { note.set(event.value); edited.set(true); }} />
-      <div class="muted">{edited.get() ? `Довжина нотатки: ${note.get().length} символів` : 'Редактор: виділення, переноси, Undo / Redo.'}</div>
+      <div id="editor-help" class="muted">{edited.get() ? `Довжина нотатки: ${note.get().length} символів` : 'Редактор: виділення, переноси, Undo / Redo.'}</div>
     </div>
   );
 }
@@ -75,14 +75,14 @@ function TypographyCard(props: CardProps): number {
     <div class="card">
       <div class="heading">{'03 / Текст і компонування'}</div>
       <div class="inline">Це спільний рядок із <span class="accent">кольоровим фрагментом</span>, успадкуванням стилів та природними переносами між вузлами.</div>
-      <select id="topic" class="field" aria-label="Тема демонстрації" value={topic.get()}
+      <select id="topic" class="field" aria-label="Тема демонстрації" aria-describedby="topic-help" value={topic.get()}
         onInput={(event: ViewEvent) => topic.set(event.value)}>
         <option value="ui">Інтерфейс</option>
         <option value="core">Ядро</option>
         <option value="all">Усе разом</option>
       </select>
       <div class="muted">{topic.get() === 'core' ? 'Обрано: ядро' : topic.get() === 'all' ? 'Обрано: усе разом' : 'Обрано: інтерфейс'}</div>
-      <div class="muted">Спробуйте Tab, Shift+Tab, Space та стрілки.</div>
+      <div id="topic-help" class="muted">Спробуйте Tab, Shift+Tab, Space та стрілки.</div>
     </div>
   );
 }
@@ -107,7 +107,7 @@ function EngineCard(props: CardProps): number {
   return (
     <div class="card">
       <div class="heading">{'04 / Можливості ядра'}</div>
-      <div class="output">{result.get()}</div>
+      <div class="output" role="status" aria-label="Результат прикладу">{result.get()}</div>
       <button id="run-engine" type="button" class="button primary wide"
         onClick={() => { runEngine(result.set); }}>Запустити приклад</button>
     </div>

@@ -1466,6 +1466,213 @@ fn input(json: &str) -> varta_view::Input {
 }
 
 #[test]
+fn assistive_frame_scroll_events_run_later_with_fresh_budgets() {
+    use varta_common::view::{CssProperty as P, EventKind, Tag};
+    use varta_view::{
+        AccessibilityAction as A, AccessibilityScrollAction as S, AccessibilityScrollUnit as U,
+    };
+    let source = format!(
+        r#"
+export function main(): void {{
+ const pane=View.node();View.createElement(pane,{div});View.setAttribute(pane,{id},'pane');
+ View.setStyle(pane,{width},'100px');View.setStyle(pane,{height},'50px');View.setStyle(pane,{overflow},'auto');
+ View.on(pane,{scroll},(event:ViewEvent):void => {{console.log('scrolled');}},0,0,0,0);
+ const child=View.node();View.createElement(child,{div});View.setStyle(child,{height},'200px');
+ View.insert(pane,child,0);View.insert(1,pane,0);View.commit();
+}}
+"#,
+        div = Tag::Div.code(),
+        id = varta_common::view::Attribute::Id.code(),
+        width = P::Width.code(),
+        height = P::Height.code(),
+        overflow = P::Overflow.code(),
+        scroll = EventKind::Scroll.code()
+    );
+    let mut app = instance(&source, vec![], None);
+    let semantics = app.view_accessibility_tree().unwrap();
+    let pane = semantics
+        .nodes
+        .values()
+        .find(|node| node.author_id.as_deref() == Some("pane"))
+        .unwrap();
+    let frame = app.view_rasterize(150, 100, None).unwrap().into_metadata();
+    let turns = app.budget_report().turns.len();
+    let action = A::Scroll(S::Down(U::Page));
+    assert!(
+        !app.view_accessibility_input(&pane.identity, &action)
+            .unwrap()
+    );
+    assert!(
+        app.view_accessibility_input_from_frame(&pane.identity, &action, &frame)
+            .unwrap()
+    );
+    assert!(app.take_output().is_empty());
+    assert_eq!(app.budget_report().turns.len(), turns);
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), ["varta log: scrolled"]);
+    assert_eq!(app.budget_report().turns.len(), turns + 1);
+    assert!(app.failure().is_none());
+}
+
+#[test]
+fn assistive_inputs_deliver_guest_events_on_later_budgeted_turns() {
+    use varta_view::AccessibilityAction as Action;
+    let mut app = instance(FIELD, vec![], None);
+    let semantics = app.view_accessibility_tree().unwrap();
+    let field = &semantics
+        .nodes
+        .values()
+        .find(|node| node.author_id.as_deref() == Some("name"))
+        .unwrap()
+        .identity;
+    let button = &semantics
+        .nodes
+        .values()
+        .find(|node| node.author_id.as_deref() == Some("go"))
+        .unwrap()
+        .identity;
+    let turns = app.budget_report().turns.len();
+    assert!(
+        app.view_accessibility_input(field, &Action::SetValue("assistive".into()))
+            .unwrap()
+    );
+    assert!(
+        app.view_accessibility_input(button, &Action::Click)
+            .unwrap()
+    );
+    assert!(app.take_output().is_empty());
+    assert_eq!(app.budget_report().turns.len(), turns);
+    assert!(
+        !app.view_accessibility_input(button, &Action::SetValue("invalid".into()))
+            .unwrap()
+    );
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(
+        app.take_output(),
+        ["varta log: input assistive", "varta log: click"]
+    );
+    let report = app.budget_report();
+    assert_eq!(report.turns.len(), turns + 2);
+    assert!(report.per_turn);
+    assert!(
+        report
+            .turns
+            .iter()
+            .all(|turn| turn.fuel < varta_common::abi::FUEL)
+    );
+}
+
+#[test]
+fn assistive_text_selection_and_replacement_keep_unicode_offsets_and_event_turns() {
+    use varta_view::AccessibilityAction as Action;
+    let mut app = instance(FIELD, vec![], None);
+    let tree = app.view_accessibility_tree().unwrap();
+    let identity = &tree
+        .nodes
+        .values()
+        .find(|node| node.author_id.as_deref() == Some("name"))
+        .unwrap()
+        .identity;
+    assert!(
+        app.view_accessibility_input(identity, &Action::SetValue("A😀e\u{301}\r\nБ".into()))
+            .unwrap()
+    );
+    assert_eq!(app.run(), crate::Step::Idle);
+    app.take_output();
+    let tree = app.view_accessibility_tree().unwrap();
+    let node = tree
+        .nodes
+        .values()
+        .find(|node| node.author_id.as_deref() == Some("name"))
+        .unwrap();
+    let model = node.text.as_ref().unwrap();
+    let selection = Action::SelectText {
+        revision: model.revision.clone(),
+        anchor: 8,
+        focus: 1,
+    };
+    let turns = app.budget_report().turns.len();
+    assert!(
+        app.view_accessibility_input(&node.identity, &selection)
+            .unwrap()
+    );
+    assert!(app.take_output().is_empty());
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.budget_report().turns.len(), turns);
+    assert!(
+        app.view_accessibility_input(&node.identity, &Action::ReplaceSelectedText("X".into()))
+            .unwrap()
+    );
+    assert!(app.take_output().is_empty());
+    assert_eq!(app.budget_report().turns.len(), turns);
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.take_output(), ["varta log: input AX\r\nБ"]);
+    assert_eq!(app.budget_report().turns.len(), turns + 1);
+    let before = app.view_snapshot();
+    assert!(
+        !app.view_accessibility_input(&node.identity, &selection)
+            .unwrap()
+    );
+    assert_eq!(app.view_snapshot(), before);
+    assert!(app.failure().is_none());
+}
+
+#[test]
+fn assistive_observer_refusal_keeps_the_instance_running_and_recovers_after_input() {
+    use varta_common::view::{Attribute as A, Tag};
+    let source = format!(
+        r#"
+export function main(): void {{
+ const button = View.node(); View.createElement(button, {button});
+ View.setAttribute(button, {id}, 'go');
+ View.setAttribute(button, {describedby}, 'help '.repeat(254) + 'help');
+ View.on(button, {click}, (event: ViewEvent): void => {{
+   View.setAttribute(button, {describedby}, 'help'); View.setTitle('recovered'); View.commit();
+ }}, 0, 0, 0, 0);
+ const help = View.node(); View.createElement(help, {div});
+ View.setAttribute(help, {id}, 'help'); View.setAttribute(help, {hidden}, 'true');
+ const text = View.node(); View.createText(text, 'é'.repeat({units}));
+ View.insert(help, text, 0); View.insert(1, button, 0); View.insert(1, help, 0); View.commit();
+}}
+"#,
+        button = Tag::Button.code(),
+        div = Tag::Div.code(),
+        id = A::Id.code(),
+        describedby = A::AriaDescribedby.code(),
+        hidden = A::AriaHidden.code(),
+        click = view::EventKind::Click.code(),
+        units = view::DRAFT_MAX_VALUE_BYTES / 2
+    );
+    let mut app = instance(&source, vec![], None);
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    let before = app.view_snapshot();
+    assert!(matches!(
+        app.view_accessibility_tree(),
+        Err(varta_view::AccessibilityError::WorkLimit { .. })
+    ));
+    assert_eq!(app.view_snapshot(), before);
+    assert_eq!(app.state(), crate::InstanceState::Running);
+    assert!(app.failure().is_none());
+    app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Ident("#go".into()),
+    })
+    .unwrap();
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert_eq!(app.view_title(), "recovered");
+    let semantics = app.view_accessibility_tree().unwrap();
+    let button = semantics
+        .nodes
+        .values()
+        .find(|node| node.author_id.as_deref() == Some("go"))
+        .unwrap();
+    assert_eq!(
+        button.description.as_ref().unwrap().len(),
+        view::DRAFT_MAX_VALUE_BYTES
+    );
+    assert_eq!(app.state(), crate::InstanceState::Running);
+}
+
+#[test]
 fn view_records_are_host_tasks_with_fresh_turns_and_queue_coalescing() {
     let mut app = instance(FIELD, vec![], None);
     assert!(app.failure().is_none(), "{:?}", app.failure());
@@ -2103,4 +2310,81 @@ export function main():void {
     .unwrap();
     assert_eq!(app.run(), crate::Step::Idle);
     assert_eq!(app.take_output(), ["varta log: activated"]);
+}
+
+#[test]
+fn assistive_text_reveal_changes_only_display_and_schedules_no_guest_turn() {
+    use varta_view::{
+        AccessibilityAction as A, AccessibilityScrollAction as S, AccessibilityScrollHint as H,
+    };
+    let source = format!(
+        r#"
+export function main():void {{
+ View.stylesheet(1,'.field {{display:block;width:60px;height:40px;min-width:0;min-height:0;padding:4px;border:1px solid #000;outline:none;border-radius:0;background-color:#fff;color:#000;font-family:"Varta Password Fixture";font-size:20px;font-weight:400;font-style:normal;line-height:20px}}');
+ const field=View.node();View.createElement(field,{input});View.setClass(field,'field');
+ View.setValue(field,'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+ View.on(field,{event},(event:ViewEvent):void=>{{console.log('input');}},0,0,0,0);
+ View.insert(1,field,0);View.commit();
+}}
+"#,
+        input = view::Tag::Input.code(),
+        event = view::EventKind::Input.code()
+    );
+    let mut app = instance(&source, vec![], None);
+    let semantics = app.view_accessibility_tree().unwrap();
+    let field = semantics
+        .nodes
+        .values()
+        .find(|node| node.text.is_some())
+        .unwrap();
+    let text = field.text.as_ref().unwrap();
+    let mut font = varta_view::TextMeasurer::new(
+        include_bytes!("../../varta-view/tests/fixtures/password.ttf").to_vec(),
+        "Varta Password Fixture",
+    )
+    .unwrap();
+    let frame = app
+        .view_rasterize_scaled(400, 200, 2.0, Some((&mut font, 20.0)))
+        .unwrap()
+        .into_metadata();
+    let before = frame
+        .field_text_geometry(&field.identity, &text.revision)
+        .unwrap()
+        .clusters[0]
+        .bounds
+        .x;
+    let turns = app.budget_report().turns.len();
+    let action = A::Scroll(S::TextIntoView {
+        revision: text.revision.clone(),
+        start: 0,
+        end: 1,
+        hint: H::Nearest,
+    });
+    assert!(
+        !app.view_accessibility_input(&field.identity, &action)
+            .unwrap()
+    );
+    assert!(
+        app.view_accessibility_input_from_frame(&field.identity, &action, &frame)
+            .unwrap()
+    );
+    assert_eq!(app.run(), crate::Step::Idle);
+    assert!(app.take_output().is_empty());
+    assert_eq!(app.budget_report().turns.len(), turns);
+    let after = app.view_accessibility_tree().unwrap();
+    assert_eq!(after.focus, semantics.focus);
+    assert_eq!(after.nodes[&field.id].value, field.value);
+    assert_eq!(
+        after.nodes[&field.id].text.as_ref().unwrap().selection,
+        text.selection
+    );
+    let fresh = app
+        .view_rasterize_scaled(400, 200, 2.0, Some((&mut font, 20.0)))
+        .unwrap();
+    let g = fresh
+        .field_text_geometry(&field.identity, &text.revision)
+        .unwrap();
+    assert!(g.clusters[0].bounds.x > before);
+    assert!(g.clusters[0].bounds.x >= g.clip.x);
+    assert!(app.failure().is_none());
 }

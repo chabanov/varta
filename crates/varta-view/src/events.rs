@@ -716,6 +716,7 @@ impl View {
                         field.editor.upstream = *upstream;
                         field.editor.preedit = None;
                         field.editor.manual_text_scroll = false;
+                        field.editor.horizontal_scroll = None;
                     }
                 }
             }
@@ -1107,6 +1108,9 @@ impl View {
                 self.history.pop_front();
             }
         }
+        if element.value != value {
+            element.editor.text_epoch = Some(std::sync::Arc::new(()));
+        }
         element.value = value;
         element.editor.anchor = anchor;
         element.editor.focus = focus;
@@ -1152,6 +1156,9 @@ impl View {
         };
         self.history[index].undone = !redo;
         let element = self.tree.element_mut(node).expect("validated field");
+        if element.value != replacement.value {
+            element.editor.text_epoch = Some(std::sync::Arc::new(()));
+        }
         element.value = replacement.value;
         element.editor.anchor = replacement.anchor;
         element.editor.focus = replacement.focus;

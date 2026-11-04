@@ -4,6 +4,7 @@
 //! layout, so steps 2I (tooltip) and the CSS parts of 2F do not apply.
 use crate::style::Environment;
 use crate::tree::{Content, Element, Tree};
+use unicode_segmentation::UnicodeSegmentation;
 use varta_common::view::{Attribute, CssProperty, Tag};
 
 use std::collections::BTreeMap;
@@ -13,6 +14,7 @@ use varta_common::view::accessibility::NAME_FROM_CONTENT;
 /// rather than scanning the document for every repeated naming relation.
 pub(crate) struct Names<'a> {
     tree: &'a Tree,
+    mask_graphemes: bool,
     ids: BTreeMap<&'a str, u32>,
     labels: BTreeMap<&'a str, Vec<u32>>,
     hidden: BTreeMap<u32, bool>,
@@ -23,6 +25,7 @@ impl<'a> Names<'a> {
     pub(crate) fn new(tree: &'a Tree, environment: &Environment) -> Self {
         let mut names = Self {
             tree,
+            mask_graphemes: false,
             ids: BTreeMap::new(),
             labels: BTreeMap::new(),
             hidden: BTreeMap::new(),
@@ -52,13 +55,61 @@ impl<'a> Names<'a> {
         names
     }
 
+    /// Native alternatives use the same masks as painted password fields;
+    /// legacy snapshots keep their established scalar-mask representation.
+    pub(crate) fn native(tree: &'a Tree, environment: &Environment) -> Self {
+        Self {
+            mask_graphemes: true,
+            ..Self::new(tree, environment)
+        }
+    }
+
     pub(crate) fn hidden(&self, id: u32) -> bool {
         self.hidden[&id]
     }
 
+    pub(crate) fn resolve_id(&self, ident: &str) -> Option<u32> {
+        self.ids.get(ident).copied()
+    }
+
+    /// Description references use the same finite text-alternative traversal.
+    /// Describedby itself is never followed recursively. Call only after the
+    /// native observer's aggregate potential-work preflight succeeds.
+    pub(crate) fn description(&self, id: u32) -> Option<String> {
+        let refs = self
+            .tree
+            .element(id)?
+            .attributes
+            .get(&Attribute::AriaDescribedby)?;
+        let parts: Vec<_> = refs
+            .split_ascii_whitespace()
+            .filter_map(|ident| self.resolve_id(ident))
+            .map(|referenced| {
+                compute(
+                    self,
+                    referenced,
+                    None,
+                    Traversal {
+                        root: id,
+                        labelledby: false,
+                        include_hidden: self.hidden_in_tree[&referenced],
+                    },
+                    Step::Referenced,
+                )
+            })
+            .collect();
+        let description = flat(&parts.join(" "));
+        (!description.is_empty()).then_some(description)
+    }
+
     /// Flat ASCII-whitespace-normalized name; no borrowed cache survives a frame.
     pub(crate) fn accessible_name(&self, id: u32, role: &str) -> String {
-        flat(&compute(
+        self.name_with_origin(id, role).0
+    }
+    /// True only for the root's successful name-from-content fallback, not
+    /// author labels, relations, host labels or placeholder fallback.
+    pub(crate) fn name_with_origin(&self, id: u32, role: &str) -> (String, bool) {
+        let (name, contents) = compute_with_origin(
             self,
             id,
             Some(role),
@@ -68,7 +119,8 @@ impl<'a> Names<'a> {
                 include_hidden: false,
             },
             Step::Root,
-        ))
+        );
+        (flat(&name), contents)
     }
 }
 
@@ -77,7 +129,8 @@ impl<'a> Names<'a> {
 enum Step {
     /// The element whose name is computed.
     Root,
-    /// The node directly referenced by `aria-labelledby` or a native `label`.
+    /// The node directly referenced by `aria-labelledby`, `aria-describedby`
+    /// or a native `label`.
     Referenced,
     /// A descendant reached through name from content.
     Descendant,
@@ -112,13 +165,14 @@ pub(crate) fn hidden_element(
         || (element.tag == Tag::Dialog && !element.open)
 }
 
-fn compute<'a>(
+fn compute_with_origin<'a>(
     names: &'a Names<'_>,
     id: u32,
     role: Option<&'a str>,
     traversal: Traversal,
     step: Step,
-) -> String {
+) -> (String, bool) {
+    let mut root_contents = false;
     let tree = names.tree;
     enum Task<'a> {
         Visit(u32, Option<&'a str>, Step),
@@ -142,11 +196,12 @@ fn compute<'a>(
             };
             // Descendant content already occupies an ordered fragment range.
             // Do not concatenate that range again at every ancestor depth.
-            if !recursion
-                && parts[start..]
+            if !recursion {
+                root_contents = parts[start..]
                     .iter()
-                    .all(|part| part.split_ascii_whitespace().next().is_none())
-            {
+                    .any(|part| part.split_ascii_whitespace().next().is_some());
+            }
+            if !recursion && !root_contents {
                 parts.truncate(start);
                 parts.push(placeholder.unwrap_or_default().to_owned());
             }
@@ -182,7 +237,7 @@ fn compute<'a>(
             continue;
         }
         let recursion = step != Step::Root;
-        if recursion && let Some(value) = embedded_value(tree, id, element) {
+        if recursion && let Some(value) = embedded_value(names, id, element) {
             parts.push(value);
             continue;
         }
@@ -201,7 +256,7 @@ fn compute<'a>(
             .then(|| element.attributes.get(&Attribute::Placeholder))
             .flatten()
             .map(String::as_str);
-        let role = role.or_else(|| crate::snapshot::role(element));
+        let role = role.or_else(|| crate::accessibility::role(element));
         if recursion || role.is_some_and(|role| NAME_FROM_CONTENT.contains(&role)) {
             pending.push(Task::Content {
                 start: parts.len(),
@@ -218,7 +273,16 @@ fn compute<'a>(
             parts.push(placeholder.unwrap_or_default().to_owned());
         }
     }
-    parts.concat()
+    (parts.concat(), root_contents)
+}
+fn compute<'a>(
+    names: &'a Names<'_>,
+    id: u32,
+    role: Option<&'a str>,
+    traversal: Traversal,
+    step: Step,
+) -> String {
+    compute_with_origin(names, id, role, traversal, step).0
 }
 
 /// 2B: the names of the attached referenced nodes, joined by one space; `None`
@@ -243,10 +307,16 @@ fn labelledby(names: &Names<'_>, element: &Element, traversal: Traversal) -> Opt
 
 /// 2C: the value of an embedded textbox, spinbutton or combobox (a password
 /// field contributes its masked value, as the snapshot shows it).
-fn embedded_value(tree: &Tree, id: u32, element: &Element) -> Option<String> {
+fn embedded_value(names: &Names<'_>, id: u32, element: &Element) -> Option<String> {
+    let tree = names.tree;
     if element.text_field() {
         return Some(if element.input_type() == "password" {
-            "•".repeat(element.value.chars().count())
+            let count = if names.mask_graphemes {
+                element.value.graphemes(true).count()
+            } else {
+                element.value.chars().count()
+            };
+            crate::text::field_display::PASSWORD_MASK.repeat(count)
         } else {
             element.value.clone()
         });

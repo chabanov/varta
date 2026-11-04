@@ -1,5 +1,6 @@
 //! Deterministic text shaping using only explicitly supplied fonts.
 mod cache;
+pub(crate) mod field_display;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{
     FontContext, FontFamilyName, FontStyle, FontWeight, Layout, LayoutContext, LineHeight,

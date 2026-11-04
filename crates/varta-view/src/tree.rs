@@ -32,7 +32,11 @@ pub(crate) struct EditorState {
     pub focus: usize,
     pub preedit: Option<Preedit>,
     pub history_epoch: Arc<()>,
+    /// Host text-range generation; allocated on the first content/type change.
+    pub text_epoch: Option<Arc<()>>,
     pub manual_text_scroll: bool,
+    /// Assistive display panning; ordinary caret navigation restores following.
+    pub horizontal_scroll: Option<f32>,
     pub preferred_x: Option<f32>,
     pub upstream: bool,
     pub option_selected: bool,
@@ -43,6 +47,7 @@ pub(crate) struct EditorState {
 }
 impl EditorState {
     pub fn reset_navigation(&mut self) {
+        self.horizontal_scroll = None;
         self.preferred_x = None;
         self.upstream = false;
     }
@@ -1003,6 +1008,10 @@ impl Apply<'_, '_, '_> {
                 let tag = self.tag(node)?;
                 self.attribute_admitted(*attribute, tag)?;
                 if self.element(node)?.attributes.remove(attribute).is_some() {
+                    if *attribute == Attribute::Type {
+                        self.element(node)?.editor.text_epoch = Some(Arc::new(()));
+                        self.element(node)?.editor.horizontal_scroll = None;
+                    }
                     self.tree.select_attribute(node, *attribute, false);
                 }
                 Ok(())
@@ -1180,6 +1189,10 @@ impl Apply<'_, '_, '_> {
         let element = self.element(node)?;
         let changed = element.attributes.get(&attribute).map(String::as_str) != Some(value);
         element.attributes.insert(attribute, value.into());
+        if changed && attribute == Attribute::Type {
+            element.editor.text_epoch = Some(Arc::new(()));
+            element.editor.horizontal_scroll = None;
+        }
         if matches!(attribute, Attribute::Disabled | Attribute::Readonly) {
             element.editor.preedit = None;
             element.editor.select_popup = None;
@@ -1427,6 +1440,7 @@ impl Apply<'_, '_, '_> {
                 element.editor.focus = value.len();
                 element.editor.preedit = None;
                 element.editor.history_epoch = Arc::new(());
+                element.editor.text_epoch = Some(Arc::new(()));
                 element.editor.manual_text_scroll = false;
                 element.editor.reset_navigation();
             }

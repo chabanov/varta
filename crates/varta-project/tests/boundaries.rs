@@ -172,6 +172,11 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 !STORAGE_CRATES.contains(&target) || name == "varta-runtime" && !dev,
                 "the KV storage engine is a runtime host dependency only: {name} -> {target}"
             );
+            assert!(
+                !target.starts_with("accesskit")
+                    || name == "varta-desktop" && (!dev || target == "accesskit_consumer"),
+                "native accessibility belongs to the desktop host: {name} -> {target}"
+            );
         }
     }
 }
@@ -245,7 +250,7 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
             (node["id"].as_str().unwrap(), normal)
         })
         .collect();
-    let reaches_sqlite = |root: &str| {
+    let reaches = |root: &str, target: &str| {
         let start = names
             .iter()
             .find(|(_, name)| **name == root)
@@ -257,7 +262,7 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
             if !seen.insert(id) {
                 continue;
             }
-            if names[id] == "libsqlite3-sys" {
+            if names[id] == target {
                 return true;
             }
             pending.extend(edges.get(id).into_iter().flatten().copied());
@@ -273,9 +278,21 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
         "varta-intrinsics-wasm",
         "varta-view",
     ] {
-        assert!(!reaches_sqlite(engine), "{engine} reaches SQLite");
+        assert!(
+            !reaches(engine, "libsqlite3-sys"),
+            "{engine} reaches SQLite"
+        );
     }
-    assert!(reaches_sqlite("varta-runtime"));
+    assert!(reaches("varta-runtime", "libsqlite3-sys"));
+    // Accessibility adapters must not increase the runtime/distribution graph,
+    // even indirectly through another crate or a build dependency.
+    for package in metadata["workspace_members"].as_array().unwrap() {
+        let name = names[package.as_str().unwrap()];
+        if name != "varta-desktop" {
+            assert!(!reaches(name, "accesskit"), "{name} reaches AccessKit");
+        }
+    }
+    assert!(reaches("varta-desktop", "accesskit"));
 }
 
 /// The target triple of the toolchain running the tests, from `rustc -vV`.

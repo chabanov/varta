@@ -72,41 +72,89 @@ pub(crate) fn scroll_into_view_plan(
             return Err(LayoutError::Unsupported(*id));
         }
     }
-    let mut rect = geometry
+    let rect = geometry
         .get(&target)
         .ok_or(LayoutError::Unsupported(target))?
         .rect;
+    Ok(scroll_path_plan(
+        geometry,
+        path.into_iter().skip(1),
+        rect,
+        ScrollAlignment::Nearest,
+    ))
+}
+pub(crate) fn scroll_path_plan(
+    geometry: &BTreeMap<u32, BoxGeometry>,
+    path: impl IntoIterator<Item = u32>,
+    mut rect: BoxRect,
+    alignment: ScrollAlignment,
+) -> Vec<(u32, f64)> {
     let mut changes = Vec::new();
-    for id in path.into_iter().skip(1) {
+    for id in path {
         let Some(scroll) = geometry.get(&id).and_then(|item| item.programmatic_scroll) else {
             continue;
         };
-        let top = rect.y;
-        let bottom = rect.y + rect.height;
-        let port_top = scroll.viewport.y;
-        let port_bottom = port_top + scroll.viewport.height;
-        let above = top < port_top;
-        let below = bottom > port_bottom;
-        let delta = if above && below {
-            0.0
-        } else if (above && rect.height <= scroll.viewport.height)
-            || (below && rect.height > scroll.viewport.height)
-        {
-            top - port_top
-        } else if (above && rect.height > scroll.viewport.height)
-            || (below && rect.height <= scroll.viewport.height)
-        {
-            bottom - port_bottom
-        } else {
-            0.0
-        };
-        let next = (scroll.top + delta).clamp(0.0, scroll.max);
+        let next = aligned_scroll_offset(
+            alignment,
+            rect.y,
+            rect.y + rect.height,
+            scroll.viewport.y,
+            scroll.viewport.y + scroll.viewport.height,
+            scroll.top,
+            scroll.max,
+        );
         if next != scroll.top {
             rect.y -= next - scroll.top;
             changes.push((id, f64::from(next)));
         }
     }
-    Ok(changes)
+    changes
+}
+#[derive(Clone, Copy)]
+pub(crate) enum ScrollAlignment {
+    Nearest,
+    Start,
+    End,
+}
+pub(crate) fn aligned_scroll_offset(
+    alignment: ScrollAlignment,
+    start: f32,
+    end: f32,
+    port_start: f32,
+    port_end: f32,
+    current: f32,
+    max: f32,
+) -> f32 {
+    match alignment {
+        ScrollAlignment::Nearest => {
+            nearest_scroll_offset(start, end, port_start, port_end, current, max)
+        }
+        ScrollAlignment::Start => (current + start - port_start).clamp(0.0, max),
+        ScrollAlignment::End => (current + end - port_end).clamp(0.0, max),
+    }
+}
+pub(crate) fn nearest_scroll_offset(
+    start: f32,
+    end: f32,
+    port_start: f32,
+    port_end: f32,
+    current: f32,
+    max: f32,
+) -> f32 {
+    let above = start < port_start;
+    let below = end > port_end;
+    let extent = end - start;
+    let available = port_end - port_start;
+    let delta = if above && below {
+        0.0
+    } else if (above && extent <= available) || (below && extent > available) {
+        start - port_start
+    } else if (above && extent > available) || (below && extent <= available) {
+        end - port_end
+    } else {
+        0.0
+    };
+    (current + delta).clamp(0.0, max)
 }
 
 /// A tree outside the currently implemented box-only subset is rejected.
@@ -1242,13 +1290,18 @@ fn geometry_and_text_inner(
                     text.push(' ');
                 }
             }
+            inventory.text(text.len())?;
+            if let std::borrow::Cow::Owned(normalized) =
+                crate::text::field_display::normalized_breaks(&text)
+            {
+                text = normalized;
+            }
             if text
                 .chars()
                 .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
             {
                 return Err(LayoutError::Unsupported(id));
             }
-            inventory.text(text.len())?;
             let (mut options, families) = text_style(tree, &layout_env, id, font_size, measurer)?;
             options.white_space = WhiteSpaceMode::PreWrap;
             options.break_anywhere = true;

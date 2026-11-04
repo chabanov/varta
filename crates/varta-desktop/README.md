@@ -1,6 +1,74 @@
 # Experimental desktop preview
 
-## UI diagnostics and GPU prototype (working tree)
+## Native accessibility foundation
+
+The preview installs AccessKit 0.25.2 through accesskit_winit 0.34.2 before
+showing its window. These exact Apache-2.0 dependencies are desktop-only; the
+headless view and runtime have no platform accessibility dependency. Existing
+locked package versions are retained. The adapters supply the native platform
+integration without adding unsafe code to Varta.
+
+When an assistive client activates accessibility, the worker prepares a flat
+semantic tree using the headless view's existing role and accessible-name rules.
+It includes actionable roleless containers, masked password values, control
+states and stable opaque identities. The established headless JSON shape stays
+unchanged. The GUI publishes the tree only after presenting its matching CPU or
+GPU frame, with visible element-fragment unions in physical pixels. Offscreen,
+text-only and select-popup option geometry is not complete.
+
+Supported actions are Focus, Click, SetValue with a string and
+ReplaceSelectedText and SetTextSelection. Callbacks enqueue at most eight requests, with at most
+1 MiB of retained text and the existing per-field UTF-16 limits; one coalesced
+data-free GUI wake represents pending requests. They execute between guest turns
+through ordinary view input and permission checks. Source identity and displayed
+revision/viewport/theme/scale guards are checked before worker effects. A queued
+semantic request can rebind across a repaint only if its native ID, opaque source
+identity and current action remain valid; focus-then-edit bursts keep FIFO order.
+Hidden, replaced and unsupported targets are discarded; readonly fields allow
+selection and reject edits. Native IDs are never
+reassigned to replacement source nodes, including after deactivation.
+Deactivation clears bindings, cached native data and queued requests. Inactive
+rendering checks one atomic flag and does not construct semantic snapshots.
+
+Typed snapshots now include `aria-describedby` descriptions. The observer API
+returns `Result<AccessibilityTree, AccessibilityError>`: one 8 MiB potential-work
+allowance preflights native names (including actionable generic containers) and
+descriptions before allocating them. Description traversal reuses the admitted
+name algorithm and masks embedded passwords; cycles do not recurse through
+`describedby`. Existing guest admission and headless JSON stay unchanged.
+On observer refusal, the app keeps rendering and accepting ordinary input; the
+native tree exposes a static-text explanation and clears old guest actions.
+Valid subsequent state restores native content with fresh IDs. Caller-owned
+copies and total backend memory remain the embedder's responsibility.
+[Current description/observer checks and native limitations](../../examples/native-showcase/accessibility-descriptions-2026-11-03.json).
+
+Text fields now project logical text runs, Unicode word starts, hard lines and
+directional selections. Runs contain at most 255 scalar/CRLF units, with linked
+chunks for long lines and an observer-only cap of 4096 auxiliary nodes. Password
+units are rendered grapheme masks; headless JSON keeps its previous mask count. Exact
+source-byte maps remain host-owned; password runs expose masks only. Content
+revisions and nonrecycled run IDs reject ranges from earlier edits, Undo/Redo or
+input-type changes. Selection and replacement use the ordinary editor path.
+
+Matching frames now supply visual line and direction splits, clipped character
+positions/widths and caret affinity. Exact source-range keys preserve native IDs
+only while their character positions retain the same meaning after wrapping.
+The auxiliary-run ceiling includes visual spans; refusal still leaves the guest
+running. Native geometry/caret checks are separate from platform acceptance.
+[Current geometry checks, artifact hashes and native timeout](../../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
+
+Assistive scrolling and announcements, screen-reader
+behavior and Linux/Windows/Pi acceptance remain open. Pure projection/queue/core
+tests do not prove platform acceptance.
+
+Local macOS observations now cover the system accessibility API in CPU Debug
+and real Metal GPU Release: names/controls, buttons, Ukrainian SetValue and
+concrete option selection. Debug also covers radio/checkbox, Undo and resize
+with preserved state and working subsequent input. The Release async example
+completes through its accessible button. This is API-level evidence, not a
+VoiceOver audio test. [Pinned inputs and scope](../../examples/native-showcase/accessibility-checkpoint-2026-11-03.json).
+
+## UI diagnostics and GPU prototype
 
 The default build remains the software preview. `VARTA_PREVIEW_TIMING=1`
 prints a host-entry-to-first-presentation sample plus host-only JSON input
@@ -15,7 +83,7 @@ Pointer-state samples remain coalesced outside the activation FIFO; a generation
 and condition variable wake the worker on pointer/input/frame acknowledgement
 without losing notifications that arrive just before it waits.
 
-An optional GPU prototype is implemented in the working tree:
+An optional GPU prototype was committed in `be85c981`:
 
 ```sh
 cargo build -p varta-desktop --features gpu --bin varta-preview --locked
@@ -220,7 +288,7 @@ update the viewport and invalidate stale frames and input; cross-display
 acceptance remains open.
 The system light/dark theme drives `prefers-color-scheme` from the first turn and
 on theme changes. Direct OS theme-switch acceptance remains open.
-Full IME support, accessibility, broader platform integration, packaging, target
+Full IME support, complete accessibility, broader platform integration, packaging, target
 acceptance and a production shell remain open. The preview is not a `--single` launcher
 and does not accept a package manifest or embedded artifact.
 

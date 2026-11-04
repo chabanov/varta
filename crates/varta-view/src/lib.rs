@@ -15,6 +15,7 @@
 //! Snapshots carry the tree, cascaded styles and accessibility tree. The
 //! separate experimental layout and CPU raster methods support bounded box and
 //! explicit-font text subsets; full native rendering is not implemented yet.
+mod accessibility;
 mod drawing;
 mod events;
 mod inline;
@@ -34,14 +35,21 @@ mod units;
 mod variables;
 mod wire;
 
+pub use accessibility::{
+    ACCESSIBILITY_TEXT_RUN_CHARACTERS, ACCESSIBILITY_TEXT_RUN_LIMIT, ACCESSIBILITY_TEXT_WORK_LIMIT,
+    AccessibilityAction, AccessibilityError, AccessibilityNode, AccessibilityScrollAction,
+    AccessibilityScrollHint, AccessibilityScrollOffset, AccessibilityScrollUnit,
+    AccessibilitySelection, AccessibilityState, AccessibilityText, AccessibilityTextRevision,
+    AccessibilityTextRun, AccessibilityTree,
+};
 pub use drawing::{DisplayList, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame};
 pub use events::{
     HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep, Target,
 };
 pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
 pub use paint::{
-    FrameMetadata, PaintError, PointerCursor, RasterImage, SelectHit, SelectMenuMetrics,
-    TextNavigation,
+    FieldTextCluster, FieldTextGeometry, FieldTextLine, FrameMetadata, PaintError, PointerCursor,
+    RasterImage, SelectHit, SelectMenuMetrics, TextNavigation,
 };
 pub use render::{RenderStats, Renderer};
 pub use snapshot::project_flex_blockification;
@@ -273,7 +281,8 @@ pub struct Delivery {
     pub gesture: bool,
 }
 
-/// Opaque identity of one attached element, distinct across ID reuse.
+/// Opaque identity of one source node, distinct across ID reuse.
+/// Element-action APIs still validate attachment and element type.
 #[derive(Debug, Clone)]
 pub struct NodeIdentity {
     id: u32,

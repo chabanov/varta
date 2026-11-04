@@ -12109,8 +12109,9 @@ dispatches an input event. The preview positions the system candidate window at
 the caret, bounds and validates incoming composition data, and cancels preedit
 on focus changes or a guest view commit. Composition events are not exposed to
 the guest and platform IME acceptance remains unverified. Clipboard, live drag
-highlighting, bidirectional visual navigation and native accessibility are not
-yet provided by this preview. Firefox can delete
+highlighting and bidirectional visual navigation are not
+yet provided by this preview. Native accessibility has the bounded foundation
+described below. Firefox can delete
 part of a ZWJ emoji sequence where this editor removes its whole grapheme;
 cross-renderer equivalence for those cases remains open.
 The native GUI backlog has separate host limits: 64 pending key/IME records and
@@ -12127,6 +12128,244 @@ policy, without truncating committed text. Pop, binding-filter retention and
 focus-loss clear all release accounted capacity. Focus-loss cleanup uses the same
 checked enqueue path. Existing per-key and IME value/cursor guards remain in force.
 This is distinct from runtime event queues and whole-backend/RSS accounting.
+
+**Native accessibility foundation.** The desktop host pins AccessKit 0.25.2 and
+accesskit_winit 0.34.2 (Apache-2.0), installs the adapter before showing the winit
+window and forwards its window events. These dependencies remain outside the
+engine/runtime dependency graph. The host-only `View::accessibility_tree` and
+`Application::view_accessibility_tree` return `Result<AccessibilityTree,
+AccessibilityError>` with flat owned semantic data using the
+same admitted roles and accessible-name algorithm as the headless snapshot.
+Actionable roleless containers additionally appear as generic native nodes;
+the established headless JSON output is unchanged. Password values are masked.
+Caller-owned semantic copies, like ordinary snapshots, belong to the embedder.
+No Wasm import, profile or ABI changes are introduced.
+
+**Native text alternatives and observer limits.** `aria-describedby` contributes
+a separate `description` to the typed native snapshot and AccessKit node. It
+does not replace the accessible name or add fields to the established headless
+JSON. Attached references are visited in attribute order, including repetitions;
+missing references are skipped. Each referenced text alternative uses the
+admitted name algorithm, including author labels, image alternatives, live
+embedded control values and password masks. A relation starting at a hidden node
+includes that hidden subtree; a visible referenced node excludes hidden descendants.
+Whitespace is flattened by the existing ASCII rule. `describedby` is not followed
+recursively; nested `labelledby` retains its existing finite traversal rule.
+Empty/unresolved descriptions have no fallback because `aria-description` and
+tooltip/title attributes are outside this subset. This follows the applicable
+[AccName 1.2 description steps](https://www.w3.org/TR/2026/WD-accname-1.2-20261012/).
+
+Before allocating native text alternatives, indexed numeric summaries preflight
+all visible semantic names, actionable generic-container names and descriptions.
+The observer has a fixed `ACCESSIBILITY_TEXT_WORK_LIMIT` of 8 MiB potential work,
+using the existing name-cost node units and conservative future field-value
+reservations. Description id-list bytes, per-reference lookup/separator work and
+the referenced subtree summaries share that one allowance. Exceeding it returns
+`AccessibilityError::WorkLimit`, with no partial tree or guest-state mutation.
+Guest commit admission, its name-work recurrence, wire budgets and the existing
+browser contract remain unchanged. Trusted action validation reads interaction
+flags and visibility without evaluating a name or description.
+
+The desktop host continues ordinary rendering/input after observer refusal.
+At matching frame presentation it replaces the old native guest tree with a
+host-owned static-text explanation, clears queued assistive actions and bindings,
+and logs at most one observer warning per activation. Later successful projection
+restores the guest tree with fresh monotonically allocated native IDs. Root and
+refusal-message IDs are reserved outside guest-node allocation. This is an
+observer resource limit, not a guest trap or a whole-backend memory guarantee.
+
+Semantic snapshots are built only while the platform adapter is active. The GUI
+publishes them after matching frame presentation, using visible element-fragment
+unions in physical pixels. A source node keeps its native ID while its opaque
+identity matches; replacement nodes receive monotonically allocated IDs, never
+recycled within the bridge's lifetime. Deactivation clears cached trees,
+bindings and queued actions, preserving the ID counter. Allocation exhaustion
+clears action bindings before any further effect.
+
+**Native logical field text.** Text fields expose owned logical text metadata
+and auxiliary AccessKit TextRun children. Plain-field selection units follow the editor's
+Unicode scalar boundaries, with CRLF grouped into one unit. Each run contains
+at most 255 units so both word indices and end positions fit the adapter's u8
+word-navigation representation. Long logical lines link adjacent chunks with
+previous/next-on-line; LF and CRLF retain their original bytes, and a trailing
+newline has an empty final line. Unicode word starts are independent of chunks.
+The logical model retains hard lines. When a matching rendered frame is present,
+the desktop projection uses its visual wrapping and directional spans instead.
+
+The observer preflights a separate 4096 auxiliary-run ceiling and charges source
+text and metadata work against its existing shared work allowance before
+allocating. Exceeding the run ceiling returns `AccessibilityError::TextRunLimit`
+through the same recoverable observer-refusal path. Guest live-node limits and
+headless JSON do not change. Source UTF-8 offsets stay host-owned; native runs
+carry displayed UTF-8 lengths for the platform adapter's UTF-16 conversion.
+Password runs contain one mask per rendered grapheme and no original word/line
+structure. This matches the renderer even for combining marks and joined emoji;
+the established headless JSON mask count remains unchanged. Native password
+selection endpoints follow those rendered grapheme boundaries.
+
+`FrameMetadata::field_text_geometry` borrows the actual painted field clusters,
+visual lines and content clip in physical pixels. Cluster ranges still address
+original UTF-8, including for password masks. This data also drives ordinary
+pointer navigation; the observer does not reshape text. The getter requires
+matching opaque source and content identities and refuses transient IME display.
+Bounds retain full advances while the content clip describes visibility. CRLF
+textareas retain the source pair and place keyboard End before the whole pair.
+The desktop adapter splits source-ordered native runs by visual line, direction
+and the character-index bound, with previous/next-on-line links. Run bounds,
+character positions and widths come from these clusters, clipped to the same
+content viewport as painting. Fully clipped units have zero-area geometry at
+the clip edge; this describes visible fragments rather than unbounded offscreen
+glyph boxes. Combining-scalar interiors share the cluster's leading caret and
+its final scalar advances to the trailing caret, matching painted byte-index
+cursor snapping. Password spans additionally split whenever clipped widths or
+steps cease to be uniform, as required by the adapter's password metric rules.
+
+Native selection endpoints choose the visual position nearest the frame's actual
+anchor/focus carets, preserving soft-wrap and bidi affinity. Collapsed selection
+always uses the same native position for both endpoints. A native run ID can be
+reused only for the same content revision and exact source-unit range; an equal
+number of differently wrapped runs is insufficient. Previously decoded absolute
+selections can survive layout-only acknowledgement frames, while removed run IDs
+can no longer decode new callbacks. Missing/mismatched/composing geometry keeps
+logical text without publishing invented character rectangles.
+
+The shared auxiliary-run ceiling also bounds actual visual/directional spans,
+which can exceed the logical model's count. Overflow uses the same explicit
+observer refusal and fresh-ID recovery path, with no partial native update or
+guest-state rejection. These host-side checks do not prove OS/VoiceOver acceptance.
+
+Directional selection endpoints map exactly to source bytes. Disabled/composing
+fields do not advertise selection; readonly fields permit selection while
+rejecting edits. A pre-existing editor selection inside CRLF is unavailable to
+the native observer without rounding or mutating it. Every range carries an
+opaque content revision, separate from the wrapping field sequence. Actual
+value changes, Undo/Redo and input-type changes rotate that revision; equal
+value echoes and selection-only updates preserve it. Native run IDs are reused
+only for the same content revision and are never recycled. Old, foreign-owner,
+out-of-range and mismatched-generation endpoints are discarded before effects.
+
+**Frame-dependent assistive scrolling (UI-2.4, in progress).** The host-only
+`View::accessibility_input_from_frame` and matching Application API accept
+vertical page/item movements, finite absolute offsets, edge-aligned element
+reveal and revision-guarded text-range reveal. The acknowledged frame retains CSS layout boxes, original
+source identities/topology, field content revisions and scroll state. The
+desktop worker retains its model revision, viewport, theme and scale checks;
+the core adds source/path/content/scroll guards before effects. Layout-free
+assistive input ignores these frame-dependent actions.
+
+Page metrics include the textarea's actual painted scroll range. Item movement
+uses its shaped line height, or the root font size as the admitted approximation
+for other containers. Absolute offsets are finite nonnegative typed values and
+clamp to the measured maximum. Native scroll properties and incoming offsets
+use physical node coordinates; the adapter converts offsets to CSS coordinates
+using that frame's scale. Horizontal SetScrollOffset payloads are ignored while vertical
+scroll controls are the admitted surface.
+
+Nearest-edge reveal uses unclipped target boxes and the existing inner-to-outer
+ancestor plan. It preserves focus, selection and values. Scroll notifications
+use the established measured fields, later guest turns and coalescible queue
+policy, without gesture authority. A full queue may omit coalescible notifications
+while preserving its fixed capacity. Readonly text can still scroll. Roleless
+overflow/live-region containers remain in native semantics; headless JSON keeps
+its previous shape. Native scroll controls advertise only available vertical
+ranges and ancestor reveal paths. Rebinding discards newly unsupported actions.
+Text-range reveal derives original UTF-8 bounds from painted clusters, with
+CRLF/scalar boundaries for plain text and mask grapheme boundaries for passwords.
+Platform text-run IDs decode to source identity, revision and byte range before
+enqueue; the semantic FIFO retains that decoded meaning across presentation ACKs
+and rejects changed content or unsupported bindings. Edge hints align each
+specified axis; other axes use nearest-edge behavior. No-hint oversized targets
+already spanning both viewport edges need not move.
+
+Single-line fields retain a host-only horizontal display offset. Range reveal can
+pan away from the caret without changing the value, selection, content revision
+or focus. Offscreen carets are clipped instead of being painted at a false edge.
+Ordinary selection, navigation, IME and real content/type changes restore caret
+following; equal guest value echoes preserve panning. Horizontal display changes
+create no guest event or new frozen wire field. Textarea reveal uses its content
+viewport, then scrolls ancestors from inside out; vertical notifications retain
+the established scroll metrics and coalescing rules. Geometry stays physical for
+text, CSS for scroll arithmetic, with one explicit scale conversion.
+
+Native text runs advertise reveal only with matching painted geometry and an
+available own/ancestor scroll range. This is the host/adapter contract, not proof
+that every platform exposes range scrolling: the pinned macOS adapter currently
+sends ordinary node ScrollIntoView actions without a range or edge hint. End-to-end
+text-range/VoiceOver acceptance remains open; live-update implementation is
+specified below.
+
+**Native live updates.** The native projection preserves roleless busy containers
+and root live/busy settings; the frozen headless projection retains its prior
+shape. Explicit `aria-live` in the ancestor chain determines priority; otherwise
+admitted `status` and `alert` roles supply polite/assertive defaults, with atomic
+content. Explicit local settings override inherited settings. Unadmitted ARIA
+attributes are not added to v38 to implement this host behavior. The semantics
+follow [ARIA 1.2 live regions](https://www.w3.org/TR/wai-aria-1.2/#aria-live),
+[status](https://www.w3.org/TR/wai-aria-1.2/#status) and
+[busy](https://www.w3.org/TR/wai-aria-1.2/#aria-busy).
+
+A local pinned macOS adapter patch plans live updates after a complete tree
+publication. Trigger channels are separate from message content: a changed live
+channel triggers its nearest atomic owner, whose entire visible subtree (including
+nested live/off text and the author label) is then presented. Off changes alone
+do not trigger delivery. Nested atomic owners retain their own triggers. Several
+changed channels for one owner coalesce at the highest changed priority; an
+unchanged assertive child does not escalate a polite change. Messages preserve
+owner tree order. Busy ancestors or atomic descendants defer the affected message.
+Fixed-size SHA-256 baselines track individual source parts as well as channel
+and owner content. Source-part changes classify additions/text changes; removal
+alone does not announce the remaining text. Relative order changes use only the
+participating parts' priority. Same-content child replacement within one atomic
+owner/presentation coalesces to a no-op. Busy baselines keep no historical strings;
+removed source identities are pruned and retained order consists only of IDs. Only current complete ready content is delivered. Unchanged
+repaints, cancellations back to delivered content, empty messages and removals
+are silent. Newly appearing content and changed priority can announce once.
+Activation primes a baseline; initially busy regions can announce on release.
+Native text folding follows the effective name-from-content role, rather than
+just the physical tag. The name traversal records whether the actual fallback
+used content, distinguishing author/host labels, relations and placeholders.
+Mixed semantic children retain the resolved name plus `labelled_by` links to
+those children; the message planner omits this derived-name copy while keeping
+actual author labels. Frozen JSON preserves its earlier folding. Field values
+already contain password grapheme masks, and native name/description references
+use the same mask units. Legacy naming keeps scalar masks. Auxiliary run children
+are not a second announcement copy. Geometry/selection-only updates skip planning.
+The observer's existing work allowance preflights possible full atomic-message
+traversal/output as well, including external label relations and field/mask
+capacity. Excess work takes the recoverable refusal path without changing guest
+admission. A flat fragment buffer and subtree ranges avoid copying full messages
+before delivery. These and the run ceiling bound Varta's projected inputs; they
+are not a complete RSS/CPU guarantee for the toolkit. Existing AppKit notification
+raising and medium/high priorities are reused without new unsafe host code.
+[Patch provenance and exact diff](../vendor/accesskit_macos/VARTA-PATCH.md).
+VoiceOver delivery and non-macOS behavior require their own acceptance evidence.
+
+Native Focus, Click, string SetValue, ReplaceSelectedText, SetTextSelection and scroll callbacks only enqueue
+host requests. Admission requires a current binding, an advertised action,
+at most eight pending requests and at most 1 MiB of retained owned text. String
+payloads also obey the existing per-field reservation/UTF-16 limits. Unsupported,
+oversized, disabled and unknown requests are ignored; readonly targets reject
+editing actions. A coalesced
+data-free wake prevents an unbounded queue of platform payloads. The GUI sends
+one request per acknowledged frame through the existing bounded worker channel.
+Pending semantic requests rebind to the latest presented frame only while their
+native ID, opaque source identity and advertised action still match; absolute
+text selections additionally require the current content revision. This keeps
+FIFO focus-then-edit bursts across their own acknowledgement frames; removed,
+hidden, replaced or newly unsupported targets are discarded. The worker then
+rechecks the refreshed revision, viewport, scale and theme before effects.
+Coordinate input retains its original frame guards. Current no-op requests still
+receive an acknowledgement frame. The ordinary input path owns edits, sequence
+numbers, history, select-option identity, event budgets and permission checks;
+guest listeners run on later application turns. Input records retain their
+ordinary gesture classification.
+
+This is not complete platform accessibility: platform acceptance of visual text
+ranges, assistive scrolling/announcements and screen-reader/target
+acceptance remain open. Offscreen, text-only and select-popup option bounds can
+be absent. Native API exposure and performance require direct platform evidence;
+headless projection tests alone do not establish it.
+
 Explicitly sized text inputs and buttons with explicit display, minimum sizes,
 padding and border can participate in this experimental geometry. A button with
 text requires one text child, flex display and explicit font and alignment

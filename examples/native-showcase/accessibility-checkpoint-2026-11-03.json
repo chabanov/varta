@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-03",
+  "head": "be85c981086bb56daec7d344fdc8524d863138fc",
+  "workingTree": true,
+  "os": "27.0.1",
+  "machine": "Apple M1 Max, arm64",
+  "dependencyPins": {
+    "accesskit": "0.25.2",
+    "accesskit_winit": "0.34.2"
+  },
+  "scope": "Native macOS accessibility API observations via Cua; no VoiceOver audio or cross-platform acceptance",
+  "debugCpu": {
+    "bundle": "dist/Varta Showcase A11Y Debug.app",
+    "hostSha256": "fc591d13d5f056c7be77bceb306a9ea39a493ac23fda27eb4a3a60459138a009",
+    "wasmSha256": "6f596c18e2c2e3c7652845a1f4c4c94b6f6efacaed1775777552da9b3612b970",
+    "fontSha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9"
+  },
+  "releaseGpu": {
+    "bundle": "dist/Varta Showcase A11Y-GPU Release.app",
+    "hostSha256": "67269ae932d69fd877375cf830451581abcd1e02811087409b5fc0559de6ffad",
+    "wasmSha256": "6f596c18e2c2e3c7652845a1f4c4c94b6f6efacaed1775777552da9b3612b970",
+    "fontSha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9"
+  },
+  "observations": [
+    {
+      "host": "debugCpu",
+      "case": "native roles/names",
+      "result": "buttons, radio, checkbox, text field, textarea and select/options exposed"
+    },
+    {
+      "host": "debugCpu",
+      "case": "button/radio",
+      "result": "counter 0 -> 1; select step five; counter 1 -> 6"
+    },
+    {
+      "host": "debugCpu",
+      "case": "string SetValue",
+      "result": "Доступність; greeting Вітаю, Доступність!"
+    },
+    {
+      "host": "debugCpu",
+      "case": "Undo after SetValue",
+      "result": "Перевірка Undo -> Доступність with Command+Z"
+    },
+    {
+      "host": "debugCpu",
+      "case": "concrete option action",
+      "result": "Pick Ядро; value core; output Обрано: ядро"
+    },
+    {
+      "host": "debugCpu",
+      "case": "checkbox",
+      "result": "on; highlighted card and visible focus outline"
+    },
+    {
+      "host": "debugCpu",
+      "case": "window zoom/restore",
+      "result": "resized layout visually verified; state retained; counter 6 -> 11 after zoom; restored"
+    },
+    {
+      "host": "releaseGpu",
+      "case": "backend",
+      "result": "Apple M1 Max (Metal); first frame presented",
+      "log": "target/accessibility-release-window.log"
+    },
+    {
+      "host": "releaseGpu",
+      "case": "button",
+      "result": "counter 0 -> 1"
+    },
+    {
+      "host": "releaseGpu",
+      "case": "string SetValue",
+      "result": "Нативний Release; greeting Вітаю, Нативний Release!"
+    },
+    {
+      "host": "releaseGpu",
+      "case": "concrete option action",
+      "result": "Pick Усе разом; value all; output Обрано: усе разом"
+    },
+    {
+      "host": "releaseGpu",
+      "case": "async guest result",
+      "result": "JSON: Varta, елементів: 3; Генератор: 2 + 3 + 5 = 10; Promise / await: 7; Усі обчислення завершено."
+    }
+  ],
+  "scopedChecks": {
+    "viewAccessibilityTests": 6,
+    "runtimeAssistiveTurnTests": 1,
+    "desktopDefaultTests": 22,
+    "desktopGpuTests": 22,
+    "affectedGpuAllTargetClippy": "passed"
+  },
+  "open": [
+    "Full text ranges/line data",
+    "aria-describedby descriptions",
+    "assistive scrolling and announcements",
+    "complete offscreen/text/popup geometry",
+    "VoiceOver/screen-reader behavior",
+    "Linux/Windows/Pi acceptance",
+    "controlled accessibility overhead measurements"
+  ],
+  "notes": [
+    "Temporary local stderr redirect used only for backend evidence; original generated launcher restored.",
+    "Readonly/disabled/stale identities and bounded ingress have regression tests; native secure-field masking and editing have an additional direct macOS API observation.",
+    "This record does not establish complete P10/P13 or browser/native accessibility equivalence."
+  ],
+  "secureFieldFixture": {
+    "case": "macOS secure text field",
+    "initial": "six masks; source fixture contains mixed Unicode test text",
+    "edit": "SetValue AA -> two masks; raw value not exposed in native AX tree",
+    "wasmSha256": "c60d5760f723d3b24806cc7abe80b44c3c9771f29a86de95f762282dd5914bb2",
+    "fontSha256": "33dd3f6379c8531ed811f1e6bfa51d4014149faa2091965c8f2db0cec575dcc8"
+  },
+  "bundleSizes": [
+    {
+      "bundle": "Varta Showcase A11Y-GPU Release.app",
+      "bytes": 28976058,
+      "hostBytes": 27915152
+    },
+    {
+      "bundle": "Varta Showcase GPU UI Release.app",
+      "bytes": 28574180,
+      "hostBytes": 27513280
+    },
+    {
+      "bundle": "Varta Showcase A11Y Debug.app",
+      "bytes": 104309318,
+      "hostBytes": 103248432
+    }
+  ],
+  "consolidatedVerification": {
+    "commandsPassed": 8,
+    "passedTests": 3215,
+    "failures": 0,
+    "ignored": 16,
+    "conformancePassed": 123,
+    "conformanceKnownUnsupported": 4,
+    "originalReport": "target/verification/20261103-192156-v_2wjssj/report.json",
+    "originalWrapperPassed": false,
+    "sourceReconciliation": "target/verification/20261103-192156-v_2wjssj/source-reconciliation.json",
+    "exactInitialSourceRestored": true,
+    "sourceSha256": "6871cd21c8520f2f7e48e677e937c233f50dcbcea33524e8fbaf2659a7a9bf44",
+    "note": "Only an untracked generated fixture manifest changed during the run. Its removal restores the exact initial fingerprint; reintroducing it exactly reproduces the recorded final fingerprint. All command results are reused for identical inputs. The original full report is preserved as failed, not relabeled. Subsequent edits are documentation/observation records only."
+  }
+}

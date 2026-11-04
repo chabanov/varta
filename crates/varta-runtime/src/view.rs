@@ -65,6 +65,11 @@ impl Session {
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         self.view.snapshot()
     }
+    pub(crate) fn accessibility_tree(
+        &self,
+    ) -> Result<varta_view::AccessibilityTree, varta_view::AccessibilityError> {
+        self.view.accessibility_tree()
+    }
     pub(crate) fn title(&self) -> &str {
         self.view.title()
     }
@@ -320,6 +325,44 @@ pub(crate) fn input(context: &mut RuntimeContext, input: &Input) -> Result<(), R
         .input(input, &mut decisions)
         .map_err(RuntimeError::ViewInput)?;
     view.queue(events).map_err(RuntimeError::View)
+}
+
+/// Assistive input uses the same broker, event queue and later guest turns.
+pub(crate) fn accessibility_input(
+    context: &mut RuntimeContext,
+    identity: &varta_view::NodeIdentity,
+    action: &varta_view::AccessibilityAction,
+    frame: Option<&varta_view::FrameMetadata>,
+) -> Result<bool, RuntimeError> {
+    let RuntimeContext {
+        view,
+        broker,
+        policy,
+        events,
+        ..
+    } = context;
+    let mut decisions = ViewBroker {
+        broker,
+        policy,
+        prompts: ViewPrompts {
+            seam: true,
+            simulated: view.simulated,
+        },
+    };
+    let accepted = match frame {
+        Some(frame) => {
+            view.view
+                .accessibility_input_from_frame(identity, action, frame, &mut decisions)
+        }
+        None => view
+            .view
+            .accessibility_input(identity, action, &mut decisions),
+    }
+    .map_err(RuntimeError::ViewInput)?;
+    if accepted {
+        view.queue(events).map_err(RuntimeError::View)?;
+    }
+    Ok(accepted)
 }
 
 /// Run a view record's turn: the renderer learns it was delivered, the

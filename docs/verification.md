@@ -91,7 +91,72 @@ The probe's mean RGB tolerance is an antialiasing smoke check, not complete pixe
 or cross-platform acceptance. Resource caps must be reported with their actual
 scope; individual buffer caps are not a total GPU-memory quota.
 
+## Native accessibility
+
+For a native accessibility increment, start with focused semantic/action and
+queue tests, then cover the runtime turn boundary and dependency graph once the
+package is ready:
+
+```sh
+cargo test -p varta-view --test accessibility --locked
+cargo test -p varta-view --test accessibility_text --locked
+cargo test -p varta-view --test accessibility_scroll --test accessibility_reveal --test text_geometry --locked
+cargo test -p varta-runtime --lib assistive_ --locked
+cargo test -p varta-desktop --locked
+cargo test -p varta-desktop --features gpu --locked
+cargo test -p varta-project --test boundaries --locked
+```
+
+Exercise the platform accessibility API against the packaged CPU Debug and GPU
+Release hosts. Record actual backend, inputs, names/states, edits, option actions
+and resize, and keep screen-reader/text-range acceptance separate. Put all
+generated fixture artifacts under ignored `target` before the final full run;
+an untracked generated manifest is still a source-fingerprint change. Do not
+edit observation records while that run is active.
+
+After shared name-summary or headless-projection changes, run the complete
+`varta-view` suite once for the finished package and retain the exact-budget
+`naming_work` cases. Native descriptions also need direct platform `Help`
+observations and an over-limit/refusal/recovery scenario: the guest continues
+ordinary input, stale assistive actions disappear, an explicit status is readable
+and a valid later tree returns. Scoped results apply only to their changed-input
+scope; preserve the full gate for the completed code batch before committing.
+
 ## Evidence and failure handling
+
+Logical field text changes also cover Unicode byte/UTF-16 correspondence, CRLF,
+empty trailing lines, long-run chunk boundaries, reversed selection, password
+masks, readonly/disabled/composing controls, content revisions through edits and
+Undo/type changes, foreign/stale native endpoints and selection-then-replace FIFO
+across acknowledgement frames. Exercise actual platform range selection before
+claiming native acceptance; logical metadata alone does not prove wrapping,
+character geometry, VoiceOver or cross-target behavior.
+
+For visual field geometry, compare source-byte coverage, bidi/soft lines,
+physical scaling, clipping, grapheme password masks and CRLF content sizing with
+the actual paint/input metadata. Cover endpoint affinity and collapsed selections,
+range-ID reuse across reflow, already decoded selections, unknown old run IDs,
+and the exact actual-visual-span ceiling plus recovery. The pure desktop checks
+must not be relabeled as platform range or VoiceOver observations.
+
+Live updates additionally cover implicit alert/status defaults, explicit inherited
+priority/off settings, roleless/root busy state, atomic text across descendants,
+multiple busy publications and final release, initially busy regions, cancellation
+through empty content, empty/removal/replacement changes and rendered password
+masks without duplicate run text. An outer atomic message must include nested
+live/off content, while off changes alone remain silent; an unchanged assertive
+child must not escalate a polite update. Cover complete-message work overflow
+and recovery without changing guest admission. Effective-role text folding and
+partial removals alone must stay silent (including during busy cancellation),
+and reorders use only participating parts' priority. Same-content child
+replacement in one atomic owner/presentation coalesces without replay.
+Mixed semantic children must neither lose visible text nor repeat a derived name;
+author labels, valid/empty relations and placeholder fallback remain distinct. The desktop live tests compile the exact safe planner used by the pinned
+macOS adapter patch and process real publications through the consumer tree.
+Check its release archive checksum, unchanged files, exact patch diff and supplied
+licenses using `vendor/accesskit_macos/VARTA-PATCH.md`. Planner tests establish
+message selection, not actual VoiceOver delivery. Observe announcements and
+absence of repaint duplicates through the packaged host separately.
 
 The helper streams command output and records per-command logs, exit status,
 passed-test counts, durations, scope and before/after source fingerprints in
@@ -1085,3 +1150,25 @@ ignored). The batch includes **217 native tests**, the separate **2724-check
 Chrome inline oracle**, and the earlier Unicode/rem scoped probes. Only result
 and status documentation was updated after the full gate; code/build inputs
 were unchanged. This does not close native console/platform/release acceptance.
+
+### UI-2 consolidated accessibility gate — 2026-11-04
+
+`python3 scripts/verify.py full` passes all eight commands with unchanged inputs:
+**3281 tests passed, 0 failed, 16 ignored**. Report:
+`target/verification/20261104-011619-8_yzsx6c/report.json`; source SHA-256
+`2ab8cfa1489dc188cae26237c3f9ea5cf2d9b9332e48977199448f47176e62df`. This supersedes the failed boundary report
+`target/verification/20261104-005142-wa0_orw4/report.json` for the corrected
+inputs; that failed report is retained. Documentation-only annotations follow
+verification. The separate optional GPU, Showcase and headless checks above
+retain their own scopes. Native window/VoiceOver, remaining range/scroll routes
+and other target acceptance are not inferred from the workspace result.
+
+A read-only sample of a delayed test process observed 800/800 samples at
+`_dyld_start + 0` with a 112 KiB footprint before the Rust harness started.
+Evidence: `target/a11y9-test-startup-sample.txt` and
+`target/a11y9-test-startup-diagnostic.json`. The cause of this host startup
+delay is unconfirmed; no system protections were changed. A common cause with
+the earlier UI-tool timeouts is only a hypothesis. Documentation retrieval later
+succeeded, but selecting the current Debug bundle timed out again after 60 s
+with kernel reset (`target/a11y9-native-retry.json`); no native acceptance
+is inferred from this attempt.

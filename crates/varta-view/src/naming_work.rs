@@ -11,7 +11,16 @@ fn add(left: usize, right: usize) -> usize {
     left.saturating_add(right).min(LIMIT + 1)
 }
 
-pub(crate) fn potential_work(tree: &Tree) -> usize {
+pub(crate) struct Summaries<'a> {
+    order: Vec<u32>,
+    own: BTreeMap<u32, usize>,
+    relations: BTreeMap<u32, usize>,
+    pub(crate) descendants: BTreeMap<u32, usize>,
+    labels: BTreeMap<&'a str, usize>,
+    inventory: usize,
+}
+
+pub(crate) fn summaries(tree: &Tree) -> Summaries<'_> {
     let mut order = Vec::with_capacity(tree.nodes.len());
     let mut pending: Vec<_> = tree
         .nodes
@@ -106,28 +115,51 @@ pub(crate) fn potential_work(tree: &Tree) -> usize {
             *cost = add(*cost, add(NODE + 1, descendants[id]));
         }
     }
-    for id in &order {
-        let Some(element) = tree.element(*id) else {
-            continue;
+    Summaries {
+        order,
+        own,
+        relations,
+        descendants,
+        labels,
+        inventory,
+    }
+}
+
+impl Summaries<'_> {
+    /// Potential root name, including the native observer's generic containers.
+    pub(crate) fn root(&self, tree: &Tree, id: u32) -> usize {
+        let Some(element) = tree.element(id) else {
+            return self.own[&id];
         };
-        let Some(role) = crate::snapshot::role(element) else {
-            continue;
-        };
-        if *id == ROOT_NODE {
-            continue;
-        }
-        let mut cost = add(own[id], relations[id]);
-        if NAME_FROM_CONTENT.contains(&role) {
-            for child in &tree.nodes[id].children {
-                cost = add(cost, descendants[child]);
+        let mut cost = add(self.own[&id], self.relations[&id]);
+        if crate::accessibility::role(element).is_some_and(|role| NAME_FROM_CONTENT.contains(&role))
+        {
+            for child in &tree.nodes[&id].children {
+                cost = add(cost, self.descendants[child]);
             }
         }
         if LABELABLE.contains(&element.tag)
             && let Some(ident) = element.attributes.get(&A::Id)
         {
-            cost = add(cost, labels.get(ident.as_str()).copied().unwrap_or(0));
+            cost = add(cost, self.labels.get(ident.as_str()).copied().unwrap_or(0));
         }
-        inventory = add(inventory, cost);
+        cost
+    }
+}
+
+pub(crate) fn potential_work(tree: &Tree) -> usize {
+    let summaries = summaries(tree);
+    let mut inventory = summaries.inventory;
+    for &id in &summaries.order {
+        if id == ROOT_NODE
+            || tree
+                .element(id)
+                .and_then(crate::accessibility::role)
+                .is_none()
+        {
+            continue;
+        }
+        inventory = add(inventory, summaries.root(tree, id));
         if inventory > LIMIT {
             break;
         }

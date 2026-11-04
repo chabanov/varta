@@ -23,6 +23,13 @@ varta-view = { path = "../varta-view" }
 # Windowing and CPU presentation; Apache-2.0 and MIT OR Apache-2.0 respectively.
 winit.workspace = true
 softbuffer.workspace = true
+accesskit.workspace = true
+accesskit_winit.workspace = true
 wgpu = { workspace = true, optional = true }
 vello_gpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Exercise the same safe live planner compiled by the patched platform adapter.
+accesskit_consumer = "=0.39.2"
+sha2.workspace = true

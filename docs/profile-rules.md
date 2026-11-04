@@ -4133,6 +4133,63 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
 - The headless renderer (`varta-view`) stays free of Wasm, I/O and clocks;
   host decisions reach it through `Broker`. Production budgets never change
   for views; every view turn has its own per-turn allowance.
+- Native text-alternative observers preflight names, actionable generic names
+  and `aria-describedby` with shared numeric name summaries before allocating
+  strings. Keep the fixed observer allowance separate from guest admission;
+  adding descriptions must not change which v38 batches the browser/native
+  guest contract accepts. Observer refusal returns a typed error, leaves the
+  application running, clears stale native actions and publishes an explicit
+  host status. Action validation must never compute a name/description.
+- Native field text uses exact scalar/CRLF source boundaries, bounded logical
+  runs and host-owned UTF-8 offset maps. Password units follow rendered
+  grapheme masks; preserve the legacy headless JSON mask representation.
+  Keep password word/line structure
+  masked. Absolute selection requests require source identity and an opaque
+  content revision rotated by real edits, history restoration and input-type
+  changes; equal echoes and selection-only changes preserve it. Never validate
+  stale text ranges from the wrapping field sequence alone. Auxiliary text-run
+  limits belong to the observer, not guest admission. Do not claim visual
+  line/character geometry from hard-line text metadata.
+- Field geometry must come from the painted frame's shaped clusters and visual
+  lines, guarded by both source identity and content revision. Do not reshape for
+  accessibility or match retained geometry by numeric node ID alone. Keep full
+  advances distinct from the visible content clip, scale both to physical pixels
+  and refuse transient composition. A layout split may reuse native text IDs
+  only while their source ranges retain the same meaning.
+- Assistive scrolling uses acknowledged frame geometry and the same model/
+  viewport/theme/scale guards as other desktop input. Native offsets and bounds
+  share physical coordinates; finite typed offsets are converted to CSS before
+  effects. Preserve focus, field selection, readonly behavior and ordinary scroll
+  coalescing/queue-full policy. Scroll records carry no gesture authority. Keep
+  roleless scroll/live containers in native semantics without changing legacy
+  JSON. A layout-free action must not guess scroll geometry.
+- Assistive text reveal uses painted source ranges and content revisions, never
+  platform character indexes as UTF-8 offsets. Honor requested edges on each axis;
+  range geometry is physical while scroll arithmetic is CSS. Use the field's
+  content viewport before inner-to-outer ancestor scrolling. Single-line display
+  panning is host-owned, preserves logical selection/value/focus and does not add
+  a guest wire field or input event. Ordinary navigation/edits restore caret
+  following; equal value echoes preserve panning. Clip offscreen carets honestly.
+  Do not claim end-to-end range scrolling from adapter unit tests alone.
+- Native live announcements respect explicit inherited `aria-live`, admitted
+  alert/status defaults and atomic grouping, and defer busy regions without
+  retaining their intermediate history. Separate trigger channels from complete
+  atomic message text: off changes alone stay silent, but off/nested text remains
+  in a triggered complete message. Only changed channels determine priority.
+  Charge full-message work (including external labels and mask capacity) within
+  the existing observer allowance before allocation; keep delivered fingerprints,
+  not historical message strings, through busy periods. Preserve roleless busy containers and
+  root live/busy settings in native semantics only. Keep headless JSON unchanged.
+  Never copy raw password values or include text-run children a second time.
+  Native name/description references use rendered grapheme masks; frozen naming
+  keeps scalar masks. Preserve actual name origin through the traversal so mixed
+  semantic children do not repeat a derived name while author labels remain.
+  Plan once per complete presentation, in tree order, using the existing platform
+  announcement queue and priorities. Geometry/selection-only updates do not replay
+  messages. The macOS dependency patch and license provenance are recorded in
+  `vendor/accesskit_macos/VARTA-PATCH.md`; changes require scoped desktop planner
+  tests, dependency boundaries and batch verification, plus separate native
+  observations before claiming screen-reader acceptance.
 - Single-select transaction work comes from `view::DRAFT_MAX_SELECT_WORK` and
   `DRAFT_SELECT_NODE_WORK`. Charge ownership walks, affected option catalogs and
   incoming sources before mutation, then all option inventory before final value

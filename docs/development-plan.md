@@ -2,8 +2,11 @@
 
 ## Status
 
-Updated 2026-11-03 for the renderer batch based on `1259eb8`, including
-CPU renderer, pointer-state, TSX Showcase and optional native GPU work. The
+Updated 2026-11-04 after renderer commit `be85c981`: the native accessibility
+foundation, bounded descriptions, painted text ranges, assistive scrolling and
+live-announcement implementation pass the consolidated batch gate. The preceding
+renderer batch includes CPU rendering, pointer-state, TSX Showcase and optional
+native GPU work. The
 browser geometry/timing increment and Metal prototype are recorded below. Varta is an experimental
 research project with a working typed TypeScript compiler, capability-checked
 runtime and application foundation. K1–K3 are implemented for their declared
@@ -16,17 +19,224 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last full gate | UI renderer/browser timing/GPU prototype batch (2026-11-03, macOS arm64): **3202 passed**, 0 failures, 16 ignored; all eight commands passed with unchanged sources. Report: `target/verification/20261103-182413-ec8q70t8/report.json`; source SHA-256 `009e775316e7cb5c20b627ba05cc95b75b780efe383caffdce10c1191f45482d`. Optional GPU all-target Clippy and 16 desktop tests pass separately; 162 browser Node tests, 12 Showcase assertions and 52 Metal offscreen cases also pass. Only documentation/measurement annotations changed after the gate. Complete browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
+| Last full gate | Native accessibility UI-2 implementation batch (2026-11-04, macOS arm64): **3281 passed**, 0 failures, 16 ignored; all eight commands passed with unchanged inputs. Report: `target/verification/20261104-011619-8_yzsx6c/report.json`; source SHA-256 `2ab8cfa1489dc188cae26237c3f9ea5cf2d9b9332e48977199448f47176e62df`. Optional GPU all-target Clippy and 55 desktop GPU tests, the 12-input Showcase scenario and the inspected headless initial frame have separate scoped evidence below. Documentation was updated after the gate; implementation inputs are unchanged. Native VoiceOver/range routing, browser/pilot, Linux/Windows/Pi and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Uncommitted work adds retained rendering caches/damage replay, RGB reuse, hover/active/cursors and input coalescing. Scoped verification and local frame measurements are recorded below; an optional shared-scene GPU backend now runs on Metal and recovers to CPU. Full L0 painting, paste/full IME, accessibility, production shell and target acceptance remain open. The old UARP node-16 refusal is the last recorded console probe, not a new result for this working tree. |
+| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. The working tree adds lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates and FIFO assistive actions. Full L0 painting, paste/full IME, complete accessibility, production shell and target acceptance remain open. The old UARP node-16 refusal is historical. |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
 
 ### Current UI checkpoint and proposed continuation
+
+**Active package UI-2 — native accessibility foundation, after `be85c981`.**
+Shared flat semantic snapshots, native AccessKit roles/names/states, stable
+nonrecycled platform IDs and presented-frame physical bounds are implemented
+in the working tree. Focus, Click, string SetValue and ReplaceSelectedText route
+through bounded host queues and ordinary input/broker/event paths, with source
+identity and frame guards. Inactive rendering avoids semantic projection.
+The existing headless JSON contract, Wasm ABI and production guest budgets stay
+unchanged. Scoped checks pass: 6 semantic/action tests, one runtime event-turn
+test, 22 desktop tests in each default/GPU build and strict affected-package
+all-target Clippy with GPU. Native macOS API checks pass in CPU Debug and Metal
+GPU Release: controls/names, activation, Ukrainian SetValue and concrete option
+selection; Debug also covers radio/checkbox, Undo and window zoom/restore with
+preserved state and subsequent input. Release guest async output is observed.
+[Pinned inputs and observations](../examples/native-showcase/accessibility-checkpoint-2026-11-03.json).
+Consolidated verification ran all eight commands successfully: **3215 passed,
+0 failures, 16 ignored**; the conformance baseline matches (123/127, four known
+unsupported). The wrapper's source guard failed because an additional native
+password-fixture build created one untracked generated manifest during the run.
+Moving that artifact to `target` restores the exact initial fingerprint;
+reintroducing only that artifact reproduces the exact reported final fingerprint.
+The eight completed command results are reused for those identical source inputs.
+The original report remains failed; this is an audited reconciliation, not a new
+clean full pass. Evidence: `target/verification/20261103-192156-v_2wjssj/report.json`
+and `source-reconciliation.json`; restored source SHA-256
+`6871cd21c8520f2f7e48e677e937c233f50dcbcea33524e8fbaf2659a7a9bf44`.
+Only documentation/observation records change after reconciliation.
+The additional native password fixture exposes a secure field with masked values
+before and after assistive editing. GPU Release is 28,976,058 bytes, +401,878
+against the previous GPU UI bundle; this is package size, not memory use.
+The subsequent description increment below implements bounded `aria-describedby`.
+Full text ranges/line data, assistive scrolling/announcements and
+screen-reader/cross-target acceptance remain separate open work. UI-2 does not
+close P10/P13 or claim complete accessibility.
+
+**UI-2.1 — native descriptions and bounded observer work.** `aria-describedby`
+now contributes a separate typed/AccessKit description using shared finite name
+traversal. The native observer preflights names, actionable generic-container
+names and descriptions before allocating strings. One fixed 8 MiB potential-work
+allowance returns a typed observer error; it does not alter v38 guest admission,
+headless JSON or browser budgets. Ordinary trusted action validation no longer
+evaluates a name. On refusal, desktop publishing clears old actions and exposes
+a host-owned static-text explanation; later valid state restores fresh native IDs.
+Semantic FIFO rebinding also preserves a queued focus-then-value pair across its
+focus acknowledgement while rejecting newly readonly/replaced/hidden targets.
+
+The typed Showcase links name, textarea and select help text through explicit
+ARIA references. Scoped verification covers exact work allowance and one-byte
+overflow, hidden references/order/cycles, password masks, replacement nodes,
+generic-name expansion, runtime survival/recovery and stale native-action cleanup.
+Current scoped checks pass **237 view cases, 2 runtime assistive cases and
+25 desktop cases**, affected GPU all-target Clippy and the final desktop GPU
+all-target check; the 12-input Showcase scenario passes. CPU Debug and Metal
+Release expose separate reactive `Help` descriptions. A CPU Debug fixture
+exposes the explicit refusal text and recovers by ordinary Space in the same
+process. Those native observations precede the final semantic FIFO refinement;
+its native retry is blocked by UI-tool timeouts. The attempted final Release
+textarea edit has no confirmed outcome. A short thread sample shows worker waits
+and AppKit window-raise work, without proving the timeout cause.
+[Pinned observations, hosts, code digest and limits](../examples/native-showcase/accessibility-descriptions-2026-11-03.json).
+The older 3215-test reconciliation above does not verify these newer code inputs.
+The full workspace gate remains a pre-commit
+batch-boundary check. Text ranges/line data, assistive scrolling/announcements and
+VoiceOver/other-target acceptance remain open.
+
+**UI-2.2 — logical field ranges and checked selection.** The working tree adds
+scalar/CRLF text units, Unicode word starts, hard lines and directional selection
+to the native observer. AccessKit receives chunks of at most 255 units with
+same-line links and exact UTF-8 source mapping held in the host. Password runs
+expose masks only. An observer-only ceiling of 4096 auxiliary runs shares the
+recoverable refusal path; metadata also consumes the existing work allowance.
+Absolute selections carry opaque content revisions, so actual edits, Undo/Redo
+and input-type changes invalidate old endpoints even when bytes later match.
+Equal echoes and selection-only frames preserve run IDs. Readonly selection
+works; disabled/composing, foreign-owner and stale requests are ignored.
+Selection and replacement retain the ordinary editor/event-turn boundary.
+
+Visual soft-wrap/bidi/character geometry, assistive scrolling/announcements,
+VoiceOver and non-macOS acceptance remain open. Scoped verification passes
+**244 view cases, 3 runtime assistive cases and 29 desktop GPU cases**, strict
+affected-package GPU all-target Clippy and a GPU-capable Debug build. Seven
+strengthened text cases pass again separately and are included in the view count.
+The prepared CPU Debug bundle's native query timed out in the UI tool, so platform
+range behavior remains unconfirmed.
+[Pinned inputs, checks and limits](../examples/native-showcase/accessibility-text-ranges-2026-11-03.json).
+These scoped results are separate from the preceding full-gate checkpoints.
+
+**UI-2.3 — visual text geometry implemented; platform acceptance open.** The renderer retains shaped
+cluster rectangles, source ranges, direction, visual lines and the content clip
+for the same text used by pointer navigation. The borrowed frame API requires
+matching source/content identities and refuses IME display. Native password
+units now match the renderer's grapheme masks; legacy headless JSON remains
+unchanged. CRLF textarea geometry and keyboard End keep the source pair intact.
+The native projection now publishes visual/directional spans, clipped character
+positions/widths and matching line links. Exact range keys prevent ID reuse for
+changed portions after wrapping. Painted endpoint carets preserve affinity;
+collapsed selections stay collapsed. The visual span cap has independent exact
+limit/refusal/recovery cases. Scoped checks pass 90 field/editor cases before the
+final caret refinement, then 16 final core cases and 35 desktop GPU cases;
+overlapping cases are not additional unique tests. Strict affected-package GPU
+all-target Clippy, formatting and a GPU-capable Debug build pass. The prepared
+`Varta Showcase GEOMETRY Debug.app` query timed out after 20 seconds in the UI
+tool; launch and OS range behavior remain unconfirmed.
+[Source digest, artifact hashes and limits](../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
+UI-2.2 results above do not verify this newer code. Assistive scrolling,
+announcements and actual platform acceptance remain next.
+
+**UI-2.4 — assistive scrolling and announcements, in progress.** Vertical
+page/item/absolute scroll controls and nearest-edge element reveal are implemented
+on acknowledged-frame geometry. Native physical offsets convert to CSS using
+that frame's scale. The core validates source paths, field revisions and scroll
+state; the worker keeps the existing full frame guards. Values/selection/focus
+are preserved, scroll records run in later guest turns with no gesture grant,
+and the established coalescible queue policy remains bounded at capacity.
+Roleless overflow/live containers remain in native semantics while legacy JSON
+is unchanged. Scope: 19 view cases, four runtime assistive cases and four final
+desktop scroll cases pass; the 38-case desktop regression run precedes the final
+DPI refinement. Logs: `target/a11y5-final-view-tests.log`,
+`target/a11y5-runtime-tests.log`, `target/a11y5-desktop-tests.log` and
+`target/a11y5-final-scroll-tests.log`. Strict/final broad verification remains at
+the coherent batch boundary. This vertical checkpoint precedes the text-range
+implementation below. The previous UI-2.3 report applies to its recorded earlier
+inputs.
+
+Text-range reveal and single-line horizontal display panning now use acknowledged
+shaped source ranges, opaque content revisions and per-axis edge hints. Own field
+content scrolling precedes ancestor scrolling; logical selection/value/focus and
+readonly behavior are preserved. Ordinary navigation/IME/real edits restore
+caret following; equal guest echoes retain the reading position. Horizontal
+panning adds no guest event or ABI field. Tests cover long fields, nested panes,
+password grapheme masks, CRLF/trailing empty lines, stale/composing ranges and 2×
+frames. Native text-run callbacks decode to semantic ranges before the FIFO and
+survive matching content ACKs; removed IDs and changed content are rejected.
+The final range checks pass 27 view cases and 25 desktop accessibility cases
+(with GPU enabled); five runtime assistive cases cover later guest turns and
+horizontal reveal with no guest event. Evidence:
+`target/a11y6-final-view-tests.log`, `target/a11y6-final-desktop-tests.log`,
+`target/a11y6-final-runtime-tests.log`, `target/a11y6-progress.json`.
+The source snapshot is separate from the preceding vertical checkpoint; earlier
+intermediate logs include failing fixtures and are not final verification.
+
+Live-update implementation now preserves root/roleless busy semantics and
+alert/status defaults without changing frozen JSON. A pinned macOS adapter patch
+replaces per-node label announcements with one safe message plan per complete
+publication. Atomic messages include the complete visible subtree, while separate
+trigger channels determine when and at which priority they announce. Busy periods retain
+fixed-size SHA-256 delivered-content fingerprints instead of old text. Ready content
+is announced once, while cancelled, empty, removed and unchanged updates stay silent.
+Nested live/off text remains in complete atomic messages but off changes alone
+are silent; nested atomic owners handle their own triggers. Only changed channels
+set a coalesced message's priority. Password values are masks
+before projection and text-run children are not copied again. Geometry/selection
+changes skip planning. The Showcase marks counter and async output as status
+regions. Patch source, checksum, licenses and reviewable diff:
+[`vendor/accesskit_macos/VARTA-PATCH.md`](../vendor/accesskit_macos/VARTA-PATCH.md).
+
+The earlier 11 semantic/31 desktop checks and 59-case report precede the atomic
+message correction. Review against ARIA 1.2 found that the first planner omitted
+nested live/off text from complete messages. The initial broad run was interrupted
+before completion (`target/a11y7-verification-aborted.json`); it is not a passing
+full gate. The corrected planner also avoids persistent historical-text retention,
+and preflight charges complete-message work within the unchanged observer
+allowance. Native text folding and name-origin metadata also prevent lost text
+under role overrides and duplicate derived names across semantic children;
+legacy JSON folding is preserved. Native name/description references use the
+same grapheme masks as painted passwords, while legacy names keep scalar masks.
+Corrected scoped checks pass **14 semantic cases and 53 desktop GPU cases**;
+affected view/desktop GPU all-target strict Clippy and formatting pass. Evidence:
+`target/a11y8-final-semantic.log`, `target/a11y8-final-desktop.log`,
+`target/a11y8-final-clippy.log`, `target/a11y8-progress.json`, and
+`target/a11y8-vendor-provenance-final.json`. These supersede the earlier scoped
+results for the changed live/naming inputs. The full batch gate follows these
+corrections. A second read-only probe then exposed a partial-removal error:
+removing B from an atomic A/B region announced A. The second broad run was
+interrupted (`target/a11y8-verification-aborted.json`). Source-part fingerprints
+now separate removals from relevant text changes, with owner/channel fingerprints
+for net cancellation and ID-only order tracking. Fourteen live cases pass,
+including partial removal, busy cancellation and mixed-priority reorder; the
+standalone probe now passes. Logs: `target/a11y9-live-complete.log`,
+`target/a11y9-removal-probe.log`, `target/a11y9-clippy.log`.
+The 67-case checkpoint above precedes this final removal/reorder refinement;
+the final complete desktop selection passes **55 cases with GPU**, and strict
+all-target desktop GPU Clippy passes. The 12-input Showcase scenario passes on
+the freshly built artifact. CPU Debug bundle:
+`dist/Varta Showcase A11Y9 Debug.app` (106,556,627 bytes; not Release size).
+The initial headless frame was inspected at 1024×768; it is not an OS screenshot.
+Native app selection and even the UI-tool inventory both timed out after 30 s
+with kernel reset. No matching app process was observed after selection; launch
+and actual UI/VoiceOver behavior remain unconfirmed. No shell/AX automation was
+used as a substitute. Evidence: `target/a11y9-progress.json`,
+`target/a11y9-debug-bundle.json`, `target/a11y9-vendor-provenance.json`,
+`target/a11y9-desktop-final.log`, `target/a11y9-showcase-tests.log` and
+`target/a11y9-initial.png`. Consolidated verification kept sources unchanged but
+failed the dependency-boundary test: it rejected the desktop's exact
+`accesskit_consumer` test dependency. The rule now permits that consumer only in
+desktop tests; AccessKit remains excluded from engine crates. Report:
+`target/verification/20261104-005142-wa0_orw4/report.json` (failed, not a full pass).
+The corrected boundary passes both dependency tests; the consolidated result follows below.
+End-to-end native/VoiceOver acceptance remains open. The pinned macOS range adapter still only emits node ScrollIntoView without a range
+or edge hint; unit-tested text-run requests alone do not close platform range
+acceptance. The final consolidated workspace gate passes **3281 tests**, with 16
+ignored and all eight commands successful on unchanged inputs:
+`target/verification/20261104-011619-8_yzsx6c/report.json`. This does not close native range/VoiceOver acceptance.
+A separate read-only probe also reproduced unchecked range-end addition in the
+unchanged upstream macOS `from_ns_range` utility. Exact UTF-16 validation and
+native visible-range routing are the next package; their preparatory code/tests
+under ignored `target/a11y10-stage` are outside this gate and commit.
 
 **Renderer batch based on `1259eb8`; 2026-11-03.** This batch includes renderer
 and pointer changes, new Rust modules/tests, the Showcase and documentation.
@@ -62,11 +272,11 @@ checks close this implementation batch, not the broader P10/P13 target matrix.
   packaged Arial. Chrome checks cover counter/step/checkbox, Ukrainian editing,
   Undo/Redo, Tab, select and JSON/generator/async output. The native output agrees.
   The initial browser body margins/indefinite root height and control
-  content-box mismatch are corrected by UI-1 below; native controls still lack
-  OS accessibility exposure. This is a
+  content-box mismatch are corrected by UI-1 below; at that checkpoint native
+  controls lacked OS accessibility exposure. UI-2 above records the later foundation. This is a
   scoped macOS/Chrome observation, not cross-platform acceptance.
 
-**Active package UI-1 — owner authorized implementation through completion.** Normalize
+**UI-1 — committed in `be85c981`; broader target acceptance remains open.** Normalize
 root viewport and admitted control box sizing between the official browser host
 and native preview; add comparable input-to-present instrumentation and exercise
 counter, hover, editing and scrolling in Debug/Release. Preserve packaged fonts,

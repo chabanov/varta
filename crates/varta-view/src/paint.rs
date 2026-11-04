@@ -1,11 +1,13 @@
 //! Bounded CPU painting for an explicitly limited subset of the view tree.
+mod scroll;
 mod select;
+mod text_geometry;
 use crate::TextMeasurer;
 use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
 use crate::render::glyphs::{self, Glyphs};
 use crate::render::scene::{self, Draw, Primitive, Recording, Scene};
 use crate::style::{self, Environment, Name};
-use crate::text::{TextSource, WhiteSpaceMode};
+use crate::text::{TextSource, WhiteSpaceMode, field_display};
 use crate::tree::{Content, Tree, border_color_sides, outline_components};
 use crate::units::Units;
 use parley::{Affinity, Cursor, Layout, PositionedLayoutItem, Selection};
@@ -16,11 +18,9 @@ use skrifa::{
     outline::{DrawSettings, OutlinePen},
 };
 use std::{borrow::Cow, collections::BTreeMap};
+pub use text_geometry::{FieldTextCluster, FieldTextGeometry, FieldTextLine};
 use tiny_skia::{Color, FillRule, Mask, Paint, PathBuilder, Pixmap, Rect, Shader, Transform};
-use unicode_segmentation::UnicodeSegmentation;
 use varta_common::view::{Attribute, CssProperty, ROOT_NODE, Tag};
-
-const PASSWORD_MASK: &str = "•";
 
 /// A transparent, premultiplied RGBA8 image in row-major order.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +57,8 @@ pub struct FrameMetadata {
     text_hits: BTreeMap<u32, TextHit>,
     select_menu: Option<Box<select::SelectMenu>>,
     cursors: BTreeMap<u32, PointerCursor>,
+    scroll_layout: BTreeMap<u32, layout::BoxGeometry>,
+    scroll_sources: BTreeMap<u32, scroll::Source>,
 }
 
 /// The four cursor values admitted by the checked CSS subset.
@@ -71,25 +73,22 @@ pub enum PointerCursor {
 
 #[derive(Debug, Clone, PartialEq)]
 struct TextHit {
-    /// Each visual cluster's midpoint and its leading/trailing byte positions.
-    clusters: Vec<(f32, usize, usize)>,
+    identity: crate::NodeIdentity,
+    revision: crate::AccessibilityTextRevision,
+    clip: BoxRect,
+    selection_carets: [BoxRect; 2],
+    clusters: Vec<FieldTextCluster>,
     end: usize,
     composing: bool,
     caret_area: Option<BoxRect>,
-    lines: Vec<TextLineHit>,
+    lines: Vec<FieldTextLine>,
     scroll: Option<ScrollMetrics>,
+    horizontal: Option<scroll::Horizontal>,
+    text_viewport: BoxRect,
     caret_y: f32,
     origin_x: f32,
     preferred_x: f32,
     multiline: bool,
-}
-#[derive(Debug, Clone, PartialEq)]
-struct TextLineHit {
-    top: f32,
-    bottom: f32,
-    clusters: std::ops::Range<usize>,
-    start: usize,
-    end: usize,
 }
 /// A visual caret movement computed from one rendered frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,6 +130,8 @@ impl FrameMetadata {
             && self.editable == other.editable
             && self.text_hits == other.text_hits
             && self.select_menu == other.select_menu
+            && self.scroll_layout == other.scroll_layout
+            && self.scroll_sources == other.scroll_sources
     }
     #[must_use]
     pub fn cursor_at(&self, x: f32, y: f32) -> PointerCursor {
@@ -158,6 +159,35 @@ impl FrameMetadata {
     #[must_use]
     pub fn scale(&self) -> f32 {
         self.scale
+    }
+    /// Visible element-fragment unions, collected once for platform adapters.
+    /// Physical pixels; offscreen and text-only nodes can have no visible bounds.
+    #[must_use]
+    pub fn node_bounds_map(&self) -> BTreeMap<u32, BoxRect> {
+        let mut bounds = BTreeMap::<u32, BoxRect>::new();
+        for &(id, rect) in &self.hit_regions {
+            bounds
+                .entry(id)
+                .and_modify(|previous| {
+                    let x = previous.x.min(rect.x);
+                    let y = previous.y.min(rect.y);
+                    previous.width = (previous.x + previous.width).max(rect.x + rect.width) - x;
+                    previous.height = (previous.y + previous.height).max(rect.y + rect.height) - y;
+                    previous.x = x;
+                    previous.y = y;
+                })
+                .or_insert(rect);
+        }
+        bounds.insert(
+            ROOT_NODE,
+            BoxRect {
+                x: 0.0,
+                y: 0.0,
+                width: self.width as f32,
+                height: self.height as f32,
+            },
+        );
+        bounds
     }
     /// Focused element if it participates in this rendered frame.
     #[must_use]
@@ -190,11 +220,11 @@ impl FrameMetadata {
             return None;
         }
         let mut last = 0;
-        for (midpoint, before, after) in &hit.clusters {
-            if x < *midpoint {
-                return Some(*before);
+        for cluster in hit.clusters.iter().filter(|c| !c.line_break) {
+            if x < cluster.midpoint() {
+                return Some(cluster.before());
             }
-            last = *after;
+            last = cluster.after();
         }
         Some(if hit.clusters.is_empty() {
             hit.end
@@ -215,14 +245,17 @@ impl FrameMetadata {
         let line = hit
             .lines
             .iter()
-            .find(|line| y < line.bottom)
+            .find(|line| y < line.bounds.y + line.bounds.height)
             .or_else(|| hit.lines.last())?;
-        let mut last = line.start;
-        for (midpoint, before, after) in &hit.clusters[line.clusters.clone()] {
-            if x < *midpoint {
-                return Some(*before);
+        let mut last = line.source.start;
+        for cluster in hit.clusters[line.clusters.clone()]
+            .iter()
+            .filter(|c| !c.line_break)
+        {
+            if x < cluster.midpoint() {
+                return Some(cluster.before());
             }
-            last = *after;
+            last = cluster.after();
         }
         Some(last)
     }
@@ -236,11 +269,11 @@ impl FrameMetadata {
         let current = hit
             .lines
             .iter()
-            .position(|line| hit.caret_y < line.bottom)
+            .position(|line| hit.caret_y < line.bounds.y + line.bounds.height)
             .unwrap_or(hit.lines.len().checked_sub(1)?);
         let (line, boundary, preferred_x) = match key {
-            "Home" => (current, Some(hit.lines[current].start), None),
-            "End" => (current, Some(hit.lines[current].end), None),
+            "Home" => (current, Some(hit.lines[current].source.start), None),
+            "End" => (current, Some(hit.lines[current].content_end), None),
             "ArrowUp" if current == 0 => (0, Some(0), Some(hit.preferred_x)),
             "ArrowDown" if current + 1 == hit.lines.len() => {
                 (current, Some(hit.end), Some(hit.preferred_x))
@@ -254,14 +287,14 @@ impl FrameMetadata {
             self.text_position_at(
                 node,
                 hit.origin_x + hit.preferred_x * self.scale,
-                (destination.top + destination.bottom) / 2.0,
+                destination.bounds.y + destination.bounds.height / 2.0,
             )
         })?;
-        let upstream = position == destination.end
+        let upstream = position == destination.content_end
             && hit
                 .lines
                 .get(line + 1)
-                .is_some_and(|next| next.start == position);
+                .is_some_and(|next| next.source.start == position);
         Some(TextNavigation {
             position,
             preferred_x,
@@ -1148,11 +1181,12 @@ fn paint_input(
         tree.computed_read(ancestor, env)
             .get(&CssProperty::TextDecoration)
             .is_some_and(|value| value != "none")
-    }) || element
-        .value
-        .chars()
-        .any(|ch| ch.is_control() && !(element.tag == Tag::Textarea && matches!(ch, '\n' | '\t')))
-    {
+    }) || element.value.char_indices().any(|(byte, ch)| {
+        ch.is_control()
+            && !(element.tag == Tag::Textarea
+                && (matches!(ch, '\n' | '\t')
+                    || ch == '\r' && element.value.as_bytes().get(byte + 1) == Some(&b'\n')))
+    }) {
         return Err(PaintError::Unsupported(id));
     }
     let base_start = element.editor.anchor.min(element.editor.focus);
@@ -1179,36 +1213,36 @@ fn paint_input(
     let source_len = display.len();
     // The password's shaped buffer contains only masks. Retain byte boundaries
     // separately so hit testing still addresses the original UTF-8 value.
-    let password_positions = if element.input_type() == "password" {
-        let positions: Vec<_> = display
-            .grapheme_indices(true)
-            .map(|(offset, _)| offset)
-            .chain(std::iter::once(display.len()))
-            .collect();
-        let masked_position =
-            |offset| positions.partition_point(|position| *position < offset) * PASSWORD_MASK.len();
-        selection = (masked_position(selection.0), masked_position(selection.1));
-        preedit_range = preedit_range.map(|(start, end)| {
-            let start = positions
-                .partition_point(|position| *position <= start)
-                .saturating_sub(1)
-                * PASSWORD_MASK.len();
-            (start, masked_position(end))
-        });
-        display = Cow::Owned(PASSWORD_MASK.repeat(positions.len() - 1));
+    let password = element.input_type() == "password";
+    let transformed = if password {
+        Some(field_display::password(&display))
+    } else {
+        field_display::normalize_crlf(&display)
+    };
+    let source_map = if let Some((text, map)) = transformed {
+        let display_position = |source| {
+            if password {
+                map.display_ceil(source)
+            } else {
+                map.display_floor(source)
+            }
+        };
+        selection = (display_position(selection.0), display_position(selection.1));
+        preedit_range =
+            preedit_range.map(|(start, end)| (map.display_floor(start), display_position(end)));
+        display = Cow::Owned(text);
         *work = work.saturating_add(display.len());
         if *work > 1_000_000 {
             return Err(PaintError::Unsupported(id));
         }
-        Some(positions)
+        Some(map)
     } else {
         None
     };
     let source_position = |offset: usize| {
-        password_positions.as_ref().map_or_else(
-            || offset.min(source_len),
-            |positions| positions[(offset / PASSWORD_MASK.len()).min(positions.len() - 1)],
-        )
+        source_map
+            .as_ref()
+            .map_or_else(|| offset.min(source_len), |map| map.source(offset))
     };
     let (mut options, families) = layout::text_style(tree, env, id, font_size, measurer)?;
     let multiline = element.tag == Tag::Textarea;
@@ -1246,11 +1280,30 @@ fn paint_input(
         },
     );
     let caret_bounds = caret.geometry(&shaped, 1.0);
+    let anchor = if selection.0 == selection.1 {
+        caret
+    } else {
+        Cursor::from_byte_index(&shaped, selection.0, Affinity::Downstream)
+    };
+    let anchor_bounds = if selection.0 == selection.1 {
+        caret_bounds
+    } else {
+        anchor.geometry(&shaped, 1.0)
+    };
     let caret_x = caret_bounds.x0 as f32;
+    let automatic_x = (caret_x - (content.width - 1.0).max(0.0)).max(0.0);
+    let horizontal_max = (width - (content.width - 1.0).max(0.0))
+        .max(automatic_x)
+        .max(0.0);
+    let horizontal_offset = element
+        .editor
+        .horizontal_scroll
+        .unwrap_or(automatic_x)
+        .clamp(0.0, horizontal_max);
     let x = if multiline {
         content.x
     } else {
-        content.x - (caret_x - (content.width - 1.0).max(0.0)).max(0.0)
+        content.x - horizontal_offset
     };
     let text_max_scroll = (metrics.height - content.height).max(0.0);
     let text_scroll = if element.editor.manual_text_scroll {
@@ -1272,34 +1325,44 @@ fn paint_input(
             for cluster in run.visual_clusters() {
                 let advance = cluster.advance();
                 let range = cluster.text_range();
-                if display.get(range.clone()) == Some("\n") {
-                    continue;
+                if !display.is_empty() {
+                    clusters.push(FieldTextCluster {
+                        source: source_position(range.start)..source_position(range.end),
+                        bounds: BoxRect {
+                            x: position,
+                            y: y + line.metrics().block_min_coord,
+                            width: advance,
+                            height: line.metrics().block_max_coord - line.metrics().block_min_coord,
+                        },
+                        rtl: cluster.is_rtl(),
+                        line_break: matches!(display.get(range), Some("\n" | "\r\n")),
+                    });
                 }
-                let before = source_position(if cluster.is_rtl() {
-                    range.end
-                } else {
-                    range.start
-                });
-                let after = source_position(if cluster.is_rtl() {
-                    range.start
-                } else {
-                    range.end
-                });
-                clusters.push((position + advance / 2.0, before, after));
                 position += advance;
                 if clusters.len() > 65_536 {
                     return Err(PaintError::Unsupported(id));
                 }
             }
         }
-        lines.push(TextLineHit {
-            top: y + line.metrics().block_min_coord,
-            bottom: y + line.metrics().block_max_coord,
+        lines.push(FieldTextLine {
+            bounds: BoxRect {
+                x: x + line.metrics().offset,
+                y: y + line.metrics().block_min_coord,
+                width: if display.is_empty() {
+                    0.0
+                } else {
+                    position - x - line.metrics().offset
+                },
+                height: line.metrics().block_max_coord - line.metrics().block_min_coord,
+            },
             clusters: cluster_start..clusters.len(),
-            start: source_position(line.text_range().start),
-            end: {
+            source: source_position(line.text_range().start)
+                ..source_position(line.text_range().end),
+            content_end: {
                 let end = line.text_range().end.min(display.len());
-                source_position(if display[..end].ends_with('\n') {
+                source_position(if display[..end].ends_with("\r\n") {
+                    end - 2
+                } else if display[..end].ends_with('\n') {
                     end - 1
                 } else {
                     end
@@ -1309,7 +1372,6 @@ fn paint_input(
     }
     let color = current_color(tree, env, id).ok_or(PaintError::Unsupported(id))?;
     if tree.focus == Some(id) && !element.disabled() && selection.0 != selection.1 {
-        let anchor = Cursor::from_byte_index(&shaped, selection.0, Affinity::Downstream);
         let selection = Selection::new(anchor, caret);
         for (rect, _) in selection.geometry(&shaped) {
             let highlight = BoxRect {
@@ -1402,7 +1464,11 @@ fn paint_input(
         }
     }
     let caret_rect = BoxRect {
-        x: (x + caret_bounds.x0 as f32).min(content.x + (content.width - 1.0).max(0.0)),
+        x: if element.editor.horizontal_scroll.is_some() {
+            x + caret_bounds.x0 as f32
+        } else {
+            (x + caret_bounds.x0 as f32).min(content.x + (content.width - 1.0).max(0.0))
+        },
         y: y + caret_bounds.y0 as f32,
         width: 1.0,
         height: (caret_bounds.y1 - caret_bounds.y0) as f32,
@@ -1428,6 +1494,21 @@ fn paint_input(
         content
     };
     Ok(TextHit {
+        identity: crate::NodeIdentity {
+            id,
+            token: tree.nodes[&id].identity.clone(),
+        },
+        revision: crate::AccessibilityTextRevision::new(&tree.nodes[&id], element),
+        clip,
+        selection_carets: [
+            BoxRect {
+                x: x + anchor_bounds.x0 as f32,
+                y: y + anchor_bounds.y0 as f32,
+                width: 1.0,
+                height: (anchor_bounds.y1 - anchor_bounds.y0) as f32,
+            },
+            caret_rect,
+        ],
         clusters,
         end: source_len,
         composing: element.editor.preedit.is_some(),
@@ -1436,6 +1517,15 @@ fn paint_input(
         origin_x: x,
         preferred_x: element.editor.preferred_x.unwrap_or(caret_x),
         multiline,
+        text_viewport: content,
+        horizontal: (!multiline).then_some(scroll::Horizontal {
+            offset: horizontal_offset,
+            max: horizontal_max,
+            viewport: BoxRect {
+                width: (content.width - 1.0).max(0.0),
+                ..content
+            },
+        }),
         scroll: multiline.then_some(ScrollMetrics {
             top: text_scroll,
             max: text_max_scroll,
@@ -1909,13 +1999,16 @@ fn rasterize_inner_scoped(
     for hit in text_hits.values_mut() {
         hit.caret_y *= scale;
         hit.origin_x *= scale;
-        for (midpoint, _, _) in &mut hit.clusters {
-            *midpoint *= scale;
+        hit.clip = scaled_rect(hit.clip, scale);
+        for caret in &mut hit.selection_carets {
+            *caret = scaled_rect(*caret, scale);
+        }
+        for cluster in &mut hit.clusters {
+            cluster.bounds = scaled_rect(cluster.bounds, scale);
         }
         hit.caret_area = hit.caret_area.map(|rect| scaled_rect(rect, scale));
         for line in &mut hit.lines {
-            line.top *= scale;
-            line.bottom *= scale;
+            line.bounds = scaled_rect(line.bounds, scale);
         }
     }
     let pixels = pixmap.finish(scene)?;
@@ -1933,6 +2026,8 @@ fn rasterize_inner_scoped(
             text_hits,
             select_menu,
             cursors,
+            scroll_sources: scroll::sources(tree, &geometry),
+            scroll_layout: geometry,
         },
     })
 }

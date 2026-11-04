@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 //! Experimental native preview for an already compiled, unprivileged view module.
+mod accessibility;
 #[cfg(feature = "gpu")]
 mod gpu;
 #[cfg(feature = "gpu")]
@@ -48,12 +49,14 @@ use pixels::WHITE_RGB;
 use pixels::update_rgb;
 
 enum GuiEvent {
+    AccessibilityWake,
     #[cfg(feature = "gpu")]
     GpuLost,
     Frame(Box<PreviewFrame>),
     Error(String),
 }
 struct PreviewFrame {
+    accessibility: Option<Result<varta_view::AccessibilityTree, varta_view::AccessibilityError>>,
     image: Arc<FrameMetadata>,
     scene: Option<varta_view::DisplayList>,
     rgb: Vec<u32>,
@@ -67,6 +70,7 @@ struct PreviewFrame {
     timing: Option<timing::FrameTiming>,
 }
 enum WorkerMessage {
+    Accessibility(accessibility::Pending),
     Input {
         input: Input,
         trace: Option<timing::InputStamp>,
@@ -146,6 +150,7 @@ struct WorkerState {
     pointer: Arc<Mutex<PointerState>>,
     wake: Arc<wake::Wake>,
     gpu_active: Arc<AtomicBool>,
+    accessibility_active: Arc<AtomicBool>,
 }
 
 /// One coalesced sample, independent of the bounded activation/key FIFO.
@@ -171,6 +176,7 @@ fn worker(
         pointer,
         wake,
         gpu_active,
+        accessibility_active,
     } = state;
     let execute = || -> Result<(), String> {
         let initial_dimensions = loop {
@@ -231,12 +237,39 @@ fn worker(
         let mut environment_scale = initial_scale;
         let mut last_image: Option<Arc<FrameMetadata>> = None;
         let mut rendered_gpu = false;
+        let mut rendered_accessibility = false;
         let mut pointer_changed = false;
         let mut timing = timing::Pending::default();
         loop {
             let observed_wake = wake.snapshot();
             let mut active = false;
             match messages.try_recv() {
+                Ok(WorkerMessage::Accessibility(pending)) => {
+                    active = true;
+                    if revision == pending.version.revision
+                        && dimensions.load(Ordering::Acquire) == pending.version.dimensions
+                        && dark.load(Ordering::Acquire) == pending.version.dark
+                        && scale.load(Ordering::Acquire) == pending.version.scale
+                    {
+                        let started = Instant::now();
+                        timing.accept(pending.trace);
+                        match &last_image {
+                            Some(frame) => app.view_accessibility_input_from_frame(
+                                &pending.identity,
+                                &pending.action,
+                                frame,
+                            ),
+                            None => {
+                                app.view_accessibility_input(&pending.identity, &pending.action)
+                            }
+                        }
+                        .map_err(|e| e.to_string())?;
+                        timing.guest(started.elapsed());
+                        // A current request still needs an acknowledgement frame
+                        // when the core ignores an unsupported/no-op action.
+                        revision = revision.checked_add(1).ok_or("view revision exhausted")?;
+                    }
+                }
                 Ok(WorkerMessage::Input {
                     input,
                     trace,
@@ -348,6 +381,7 @@ fn worker(
                 pointer_changed |= changed;
             }
             let current_gpu = gpu_active.load(Ordering::Acquire);
+            let current_accessibility = accessibility_active.load(Ordering::Acquire);
             if in_flight.is_none()
                 && width > 0
                 && height > 0
@@ -355,7 +389,8 @@ fn worker(
                 && (revision != rendered_revision
                     || dimensions != rendered_dimensions
                     || pointer_changed
-                    || rendered_gpu != current_gpu)
+                    || rendered_gpu != current_gpu
+                    || rendered_accessibility != current_accessibility)
             {
                 let render_started = Instant::now();
                 let (frame, vector) = if current_gpu {
@@ -386,6 +421,8 @@ fn worker(
                     (frame.into_metadata(), None)
                 };
                 rendered_gpu = vector.is_some();
+                let accessibility = current_accessibility.then(|| app.view_accessibility_tree());
+                rendered_accessibility = current_accessibility;
                 if pointer_changed
                     && revision == rendered_revision
                     && last_image
@@ -402,6 +439,7 @@ fn worker(
                 pointer_changed = false;
                 if proxy
                     .send_event(GuiEvent::Frame(Box::new(PreviewFrame {
+                        accessibility,
                         image: frame,
                         scene: vector,
                         rgb: rgb.clone(),
@@ -431,6 +469,8 @@ fn worker(
 }
 
 struct Preview {
+    accessibility: Option<accessibility::Bridge>,
+    accessibility_adapter: Option<accesskit_winit::Adapter>,
     window: Option<Arc<Window>>,
     surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
     #[cfg(feature = "gpu")]
@@ -472,6 +512,66 @@ struct Pressed {
     select_hit: Option<SelectHit>,
 }
 impl Preview {
+    fn publish_accessibility(&mut self) {
+        if !self.frame_presented {
+            return;
+        }
+        let (Some(bridge), Some(adapter), Some(frame)) = (
+            &self.accessibility,
+            &mut self.accessibility_adapter,
+            &self.frame,
+        ) else {
+            return;
+        };
+        let Some(tree) = &frame.accessibility else {
+            return;
+        };
+        if let Some(update) = bridge.publish(
+            frame.sequence,
+            tree,
+            &frame.image,
+            accessibility::Version {
+                revision: frame.revision,
+                dimensions: frame.dimensions,
+                dark: frame.dark,
+                scale: frame.scale,
+            },
+            &frame.title,
+        ) {
+            adapter.update_if_active(|| update);
+        }
+    }
+    fn flush_accessibility(&mut self) -> Result<(), String> {
+        if !self.frame_presented
+            || self.key_inflight.is_some()
+            || self.scroll_inflight.is_some()
+            || !self.pending_keys.is_empty()
+        {
+            return Ok(());
+        }
+        let (Some(bridge), Some(frame)) = (&self.accessibility, &self.frame) else {
+            return Ok(());
+        };
+        let version = accessibility::Version {
+            revision: frame.revision,
+            dimensions: frame.dimensions,
+            dark: frame.dark,
+            scale: frame.scale,
+        };
+        if let Some(pending) = bridge.take_current(version) {
+            match self.sender.try_send(WorkerMessage::Accessibility(pending)) {
+                Ok(()) => {
+                    self.key_inflight = Some((frame.revision, frame.dimensions));
+                    self.wake.notify();
+                }
+                Err(mpsc::TrySendError::Full(_)) => {}
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err("application stopped".into());
+                }
+            }
+        }
+        Ok(())
+    }
     #[cfg(feature = "gpu")]
     fn switch_to_cpu(&mut self) -> Result<(), String> {
         eprintln!("varta-preview: switching GPU to CPU fallback");
@@ -658,7 +758,9 @@ impl Preview {
         }) {
             self.key_inflight = None;
         }
+        self.publish_accessibility();
         self.flush_keys()?;
+        self.flush_accessibility()?;
         self.flush_scroll()
     }
     fn hit(&self) -> Option<(u32, u64, u64)> {
@@ -955,9 +1057,16 @@ impl ApplicationHandler<GuiEvent> for Preview {
         let result = (|| -> Result<(), String> {
             let window = Arc::new(
                 event_loop
-                    .create_window(Window::default_attributes().with_title("Varta preview"))
+                    .create_window(
+                        Window::default_attributes()
+                            .with_title("Varta preview")
+                            .with_visible(false),
+                    )
                     .map_err(|e| e.to_string())?,
             );
+            if let Some(bridge) = &self.accessibility {
+                self.accessibility_adapter = Some(bridge.install(event_loop, &window));
+            }
             #[cfg(feature = "gpu")]
             if self.gpu_active.load(Ordering::Acquire) {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -984,6 +1093,7 @@ impl ApplicationHandler<GuiEvent> for Preview {
             self.scale
                 .store(window.scale_factor().to_bits(), Ordering::Release);
             self.size_changed(&window);
+            window.set_visible(true);
             self.window = Some(window);
             Ok(())
         })();
@@ -994,6 +1104,21 @@ impl ApplicationHandler<GuiEvent> for Preview {
     }
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: GuiEvent) {
         match event {
+            GuiEvent::AccessibilityWake => {
+                if let Some(bridge) = &self.accessibility {
+                    bridge.acknowledge();
+                    if !bridge.active.load(Ordering::Acquire)
+                        && let Some(frame) = &mut self.frame
+                    {
+                        frame.accessibility = None;
+                    }
+                }
+                self.publish_accessibility();
+                if let Err(error) = self.flush_accessibility() {
+                    self.error = Some(error);
+                    event_loop.exit();
+                }
+            }
             #[cfg(feature = "gpu")]
             GuiEvent::GpuLost => {
                 if self.gpu.is_none() {
@@ -1026,6 +1151,9 @@ impl ApplicationHandler<GuiEvent> for Preview {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_none_or(|window| window.id() != id) {
             return;
+        }
+        if let (Some(adapter), Some(window)) = (&mut self.accessibility_adapter, &self.window) {
+            adapter.process_event(window, &event);
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -1346,6 +1474,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let (sender, receiver) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
     let proxy = event_loop.create_proxy();
+    let accessibility_active = Arc::new(AtomicBool::new(false));
+    let accessibility = accessibility::Bridge::new(
+        Some(proxy.clone()),
+        wake.clone(),
+        accessibility_active.clone(),
+    );
     #[cfg(feature = "gpu")]
     let gpu_events = Some(proxy.clone());
     let worker_dimensions = dimensions.clone();
@@ -1367,12 +1501,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pointer: worker_pointer,
                 wake: worker_wake,
                 gpu_active: worker_gpu,
+                accessibility_active,
             },
             receiver,
             proxy,
         )
     });
     let mut preview = Preview {
+        accessibility: Some(accessibility),
+        accessibility_adapter: None,
         window: None,
         surface: None,
         #[cfg(feature = "gpu")]
@@ -1424,6 +1561,8 @@ mod tests {
         let (sender, receiver) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
         (
             Preview {
+                accessibility: None,
+                accessibility_adapter: None,
                 window: None,
                 surface: None,
                 #[cfg(feature = "gpu")]
@@ -1460,6 +1599,7 @@ mod tests {
     }
     fn present_empty_frame(preview: &mut super::Preview) {
         preview.frame = Some(super::PreviewFrame {
+            accessibility: None,
             timing: None,
             scene: None,
             image: Arc::new(
@@ -1630,7 +1770,9 @@ mod tests {
         present_empty_frame(&mut preview);
         preview.flush_keys().unwrap();
         preview.flush_keys().unwrap();
-        let super::WorkerMessage::Input { input, .. } = receiver.try_recv().unwrap();
+        let super::WorkerMessage::Input { input, .. } = receiver.try_recv().unwrap() else {
+            panic!("expected a keyboard input")
+        };
         assert!(matches!(input,varta_view::Input::Key{key,shift:true,..} if key=="Tab"));
         assert!(matches!(
             receiver.try_recv(),

@@ -7,6 +7,140 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-03 — Painted field geometry and visual native text ranges
+
+UI-2.3 exposes borrowed cluster/line geometry from the exact painted frame,
+guarded by source identity and content revision, without reshaping for observers.
+The same cluster rectangles drive pointer navigation. Original source ranges,
+direction, visual wrapping, content clipping and both endpoint carets retain
+their physical-pixel coordinates through scale changes. Transient IME geometry
+is refused. Native password units now follow the renderer's grapheme masks;
+legacy headless JSON retains its original mask count.
+
+A new regression caught CRLF creating a separate extra visual line. Shared
+display normalization fixes painting and content sizing while retaining original
+guest bytes, selection offsets and End-before-pair behavior. Password masking
+and CRLF display transformations keep source maps under the existing budgets.
+
+Native runs now split by visual line/direction and character-index limits, with
+clipped bounds, positions/widths and logical same-line links. Password metrics
+split when clipping makes their widths/steps nonuniform. Run IDs are reused only
+for equal content revisions and exact source ranges. Reflow cannot reassign an
+old native character index to different bytes. Endpoint selection follows the
+painted caret's affinity; collapsed upstream selections remain collapsed.
+Actual visual spans share the observer-only run ceiling and explicit refusal/
+fresh-ID recovery behavior, independently of the logical model's run count.
+
+The 90-case field/editor run passes before final caret refinement; final 16 core
+cases and 35 desktop GPU cases pass afterward, alongside strict affected-package
+GPU all-target Clippy, formatting and a GPU-capable Debug build. Overlaps are not
+additional unique cases. The new Debug bundle's UI query timed out after 20
+seconds. Launch and OS range behavior remain unconfirmed; VoiceOver, assistive
+scrolling/announcements and other targets are still open. No new full gate is
+claimed. [Pinned inputs and evidence](../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
+
+## 2026-11-03 — Native logical text runs and checked directional selection
+
+UI-2.2 adds host-owned field text metadata: scalar units with CRLF grouped,
+Unicode word starts, hard lines, trailing empty lines and directional UTF-8
+selection. AccessKit runs contain at most 255 units so word-navigation end
+positions also fit u8. Long logical lines link adjacent chunks; original UTF-8
+offset maps remain in the host. Password runs contain only scalar masks and
+reveal no original word/line structure.
+
+Opaque content revisions are separate from wrapping field edit sequences.
+Actual edits, guest value changes, Undo/Redo and input-type changes invalidate
+earlier ranges, including when old bytes or types return. Equal value echoes
+and selection-only frames retain run identity. Native callbacks reject unknown,
+foreign-owner, invalid-index and stale endpoints before queueing or effects.
+Selection-only acknowledgement frames preserve queued replacement ordering;
+readonly selection remains available while editing is denied. Disabled and
+composing fields do not advertise selection. A legacy selection inside CRLF is
+left unchanged and omitted from the native selection snapshot.
+
+A separate observer cap bounds auxiliary text nodes; text/metadata work also
+uses the existing observer allowance. Refusal leaves guest admission, rendering
+and ordinary input unchanged. Wasm profiles, imports and headless JSON retain
+their previous meaning. Visual wrapping/bidi/character geometry, assistive
+scrolling/announcements, VoiceOver and other targets remain open.
+
+Scoped verification passes 244 view cases, three runtime assistive cases and
+29 desktop GPU cases, strict affected-package GPU all-target Clippy, formatting
+and a GPU-capable Debug build. Seven final text cases strengthen Undo/Redo and
+type-transition assertions; they are not additional unique cases. The prepared
+CPU Debug bundle and the preceding Release bundle both timed out while being
+queried through the UI tool. Launch and current native range behavior remain
+unconfirmed; no platform success is inferred from the unit tests.
+[Pinned scope and source digest](../examples/native-showcase/accessibility-text-ranges-2026-11-03.json).
+
+## 2026-11-03 — Native descriptions and bounded text-alternative observer
+
+The next working increment adds a separate `description` to typed native nodes
+and AccessKit from `aria-describedby`, using the existing finite name traversal.
+Reference order, hidden-target exceptions, nested label relations, image text
+alternatives and embedded password masks share that implementation. Describedby
+cycles do not recurse. The Showcase connects its three existing help texts with
+explicit ARIA references and keeps names separate from descriptions.
+
+`accessibility_tree` now returns a typed observer result. Numeric name summaries
+are shared with the unchanged guest admission calculation; the native observer
+separately preflights all semantic/generic names and descriptions within one
+8 MiB potential-work allowance. This closes the earlier actionable-generic name
+expansion gap without rejecting previously admitted v38 guest batches. Action
+validation uses interaction flags and visibility without computing text names.
+Observer refusal leaves the instance running, clears stale native actions and
+publishes a host-owned static-text explanation. Recovery allocates fresh IDs.
+An adjacent semantic-queue fix preserves focus-then-value bursts across a focus
+acknowledgement by rebinding only the same native/source identity and still-valid
+action to the latest presented frame; worker frame guards remain in force.
+
+Mac API observations cover CPU Debug and Metal Release descriptions, including
+reactive `Help` changes. A separate CPU fixture traverses valid → refused → valid
+states using ordinary keyboard input for recovery, with an explicit static-text
+refusal and unchanged process identity. Scoped checks pass 237 view cases,
+2 runtime assistive cases and 25 final desktop cases, affected/final desktop
+GPU all-target Clippy and the 12-input Showcase scenario. Native observations
+precede the final semantic FIFO refinement; the repeated native retry timed out
+in the UI tool, so no passing post-refinement native result is claimed.
+[Exact scope and hosts](../examples/native-showcase/accessibility-descriptions-2026-11-03.json).
+The earlier
+3215-test source reconciliation belongs to the prior code inputs; this increment
+uses scoped checks, with the full workspace gate reserved for the code-commit
+batch boundary. Full text ranges/line data, assistive scrolling/announcements,
+VoiceOver behavior and other targets remain open.
+
+## 2026-11-03 — Native accessibility foundation after `be85c981`
+
+The next UI package adds a shared flat semantic snapshot and desktop-only exact
+AccessKit 0.25.2/accesskit_winit 0.34.2 pins. Existing locked versions remain;
+48 platform/transitive packages are added, with dependency-boundary regression
+checks keeping AccessKit out of engine, runtime, tooling and distribution.
+Existing headless JSON, Wasm imports/profile/ABI and guest budgets are unchanged.
+Native IDs follow opaque source identity and are never recycled. Lazy snapshots
+are published only after the corresponding frame presents. Focus, Click,
+string SetValue and ReplaceSelectedText use bounded callback ingress, coalesced
+wakes, frame/identity checks and ordinary input/broker/later guest event turns.
+
+Scoped checks pass six core semantic/action cases, one runtime event-turn case,
+22 desktop tests in both default/GPU builds and affected GPU all-target strict
+Clippy. Real macOS accessibility API observations pass on CPU Debug and Metal GPU
+Release, including reactive edits and option actions; Debug also covers Undo,
+radio/checkbox and zoom/restore. Release guest JSON/generator/await output is
+observed. [Pinned record](../examples/native-showcase/accessibility-checkpoint-2026-11-03.json).
+All eight consolidated verification commands pass, including **3215 tests,
+0 failures, 16 ignored** and the unchanged conformance baseline. The wrapper
+report remains failed: a separate native password-fixture build created an
+untracked generated manifest during the run. Moving it under `target` restores
+the exact initial source fingerprint; reintroducing only that artifact exactly
+reproduces the reported final fingerprint. Completed command results are reused
+for identical inputs, with an explicit reconciliation rather than relabeling the
+original report. Evidence: `target/verification/20261103-192156-v_2wjssj/report.json`
+and `source-reconciliation.json`. Later edits are documentation/observation
+records only. The secure native field is also observed masking its value before
+and after editing. Full text ranges, descriptions, assistive
+scrolling/announcements, complete geometry, screen-reader and other-target
+acceptance remain open.
+
 ## 2026-11-03 — UI geometry/timing and optional Metal GPU prototype
 
 Working tree after `1259eb8`: standalone browser root/control geometry normalized
@@ -2889,3 +3023,22 @@ Additional local evidence: `target/inline-focused.log`,
 `target/inline-console-summary.log`, `target/native-text-full-gate.log` and
 `target/inline-font-regeneration/`. Historical scoped records above describe
 intermediate states; this full gate covers their final code together.
+
+### Native accessibility UI-2 consolidated checkpoint — 2026-11-04
+
+The package following renderer commit `be85c981` implements the lazy native
+observer, bounded descriptions and actions, exact field source maps and painted
+geometry, guarded assistive scrolling and coalesced live announcements. The
+headless JSON, guest ABI and production budgets retain their existing contracts.
+After a failed boundary run rejected the desktop consumer test dependency, the
+rule was narrowed to allow only that AccessKit test dependency in the desktop
+host. Both boundary cases pass. The clean final full gate passes **3281 tests,
+0 failures, 16 ignored**, all eight commands and unchanged source inputs.
+Report: `target/verification/20261104-011619-8_yzsx6c/report.json`; source SHA-256
+`2ab8cfa1489dc188cae26237c3f9ea5cf2d9b9332e48977199448f47176e62df`. Documentation-only status updates follow the gate.
+
+Separate GPU/Showcase and headless evidence remain scoped as recorded in the
+plan. UI-tool app selection/inventory timed out, so current native/VoiceOver
+acceptance is open. A subsequently reproduced upstream range-overflow and
+missing native visible-range route are tracked for the next implementation
+package; preparatory ignored staging files are outside this checkpoint.

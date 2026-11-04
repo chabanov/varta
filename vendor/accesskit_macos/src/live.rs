@@ -1,0 +1,403 @@
+// Varta addition, under the package's Apache-2.0 OR MIT licenses.
+//! Pure snapshot-based live updates. No AppKit calls, timers or guest tasks.
+use accesskit::{Live, Role};
+use accesskit_consumer::{FullNodeId, TreeState};
+use sha2::{Digest, Sha256, digest::Output};
+type Fingerprint = Output<Sha256>;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+};
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Priority {
+    Polite,
+    Assertive,
+}
+impl Priority {
+    fn from_live(live: Live) -> Option<Self> {
+        match live {
+            Live::Off => None,
+            Live::Polite => Some(Self::Polite),
+            Live::Assertive => Some(Self::Assertive),
+        }
+    }
+    fn live(self) -> Live {
+        match self {
+            Self::Polite => Live::Polite,
+            Self::Assertive => Live::Assertive,
+        }
+    }
+}
+type Key = (FullNodeId, Priority);
+struct Trigger {
+    hash: Sha256,
+    empty: bool,
+}
+impl Trigger {
+    fn new() -> Self {
+        Self {
+            hash: Sha256::new(),
+            empty: true,
+        }
+    }
+    fn append(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if !self.empty {
+            self.hash.update(b" ");
+        }
+        self.hash.update(text.as_bytes());
+        self.empty = false;
+    }
+    fn digest(self) -> Fingerprint {
+        self.hash.finalize()
+    }
+}
+struct Content {
+    own: Range<usize>,
+    subtree: Range<usize>,
+    own_busy: bool,
+    subtree_busy: bool,
+    atomic: bool,
+}
+impl Content {
+    fn busy(&self) -> bool {
+        if self.atomic {
+            self.subtree_busy
+        } else {
+            self.own_busy
+        }
+    }
+}
+#[derive(Clone)]
+struct NodeTrigger {
+    key: Key,
+    digest: Fingerprint,
+    empty: bool,
+}
+struct Snapshot {
+    // Each projected label/value occurs once here, regardless of nesting.
+    parts: Vec<String>,
+    content: BTreeMap<FullNodeId, Content>,
+    order: Vec<FullNodeId>,
+    triggers: BTreeMap<Key, Trigger>,
+    owner_triggers: BTreeMap<FullNodeId, Trigger>,
+    nodes: BTreeMap<FullNodeId, NodeTrigger>,
+}
+fn snapshot(tree: &TreeState) -> Snapshot {
+    let mut result = Snapshot {
+        parts: Vec::new(),
+        content: BTreeMap::new(),
+        order: Vec::new(),
+        triggers: BTreeMap::new(),
+        owner_triggers: BTreeMap::new(),
+        nodes: BTreeMap::new(),
+    };
+    let mut pending = vec![(tree.root(), Live::Off, None, false, false)];
+    while let Some((node, inherited_live, inherited_atomic, inherited_busy, exit)) = pending.pop() {
+        if exit {
+            let content = result.content.get_mut(&node.id()).expect("entered node");
+            content.subtree.end = result.parts.len();
+            let busy = content.subtree_busy;
+            if let Some(parent) = node.parent_id().and_then(|id| result.content.get_mut(&id)) {
+                parent.subtree_busy |= busy;
+            }
+            continue;
+        }
+        // Offscreen content still announces; semantic hidden state excludes it.
+        if node.data().is_hidden() {
+            continue;
+        }
+        let live = node.data().live().unwrap_or(inherited_live);
+        let atomic = if node.is_live_atomic() {
+            Some(node.id())
+        } else {
+            inherited_atomic
+        };
+        let busy = inherited_busy || node.is_busy();
+        let derived = !node.data().children().is_empty()
+            && node.data().labelled_by() == node.data().children();
+        let label = if derived { None } else { node.data().label() };
+        let value = node.data().value();
+        let part = if node.role() == Role::Label {
+            value.or(label).unwrap_or("").to_owned()
+        } else {
+            match (
+                label.filter(|s| !s.is_empty()),
+                value.filter(|s| !s.is_empty()),
+            ) {
+                (Some(label), Some(value)) => format!("{label} {value}"),
+                (Some(text), None) | (None, Some(text)) => text.to_owned(),
+                (None, None) => String::new(),
+            }
+        };
+        let start = result.parts.len();
+        if let Some(priority) = Priority::from_live(live) {
+            let owner = atomic.unwrap_or(node.id());
+            result.nodes.insert(
+                node.id(),
+                NodeTrigger {
+                    key: (owner, priority),
+                    digest: Sha256::digest(part.as_bytes()),
+                    empty: part.is_empty(),
+                },
+            );
+            result
+                .owner_triggers
+                .entry(owner)
+                .or_insert_with(Trigger::new)
+                .append(&part);
+            result
+                .triggers
+                .entry((atomic.unwrap_or(node.id()), priority))
+                .or_insert_with(Trigger::new)
+                .append(&part);
+        }
+        if !part.is_empty() {
+            result.parts.push(part);
+        }
+        result.content.insert(
+            node.id(),
+            Content {
+                own: start..result.parts.len(),
+                subtree: start..start,
+                own_busy: busy,
+                subtree_busy: busy,
+                atomic: node.is_live_atomic(),
+            },
+        );
+        result.order.push(node.id());
+        pending.push((node, inherited_live, inherited_atomic, inherited_busy, true));
+        // Run children are geometry, not a second copy of their owner's value.
+        pending.extend(
+            node.children()
+                .rev()
+                .filter(|child| child.role() != Role::TextRun)
+                .map(|child| (child, live, atomic, busy, false)),
+        );
+    }
+    result
+}
+
+fn orders(snapshot: &Snapshot) -> BTreeMap<FullNodeId, Vec<FullNodeId>> {
+    let mut result = BTreeMap::<FullNodeId, Vec<FullNodeId>>::new();
+    for id in &snapshot.order {
+        if let Some(unit) = snapshot.nodes.get(id).filter(|unit| !unit.empty) {
+            result.entry(unit.key.0).or_default().push(*id);
+        }
+    }
+    result
+}
+fn reordered_priority(
+    before: &[FullNodeId],
+    after: &[FullNodeId],
+    nodes: &BTreeMap<FullNodeId, NodeTrigger>,
+) -> Option<Priority> {
+    let positions = before
+        .iter()
+        .enumerate()
+        .map(|(rank, id)| (*id, rank))
+        .collect::<BTreeMap<_, _>>();
+    let common = after
+        .iter()
+        .filter_map(|id| positions.get(id).map(|rank| (*rank, nodes[id].key.1)))
+        .collect::<Vec<_>>();
+    let mut suffix = vec![usize::MAX; common.len() + 1];
+    for i in (0..common.len()).rev() {
+        suffix[i] = suffix[i + 1].min(common[i].0);
+    }
+    let mut largest = None::<usize>;
+    let mut priority = None::<Priority>;
+    for (i, &(rank, current)) in common.iter().enumerate() {
+        if largest.is_some_and(|old| rank < old) || rank > suffix[i + 1] {
+            priority = Some(priority.map_or(current, |old| old.max(current)));
+        }
+        largest = Some(largest.map_or(rank, |old| old.max(rank)));
+    }
+    priority
+}
+pub(crate) struct State {
+    // Fixed-size digests retain no historical text. Per-node baselines classify
+    // additions/text changes; group baselines coalesce busy cancellation and
+    // same-content replacement within one atomic owner. Removals alone are silent.
+    delivered: BTreeMap<Key, Fingerprint>,
+    nodes: BTreeMap<FullNodeId, NodeTrigger>,
+    owners: BTreeMap<FullNodeId, Fingerprint>,
+    order: BTreeMap<FullNodeId, Vec<FullNodeId>>,
+}
+impl State {
+    pub(crate) fn new(tree: &TreeState) -> Self {
+        let snapshot = snapshot(tree);
+        let order = orders(&snapshot)
+            .into_iter()
+            .filter(|(owner, _)| !snapshot.content[owner].busy())
+            .collect();
+        let nodes = snapshot
+            .nodes
+            .into_iter()
+            .filter(|(_, unit)| !snapshot.content[&unit.key.0].busy())
+            .collect();
+        let delivered = snapshot
+            .triggers
+            .into_iter()
+            .filter(|(key, _)| !snapshot.content[&key.0].busy())
+            .map(|(key, trigger)| (key, trigger.digest()))
+            .collect();
+        let owners = snapshot
+            .owner_triggers
+            .into_iter()
+            .filter(|(owner, _)| !snapshot.content[owner].busy())
+            .map(|(owner, trigger)| (owner, trigger.digest()))
+            .collect();
+        Self {
+            delivered,
+            nodes,
+            owners,
+            order,
+        }
+    }
+    pub(crate) fn update(&mut self, tree: &TreeState) -> Vec<(String, Live)> {
+        let snapshot = snapshot(tree);
+        let current_order = orders(&snapshot);
+        let mut changed = BTreeMap::<FullNodeId, Priority>::new();
+        let mut candidates = BTreeSet::new();
+        let mut next_nodes = BTreeMap::new();
+        for (&id, unit) in &snapshot.nodes {
+            let old = self.nodes.remove(&id);
+            if snapshot.content[&unit.key.0].busy() {
+                if let Some(old) = old
+                    && (old.key.0 == unit.key.0
+                        || snapshot.content.get(&old.key.0).is_some_and(Content::busy))
+                {
+                    next_nodes.insert(id, old);
+                }
+            } else {
+                if old.as_ref().map_or(!unit.empty, |old| {
+                    old.key != unit.key || old.digest != unit.digest
+                }) {
+                    candidates.insert(unit.key);
+                }
+                next_nodes.insert(id, unit.clone());
+            }
+        }
+        self.nodes = next_nodes;
+        let mut next_delivered = BTreeMap::new();
+        let mut nonempty = BTreeSet::new();
+        for (key, trigger) in snapshot.triggers {
+            let old = self.delivered.remove(&key);
+            let empty = trigger.empty;
+            let digest = trigger.digest();
+            if !empty {
+                nonempty.insert(key);
+            }
+            if snapshot.content[&key.0].busy() {
+                if let Some(old) = old {
+                    next_delivered.insert(key, old);
+                }
+            } else {
+                if !empty && candidates.contains(&key) && old.as_ref() != Some(&digest) {
+                    changed
+                        .entry(key.0)
+                        .and_modify(|p| *p = (*p).max(key.1))
+                        .or_insert(key.1);
+                }
+                next_delivered.insert(key, digest);
+            }
+        }
+        // A busy owner can temporarily mute a channel and restore it. Keep at
+        // most the two channel digests while that owner still exists and is busy.
+        for (key, digest) in std::mem::take(&mut self.delivered) {
+            if snapshot.content.get(&key.0).is_some_and(Content::busy) {
+                next_delivered.insert(key, digest);
+            }
+        }
+        let mut next_owners = BTreeMap::new();
+        let mut next_order = BTreeMap::new();
+        for (owner, trigger) in snapshot.owner_triggers {
+            let old = self.owners.remove(&owner);
+            let digest = trigger.digest();
+            if snapshot.content[&owner].busy() {
+                if let Some(old) = old {
+                    next_owners.insert(owner, old);
+                }
+                if let Some(before) = self.order.remove(&owner) {
+                    next_order.insert(
+                        owner,
+                        before
+                            .into_iter()
+                            .filter(|id| {
+                                snapshot
+                                    .nodes
+                                    .get(id)
+                                    .is_some_and(|unit| unit.key.0 == owner)
+                            })
+                            .collect(),
+                    );
+                }
+            } else {
+                let after = current_order.get(&owner).map_or(&[][..], Vec::as_slice);
+                if old.as_ref() != Some(&digest) {
+                    let reordered = self
+                        .order
+                        .get(&owner)
+                        .and_then(|before| reordered_priority(before, after, &snapshot.nodes));
+                    let priority = reordered.or_else(|| {
+                        (!changed.contains_key(&owner))
+                            .then(|| {
+                                candidates
+                                    .iter()
+                                    .filter(|key| key.0 == owner && nonempty.contains(key))
+                                    .map(|key| key.1)
+                                    .max()
+                            })
+                            .flatten()
+                    });
+                    if let Some(priority) = priority {
+                        changed
+                            .entry(owner)
+                            .and_modify(|p| *p = (*p).max(priority))
+                            .or_insert(priority);
+                    }
+                }
+                next_order.insert(owner, after.to_vec());
+                next_owners.insert(owner, digest);
+            }
+        }
+        for (owner, digest) in std::mem::take(&mut self.owners) {
+            if snapshot.content.get(&owner).is_some_and(Content::busy) {
+                next_owners.insert(owner, digest);
+                if let Some(before) = self.order.remove(&owner) {
+                    next_order.insert(
+                        owner,
+                        before
+                            .into_iter()
+                            .filter(|id| snapshot.nodes.contains_key(id))
+                            .collect(),
+                    );
+                }
+            }
+        }
+        self.delivered = next_delivered;
+        self.owners = next_owners;
+        self.order = next_order;
+        let mut announcements = Vec::new();
+        for id in snapshot.order {
+            let Some(priority) = changed.remove(&id) else {
+                continue;
+            };
+            let content = &snapshot.content[&id];
+            let range = if content.atomic {
+                content.subtree.clone()
+            } else {
+                content.own.clone()
+            };
+            let text = snapshot.parts[range].join(" ");
+            if !text.is_empty() {
+                announcements.push((text, priority.live()));
+            }
+        }
+        announcements
+    }
+}

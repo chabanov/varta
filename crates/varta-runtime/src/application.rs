@@ -635,6 +635,54 @@ impl Application {
     pub fn view_snapshot(&self) -> serde_json::Value {
         self.execution.store.data().view.snapshot()
     }
+    /// Platform-neutral accessibility data, without a full diagnostic snapshot.
+    /// Observer work refusal does not terminate the application or mutate its view.
+    pub fn view_accessibility_tree(
+        &self,
+    ) -> Result<varta_view::AccessibilityTree, varta_view::AccessibilityError> {
+        self.execution.store.data().view.accessibility_tree()
+    }
+    /// Trusted assistive input between turns. Stale or unsupported actions are
+    /// ignored without events; admitted actions retain ordinary event limits.
+    pub fn view_accessibility_input(
+        &mut self,
+        identity: &varta_view::NodeIdentity,
+        action: &varta_view::AccessibilityAction,
+    ) -> Result<bool, ApplicationError> {
+        self.assistive_input(identity, action, None)
+    }
+    /// Frame-dependent assistive input. Hosts retain the acknowledged model,
+    /// viewport, theme and scale guards before calling this between turns.
+    pub fn view_accessibility_input_from_frame(
+        &mut self,
+        identity: &varta_view::NodeIdentity,
+        action: &varta_view::AccessibilityAction,
+        frame: &varta_view::FrameMetadata,
+    ) -> Result<bool, ApplicationError> {
+        self.assistive_input(identity, action, Some(frame))
+    }
+    fn assistive_input(
+        &mut self,
+        identity: &varta_view::NodeIdentity,
+        action: &varta_view::AccessibilityAction,
+        frame: Option<&varta_view::FrameMetadata>,
+    ) -> Result<bool, ApplicationError> {
+        if self.state != InstanceState::Running {
+            return Err(ApplicationError::Terminated);
+        }
+        match crate::view::accessibility_input(
+            self.execution.store.data_mut(),
+            identity,
+            action,
+            frame,
+        ) {
+            Ok(accepted) => Ok(accepted),
+            Err(error) => {
+                self.fail(error);
+                Err(ApplicationError::Terminated)
+            }
+        }
+    }
     /// Bounded diagnostic JSON export; failure leaves the application running.
     pub fn view_snapshot_json(
         &self,

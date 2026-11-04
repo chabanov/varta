@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-03",
+  "head": "be85c981086bb56daec7d344fdc8524d863138fc",
+  "workingTree": true,
+  "scope": "UI-2.1 native descriptions, bounded text-alternative observer and semantic FIFO rebinding",
+  "verificationScope": "scoped; no new full workspace pass is claimed",
+  "changedCodeFilesSha256": "f4a8a402c7334842feabc274ba235430043c73bfe7d900cfb68233bc4a28fe36",
+  "changedCodeFiles": {
+    "Cargo.lock": "1f041b1cc55680755aca77434cafe837f165a77830cef1344d7c8e239e5fd7fb",
+    "Cargo.toml": "64f3af3f790d298480e571eb99e75ef71a9f9754afa36cad57135a2a30f0d964",
+    "crates/varta-desktop/Cargo.toml": "29bdf51feecc814af1579b0b8378df0105da7737f0e23fd4c9a58670b36fd814",
+    "crates/varta-desktop/src/accessibility/mod.rs": "1e3a55fe0458e2c61a21944bd073d998224a31beeae60dd65c5ca7e87705626f",
+    "crates/varta-desktop/src/accessibility/tree.rs": "7509e4b05cb53745d4243ba4b8d1760e05363f5e99f62ace233e0574afb881d9",
+    "crates/varta-desktop/src/main.rs": "b63147b7e9bd39d5c98fb63add289db105be7ca232ed31645bd99aee409aff43",
+    "crates/varta-project/tests/boundaries.rs": "b958e313334e550e53d36e62727cf875f381bbb34277d827abd1476867f32273",
+    "crates/varta-runtime/src/application.rs": "3d19d132608a1cefe169a0343e4ab42e7330c8d90900a1d24d57036e6085dbab",
+    "crates/varta-runtime/src/view.rs": "77168094e665e9803224d35f788c13c36b380072e653fc1d4b1b04dd147ea756",
+    "crates/varta-runtime/src/view_tests.rs": "a9a47f6085fdb6a49f8fddfc2ada5ecc0a7d79c4c64e1397183b0da2d22750fa",
+    "crates/varta-view/src/accessibility.rs": "66f9f16fa38de45de5c982c948aa543a3b1ee29cdc75f5b318c87c3c12dd07b6",
+    "crates/varta-view/src/lib.rs": "33a330903254b30809f8aaa144b8bd2478a7dab49b21df28ca4dcf57b24bb827",
+    "crates/varta-view/src/name.rs": "dca19b93a134f17a07972933d8dae40990dedbfd90a326ed5a76ef96815eedbe",
+    "crates/varta-view/src/naming_work.rs": "c310747f67963c5b577822f6abd4833ccbc986fc102ad6648f6d544218f0db16",
+    "crates/varta-view/src/paint.rs": "4446fe5ea48d189025cbd0cdbddfe15c0bc526e50edd006e233d5b69e9972c0d",
+    "crates/varta-view/src/snapshot.rs": "5d3bbb376b6a434adb256f6659e280d178c8945c1155a5b63dc8709d78b6de84",
+    "crates/varta-view/tests/accessibility.rs": "797d2eaa647c87e92ac0c4ad3ee6a6df0562ca6f457e30c2d153a7c7f15e4152",
+    "examples/native-showcase/main.tsx": "5700bbb1cb4af63420198c151e2576e67e3b85c8fc4d7fb69cc0667e246b2a4b"
+  },
+  "checks": {
+    "viewSuite": {
+      "passed": 237,
+      "log": "target/a11y2-view-suite.log"
+    },
+    "runtimeAssistiveCases": {
+      "passed": 2,
+      "log": "target/a11y2-runtime-tests.log"
+    },
+    "finalDesktopCases": {
+      "passed": 25,
+      "log": "target/a11y2-desktop-queue-tests.log"
+    },
+    "affectedGpuAllTargetClippy": {
+      "result": "passed",
+      "log": "target/a11y2-clippy.log",
+      "note": "Later changes are desktop-only; final desktop scope is checked separately."
+    },
+    "finalDesktopGpuAllTargetClippy": {
+      "result": "passed",
+      "log": "target/a11y2-desktop-queue-clippy.log"
+    },
+    "showcase": {
+      "trustedInputs": 12,
+      "result": "passed",
+      "log": "target/a11y2-showcase-verify.log",
+      "note": "The existing CLI compiles the changed TSX with the unchanged v38 guest wire contract; native observer behavior is covered by the current runtime/desktop checks."
+    }
+  },
+  "nativeObservations": [
+    {
+      "host": "CPU Debug",
+      "bundle": "dist/Varta Showcase DESC-CURRENT Debug.app",
+      "case": "three controls expose separate Help text; name edit",
+      "result": "name field value Підказка; Help Вітаю, Підказка!"
+    },
+    {
+      "host": "Metal Release",
+      "bundle": "dist/Varta Showcase DESC-GPU Release.app",
+      "case": "reactive Help",
+      "result": "name value Описи працюють -> Help Вітаю, Описи працюють!; textarea Нотатка -> Help Довжина нотатки: 7 символів"
+    },
+    {
+      "host": "Metal Release",
+      "bundle": "dist/Varta Showcase DESC-CURRENT Release.app",
+      "case": "final status-node layout build",
+      "result": "initial name, textarea and select Help exposed; adapter Apple M1 Max (Metal) confirmed",
+      "log": "target/a11y2-current-release-window.log"
+    },
+    {
+      "host": "CPU Debug",
+      "bundle": "target/Varta Description Recovery Status.app",
+      "case": "valid -> refused -> recovered",
+      "result": "button Help Короткий опис; overflow removes guest actions and exposes static text Accessibility content exceeds this preview's supported complexity.; ordinary Space restores button Help in the same process",
+      "processEvidence": {
+        "initialPid": 93349,
+        "recoveredPid": 93349,
+        "sameProcess": true,
+        "visibleRefusalText": true,
+        "keyboardSpaceRecovery": true
+      },
+      "log": "target/a11y2-recovery-status-window.log"
+    }
+  ],
+  "testedDebugArtifact": {
+    "path": "dist/Varta Showcase DESC-CURRENT Debug.app",
+    "hostSha256": "390669c98a4c8e4b4345435494de01de85569ece3aa747612d0243b21add1344",
+    "wasmSha256": "9259b631d04350b8b022795414e41d562f9e8969ac35805d217a0898a9443797",
+    "fontSha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+    "bundleBytes": 104341134
+  },
+  "testedReleaseArtifact": {
+    "path": "dist/Varta Showcase DESC-CURRENT Release.app",
+    "hostSha256": "ca6f74907bbaa2b9b3b7d1a1a59429e98e7618f9ecac45e87121d1da91332ae1",
+    "wasmSha256": "9259b631d04350b8b022795414e41d562f9e8969ac35805d217a0898a9443797",
+    "fontSha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+    "bundleBytes": 28993142
+  },
+  "testedRecoveryArtifact": {
+    "path": "target/Varta Description Recovery Status.app",
+    "hostSha256": "390669c98a4c8e4b4345435494de01de85569ece3aa747612d0243b21add1344",
+    "wasmSha256": "eadefc2ed143dd23bd2c005421a4ccf24951db6877bc7516f5b04d5c298cda40",
+    "fontSha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+    "bundleBytes": 104137251
+  },
+  "finalQueueReleaseArtifact": {
+    "path": "dist/Varta Showcase DESC-QUEUE Release.app",
+    "hostSha256": "7ba211d97dd403ea113f48c5ecd4bcf4503a823fa7248262ec6673900f9e9f0d",
+    "wasmSha256": "9259b631d04350b8b022795414e41d562f9e8969ac35805d217a0898a9443797",
+    "fontSha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+    "bundleBytes": 28993136
+  },
+  "limitations": [
+    "Native observations precede the final semantic FIFO refinement. That refinement has current unit tests, all-target GPU Clippy and a Release build; native retry is unverified.",
+    "The UI verification tool timed out during a repeated final Release textarea edit, then during read-only app reacquisition and a fresh post-refinement app query. The attempted edit outcome is unknown. No native retry is reported as passing.",
+    "A one-second Release thread sample shows worker waits and AppKit accessibility/window-raise work. It does not establish the timeout cause or prove physical display latency. Sample: target/a11y2-release-thread-sample.txt.",
+    "The initial root-window-only refusal help was not visible in macOS AX. A reserved static-text status child was added and directly observed before/after keyboard recovery.",
+    "Full text ranges/line data, assistive scrolling/announcements, VoiceOver and non-macOS targets remain open.",
+    "The 3215-test source reconciliation belongs to prior code inputs. Full workspace verification is reserved for the completed code batch before commit."
+  ]
+}
