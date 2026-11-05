@@ -3475,10 +3475,11 @@ limit; the test now runs the rewrite on a metered view of the input that counts
 the code units read, allows at most six per input unit plus one, and throws at
 the first uncounted access (such as a regex `replace`) or read past that bound.
 With the regex restored, the three checks failed in under 50 ms each and the
-whole file in 0.7 s; a deliberately quadratic scan is also stopped. A review gate run also
-failed once at `test-browser-navigation.mjs` with `ENOTEMPTY` while removing the
-Chrome profile; `scripts/browser-probe.mjs` now waits for the killed Chrome and
-retries the removal. With both fixes on `9fb24a9`, three whole gate runs at
+whole file in 0.7 s; a deliberately quadratic scan is also stopped. A review
+gate run also failed once at `test-browser-navigation.mjs` with `ENOTEMPTY`
+while removing the Chrome profile; `scripts/browser-probe.mjs` now waits for the
+killed Chrome and retries the removal. That is a mitigation, not a verified fix:
+the race was never reproduced. With both changes on `9fb24a9`, three whole gate runs at
 starting load averages of about 94, 63 and 15 passed all 34 commands (no skips,
 no known gaps; oracle suite 7 then 11 tests, execution matrix 75/0, integrity
 15/0, dev matrix 9/0, the variables driver with 23 fixtures, 253 computed-style
@@ -3487,4 +3488,7 @@ in all three), and the Firefox variables selection passed 5 of 5 standalone
 runs, two of them beside 30 spinning threads. An earlier run on `cdcd08b` was
 void: a documentation edit changed the source during it, and at a load average
 above 100 one WebKit execution-matrix case hit the browser execution deadline.
+The probe's exit wait now clears its timer and listener and returns at once for
+a Chrome that has already exited, so a prompt exit no longer keeps a driver's
+event loop open for the rest of the grace period.
 No CI run has been observed.

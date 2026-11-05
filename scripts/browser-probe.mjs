@@ -10,16 +10,26 @@ const CDP_CALL_TIMEOUT_MS = 12000;
 const LOAD_POLL_LIMIT = 100;
 const LOAD_POLL_MS = 20;
 // Teardown: SIGTERM grace, then a bounded wait for the SIGKILLed process to be
-// reaped. Chrome's helper processes can still be flushing the profile (for
-// example Default/Cache/Cache_Data) after the main process exits, so profile
-// removal retries ENOTEMPTY/EBUSY/EPERM instead of failing the probe.
+// reaped, then profile removal that retries ENOTEMPTY/EBUSY/EPERM. One gate run
+// failed the removal with ENOTEMPTY; the race was never reproduced and its cause
+// (presumably a Chrome process still writing the profile) is not established, so
+// the wait and the retries are a mitigation, not a verified fix.
 const TERM_GRACE_MS = 3000;
 const KILL_REAP_MS = 3000;
 const PROFILE_RM_RETRIES = 10;
 const PROFILE_RM_RETRY_DELAY_MS = 200;
 
 const running = (child) => child && child.exitCode === null && child.signalCode === null;
-const exitWithin = (child, ms) => Promise.race([new Promise((resolve) => child.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, ms))]);
+// Resolves when the child exits or after `ms`, whichever comes first, and leaves
+// no timer or listener behind. A child that has already exited resolves at once;
+// 'exit' is emitted from a later event-loop turn, so the synchronous check and
+// subscription cannot miss it.
+const exitWithin = (child, ms) => new Promise((resolve) => {
+  if (!running(child)) { resolve(); return; }
+  const done = () => { clearTimeout(timer); child.off("exit", done); resolve(); };
+  const timer = setTimeout(done, ms);
+  child.once("exit", done);
+});
 
 export async function withBrowserPage(url, action) {
   const profile = await mkdtemp(join(tmpdir(), "varta-browser-probe-"));

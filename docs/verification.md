@@ -558,8 +558,8 @@ cases at the stylesheet byte limit are checked by `view-stylesheet.test.mjs`
 code units the rewrite reads against a linear bound instead of timing it, and
 stops a rewrite at its first uncounted access or read past that bound. The DevTools drivers'
 shared `scripts/browser-probe.mjs` waits for Chrome to be reaped and retries the
-profile removal, so a late cache write no longer fails teardown with
-`ENOTEMPTY`.
+profile removal. This mitigates one observed `ENOTEMPTY` teardown failure whose
+race was never reproduced, so it is not a verified fix.
 
 The gate does not cover `test-browser-select-bundle.mjs` (its `examples/select`
 fixture is not in the repository), the native oracles (`test-native-*.mjs`,
