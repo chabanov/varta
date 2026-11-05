@@ -35,6 +35,7 @@ mod snapshot;
 mod snapshot_json;
 mod style;
 mod text;
+mod transition;
 mod tree;
 mod units;
 
@@ -391,7 +392,29 @@ impl View {
         }
         self.tree.hovered = hovered;
         self.tree.active = active;
+        self.restyle();
         true
+    }
+
+    /// Move the animation clock to `ms` milliseconds on the host's time line
+    /// (it never moves back; a scripted session uses its virtual loop time).
+    /// Returns whether a running CSS transition's value may have changed, so
+    /// a new frame should be presented.
+    pub fn set_animation_time(&mut self, ms: f64) -> bool {
+        self.tree.animations.advance(ms)
+    }
+
+    /// Whether a CSS transition is running: the host keeps presenting frames
+    /// at its display rate, advancing the clock, until none is.
+    #[must_use]
+    pub fn animating(&self) -> bool {
+        self.tree.animations.active()
+    }
+
+    /// One style change event at the current animation clock: start, keep,
+    /// reverse or cancel transitions ([`transition`]).
+    fn restyle(&mut self) {
+        transition::Animations::restyle(&mut self.tree, &self.environment);
     }
 
     /// Update host viewport conditions used by the cascade and platform input.
@@ -400,7 +423,11 @@ impl View {
             return Err(LayoutError::Viewport);
         }
         units::Units::new(&environment).ok_or(LayoutError::RootFont)?;
+        let changed = self.environment != environment;
         self.environment = environment;
+        if changed {
+            self.restyle();
+        }
         Ok(())
     }
 
@@ -496,6 +523,7 @@ impl View {
         self.tree = next;
         self.prune_history();
         self.commits += 1;
+        self.restyle();
         for effect in effects {
             match effect {
                 tree::Effect::Copy { request, text } => {

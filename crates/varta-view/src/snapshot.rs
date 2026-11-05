@@ -110,7 +110,9 @@ fn node(tree: &Tree, id: u32, environment: &Environment, children: Vec<Value>) -
             if !element.class.is_empty() {
                 out.insert("class".into(), json!(element.class));
             }
-            let computed = tree.computed(id, environment);
+            // The cascade without running transitions: a snapshot is the
+            // model, not a frame.
+            let computed = tree.computed_static(id, environment);
             if !computed.is_empty() {
                 out.insert(
                     "style".into(),

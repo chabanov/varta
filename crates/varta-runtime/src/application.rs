@@ -514,6 +514,8 @@ impl VartaRuntime {
                         break;
                     }
                     application.advance_loop_time(end);
+                    // Transitions run on the same virtual time.
+                    application.view_advance_animations();
                 }
                 varta_view::ScriptStep::WaitNetwork { ms } => {
                     if !application.wait_network(number, Duration::from_secs_f64(ms / 1000.0)) {
@@ -885,6 +887,7 @@ impl Application {
         &mut self,
         environment: varta_view::Environment,
     ) -> Result<(), varta_view::LayoutError> {
+        crate::view::sync_clock(self.execution.store.data_mut());
         self.execution
             .store
             .data_mut()
@@ -911,11 +914,27 @@ impl Application {
     }
     /// Update host pointer CSS state without a guest event or activation.
     pub fn view_set_pointer_state(&mut self, hovered: Option<u32>, active: Option<u32>) -> bool {
+        crate::view::sync_clock(self.execution.store.data_mut());
         self.execution
             .store
             .data_mut()
             .view
             .set_pointer_state(hovered, active)
+    }
+
+    /// Move the view's animation clock to now (the wall clock since the
+    /// instance started; a scripted session's virtual loop time) before a
+    /// frame. Returns whether a running CSS transition's value may have
+    /// changed, so the frame differs.
+    pub fn view_advance_animations(&mut self) -> bool {
+        crate::view::sync_clock(self.execution.store.data_mut())
+    }
+    /// Whether a CSS transition is running: a host presents frames at its
+    /// display rate, calling [`Self::view_advance_animations`] before each,
+    /// until none is.
+    #[must_use]
+    pub fn view_animating(&self) -> bool {
+        self.execution.store.data().view.animating()
     }
 
     /// Render the current view to a bounded CPU image using explicitly supplied fonts.

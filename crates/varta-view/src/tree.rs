@@ -256,6 +256,8 @@ pub(crate) struct Tree {
     /// The top layer: modal dialogs in the order they were shown, the
     /// topmost last.
     pub modals: Vec<Modal>,
+    /// The animation clock and running CSS transitions.
+    pub animations: crate::transition::Animations,
 }
 
 /// A modal dialog in the top layer and the element focused before it was
@@ -288,6 +290,7 @@ impl Default for Tree {
             active: None,
             pending_requests: BTreeSet::new(),
             modals: Vec::new(),
+            animations: crate::transition::Animations::default(),
         }
     }
 }
@@ -864,6 +867,9 @@ impl Tree {
         if let Some(values) = self.render_reads.get(id, environment) {
             return values.get(&property).cloned();
         }
+        if let Some(value) = self.animations.overlay_property(id, property) {
+            return Some(value);
+        }
         let inline = self
             .element(id)
             .and_then(|element| element.style.get(&property));
@@ -877,6 +883,8 @@ impl Tree {
         })?;
         style::Variables::new(self, id, environment).property(property, raw)
     }
+    /// The computed values layout and paint read: the cascade with the
+    /// current value of each running transition.
     pub(crate) fn computed(
         &self,
         id: u32,
@@ -885,6 +893,17 @@ impl Tree {
         if let Some(values) = self.render_reads.get(id, environment) {
             return values.clone();
         }
+        let mut values = self.computed_static(id, environment);
+        self.animations.overlay(id, &mut values);
+        values
+    }
+    /// The computed values without transitions: what a style change compares
+    /// and snapshots show.
+    pub(crate) fn computed_static(
+        &self,
+        id: u32,
+        environment: &Environment,
+    ) -> BTreeMap<CssProperty, String> {
         let mut declared = BTreeMap::new();
         for (name, value) in self.cascade_refs(id, environment) {
             if let Name::Property(property) = name {
@@ -915,6 +934,27 @@ impl Tree {
             Some(values) => std::borrow::Cow::Borrowed(values),
             None => std::borrow::Cow::Owned(self.computed(id, env)),
         }
+    }
+    /// Whether any stylesheet rule or inline style declares a transition
+    /// duration or delay, without which no transition has a positive
+    /// combined duration and none can start.
+    pub(crate) fn uses_transitions(&self) -> bool {
+        let declares = |property: &CssProperty| {
+            matches!(
+                property,
+                CssProperty::TransitionDuration | CssProperty::TransitionDelay
+            )
+        };
+        self.sheets.values().any(|sheet| {
+            sheet.rules.iter().any(|rule| {
+                rule.declarations
+                    .iter()
+                    .any(|(name, _)| matches!(name, Name::Property(p) if declares(p)))
+            })
+        }) || self.nodes.keys().any(|id| {
+            self.element(*id)
+                .is_some_and(|element| element.style.keys().any(declares))
+        })
     }
     /// Document order with hidden subtrees skipped once, rather than checking
     /// the complete ancestor path for every prospective focus stop.

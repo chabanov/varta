@@ -759,6 +759,11 @@ fn scaled_rect(rect: BoxRect, scale: f32) -> BoxRect {
     }
 }
 
+/// A CSS color value of the view subset (also the transitions' parser).
+pub(crate) fn parse_color(value: &str) -> Option<Color> {
+    color(value)
+}
+
 fn color(value: &str) -> Option<Color> {
     if value == "transparent" {
         return Some(Color::from_rgba8(0, 0, 0, 0));

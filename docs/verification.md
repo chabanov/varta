@@ -705,6 +705,14 @@ for scale in 1 1.25 2; do
 done
 ```
 
+Native CSS transitions are compared with Chrome on the same clock: Chrome keeps
+every transition paused at the probe's time since its style change.
+
+```sh
+cargo run -p varta-view --example native_transition_probe --locked > target/native-transitions.json
+node scripts/test-native-transitions.mjs target/native-transitions.json
+```
+
 The oracle carries its original font bytes and compares fixed control boxes and
 UTF-8 caret offsets for password graphemes, emoji and search text. It suppresses
 Chrome's search-clear affordance to compare the admitted plain-field surface.

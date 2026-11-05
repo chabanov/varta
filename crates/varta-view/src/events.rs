@@ -656,6 +656,14 @@ impl View {
     /// field buffers, edit counters), dispatch its events and run the
     /// default actions that were not prevented.
     pub fn input(&mut self, input: &Input, broker: &mut dyn Broker) -> Result<(), InputError> {
+        let result = self.input_inner(input, broker);
+        // Focus, pointer and checked state may have changed even when the
+        // input then failed: one style change event either way.
+        self.restyle();
+        result
+    }
+
+    fn input_inner(&mut self, input: &Input, broker: &mut dyn Broker) -> Result<(), InputError> {
         match input {
             Input::Click { target } => {
                 let node = self.resolve(target)?;

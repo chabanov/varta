@@ -152,7 +152,8 @@ impl ReadCache {
 }
 
 pub(crate) fn same_sources(a: &Tree, b: &Tree) -> bool {
-    a.focus == b.focus
+    a.animations.same_frame(&b.animations)
+        && a.focus == b.focus
         && a.hovered == b.hovered
         && a.active == b.active
         && a.sheets == b.sheets

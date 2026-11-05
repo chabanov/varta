@@ -13976,6 +13976,46 @@ but no longer modal (moved after `show_modal`) is refused with
 `scripts/test-native-dialog.mjs`); AccessKit publishes a modal `Dialog` with
 those bounds and drops the inert page.
 
+#### Native CSS transitions
+
+The native view runs CSS Transitions 1 as Chrome 156 does for the subset's
+animatable paint properties: `color`, `background-color` and `opacity`
+(`transform` may be named in `transition-property` but has no native value
+to animate). `transition-property` (initially `all`; `none` matches
+nothing), `-duration`, `-timing-function` (`linear`, `ease`, `ease-in`,
+`ease-out`, `ease-in-out` as their cubic Béziers) and `-delay` are
+paint-only: layout admits them and they change no box. A property's
+transition takes the last `transition-property` entry naming it (or `all`),
+and the other lists at that entry's index, each list repeating.
+
+Time is the view's animation clock in milliseconds, which the host sets
+(`View::set_animation_time`, never moving back). Every style change (a
+commit, an input, a pointer state or environment change) is evaluated at
+that clock: for each displayed element and property, the value before the
+change is the running transition's current value, otherwise the static value
+after the previous change. A transition starts when that value differs from
+the new static value and the combined duration (`max(duration, 0) + delay`)
+is positive; a running one is kept while its end value stays, reversed to
+its start value with the reversing shortening factor, restarted from its
+current value toward a third value, and cancelled when no declaration
+matches or the current value already equals the new one. Removing
+`transition-property` leaves its initial `all`, so the transition runs on.
+No transition starts for an element's first style or across `display: none`.
+Colours interpolate in sRGB with premultiplied alpha, `opacity` linearly; an
+undeclared `background-color` is transparent and `opacity` 1, and `color`
+inherits. Layout and paint read the current values; snapshots keep the
+static cascade. Pixels match Chrome with every transition paused at the same
+time since its style change (`native_transition_probe` with
+`scripts/test-native-transitions.mjs`).
+
+`varta-runtime` sets the clock before each view commit, input, pointer and
+environment change: a scripted headless session uses its virtual loop time
+(a `wait` step moves transitions deterministically), an application
+instance the wall clock since it started. `Application::view_animating`
+tells a host that a transition runs and `view_advance_animations` moves the
+clock to now before a frame; `varta-shell` then presents a new frame each
+time the previous one was presented, and the last shows the end value.
+
 #### Native positioned painting and stacking
 
 Native paint, hit testing and scrolling admit `position: static | relative |

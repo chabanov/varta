@@ -971,6 +971,41 @@ export function main(): void {
 }
 
 #[test]
+fn a_style_change_starts_a_transition_on_the_instance_clock() {
+    // A minute-long transition: the frame right after the change is still at
+    // its start, and the host keeps presenting frames while it runs.
+    let bytes = compile(
+        r##"
+export function main(): void {
+  View.stylesheet(1, '.box { width:20px; height:20px; background-color:#f00; transition-duration:60s } @media (prefers-color-scheme: dark) { .box { background-color:#0f0 } }');
+  const root = View.node(); View.createElement(root, 1); View.setClass(root, 'box'); View.mount(root);
+}
+"##,
+    );
+    let mut app = VartaRuntime::new()
+        .start_application(
+            &bytes,
+            crate::ApplicationOptions {
+                view_layout: Some(crate::ViewLayout::new(100.0, 100.0, None, 16.0).unwrap()),
+                ..crate::ApplicationOptions::default()
+            },
+        )
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    assert!(!app.view_animating());
+    app.view_set_environment(varta_view::Environment {
+        width: 100.0,
+        dark: true,
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(app.view_animating());
+    app.view_advance_animations();
+    let pixel = app.view_rasterize(100, 100, None).unwrap().pixels[..4].to_vec();
+    assert!(pixel[0] >= 250 && pixel[1] <= 5, "{pixel:?}");
+}
+
+#[test]
 fn native_password_and_search_frames_deliver_original_guest_values() {
     let source = r#"
 export function main(): void {

@@ -63,6 +63,10 @@ impl Session {
             ..Self::default()
         }
     }
+    /// Whether a CSS transition is running.
+    pub(crate) fn animating(&self) -> bool {
+        self.view.animating()
+    }
     /// A new turn starts: its commit allowance.
     pub(crate) fn begin_turn(&mut self) {
         self.committed = false;
@@ -246,6 +250,8 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
          -> Result<i32, wasmtime::Error> {
             caller.data_mut().tick()?;
             let bytes = batch(&mut caller, ptr, len)?;
+            // A commit is a style change event at the instance's time.
+            sync_clock(caller.data_mut());
             let RuntimeContext {
                 view,
                 broker,
@@ -321,7 +327,24 @@ fn batch(
 /// Perform one trusted platform input between turns (host work, no guest
 /// code): the renderer updates host-owned state and its records become host
 /// tasks. A prompt it needs may use the instance's prompt seam.
+/// Move the view's animation clock to the instance's time line: the virtual
+/// loop time of a scripted (simulated) session, so its `wait` steps move
+/// transitions deterministically, otherwise the wall clock since the
+/// instance started. Returns whether a running transition's value may have
+/// changed.
+pub(crate) fn sync_clock(context: &mut RuntimeContext) -> bool {
+    let now = if context.view.simulated {
+        context.scheduler.loop_time()
+    } else {
+        context.started.elapsed().as_secs_f64() * MILLISECONDS_PER_SECOND
+    };
+    context.view.view.set_animation_time(now)
+}
+
+const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+
 pub(crate) fn input(context: &mut RuntimeContext, input: &Input) -> Result<(), RuntimeError> {
+    sync_clock(context);
     let RuntimeContext {
         view,
         broker,
@@ -351,6 +374,7 @@ pub(crate) fn accessibility_input(
     action: &varta_view::AccessibilityAction,
     frame: Option<&varta_view::FrameMetadata>,
 ) -> Result<bool, RuntimeError> {
+    sync_clock(context);
     let RuntimeContext {
         view,
         broker,

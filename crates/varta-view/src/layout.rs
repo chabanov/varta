@@ -258,8 +258,8 @@ fn factor(value: &str) -> Option<f32> {
     (number.is_finite() && (0.0..=1000.0).contains(&number)).then_some(number)
 }
 
-/// Properties that affect paint or stacking, but not the border-box geometry
-/// this API returns. They are still retained by the regular view snapshot.
+/// Properties that affect paint, stacking or its animation, but not the
+/// border-box geometry this API returns. They are still retained by the regular view snapshot.
 fn paint_only(property: CssProperty) -> bool {
     matches!(
         property,
@@ -275,6 +275,11 @@ fn paint_only(property: CssProperty) -> bool {
             | CssProperty::Cursor
             | CssProperty::TextDecoration
             | CssProperty::ZIndex
+            // Transitions animate paint-only values (`crate::transition`).
+            | CssProperty::TransitionProperty
+            | CssProperty::TransitionDuration
+            | CssProperty::TransitionTimingFunction
+            | CssProperty::TransitionDelay
     )
 }
 

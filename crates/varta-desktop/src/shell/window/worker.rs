@@ -334,12 +334,18 @@ pub(super) fn worker(
                 }
                 let current_gpu = gpu_active.load(Ordering::Acquire);
                 let current_accessibility = accessibility_active.load(Ordering::Acquire);
+                // A running CSS transition paints a new frame whenever the
+                // previous one was presented: frames follow the display, and
+                // the transition's last frame shows its end value.
+                let animated =
+                    in_flight.is_none() && app.view_animating() && app.view_advance_animations();
                 if in_flight.is_none()
                     && width > 0
                     && height > 0
                     && app.view_commits() > 0
                     && (revision != rendered_revision
                         || dimensions != rendered_dimensions
+                        || animated
                         || pointer_changed
                         || rendered_gpu != current_gpu
                         || rendered_accessibility != current_accessibility)
