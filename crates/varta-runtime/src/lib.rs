@@ -136,6 +136,9 @@ mod net_header_tests;
 mod net_loopback;
 #[cfg(test)]
 mod net_tests;
+mod replay;
+pub use replay::NetworkMode;
+pub use varta_common::net::replay::{NetworkLog, NetworkLogError, ReplayError};
 mod number;
 mod number_format;
 #[cfg(test)]
@@ -195,6 +198,8 @@ mod record_compound_tests;
 mod record_tests;
 #[cfg(test)]
 mod reduce_right_tests;
+#[cfg(test)]
+mod replay_tests;
 #[cfg(test)]
 mod resolution_review_tests;
 mod scheduler;
@@ -259,6 +264,10 @@ pub enum RuntimeError {
     Scheduler(#[from] varta_common::scheduler::SchedulerError),
     #[error(transparent)]
     Net(#[from] varta_common::net::NetError),
+    /// V38 recorded network replay or recording: a refused log, a
+    /// divergence, a stall or an exceeded recording limit.
+    #[error(transparent)]
+    Replay(#[from] ReplayError),
     /// A v38 (`data_limits`) guest exhausted a real resource.
     #[error(transparent)]
     Resource(#[from] varta_common::limits::ResourceExhausted),
@@ -922,6 +931,10 @@ pub struct RunReport {
     /// The per-function fuel of a fuel-profiling run
     /// ([`RunOptions::fuel_profile`]), up to a failure.
     pub fuel_profile: Option<varta_common::profile::FuelProfile>,
+    /// The log of an application instance run with
+    /// [`NetworkMode::Record`]: every completion the guest received from a
+    /// transport up to the end of the instance, also of a failed one.
+    pub network_log: Option<NetworkLog>,
 }
 impl RunReport {
     fn new(artifact: String) -> Self {

@@ -29,5 +29,43 @@ pub(super) fn registry() -> Value {
             "failed":C::Failed as i32,"aborted":C::Aborted as i32,"denied":C::Denied as i32},
         "result":{"base":abi::RESULT_BASE,"length":abi::RESULT_LEN,"maxBytes":abi::MAX_RESULT_BYTES,"pageBytes":abi::WASM_PAGE_BYTES},
         "errors":errors,
+        "replay":replay(),
+    })
+}
+
+/// The recorded-log contract (`net::replay`): format, limits, wire names and
+/// the replay failure texts, with `{name}` placeholders for their fields.
+fn replay() -> Value {
+    use n::replay::{self as r, LoggedEvent, LoggedRead, ReplayError as E};
+    // Field placeholders: a numeric field is rendered from a sentinel
+    // nothing else in the text contains, then replaced by its name.
+    const SENTINEL: u32 = u32::MAX;
+    const SENTINEL_COUNT: usize = usize::MAX;
+    let text = |error: E| {
+        error
+            .to_string()
+            .replace(&SENTINEL_COUNT.to_string(), "{count}")
+            .replace(&SENTINEL.to_string(), "{request}")
+    };
+    let field = |name: &str| format!("{{{name}}}");
+    let errors = json!({
+        "ungranted":text(E::Ungranted{request:SENTINEL,method:field("method"),url:field("url")}),
+        "unlogged":text(E::Unlogged{method:field("method"),url:field("url")}),
+        "request":text(E::Request{request:SENTINEL,method:field("method"),url:field("url"),
+            logged_method:field("loggedMethod"),logged_url:field("loggedUrl")}),
+        "read":text(E::Read{request:SENTINEL,actual:LoggedRead::Text,logged:LoggedRead::Bytes})
+            .replacen(LoggedRead::Text.name(),"{actual}",1).replacen(LoggedRead::Bytes.name(),"{logged}",1),
+        "abort":text(E::Abort{request:SENTINEL}),
+        "stalled":text(E::Stalled{event:SENTINEL_COUNT}).replace("{count}","{event}"),
+        "unconsumed":text(E::Unconsumed{remaining:SENTINEL_COUNT}).replace("{count}","{remaining}"),
+        "descriptor":E::Descriptor.to_string(),
+    });
+    json!({
+        "format":r::LOG_FORMAT,"version":r::LOG_VERSION,"maxLogBytes":r::MAX_LOG_BYTES,
+        "maxRequests":r::MAX_LOG_REQUESTS,"maxEvents":r::MAX_LOG_EVENTS,
+        "maxFailureBytes":r::MAX_FAILURE_TEXT_BYTES,"minStatus":r::MIN_STATUS,"maxStatus":r::MAX_STATUS,
+        "unscriptedStep":r::UNSCRIPTED_STEP,"maxIndex":r::MAX_LOG_INDEX,
+        "kinds":LoggedEvent::KINDS,"reads":[LoggedRead::Text.name(),LoggedRead::Bytes.name()],
+        "errors":errors,
     })
 }

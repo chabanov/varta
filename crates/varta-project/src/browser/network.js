@@ -1,5 +1,11 @@
 // A bounded slot/operation broker. Transport completions never run guest code;
 // the event loop must explicitly deliver one event and drain its checkpoint.
+// `transport` is Fetch's browserTransport or a recorded log's replay
+// (replayTransport). A replay claims its logged request when the request
+// starts (`claim`), in start order as natively, and creates the transfer of
+// that claim later (`transport(plan, claim)`); it is told of a request
+// aborted before its transfer was created (`abandon(claim)`), and an ended
+// instance closes its open transfers instead of aborting them.
 function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, transport) {
   const N = registry.network, C = N.completion, encoder = new TextEncoder();
   const requests = new Map(), events = new Map(), deferred = new Map();
@@ -60,11 +66,13 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
       const outcome = plan(value);
       if (!Number.isSafeInteger(nextId + 1)) fail();
       const id = ++nextId;
-      const item = { phase: outcome.kind ? "ready" : "armed", completion: outcome.kind ? outcome : undefined, watcher: undefined, cancelled: false, transfer: undefined };
+      // Only a request that reaches the transport claims a logged request.
+      const claim = outcome.kind ? undefined : transport.claim?.(outcome);
+      const item = { phase: outcome.kind ? "ready" : "armed", completion: outcome.kind ? outcome : undefined, watcher: undefined, cancelled: false, transfer: undefined, claim };
       requests.set(id, item);
       if (!outcome.kind) deferred.set(id, () => {
         if (requests.get(id) !== item || item.cancelled) return;
-        const transfer = transport(outcome); item.transfer = transfer;
+        const transfer = transport(outcome, claim); item.transfer = transfer;
         transfer.head.then((completion) => publish(id, completion), (error) => publish(id, { kind: C.failed, text: String(error.message ?? error) }));
       });
       return id;
@@ -90,7 +98,8 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
     net_body_read_bytes(id) { read(id, true); },
     net_request_abort(id) {
       const item = requests.get(id); if (!item) return;
-      cancel(item); events.delete(id); deferred.delete(id);
+      cancel(item); events.delete(id);
+      if (deferred.delete(id) && !item.transfer && item.claim !== undefined) transport.abandon?.(item.claim);
       if (item.phase === "idle") { requests.delete(id); return; }
       item.phase = "ready"; item.completion = { kind: C.aborted, text: "" };
       if (item.watcher !== undefined) { scheduler.wake(item.watcher); item.watcher = undefined; }
@@ -125,6 +134,6 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
         notify = () => { clearTimeout(timer); notify = undefined; resolve(); };
       });
     },
-    close() { for (const item of requests.values()) cancel(item); requests.clear(); events.clear(); deferred.clear(); notify?.(); },
+    close() { for (const item of requests.values()) { item.cancelled = true; if (item.transfer?.close) item.transfer.close(); else item.transfer?.cancel(); } requests.clear(); events.clear(); deferred.clear(); notify?.(); },
   };
 }

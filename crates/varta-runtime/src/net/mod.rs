@@ -7,18 +7,24 @@
 //! runtime that only the event loop drives. The runtime keeps request ids,
 //! completions and the promise serial each armed operation wakes, never a
 //! guest reference: the guest's waiting frame roots everything it needs.
+//!
+//! An application instance may record its transfers or replay a recorded
+//! log instead of a transport ([`crate::replay`]); requests are planned and
+//! authorized the same way in every mode.
 mod client;
 mod dns;
 pub(crate) use client::fetch_cancellable;
 
+use crate::replay::{NetworkMode, Recorder, Replayer, recorded_step};
 use crate::scheduler::{self, Scheduler};
 use crate::{RuntimeContext, host};
 use client::ReadMode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::HostOperation;
+use varta_common::net::replay::{LoggedEvent, LoggedRead, NetworkLog, ReplayError};
 use varta_common::net::{
     BodyBound, CompletionKind, DescriptorVersion, HeadForm, MAX_PENDING_REQUESTS,
     MAX_REQUEST_BYTES, MAX_REQUEST_HEADER_BYTES, NATIVE_ACCEPT_ENCODING, NetError, RUNTIME_HEADERS,
@@ -59,6 +65,42 @@ struct Request {
     /// The serial whose one reaction the armed operation wakes.
     watcher: Option<u64>,
     transfer: Option<Transfer>,
+    /// The request's place among the logged requests (recording or replay).
+    logged: Option<u32>,
+    /// The mode of the most recently armed body read.
+    read: Option<ReadMode>,
+    /// The open transfer a replay serves in place of `transfer`.
+    replay: Option<Replayed>,
+}
+
+/// A replayed transfer: what its head needs and whether a logged event was
+/// released to its armed operation and not delivered yet.
+struct Replayed {
+    url: String,
+    visible: BTreeSet<String>,
+    released: bool,
+}
+
+/// Where completions come from.
+#[derive(Default)]
+enum Session {
+    #[default]
+    Live,
+    Record(Recorder),
+    Replay(Replayer),
+}
+
+impl ReadMode {
+    fn logged(self) -> LoggedRead {
+        match self {
+            Self::Text => LoggedRead::Text,
+            Self::Bytes => LoggedRead::Bytes,
+        }
+    }
+}
+
+fn replay_fatal(error: ReplayError) -> wasmtime::Error {
+    wasmtime::Error::new(error)
 }
 
 /// A running transfer: its task, the channel that asks for the next chunk
@@ -119,6 +161,11 @@ pub(crate) struct Net {
     next_id: u64,
     /// The text of the most recently taken completion and its request id.
     taken: Option<(u64, String)>,
+    session: Session,
+    /// The scripted-session step being performed (`None` outside a
+    /// scripted session): recorded with each event, and the bound up to
+    /// which a replay releases logged events.
+    step: Option<u32>,
 }
 
 #[cfg(test)]
@@ -165,23 +212,168 @@ impl Net {
     }
     /// A new request: a slot, then either an immediate completion (a denial,
     /// an invalid URL or request) or a transfer task.
+    ///
+    /// A recording logs a planned request before its transfer starts; a
+    /// replay serves it from the log instead, once it claimed the next
+    /// logged request. Both serve version 2 descriptors only.
     fn start(&mut self, outcome: Result<client::Plan, Completion>) -> Result<f64, wasmtime::Error> {
         self.full()?;
         self.next_id += 1;
         let id = self.next_id;
-        let (phase, transfer) = match outcome {
-            Err(completion) => (Phase::Ready(completion), None),
-            Ok(plan) => (Phase::Armed, Some(self.spawn(id, plan)?)),
+        let mut request = Request {
+            phase: Phase::Armed,
+            watcher: None,
+            transfer: None,
+            logged: None,
+            read: None,
+            replay: None,
         };
-        self.requests.insert(
-            id,
-            Request {
-                phase,
-                watcher: None,
-                transfer,
-            },
-        );
+        match outcome {
+            Err(completion) => request.phase = Phase::Ready(completion),
+            Ok(plan) => {
+                let visible = match (&self.session, &plan.head) {
+                    (Session::Live, _) => None,
+                    (_, HeadForm::Canonical(visible)) => Some(visible.clone()),
+                    (_, HeadForm::Arrival) => return Err(replay_fatal(ReplayError::Descriptor)),
+                };
+                let (method, url) = (plan.method.as_str(), plan.url.as_str());
+                match &mut self.session {
+                    Session::Live => request.transfer = Some(self.spawn(id, plan)?),
+                    Session::Record(recorder) => {
+                        request.logged = Some(recorder.request(method, url).map_err(replay_fatal)?);
+                        request.transfer = Some(self.spawn(id, plan)?);
+                    }
+                    Session::Replay(replayer) => {
+                        request.logged = Some(replayer.claim(method, url).map_err(replay_fatal)?);
+                        request.replay = Some(Replayed {
+                            url: url.to_owned(),
+                            visible: visible.unwrap_or_default(),
+                            released: false,
+                        });
+                    }
+                }
+            }
+        }
+        self.requests.insert(id, request);
+        self.release().map_err(replay_fatal)?;
         Ok(id as f64)
+    }
+    /// Set how completions reach this execution's requests (before any).
+    pub(crate) fn configure(&mut self, mode: NetworkMode) {
+        self.session = match mode {
+            NetworkMode::Live => Session::Live,
+            NetworkMode::Record => Session::Record(Recorder::new()),
+            NetworkMode::Replay(log) => Session::Replay(Replayer::new(log)),
+        };
+    }
+    /// A scripted session performs `step` (1-based): later events are
+    /// recorded with it, and a replay releases the events logged up to it.
+    pub(crate) fn set_step(&mut self, step: u32) -> Result<(), ReplayError> {
+        self.step = Some(step);
+        self.release()
+    }
+    /// Whether completions come from a replayed log.
+    pub(crate) fn replaying(&self) -> bool {
+        matches!(self.session, Session::Replay(_))
+    }
+    /// Whether waiting can deliver a completion: a transfer is armed and
+    /// watched, or a replay released a completion that has not arrived.
+    pub(crate) fn busy(&self) -> bool {
+        match &self.session {
+            Session::Replay(replayer) => replayer.waiting(),
+            _ => self.alive(),
+        }
+    }
+    /// A replay's next logged event and the events not released yet.
+    pub(crate) fn replay_position(&self) -> Option<(usize, usize)> {
+        match &self.session {
+            Session::Replay(replayer) => Some((replayer.cursor(), replayer.remaining())),
+            _ => None,
+        }
+    }
+    /// The log a recording produced; the execution keeps no recording after.
+    pub(crate) fn take_log(&mut self) -> Option<NetworkLog> {
+        match std::mem::take(&mut self.session) {
+            Session::Record(recorder) => Some(recorder.finish()),
+            other => {
+                self.session = other;
+                None
+            }
+        }
+    }
+    /// Release logged events in log order: each once its request has the
+    /// matching operation armed (and nothing released to it is pending),
+    /// up to the first event that cannot be released yet. An abort waits
+    /// for the guest's own abort ([`Self::abort`]).
+    fn release(&mut self) -> Result<(), ReplayError> {
+        let Self {
+            session: Session::Replay(replayer),
+            requests,
+            step,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        while let Some(event) = replayer.next(*step).cloned() {
+            let logged = event.request();
+            let Some((&id, request)) = requests
+                .iter_mut()
+                .find(|(_, request)| request.logged == Some(logged))
+            else {
+                break;
+            };
+            let Some(replayed) = request.replay.as_mut() else {
+                break;
+            };
+            if replayed.released || !matches!(request.phase, Phase::Armed) {
+                break;
+            }
+            let completion = match &event {
+                LoggedEvent::Head { .. } => Completion {
+                    kind: CompletionKind::Head,
+                    text: event
+                        .head_text(&replayed.url, &replayed.visible)
+                        .unwrap_or_default(),
+                },
+                LoggedEvent::Chunk { read, text, .. } => {
+                    let Some(actual) = request.read.map(ReadMode::logged) else {
+                        break;
+                    };
+                    if actual != *read {
+                        return Err(ReplayError::Read {
+                            request: logged,
+                            actual,
+                            logged: *read,
+                        });
+                    }
+                    Completion {
+                        kind: CompletionKind::Chunk,
+                        text: text.clone(),
+                    }
+                }
+                LoggedEvent::End { .. } => Completion {
+                    kind: CompletionKind::End,
+                    text: String::new(),
+                },
+                LoggedEvent::Failed { text, .. } => Completion {
+                    kind: CompletionKind::Failed,
+                    text: text.clone(),
+                },
+                LoggedEvent::Abort { .. } => break,
+            };
+            if event.terminal() {
+                request.replay = None;
+            } else {
+                replayed.released = true;
+            }
+            replayer.release(Event {
+                id,
+                completion,
+                arrived: Instant::now(),
+            });
+        }
+        Ok(())
     }
     fn spawn(&mut self, id: u64, plan: client::Plan) -> Result<Transfer, wasmtime::Error> {
         if self.runtime.is_none() {
@@ -239,7 +431,8 @@ impl Net {
     /// A transfer completed its armed operation. Completions of requests that
     /// were aborted or released are discarded. A terminal completion first
     /// closes the transfer's connection, so its socket is gone before the
-    /// guest can observe the end, as after an abort.
+    /// guest can observe the end, as after an abort. A recording logs each
+    /// completion the guest receives here, and only those.
     pub(crate) fn deliver(
         &mut self,
         scheduler: &mut Scheduler,
@@ -255,6 +448,15 @@ impl Net {
         }
         if !matches!(request.phase, Phase::Armed) {
             return Ok(());
+        }
+        if let (Session::Record(recorder), Some(logged)) = (&mut self.session, request.logged) {
+            let step = recorded_step(self.step);
+            logged_event(step, logged, request.read, &event.completion)
+                .and_then(|logged| recorder.event(logged))
+                .map_err(replay_fatal)?;
+        }
+        if let Some(replayed) = request.replay.as_mut() {
+            replayed.released = false;
         }
         request.phase = Phase::Ready(event.completion);
         if let Some(serial) = request.watcher.take() {
@@ -283,22 +485,32 @@ impl Net {
             _ => Err(NetError::State),
         }
     }
-    fn read(&mut self, id: f64, mode: ReadMode) -> Result<(), NetError> {
-        let (_, request) = self.request(id)?;
+    fn read(&mut self, id: f64, mode: ReadMode) -> Result<(), wasmtime::Error> {
+        let (_, request) = self.request(id).map_err(fatal)?;
         if !matches!(request.phase, Phase::Idle) || request.watcher.is_some() {
-            return Err(NetError::State);
+            return Err(fatal(NetError::State));
         }
-        let Some(transfer) = &request.transfer else {
-            return Err(NetError::State);
-        };
-        // The capacity-1 channel is empty: every earlier pull was answered.
-        transfer.pull.try_send(mode).map_err(|_| NetError::State)?;
+        if let Some(replayed) = request.replay.as_mut() {
+            replayed.released = false;
+        } else {
+            let Some(transfer) = &request.transfer else {
+                return Err(fatal(NetError::State));
+            };
+            // The capacity-1 channel is empty: every earlier pull was answered.
+            transfer
+                .pull
+                .try_send(mode)
+                .map_err(|_| fatal(NetError::State))?;
+        }
+        request.read = Some(mode);
         request.phase = Phase::Armed;
-        Ok(())
+        self.release().map_err(replay_fatal)
     }
     /// Cancel the transfer, closing its connection before this returns. An
     /// armed (or completed but untaken) operation completes as aborted and
-    /// wakes its waiter; an idle request is released.
+    /// wakes its waiter; an idle request is released. A recording logs the
+    /// abort of an open transfer; a replay requires the log's next event to
+    /// be that abort.
     fn abort(&mut self, scheduler: &mut Scheduler, id: f64) -> Result<(), wasmtime::Error> {
         let Some(id) = request_id(id) else {
             return Ok(());
@@ -306,21 +518,35 @@ impl Net {
         let Some(request) = self.requests.get_mut(&id) else {
             return Ok(());
         };
+        let step = self.step;
+        if request.replay.take().is_some()
+            && let (Session::Replay(replayer), Some(logged)) = (&mut self.session, request.logged)
+        {
+            replayer.abort(logged, step).map_err(replay_fatal)?;
+        }
         if let Some(transfer) = request.transfer.take() {
+            if let (Session::Record(recorder), Some(logged)) = (&mut self.session, request.logged) {
+                recorder
+                    .event(LoggedEvent::Abort {
+                        step: recorded_step(step),
+                        request: logged,
+                    })
+                    .map_err(replay_fatal)?;
+            }
             transfer.close(self.runtime.as_ref());
         }
         if matches!(request.phase, Phase::Idle) {
             self.requests.remove(&id);
-            return Ok(());
+        } else {
+            request.phase = Phase::Ready(Completion {
+                kind: CompletionKind::Aborted,
+                text: String::new(),
+            });
+            if let Some(serial) = request.watcher.take() {
+                scheduler.wake(serial).map_err(wasmtime::Error::new)?;
+            }
         }
-        request.phase = Phase::Ready(Completion {
-            kind: CompletionKind::Aborted,
-            text: String::new(),
-        });
-        if let Some(serial) = request.watcher.take() {
-            scheduler.wake(serial).map_err(wasmtime::Error::new)?;
-        }
-        Ok(())
+        self.release().map_err(replay_fatal)
     }
     /// Let the transfers make the progress they can without waiting, so
     /// completions arrive while a long-lived instance stays busy with other
@@ -332,10 +558,18 @@ impl Net {
     }
     /// A completion that already arrived, without driving the transfers.
     pub(crate) fn poll(&mut self) -> Option<Event> {
+        if let Session::Replay(replayer) = &mut self.session {
+            return replayer.poll();
+        }
         self.events.as_mut()?.1.try_recv().ok()
     }
     /// Drive the transfers until one reports a completion or `until` passes.
+    /// A replay never waits for the wall clock: what it released arrives
+    /// now, and nothing else can.
     pub(crate) fn wait(&mut self, until: Instant) -> Option<Event> {
+        if let Session::Replay(replayer) = &mut self.session {
+            return replayer.wait();
+        }
         let (Some(runtime), Some((_, events))) = (&self.runtime, &mut self.events) else {
             std::thread::sleep(until.saturating_duration_since(Instant::now()));
             return None;
@@ -355,6 +589,67 @@ impl Net {
 /// A request id the guest passed back: a positive integer.
 fn request_id(value: f64) -> Option<u64> {
     (value >= 1.0 && value <= u64::MAX as f64 && value.fract() == 0.0).then_some(value as u64)
+}
+
+/// The logged form of a completion a transfer delivered to logged request
+/// `request`: a head keeps the fields of its record except the URL (a
+/// replaying host supplies its own), a chunk the mode of the read that
+/// armed it.
+fn logged_event(
+    step: u32,
+    request: u32,
+    read: Option<ReadMode>,
+    completion: &Completion,
+) -> Result<LoggedEvent, ReplayError> {
+    let unrecordable = || ReplayError::Unrecordable { request };
+    Ok(match completion.kind {
+        CompletionKind::Head => {
+            let [status, status_text, _, location, headers] = varta_common::net::HEAD_FIELDS;
+            let record: serde_json::Value =
+                serde_json::from_str(&completion.text).map_err(|_| unrecordable())?;
+            let text = |name: &str| {
+                record
+                    .get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(unrecordable)
+            };
+            LoggedEvent::Head {
+                step,
+                request,
+                status: record
+                    .get(status)
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|status| u16::try_from(status).ok())
+                    .ok_or_else(unrecordable)?,
+                status_text: text(status_text)?,
+                location: text(location)?,
+                headers: record
+                    .get(headers)
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|values| {
+                        values
+                            .iter()
+                            .map(|value| value.as_str().map(str::to_owned))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .ok_or_else(unrecordable)?,
+            }
+        }
+        CompletionKind::Chunk => LoggedEvent::Chunk {
+            step,
+            request,
+            read: read.ok_or_else(unrecordable)?.logged(),
+            text: completion.text.clone(),
+        },
+        CompletionKind::End => LoggedEvent::End { step, request },
+        CompletionKind::Failed => LoggedEvent::Failed {
+            step,
+            request,
+            text: completion.text.clone(),
+        },
+        CompletionKind::Aborted | CompletionKind::Denied => return Err(unrecordable()),
+    })
 }
 
 fn failed(failure: RequestFailure) -> Completion {
@@ -581,11 +876,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         HostOperation::NetBodyRead.name(),
         |mut caller: Caller<'_, RuntimeContext>, id: f64| {
             deadline(caller.data())?;
-            caller
-                .data_mut()
-                .net
-                .read(id, ReadMode::Text)
-                .map_err(fatal)
+            caller.data_mut().net.read(id, ReadMode::Text)
         },
     )?;
     linker.func_wrap(
@@ -593,11 +884,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
         HostOperation::NetBodyReadBytes.name(),
         |mut caller: Caller<'_, RuntimeContext>, id: f64| {
             deadline(caller.data())?;
-            caller
-                .data_mut()
-                .net
-                .read(id, ReadMode::Bytes)
-                .map_err(fatal)
+            caller.data_mut().net.read(id, ReadMode::Bytes)
         },
     )?;
     linker.func_wrap(
@@ -615,6 +902,14 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
 /// The event loop's wait while requests are in flight: deliver the next
 /// completion, or report that `until` passed without one.
 pub(crate) fn wait(context: &mut RuntimeContext, until: Instant) -> Result<bool, wasmtime::Error> {
+    if context.net.replaying() {
+        // A released completion arrives at once; nothing else can.
+        let Some(event) = context.net.wait(until) else {
+            return Ok(false);
+        };
+        context.net.deliver(&mut context.scheduler, event)?;
+        return Ok(true);
+    }
     let event = loop {
         context.check_cancelled()?;
         let slice = context

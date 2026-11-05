@@ -201,6 +201,7 @@ fn runtime_error(error: RuntimeError) -> Error {
         RuntimeError::Uncaught(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Scheduler(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Net(error) => Error::ExecutionFailed(error.to_string()),
+        RuntimeError::Replay(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Resource(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Budget(error) => Error::ExecutionFailed(error.to_string()),
         RuntimeError::Event(error) => Error::ExecutionFailed(error.to_string()),

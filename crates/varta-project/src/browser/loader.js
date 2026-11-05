@@ -78,8 +78,11 @@ function resolvePermissions(ceiling) {
   }
   return snapshot;
 }
-function execute({ signal, budgetCeiling, permissionCeiling, decisions, decisionStore, environmentInputs, onPrompt, onAudit, container, mode="run", onControl=()=>{}, onReady=()=>{}, onTurn=()=>{}, onLog=()=>{}, onFrameTiming } = {}) {
+function execute({ signal, budgetCeiling, permissionCeiling, decisions, decisionStore, environmentInputs, networkReplay, onPrompt, onAudit, container, mode="run", onControl=()=>{}, onReady=()=>{}, onTurn=()=>{}, onLog=()=>{}, onFrameTiming } = {}) {
   return new Promise((resolve, reject) => {
+    // A recorded network log (its JSON text) replaces Fetch; it is
+    // validated before anything loads.
+    const replayLog = networkReplay === undefined ? undefined : snapshotNetworkLog(networkReplay);
     if(onFrameTiming!==undefined&&typeof onFrameTiming!=="function")throw new TypeError("invalid UI timing callback");
     const timing=onFrameTiming===undefined?undefined:uiTiming.createUiTiming({now:()=>performance.now(),request:f=>requestAnimationFrame(f),cancel:id=>cancelAnimationFrame(id),emit:sample=>{try{onFrameTiming(sample);}catch(error){finish(error);}},limit:descriptor.view.limits.events});
     const budgets = resolveBudgets(budgetCeiling);
@@ -342,7 +345,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       };
       worker.onerror = () => finish(new Error("browser worker failed"));
       worker.onmessageerror = () => finish(new Error("invalid browser worker message"));
-      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), original, image, manifest }, [original.buffer, image.buffer, manifest.buffer]);
+      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), networkReplay:replayLog, original, image, manifest }, [original.buffer, image.buffer, manifest.buffer]);
       onControl({deliver(event){
         const E=descriptor.permissions.events;
         if(settled)return Promise.reject(new Error('browser application ended'));

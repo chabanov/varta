@@ -3468,3 +3468,53 @@ at most `MAX_RUNNING_LAUNCHERS` launchers instead of a reaper thread per
 opening, the prototype `varta-web-host` refuses artifacts with a resource
 section, and the sfnt record offsets and the renderer's family/alias limits
 are named. The manual trusted-gesture run is still open.
+
+### Recorded network replay (`w3-network-replay`) — wave 3, scoped 2026-11-05
+
+`varta_common::net::replay` defines the versioned recorded-completion log
+(requests in start order; heads with the recording grant's visible headers,
+chunks with their read mode, ends, failures and aborts in delivery order,
+each with its script step), its bounded reader and the shared `ReplayError`
+texts, which the browser registry exports. The native runtime records real
+transfers (`NetworkMode::Record`, logged at delivery) and replays a log in
+place of the transport (`NetworkMode::Replay`): every request is planned and
+authorized as a real one, an ungranted logged request fails before the
+instance starts, logged events are released in log order once their
+operation is armed and their step is reached, and a released completion
+arrives at the instance's next wait, after its idle maintenance. `varta dev
+--view-script` gains `--network-record` and `--network-replay`. The browser
+loader accepts the log as `networkReplay` and the Worker serves it through a
+replay transport behind the same planning and grant checks.
+
+Verification (scoped): `replay_tests` record SSE, a 404 and a refused
+connection, an abort of an open stream, a Retry-After backoff on virtual time
+and a stream longer than a test per-turn deadline from real loopback runs and
+replay each with identical lines, snapshot and per-turn usage; they also
+cover the pre-start grant refusal, request and abort divergences, a hidden
+`retry-after` stalling the replay, undelivered events and the recording
+limit. A CLI smoke test records and replays a session against a loopback
+server and checks `--help`, refusals and flag rules. Node tests cover the
+browser reader, transport and `createNetwork` paths.
+`scripts/test-browser-replay.mjs` records a session against a Varta HTTP
+service and replays it natively and in local Chrome with the same lines,
+view text and usage. Firefox and WebKit were not run: no Playwright module is
+installed here.
+
+Review fixes: the browser replay now claims a logged request in
+`net_request_start_v2` (start order) and creates its transfer at the pump,
+so a later request aborted before the pump no longer takes an earlier
+request's slot; recording and replay refuse a module importing
+`varta.net.get` or `varta.net.fetch` before setup (`ReplayError::Unserved`),
+since those reads bypass the transport; the browser log reader refuses a
+leading byte order mark, duplicate members, non-integer numbers, indices
+beyond 32 bits and escaped lone surrogates as serde does, and both readers
+count head field text as one byte per code unit; an authorized exit in the
+browser checks the replay was consumed. The exported index bound is derived
+from the event index type (`LogIndex`), and the browser's strict scan
+passes the literals `true`, `false` and `null` whole, so the log schema
+refuses them where a field needs another type, as natively. Tests: Node and native two-request early-abort cases, native and
+CLI refusal of `net.get`/`net.fetch` with no socket opened, a broker-denied
+request that claims nothing, reader parity cases on both sides; the Chrome
+acceptance now records the early abort, ends with an exit, compares the
+`#app` tree and accessible texts and refuses a log with an undelivered
+request on both hosts.

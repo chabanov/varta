@@ -105,6 +105,36 @@ enum Commands {
             requires = "view_geometry"
         )]
         view_font: Vec<String>,
+        /// With --view-script: perform real transfers and write every
+        /// completion the session received from them (heads, body chunks
+        /// with their read mode, ends, failures) and every abort of an open
+        /// transfer, in delivery order and with its script step, to this
+        /// new network log file (never overwritten; also written when the
+        /// session fails after it started). Heads keep only the response
+        /// headers the grant showed. The log is bounded; exceeding it fails
+        /// the session. Only fetch requests are recorded: a module that
+        /// imports varta.net.get or varta.net.fetch is refused before it
+        /// starts, and no log is written.
+        #[arg(
+            long,
+            value_name = "PATH",
+            requires = "view_script",
+            conflicts_with = "network_replay"
+        )]
+        network_record: Option<PathBuf>,
+        /// With --view-script: serve this recorded network log instead of
+        /// the network (no socket is opened). A module that imports
+        /// varta.net.get or varta.net.fetch, which the log cannot serve, is
+        /// refused before it starts. Every logged request must be granted,
+        /// or the session fails before it starts; each request is
+        /// still authorized when it starts and must match the next logged
+        /// request's method and URL. Logged events reach the guest in log
+        /// order, each once its operation is armed and the script reached
+        /// its step, without waiting for the wall clock. A divergence, an
+        /// armed request a wait_network step cannot complete from the log,
+        /// or logged events left undelivered fail the session.
+        #[arg(long, value_name = "PATH", requires = "view_script")]
+        network_replay: Option<PathBuf>,
     },
     /// Build validated Wasm; --single embeds it in a native launcher.
     /// --target browser writes a checked console/view bundle to dist/web
@@ -294,10 +324,25 @@ fn execute(
             view_script: Some(script),
             view_geometry,
             view_font,
+            network_record,
+            network_replay,
             ..
         }) => {
             let project = CheckedProject::load(&config)?;
             let script = varta_project::read_view_script(&script)?;
+            let network = match (&network_record, &network_replay) {
+                (Some(path), _) if path.symlink_metadata().is_ok() => {
+                    return Err(ProjectError::Usage(format!(
+                        "network log {} already exists",
+                        path.display()
+                    )));
+                }
+                (Some(_), _) => varta_project::NetworkMode::Record,
+                (None, Some(path)) => {
+                    varta_project::NetworkMode::Replay(varta_project::read_network_log(path)?)
+                }
+                (None, None) => varta_project::NetworkMode::Live,
+            };
             let mut geometry = if view_geometry {
                 let fonts: Vec<(PathBuf, String)> = view_font
                     .as_chunks::<VIEW_FONT_VALUES>()
@@ -316,10 +361,16 @@ fn execute(
             } = varta_project::run_view_with_geometry(
                 &project.artifact,
                 policy.as_ref(),
-                project.dev_settings(settings(decisions, &execution)),
+                project.dev_settings(varta_project::RunSettings {
+                    network,
+                    ..settings(decisions, &execution)
+                }),
                 &script,
                 geometry.as_mut(),
             )?;
+            if let (Some(path), Some(log)) = (&network_record, report.network_log.take()) {
+                varta_project::write_network_log(path, &log)?;
+            }
             // The output, the snapshot of a run that did not fail, then the
             // budget report and the failure.
             for line in std::mem::take(&mut report.output.lines) {
@@ -576,6 +627,7 @@ fn settings(
         decisions,
         observer: Some(observer(flags.budget_report)),
         file_roots: None,
+        network: varta_project::NetworkMode::Live,
     }
 }
 

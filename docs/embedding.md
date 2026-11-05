@@ -1434,6 +1434,58 @@ and before a timer due by the horizon that became due after the loop time at
 which the completion arrived; otherwise a host task comes first, then a timer
 due by the horizon, then the completion.
 
+#### Recorded network replay (v38)
+
+A host may serve `net_request_start_v2` requests from a recorded log instead
+of a transport. The log format, its limits, the event kind and read names
+and the divergence texts are in the generated registry
+(`registry.network.replay`, from `varta_common::net::replay`); the
+[architecture contract](architecture.md#recorded-network-replay-v38) defines
+the format and what a replay does and does not reproduce. A replaying host
+must:
+
+1. Validate the whole log before the instance starts, with the reader's
+   rules: a strict JSON reader that refuses a leading byte order mark
+   (although RFC 8259 lets a parser ignore one), duplicate members, numbers
+   that are no unsigned integer literals, a `step` or `request` above
+   `maxIndex` and escaped lone surrogates, and response head limits that
+   count field text as one byte per code unit. Refuse a log that names a request the
+   package grants or the host ceiling do not admit (the `ungranted` text)
+   before any guest code runs.
+   A host that implements the direct network reads `net_get*` and
+   `net_fetch*` refuses a replaying module that imports them, since the log
+   cannot serve them; the official browser host implements neither.
+2. Plan every request exactly as without replay: descriptor, pending-request
+   limit, permission decision and audit, body and header checks. Only a
+   request that would reach the transport claims the next logged request,
+   in `net_request_start_v2` and so in start order, which must have the
+   same method and URL (`request`, `unlogged`). A host that creates the
+   transfer later (a deferred pump) keeps that claim: a request aborted
+   before its transfer existed releases the log's abort of its own index,
+   which must be the log's next event.
+3. Release logged events strictly in log order, each once its request's
+   operation is armed: the head after the start, a chunk, end or failure
+   after a body read. A chunk must have been logged with the armed read's
+   mode (`read`). A logged abort is released only by the guest's own abort of
+   that request; any other abort of an open replayed transfer is a
+   divergence (`abort`). Closing an ended instance is no abort.
+4. Build each head record from the logged status, status text and location,
+   the request's own URL and only the logged names the request's grant
+   shows ([canonical head](#canonical-head-v38)); deliver chunk, end and
+   failure texts unchanged.
+5. Deliver a released completion like a transport's: never inside the turn
+   that armed the operation, but as a network task when the instance next
+   waits, after its idle-period maintenance. Completions released by then
+   arrive in log order.
+6. Fail the instance on any divergence, and when it ends (also by an
+   authorized exit) with logged events undelivered (`unconsumed`). A host
+   with scripted sessions also releases an event only once the session
+   reached its `step`, and fails a network wait that ends with a watched
+   request armed (`stalled`).
+
+The official browser host accepts the log's JSON text as the loader option
+`networkReplay` of `run` and `mount` and does not interpret steps.
+
 ### Permissions and host events (v38)
 
 The permission broker and the host event queue of a long-lived instance

@@ -451,7 +451,9 @@ impl BrowserArtifact {
         let descriptor = serde_json::to_string(&descriptor)
             .map_err(|e| ProjectError::Artifact(e.to_string()))?;
         let parent_view = embedded_sources(true);
-        let loader = format!("const descriptor = {descriptor};\nconst registry = {{network:descriptor.network,view:descriptor.view,permissions:descriptor.permissions,environment:descriptor.environment}};\n{parent_view}\n{NETWORK_POLICY}\n{LOADER}").into_bytes();
+        // The loader validates an embedder's recorded network log with the
+        // transport module's reader before any file loads.
+        let loader = format!("const descriptor = {descriptor};\nconst registry = {{network:descriptor.network,view:descriptor.view,permissions:descriptor.permissions,environment:descriptor.environment}};\n{parent_view}\n{NETWORK_POLICY}\n{TRANSPORT}\n{LOADER}").into_bytes();
         let origins = varta_common::browser::request_origins(&self.original.manifest)?;
         // URL domains admit punctuation that CSP host-source tokens do not.
         // Reject it before HTML generation: neither attribute escaping nor a
