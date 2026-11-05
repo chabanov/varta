@@ -1,10 +1,13 @@
 //! Same strict browser oracle, using the product's native glyph rasterizer.
 //!
 //! `native_text_probe [SCALE] [decorations]` runs the inline corpus.
-//! `native_text_probe faces variable|variable-names|collection [SCALE]`
-//! renders the desktop face fixtures (a `wght` variable font at several
-//! weights, the same face whose Mac and Windows axis names differ, or member 1
-//! of a collection) and fails unless every glyph used native coverage.
+//! `native_text_probe faces variable|variable-names|collection [SCALE]
+//! [-AppleLanguages (LANGUAGE)]` renders the desktop face fixtures (a `wght`
+//! variable font at several weights, the same face whose Mac and Windows axis
+//! names differ, or member 1 of a collection) and fails unless every glyph
+//! used native coverage. CoreFoundation reads the trailing pair as this
+//! process's preferred languages, which CoreText's axis names follow, so the
+//! face variants can be checked under a language other than the user's.
 #[cfg(target_os = "macos")]
 #[path = "../../varta-view/examples/native_inline_probe/probe.rs"]
 mod probe;
@@ -31,6 +34,9 @@ mod faces {
 
     pub const MODE: &str = "faces";
     const KINDS: &str = "expected variable, variable-names or collection";
+    /// CoreFoundation's argument-domain option for the preferred languages,
+    /// followed by one property-list array such as `(uk)`.
+    const LANGUAGES_OPTION: &str = "-AppleLanguages";
     const VARIABLE: &[u8] = include_bytes!("../tests/fixtures/fonts/variable.ttf");
     /// CoreGraphics names this face's axis by its Mac record ("Gewicht").
     const VARIABLE_NAMES: &[u8] = include_bytes!("../tests/fixtures/fonts/variable-names.ttf");
@@ -78,7 +84,13 @@ mod faces {
     }
 
     pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let mut args = std::env::args().skip(2);
+        let mut args = std::env::args().skip(2).collect::<Vec<_>>();
+        let languages = match args.iter().position(|arg| arg == LANGUAGES_OPTION) {
+            Some(at) if at + 2 == args.len() => args.drain(at..).nth(1),
+            Some(_) => return Err(format!("{LANGUAGES_OPTION} takes one final value").into()),
+            None => None,
+        };
+        let mut args = args.into_iter();
         let kind = args.next().ok_or(KINDS)?;
         let scale = args
             .next()
@@ -191,6 +203,7 @@ mod faces {
             "family": family,
             "font": browser_font,
             "scale": scale,
+            "languages": languages,
             "text_rasterizer": "host",
             "cases": cases,
         }))?;

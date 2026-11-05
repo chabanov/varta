@@ -312,7 +312,7 @@ fn every_axis_is_set_by_index_and_duplicate_axis_names_are_declined() {
 }
 
 #[test]
-fn variation_keys_follow_the_fvar_tag_not_the_record_order() {
+fn variation_keys_follow_the_fvar_index_and_its_checked_tag() {
     let face = sfnt::Face::parse(VARIABLE_AXES, 0).unwrap();
     let axes = sfnt::axes(&face).unwrap();
     let data = Arc::new(VARIABLE_AXES.to_vec());
@@ -320,12 +320,23 @@ fn variation_keys_follow_the_fvar_tag_not_the_record_order() {
         Graphics::new(&data, &axes).unwrap().keys,
         ["Weight", "Width"]
     );
-    // Axes listed in another order than the platform records keep their own
-    // keys: each is found by its tag, not by its position.
+    // Each key is CoreGraphics's record at the axis's `fvar` index, so axes
+    // in another order than the platform's records have no exact key: the
+    // tag CoreText gives that index is not theirs.
     let reversed = axes.iter().rev().cloned().collect::<Vec<_>>();
     assert_eq!(
-        Graphics::new(&data, &reversed).unwrap().keys,
-        ["Width", "Weight"]
+        Graphics::new(&data, &reversed).err(),
+        Some(Decline::Variation)
+    );
+    // The same holds when the ranges agree: only the tag tells them apart.
+    let mut swapped = axes.clone();
+    swapped.swap(0, 1);
+    for (axis, original) in swapped.iter_mut().zip(&axes) {
+        (axis.min, axis.default, axis.max) = (original.min, original.default, original.max);
+    }
+    assert_eq!(
+        Graphics::new(&data, &swapped).err(),
+        Some(Decline::Variation)
     );
     // A tag CoreText does not list, or a range that is not the platform's,
     // has no exact key.
@@ -344,6 +355,82 @@ fn variation_keys_follow_the_fvar_tag_not_the_record_order() {
     assert_eq!(
         Graphics::new(&data, &axes[..1]).err(),
         Some(Decline::Variation)
+    );
+}
+
+/// CoreFoundation reads this argument-domain option, followed by one
+/// property-list array, as the process's preferred languages. CoreText
+/// localises its axis names to them; CoreGraphics does not.
+const LANGUAGES_OPTION: &str = "-AppleLanguages";
+/// English, and two languages in which CoreText names the fixture's axes
+/// differently from the font (and from CoreGraphics).
+const ENGLISH: &str = "(en)";
+const PINNED_LANGUAGES: [&str; 3] = [ENGLISH, "(uk)", "(de)"];
+/// The test run in a child process under each pinned language.
+const PINNED_TEST: &str = "text_raster::tests::variation_instances_under_the_pinned_languages";
+/// Value of CoreText's `kCTFontVariationAxisNameKey`, read only to show that
+/// the pin is in effect.
+const CT_AXIS_NAME_KEY: &str = "NSCTVariationAxisName";
+
+#[test]
+fn variation_instances_do_not_depend_on_the_process_language() {
+    let test = std::env::current_exe().unwrap();
+    for languages in PINNED_LANGUAGES {
+        // libtest reads no options after `--`, and with `--exact` the
+        // trailing pair names no test.
+        let output = std::process::Command::new(&test)
+            .args([PINNED_TEST, "--exact", "--ignored", "--"])
+            .args([LANGUAGES_OPTION, languages])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{languages}: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+#[ignore = "run under each pinned language by variation_instances_do_not_depend_on_the_process_language"]
+fn variation_instances_under_the_pinned_languages() {
+    let languages = std::env::args()
+        .skip_while(|arg| arg != LANGUAGES_OPTION)
+        .nth(1)
+        .expect("pinned languages");
+    let face = sfnt::Face::parse(VARIABLE_AXES, 0).unwrap();
+    let axes = sfnt::axes(&face).unwrap();
+    let graphics = Graphics::new(&Arc::new(VARIABLE_AXES.to_vec()), &axes).unwrap();
+    assert_eq!(graphics.keys, ["Weight", "Width"]);
+    // The pin is in effect: outside English, CoreText's names are not keys.
+    let localised = font::new_from_CGFont(&graphics.font, INSTANCE_POINT_SIZE)
+        .get_variation_axes()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            field::<CFString>(&record, CT_AXIS_NAME_KEY)
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        localised == graphics.keys,
+        languages == ENGLISH,
+        "{languages}: {localised:?}"
+    );
+    let mut raster = CoreTextRasterizer::default();
+    let statistics = raster.statistics();
+    let mut width = |data: &[u8], id: u64, coords: &[i16]| {
+        ink(&draw(&mut raster, &request(id, data, 0, GLYPH_B, coords))).0
+    };
+    assert!((68..=70).contains(&width(VARIABLE, 20, &[16384])));
+    assert!((68..=70).contains(&width(VARIABLE_AXES, 21, &[16384, 0])));
+    assert!((80..=82).contains(&width(VARIABLE_AXES, 21, &[16384, 16384])));
+    let counts = statistics.counts();
+    assert_eq!(
+        (counts.variation_instances, counts.declined_variation),
+        (3, 0)
     );
 }
 

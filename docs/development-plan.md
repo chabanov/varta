@@ -482,12 +482,14 @@ Branch `wave3/w3-native-macos-adapters` (on `49186cf`).
   probing process is not trusted for the accessibility API here).
 - **CoreText face variants.** Collection members and variation instances are
   instantiated from the artifact bytes; color/bitmap tables, `opsz` and `avar`
-  v2 keep declining with explicit counters. Variation keys are found by `fvar`
-  tag through CoreText's axis records and CoreGraphics's record of that name,
-  and every instance is read back; duplicate axis names or a mismatch decline (`declined_variation`). The
+  v2 keep declining with explicit counters. Each variation key is
+  CoreGraphics's (unlocalised) axis name at the `fvar` index, whose tag
+  (from CoreText) and ranges are checked, and every instance is read back;
+  duplicate axis names or a mismatch decline (`declined_variation`). The
   native text probe's faces mode reports zero outline glyphs for the variable,
   differing-axis-name and collection fixtures and the Chrome oracle stays under
-  2/255 at 1×/1.25×/2× (maximum mean 0.446).
+  2/255 at 1×/1.25×/2× (maximum mean 0.446), with the process language pinned
+  to English, Ukrainian and German.
 
 Scoped results: `python3 scripts/verify.py local varta-desktop` (99 library,
 7 binary, 18 shell tests) and `local varta-view` (149 library, 349
@@ -500,7 +502,15 @@ Windows axis names differ draws its requested instance; `local varta-desktop`
 integration) pass again. Second fix round: the clip-aware hit test moved into a
 vendored `accesskit_consumer` so the AT-SPI and UIA adapters get it too
 ([patch record](../vendor/accesskit_consumer/VARTA-PATCH.md)), and variation
-keys are matched by `fvar` tag.
+keys are matched by `fvar` tag. Third fix round: that match compared
+CoreText's axis names, which are localised, so under Ukrainian or German every
+variable instance declined; keys are now CoreGraphics's names at the `fvar`
+index with CoreText's tag checked there, and a desktop test reruns the
+instances under pinned English, Ukrainian and German. The Linux and Windows
+targets were not compiled here (their dependency sources are not in the
+offline cache and no Windows target is installed); the cross-platform reach of
+the consumer patch rests on the shared lock entry until CI or a Pi 5 builds
+it.
 
 ### Wave 2 integration — 2026-11-05
 

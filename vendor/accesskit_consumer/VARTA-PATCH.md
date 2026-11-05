@@ -58,5 +58,14 @@ temporarily restoring the release `src/node.rs`: both regressions then fail with
 the hidden node). These are consumer-level checks run on macOS; no AT-SPI or
 UIA client was driven.
 
+Verification status: the reach of this patch to AT-SPI and UIA follows from
+the single `accesskit_consumer` lock entry that `accesskit_atspi_common`,
+`accesskit_windows` and `accesskit_macos` share, not from a build. Varta's
+desktop crate was not compiled for a Linux or Windows target with this patch
+(the Linux dependency sources are not in the offline cache and no Windows
+target is installed); only this crate alone was checked for
+`aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. Linux and Windows
+success needs a CI or Pi 5 build before it is claimed.
+
 Reassess/remove the patch when an upstream release honours `clips_children` in
 its hit test and passes those regressions. Do not edit the registry cache.

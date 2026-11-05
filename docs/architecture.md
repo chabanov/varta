@@ -12735,14 +12735,16 @@ and a variation instance is a CoreGraphics copy of the face with every `fvar`
 axis set to the user value whose default normalization followed by the `avar`
 (version 1) map yields the shaper's normalized coordinate. No font is looked up
 by name. CoreGraphics keys variation values by axis names of its own choosing
-(its Mac name record wins over the Windows one) and silently ignores an unknown
-key, so the adapter takes each `fvar` axis's key by its tag: CoreText's axis
-records carry the tag and name, and that name must name exactly one
-CoreGraphics axis record, whose minimum/default/maximum (and CoreText's) must
-match `fvar`, with equal record counts. An absent tag or name, two axes with one
-name, mismatched records, or an instance whose read-back values differ from the
-requested ones are declined (`declined_variation`), never drawn at the default
-instance. Faces with bitmap or color glyph tables (`COLR`,
+(its Mac name record wins over the Windows one; the names are never localised)
+and silently ignores an unknown key, so the adapter keys each `fvar` axis by the
+name of CoreGraphics's axis record at the same index. CoreText's axis record at
+that index must carry the axis's `fvar` tag, both records'
+minimum/default/maximum must match `fvar`, and the record counts must be equal.
+CoreText's axis names follow the process's preferred languages and are never
+compared, so instances do not depend on the user's language. A mismatched tag,
+range or count, two axes with one name, or an instance whose read-back values
+differ from the requested ones are declined (`declined_variation`), never drawn
+at the default instance. Faces with bitmap or color glyph tables (`COLR`,
 `CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText would size it from the
 point size while the shaper keeps its default) or `avar` version 2 are
 declined, and their glyphs keep portable outlines. A face is charged its
@@ -13187,8 +13189,10 @@ the page, and options of a closed select stay unbounded. Every AccessKit
 platform adapter (macOS, AT-SPI on Linux, UIA on Windows) hit-tests through
 `accesskit_consumer`'s `node_at_point`, which upstream ignores clipping; the
 vendored consumer searches a clipping node's descendants only inside its bounds
-([patch record](../vendor/accesskit_consumer/VARTA-PATCH.md)), so on every
-platform a point returns only a node presented there. AccessKit's unchanged
+([patch record](../vendor/accesskit_consumer/VARTA-PATCH.md)), so a point
+returns only a node presented there. Only the macOS build and the consumer's
+own search are verified; the AT-SPI and UIA builds were not compiled for this
+change. AccessKit's unchanged
 filter omits a clipping scroll area's children beyond the nearest one past each
 edge from the platform tree until scrolling brings them next to the area;
 scrolling the nearest included one into view brings the next one in.

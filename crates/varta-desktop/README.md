@@ -158,8 +158,9 @@ containers publish `clips_children` when every presented descendant lies inside
 them. Every AccessKit platform adapter (macOS, AT-SPI, UIA) hit-tests through
 `accesskit_consumer`'s `node_at_point`; the vendored consumer
 ([patch record](../../vendor/accesskit_consumer/VARTA-PATCH.md)) searches a
-clipping node's descendants only inside its bounds, so on every platform a
-point returns only a node presented there. Other
+clipping node's descendants only inside its bounds, so a point returns only a
+node presented there. This is verified on macOS only: the Linux and Windows
+targets were not compiled here, and no AT-SPI or UIA client was driven. Other
 hidden nodes (under a scroll border, a row scrolled out of the open list over
 the page) and options of a closed select stay unbounded. AccessKit's filter
 then omits a clipping scroll area's children beyond the nearest one past each
@@ -423,11 +424,14 @@ face the shaper selected, from the supplied bytes only: a collection member
 CoreGraphics copy of the face with every `fvar` axis set to the user value whose
 normalization (default normalization, then the inverse of the `avar` v1 map)
 gives the shaper's normalized coordinate. CoreGraphics keys those values by its
-own axis names (the Mac name record wins) and ignores unknown keys, so each key
-is found by the axis's `fvar` tag (CoreText's axis records carry tag and name,
-and the name must name exactly one CoreGraphics record of the same range), and
-every instance is read back; duplicate axis names or a different
-read-back decline to outlines (`declined_variation`). Faces with bitmap or color
+own axis names (the Mac name record wins, never localised) and ignores unknown
+keys, so each key is the name of CoreGraphics's record at the axis's `fvar`
+index; CoreText's record at that index must carry the axis's tag, both records'
+ranges must equal `fvar`'s, and every instance is read back. CoreText's axis
+names follow the process's preferred language and are never compared, so the
+same instances are drawn under any user language. Duplicate axis names, a
+mismatched tag or range, or a different read-back decline to outlines
+(`declined_variation`). Faces with bitmap or color
 glyph tables (`COLR`, `CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText
 sizes it from the point size) or `avar` v2 keep declining, so their glyphs keep
 the portable outline path. `CoreTextRasterizer::statistics` counts declined
@@ -446,6 +450,7 @@ cargo build -p varta-desktop --example native_text_probe
 target/debug/examples/native_text_probe faces variable 1.25 > variable.json   # weights 400–700
 target/debug/examples/native_text_probe faces variable-names 1.25 > names.json  # same, Mac/Windows axis names differ
 target/debug/examples/native_text_probe faces collection 1.25 > member.json   # member 1
+target/debug/examples/native_text_probe faces variable 1.25 -AppleLanguages '(uk)' > uk.json  # pinned language
 node scripts/test-native-inline.mjs variable.json
 ```
 

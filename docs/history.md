@@ -69,6 +69,22 @@ macOS adapter's private copy is removed. Variation keys are now found by
 `fvar` tag through CoreText's axis records instead of CoreGraphics record
 order.
 
+Third fix round. That match compared CoreText's axis names with CoreGraphics's,
+but CoreText localises them to the process's preferred languages (`Вага` for
+`wght` under Ukrainian) and CoreGraphics does not, so for any user
+whose first language is not English every variable instance declined to
+outlines and three unit tests failed. Each key is now CoreGraphics's own name
+at the axis's `fvar` index; CoreText's record there must carry the axis's tag,
+both ranges must match `fvar`, names must be distinct, and every instance is
+still read back. CoreText's names are never compared. A desktop test reruns
+the instances in child processes pinned to `-AppleLanguages` `(en)`, `(uk)` and
+`(de)` (it fails under `(uk)` with the previous match), and the native text
+probe's faces mode takes the same pin: all three fixtures report zero outline
+glyphs under each language, with rasters identical to English, and the Chrome
+oracle stays under 2/255. Linux and Windows targets were not compiled (their
+dependency sources are not in the offline cache; no Windows target is
+installed).
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only

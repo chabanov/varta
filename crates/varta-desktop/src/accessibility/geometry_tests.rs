@@ -630,6 +630,18 @@ fn offscreen_view() -> View {
     commit(&mut view, &b);
     view
 }
+/// The presented surface size of `present`, in device pixels.
+const PRESENTED_WIDTH: u32 = 400;
+const PRESENTED_HEIGHT: u32 = 600;
+/// The frame version `present` publishes for `revision`.
+fn presented_version(revision: u64) -> Version {
+    Version {
+        revision,
+        dimensions: u64::from(PRESENTED_WIDTH) << 32 | u64::from(PRESENTED_HEIGHT),
+        dark: false,
+        scale: f64::from(SCALE).to_bits(),
+    }
+}
 fn present(view: &View, revision: u64, bridge: &Bridge) -> (FrameMetadata, accesskit::TreeUpdate) {
     let mut font = TextMeasurer::new(
         include_bytes!("../../../varta-view/tests/fixtures/password.ttf").to_vec(),
@@ -637,15 +649,15 @@ fn present(view: &View, revision: u64, bridge: &Bridge) -> (FrameMetadata, acces
     )
     .unwrap();
     let metadata = view
-        .rasterize_scaled(400, 600, SCALE, Some((&mut font, 20.0)))
+        .rasterize_scaled(
+            PRESENTED_WIDTH,
+            PRESENTED_HEIGHT,
+            SCALE,
+            Some((&mut font, 20.0)),
+        )
         .unwrap()
         .into_metadata();
-    let version = Version {
-        revision,
-        dimensions: 400u64 << 32 | 600,
-        dark: false,
-        scale: f64::from(SCALE).to_bits(),
-    };
+    let version = presented_version(revision);
     let update = bridge
         .publish(
             revision,
@@ -945,13 +957,7 @@ fn scrolling_an_included_neighbour_into_view_brings_an_omitted_item_into_the_tre
         .unwrap()
         .0;
     bridge.enqueue(request(two, Action::ScrollIntoView, None));
-    let version = Version {
-        revision,
-        dimensions: 400u64 << 32 | 600,
-        dark: false,
-        scale: f64::from(SCALE).to_bits(),
-    };
-    let input = bridge.take_current(version).unwrap();
+    let input = bridge.take_current(presented_version(revision)).unwrap();
     assert!(
         view.accessibility_input_from_frame(&input.identity, &input.action, &metadata, &mut Deny)
             .unwrap()

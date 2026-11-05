@@ -4,9 +4,10 @@
 //! variation instance is a CoreGraphics copy of that face at the user values
 //! whose normalization equals the shaper's normalized coordinates. CoreGraphics
 //! keys those values by axis names of its own choosing and silently ignores a
-//! key it does not know, so each key is the name CoreText's axis records give
-//! the `fvar` tag, matched to exactly one CoreGraphics record of the same
-//! range, and every instance is read back before use.
+//! key it does not know, so each key is the name of CoreGraphics's own record
+//! at the axis's `fvar` index, whose tag and range are checked, and every
+//! instance is read back before use. CoreText's axis names follow the
+//! process's preferred language and are never compared.
 mod sfnt;
 #[cfg(test)]
 mod tests;
@@ -56,10 +57,9 @@ const CG_AXIS_RANGE_KEYS: [&str; 3] = [
     "kCGFontVariationAxisDefaultValue",
     "kCGFontVariationAxisMaxValue",
 ];
-/// Values of CoreText's `kCTFontVariationAxisNameKey`,
-/// `kCTFontVariationAxisIdentifierKey` (the `fvar` tag as a number) and its
-/// min/default/max keys, which the safe wrappers do not export.
-const CT_AXIS_NAME_KEY: &str = "NSCTVariationAxisName";
+/// Values of CoreText's `kCTFontVariationAxisIdentifierKey` (the `fvar` tag
+/// as a number) and its min/default/max keys, which the safe wrappers do not
+/// export. Its name key is not read: the name is localised.
 const CT_AXIS_TAG_KEY: &str = "NSCTVariationAxisIdentifier";
 const CT_AXIS_RANGE_KEYS: [&str; 3] = [
     "NSCTVariationAxisMinimumValue",
@@ -85,10 +85,10 @@ pub struct CoreTextCounts {
     pub declined_optical_size: usize,
     /// Malformed or unsupported faces, members or variation data.
     pub declined_unsupported: usize,
-    /// Variation instances CoreGraphics cannot apply exactly: an `fvar` tag
-    /// has no single CoreText axis, its name no single CoreGraphics record of
-    /// the same range (two axes sharing a name share a variation key), the
-    /// counts differ, or the instance reads back other values.
+    /// Variation instances CoreGraphics cannot apply exactly: the platform
+    /// records at an `fvar` index carry another tag or range, two
+    /// CoreGraphics records share a name (and so a variation key), the counts
+    /// differ, or the instance reads back other values.
     pub declined_variation: usize,
     /// Faces that do not fit the shared glyph-cache allowance.
     pub declined_resource: usize,
@@ -397,19 +397,26 @@ impl Variable {
 }
 
 impl Graphics {
-    /// The face and CoreGraphics's key for each `fvar` axis. CoreText's axis
-    /// records carry the `fvar` tag, so each axis's name is found by its tag
-    /// there; it must name exactly one CoreGraphics record, and that record's
-    /// range must equal the axis's. Counts must equal `fvar`'s and names must
+    /// The face and CoreGraphics's key for each `fvar` axis, by `fvar` index.
+    /// CoreGraphics lists its axis records in `fvar` order and names them
+    /// from the font's own name records, never localised; its key for an axis
+    /// is the name of its record at that index. CoreText's records for the
+    /// same face carry the `fvar` tag, but their names follow the process's
+    /// preferred language, so only their tags and ranges are read: at each
+    /// index CoreText's tag must be the axis's, and both platforms' ranges
+    /// must equal it. Counts must equal `fvar`'s and CoreGraphics's names must
     /// be distinct, or the face has no exact instances.
     fn new(data: &Arc<Vec<u8>>, axes: &[sfnt::Axis]) -> Result<Self, Decline> {
         let provider = CGDataProvider::from_buffer(data.clone());
         let font = CGFont::from_data_provider(provider).map_err(|_| Decline::Unsupported)?;
-        let records = font
+        let named = font
             .copy_variation_axes()
             .ok_or(Decline::Variation)?
             .iter()
-            .map(|record| axis_record(&record, AXIS_NAME_KEY, None, CG_AXIS_RANGE_KEYS))
+            .map(|record| {
+                let name = field::<CFString>(&record, AXIS_NAME_KEY)?.to_string();
+                Some((name, axis_range(&record, CG_AXIS_RANGE_KEYS)?))
+            })
             .collect::<Option<Vec<_>>>()
             .ok_or(Decline::Variation)?;
         let tagged = font::new_from_CGFont(&font, INSTANCE_POINT_SIZE)
@@ -417,75 +424,51 @@ impl Graphics {
             .ok_or(Decline::Variation)?
             .iter()
             .map(|record| {
-                axis_record(
-                    &record,
-                    CT_AXIS_NAME_KEY,
-                    Some(CT_AXIS_TAG_KEY),
-                    CT_AXIS_RANGE_KEYS,
-                )
+                let tag = field::<CFNumber>(&record, CT_AXIS_TAG_KEY)?.to_i64()?;
+                Some((tag, axis_range(&record, CT_AXIS_RANGE_KEYS)?))
             })
             .collect::<Option<Vec<_>>>()
             .ok_or(Decline::Variation)?;
-        if records.len() != axes.len() || tagged.len() != axes.len() {
+        if named.len() != axes.len() || tagged.len() != axes.len() {
             return Err(Decline::Variation);
         }
         let mut keys: Vec<String> = Vec::with_capacity(axes.len());
-        for axis in axes {
-            let tag = i64::from(u32::from_be_bytes(axis.tag));
-            let [named] = tagged
-                .iter()
-                .filter(|record| record.tag == Some(tag))
-                .collect::<Vec<_>>()[..]
-            else {
-                return Err(Decline::Variation);
-            };
-            let [record] = records
-                .iter()
-                .filter(|record| record.name == named.name)
-                .collect::<Vec<_>>()[..]
-            else {
-                // Absent, or two axes with one name sharing one variation key.
-                return Err(Decline::Variation);
-            };
+        for ((axis, (name, named_range)), (tag, tagged_range)) in axes.iter().zip(named).zip(tagged)
+        {
             let range = [axis.min, axis.default, axis.max];
-            let exact = |read: &[f64; 3]| read.iter().zip(range).all(|(&a, b)| same(a, b));
-            if !exact(&record.range) || !exact(&named.range) {
+            let exact = |read: [f64; 3]| read.iter().zip(range).all(|(&a, b)| same(a, b));
+            // Two axes with one name would share one variation key.
+            if tag != i64::from(u32::from_be_bytes(axis.tag))
+                || !exact(named_range)
+                || !exact(tagged_range)
+                || keys.contains(&name)
+            {
                 return Err(Decline::Variation);
             }
-            keys.push(record.name.clone());
+            keys.push(name);
         }
         Ok(Self { font, keys })
     }
 }
 
-/// One platform variation-axis record: its name, `fvar` tag (CoreText only)
-/// and min/default/max.
-struct AxisRecord {
-    name: String,
-    tag: Option<i64>,
-    range: [f64; 3],
+/// A platform variation-axis record's field of type `T`; `None` if absent or
+/// of another type.
+fn field<T: core_foundation::ConcreteCFType>(
+    record: &CFDictionary<CFString, CFType>,
+    key: &'static str,
+) -> Option<T> {
+    record
+        .find(CFString::from_static_string(key))?
+        .downcast::<T>()
 }
 
-/// The record's fields under the given keys; `None` if any is absent.
-fn axis_record(
+/// A platform variation-axis record's min/default/max under the given keys.
+fn axis_range(
     record: &CFDictionary<CFString, CFType>,
-    name_key: &'static str,
-    tag_key: Option<&'static str>,
-    range_keys: [&'static str; 3],
-) -> Option<AxisRecord> {
-    let field = |key: &'static str| record.find(CFString::from_static_string(key));
-    let number = |key: &'static str| field(key)?.downcast::<CFNumber>();
-    let name = field(name_key)?.downcast::<CFString>()?.to_string();
-    let tag = match tag_key {
-        Some(key) => Some(number(key)?.to_i64()?),
-        None => None,
-    };
-    let [min, default, max] = range_keys.map(|key| number(key).and_then(|n| n.to_f64()));
-    Some(AxisRecord {
-        name,
-        tag,
-        range: [min?, default?, max?],
-    })
+    keys: [&'static str; 3],
+) -> Option<[f64; 3]> {
+    let [min, default, max] = keys.map(|key| field::<CFNumber>(record, key)?.to_f64());
+    Some([min?, default?, max?])
 }
 
 /// Equal to within one 16.16 `fvar` unit.
