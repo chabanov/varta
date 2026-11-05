@@ -165,6 +165,12 @@ pub(crate) fn nearest_scroll_offset(
 pub enum LayoutError {
     #[error("invalid viewport dimensions")]
     Viewport,
+    /// A headless geometry request at an admitted viewport width with no
+    /// exact single-precision value: layout runs in `f32` while the cascade
+    /// evaluates media queries at the `f64` width, so the rectangles could
+    /// follow different media decisions than the snapshot tree.
+    #[error("viewport width {0} has no exact single-precision value for headless geometry")]
+    InexactViewportWidth(f64),
     #[error("invalid host reference root font size")]
     RootFont,
     #[error("layout exceeds the initial box or depth limit")]

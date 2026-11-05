@@ -26,7 +26,9 @@ pub(crate) fn snapshot(tree: &Tree, environment: &Environment, platform: &Effect
 
 /// Project explicit cascaded `display` values through flex item blockification.
 /// This is deliberately separate from the established cascade snapshot: it is
-/// one layout rule, not a complete browser computed-style implementation.
+/// one layout rule, not a complete browser computed-style implementation. The
+/// opt-in geometry section reports the used display of every laid-out element
+/// instead, without rewriting the tree ([`crate::View::snapshot_with_geometry`]).
 pub fn project_flex_blockification(snapshot: &mut Value) {
     let Some(tree) = snapshot.get_mut("tree") else {
         return;

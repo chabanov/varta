@@ -65,6 +65,12 @@ impl Session {
     pub(crate) fn snapshot(&self) -> serde_json::Value {
         self.view.snapshot()
     }
+    pub(crate) fn snapshot_with_geometry(
+        &self,
+        request: &mut varta_view::GeometryRequest,
+    ) -> Result<serde_json::Value, varta_view::LayoutError> {
+        self.view.snapshot_with_geometry(request)
+    }
     pub(crate) fn accessibility_tree(
         &self,
     ) -> Result<varta_view::AccessibilityTree, varta_view::AccessibilityError> {

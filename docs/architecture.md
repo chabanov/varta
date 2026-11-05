@@ -11778,7 +11778,7 @@ for graph, fallback, alias and reclamation rules. Serialized output, retained
 frames, backend overhead, repeated getter work, process RSS and cross-engine
 late-value subset parity remain open. Other
 properties report their cascaded value. Ordinary snapshots do not include layout
-rectangles. An experimental separate `layout_boxes` API uses pinned Taffy to
+rectangles; the opt-in geometry section below adds them on request. An experimental separate `layout_boxes` API uses pinned Taffy to
 compute a bounded subset of div and semantic block/flex/grid geometry and
 single-text-child paragraphs with pixel and percentage dimensions,
 min/max sizes, automatic and signed pixel/percentage margins, padding, border shorthands and uniform border width/style,
@@ -11814,6 +11814,23 @@ system-font discovery. A text node's rectangle
 is its anonymous layout box, not a glyph-ink bound, on the single-text-child
 path. Inline-only formatting contexts instead expose unions of their font-box
 fragments for descendants; those unions are not themselves hit regions.
+
+**Opt-in snapshot geometry.** `View::snapshot_with_geometry` adds one top-level
+`geometry` key to the snapshot, computed by `layout_geometry_with_text` with a
+`GeometryRequest`'s explicit fonts at the environment's viewport width and
+reference root font size and the request's viewport height. It lists, in
+document order, every displayed element except `br`: its id, used outer display
+and border box. The runtime computes it once from the final view of a scripted
+session (`VartaRuntime::run_view_with_geometry`, `varta dev --view-script
+--view-geometry --view-font PATH FAMILY`) only when the session did not fail;
+a refused layout becomes `RuntimeError::ViewLayout` and no partial section is
+published. Without a request, snapshots, reports and the printed output are
+unchanged. The tree keeps cascaded values: a flex or grid item with a
+text-level display keeps it in `style.display`, while its geometry entry reports
+the used `block`. The session itself, its turns, budgets and scroll handling do
+not change: geometry is an observer of the final state, not a layout-aware
+session. Field semantics, number formatting, failure rules and the Chrome oracle
+are specified in the [embedding contract](embedding.md#headless-geometry-output).
 
 The text-aware native path admits adjacent text and nested `span`, `strong`,
 `em`, `code`, `label`, explicitly styled links and `br` inside supported block containers.

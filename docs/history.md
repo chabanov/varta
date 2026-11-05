@@ -28,6 +28,31 @@ and passing after, `verify.py local varta-runtime --filter net` (55) and
 `--filter server` (32), related runtime groups, strict Clippy of
 `varta-runtime` and formatting. The full gate is the wave lead's.
 
+## 2026-11-04 — Opt-in headless geometry (wave 2, scoped)
+
+Headless view snapshots gained an opt-in `geometry` section: the viewport, the
+base text size and, per displayed element in document order, its id, used
+outer display and border box, computed by the existing explicit-font layout
+from the final view of a scripted session. `varta dev --view-script` takes
+`--view-geometry` with repeatable `--view-font PATH FAMILY`; the runtime adds
+`run_view_with_geometry` and `Application::view_snapshot_with_geometry`, and
+`varta-view` adds `View::snapshot_with_geometry` with `GeometryRequest`.
+Without a request the output is byte-identical: both UARP console view scripts
+still match `chat.expected.json` and `stream.expected.json`. Blockified flex
+and grid items keep their cascaded `display` in the tree and report the used
+`block` in the section. Unsupported layout fails the run without a partial
+section; the console chat view is refused at present (node 43 with the
+structure fixture face), so its geometry stays open.
+
+Scoped evidence on `wave2/w2-headless-geometry`: `scripts/verify.py local
+varta-view`, `local varta-runtime --filter view` and `local varta-project`; the
+full `varta` smoke suite (353 tests); the documentation tests; and
+`node scripts/test-headless-geometry.mjs` with Chrome 156.0.8078.80 on macOS
+arm64. That oracle ran counter, list and form fixtures, 44 boxes and 223 checks,
+all within ±1 px (largest observed difference 0.0275 px). It rebuilds the
+snapshot tree in Chrome rather than replaying the patch stream through the
+official applier. The full gate is the wave lead's.
+
 ## 2026-11-04 — Browser pilot effects and idle collection (wave 1, scoped)
 
 The official browser host admitted `date_now`, `number_random`, `env_snapshot`

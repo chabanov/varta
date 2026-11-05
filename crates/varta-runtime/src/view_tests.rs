@@ -2389,3 +2389,199 @@ export function main():void {{
     assert!(g.clusters[0].bounds.x >= g.clip.x);
     assert!(app.failure().is_none());
 }
+
+/// A counter whose flex row holds text-level children, styled with the
+/// structure fixture font; `__EXTRA__` adds a child to the row and
+/// `__CLICK__` is the click handler's body.
+const GEOMETRY_APP: &str = r#"
+import { NumberSignal, effect } from './signals.ts';
+export function main(): void {
+  View.setEffect(effect);
+  View.stylesheet(1, '.app { font-family: "Varta Structure Fixture"; font-size: 16px; line-height: 20px } .row { display: flex; gap: 4px }');
+  const count = new NumberSignal(1);
+  View.mount(
+    <main class="app">
+      <div class="row" id="row"><span id="label">A</span><strong id="count">{count.get()}</strong>__EXTRA__</div>
+      <div id="inc" onClick={() => { __CLICK__ }}>B</div>
+    </main>,
+  );
+}
+"#;
+const GEOMETRY_CLICK: &str = "count.set(count.get() + 10);";
+const GEOMETRY_INPUTS: &str =
+    r##"{"viewport":{"width":200},"inputs":[{"input":"click","target":"#inc"}]}"##;
+
+fn geometry_request() -> crate::ViewGeometryRequest {
+    crate::ViewGeometryRequest::new(
+        varta_view::TextMeasurer::new(
+            include_bytes!("../../varta-view/tests/fixtures/structure-400.ttf").to_vec(),
+            "Varta Structure Fixture",
+        )
+        .unwrap(),
+    )
+}
+
+fn geometry_session(
+    extra: &str,
+    click: &str,
+    request: Option<&mut crate::ViewGeometryRequest>,
+) -> crate::ViewReport {
+    let source = GEOMETRY_APP
+        .replace("__EXTRA__", extra)
+        .replace("__CLICK__", click);
+    // `compile_tsx` takes the entry by reference; the module table is static.
+    let bytes = compile_tsx(&source, &[("signals.ts", SIGNALS)]);
+    VartaRuntime::new().run_view_with_geometry(
+        &bytes,
+        crate::ApplicationOptions::default(),
+        &script(GEOMETRY_INPUTS),
+        request,
+    )
+}
+
+fn geometry_box<'a>(snapshot: &'a serde_json::Value, ident: &str) -> &'a serde_json::Value {
+    let id = &by_id(&snapshot["tree"], ident).unwrap()["id"];
+    snapshot[varta_view::GEOMETRY_KEY]["boxes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| &entry["id"] == id)
+        .unwrap()
+}
+
+#[test]
+fn view_geometry_is_opt_in_and_only_adds_its_section_after_the_session() {
+    let plain = geometry_session("", GEOMETRY_CLICK, None);
+    assert!(plain.report.failure.is_none(), "{:?}", plain.report.failure);
+    let plain_snapshot = plain.snapshot.unwrap();
+    assert!(plain_snapshot.get(varta_view::GEOMETRY_KEY).is_none());
+    let mut request = geometry_request();
+    let measured = geometry_session("", GEOMETRY_CLICK, Some(&mut request));
+    assert!(
+        measured.report.failure.is_none(),
+        "{:?}",
+        measured.report.failure
+    );
+    assert_eq!(measured.commits, plain.commits);
+    assert_eq!(measured.report.output.lines, plain.report.output.lines);
+    let mut snapshot = measured.snapshot.unwrap();
+    // The final state: the click ran before the layout.
+    assert_eq!(text_of(by_id(&snapshot["tree"], "count").unwrap()), "11");
+    assert_eq!(
+        snapshot[varta_view::GEOMETRY_KEY]["viewport"],
+        serde_json::json!({"width": 200.0, "height": varta_view::DEFAULT_VIEWPORT_HEIGHT})
+    );
+    assert_eq!(geometry_box(&snapshot, "row")["display"], "flex");
+    for ident in ["label", "count"] {
+        // Blockified flex items: the tree keeps the cascade (no display).
+        assert!(
+            by_id(&snapshot["tree"], ident)
+                .unwrap()
+                .get("style")
+                .is_none()
+        );
+        let entry = geometry_box(&snapshot, ident);
+        assert_eq!(entry["display"], "block", "{ident}");
+        assert_eq!(entry["height"], 20.0, "{ident}");
+    }
+    let (label, count) = (
+        geometry_box(&snapshot, "label"),
+        geometry_box(&snapshot, "count"),
+    );
+    let gap = count["x"].as_f64().unwrap()
+        - label["x"].as_f64().unwrap()
+        - label["width"].as_f64().unwrap();
+    assert!((gap - 4.0).abs() < 1e-3, "flex gap {gap}");
+    snapshot
+        .as_object_mut()
+        .unwrap()
+        .remove(varta_view::GEOMETRY_KEY);
+    assert_eq!(snapshot, plain_snapshot);
+}
+
+#[test]
+fn unsupported_view_geometry_fails_the_session_without_a_partial_section() {
+    let mut request = geometry_request();
+    let report = geometry_session("<code>A</code>", GEOMETRY_CLICK, Some(&mut request));
+    assert!(
+        matches!(
+            report.report.failure,
+            Some(crate::RuntimeError::ViewLayout(
+                varta_view::LayoutError::Unsupported(_)
+            ))
+        ),
+        "{:?}",
+        report.report.failure
+    );
+    let snapshot = report.snapshot.unwrap();
+    assert!(snapshot.get(varta_view::GEOMETRY_KEY).is_none());
+    assert_eq!(text_of(by_id(&snapshot["tree"], "count").unwrap()), "11");
+    // Without the request the same session succeeds.
+    let plain = geometry_session("<code>A</code>", GEOMETRY_CLICK, None);
+    assert!(plain.report.failure.is_none(), "{:?}", plain.report.failure);
+}
+
+#[test]
+fn a_failed_session_keeps_its_own_failure_and_is_never_laid_out() {
+    let mut request = geometry_request();
+    // The click throws; the `code` item, which layout would refuse, is
+    // never laid out because the session already failed.
+    let report = geometry_session(
+        "<code>A</code>",
+        "throw new Error('boom');",
+        Some(&mut request),
+    );
+    assert!(
+        matches!(
+            report.report.failure,
+            Some(crate::RuntimeError::Uncaught(_))
+        ),
+        "{:?}",
+        report.report.failure
+    );
+    assert!(
+        report
+            .snapshot
+            .unwrap()
+            .get(varta_view::GEOMETRY_KEY)
+            .is_none()
+    );
+}
+
+#[test]
+fn an_inexact_viewport_width_is_refused_before_a_geometry_session_runs() {
+    // The view admits 300.1, but it has no exact single-precision value.
+    const WIDTH: f64 = 300.1;
+    let inexact = GEOMETRY_INPUTS.replace(r#""width":200"#, &format!(r#""width":{WIDTH}"#));
+    assert_ne!(inexact, GEOMETRY_INPUTS);
+    let source = GEOMETRY_APP
+        .replace("__EXTRA__", "")
+        .replace("__CLICK__", GEOMETRY_CLICK);
+    let bytes = compile_tsx(&source, &[("signals.ts", SIGNALS)]);
+    let run = |request: Option<&mut crate::ViewGeometryRequest>| {
+        VartaRuntime::new().run_view_with_geometry(
+            &bytes,
+            crate::ApplicationOptions::default(),
+            &script(&inexact),
+            request,
+        )
+    };
+    let plain = run(None);
+    assert!(plain.report.failure.is_none(), "{:?}", plain.report.failure);
+    let mut request = geometry_request();
+    let refused = run(Some(&mut request));
+    assert!(
+        matches!(
+            refused.report.failure,
+            Some(crate::RuntimeError::ViewLayout(
+                varta_view::LayoutError::InexactViewportWidth(width)
+            )) if width == WIDTH
+        ),
+        "{:?}",
+        refused.report.failure
+    );
+    // Refused at admission: no guest ran, so no commit and no snapshot.
+    assert!(refused.snapshot.is_none());
+    assert_eq!(refused.commits, 0);
+    assert!(refused.report.output.lines.is_empty());
+}
