@@ -549,16 +549,15 @@ needs a reproducible failure; a selection that fails only on some runs is not
 waived, so a failing run fails the scope. The table is currently empty, and all
 three engine selections of `test-browser-variables.mjs` run.
 
-Open intermittent defect: in Firefox 153 the first `page.evaluate` of
-`test-browser-variables.mjs` can throw `too much recursion` from
-`rewriteRootSelector` in `view-css.mjs` (its outer `text.replace` over
-`"[^"]*"|[^{}"]+(?=\{)`). On one macOS host the same command, oracle and
-sources first passed 19 consecutive runs, then failed 45 of 51 (two of them
-inside whole gate runs), and then passed in a third gate run. The cause of the
-variation is not established: host load does not explain it, since that third
-run started at a load average above 100. Chrome and WebKit did not fail. The
-browser host really throws there, so the gate fails on such a run rather than
-waiving the selection, until `rewriteRootSelector` is fixed.
+Earlier Firefox `too much recursion` failures of that selection came from a
+regex in `rewriteRootSelector` that was quadratic in the longest run without
+braces or quotes; it is now a linear scan
+([history](history.md#browser-oracle-gate-wave-3--2026-11-05)). Its worst
+cases at the stylesheet byte limit are timed by `view-stylesheet.test.mjs`, one
+of the Node suites above that this scope does not run. The DevTools drivers'
+shared `scripts/browser-probe.mjs` waits for Chrome to be reaped and retries the
+profile removal, so a late cache write no longer fails teardown with
+`ENOTEMPTY`.
 
 The gate does not cover `test-browser-select-bundle.mjs` (its `examples/select`
 fixture is not in the repository), the native oracles (`test-native-*.mjs`,

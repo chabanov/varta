@@ -3453,6 +3453,23 @@ run on `b583e01` passed all 34 commands (no skips, no known gaps): the Node
 oracle suite 7 then 11 tests, execution matrix 75/0, integrity 15/0, dev matrix
 9/0, the variables driver in Chrome, Firefox and WebKit and the variable bundle
 in all three, with Playwright 1.62.1, Chrome 156.0.8078.80, Firefox 153.0 and
-WebKit 26.5; it started at a load average above 100, so load does not explain
-the failures. Chrome and WebKit selections and the compiled variable bundle
-passed 3 of 3 standalone runs each. No CI run has been observed.
+WebKit 26.5. Chrome and WebKit selections and the compiled variable bundle
+passed 3 of 3 standalone runs each.
+
+Cause and fix. The recursion came from the outer regex of
+`rewriteRootSelector`, `"[^"]*"|[^{}"]+(?=\{)`, which backtracks quadratically
+over a run without braces or quotes. The oracle's `oversized-custom` case has a
+32,777-code-unit run of that kind; Firefox 153 finished it in about 1.65 s at a
+load average near 5 and threw `too much recursion` after about 7 s under CPU
+contention, so the outcome depended on CPU time (a gate run's starting load
+average says nothing about the load at its Firefox step). Chrome took 2.7 s for
+that run, and an accepted 102,897-byte stylesheet took 24.8 s under Node, so a
+guest could stall the apply path. `rewriteRootSelector` is now a single linear
+scan with the same output: `view-stylesheet.test.mjs` compares it with the
+regex on every sequence of up to six pieces and times the `oversized-custom`
+input and three 262,144-byte worst cases, including an accepted stylesheet,
+against a 2 s bound (a few milliseconds each locally; the regex needed 4.0 s for a
+32,769-code-unit run and 23.3 s for 65,536 under Node). A review gate run also
+failed once at `test-browser-navigation.mjs` with `ENOTEMPTY` while removing the
+Chrome profile; `scripts/browser-probe.mjs` now waits for the killed Chrome and
+retries the removal.
