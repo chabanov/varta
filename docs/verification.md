@@ -553,8 +553,10 @@ Earlier Firefox `too much recursion` failures of that selection came from a
 regex in `rewriteRootSelector` that was quadratic in the longest run without
 braces or quotes; it is now a linear scan
 ([history](history.md#browser-oracle-gate-wave-3--2026-11-05)). Its worst
-cases at the stylesheet byte limit are timed by `view-stylesheet.test.mjs`, one
-of the Node suites above that this scope does not run. The DevTools drivers'
+cases at the stylesheet byte limit are checked by `view-stylesheet.test.mjs`
+(one of the Node suites above that this scope does not run), which counts the
+code units the rewrite reads against a linear bound instead of timing it, and
+stops a rewrite at its first uncounted access or read past that bound. The DevTools drivers'
 shared `scripts/browser-probe.mjs` waits for Chrome to be reaped and retries the
 profile removal, so a late cache write no longer fails teardown with
 `ENOTEMPTY`.

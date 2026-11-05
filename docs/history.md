@@ -3466,10 +3466,16 @@ average says nothing about the load at its Firefox step). Chrome took 2.7 s for
 that run, and an accepted 102,897-byte stylesheet took 24.8 s under Node, so a
 guest could stall the apply path. `rewriteRootSelector` is now a single linear
 scan with the same output: `view-stylesheet.test.mjs` compares it with the
-regex on every sequence of up to six pieces and times the `oversized-custom`
-input and three 262,144-byte worst cases, including an accepted stylesheet,
-against a 2 s bound (a few milliseconds each locally; the regex needed 4.0 s for a
-32,769-code-unit run and 23.3 s for 65,536 under Node). A review gate run also
+regex on every sequence of up to six pieces and checks the `oversized-custom`
+input and three 262,144-byte worst cases, including an accepted stylesheet (the
+regex needed 4.0 s for a 32,769-code-unit run and 23.3 s for 65,536 under Node).
+A first version timed those cases against a 2 s bound, which a review found too
+close to the regex's 2.5 s for `oversized-custom` and slow to fail at the byte
+limit; the test now runs the rewrite on a metered view of the input that counts
+the code units read, allows at most six per input unit plus one, and throws at
+the first uncounted access (such as a regex `replace`) or read past that bound.
+With the regex restored, the three checks failed in under 50 ms each and the
+whole file in 0.7 s; a deliberately quadratic scan is also stopped. A review gate run also
 failed once at `test-browser-navigation.mjs` with `ENOTEMPTY` while removing the
 Chrome profile; `scripts/browser-probe.mjs` now waits for the killed Chrome and
 retries the removal. With both fixes on `9fb24a9`, three whole gate runs at

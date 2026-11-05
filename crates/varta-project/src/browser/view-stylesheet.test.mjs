@@ -22,18 +22,57 @@ test('linear root rewriting matches the regex rewrite on every short piece seque
   for(const text of inputs)assert.equal(rewriteRootSelector(text,ROOT_TARGET),regexRootRewrite(text,ROOT_TARGET),JSON.stringify(text));
  }
 });
-// Generous wall bound for one linear pass over a maximal stylesheet; the replaced
-// regex needed seconds for a 32 KiB run and minutes at the stylesheet byte limit.
-const LINEAR_REWRITE_WALL_MS=2000;
-function timedRewrite(text){
- const start=performance.now(),out=rewriteRootSelector(text,ROOT_TARGET),elapsed=performance.now()-start;
- assert.ok(elapsed<LINEAR_REWRITE_WALL_MS,`rewriteRootSelector took ${elapsed} ms for ${text.length} code units`);
- return out;
+// Linearity is checked by counting reads of the input, not by wall time, so the
+// verdict does not depend on host speed or load. Per input code unit the scan makes
+// at most one loop length check, three delimiter tests and one slice of its run,
+// plus at most one failed quote search over it (only the last quote of a text can
+// be unclosed); the length check that ends the loop is the one fixed read.
+const ROOT_SCAN_READS_PER_UNIT=6,ROOT_SCAN_FIXED_READS=1;
+const INDEX_KEY=/^(0|[1-9][0-9]*)$/,BLOCK_OPEN='{';
+class RootScanMeterError extends Error{}
+// Runs `rewrite` on a metered view of `text`. The view admits only `length`, index
+// reads, `indexOf` and `slice`, charging the code units each one reads. Any other
+// access (for example a regex `replace`, whose work cannot be counted) throws at
+// once, and so does the first read past the linear bound, so a superlinear rewrite
+// fails after linear work instead of running to completion.
+function meteredRewrite(text,rewrite=rewriteRootSelector){
+ const limit=ROOT_SCAN_READS_PER_UNIT*text.length+ROOT_SCAN_FIXED_READS;
+ let reads=0;
+ const charge=units=>{reads+=units;if(reads>limit)throw new RootScanMeterError(`rewrite read over ${limit} code units of a ${text.length}-unit input`);};
+ const span=(from,to)=>Math.max(0,to-from);
+ const view=new Proxy(new String(text),{get(_target,key){
+  if(key==='length'){charge(1);return text.length;}
+  if(typeof key==='string'&&INDEX_KEY.test(key)){charge(1);return text[key];}
+  if(key==='indexOf')return(search,from)=>{const found=text.indexOf(search,from);charge(found<0?span(from,text.length):span(from,found+search.length));return found;};
+  if(key==='slice')return(start,end)=>{const out=text.slice(start,end);charge(out.length);return out;};
+  throw new RootScanMeterError(`rewrite made an uncounted access to ${String(key)}`);
+ }});
+ return rewrite(view,ROOT_TARGET);
 }
+test('root rewriting reads every short piece sequence within the linear bound',()=>{
+ let inputs=[''];
+ for(let length=1;length<=ROOT_PIECE_COUNT;length++){
+  inputs=inputs.flatMap(prefix=>ROOT_PIECES.map(piece=>prefix+piece));
+  for(const text of inputs)assert.equal(meteredRewrite(text),regexRootRewrite(text,ROOT_TARGET),JSON.stringify(text));
+ }
+});
+// One brace- and quote-free run of the whole stylesheet byte limit.
+const ROOT_HEAD=':root ';
+const maximalRun=()=>ROOT_HEAD+'x'.repeat(V.limits.stylesheetBytes-ROOT_HEAD.length);
+test('the read meter stops the replaced regex and a quadratic scan after linear work',()=>{
+ const text=maximalRun();
+ assert.throws(()=>meteredRewrite(text,regexRootRewrite),/uncounted access to replace/);
+ // Rescans the rest of the text from every position, as the regex backtracked.
+ const quadratic=(input,selector)=>{
+  for(let at=0;at<input.length;at++){let end=at;while(end<input.length&&input[end]!==BLOCK_OPEN)end+=1;}
+  return rewriteRootSelector(input,selector);
+ };
+ assert.throws(()=>meteredRewrite(text,quadratic),RootScanMeterError);
+});
 test('root rewriting stays linear on the oversized custom-property oracle input',()=>{
  // Same shape as browser_contract_probe's variableCases "oversized-custom".
  const run='x'.repeat(V.limits.valueBytes/2+1),css=`:root{--large:${run}}.target{color:var(--large,#abc)}`;
- assert.equal(timedRewrite(css),`${ROOT_TARGET}{--large:${run}}.target{color:var(--large,#abc)}`);
+ assert.equal(meteredRewrite(css),`${ROOT_TARGET}{--large:${run}}.target{color:var(--large,#abc)}`);
 });
 test('root rewriting stays linear on an accepted stylesheet of the maximal byte size',()=>{
  const open=':root{',close='}',declarations=[];
@@ -42,14 +81,14 @@ test('root rewriting stays linear on an accepted stylesheet of the maximal byte 
  const body=declarations.join('')+' '.repeat(V.limits.stylesheetBytes-length),css=open+body+close;
  assert.equal(css.length,V.limits.stylesheetBytes);
  assert.deepEqual(checkStylesheet(css,V).errors,[]);
- assert.equal(timedRewrite(css),`${ROOT_TARGET}{${body}}`);
+ assert.equal(meteredRewrite(css),`${ROOT_TARGET}{${body}}`);
  // A brace- and quote-free run of the whole limit, then one after an unclosed quote.
- const head=':root ',fill=count=>'x'.repeat(V.limits.stylesheetBytes-head.length-count);
- const bare=head+fill(0);
- assert.equal(timedRewrite(bare),bare);
- const unclosed=`"${head}${fill(2)}{`;
+ const bare=maximalRun();
+ assert.equal(meteredRewrite(bare),bare);
+ const unclosedQuote='"',fill='x'.repeat(V.limits.stylesheetBytes-unclosedQuote.length-ROOT_HEAD.length-BLOCK_OPEN.length);
+ const unclosed=`${unclosedQuote}${ROOT_HEAD}${fill}${BLOCK_OPEN}`;
  assert.equal(unclosed.length,V.limits.stylesheetBytes);
- assert.equal(timedRewrite(unclosed),`"${ROOT_TARGET} ${fill(2)}{`);
+ assert.equal(meteredRewrite(unclosed),`${unclosedQuote}${ROOT_TARGET} ${fill}${BLOCK_OPEN}`);
 });
 const source=(conditions,rules)=>`@media ${Array(conditions).fill('(min-width:0px)').join(' and ')}{${'.a{}'.repeat(rules)}}`;
 const sheet=(sheet,text)=>({name:'stylesheet',sheet,text});
