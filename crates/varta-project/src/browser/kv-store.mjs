@@ -532,13 +532,21 @@ export function createKvHost({memory,codec,broker,policy,storage,emit,writeResul
   const open=(ptr,len)=>{
     const path=read(ptr,len,'invalid database path');
     if(!granted(K.capabilities.read,path))return fail(denied(K.capabilities.read,path));
-    const writable=policy.covers(K.capabilities.write,path)&&broker.granted(K.capabilities.write);
+    // As native (`policy.database(kv.write)`): writable when the package
+    // and the ceiling cover `kv.write`, whatever the broker decides; the
+    // broker decides each commit.
+    const writable=policy.covers(K.capabilities.write,path);
     if(databases.size===K.maxOpenDatabases)return fail(typeError(K.texts.tooManyDatabases));
     // V38 fair fuel: the open, after the grant and before the storage.
     chargeFuel(K.fuel.operation);
-    const name=path.split(K.paths.separator).at(-1);
-    if(path.split(K.paths.separator).length<=2)return fail(typeError(FAILURES.noFile(path)));
+    // `/<root>/<directories…>/<name>`: the root, then the components.
+    const [,,...components]=path.split(K.paths.separator),name=components.at(-1);
+    if(components.length===0)return fail(typeError(FAILURES.noFile(path)));
     if(name.startsWith(K.reservedNamePrefix)||K.sidecarSuffixes.some(suffix=>name.endsWith(suffix)))return fail(typeError(FAILURES.invalidName(path)));
+    // The container has no directories: a database below one is refused by
+    // name (fail closed), where native opens it only inside a directory the
+    // host created (a recorded deviation).
+    if(components.length>1)return fail(typeError(FAILURES.unavailable(path,K.noDirectories)));
     if(!storage)return fail(typeError(FAILURES.unavailable(path,K.noStorage)));
     if(storage.locked)return fail(typeError(FAILURES.locked(path)));
     if(storage.failure!==undefined)return fail(typeError(FAILURES.unavailable(path,storage.failure)));
@@ -582,6 +590,10 @@ export function createKvHost({memory,codec,broker,policy,storage,emit,writeResul
     if(!granted(K.capabilities.read,open.path))return fail(denied(K.capabilities.read,open.path));
     // V38 fair fuel: the read, after the grant and before the storage.
     chargeFuel(K.fuel.operation);
+    // A container left uncertain by an unfinished write serves nothing,
+    // reads included, until the application reloads.
+    const unusable=storage.container.unusable(open.path);
+    if(unusable)return fail(unusable);
     const outputs=storage.container.read(open.path,ranges);
     const request=new Out().u32(ranges.length);
     for(const range of ranges)request.bytes(range.prefix);

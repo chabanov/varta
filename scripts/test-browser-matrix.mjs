@@ -38,7 +38,7 @@ const names=fixtures?['ok','fifo','handled','unhandled','timer-order','timer-v36
 const files=new Map(),goldens=new Map();
 for(const name of names){goldens.set(name,JSON.parse(await readFile(join(root,name+'.golden.json'),'utf8')));for(const entry of await readdir(join(root,name),{withFileTypes:true})){if(entry.isFile())files.set('/'+name+'/'+entry.name,await readFile(join(root,name,entry.name)));}}
 const runEffects=effectsExecutable?(await import('./test-browser-effects.mjs')).runEffects:undefined;
-const runKv=kvExecutable?(await import('./test-browser-kv.mjs')).runKv:undefined;
+const kvCases=kvExecutable?await import('./test-browser-kv.mjs'):undefined;
 const server=createServer((request,response)=>{const path=request.url.split('?')[0],bytes=files.get(path);if(!bytes){response.writeHead(404).end();return;}response.setHeader('Content-Type',path.endsWith('.js')?'text/javascript':path.endsWith('.html')?'text/html':path.endsWith('.json')?'application/json':path.endsWith('.wasm')?'application/wasm':'application/octet-stream');response.setHeader('Cache-Control','no-store');response.end(bytes);});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const report={playwright:await loadedPlaywrightVersion(resolve(process.argv[3])),fixtureRoot:root,cases:[],errors:[]};
@@ -60,6 +60,9 @@ try{for(const [engine,type,options] of [['firefox',firefox,{}],['webkit',webkit,
     await page.goto(url,{timeout:45000});await page.waitForFunction(()=>document.querySelector('script[data-varta-dev]')!==null,null,{timeout:20000});
     return await action((expression)=>page.evaluate(expression));
   }finally{await context.close();}};
+  // The KV cases need one persistent multi-tab profile of this engine (OPFS
+  // persists across tabs and reloads), not a fresh context per page.
+  const runKv=kvCases&&(async(executable)=>{const driver=await kvCases.playwrightKvDriver(type,options);try{return await kvCases.runKv(executable,driver);}finally{await driver.close();}});
   for(const [group,runner,executable] of [['effects',runEffects,effectsExecutable],['kv',runKv,kvExecutable]]){
    if(!runner)continue;
    try{const passed=await runner(resolve(executable),open);for(const name of passed){report.cases.push({engine,version:browser.version(),name:`${group}/${name}`,status:'pass'});console.log('PASS',engine,`${group}/${name}`);}}

@@ -797,6 +797,15 @@ fn kv_texts_equal_the_native_texts() {
             .replace(kv["operationPlaceholder"].as_str().unwrap(), "sum"),
         "Failed to perform 'sum' mutation on a non-U64 value in the database"
     );
+    // The shared value depth the codec enforces, for the browser tests.
+    assert_eq!(
+        kv["maxValueDepth"],
+        serde_json::json!(varta_kv_codec::MAX_VALUE_DEPTH)
+    );
+    assert_eq!(
+        kv["valueTooDeep"].as_str().unwrap(),
+        varta_kv_codec::too_deep()
+    );
 }
 
 /// KV admission is the native profile's import admission: every KV import

@@ -22,6 +22,12 @@ const STORAGE_UNAVAILABLE: &str = "browser KV storage needs OPFS sync access han
 /// The failure an open reports in a Worker that acquired no storage for the
 /// artifact although a grant covers the path.
 const NO_STORAGE: &str = "no KV storage was acquired for this application";
+/// The failure an open reports for a database path with a directory below
+/// its file root (`/data/sub/app.kv`): the container keeps one flat
+/// namespace per root and has no directories to create or find, so the
+/// browser refuses what native admits only inside a host-created directory.
+const NO_DIRECTORIES: &str =
+    "the browser host keeps KV databases only directly in a file root, with no directories";
 /// The errors a `FileSystemSyncAccessHandle` is refused with while another
 /// handle holds the file (another tab or Worker of the same artifact): the
 /// standard's, and WebKit's.
@@ -106,6 +112,13 @@ pub(super) fn registry() -> Value {
             "value":H::KvValue.name(),"text":H::KvText.name(),"close":H::KvClose.name()},
         "failed":kv::FAILED,"checkFailed":kv::CHECK_FAILED,"committed":kv::COMMITTED,
         "separator":kv::DESCRIPTOR_SEPARATOR.to_string(),
+        "descriptorVersion":kv::DESCRIPTOR_VERSION,
+        // The shared depth limit of a KV value (`varta_kv_codec::
+        // MAX_VALUE_DEPTH`, the legacy checked-JSON depth) and its
+        // recoverable `TypeError` text, which the codec enforces on both
+        // hosts; `varta-project`'s browser tests compare them.
+        "maxValueDepth":crate::value::MAX_JSON_DEPTH,
+        "valueTooDeep":format!("a KV value cannot nest deeper than {} levels",crate::value::MAX_JSON_DEPTH),
         "maxDescriptorBytes":kv::MAX_DESCRIPTOR_BYTES,
         "maxOpenDatabases":kv::MAX_OPEN_DATABASES,
         "maxStaged":kv::MAX_STAGED,"maxStagedBytes":kv::MAX_STAGED_BYTES,
@@ -129,7 +142,7 @@ pub(super) fn registry() -> Value {
         "denialText":format!("<capability denied: {CAPABILITY_PLACEHOLDER}> ({PATH_PLACEHOLDER})"),
         "pathPlaceholder":PATH_PLACEHOLDER,"capabilityPlaceholder":CAPABILITY_PLACEHOLDER,
         "storageUnavailable":STORAGE_UNAVAILABLE,
-        "noStorage":NO_STORAGE,"lockedErrors":LOCKED_ERRORS,"quotaError":QUOTA_ERROR,"deadlineError":DEADLINE_ERROR,
+        "noStorage":NO_STORAGE,"noDirectories":NO_DIRECTORIES,"lockedErrors":LOCKED_ERRORS,"quotaError":QUOTA_ERROR,"deadlineError":DEADLINE_ERROR,
         "guest":{"allocate":crate::value::VALUE_ALLOCATE,"retain":crate::value::VALUE_RETAIN,
             "resultLength":crate::abi::RESULT_LEN,"pending":crate::exceptions::PENDING},
         "codec":codec(),

@@ -22,7 +22,13 @@
 //   holds the container ("locked by another writer"), and can afterwards;
 // - corrupt: a container that is not format version 1 fails every open;
 // - full: past the origin's quota a commit fails and applies nothing;
-// - aborted: a run aborted between commits leaves a consistent container.
+// - aborted: a run aborted between commits leaves a consistent container;
+// - nested: a database below a directory of its root is refused by name
+//   (the container has no directories), where native, without a
+//   host-created directory, fails to open it too;
+// - deep: values just below, at and above the shared KV depth limit (and
+//   far above it) store, read back or fail by name equal to native, within
+//   the engine's own stack.
 //
 //   node scripts/test-browser-kv.mjs <varta-executable> [--playwright <module> <firefox|webkit>]
 //
@@ -127,6 +133,29 @@ const LARGE = GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)
     kv.close();`);
 // Checks that two KvU64 counters summed by the same commits agree, then
 // commits to both, one commit per timer turn, until aborted.
+// A database one directory below the root.
+const NESTED_PATH = `/${ROOT}/sub/app.kv`;
+const NESTED = GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(NESTED_PATH)});
+    await kv.set(['note'], 'nested');
+    console.log('set');
+    kv.close();`);
+// Chains of records just below, at and above the shared depth limit, and
+// far above it (a depth that once overflowed the native host stack).
+const FAR_DEPTH = 2000;
+const DEEP_RECURSIVE = `interface Chain { next?: Chain }
+`;
+const DEEP = DEEP_RECURSIVE + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
+    for (const depth of [${K.maxValueDepth - 1}, ${K.maxValueDepth}, ${K.maxValueDepth + 1}, ${FAR_DEPTH}]) {
+      let value: Chain = {};
+      for (let i = 0; i < depth; i++) { value = { next: value }; }
+      try { await kv.set(['deep', depth], value); console.log('set ' + String(depth)); }
+      catch (error) { if (error instanceof Error) { console.log(error.name + ': ' + error.message); } }
+      const got = await kv.get<Chain>(['deep', depth]);
+      let n = 0; let at = got.value;
+      while (at !== null && at.next !== undefined) { at = at.next; n++; }
+      console.log('get ' + String(n));
+    }
+    kv.close();`);
 const COUNTER = GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
     const count = (await kv.get<KvU64>(['count'])).value;
     const twin = (await kv.get<KvU64>(['twin'])).value;
@@ -243,6 +272,8 @@ export async function runKv(varta, driver) {
     await add('corrupt', READER, GRANTS);
     await add('full', LARGE, {...GRANTS, time: {timer: true}});
     await add('aborted', COUNTER, {...GRANTS, time: {timer: true}});
+    await add('nested', NESTED, {kv: {read: [`/${ROOT}/**`], write: [`/${ROOT}/**`]}});
+    await add('deep', DEEP, GRANTS);
     const {server, origin} = await serveBundles(bundles);
     const page = async (name) => driver.page(`${origin}/${name}/blank.html`);
     const same = (label, browser, native) => {
@@ -364,6 +395,33 @@ export async function runKv(varta, driver) {
         await tab.close();
         pass('aborted');
       }
+      // A nested database path: the browser refuses it by name; native,
+      // without a host-created directory, cannot open it either.
+      {
+        const native = nativeRun(varta, directories.get('nested'));
+        const opening = text('unavailable', NESTED_PATH, '');
+        assert.equal(native.logs.length, 1, JSON.stringify(native.logs));
+        assert(native.logs[0].startsWith(`${LOG_PREFIX}${K.errors.typeError}: ${opening}`), native.logs[0]);
+        const tab = await page('nested');
+        const browser = await tab.evaluate(runExpression('nested'));
+        assert.equal(browser.status, 'ok', browser.error);
+        assert.deepEqual(browser.logs, [`${LOG_PREFIX}${K.errors.typeError}: ${text('unavailable', NESTED_PATH, K.noDirectories)}`]);
+        await tab.close();
+        pass('nested');
+      }
+      // Deep values: equal to native at, just below and above the limit.
+      {
+        const native = nativeRun(varta, directories.get('deep'));
+        const refused = `${LOG_PREFIX}${K.errors.typeError}: ${K.valueTooDeep}`;
+        assert.deepEqual(native.logs, [
+          ...[K.maxValueDepth - 1, K.maxValueDepth].flatMap((depth) => [`${LOG_PREFIX}set ${depth}`, `${LOG_PREFIX}get ${depth}`]),
+          refused, `${LOG_PREFIX}get 0`, refused, `${LOG_PREFIX}get 0`,
+        ]);
+        const tab = await page('deep');
+        same('deep', await tab.evaluate(runExpression('deep')), native);
+        await tab.close();
+        pass('deep');
+      }
     } finally { await new Promise((done) => server.close(done)); }
   } finally { await rm(root, {recursive: true, force: true}); }
   return passed;
@@ -436,20 +494,32 @@ async function chromeDriver() {
   };
 }
 
-/** A Playwright driver: one persistent browser context of `engine`. */
-async function playwrightDriver(module, engine) {
-  const playwright = await import(pathToFileURL(resolve(module)).href);
-  const type = (playwright.default ?? playwright)[engine];
+// The Playwright engine whose DevTools session can override a quota.
+const CHROMIUM = 'chromium';
+/** A Playwright driver: one persistent browser context (OPFS needs one in
+ * WebKit) of the Playwright browser type `type`, launched with `options`.
+ * Chromium also overrides the storage quota through its DevTools session.
+ * scripts/test-browser-matrix.mjs runs the KV group through it. */
+export async function playwrightKvDriver(type, options = {}) {
+  const engine = type.name();
   const directory = await mkdtemp(join(tmpdir(), `varta-browser-kv-${engine}-`));
-  const context = await type.launchPersistentContext(directory, {headless: true});
+  const context = await type.launchPersistentContext(directory, {headless: true, ...options});
   return {
     async page(url) {
       const tab = await context.newPage();
       await tab.goto(url);
-      return {evaluate: (expression) => tab.evaluate(expression), reload: () => tab.reload(), close: () => tab.close()};
+      const session = engine === CHROMIUM ? await context.newCDPSession(tab) : undefined;
+      return {
+        evaluate: (expression) => tab.evaluate(expression), reload: () => tab.reload(), close: () => tab.close(),
+        ...(session ? {quota: (origin, bytes) => session.send('Storage.overrideQuotaForOrigin', {origin, ...(bytes === undefined ? {} : {quotaSize: bytes})})} : {}),
+      };
     },
     async close() { await context.close(); await rm(directory, {recursive: true, force: true}); },
   };
+}
+async function playwrightDriver(module, engine) {
+  const playwright = await import(pathToFileURL(resolve(module)).href);
+  return playwrightKvDriver((playwright.default ?? playwright)[engine]);
 }
 
 if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href) {

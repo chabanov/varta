@@ -144,6 +144,7 @@ export const registry = freeze({
     "containerFormat": 1,
     "deadlineError": "browser execution deadline exceeded",
     "denialText": "<capability denied: {capability}> ({path})",
+    "descriptorVersion": "varta-kv-1",
     "encodings": {
       "bytes": 3,
       "u64": 2,
@@ -182,6 +183,7 @@ export const registry = freeze({
     "maxOpenDatabases": 8,
     "maxStaged": 2100,
     "maxStagedBytes": 901120,
+    "maxValueDepth": 64,
     "mutationNames": {
       "2": "sum",
       "3": "min",
@@ -194,6 +196,7 @@ export const registry = freeze({
       "set": 0,
       "sum": 2
     },
+    "noDirectories": "the browser host keeps KV databases only directly in a file root, with no directories",
     "noStorage": "no KV storage was acquired for this application",
     "notAllowed": "NotAllowedError",
     "operationPlaceholder": "{operation}",
@@ -240,7 +243,8 @@ export const registry = freeze({
       "tooManyDatabases": "at most 8 KV databases are open at once",
       "unavailable": "cannot open the KV database {path}: {failure}",
       "uncertain": "the KV storage of {path} is unavailable after an unfinished write; reload the application"
-    }
+    },
+    "valueTooDeep": "a KV value cannot nest deeper than 64 levels"
   },
   "maxTurnFuel": 1000000000,
   "meter": {

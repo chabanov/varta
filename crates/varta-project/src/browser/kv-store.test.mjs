@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {registry} from '../../../varta-common/browser/registry.mjs';
-import {KvContainer,CONTAINER,FAILURES,crc32,compareBytes,versionstamp,openKvStorage,syncHandlesSupported,parseVirtualPath,virtualMatches,glob,createKvPolicy,createCodec} from './kv-store.mjs';
+import {KvContainer,CONTAINER,FAILURES,crc32,compareBytes,versionstamp,openKvStorage,syncHandlesSupported,parseVirtualPath,virtualMatches,glob,createKvPolicy,createCodec,createKvHost} from './kv-store.mjs';
 
 const K=registry.kv;
 const PATH='/data/app.kv', OTHER='/data/other.kv';
@@ -245,6 +245,63 @@ test('virtual paths and patterns follow the native file-root rules',()=>{
   assert(!createKvPolicy(manifest,{}).covers(K.capabilities.read,PATH));
   // An undeclared root denies even when a pattern names it.
   assert(!createKvPolicy({...manifest,fsRoots:[]},undefined).covers(K.capabilities.read,PATH));
+});
+
+const CODEC=new WebAssembly.Module(readFileSync(new URL('./kv-codec.wasm',import.meta.url)));
+// A guest module with no static sections (a single-page static region).
+const EMPTY_GUEST=new WebAssembly.Module(Uint8Array.of(0,0x61,0x73,0x6d,1,0,0,0));
+const RW_GRANTS=[{id:K.capabilities.read,patterns:['/data/**']},{id:K.capabilities.write,patterns:['/data/**']}];
+/** The `kv_*` imports over `container`, with a broker that grants every
+ * covered operation and reports `writeGranted` for `kv.write`. Strings are
+ * written to guest memory as the guest passes them (UTF-16LE). */
+function kvHost({container,grants=RW_GRANTS,writeGranted=true}){
+  const memory=new WebAssembly.Memory({initial:1}),O=K.operations;
+  const codec=createCodec({codec:CODEC,guest:EMPTY_GUEST,memory:()=>memory,exports:()=>({}),deadlinePassed:()=>false,chargeFuel:()=>{},version:{global:'',value:0}});
+  const broker={operation:(id,path,covered)=>covered,granted:(id)=>id!==K.capabilities.write||writeGranted};
+  const host=createKvHost({memory:()=>memory,codec,broker,policy:createKvPolicy({fsRoots:['data'],capabilities:grants},undefined),
+    storage:{container},emit:()=>{},writeResult:(value)=>value,chargeBytes:()=>{},chargeFuel:()=>{},turnDeadline:()=>Infinity});
+  const pass=(text)=>{
+    const units=Uint16Array.from(text,(char)=>char.charCodeAt(0));
+    new Uint8Array(memory.buffer).set(new Uint8Array(units.buffer));
+    return [0,units.byteLength];
+  };
+  const outcome=(result)=>result===K.failed?host[O.text]():result;
+  return {
+    open:(path)=>outcome(host[O.open](...pass(path))),
+    read:(id)=>outcome(host[O.read](...pass([K.descriptorVersion,id,0].join(K.separator)))),
+  };
+}
+const failureText=(name,message)=>`${name}${K.separator}${message}`;
+
+test('a database below a directory of its root is refused by name, as the container has none',()=>{
+  const root='/data';
+  const host=kvHost({container:container(new FakeHandle()),grants:RW_GRANTS.map(grant=>({...grant,patterns:[...grant.patterns,root]}))});
+  const nested='/data/sub/app.kv';
+  assert.equal(host.open(nested),failureText(K.errors.typeError,FAILURES.unavailable(nested,K.noDirectories)));
+  assert.equal(host.open('/data/a/b/c.kv'),failureText(K.errors.typeError,FAILURES.unavailable('/data/a/b/c.kv',K.noDirectories)));
+  // A root-level database opens; the root itself names no file.
+  assert.equal(host.open(PATH),1);
+  assert.equal(host.open(root),failureText(K.errors.typeError,FAILURES.noFile(root)));
+});
+
+test('a database opens writable when kv.write is covered, whatever the broker decides, as native',()=>{
+  const store=container(new FakeHandle());
+  // kv.write covered but not granted: the missing database is created.
+  assert.equal(kvHost({container:store,writeGranted:false}).open(PATH),1);
+  assert(store.has(PATH));
+  // kv.write not covered: a missing database is not found.
+  const readOnly=kvHost({container:store,grants:[RW_GRANTS[0]]});
+  assert.equal(readOnly.open(OTHER),failureText(K.errors.notFound,FAILURES.notFound(OTHER)));
+});
+
+test('a container left uncertain by an unfinished write refuses reads too',()=>{
+  const handle=new FakeHandle(),store=container(handle),host=kvHost({container:store});
+  const id=host.open(PATH);
+  assert.equal(host.read(id),0);
+  handle.crashAt=handle.calls+2;
+  assert.equal(store.commit(PATH,[],[set([1],[1])]).error.message,FAILURES.uncertain(PATH));
+  assert.equal(host.read(id),failureText(K.errors.typeError,FAILURES.uncertain(PATH)));
+  assert.equal(host.open(PATH),failureText(K.errors.typeError,FAILURES.uncertain(PATH)));
 });
 
 test('the checked-in codec module has exactly the registry interface',async()=>{
