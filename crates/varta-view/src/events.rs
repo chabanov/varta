@@ -2,6 +2,8 @@
 //! key filters, `preventDefault`/`stopPropagation`), default actions, and
 //! the clipboard and system browser of the headless renderer.
 mod clipboard;
+#[cfg(test)]
+mod number_tests;
 use crate::tree::{Element, Preedit, focus_records};
 use crate::{Access, Broker, EventRecord, InputError, View, ViewError};
 pub use clipboard::{

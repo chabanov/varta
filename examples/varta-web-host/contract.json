@@ -8769,7 +8769,7 @@
       "flex-grow": "nonnegative",
       "flex-shrink": "nonnegative",
       "opacity": "0 to 1",
-      "font-family": "artifact fonts or generic families",
+      "font-family": "artifact fonts or generic families; no CSS-wide keywords",
       "field-sizing": "textarea only",
       "resize": "textarea only; treated as `none` with `field-sizing: content`"
     },

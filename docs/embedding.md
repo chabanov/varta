@@ -3175,7 +3175,7 @@ not imply complete CSS rendering or typography acceptance.
 | 50 | `outline-style` | `none \| solid` | — |
 | 51 | `outline-color` | `<color>` | — |
 | 52 | `outline-offset` | `<length>` | — |
-| 53 | `font-family` | `[<string> \| <ident> \| sans-serif \| serif \| monospace \| system-ui]#` | artifact fonts or generic families |
+| 53 | `font-family` | `[<string> \| <ident> \| sans-serif \| serif \| monospace \| system-ui]#` | artifact fonts or generic families; no CSS-wide keywords |
 | 54 | `font-size` | `<length-percentage>` | — |
 | 55 | `font-weight` | `normal \| bold \| 400 \| 500 \| 600 \| 700` | — |
 | 56 | `font-style` | `normal \| italic` | — |

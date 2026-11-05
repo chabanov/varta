@@ -1022,7 +1022,7 @@ impl CssProperty {
             | Self::FlexGrow
             | Self::FlexShrink => Some("nonnegative"),
             Self::Opacity => Some("0 to 1"),
-            Self::FontFamily => Some("artifact fonts or generic families"),
+            Self::FontFamily => Some("artifact fonts or generic families; no CSS-wide keywords"),
             Self::FieldSizing => Some("textarea only"),
             Self::Resize => Some("textarea only; treated as `none` with `field-sizing: content`"),
             _ => None,
