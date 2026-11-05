@@ -2608,7 +2608,7 @@ draft.
 
   | Field | Meaning |
   | --- | --- |
-  | `viewport.width` | The environment width: the script's `viewport.width`, default `DEFAULT_VIEWPORT_WIDTH` |
+  | `viewport.width` | The environment width: the script's `viewport.width`, default `DEFAULT_VIEWPORT_WIDTH`. It must have an exact single-precision value (`300` or `300.5`, not `300.1`): `GeometryRequest::admit` refuses another width with `LayoutError::InexactViewportWidth` before the session runs, even though the view itself admits it |
   | `viewport.height` | The request's height, `DEFAULT_VIEWPORT_HEIGHT` |
   | `fontSize` | The base text size given to layout: the environment's reference root font size (`Environment::root_font_size`) |
   | `boxes[]` | One entry per displayed element in document order, the view root (`id` 1) first. Text nodes, `br`, and an element with `display: none` together with its subtree have no entry |
@@ -2628,9 +2628,10 @@ draft.
   Fonts are only the request's faces, with no OS font lookup; the first family
   is the default when CSS names none, so a browser comparison sets the view
   root's `font-family` to it and its `font-size` to `fontSize`. `varta dev`
-  reads each `--view-font` file under the browser font-file bound and all of
-  them under the browser resource total before the text shaper validates the
-  faces; an unreadable or refused face fails before the session starts.
+  bounds each `--view-font` read by the browser font-file bound and by what
+  remains of the browser resource total, as browser resources are, before the
+  text shaper validates the faces; an unreadable, oversized or refused face
+  fails before the session starts.
   Layout is the experimental native subset of the
   [architecture contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx);
   unsupported content or CSS fails the whole request with
@@ -2647,7 +2648,9 @@ draft.
   with the structure fixture faces. Chrome rebuilds each final tree from the
   snapshot (tags, attributes, classes, field values and cascaded styles as
   inline declarations) in a closed shadow root with the official applier's
-  root and control base rules and the same font bytes. Every box must match
+  base sheet (read from `view-dom.mjs` and filled from the registry defaults at
+  run time, so its root selector and control rules cannot drift) and the same
+  font bytes. Every box must match
   `getBoundingClientRect` within ±1 CSS px, its `display` Chrome's computed
   outer display, and the set and order of boxes Chrome's displayed elements.
   The oracle does not replay the patch stream through the official browser

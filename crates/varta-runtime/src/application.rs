@@ -420,7 +420,9 @@ impl VartaRuntime {
     /// settled and only when it did not fail. Unsupported layout content or
     /// CSS becomes the report's failure ([`RuntimeError::ViewLayout`]) and
     /// the snapshot then has no geometry section. Without a request the
-    /// session and its snapshot are exactly those of [`Self::run_view`].
+    /// session and its snapshot are exactly those of [`Self::run_view`]. A
+    /// script environment the request cannot lay out exactly (a viewport
+    /// width with no single-precision value) fails before the session runs.
     #[must_use]
     pub fn run_view_with_geometry(
         &self,
@@ -430,8 +432,20 @@ impl VartaRuntime {
         geometry: Option<&mut varta_view::GeometryRequest>,
     ) -> ViewReport {
         let mut report = RunReport::new(crate::artifact_identity(bytes));
-        if let Err(error) = script.validate() {
-            report.failure = Some(error.into());
+        // A geometry request refuses an environment it cannot lay out
+        // exactly before the session runs, as the script's own limits do.
+        let admitted = script
+            .validate()
+            .map_err(RuntimeError::from)
+            .and_then(|()| {
+                geometry.as_deref().map_or(Ok(()), |request| {
+                    request
+                        .admit(&script.environment())
+                        .map_err(RuntimeError::from)
+                })
+            });
+        if let Err(error) = admitted {
+            report.failure = Some(error);
             return ViewReport {
                 report,
                 snapshot: None,

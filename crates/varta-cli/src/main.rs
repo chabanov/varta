@@ -89,8 +89,10 @@ enum Commands {
         /// the tree keeps its cascaded style) and border-box rectangle
         /// x, y, width, height in CSS pixels. Layout uses the script's
         /// viewport width, the default headless viewport height and only the
-        /// --view-font faces, never OS fonts. Unsupported layout content or
-        /// CSS fails the run.
+        /// --view-font faces, never OS fonts. The viewport width must have an
+        /// exact single-precision value (300 or 300.5, not 300.1); otherwise
+        /// the run fails before the session starts. Unsupported layout content
+        /// or CSS fails the run.
         #[arg(long, requires = "view_script", requires = "view_font")]
         view_geometry: bool,
         /// With --view-geometry: an explicit font file and the CSS family it

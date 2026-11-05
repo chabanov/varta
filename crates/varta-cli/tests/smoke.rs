@@ -17461,6 +17461,25 @@ fn view_geometry_is_an_opt_in_snapshot_section_with_explicit_fonts() {
     assert!(!combined(&unsupported).contains("varta dev: completed"));
     let plain = project.command(&["dev", "--view-script", "script.json"]);
     assert!(plain.status.success(), "{}", combined(&plain));
+    // A viewport width the view admits but that has no exact single-precision
+    // value is refused by the geometry request before the session runs.
+    app("");
+    fs::write(
+        project.0.join("script.json"),
+        r#"{"viewport":{"width":300.1}}"#,
+    )
+    .unwrap();
+    let plain = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(plain.status.success(), "{}", combined(&plain));
+    let inexact = project.command(&measure);
+    assert!(!inexact.status.success());
+    assert!(
+        combined(&inexact).contains("viewport width 300.1 has no exact single-precision value"),
+        "{}",
+        combined(&inexact)
+    );
+    assert!(!combined(&inexact).contains('{'), "no snapshot");
+    assert!(!combined(&inexact).contains("varta dev: completed"));
 }
 
 // Profile v38 hashed dictionaries (`dictionary_hashing`, value layout 18):

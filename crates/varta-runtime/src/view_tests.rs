@@ -2547,3 +2547,41 @@ fn a_failed_session_keeps_its_own_failure_and_is_never_laid_out() {
             .is_none()
     );
 }
+
+#[test]
+fn an_inexact_viewport_width_is_refused_before_a_geometry_session_runs() {
+    // The view admits 300.1, but it has no exact single-precision value.
+    const WIDTH: f64 = 300.1;
+    let inexact = GEOMETRY_INPUTS.replace(r#""width":200"#, &format!(r#""width":{WIDTH}"#));
+    assert_ne!(inexact, GEOMETRY_INPUTS);
+    let source = GEOMETRY_APP
+        .replace("__EXTRA__", "")
+        .replace("__CLICK__", GEOMETRY_CLICK);
+    let bytes = compile_tsx(&source, &[("signals.ts", SIGNALS)]);
+    let run = |request: Option<&mut crate::ViewGeometryRequest>| {
+        VartaRuntime::new().run_view_with_geometry(
+            &bytes,
+            crate::ApplicationOptions::default(),
+            &script(&inexact),
+            request,
+        )
+    };
+    let plain = run(None);
+    assert!(plain.report.failure.is_none(), "{:?}", plain.report.failure);
+    let mut request = geometry_request();
+    let refused = run(Some(&mut request));
+    assert!(
+        matches!(
+            refused.report.failure,
+            Some(crate::RuntimeError::ViewLayout(
+                varta_view::LayoutError::InexactViewportWidth(width)
+            )) if width == WIDTH
+        ),
+        "{:?}",
+        refused.report.failure
+    );
+    // Refused at admission: no guest ran, so no commit and no snapshot.
+    assert!(refused.snapshot.is_none());
+    assert_eq!(refused.commits, 0);
+    assert!(refused.report.output.lines.is_empty());
+}

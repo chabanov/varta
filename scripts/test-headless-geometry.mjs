@@ -2,7 +2,8 @@
 // app runs through `varta dev --view-script --view-geometry` with explicit
 // fonts; Chrome rebuilds the final snapshot's tree (tags, attributes, classes,
 // field values, cascaded styles) in a closed shadow root with the official
-// applier's root and control base rules, loads the same font bytes, and every
+// applier's base sheet (read from view-dom.mjs and filled from the registry
+// defaults at run time, root selector included), loads the same font bytes, and every
 // reported border box must match getBoundingClientRect within ±1 CSS px and its
 // used display Chrome's computed outer display. A run without --view-geometry
 // must print the same snapshot minus the section.
@@ -29,6 +30,34 @@ const INLINE_TAGS = new Set(['span', 'strong', 'em', 'code', 'a', 'br', 'label']
 const SIGNALS = join(repo, 'crates/varta-runtime/src/view_cases/signals.ts');
 /// The freeze criterion's tolerance (docs/development-plan.md, L0 v1 subset).
 const TOLERANCE_PX = 1;
+/// The official applier whose base sheet the oracle reuses.
+const APPLIER = join(repo, 'crates/varta-project/src/browser/view-dom.mjs');
+const DEFAULTS = registry.view.defaults;
+/// The view root's marker attribute, derived from the registry's root
+/// selector exactly as the applier derives it.
+const ROOT_ATTRIBUTE = /^\[([a-z0-9-]+)\]$/.exec(DEFAULTS.rootSelector)?.[1];
+assert(ROOT_ATTRIBUTE, `root selector ${DEFAULTS.rootSelector} is not a single attribute selector`);
+
+/// The applier's base sheet (`:host`, view root and control rules), read from
+/// its source at run time and filled from the registry defaults, so the
+/// oracle cannot drift from the applier.
+async function applierBaseSheet() {
+  const source = await readFile(APPLIER, 'utf8');
+  const sheets = [...source.matchAll(/\bbase\.replaceSync\(`([^`]*)`\)/g)];
+  assert.equal(sheets.length, 1, `${APPLIER}: expected one base.replaceSync template`);
+  const sheet = sheets[0][1].replace(/\$\{D\.(\w+)(?:\[(\d+)\])?\}/g, (_, name, index) => {
+    const value = DEFAULTS[name];
+    assert(value !== undefined, `${APPLIER}: unknown view default ${name}`);
+    const resolved = index === undefined ? value : value[Number(index)];
+    assert(typeof resolved === 'string', `${APPLIER}: view default ${name}${index === undefined ? '' : `[${index}]`} is not text`);
+    return resolved;
+  });
+  assert(!sheet.includes('${'), `${APPLIER}: unresolved base sheet interpolation`);
+  for (const rule of [DEFAULTS.rootSelector, 'button, input, textarea, select']) {
+    assert(sheet.includes(rule), `${APPLIER}: base sheet lacks ${rule}`);
+  }
+  return sheet;
+}
 const FIELD = `display: block; width: 120px; height: 24px; min-width: 0; min-height: 0; padding: 2px 4px; border: 1px solid #000; font-family: "${FAMILY}"; font-size: 16px; font-weight: 400; font-style: normal; line-height: 18px`;
 const BUTTON = `display: flex; width: 40px; height: 24px; min-width: 0; min-height: 0; padding: 0 4px; border: 1px solid #000; font-family: "${FAMILY}"; font-size: 16px; font-weight: 400; font-style: normal; line-height: 20px; justify-content: center; align-items: center`;
 const APP = `font-family: "${FAMILY}"; font-size: 16px; line-height: 20px; padding: 8px`;
@@ -158,6 +187,7 @@ let checks = 0;
 try {
   const cases = [];
   for (const fixture of fixtures) cases.push(await run(fixture, work));
+  const baseSheet = await applierBaseSheet();
   const fonts = await Promise.all(FONTS.map(async (font) => ({weight: font.weight, data: [...await readFile(font.path)]})));
   await withBrowserPage('about:blank', async (call) => {
     async function evaluate(expression) {
@@ -173,14 +203,14 @@ try {
         document.body.replaceChildren();
         const host=document.createElement('div');host.style.cssText='width:${viewport.width}px;height:${viewport.height}px';document.body.append(host);
         const shadow=host.attachShadow({mode:'closed'}),style=document.createElement('style');
-        // The official applier's base rules (crates/varta-project/src/browser/view-dom.mjs).
-        style.textContent=':host{all:initial;display:block} [data-l0-root]{${registry.view.defaults.rootStyle}} button,input,textarea,select{box-sizing:border-box;margin:0} textarea{resize:none}';
+        // The official applier's base sheet, read from its source.
+        style.textContent=${JSON.stringify(baseSheet)};
         shadow.append(style);
         const nodes=new Map();
         function create(n){
           if(n.text!==undefined){const t=document.createTextNode(n.text);nodes.set(n.id,t);return t;}
           const e=document.createElement(n.tag==='root'?'div':n.tag);nodes.set(n.id,e);
-          if(n.tag==='root'){e.setAttribute('data-l0-root','');e.style.fontFamily=${JSON.stringify(`"${FAMILY}"`)};e.style.fontSize='${fontSize}px';}
+          if(n.tag==='root'){e.setAttribute(${JSON.stringify(ROOT_ATTRIBUTE)},'');e.style.fontFamily=${JSON.stringify(`"${FAMILY}"`)};e.style.fontSize='${fontSize}px';}
           for(const [name,value] of Object.entries(n.attributes??{}))e.setAttribute(name,value);
           if(n.class)e.className=n.class;
           for(const [name,value] of Object.entries(n.style??{}))e.style.setProperty(name,value);

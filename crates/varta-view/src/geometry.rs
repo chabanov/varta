@@ -46,6 +46,17 @@ impl GeometryRequest {
     pub fn height(&self) -> f32 {
         self.height
     }
+
+    /// Admit `environment` for this request before any session runs: its
+    /// viewport width and base text size must have exact single-precision
+    /// values ([`LayoutError::InexactViewportWidth`], [`LayoutError::RootFont`]).
+    /// An environment the view itself admits, such as a width of `300.1`, may
+    /// still be refused here; layout validates the viewport range.
+    pub fn admit(&self, environment: &Environment) -> Result<(), LayoutError> {
+        viewport_width(environment)?;
+        base_font_size(environment)?;
+        Ok(())
+    }
 }
 
 /// The outer display type layout used for an element. It differs from the
@@ -141,13 +152,16 @@ pub(crate) fn section(
     }))
 }
 
+/// The single-precision layout width. The view admits any finite width in its
+/// range, but layout runs in `f32`; a width with no exact `f32` value (such as
+/// `300.1`) is refused rather than rounded, so the rectangles and the snapshot
+/// cascade always see the same media width. Layout validates the range.
 fn viewport_width(environment: &Environment) -> Result<f32, LayoutError> {
-    // Narrowing is exact for every admitted width; layout validates the range.
     let width = environment.width as f32;
     if f64::from(width) == environment.width {
         Ok(width)
     } else {
-        Err(LayoutError::Viewport)
+        Err(LayoutError::InexactViewportWidth(environment.width))
     }
 }
 
@@ -349,10 +363,47 @@ mod tests {
                 Err(LayoutError::RootFont)
             ));
         }
-        environment.width = 0.1;
+    }
+
+    #[test]
+    fn inexact_viewport_widths_are_refused_before_layout() {
+        let request = GeometryRequest::new(font());
+        assert!(request.admit(&Environment::default()).is_ok());
+        for width in [0.1, 300.1, 1_024.000_000_1] {
+            let environment = Environment {
+                width,
+                ..Environment::default()
+            };
+            assert!(
+                matches!(
+                    request.admit(&environment),
+                    Err(LayoutError::InexactViewportWidth(refused)) if refused == width
+                ),
+                "{width}"
+            );
+            // The view itself admits the width; only the geometry refuses it.
+            let mut view = view(Environment::default(), mixed());
+            view.set_environment(environment).unwrap();
+            assert!(matches!(
+                view.snapshot_with_geometry(&mut GeometryRequest::new(font())),
+                Err(LayoutError::InexactViewportWidth(_))
+            ));
+        }
+        // Widths with an exact single-precision value, fractional ones too.
+        for width in [300.0, 300.5, 375.25] {
+            let environment = Environment {
+                width,
+                ..Environment::default()
+            };
+            assert!(request.admit(&environment).is_ok(), "{width}");
+        }
+        let environment = Environment {
+            root_font_size: 0.1,
+            ..Environment::default()
+        };
         assert!(matches!(
-            viewport_width(&environment),
-            Err(LayoutError::Viewport)
+            request.admit(&environment),
+            Err(LayoutError::RootFont)
         ));
     }
 

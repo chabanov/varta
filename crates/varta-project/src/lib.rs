@@ -52,6 +52,12 @@ pub enum ProjectError {
     /// The `--view-font` files together exceed the browser resource total.
     #[error("view fonts exceed their {limit}-byte total")]
     ViewFontsTooLarge { limit: usize },
+    /// One `--view-font` file exceeds the browser font-file bound.
+    #[error("view font {} exceeds its {limit}-byte bound", path.display())]
+    ViewFontTooLarge { path: PathBuf, limit: usize },
+    /// A `--view-font` path that is not a regular file.
+    #[error("view font {} is not a regular file", .0.display())]
+    ViewFontNotFile(PathBuf),
     #[error("invalid artifact: {0}")]
     Artifact(String),
     #[error("{0}")]
@@ -381,21 +387,36 @@ pub fn read_view_script(path: &Path) -> Result<ViewScript> {
 }
 
 /// Read explicit headless layout fonts (`varta dev --view-font PATH FAMILY`)
-/// into a geometry request. Each file is read with the browser font-file
-/// bound and all of them within the browser resource total, before the text
-/// shaper validates the faces (no OS font lookup); the first family is the
-/// default when CSS names none.
+/// into a geometry request. Each read is bounded by the browser font-file
+/// bound and by what remains of the browser resource total, as browser
+/// resources are, so no byte past either bound is kept and at most one more
+/// is read. The text shaper then validates the faces (no OS font lookup); the
+/// first family is the default when CSS names none.
 pub fn read_view_fonts(fonts: &[(PathBuf, String)]) -> Result<ViewGeometryRequest> {
+    use browser::resources::{MAX_RESOURCE_BYTES, MAX_TOTAL_BYTES};
     let mut faces = Vec::with_capacity(fonts.len());
     let mut total = 0usize;
     for (path, family) in fonts {
-        let data = artifact::read_bounded(path, browser::resources::MAX_RESOURCE_BYTES)?;
-        total = total.saturating_add(data.len());
-        if total > browser::resources::MAX_TOTAL_BYTES {
-            return Err(ProjectError::ViewFontsTooLarge {
-                limit: browser::resources::MAX_TOTAL_BYTES,
-            });
+        let bound = MAX_RESOURCE_BYTES.min(MAX_TOTAL_BYTES - total);
+        let file = fs::File::open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(ProjectError::ViewFontNotFile(path.clone()));
         }
+        let Some(data) = read_within(file, bound)? else {
+            // The smaller bound refused the file: what remains of the total,
+            // or the per-file bound while a whole file's worth remains.
+            return Err(if bound < MAX_RESOURCE_BYTES {
+                ProjectError::ViewFontsTooLarge {
+                    limit: MAX_TOTAL_BYTES,
+                }
+            } else {
+                ProjectError::ViewFontTooLarge {
+                    path: path.clone(),
+                    limit: MAX_RESOURCE_BYTES,
+                }
+            });
+        };
+        total += data.len();
         faces.push(varta_runtime::ViewFont {
             data,
             family: family.clone(),
@@ -404,6 +425,15 @@ pub fn read_view_fonts(fonts: &[(PathBuf, String)]) -> Result<ViewGeometryReques
     }
     let measurer = varta_runtime::ViewTextMeasurer::new_with_fonts(faces)?;
     Ok(ViewGeometryRequest::new(measurer))
+}
+
+/// Read at most `bound + 1` bytes; `None` when the input is longer than `bound`.
+fn read_within(reader: impl std::io::Read, bound: usize) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    let limit = u64::try_from(bound).unwrap_or(u64::MAX).saturating_add(1);
+    let mut data = Vec::new();
+    reader.take(limit).read_to_end(&mut data)?;
+    Ok((data.len() <= bound).then_some(data))
 }
 
 /// Policy review additionally requires a declaration for every privileged import.
@@ -530,26 +560,39 @@ mod tests {
         let large = scratch.0.join("large.ttf");
         fs::write(&large, vec![0; browser::resources::MAX_RESOURCE_BYTES + 1]).unwrap();
         assert!(matches!(
-            read_view_fonts(&[(large, FAMILY.into())]),
-            Err(ProjectError::Config(_) | ProjectError::Io(_))
+            read_view_fonts(&[(large.clone(), FAMILY.into())]),
+            Err(ProjectError::ViewFontTooLarge { path, limit })
+                if path == large && limit == browser::resources::MAX_RESOURCE_BYTES
+        ));
+        // A directory is not a face.
+        assert!(matches!(
+            read_view_fonts(&[(scratch.0.clone(), FAMILY.into())]),
+            Err(ProjectError::ViewFontNotFile(path)) if path == scratch.0
         ));
         // Files each within the bound but together over the total are refused
-        // before any face is parsed.
+        // before any face is parsed: after whole files, and when a file is
+        // within its own bound but over what remains of the total.
         let full = scratch.0.join("full.ttf");
         fs::write(&full, vec![0; browser::resources::MAX_RESOURCE_BYTES]).unwrap();
         let faces = browser::resources::MAX_TOTAL_BYTES / browser::resources::MAX_RESOURCE_BYTES;
-        let fonts: Vec<_> = std::iter::repeat_n((full, FAMILY.to_owned()), faces)
-            .chain([(font, FAMILY.to_owned())])
+        let entry = |path: &PathBuf| (path.clone(), FAMILY.to_owned());
+        let after_whole: Vec<_> = std::iter::repeat_n(entry(&full), faces)
+            .chain([entry(&font)])
             .collect();
-        assert!(matches!(
-            read_view_fonts(&fonts),
-            Err(ProjectError::ViewFontsTooLarge { limit })
-                if limit == browser::resources::MAX_TOTAL_BYTES
-        ));
+        let over_remaining: Vec<_> = std::iter::repeat_n(entry(&full), faces - 1)
+            .chain([entry(&font), entry(&full)])
+            .collect();
+        for fonts in [after_whole, over_remaining] {
+            assert!(matches!(
+                read_view_fonts(&fonts),
+                Err(ProjectError::ViewFontsTooLarge { limit })
+                    if limit == browser::resources::MAX_TOTAL_BYTES
+            ));
+        }
         // A missing file and bytes that are not a font fail too.
         assert!(matches!(
             read_view_fonts(&[(scratch.0.join("absent.ttf"), FAMILY.into())]),
-            Err(ProjectError::Config(_) | ProjectError::Io(_))
+            Err(ProjectError::Io(_))
         ));
         let bad = scratch.0.join("bad.ttf");
         fs::write(&bad, b"not a font").unwrap();
@@ -557,5 +600,26 @@ mod tests {
             read_view_fonts(&[(bad, FAMILY.into())]),
             Err(ProjectError::ViewFont(_))
         ));
+    }
+
+    #[test]
+    fn a_view_font_read_stops_one_byte_past_the_remaining_total() {
+        use browser::resources::{MAX_RESOURCE_BYTES, MAX_TOTAL_BYTES};
+        // Input that fits its bound exactly is kept whole.
+        assert_eq!(
+            read_within(FONT, FONT.len()).unwrap().as_deref(),
+            Some(FONT)
+        );
+        // With less than one file's bound left of the total, an endless input
+        // is read one byte past what remains, not up to the per-file bound.
+        let total = MAX_TOTAL_BYTES - FONT.len();
+        let bound = MAX_RESOURCE_BYTES.min(MAX_TOTAL_BYTES - total);
+        assert!(bound < MAX_RESOURCE_BYTES);
+        let mut endless = std::io::Read::take(std::io::repeat(0), u64::MAX);
+        assert!(read_within(&mut endless, bound).unwrap().is_none());
+        assert_eq!(
+            u64::MAX - endless.limit(),
+            u64::try_from(bound + 1).unwrap()
+        );
     }
 }
