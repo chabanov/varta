@@ -2,7 +2,7 @@
 //! key filters, `preventDefault`/`stopPropagation`), default actions, and
 //! the clipboard and system browser of the headless renderer.
 mod clipboard;
-mod number_step;
+pub(crate) mod number_step;
 #[cfg(test)]
 mod number_tests;
 use crate::tree::{Element, Preedit, focus_records};
@@ -82,6 +82,9 @@ pub(crate) struct Effects {
     opened_bytes: usize,
     pub opened_dropped: u64,
     pub prompts: usize,
+    /// Number-field steps refused outside the exact stepping range
+    /// ([`number_step::StepRefusal`]); saturating.
+    pub steps_refused: u64,
 }
 
 impl Effects {
@@ -1538,8 +1541,9 @@ impl View {
     /// One Up/Down step of a number field ([`number_step`]): the stepped
     /// string replaces the value as one Undo entry with the caret at its
     /// end, then `input` and `change` fire, as Chrome dispatches them. A
-    /// disabled or read-only field, or a value outside the exact stepping
-    /// range ([`number_step::StepRefusal`]), does not step.
+    /// disabled or read-only field does not step; a value outside the exact
+    /// stepping range ([`number_step::StepRefusal`]) does not step and is
+    /// counted in the platform effects (`stepsRefused`).
     fn step_number(
         &mut self,
         node: u32,
@@ -1551,8 +1555,12 @@ impl View {
         if element.disabled() || element.readonly() {
             return Ok(());
         }
-        let Ok(stepped) = number_step::step(&element.value, direction) else {
-            return Ok(());
+        let stepped = match number_step::step(&element.value, direction) {
+            Ok(stepped) => stepped,
+            Err(number_step::StepRefusal::OutsideExactRange) => {
+                self.effects.steps_refused = self.effects.steps_refused.saturating_add(1);
+                return Ok(());
+            }
         };
         let before = element.seq;
         self.edit(node, |value, anchor, focus, _| {

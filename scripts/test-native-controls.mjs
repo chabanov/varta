@@ -88,20 +88,34 @@ await withBrowserPage('about:blank',async call=>{
     assert(mean<=MAX_MEAN_RGB_DELTA,`${fixture.name}: RGB mean ${mean}, max ${maximum}`);checks++;
   }
   // input type=number stepping: the guest sets the value, the field is
-  // focused with the caret at the end, and real key presses step it.
+  // focused with the caret at the end, and real key presses (with held
+  // modifiers) step it; the value and the input/change events must match.
+  // Chrome sanitizes an assigned value, so the native grammar is checked
+  // separately: a valid value is kept, an invalid one becomes empty.
   assert(Array.isArray(oracle.steps)&&oracle.steps.length,'number stepping cases missing');
+  assert(Array.isArray(oracle.grammar)&&oracle.grammar.length,'number grammar cases missing');
   const ARROW_KEY_CODES={ArrowUp:38,ArrowDown:40};
-  const ALT_MODIFIER=1;
+  // CDP Input.dispatchKeyEvent modifier bits.
+  const MODIFIER_BITS={Alt:1,Ctrl:2,Meta:4,Shift:8};
   const stepMismatches=[];
   for(const step of oracle.steps){
-    await evaluate(`(()=>{document.body.replaceChildren();const field=document.createElement('input');field.type='number';field.id='step';document.body.append(field);field.value=${JSON.stringify(step.value)};field.focus();return true;})()`);
+    await evaluate(`(()=>{document.body.replaceChildren();const field=document.createElement('input');field.type='number';field.id='step';document.body.append(field);field.value=${JSON.stringify(step.value)};field.focus();window.stepEvents=[];for(const kind of ['input','change'])field.addEventListener(kind,()=>stepEvents.push(kind));return true;})()`);
     for(const pressed of step.keys){
-      const alt=pressed.startsWith('Alt+'),key=alt?pressed.slice('Alt+'.length):pressed;
+      const parts=pressed.split('+'),key=parts.pop();
       assert(ARROW_KEY_CODES[key],`unknown step key ${pressed}`);
-      for(const type of ['rawKeyDown','keyUp'])await call('Input.dispatchKeyEvent',{type,key,code:key,windowsVirtualKeyCode:ARROW_KEY_CODES[key],modifiers:alt?ALT_MODIFIER:0});
+      const modifiers=parts.reduce((bits,modifier)=>{assert(MODIFIER_BITS[modifier],`unknown modifier ${pressed}`);return bits|MODIFIER_BITS[modifier];},0);
+      for(const type of ['rawKeyDown','keyUp'])await call('Input.dispatchKeyEvent',{type,key,code:key,windowsVirtualKeyCode:ARROW_KEY_CODES[key],modifiers});
     }
-    const chrome=await evaluate(`document.getElementById('step').value`);
-    if(chrome!==step.native)stepMismatches.push(`${JSON.stringify(step.value)} ${step.keys.join(',')}: chrome ${JSON.stringify(chrome)}, native ${JSON.stringify(step.native)}`);else checks++;
+    const chrome=await evaluate(`({value:document.getElementById('step').value,events:stepEvents})`);
+    const row=`${JSON.stringify(step.value)} ${step.keys.join(',')}`;
+    if(chrome.value!==step.native)stepMismatches.push(`${row}: chrome ${JSON.stringify(chrome.value)}, native ${JSON.stringify(step.native)}`);else checks++;
+    if(JSON.stringify(chrome.events)!==JSON.stringify(step.events))stepMismatches.push(`${row} events: chrome ${chrome.events}, native ${step.events}`);else checks++;
+  }
+  for(const {value,valid} of [...oracle.steps,...oracle.grammar]){
+    const sanitized=await evaluate(`(()=>{const field=document.createElement('input');field.type='number';field.value=${JSON.stringify(value)};return field.value;})()`);
+    assert(sanitized===value||sanitized==='',`${JSON.stringify(value)}: Chrome sanitized it to ${JSON.stringify(sanitized)}`);
+    const chromeValid=value!==''&&sanitized===value;
+    if(chromeValid!==valid)stepMismatches.push(`${JSON.stringify(value)} validity: chrome ${chromeValid}, native ${valid}`);else checks++;
   }
   assert.deepEqual(stepMismatches,[],'number stepping');
 });

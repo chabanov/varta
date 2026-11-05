@@ -4,8 +4,9 @@
 //! bounds (Blink's `NumberInputType` default step range).
 //!
 //! The value stays the string L0 keeps. Stepping reads it with Chrome's
-//! number sanitization (an HTML floating-point number; anything else,
-//! including the empty string, is invalid and counts as 0) and writes the
+//! number sanitization (an HTML floating-point number whose value is a finite
+//! double; anything else, including the empty string, is invalid and counts
+//! as 0; [`is_valid`]) and writes the
 //! stepped number back as a plain integer string:
 //!
 //! * a value within Blink's acceptable error (2⁻²⁴ of the step) of a step
@@ -15,10 +16,14 @@
 //!
 //! Chrome computes this in Blink's 18-digit `Decimal`, which truncates long
 //! inputs and prints large results in exponent form. Native stepping is exact
-//! decimal arithmetic and admits only the range where both agree: values
-//! whose first 18 typed digits are all their nonzero digits, with magnitude
-//! below 10¹⁵ and at most 18 fraction digits, and results up to 10¹⁵. Other
-//! valid numbers are refused ([`StepRefusal`]): the key changes nothing.
+//! decimal arithmetic and admits only the range where both agree, measured
+//! in Chrome: values whose first 18 typed digits are all their nonzero
+//! digits; integers below 10¹⁸ in magnitude (Blink's 18-digit coefficient
+//! holds them and their ±1 results), other values below 10¹⁵ with at most 18
+//! fraction digits; and results below 10¹⁸ (Blink prints 10¹⁸ as `1e+18`).
+//! Other valid numbers are refused ([`StepRefusal`]): the key leaves the
+//! value unchanged, and the view counts the refusal for the host
+//! (`stepsRefused` in the snapshot).
 
 /// Which arrow key stepped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +36,7 @@ pub(crate) enum Direction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum StepRefusal {
     #[error(
-        "number value outside the exact stepping range (more than 18 significant typed digits, magnitude 10^15 or more, or more than 18 fraction digits)"
+        "number value outside the exact stepping range (more than 18 significant typed digits, an integer of magnitude 10^18 or more, another value of magnitude 10^15 or more, more than 18 fraction digits, or a result of magnitude 10^18 or more)"
     )]
     OutsideExactRange,
 }
@@ -42,15 +47,17 @@ const DECIMAL_PRECISION: usize = 18;
 const FRACTION_DIGITS: i64 = 18;
 /// 10^[`FRACTION_DIGITS`]: one step at the fixed-point scale.
 const SCALE: i128 = 1_000_000_000_000_000_000;
-/// Values below 10^this, so results print as plain integers in Chrome.
-const MAGNITUDE_DIGITS: i64 = 15;
-/// The largest admitted magnitude of a result, in steps (10^15).
-const MAX_STEPS: i128 = 1_000_000_000_000_000;
+/// Non-integral values are admitted below 10^this: Chrome steps larger ones
+/// with precision loss (`12345678901234567.5` Up gives `…569`).
+const FRACTION_MAGNITUDE_DIGITS: i64 = 15;
+/// Integral values are admitted below 10^this: Blink's 18-digit coefficient
+/// holds them exactly.
+const INTEGER_MAGNITUDE_DIGITS: i64 = 18;
+/// Results are admitted below this magnitude, in steps (10^18): Chrome
+/// prints 10^18 in exponent form (`1e+18`).
+const RESULT_LIMIT: i128 = 1_000_000_000_000_000_000;
 /// Blink's acceptable step error is the step divided by 2^`FLT_MANT_DIG`.
 const ACCEPTABLE_ERROR_BITS: u32 = 24;
-/// A decimal exponent from which a number exceeds `f64::MAX`
-/// (1.797…·10³⁰⁸): Chrome's sanitization makes such a value invalid.
-const OVERFLOW_EXPONENT: i64 = 309;
 /// Exponent digits beyond this magnitude saturate (the value is then far
 /// outside every admitted range either way).
 const EXPONENT_LIMIT: i64 = 100_000;
@@ -66,9 +73,16 @@ struct Number {
     exact_in_blink: bool,
 }
 
-/// Parse `value` with Chrome's number sanitization grammar: an optional `-`,
-/// digits with an optional fraction (or a fraction alone), an optional
-/// exponent, and no trailing `.`. `None` is an invalid value.
+/// Whether `value` is valid under Chrome's number sanitization: the HTML
+/// floating-point grammar (an optional `-`, digits with an optional fraction
+/// or a fraction alone, an optional exponent, no trailing `.`) and a value
+/// that rounds to a finite double (above `f64::MAX` it is invalid).
+pub(crate) fn is_valid(value: &str) -> bool {
+    parse(value).is_some()
+}
+
+/// Parse `value` with Chrome's number sanitization ([`is_valid`]). `None`
+/// is an invalid value.
 fn parse(value: &str) -> Option<Number> {
     let bytes = value.as_bytes();
     let mut at = 0;
@@ -124,7 +138,9 @@ fn parse(value: &str) -> Option<Number> {
         }
         exponent *= sign;
     }
-    if at != bytes.len() {
+    // The grammar is a subset of Rust's float syntax, which rounds to the
+    // nearest double as Chrome's parser does.
+    if at != bytes.len() || !value.parse::<f64>().is_ok_and(f64::is_finite) {
         return None;
     }
     let exact_in_blink = typed
@@ -159,14 +175,15 @@ fn scaled(value: &str) -> Result<Option<i128>, StepRefusal> {
     }
     let length = i64::try_from(number.digits.len()).unwrap_or(i64::MAX);
     let leading = number.exponent.saturating_add(length - 1);
-    // Above `f64::MAX` Chrome's sanitization rejects the value.
-    if leading >= OVERFLOW_EXPONENT {
-        return Ok(None);
-    }
-    if !number.exact_in_blink || leading >= MAGNITUDE_DIGITS || number.exponent < -FRACTION_DIGITS {
+    let magnitude_digits = if number.exponent >= 0 {
+        INTEGER_MAGNITUDE_DIGITS
+    } else {
+        FRACTION_MAGNITUDE_DIGITS
+    };
+    if !number.exact_in_blink || leading >= magnitude_digits || number.exponent < -FRACTION_DIGITS {
         return Err(StepRefusal::OutsideExactRange);
     }
-    // At most 33 digits: below 10^15 with at most 18 fraction digits.
+    // At most 36 digits: below 10^18 with at most 18 fraction digits.
     let mut steps = number.digits.iter().fold(0i128, |total, digit| {
         total * i128::from(RADIX) + i128::from(*digit)
     });
@@ -198,7 +215,7 @@ pub(crate) fn step(value: &str, direction: Direction) -> Result<String, StepRefu
         (false, Direction::Up) => rounded + 1,
         (false, Direction::Down) => rounded - 1,
     };
-    if result.abs() > MAX_STEPS {
+    if result.abs() >= RESULT_LIMIT {
         return Err(StepRefusal::OutsideExactRange);
     }
     Ok(result.to_string())
@@ -277,6 +294,29 @@ mod tests {
             ("99999999999999.0", Up, "100000000000000"),
             ("5e14", Up, "500000000000001"),
             ("00012", Up, "13"),
+            ("999999999999999.01", Down, "999999999999999"),
+            ("999999999999999.01", Up, "1000000000000000"),
+            // Integers below 10^18 step exactly, up to results below 10^18.
+            ("1000000000000000", Up, "1000000000000001"),
+            ("1000000000000000", Down, "999999999999999"),
+            ("9007199254740991", Up, "9007199254740992"),
+            ("12345678901234567", Up, "12345678901234568"),
+            ("99999999999999999", Up, "100000000000000000"),
+            ("-99999999999999999", Down, "-100000000000000000"),
+            ("1e16", Up, "10000000000000001"),
+            ("1e17", Up, "100000000000000001"),
+            ("1e17", Down, "99999999999999999"),
+            ("5e16", Down, "49999999999999999"),
+            ("0.5e17", Up, "50000000000000001"),
+            ("1.0e17", Up, "100000000000000001"),
+            ("123456789012345678", Up, "123456789012345679"),
+            ("123456789012345678.0", Up, "123456789012345679"),
+            ("-123456789012345678", Down, "-123456789012345679"),
+            ("999999999999999998", Up, "999999999999999999"),
+            ("-999999999999999998", Down, "-999999999999999999"),
+            ("999999999999999999", Down, "999999999999999998"),
+            ("-999999999999999999", Up, "-999999999999999998"),
+            ("9.99999999999999998e17", Up, "999999999999999999"),
             // Invalid values count as 0.
             ("12e", Up, "1"),
             ("12e", Down, "-1"),
@@ -298,6 +338,10 @@ mod tests {
             ("1e400", Up, "1"),
             ("-1e400", Up, "1"),
             ("1e1023", Up, "1"),
+            ("1e99999", Up, "1"),
+            // Above `f64::MAX` once rounded to a double.
+            ("1.7976931348623159e308", Up, "1"),
+            ("-1.7976931348623159e308", Up, "1"),
         ] {
             assert_eq!(
                 step(value, direction).as_deref(),
@@ -309,20 +353,28 @@ mod tests {
 
     #[test]
     fn values_chrome_computes_with_decimal_precision_loss_are_refused() {
-        // Chrome: 1e+18, 9.99999999999999999e+19, 123456789012345679,
-        // 1.5e+300, 9007199254740995, -1 (1e-400 and 1e-19 are aligned),
-        // 1000000000000001, 1.7976931348623157e308 (unchanged) and -1.
+        // Chrome: 1e+18, -1e+18, 1e+18, 9.99999999999999999e+19,
+        // 123456789012345679, 1.5e+300, 9007199254740995,
+        // 12345678901234569, 10000000000000001, -1 (1e-400 and 1e-19 are
+        // aligned), 1.7976931348623157e308 (unchanged), 1 and -1. Chrome
+        // steps `1000000000000000.5` exactly (1000000000000001), but
+        // non-integral values from 10^15 are refused with the rest.
         for (value, direction) in [
             ("999999999999999999", Up),
+            ("-999999999999999999", Down),
+            ("1e18", Down),
             ("99999999999999999999", Up),
             ("123456789012345678.5", Up),
             ("1.5e300", Up),
             ("9007199254740993.5", Up),
+            ("12345678901234567.5", Up),
+            ("9999999999999999.5", Up),
             ("1e-400", Down),
             ("1e-19", Down),
-            ("1000000000000000", Up),
             ("1.7976931348623157e308", Up),
+            ("1.7976931348623158e308", Up),
             ("0.0000000000000000000005e20", Down),
+            ("1000000000000000.5", Up),
         ] {
             assert_eq!(
                 step(value, direction),
@@ -332,5 +384,52 @@ mod tests {
         }
         // Trailing typed zeros past 18 digits are exact in Blink too.
         assert_eq!(step("1.50000000000000000000000", Up).as_deref(), Ok("2"));
+    }
+
+    /// Chrome 156 keeps a valid assigned value and empties an invalid one.
+    #[test]
+    fn validity_follows_chrome_sanitization() {
+        for value in [
+            "0",
+            "-0",
+            "1.5",
+            ".5",
+            "-.5",
+            "1.e5",
+            "1E3",
+            "1e+3",
+            "5e-1",
+            "0e99999",
+            "1e-400",
+            "1e308",
+            "1.7976931348623157e308",
+            "1.7976931348623158e308",
+        ] {
+            assert!(is_valid(value), "{value}");
+        }
+        for value in [
+            "",
+            "1.",
+            "5.",
+            "+5",
+            " 5",
+            "5 ",
+            "1,000",
+            "12e",
+            "1e+",
+            ".e5",
+            "-",
+            ".",
+            "--5",
+            "0x10",
+            "Infinity",
+            "NaN",
+            "1e309",
+            "1e99999",
+            "1.7976931348623159e308",
+            "-1.7976931348623159e308",
+        ] {
+            assert!(!is_valid(value), "{value}");
+        }
     }
 }

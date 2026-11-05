@@ -2,8 +2,10 @@
 //! native theme, disabled colors, placeholder and default focus ring) and
 //! `input type=number` stepping, for `scripts/test-native-controls.mjs`.
 //! Usage: native_controls_probe [SCALE]
-use varta_common::view::{Attribute, Command, CssProperty as P, Tag};
-use varta_view::{Access, BatchWriter as B, Broker, Input, Target, TextFont, TextMeasurer, View};
+use varta_common::view::{Attribute, Command, CssProperty as P, EventKind, Tag};
+use varta_view::{
+    Access, BatchWriter as B, Broker, Filter, Input, Target, TextFont, TextMeasurer, View,
+};
 
 struct Denied;
 impl Broker for Denied {
@@ -493,9 +495,12 @@ const CASES: &[&str] = &[
 ];
 
 /// `input type=number` values set by the guest and the Up/Down presses
-/// (`Alt+` holds Alt) replayed on a focused field, with the caret at the end.
-/// Values Chrome steps in its 18-digit decimal with precision loss are
-/// refused natively and are not listed (see `number_step`'s unit tests).
+/// (`Shift+`, `Ctrl+`, `Meta+` and `Alt+` prefixes hold modifiers) replayed
+/// on a focused field, with the caret at the end. Values Chrome steps in its
+/// 18-digit decimal with precision loss are refused natively and are not
+/// listed (see `number_step`'s unit tests). Chrome sanitizes an assigned
+/// value, so an invalid row steps from the empty string there; the oracle
+/// checks native validity against that sanitization separately.
 const STEPS: &[(&str, &[&str])] = &[
     ("", &["ArrowUp"]),
     ("", &["ArrowDown", "ArrowDown"]),
@@ -529,16 +534,115 @@ const STEPS: &[(&str, &[&str])] = &[
     ("999999999999999.0", &["ArrowUp"]),
     ("41", &["Alt+ArrowDown"]),
     ("41", &["Alt+ArrowUp"]),
+    (
+        "41",
+        &["Shift+ArrowUp", "Shift+ArrowDown", "Shift+ArrowDown"],
+    ),
+    ("41", &["Ctrl+ArrowUp", "Ctrl+ArrowDown", "Ctrl+ArrowDown"]),
+    ("41", &["Meta+ArrowUp", "Meta+ArrowDown", "Meta+ArrowDown"]),
+    ("41", &["Shift+Alt+ArrowUp", "Ctrl+Alt+ArrowDown"]),
+    ("1000000000000000", &["ArrowUp"]),
+    ("99999999999999999", &["ArrowUp"]),
+    ("-999999999999999998", &["ArrowDown"]),
+    ("123456789012345678.0", &["ArrowUp"]),
+    ("999999999999999.01", &["ArrowDown"]),
+];
+
+/// Values whose validity under Chrome's number sanitization is compared
+/// with [`varta_view::number_value_is_valid`] (besides every [`STEPS`] value).
+const GRAMMAR: &[&str] = &[
+    "0",
+    "-0",
+    ".5",
+    "1.",
+    "1.e5",
+    "1E3",
+    "1e+3",
+    "1e-0",
+    "0e99999",
+    "1e-400",
+    "1e308",
+    "1.7976931348623157e308",
+    "1.7976931348623158e308",
+    "1.7976931348623159e308",
+    "-1.7976931348623159e308",
+    "1e99999",
+    "1e",
+    "1e+",
+    ".e5",
+    "-",
+    ".",
+    "--5",
+    "0x10",
+    "Infinity",
+    "NaN",
+    "5 ",
+    "\u{a0}5",
+    "٥",
+    "1_000",
 ];
 
 const NUMBER_FIELD: u32 = 2;
 
-/// The native value after replaying `keys` on a number field holding `value`.
-fn stepped(value: &str, keys: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+/// Handler ids of the number field's `input` and `change` listeners.
+const INPUT_HANDLER: u32 = 1;
+const CHANGE_HANDLER: u32 = 2;
+
+/// A pressed key with its held modifiers: `Shift+Alt+ArrowUp`.
+struct Press<'a> {
+    key: &'a str,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    meta: bool,
+}
+impl<'a> Press<'a> {
+    fn parse(pressed: &'a str) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut parts = pressed.split('+').collect::<Vec<_>>();
+        let key = parts.pop().ok_or("empty key press")?;
+        let mut press = Press {
+            key,
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: false,
+        };
+        for modifier in parts {
+            let held = match modifier {
+                "Shift" => &mut press.shift,
+                "Ctrl" => &mut press.ctrl,
+                "Alt" => &mut press.alt,
+                "Meta" => &mut press.meta,
+                _ => return Err(format!("unknown modifier in {pressed}").into()),
+            };
+            *held = true;
+        }
+        Ok(press)
+    }
+}
+
+/// The native value after replaying `keys` on a number field holding
+/// `value`, and the `input`/`change` events those keys dispatched.
+fn stepped(
+    value: &str,
+    keys: &[&str],
+) -> Result<(String, Vec<&'static str>), Box<dyn std::error::Error>> {
     let mut b = B::new();
     b.create_element(NUMBER_FIELD, Tag::Input)
         .set_attribute(NUMBER_FIELD, Attribute::Type, "number")
         .set_value(NUMBER_FIELD, value, 0)
+        .listen(
+            NUMBER_FIELD,
+            EventKind::Input,
+            INPUT_HANDLER,
+            Filter::default(),
+        )
+        .listen(
+            NUMBER_FIELD,
+            EventKind::Change,
+            CHANGE_HANDLER,
+            Filter::default(),
+        )
         .insert(1, NUMBER_FIELD, 0);
     let mut view = View::default();
     view.commit(&b.finish(), false, &mut Denied)?;
@@ -552,27 +656,35 @@ fn stepped(value: &str, keys: &[&str]) -> Result<String, Box<dyn std::error::Err
         },
         &mut Denied,
     )?;
-    for key in keys {
-        let (alt, key) = key
-            .strip_prefix("Alt+")
-            .map_or((false, *key), |key| (true, key));
+    view.drain();
+    // The host delivers each key's events before the next key, so a pending
+    // `input` is not coalesced with the next step's.
+    let mut events = Vec::new();
+    for pressed in keys {
+        let press = Press::parse(pressed)?;
         view.input(
             &Input::Key {
                 target: target.clone(),
-                key: key.into(),
-                shift: false,
-                ctrl: false,
-                alt,
-                meta: false,
+                key: press.key.into(),
+                shift: press.shift,
+                ctrl: press.ctrl,
+                alt: press.alt,
+                meta: press.meta,
                 composing: false,
             },
             &mut Denied,
         )?;
+        events.extend(
+            view.drain()
+                .into_iter()
+                .map(|delivery| delivery.record.kind.name()),
+        );
     }
-    Ok(view.snapshot()["tree"]["children"][0]["value"]
+    let value = view.snapshot()["tree"]["children"][0]["value"]
         .as_str()
         .ok_or("number field value")?
-        .to_owned())
+        .to_owned();
+    Ok((value, events))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -646,9 +758,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let steps = STEPS
         .iter()
         .map(|(value, keys)| {
-            Ok(serde_json::json!({"value": value, "keys": keys, "native": stepped(value, keys)?}))
+            let (native, events) = stepped(value, keys)?;
+            Ok(serde_json::json!({
+                "value": value,
+                "keys": keys,
+                "native": native,
+                "events": events,
+                "valid": varta_view::number_value_is_valid(value),
+            }))
         })
         .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let grammar = GRAMMAR
+        .iter()
+        .map(|value| {
+            serde_json::json!({"value": value, "valid": varta_view::number_value_is_valid(value)})
+        })
+        .collect::<Vec<_>>();
     let output = serde_json::to_string(&serde_json::json!({
         "family": FAMILY,
         "font": FONT,
@@ -657,6 +782,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "viewport": {"width": width, "height": height},
         "cases": cases,
         "steps": steps,
+        "grammar": grammar,
     }))?;
     use std::io::Write;
     std::io::stdout().lock().write_all(output.as_bytes())?;

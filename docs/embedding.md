@@ -2736,7 +2736,10 @@ draft.
   counter without clearing existing entries. Permission/platform refusals never
   enter the successful-open history. Retention does not change action status or
   broker decisions. Clipboard diagnostics retain the last value under the existing
-  per-value limit; the prompt counter saturates. Browser permission audits keep
+  per-value limit; the prompt counter saturates. `stepsRefused`, present only
+after a refusal, counts number-field Up/Down presses native stepping refused
+outside its exact range (saturating); the browser host keeps Chrome's stepping
+and never reports it. Browser permission audits keep
   their separate retention contract; these native diagnostics do not impose a
   browser URL-action count limit.
 - **Parsed stylesheet work.** The limits table gives a work allowance and one

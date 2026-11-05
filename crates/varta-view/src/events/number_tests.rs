@@ -188,13 +188,28 @@ fn alt_down_inactive_fields_and_inexact_values_do_not_step() {
     assert_eq!(value(&view), "41");
     key_with(&mut view, "ArrowUp", true);
     assert_eq!(value(&view), "42");
-    // A value Chrome would step with Decimal precision loss is refused.
+    // A value Chrome would print in exponent form is refused, and the
+    // snapshot counts each refusal for the host.
     let mut view = number("999999999999999999", None);
     select_end(&mut view);
     kinds(&mut view);
+    assert!(view.snapshot().get("stepsRefused").is_none());
     key(&mut view, "ArrowUp");
     assert_eq!(value(&view), "999999999999999999");
     assert!(kinds(&mut view).is_empty());
+    assert_eq!(view.snapshot()["stepsRefused"], 1);
+    key(&mut view, "ArrowUp");
+    assert_eq!(view.snapshot()["stepsRefused"], 2);
+    // Down from it is exact, and does not add to the count.
+    key(&mut view, "ArrowDown");
+    assert_eq!(value(&view), "999999999999999998");
+    assert_eq!(view.snapshot()["stepsRefused"], 2);
+    view.effects.steps_refused = u64::MAX;
+    key(&mut view, "ArrowUp");
+    key(&mut view, "ArrowUp");
+    key(&mut view, "ArrowUp");
+    assert_eq!(value(&view), "999999999999999999");
+    assert_eq!(view.snapshot()["stepsRefused"], u64::MAX);
     // Up/Down do not navigate a number field's text.
     assert!(matches!(
         view.input(

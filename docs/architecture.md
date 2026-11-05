@@ -13400,7 +13400,8 @@ no `step`, `min` or `max` on inputs, so the step is Chrome's default 1 with
 step base 0 and no bounds; the attributes are an open L0 item. The value is
 read with Chrome's number sanitization (an optional `-`, digits with an
 optional fraction or a fraction alone, an optional exponent, no trailing `.`;
-beyond `f64::MAX` it is invalid), and an invalid or empty value counts as 0.
+a value that rounds beyond `f64::MAX` is invalid), and an invalid or empty
+value counts as 0; `varta_view::number_value_is_valid` exposes this grammar.
 A value within 2⁻²⁴ of an integer (Blink's acceptable step error) becomes that
 integer ± 1; any other value rounds to the next integer above (Up) or below
 (Down). The result is written as a plain integer string (`0`, never `-0`)
@@ -13410,9 +13411,12 @@ read-only field does not step, and `Input::TextNavigate` refuses Up/Down on a
 number field. Chrome computes the step in Blink's 18-digit decimal, which
 truncates long values and prints large results in exponent form; native
 stepping is exact and admits only values whose first 18 typed digits hold all
-their nonzero digits, below 10¹⁵ in magnitude with at most 18 fraction
-digits, and results up to 10¹⁵. Any other valid value is refused
-(`number_step::StepRefusal::OutsideExactRange`): the key changes nothing.
+their nonzero digits: integers below 10¹⁸ in magnitude, other values below
+10¹⁵ with at most 18 fraction digits, and results below 10¹⁸ (Chrome prints
+10¹⁸ as `1e+18`). Any other valid value is refused
+(`number_step::StepRefusal::OutsideExactRange`): the key changes nothing, and
+the view's platform effects count the refusal as `stepsRefused` (present in the
+snapshot only after a refusal, saturating), so the host can see it.
 Two differences from Chrome remain: Chrome converts typed text through the
 platform locale before sanitizing it (so typed `5.`, `+5` or `1,000` step from
 5 or 1000 there), whereas L0 keeps the typed string and native reads it as
