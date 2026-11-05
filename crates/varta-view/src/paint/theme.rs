@@ -351,24 +351,38 @@ fn checkable(
     Ok(())
 }
 
-/// Chrome's default `:focus-visible { outline: auto }` ring of a focused
-/// control without author outline declarations: a two-pixel ring centered
-/// on the border box outset by the user-agent `outline-offset`, less one
-/// pixel when every border is at least one pixel wide, with the control's
-/// own corner radius (theme part or author) at its center. Returns the
-/// ring's outer rectangle and radii; it is painted as a two-pixel border.
+/// Author longhands that keep `outline-style: auto` but restyle Chrome's
+/// ring: `outline-color` and `outline-offset` replace the user agent's.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(super) struct AuthorRing {
+    pub color: Option<Color>,
+    pub offset: Option<f32>,
+}
+
+/// Chrome's `:focus-visible { outline: auto }` ring of a focused control: a
+/// two-pixel ring (whatever `outline-width` says) centered on the border box
+/// outset by the `outline-offset` (the author's, else the user agent's: 2px
+/// for checkboxes and radios, otherwise 0), less one pixel when every border
+/// is at least one pixel wide, in the author's `outline-color` or
+/// `#005fcc`. A themed control keeps its theme part radius at the ring's
+/// center whatever the offset (a radio's is half its longer side, limited to
+/// the ring); an author radius is outset by half the ring. Returns the ring's outer
+/// rectangle and radii; it is painted as a two-pixel border.
 pub(super) fn focus_ring(
     kind: ControlKind,
     themed: bool,
     rect: BoxRect,
     widths: [f32; 4],
     author_radii: Corners,
+    author: AuthorRing,
 ) -> (BoxRect, Corners, f32, Color) {
-    let offset = if matches!(kind, ControlKind::Checkbox | ControlKind::Radio) {
-        CHECKABLE_FOCUS_OFFSET
-    } else {
-        0.0
-    };
+    let offset = author.offset.unwrap_or(
+        if matches!(kind, ControlKind::Checkbox | ControlKind::Radio) {
+            CHECKABLE_FOCUS_OFFSET
+        } else {
+            0.0
+        },
+    );
     let offset = if widths
         .iter()
         .all(|width| *width >= FOCUS_RING_INSIDE_BORDER)
@@ -379,27 +393,27 @@ pub(super) fn focus_ring(
     };
     let half = FOCUS_RING_WIDTH / 2.0;
     let outer = offset + half;
-    // The ring's center keeps the control's own radius whatever the offset.
-    let radii = if themed {
-        let part = if kind == ControlKind::Radio {
-            rect.width.min(rect.height) / 2.0
-        } else {
-            PART_RADIUS
-        };
-        round(part + half)
-    } else {
-        author_radii.outset(half, half)
+    let ring = BoxRect {
+        x: rect.x - outer,
+        y: rect.y - outer,
+        width: rect.width + 2.0 * outer,
+        height: rect.height + 2.0 * outer,
+    };
+    let radii = match (themed, kind) {
+        // Chrome's radio part radius is half the longer side; the ring's
+        // rounded rectangle limits it to half the ring's shorter side, so a
+        // stretched radio's ring is a stadium.
+        (true, ControlKind::Radio) => {
+            round((rect.width.max(rect.height) / 2.0 + half).min(ring.width.min(ring.height) / 2.0))
+        }
+        (true, _) => round(PART_RADIUS + half),
+        (false, _) => author_radii.outset(half, half),
     };
     (
-        BoxRect {
-            x: rect.x - outer,
-            y: rect.y - outer,
-            width: rect.width + 2.0 * outer,
-            height: rect.height + 2.0 * outer,
-        },
+        ring,
         radii,
         FOCUS_RING_WIDTH,
-        FOCUS_RING.color(),
+        author.color.unwrap_or(FOCUS_RING.color()),
     )
 }
 
@@ -536,6 +550,17 @@ mod tests {
         assert_eq!(pixel(&ring, 100, 12), rgb(FIELD_FILL));
         let none = focused(Some("none"));
         assert_eq!(pixel(&none, 100, 10), rgb(FRAME));
+        // The shorthand without `solid` sets the style to `none` as well.
+        let shorthand = focused(Some("2px #ff0000"));
+        assert_eq!(pixel(&shorthand, 100, 10), rgb(FRAME));
+        assert_eq!(pixel(&shorthand, 100, 8), [0xff; 3]);
+        assert!(matches!(
+            AuthorRing::default(),
+            AuthorRing {
+                color: None,
+                offset: None
+            }
+        ));
         // A checkable's ring sits outside its square, around its radius.
         let (outer, radii, width, _) = focus_ring(
             ControlKind::Checkbox,
@@ -548,9 +573,64 @@ mod tests {
             },
             [0.0; 4],
             Corners::default(),
+            AuthorRing::default(),
         );
         assert_eq!((outer.x, outer.width, width), (7.0, 19.0, 2.0));
         assert_eq!(radii, round(PART_RADIUS + 1.0));
+    }
+
+    #[test]
+    fn author_outline_longhands_without_a_style_restyle_the_auto_ring() {
+        let focused = |declarations: &[(P, &str)]| {
+            raster(|b| {
+                b.create_element(3, Tag::Input).insert(2, 3, 0);
+                for (property, value) in declarations {
+                    b.set_style(3, *property, value);
+                }
+                b.command(3, Command::Focus, 0.0);
+            })
+        };
+        const RED: [u8; 3] = [0xff, 0, 0];
+        // Only a color: the ring keeps its place and takes the color.
+        let colored = focused(&[(P::OutlineColor, "#ff0000")]);
+        assert_eq!(pixel(&colored, 100, 10), RED);
+        assert_eq!(pixel(&colored, 100, 11), RED);
+        assert_eq!(pixel(&colored, 100, 12), rgb(FIELD_FILL));
+        // An offset moves it out (3px, less the pixel inside the border); a
+        // width does not thicken it.
+        let moved = focused(&[
+            (P::OutlineColor, "#ff0000"),
+            (P::OutlineOffset, "3px"),
+            (P::OutlineWidth, "5px"),
+        ]);
+        assert_eq!(pixel(&moved, 100, 6), [0xff; 3]);
+        assert_eq!(pixel(&moved, 100, 7), RED);
+        assert_eq!(pixel(&moved, 100, 8), RED);
+        assert_eq!(pixel(&moved, 100, 9), [0xff; 3]);
+        assert_eq!(pixel(&moved, 100, 10), rgb(FRAME));
+        // `currentcolor` is the control's own user-agent color.
+        let current = focused(&[(P::OutlineColor, "currentcolor")]);
+        assert_eq!(pixel(&current, 100, 10), rgb(CONTROL_TEXT));
+        // A stretched radio's ring is limited to a stadium.
+        let (ring, radii, _, color) = focus_ring(
+            ControlKind::Radio,
+            true,
+            BoxRect {
+                x: 10.0,
+                y: 10.0,
+                width: 13.0,
+                height: 62.0,
+            },
+            [0.0; 4],
+            Corners::default(),
+            AuthorRing {
+                color: Some(Color::BLACK),
+                offset: Some(0.0),
+            },
+        );
+        assert_eq!((ring.width, ring.height), (15.0, 64.0));
+        assert_eq!(radii, round(7.5));
+        assert_eq!(color, Color::BLACK);
     }
 
     #[test]

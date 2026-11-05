@@ -136,7 +136,10 @@ pub(crate) fn truncate(
     text.push_str(marker);
     let mut paths = rich.paths.clone();
     paths.insert(root, Vec::new());
+    let mut line_heights = rich.line_heights.clone();
+    line_heights.insert(root, options.line_height.unwrap_or_default());
     let flow = ContentFlow {
+        line_heights,
         spans,
         paths,
         nodes: rich.nodes.clone(),

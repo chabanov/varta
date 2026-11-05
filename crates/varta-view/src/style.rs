@@ -457,7 +457,8 @@ pub(crate) enum Intrinsic {
     /// `columns` rounded average characters plus
     /// [`UA_TEXTAREA_SCROLLBAR_GUTTER_PX`] wide and `rows` lines high.
     Lines { columns: u32, rows: u32 },
-    /// A fixed border-box square that ignores padding and borders.
+    /// A square intrinsic content size (the theme square of a checkable),
+    /// which stretch alignment may grow; padding and borders are zero.
     Square(f32),
     /// Not modelled natively: an unsized control is refused.
     Refused,

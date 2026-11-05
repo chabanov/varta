@@ -922,12 +922,12 @@ fn outline_used_length(value: f32) -> f32 {
     }
 }
 
-fn outline(
-    tree: &Tree,
-    env: &Environment,
-    id: u32,
-) -> Result<Option<(f32, f32, Color)>, PaintError> {
-    let units = Units::new(env).ok_or(layout::LayoutError::RootFont)?;
+/// The cascaded outline longhands of `id`: each component with the property
+/// that declared it (a longhand or the `outline` shorthand) and its value,
+/// `None` when a variable leaves it invalid at computed-value time.
+type OutlineValues = BTreeMap<CssProperty, (CssProperty, Option<String>)>;
+
+fn outline_values(tree: &Tree, env: &Environment, id: u32) -> Result<OutlineValues, PaintError> {
     let variables = style::Variables::new(tree, id, env);
     let mut values = BTreeMap::new();
     for (name, raw) in tree.cascade_refs(id, env) {
@@ -947,6 +947,60 @@ fn outline(
     {
         values.insert(*component, (*property, variables.property(*property, raw)));
     }
+    Ok(values)
+}
+
+/// A cascaded `outline-offset` as a used length (`None` when undeclared; a
+/// value invalid at computed-value time is the initial `0`).
+fn outline_offset(
+    values: &OutlineValues,
+    units: Units,
+    id: u32,
+) -> Result<Option<f32>, PaintError> {
+    match values.get(&CssProperty::OutlineOffset) {
+        None => Ok(None),
+        Some((_, None)) => Ok(Some(0.0)),
+        Some((_, Some(raw))) if raw == "0" => Ok(Some(0.0)),
+        Some((_, Some(raw))) => units
+            .pixels(raw, true)
+            .map(|offset| Some(outline_used_length(offset)))
+            .ok_or(PaintError::Unsupported(id)),
+    }
+}
+
+/// A cascaded outline color (`currentcolor` when undeclared or invalid at
+/// computed-value time).
+fn outline_color(
+    tree: &Tree,
+    env: &Environment,
+    values: &OutlineValues,
+    id: u32,
+) -> Result<Color, PaintError> {
+    let raw_color = values
+        .get(&CssProperty::OutlineColor)
+        .and_then(|(property, raw)| raw.as_deref().map(|raw| (*property, raw)))
+        .map_or("currentcolor", |(property, raw)| {
+            if property == CssProperty::Outline {
+                shorthand_color(raw)
+            } else {
+                raw
+            }
+        });
+    if raw_color == "currentcolor" {
+        current_color(tree, env, id)
+    } else {
+        color(raw_color)
+    }
+    .ok_or(PaintError::Unsupported(id))
+}
+
+fn outline(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+) -> Result<Option<(f32, f32, Color)>, PaintError> {
+    let units = Units::new(env).ok_or(layout::LayoutError::RootFont)?;
+    let values = outline_values(tree, env, id)?;
     let get = |component| {
         values
             .get(&component)
@@ -990,29 +1044,17 @@ fn outline(
     if !solid || width == 0.0 {
         return Ok(None);
     }
-    let raw_color = get(CssProperty::OutlineColor).map_or("currentcolor", |(property, raw)| {
-        if property == CssProperty::Outline {
-            shorthand_color(raw)
-        } else {
-            raw
-        }
-    });
-    let color = if raw_color == "currentcolor" {
-        current_color(tree, env, id)
-    } else {
-        color(raw_color)
-    }
-    .ok_or(PaintError::Unsupported(id))?;
-    let offset = match get(CssProperty::OutlineOffset) {
-        Some((_, "0")) | None => 0.0,
-        Some((_, raw)) => units.pixels(raw, true).ok_or(PaintError::Unsupported(id))?,
-    };
-    Ok(Some((width, outline_used_length(offset), color)))
+    let color = outline_color(tree, env, &values, id)?;
+    let offset = outline_offset(&values, units, id)?.unwrap_or(0.0);
+    Ok(Some((width, offset, color)))
 }
 
 /// Chrome's default focus ring ([`theme::focus_ring`]) when `id` is a focused
-/// form control without author outline declarations. Native `:focus-visible`
-/// matches any focus, so the ring follows the same rule.
+/// form control whose `outline-style` stays the user agent's `auto`: no author
+/// `outline` shorthand or `outline-style` applies. An author `outline-color`
+/// or `outline-offset` replaces the ring's color or offset, as in Chrome; an
+/// author `outline-width` does not change the auto ring's width. Native
+/// `:focus-visible` matches any focus, so the ring follows the same rule.
 fn default_focus_ring(
     tree: &Tree,
     env: &Environment,
@@ -1029,13 +1071,18 @@ fn default_focus_ring(
     let Some(kind) = style::ControlKind::of(element) else {
         return Ok(None);
     };
-    let authored = !element.outline_inline.values.is_empty()
-        || tree.cascade_refs(id, env).into_iter().any(|(name, _)| {
-            matches!(name, Name::Property(property) if !outline_components(*property).is_empty())
-        });
-    if authored {
+    let values = outline_values(tree, env, id)?;
+    // A declared style (solid or none, from either form) ends `auto`.
+    if values.contains_key(&CssProperty::OutlineStyle) {
         return Ok(None);
     }
+    let author = theme::AuthorRing {
+        color: values
+            .contains_key(&CssProperty::OutlineColor)
+            .then(|| outline_color(tree, env, &values, id))
+            .transpose()?,
+        offset: outline_offset(&values, units, id)?,
+    };
     let properties = tree.computed_read(id, env);
     let paint_bounds = snap::rect(bounds);
     let radii = properties
@@ -1052,6 +1099,7 @@ fn default_focus_ring(
         paint_bounds,
         layout::border_widths(tree, env, id)?,
         radii,
+        author,
     )))
 }
 

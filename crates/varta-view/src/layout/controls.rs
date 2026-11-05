@@ -291,9 +291,8 @@ pub(crate) fn control_finish(
     Ok(())
 }
 
-/// Apply `defaults`' padding to the sides without an author value, and size
-/// an automatic checkable square. Author declarations applied afterwards
-/// replace these values.
+/// Apply `defaults`' padding to the sides without an author value. Author
+/// declarations applied afterwards replace these values.
 pub(crate) fn apply_defaults(
     defaults: &ControlDefaults,
     properties: &BTreeMap<CssProperty, String>,
@@ -316,30 +315,22 @@ pub(crate) fn apply_defaults(
             **slot = length(value);
         }
     }
-    // The theme's square is also its content-based minimum, so a flex item
-    // checkable does not shrink below it unless the author allows it.
-    if let Intrinsic::Square(side) = defaults.intrinsic {
-        for (size, minimum, value, min_value) in [
-            (
-                &mut style.size.width,
-                &mut style.min_size.width,
-                CssProperty::Width,
-                CssProperty::MinWidth,
-            ),
-            (
-                &mut style.size.height,
-                &mut style.min_size.height,
-                CssProperty::Height,
-                CssProperty::MinHeight,
-            ),
-        ] {
-            if automatic(properties.get(&value)) {
-                *size = length(side);
-                if automatic(properties.get(&min_value)) {
-                    *minimum = length(side);
-                }
-            }
-        }
+}
+
+/// A checkbox or radio's theme square as its intrinsic content size (Blink's
+/// `LayoutTheme` sizes it as an intrinsic, not a specified, size): stretch
+/// alignment in a flex line or grid area still grows an automatic axis, and
+/// the square is also the automatic minimum, so a flex item does not shrink
+/// below it unless the author allows it. Author sizes win as known sizes.
+pub(crate) fn square(tree: &Tree, id: u32) -> Option<ControlSize> {
+    let element = tree.element(id)?;
+    match style::control_defaults(ControlKind::of(element)?).intrinsic {
+        Intrinsic::Square(side) => Some(ControlSize {
+            width: side,
+            min_width: side,
+            height: side,
+        }),
+        _ => None,
     }
 }
 
@@ -446,6 +437,59 @@ mod tests {
         let shrunk = boxes(&row).unwrap();
         assert_eq!(size(shrunk[&3]), (7.0, 34.0));
         assert_eq!(size(shrunk[&4]), (13.0, 13.0));
+    }
+
+    /// Chrome 156: beside a 4-row textarea in a row with the default
+    /// `align-items` (stretch) a checkbox is 13×62, and in a stretch grid
+    /// area 150×34; an author size still wins.
+    #[test]
+    fn checkable_squares_are_intrinsic_sizes_that_stretch() {
+        let row = view("flex", |b| {
+            b.remove_style(2, P::AlignItems);
+            b.create_element(3, Tag::Textarea)
+                .set_attribute(3, Attribute::Rows, "4")
+                .insert(2, 3, 0);
+            for (id, kind) in [(4, "checkbox"), (5, "radio")] {
+                b.create_element(id, Tag::Input)
+                    .set_attribute(id, Attribute::Type, kind)
+                    .insert(2, id, 0);
+            }
+            b.create_element(6, Tag::Input)
+                .set_attribute(6, Attribute::Type, "checkbox")
+                .set_style(6, P::AlignSelf, "center")
+                .insert(2, 6, 0);
+        });
+        let sizes = boxes(&row).unwrap();
+        assert_eq!(size(sizes[&3]), (162.0, 62.0));
+        assert_eq!(size(sizes[&4]), (13.0, 62.0));
+        assert_eq!(size(sizes[&5]), (13.0, 62.0));
+        assert_eq!(size(sizes[&6]), (13.0, 13.0));
+        let grid = view("grid", |b| {
+            b.remove_style(2, P::AlignItems)
+                .set_style(2, P::GridTemplateColumns, "150px 150px")
+                .set_style(2, P::GridTemplateRows, "34px");
+            b.create_element(3, Tag::Input)
+                .set_attribute(3, Attribute::Type, "radio")
+                .insert(2, 3, 0);
+            b.create_element(4, Tag::Input)
+                .set_attribute(4, Attribute::Type, "checkbox")
+                .set_style(4, P::Display, "block")
+                .set_style(4, P::Border, "1px solid #000000")
+                .set_style(4, P::Width, "20px")
+                .set_style(4, P::Height, "20px")
+                .set_style(4, P::MinWidth, "0")
+                .set_style(4, P::MinHeight, "0")
+                .set_style(4, P::Padding, "0")
+                .insert(2, 4, 0);
+        });
+        let sizes = boxes(&grid).unwrap();
+        assert_eq!(size(sizes[&3]), (150.0, 34.0));
+        assert_eq!(size(sizes[&4]), (20.0, 20.0));
+        // The geometry-only path needs no font for a square.
+        assert_eq!(
+            size(grid.layout_boxes(VIEWPORT.0, VIEWPORT.1).unwrap()[&3]),
+            (150.0, 34.0)
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use crate::style::Environment;
 use crate::text::{TextSpan, WhiteSpaceMode, edges::TextEdge};
 use crate::tree::{Content, Tree};
 use crate::{TextMeasureError, TextMeasurer, TextMetrics};
-use parley::{InlineBoxKind, Layout, LineItem};
+use parley::{InlineBoxKind, Layout, LineHeight, LineItem};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -46,13 +46,35 @@ struct Vertical {
 }
 impl Vertical {
     fn run(run: &parley::Run<'_, u32>) -> Self {
+        Self::with_line_height(run, run.metrics().line_height)
+    }
+    fn with_line_height(run: &parley::Run<'_, u32>, line_height: f32) -> Self {
         let m = run.metrics();
-        let above = m.ascent.round()
-            + ((m.line_height - m.ascent.round() - m.descent.round()) * 0.5).floor();
+        let above =
+            m.ascent.round() + ((line_height - m.ascent.round() - m.descent.round()) * 0.5).floor();
         Self {
             above,
-            below: m.line_height - above,
+            below: line_height - above,
         }
+    }
+    /// A run's vertical extent with the line height of the span that owns
+    /// its first cluster. Parley's run metrics take the line height of the
+    /// style that ends the run (its item keeps the next style's index when a
+    /// font-size change breaks it), which differs once adjacent spans carry
+    /// different explicit line heights (control labels).
+    fn owned(run: &parley::Run<'_, u32>, line_heights: &BTreeMap<u32, LineHeight>) -> Self {
+        let owner = run
+            .clusters()
+            .next()
+            .and_then(|cluster| line_heights.get(&cluster.first_style().brush));
+        let m = run.metrics();
+        let line_height = match owner {
+            Some(LineHeight::Absolute(value)) => *value,
+            Some(LineHeight::FontSizeRelative(value)) => value * run.font_size(),
+            Some(LineHeight::MetricsRelative(value)) => (m.ascent + m.descent + m.leading) * value,
+            None => m.line_height,
+        };
+        Self::with_line_height(run, line_height)
     }
 }
 
@@ -63,6 +85,8 @@ pub(crate) struct ContentFlow {
     pub needs_paint_order: bool,
     hidden: BTreeSet<u32>,
     strut: Vertical,
+    /// Each text span owner's line height, for [`Vertical::owned`].
+    line_heights: BTreeMap<u32, LineHeight>,
     font_boxes: BTreeMap<u32, FontBox>,
     empty: BTreeMap<usize, Vec<u32>>,
     /// Nonzero horizontal decoration edges in source order, and the physical
@@ -379,6 +403,8 @@ pub(crate) fn collect(
         return Ok(None);
     }
     let (options, families) = layout::text_style(tree, env, root, size, measurer)?;
+    // Control labels use Chrome's whole-pixel line spacing in rich flows too.
+    let options = layout::controls::control_line_height(tree, root, measurer, &families, options)?;
     let mut text = String::new();
     let mut spans = Vec::<TextSpan>::new();
     let mut paths = BTreeMap::new();
@@ -476,6 +502,8 @@ pub(crate) fn collect(
                 });
                 anchors.insert(id, text.len() + usize::from(whitespace.is_some()));
                 let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
+                let style =
+                    layout::controls::control_line_height(tree, id, measurer, &names, style)?;
                 let (_, sample) = measurer
                     .shape_styled(" ", None, &names, style)
                     .map_err(LayoutError::text(id))?;
@@ -532,6 +560,7 @@ pub(crate) fn collect(
         // Each text node keeps its own white-space mode: collapsing and
         // preserving modes mix in one flow, as CSS Text 3 defines.
         let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
+        let style = layout::controls::control_line_height(tree, id, measurer, &names, style)?;
         let index = spans.len();
         spans.push(TextSpan {
             owner: id,
@@ -620,7 +649,12 @@ pub(crate) fn collect(
             empty.entry(position.min(text.len())).or_default().push(id);
         }
     }
+    let line_heights = spans
+        .iter()
+        .map(|span| (span.owner, span.options.line_height.unwrap_or_default()))
+        .collect();
     let rich = Arc::new(ContentFlow {
+        line_heights,
         spans,
         paths,
         nodes,
@@ -779,7 +813,7 @@ impl ContentFlow {
             let mut vertical = self.strut;
             for run in line.runs() {
                 measurer.charge_inline_work(1)?;
-                let m = Vertical::run(&run);
+                let m = Vertical::owned(&run, &self.line_heights);
                 vertical.above = vertical.above.max(m.above);
                 vertical.below = vertical.below.max(m.below);
                 for cluster in run.clusters() {

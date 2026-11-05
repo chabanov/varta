@@ -1439,6 +1439,11 @@ fn build_one(
     {
         let shape = text_metrics.get(&id).ok_or(LayoutError::Unsupported(id))?;
         engine.new_leaf_with_context(style, Measure::Text(shape.clone()))
+    } else if let Some(size) = (id != ROOT_NODE)
+        .then(|| controls::square(tree, id))
+        .flatten()
+    {
+        engine.new_leaf_with_context(style, Measure::Control(size))
     } else if controls::needs_intrinsic(tree, env, id) {
         // Without a text measurer there is no font for an intrinsic size.
         let size = measured
