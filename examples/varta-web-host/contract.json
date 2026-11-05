@@ -8034,8 +8034,19 @@
       "Event strings after the header": "key, value",
       "Placeholder: batch bytes / operations": "262144 / 16384",
       "Placeholder: live nodes / listeners": "65536 / 8192",
+      "Placeholder: tree component depth": "512",
       "Placeholder: value bytes / stylesheet bytes / pending events": "65536 / 262144 / 64",
+      "Placeholder: retained text bytes / live field reservation bytes": "8388608 / 98304",
       "Placeholder: pending `copy_text` requests": "16",
+      "Placeholder: single-select work / node visit units": "8388608 / 16",
+      "Placeholder: radio reconciliation work / node visit units": "8388608 / 16",
+      "Placeholder: potential cascade read work": "8388608",
+      "Placeholder: potential expanded component bytes": "8388608",
+      "Placeholder: potential accessible-name work": "8388608",
+      "Placeholder: accessible-name node/lookup work": "16",
+      "Host diagnostics: encoded snapshot JSON bytes": "16777216",
+      "Host diagnostics: retained opened URLs / UTF-8 bytes": "64 / 1048576",
+      "Placeholder: parsed stylesheet work / syntax node units": "8388608 / 16",
       "Placeholder: tokens of one CSS property value": "128",
       "`id` / `for` ident characters": "64",
       "Key filter: any key": "key code 0",
@@ -9554,7 +9565,7 @@
     },
     {
       "table": "embedding-net-limits",
-      "limit": "Body bytes of one `net_body_read` completion",
+      "limit": "Body bytes of one `net_body_read` completion (v37)",
       "profiles": null,
       "value": 65536,
       "sources": [
@@ -9563,7 +9574,16 @@
     },
     {
       "table": "embedding-net-limits",
-      "limit": "Body bytes of one response",
+      "limit": "Body bytes one v38 read delivers (a text read: the bytes it decodes)",
+      "profiles": null,
+      "value": 8192,
+      "sources": [
+        "net::MAX_READ_DELIVERY_BYTES"
+      ]
+    },
+    {
+      "table": "embedding-net-limits",
+      "limit": "Body bytes of one response (v37), or received while serving one read (v38)",
       "profiles": null,
       "value": 524288,
       "sources": [
@@ -9906,6 +9926,11 @@
         "raisedBy": "Transfer (head)",
         "kind": "Failed",
         "text": "request timed out"
+      },
+      {
+        "raisedBy": "Transfer (head)",
+        "kind": "Failed",
+        "text": "response content-encoding <error> was not requested"
       },
       {
         "raisedBy": "Body read",

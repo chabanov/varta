@@ -469,3 +469,59 @@ pub(crate) fn operation_deadline(context: &RuntimeContext) -> Instant {
     }
     context.deadline
 }
+
+/// The v38 inactivity rule of a transfer (`net_request_start_v2`): every
+/// wait for bytes (the head after the start, then each wait of a body read)
+/// may last one `window`, the per-turn deadline (host-capped by
+/// `budget::MAX_DEADLINE_PER_TURN_MS` and the host ceiling), and never runs
+/// past `bound`. A received chunk ends the wait, so the window renews with
+/// every chunk, and a long-lived stream lives as long as it stays active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Inactivity {
+    pub window: Duration,
+    /// The instance lifetime of a long-lived instance (none without one),
+    /// the execution deadline of a bounded run.
+    pub bound: Option<Instant>,
+}
+impl Inactivity {
+    /// When a wait that starts now ends.
+    pub fn until(&self) -> Instant {
+        let end = Instant::now() + self.window;
+        self.bound.map_or(end, |bound| end.min(bound))
+    }
+}
+
+/// The inactivity rule of a transfer started now.
+pub(crate) fn inactivity(context: &RuntimeContext) -> Inactivity {
+    Inactivity {
+        window: context.budgets.deadline_per_turn,
+        bound: if context.turns.renew_deadline {
+            context.lifetime
+        } else {
+            Some(context.deadline)
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inactivity_waits_never_pass_their_bound() {
+        const WINDOW: Duration = Duration::from_secs(60);
+        let open = Inactivity {
+            window: WINDOW,
+            bound: None,
+        };
+        let before = Instant::now();
+        let end = open.until();
+        assert!(end >= before + WINDOW && end <= Instant::now() + WINDOW);
+        let bound = Instant::now() + Duration::from_millis(1);
+        let bounded = Inactivity {
+            window: WINDOW,
+            bound: Some(bound),
+        };
+        assert_eq!(bounded.until(), bound);
+    }
+}

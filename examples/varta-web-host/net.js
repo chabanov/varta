@@ -13,6 +13,13 @@
 // headers CORS exposes and adds its own request headers, and a browser cannot
 // observe a redirect (`redirect: "manual"` yields an opaque response, reported
 // as a failure).
+// V38 rules of `net_request_start_v2` this prototype does not implement, each
+// a stated deviation (embedding.md "Transfer timing (v38)", "Per-read
+// delivery cap (v38)", "Host-owned headers and content codings (v38)"): it
+// sends a guest `User-Agent` and `Accept-Encoding` instead of ignoring them;
+// it keeps one end-to-end deadline instead of the inactivity window; it
+// bounds the whole body instead of what one read receives; and it delivers up
+// to the v37 chunk bytes per read instead of the per-read cap.
 import { ExecutionFailure } from "./errors.js";
 import { hostLimit, now } from "./context.js";
 import { parseDescriptor, descriptorRules, checkDescriptorExamples, DescriptorError } from "./net-descriptor.js";
@@ -33,8 +40,10 @@ const NET_LIMIT = {
   pending: "Requests holding a runtime slot at once",
   descriptorBytes: "Request descriptor, body included (UTF-16 bytes)",
   headerBytes: "Request header name and value bytes",
-  chunkBytes: "Body bytes of one `net_body_read` completion",
-  bodyBytes: "Body bytes of one response",
+  // The contract's rows; this host applies both as their v37 meaning to
+  // every profile (v38 deviations, stated in the header comment).
+  chunkBytes: "Body bytes of one `net_body_read` completion (v37)",
+  bodyBytes: "Body bytes of one response (v37), or received while serving one read (v38)",
 };
 
 /** Contract facts of the network imports, resolved once per host. */

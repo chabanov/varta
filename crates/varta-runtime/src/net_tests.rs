@@ -642,3 +642,317 @@ fn v37_rejects_the_byte_body_types() {
         );
     }
 }
+
+/// Test-only per-turn deadline of the long-lived transfer tests, so the v38
+/// inactivity window is far shorter than the streams; production budgets
+/// are unchanged.
+const WINDOW_MS: u64 = 500;
+/// The long stream: `EVENT_COUNT` events of `EVENT_BYTES` data bytes, each
+/// after `EVENT_PAUSE_MS`, so a chunk arrives inside every window while the
+/// stream lasts several windows and carries more than one v37 body. Events
+/// stay small, like a session stream's: a turn's guest work grows with the
+/// chunk it reads.
+const EVENT_COUNT: u64 = 144;
+const EVENT_BYTES: usize = 4 * 1024;
+const EVENT_PAUSE_MS: u64 = 12;
+/// The silence of `/stall`: several windows.
+const STALL_GAP_MS: u64 = 3 * WINDOW_MS;
+/// How many windows the long stream lasts at least.
+const STREAM_WINDOWS: u64 = 3;
+const _: () = assert!(EVENT_PAUSE_MS < WINDOW_MS);
+const _: () = assert!(EVENT_COUNT * EVENT_PAUSE_MS >= STREAM_WINDOWS * WINDOW_MS);
+const _: () =
+    assert!(EVENT_COUNT as usize * EVENT_BYTES > varta_common::net::MAX_RESPONSE_BODY_BYTES);
+
+/// `net_cases/v38/long_stream.ts` against `server`.
+fn long_stream(server: &Loopback) -> String {
+    program(include_str!("net_cases/v38/long_stream.ts"), server)
+        .replace("__COUNT__", &EVENT_COUNT.to_string())
+        .replace("__SIZE__", &EVENT_BYTES.to_string())
+        .replace("__PAUSE__", &EVENT_PAUSE_MS.to_string())
+        .replace("__GAP__", &STALL_GAP_MS.to_string())
+}
+/// Run `bytes` as an application instance with the test-only window.
+fn application(
+    bytes: &[u8],
+    requested: Vec<CapabilityGrant>,
+    ceiling: Option<Vec<CapabilityGrant>>,
+) -> RunReport {
+    let mut run = RunOptions {
+        requested,
+        ceiling,
+        ..RunOptions::default()
+    };
+    run.budgets.deadline_per_turn_ms = Some(WINDOW_MS);
+    VartaRuntime::new().run_application(
+        bytes,
+        ApplicationOptions {
+            run,
+            ..ApplicationOptions::default()
+        },
+    )
+}
+/// The lines `long_stream.ts` prints on every host.
+fn long_stream_lines() -> Vec<String> {
+    let bytes: usize = (1..=EVENT_COUNT)
+        .map(|id| crate::net_loopback::event(id, EVENT_BYTES).len())
+        .sum();
+    lines(&[
+        r#"agent: 200 {"guestAgent":false}"#,
+        "compressed: 200 compressed text no coding",
+        &format!("events: 200 {bytes} bytes, last id: {EVENT_COUNT}"),
+        "stall: TypeError terminated after data",
+    ])
+}
+
+/// V38: a server-sent event stream that lasts several per-turn deadlines
+/// and carries more than 512 KiB completes, because each wait for bytes
+/// lasts one window and every chunk renews it; a stream silent for longer
+/// than one window fails the waiting read with `response body timed out`;
+/// the guest's `User-Agent` never reaches the server.
+#[test]
+fn v38_long_lived_streams_are_bounded_by_inactivity() {
+    let server = Loopback::start();
+    let bytes = compile_with(&long_stream(&server), V38);
+    let started = std::time::Instant::now();
+    let report = application(&bytes, grants(&server), None);
+    assert!(
+        report.failure.is_none(),
+        "{:?} {:?}",
+        report.failure,
+        report.budget.map(|budget| budget.lines())
+    );
+    assert_eq!(report.output.lines, long_stream_lines());
+    // The events, then one window of silence before the stall fails.
+    let streamed = std::time::Duration::from_millis(EVENT_COUNT * EVENT_PAUSE_MS + WINDOW_MS);
+    let elapsed = started.elapsed();
+    assert!(elapsed >= streamed, "{elapsed:?}");
+    assert!(report.budget.unwrap().deadline_per_turn);
+}
+
+/// V38: the head must arrive within one window of the start.
+#[test]
+fn v38_heads_time_out_after_one_window() {
+    let server = Loopback::start();
+    let source = program(
+        r#"
+export async function main(): Promise<void> {
+  try {
+    await fetch('__BASE__/slow');
+  } catch (error) {
+    console.log(`${error instanceof TypeError} ${error instanceof Error ? error.message : ''}`);
+  }
+}
+"#,
+        &server,
+    );
+    let bytes = compile_with(&source, V38);
+    let started = std::time::Instant::now();
+    let report = application(&bytes, grants(&server), None);
+    assert!(report.failure.is_none(), "{:?}", report.failure);
+    assert_eq!(report.output.lines, lines(&["true fetch failed"]));
+    // The window ends the wait, long before the route closes its connection.
+    let waited = started.elapsed();
+    assert!(
+        waited >= std::time::Duration::from_millis(WINDOW_MS),
+        "{waited:?}"
+    );
+    assert!(waited < crate::net_loopback::SILENCE, "{waited:?}");
+}
+
+/// V38: the host ceiling still denies before any connection, recoverably.
+#[test]
+fn v38_long_lived_ceiling_denials_open_no_socket() {
+    let server = Loopback::start();
+    let source = program(
+        r#"
+export async function main(): Promise<void> {
+  try {
+    await fetch('__BASE__/events?count=1&size=1&pause=0');
+  } catch (error) {
+    console.log(error instanceof DOMException ? error.name : 'other');
+  }
+}
+"#,
+        &server,
+    );
+    let bytes = compile_with(&source, V38);
+    for ceiling in [
+        vec![],
+        vec![requests(&[format!("{}/public/**", server.base)], None)],
+    ] {
+        let report = application(&bytes, grants(&server), Some(ceiling));
+        assert!(report.failure.is_none(), "{:?}", report.failure);
+        assert_eq!(
+            report.output.lines.last().map(String::as_str),
+            Some("varta log: NotAllowedError")
+        );
+    }
+    assert_eq!(server.accepted(), 0);
+}
+
+/// The program of the header and encoding tests.
+const HOST_HEADERS: &str = r#"
+export async function main(): Promise<void> {
+  const headers = new Headers();
+  headers.set('User-Agent', 'varta-test-sdk/1.0');
+  headers.set('Accept-Encoding', 'gzip');
+  const sent = await fetch('__BASE__/sent', { headers });
+  console.log(await sent.text());
+  try {
+    const coded = await fetch('__BASE__/coded');
+    console.log(`${coded.status} ${await coded.text()}`);
+  } catch (error) {
+    console.log(`coded: ${error instanceof TypeError ? error.message : 'other'}`);
+  }
+}
+"#;
+
+/// V38 owns `User-Agent` and `Accept-Encoding`: the guest's values are
+/// checked, then ignored; the native host asks for the identity coding and
+/// fails a response coded otherwise. V37 sends both as given and passes a
+/// coded body through unchanged.
+#[test]
+fn host_owned_request_headers_and_identity_encoding() {
+    let server = Loopback::start();
+    let source = program(HOST_HEADERS, &server);
+    let v38 = VartaRuntime::new()
+        .run_wasm_bytes(&compile_with(&source, V38), &grants(&server))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        v38.lines,
+        lines(&[
+            r#"{"agent":null,"encoding":"identity"}"#,
+            "coded: fetch failed",
+        ])
+    );
+    let v37 = VartaRuntime::new()
+        .run_wasm_bytes(&compile(&source), &grants(&server))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        v37.lines,
+        lines(&[
+            r#"{"agent":"varta-test-sdk/1.0","encoding":"gzip"}"#,
+            "200 coded"
+        ])
+    );
+    // A host-owned header is still checked like any other header first.
+    let invalid = program(
+        r#"
+export async function main(): Promise<void> {
+  const headers = new Headers();
+  headers.set('User-Agent', 'a\u0007b');
+  try {
+    await fetch('__BASE__/sent', { headers });
+    console.log('sent');
+  } catch (error) {
+    console.log(error instanceof TypeError ? error.message : 'other');
+  }
+}
+"#,
+        &server,
+    );
+    let accepted = server.accepted();
+    let output = VartaRuntime::new()
+        .run_wasm_bytes(&compile_with(&invalid, V38), &grants(&server))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(output.lines, lines(&["fetch failed"]));
+    assert_eq!(server.accepted(), accepted);
+}
+
+/// V37 keeps one bound across the whole body: the long stream, read in a
+/// bounded run without pauses, fails once it passes 512 KiB.
+#[test]
+fn v37_long_bodies_keep_the_response_bound() {
+    run_with_fuel(
+        &format!(
+            r#"
+export async function main(): Promise<void> {{
+  const response = await fetch('__BASE__/events?count={EVENT_COUNT}&size={EVENT_BYTES}&pause=0');
+  const body = response.body;
+  if (body === null) {{
+    return;
+  }}
+  const reader = body.getReader();
+  let units = 0;
+  try {{
+    for (;;) {{
+      const {{ done, value }} = await reader.read();
+      if (done) {{
+        break;
+      }}
+      units += value.length;
+    }}
+    console.log(`complete ${{units}}`);
+  }} catch (error) {{
+    console.log(`${{units > 0 && units <= __LIMIT__}} ${{error instanceof TypeError}} ${{error instanceof Error ? error.message : ''}}`);
+  }}
+}}
+"#
+        ),
+        &["true true terminated"],
+        BODY_LIMIT_FUEL,
+    );
+}
+
+/// The burst of `net_cases/v38/burst.ts`: back-to-back events far larger
+/// than one read's delivery cap (the reviewed reproduction).
+const BURST_COUNT: u64 = 12;
+const BURST_BYTES: usize = 60_000;
+const _: () = assert!(BURST_BYTES > varta_common::net::MAX_READ_DELIVERY_BYTES);
+
+/// V38 under the production budgets: a burst of large events completes in
+/// an application instance, because each read (one event turn) delivers at
+/// most `MAX_READ_DELIVERY_BYTES` and larger received data waits for the
+/// next reads; every network turn stays within the byte path's stated share
+/// of the turn fuel. Before the cap, a read coalesced up to
+/// `MAX_CHUNK_BYTES` and exhausted `budget::TURN_FUEL`.
+#[test]
+fn v38_bursts_split_reads_within_the_turn_fuel() {
+    use varta_common::budget::TURN_FUEL;
+    use varta_common::net::{MAX_READ_DELIVERY_BYTES, READ_FUEL_SHARE};
+    let server = Loopback::start();
+    let source = program(include_str!("net_cases/v38/burst.ts"), &server)
+        .replace("__COUNT__", &BURST_COUNT.to_string())
+        .replace("__SIZE__", &BURST_BYTES.to_string())
+        .replace("__CAP__", &MAX_READ_DELIVERY_BYTES.to_string());
+    let bytes = compile_with(&source, V38);
+    let run = RunOptions {
+        requested: grants(&server),
+        ..RunOptions::default()
+    };
+    let report = VartaRuntime::new().run_application(
+        &bytes,
+        ApplicationOptions {
+            run,
+            ..ApplicationOptions::default()
+        },
+    );
+    let budget = report.budget.expect("an instance ran");
+    assert!(
+        report.failure.is_none(),
+        "{:?} {:?}",
+        report.failure,
+        budget.lines()
+    );
+    assert_eq!(budget.budgets.fuel_per_turn, TURN_FUEL);
+    let total: usize = (1..=BURST_COUNT)
+        .map(|id| crate::net_loopback::event(id, BURST_BYTES).len())
+        .sum();
+    assert_eq!(
+        report.output.lines,
+        lines(&[
+            &format!("bytes: 200 {total} bytes, last id: {BURST_COUNT}, reads within cap true"),
+            &format!("text: 200 {total} units, last id: {BURST_COUNT}"),
+        ])
+    );
+    let network: Vec<u64> = budget
+        .turns
+        .iter()
+        .filter(|turn| turn.kind == crate::turns::TurnKind::Network)
+        .map(|turn| turn.fuel)
+        .collect();
+    assert!(network.len() as u64 > 2 * total as u64 / MAX_READ_DELIVERY_BYTES as u64);
+    let share = TURN_FUEL / READ_FUEL_SHARE;
+    assert!(network.iter().all(|fuel| *fuel <= share), "{network:?}");
+}

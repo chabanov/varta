@@ -3,11 +3,14 @@
 //! no network effect happens while guest code runs, and dropping the task
 //! (abort or the end of the execution) closes its connection at once.
 //!
-//! Name resolution, connect, TLS, the request and every body read share the
-//! request's deadline (the remaining execution deadline). The task reports
-//! the head once, then one bounded chunk per pull, so a slow guest applies
-//! backpressure instead of buffering the body in the host.
+//! V37: name resolution, connect, TLS, the request and every body read share
+//! the request's deadline (the remaining execution deadline). V38: the head
+//! must arrive within one inactivity window of the start, and each wait of a
+//! body read within one window of its own start ([`Timing`]). The task
+//! reports the head once, then one bounded chunk per pull, so a slow guest
+//! applies backpressure instead of buffering the body in the host.
 use super::{Completion, Event};
+use crate::turns::Inactivity;
 use hyper::body::{Body, Bytes, Incoming};
 use hyper::header::{HeaderName, HeaderValue};
 use std::sync::Arc;
@@ -15,8 +18,8 @@ use std::task::Poll;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::net::{
-    CompletionKind, HeadForm, MAX_CHUNK_BYTES, MAX_RESPONSE_BODY_BYTES, MAX_RESPONSE_HEADER_BYTES,
-    MAX_RESPONSE_HEADERS, RequestFailure,
+    BodyBound, CompletionKind, HeadForm, MAX_CHUNK_BYTES, MAX_RESPONSE_BODY_BYTES,
+    MAX_RESPONSE_HEADER_BYTES, MAX_RESPONSE_HEADERS, RequestFailure,
 };
 
 /// A validated request, ready for the transport.
@@ -28,9 +31,35 @@ pub(super) struct Plan {
     /// v38 canonical with only the visible names.
     pub head: HeadForm,
     pub body: Option<Bytes>,
+    /// When name resolution, connect, TLS and the head must be done.
     pub deadline: Instant,
+    /// How long the body reads may wait.
+    pub timing: Timing,
+    /// Which body bytes `net::MAX_RESPONSE_BODY_BYTES` bounds.
+    pub bound: BodyBound,
+    /// V38: the request asked for the identity coding only, so a response
+    /// with another content coding fails ([`RequestFailure::Encoding`]).
+    pub identity: bool,
     /// Present exactly for `https` URLs.
     pub tls: Option<Arc<rustls::ClientConfig>>,
+}
+
+/// How long a transfer may wait for bytes.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Timing {
+    /// V37: one end-to-end deadline for the whole transfer.
+    Transfer(Instant),
+    /// V38: each wait for bytes lasts at most one window.
+    Inactivity(Inactivity),
+}
+impl Timing {
+    /// When a wait that starts now ends.
+    pub(super) fn until(&self) -> Instant {
+        match self {
+            Self::Transfer(deadline) => *deadline,
+            Self::Inactivity(inactivity) => inactivity.until(),
+        }
+    }
 }
 
 pub(super) const HTTPS: &str = "https";
@@ -91,17 +120,29 @@ pub(super) async fn run(
         Err(_) => return fail(RequestFailure::Timeout),
     };
     let (parts, body, _connection) = response;
+    if plan.identity {
+        let codings: Vec<String> = parts
+            .headers
+            .get_all(hyper::header::CONTENT_ENCODING)
+            .iter()
+            .map(|value| latin1(value.as_bytes()))
+            .collect();
+        if let Some(codings) =
+            varta_common::net::transformed_encoding(codings.iter().map(String::as_str))
+        {
+            return fail(RequestFailure::Encoding(codings));
+        }
+    }
     send(CompletionKind::Head, head(&plan.url, &parts, &plan.head));
-    let mut reader = BodyReader::new(body);
+    let mut reader = BodyReader::new(body, plan.timing, plan.bound);
     loop {
         let Some(mode) = pull.recv().await else {
             return;
         };
-        match tokio::time::timeout_at(deadline, reader.next(mode)).await {
-            Ok(Ok(Some(text))) => send(CompletionKind::Chunk, text),
-            Ok(Ok(None)) => return send(CompletionKind::End, String::new()),
-            Ok(Err(failure)) => return fail(failure),
-            Err(_) => return fail(RequestFailure::BodyTimeout),
+        match reader.next(mode).await {
+            Ok(Some(text)) => send(CompletionKind::Chunk, text),
+            Ok(None) => return send(CompletionKind::End, String::new()),
+            Err(failure) => return fail(failure),
         }
     }
 }
@@ -140,6 +181,9 @@ pub(crate) fn fetch_cancellable(
         head: HeadForm::Arrival,
         body: None,
         deadline,
+        timing: Timing::Transfer(deadline),
+        bound: BodyBound::Response,
+        identity: false,
         tls: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -311,32 +355,50 @@ fn latin1(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| char::from(*byte)).collect()
 }
 
-/// Reads a response body in chunks of at most [`MAX_CHUNK_BYTES`] and decodes
-/// them as UTF-8, completing a sequence split between chunks from the next
-/// one; a sequence still incomplete at the end becomes U+FFFD. A chunk takes
-/// every frame already received (up to the bound) without waiting for more,
-/// so small frames cost one guest read together while a quiet stream (SSE)
-/// still delivers each event as soon as it arrives.
-struct BodyReader {
-    body: Incoming,
+/// Reads a response body in chunks of at most [`BodyBound::delivery`] bytes
+/// ([`MAX_CHUNK_BYTES`] for v37, `net::MAX_READ_DELIVERY_BYTES` for v38) and
+/// decodes them as UTF-8, completing a sequence split between chunks from the
+/// next one; a sequence still incomplete at the end becomes U+FFFD. A chunk
+/// takes every frame already received (up to the bound) without waiting for
+/// more, so small frames cost one guest read together while a quiet stream
+/// (SSE) still delivers each event as soon as it arrives; received bytes
+/// beyond the bound wait for the next reads, so host memory holds at most one
+/// received frame beyond the bound plus a split sequence. Every wait for frames
+/// ends at [`Timing::until`] of its own start, and the received bytes are
+/// counted against [`MAX_RESPONSE_BODY_BYTES`] per [`BodyBound`].
+struct BodyReader<B = Incoming> {
+    body: B,
+    timing: Timing,
+    bound: BodyBound,
     buffer: Vec<u8>,
     carry: Vec<u8>,
-    total: usize,
+    /// Bytes received: of the whole body ([`BodyBound::Response`]), or
+    /// while serving the current read ([`BodyBound::Read`]).
+    counted: usize,
     ended: bool,
 }
-impl BodyReader {
-    fn new(body: Incoming) -> Self {
+impl<B> BodyReader<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
+    fn new(body: B, timing: Timing, bound: BodyBound) -> Self {
         Self {
             body,
+            timing,
+            bound,
             buffer: Vec::new(),
             carry: Vec::new(),
-            total: 0,
+            counted: 0,
             ended: false,
         }
     }
     /// The next nonempty chunk (text, or bytes as code units), or `None` at
     /// the end of the body.
     async fn next(&mut self, mode: ReadMode) -> Result<Option<String>, RequestFailure> {
+        if self.bound == BodyBound::Read {
+            self.counted = 0;
+        }
         loop {
             if mode == ReadMode::Bytes && (!self.buffer.is_empty() || !self.carry.is_empty()) {
                 // Bytes an earlier text read kept for an unfinished sequence
@@ -345,7 +407,7 @@ impl BodyReader {
                 let take = self
                     .buffer
                     .len()
-                    .min(MAX_CHUNK_BYTES.saturating_sub(bytes.len()));
+                    .min(self.bound.delivery().saturating_sub(bytes.len()));
                 let rest = self.buffer.split_off(take);
                 bytes.extend_from_slice(&std::mem::replace(&mut self.buffer, rest));
                 return Ok(Some(latin1(&bytes)));
@@ -353,7 +415,7 @@ impl BodyReader {
             if !self.buffer.is_empty() {
                 let rest = self
                     .buffer
-                    .split_off(self.buffer.len().min(MAX_CHUNK_BYTES));
+                    .split_off(self.buffer.len().min(self.text_take()));
                 let bytes = std::mem::replace(&mut self.buffer, rest);
                 let text = self.decode(&bytes);
                 if !text.is_empty() {
@@ -368,13 +430,26 @@ impl BodyReader {
                 self.carry.clear();
                 return Ok(Some(REPLACEMENT.to_string()));
             }
-            std::future::poll_fn(|context| self.fill(context)).await?;
+            // A received frame ends the wait: the next one starts afresh.
+            let until = tokio::time::Instant::from_std(self.timing.until());
+            tokio::time::timeout_at(until, std::future::poll_fn(|context| self.fill(context)))
+                .await
+                .map_err(|_| RequestFailure::BodyTimeout)??;
+        }
+    }
+    /// The buffered bytes a text read decodes: the chunk (v37, the held-back
+    /// bytes of a split sequence added), or the cap less those bytes (v38),
+    /// so a v38 read never decodes more than its cap.
+    fn text_take(&self) -> usize {
+        match self.bound {
+            BodyBound::Response => MAX_CHUNK_BYTES,
+            BodyBound::Read => self.bound.delivery().saturating_sub(self.carry.len()),
         }
     }
     /// Take every frame that is ready, until the chunk bound or the end; wait
     /// only while nothing was taken.
     fn fill(&mut self, context: &mut std::task::Context<'_>) -> Poll<Result<(), RequestFailure>> {
-        while self.buffer.len() < MAX_CHUNK_BYTES {
+        while self.buffer.len() < self.bound.delivery() {
             match std::pin::Pin::new(&mut self.body).poll_frame(context) {
                 Poll::Pending if self.buffer.is_empty() => return Poll::Pending,
                 Poll::Pending => break,
@@ -390,8 +465,8 @@ impl BodyReader {
                     let Ok(data) = frame.into_data() else {
                         continue;
                     };
-                    self.total = self.total.saturating_add(data.len());
-                    if self.total > MAX_RESPONSE_BODY_BYTES {
+                    self.counted = self.counted.saturating_add(data.len());
+                    if self.counted > MAX_RESPONSE_BODY_BYTES {
                         return Poll::Ready(Err(RequestFailure::BodyLimit));
                     }
                     self.buffer.extend_from_slice(&data);
@@ -500,6 +575,185 @@ mod tests {
                 r#""url":"http://a.test/dir/page"}"#
             )
         );
+    }
+
+    /// A body that yields `frames`, then ends or (`stall`) never answers.
+    struct Frames {
+        frames: std::collections::VecDeque<Bytes>,
+        stall: bool,
+    }
+    impl Body for Frames {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+            match self.frames.pop_front() {
+                Some(data) => Poll::Ready(Some(Ok(hyper::body::Frame::data(data)))),
+                None if self.stall => Poll::Pending,
+                None => Poll::Ready(None),
+            }
+        }
+    }
+    fn frames(sizes: &[usize], stall: bool) -> Frames {
+        Frames {
+            frames: sizes
+                .iter()
+                .map(|size| Bytes::from(vec![b'a'; *size]))
+                .collect(),
+            stall,
+        }
+    }
+    /// Test-only window: long enough for any read of a ready body.
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+    fn inactive(window: std::time::Duration) -> Timing {
+        Timing::Inactivity(Inactivity {
+            window,
+            bound: None,
+        })
+    }
+    /// Read `body` to its end, as bytes; the delivered byte count or the
+    /// failure.
+    fn drain(body: Frames, timing: Timing, bound: BodyBound) -> Result<usize, RequestFailure> {
+        reads(body, timing, bound, ReadMode::Bytes).map(|chunks| chunks.iter().sum())
+    }
+    /// Read `body` to its end in `mode`: the UTF-8 length of every chunk
+    /// (for a byte read or valid UTF-8 text, the bytes it delivered), each
+    /// checked against the bound's delivery cap.
+    fn reads<B>(
+        body: B,
+        timing: Timing,
+        bound: BodyBound,
+        mode: ReadMode,
+    ) -> Result<Vec<usize>, RequestFailure>
+    where
+        B: Body<Data = Bytes> + Unpin,
+        B::Error: std::fmt::Display,
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut reader = BodyReader::new(body, timing, bound);
+            let mut chunks = Vec::new();
+            while let Some(chunk) = reader.next(mode).await? {
+                let delivered = match mode {
+                    ReadMode::Bytes => chunk.chars().count(),
+                    ReadMode::Text => chunk.len(),
+                };
+                assert!(delivered <= bound.delivery(), "{delivered}");
+                chunks.push(delivered);
+            }
+            Ok(chunks)
+        })
+    }
+
+    /// V38 delivers at most `MAX_READ_DELIVERY_BYTES` per read, splitting a
+    /// larger received frame (or ready frames together) across reads, in
+    /// both read modes and across split UTF-8 sequences; v37 keeps its
+    /// `MAX_CHUNK_BYTES` chunks unchanged.
+    #[test]
+    fn v38_reads_never_exceed_the_delivery_cap() {
+        use varta_common::net::MAX_READ_DELIVERY_BYTES as CAP;
+        let sizes = [MAX_CHUNK_BYTES + 3, 1, CAP - 1, CAP + 1, 3 * CAP];
+        let total: usize = sizes.iter().sum();
+        for mode in [ReadMode::Bytes, ReadMode::Text] {
+            let chunks = reads(
+                frames(&sizes, false),
+                inactive(WINDOW),
+                BodyBound::Read,
+                mode,
+            )
+            .unwrap();
+            assert_eq!(chunks.iter().sum::<usize>(), total);
+            assert_eq!(chunks.iter().max(), Some(&CAP));
+            assert!(chunks.len() >= total.div_ceil(CAP));
+        }
+        // Three-byte characters never fit a cap evenly, so text reads hold
+        // back a split sequence; every read still stays within the cap.
+        let euro = "\u{20ac}".repeat(MAX_CHUNK_BYTES);
+        let body = Frames {
+            frames: [Bytes::from(euro.clone().into_bytes())].into(),
+            stall: false,
+        };
+        let chunks = reads(body, inactive(WINDOW), BodyBound::Read, ReadMode::Text).unwrap();
+        assert_eq!(chunks.iter().sum::<usize>(), euro.len());
+        assert!(chunks.len() > euro.len() / CAP);
+        // V37: frames are coalesced and split at the frozen chunk bound.
+        let timing = Timing::Transfer(Instant::now() + WINDOW);
+        let chunks = reads(
+            frames(&[MAX_CHUNK_BYTES + 3, 1], false),
+            timing,
+            BodyBound::Response,
+            ReadMode::Bytes,
+        )
+        .unwrap();
+        assert_eq!(chunks, [MAX_CHUNK_BYTES, 3, 1]);
+    }
+
+    /// V37 bounds the whole body; v38 bounds what one read receives, so a
+    /// long body in chunk-sized frames passes and one oversized frame still
+    /// fails the read that receives it.
+    #[test]
+    fn the_body_limit_applies_per_response_or_per_read() {
+        let frame = MAX_CHUNK_BYTES;
+        let count = MAX_RESPONSE_BODY_BYTES / frame + 2;
+        let long = vec![frame; count];
+        let total = frame * count;
+        assert!(total > MAX_RESPONSE_BODY_BYTES);
+        let timing = Timing::Transfer(Instant::now() + WINDOW);
+        assert_eq!(
+            drain(frames(&long, false), timing, BodyBound::Response),
+            Err(RequestFailure::BodyLimit)
+        );
+        assert_eq!(
+            drain(frames(&long, false), inactive(WINDOW), BodyBound::Read),
+            Ok(total)
+        );
+        let oversized = [frame, MAX_RESPONSE_BODY_BYTES + 1];
+        assert_eq!(
+            drain(frames(&oversized, false), inactive(WINDOW), BodyBound::Read),
+            Err(RequestFailure::BodyLimit)
+        );
+        assert_eq!(
+            drain(
+                frames(&[MAX_RESPONSE_BODY_BYTES], false),
+                inactive(WINDOW),
+                BodyBound::Read
+            ),
+            Ok(MAX_RESPONSE_BODY_BYTES)
+        );
+    }
+
+    /// A stalled body fails the waiting read after one window (v38) or at
+    /// the transfer deadline (v37), never earlier than the window.
+    #[test]
+    fn stalled_bodies_time_out() {
+        const SHORT: std::time::Duration = std::time::Duration::from_millis(50);
+        let started = Instant::now();
+        assert_eq!(
+            drain(frames(&[1, 2], true), inactive(SHORT), BodyBound::Read),
+            Err(RequestFailure::BodyTimeout)
+        );
+        assert!(started.elapsed() >= SHORT);
+        let timing = Timing::Transfer(Instant::now() + SHORT);
+        assert_eq!(
+            drain(frames(&[1], true), timing, BodyBound::Response),
+            Err(RequestFailure::BodyTimeout)
+        );
+        // The instance lifetime bounds every window.
+        let bounded = Timing::Inactivity(Inactivity {
+            window: WINDOW,
+            bound: Some(Instant::now() + SHORT),
+        });
+        let started = Instant::now();
+        assert_eq!(
+            drain(frames(&[], true), bounded, BodyBound::Read),
+            Err(RequestFailure::BodyTimeout)
+        );
+        assert!(started.elapsed() < WINDOW);
     }
 
     #[test]

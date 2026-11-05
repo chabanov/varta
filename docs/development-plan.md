@@ -3449,6 +3449,46 @@ stated); the review correction batch does not close these optimization items:
   the typed memory resource (owner decision: a consequence of the
   effects-only host).
 
+#### SDK network contract (v38, wave 1 `w1-sdk-network-contract`)
+
+Inventory items `long-lived-stream-transfer-limits` and
+`browser-transport-sdk-headers`: the unmodified uarp-sdk's session stream
+(server-sent events for minutes, beyond 512 KiB in total) and its ordinary
+requests (which always set `User-Agent`) must work natively and in the
+browser host. Implemented on the `net_request_start_v2` path only
+([contract](architecture.md#long-lived-transfers-and-host-owned-headers-v38),
+[wire rules](embedding.md#transfer-timing-v38)); v37 and earlier keep their
+end-to-end deadline, whole-body bound and headers as given.
+
+- Inactivity instead of an end-to-end deadline: the head within one
+  per-turn deadline of the start, each body wait within one window, renewed
+  by every received chunk, never past the instance lifetime (bounded runs:
+  their deadline). No production budget changed.
+- `net::MAX_RESPONSE_BODY_BYTES` counts what one read receives; there is no
+  total byte bound (time, one host chunk and the guest memory budget bound a
+  stream).
+- `user-agent` and `accept-encoding` are host-owned (checked, ignored, never
+  sent) on both hosts; the native host sends `accept-encoding: identity` and
+  fails another coding; the browser admits Fetch-decoded bodies and hides
+  `content-encoding`/`content-length` for them.
+- One read delivers at most `net::MAX_READ_DELIVERY_BYTES` on both hosts
+  (owner decision: cap the delivery rather than document the fatal
+  outcome). The v38 byte read path costs about `net::READ_BYTE_FUEL` fuel
+  per byte (1 KiB about 0.23 M, 8 KiB about 1.7 M, 32 KiB about 6.7 M fuel
+  per read turn), so a read coalesced up to `net::MAX_CHUNK_BYTES` exhausted
+  `budget::TURN_FUEL` during a burst; larger received data is now split
+  across reads (`/events?count=12&size=60000&pause=0` completes under the
+  production budgets natively and in Chrome).
+- Owner decision: the header and coding rules stay as documented (native
+  fail-closed on a non-identity coding; the other browser-controlled request
+  headers, `cookie`, `origin`, `referer`, `sec-*`, …, differ between hosts).
+- Verification: native loopback tests (`net_tests`, `net::tests`,
+  `net::client::tests`), the transport's Node tests and
+  `scripts/test-browser-streaming.mjs` (local Chrome against native, same
+  lines, the long stream and the burst). The prototype web host
+  (`examples/varta-web-host`) records the new rules as stated deviations
+  and does not implement them.
+
 ### Current integration backlog
 
 Current outstanding items, grouped by delivery boundary rather than old branches:

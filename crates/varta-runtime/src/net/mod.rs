@@ -20,8 +20,9 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use varta_common::HostOperation;
 use varta_common::net::{
-    CompletionKind, DescriptorVersion, HeadForm, MAX_PENDING_REQUESTS, MAX_REQUEST_BYTES,
-    MAX_REQUEST_HEADER_BYTES, NetError, RUNTIME_HEADERS, RequestDescriptor, RequestFailure,
+    BodyBound, CompletionKind, DescriptorVersion, HeadForm, MAX_PENDING_REQUESTS,
+    MAX_REQUEST_BYTES, MAX_REQUEST_HEADER_BYTES, NATIVE_ACCEPT_ENCODING, NetError, RUNTIME_HEADERS,
+    RequestDescriptor, RequestFailure, host_request_header,
 };
 use wasmtime::{Caller, Extern, Linker};
 
@@ -355,7 +356,7 @@ fn plan(
         return Err(failed(RequestFailure::BodyNotAllowed));
     }
     let mut bytes = 0usize;
-    let mut headers = Vec::with_capacity(request.headers.len());
+    let mut headers = Vec::with_capacity(request.headers.len() + 1);
     for (name, value) in &request.headers {
         bytes = bytes.saturating_add(name.len() + value.len());
         if bytes > MAX_REQUEST_HEADER_BYTES {
@@ -376,7 +377,17 @@ fn plan(
             .collect::<Option<Vec<u8>>>()
             .and_then(|bytes| hyper::header::HeaderValue::from_bytes(&bytes).ok())
             .ok_or_else(|| failed(RequestFailure::HeaderValue(name.to_string())))?;
+        // V38: a host-owned header is checked, then ignored on every host.
+        if version == DescriptorVersion::V2 && host_request_header(name.as_str()) {
+            continue;
+        }
         headers.push((name, value));
+    }
+    if version == DescriptorVersion::V2 {
+        headers.push((
+            hyper::header::ACCEPT_ENCODING,
+            hyper::header::HeaderValue::from_static(NATIVE_ACCEPT_ENCODING),
+        ));
     }
     // Plain HTTP requests never build the TLS configuration.
     let tls = match url.scheme() {
@@ -388,9 +399,17 @@ fn plan(
         ),
         _ => None,
     };
-    let head = match version {
-        DescriptorVersion::V1 => HeadForm::Arrival,
-        DescriptorVersion::V2 => HeadForm::Canonical(context.policy.response_headers()),
+    // V37 keeps one end-to-end deadline; a v38 transfer is bounded by
+    // inactivity, so a long-lived stream stays open while it is active.
+    let (head, timing) = match version {
+        DescriptorVersion::V1 => (
+            HeadForm::Arrival,
+            client::Timing::Transfer(crate::turns::operation_deadline(context)),
+        ),
+        DescriptorVersion::V2 => (
+            HeadForm::Canonical(context.policy.response_headers()),
+            client::Timing::Inactivity(crate::turns::inactivity(context)),
+        ),
     };
     Ok(client::Plan {
         url,
@@ -398,7 +417,10 @@ fn plan(
         headers,
         head,
         body: request.body.clone().map(hyper::body::Bytes::from),
-        deadline: crate::turns::operation_deadline(context),
+        deadline: timing.until(),
+        timing,
+        bound: BodyBound::of(version),
+        identity: version == DescriptorVersion::V2,
         tls,
     })
 }
@@ -573,6 +595,18 @@ mod tests {
     /// The head record of one GET of `path` on a loopback server, as the
     /// transfer task reports it.
     fn head_record(server: &crate::net_loopback::Loopback, path: &str, head: HeadForm) -> String {
+        let completion = first_completion(server, path, head, false);
+        assert_eq!(completion.kind, CompletionKind::Head);
+        completion.text
+    }
+    /// The first completion of one GET of `path` (`identity`: a v38 request
+    /// that asked for the identity coding only).
+    fn first_completion(
+        server: &crate::net_loopback::Loopback,
+        path: &str,
+        head: HeadForm,
+        identity: bool,
+    ) -> Completion {
         const DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -582,19 +616,45 @@ mod tests {
         let (events, mut received) = mpsc::unbounded_channel();
         // No body read follows: the closed pull channel ends the task.
         let (_, pulls) = mpsc::channel(1);
+        let deadline = Instant::now() + DEADLINE;
         let plan = client::Plan {
             url: url::Url::parse(&format!("{}{path}", server.base)).unwrap(),
             method: hyper::Method::GET,
             headers: Vec::new(),
             head,
             body: None,
-            deadline: Instant::now() + DEADLINE,
+            deadline,
+            timing: client::Timing::Transfer(deadline),
+            bound: BodyBound::Response,
+            identity,
             tls: None,
         };
         runtime.block_on(client::run(1, plan, events, pulls));
-        let event = received.try_recv().unwrap();
-        assert_eq!(event.completion.kind, CompletionKind::Head);
-        event.completion.text
+        received.try_recv().unwrap().completion
+    }
+
+    /// A v38 request asks for the identity coding only, so a response coded
+    /// otherwise fails before its head reaches the guest; v37 shows it.
+    #[test]
+    fn identity_requests_refuse_coded_responses() {
+        let server = crate::net_loopback::Loopback::start();
+        let visible = varta_common::net::visible_response_headers(None);
+        let canonical = HeadForm::Canonical(visible);
+        let refused = first_completion(&server, "/coded", canonical.clone(), true);
+        assert_eq!(refused.kind, CompletionKind::Failed);
+        assert_eq!(
+            refused.text,
+            RequestFailure::Encoding("gzip".into()).to_string()
+        );
+        assert_eq!(
+            refused.text,
+            "response content-encoding gzip was not requested"
+        );
+        let shown = first_completion(&server, "/coded", HeadForm::Arrival, false);
+        assert_eq!(shown.kind, CompletionKind::Head);
+        assert!(shown.text.contains(r#""content-encoding","gzip""#));
+        let plain = first_completion(&server, "/hello", canonical, true);
+        assert_eq!(plain.kind, CompletionKind::Head);
     }
 
     /// V38 heads are canonical whatever order, case and repetition the raw

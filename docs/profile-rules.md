@@ -3762,6 +3762,32 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
   and keep `responseHeaders` gated on host ABI 34 in the manifest schema.
   Tests: `net_header_tests` (visibility, ceiling, v37, fuel) and the raw
   loopback record in `net::tests`.
+- Transfer timing and body bound follow the descriptor version only
+  (`client::Timing`, `net::BodyBound::of`): v1 keeps
+  `turns::operation_deadline` end to end and the whole-body bound; v2 uses
+  `turns::inactivity` (window = `deadline_per_turn`, bound = lifetime or the
+  bounded run's deadline) for the head and for every wait inside
+  `BodyReader::next`, and counts `MAX_RESPONSE_BODY_BYTES` per read. Each
+  v2 read delivers at most `BodyBound::delivery` (`MAX_READ_DELIVERY_BYTES`,
+  held-back bytes included; `fill` also stops there) and v1 keeps
+  `MAX_CHUNK_BYTES` byte for byte; the browser transport uses the generated
+  `maxReadBytes`. Never raise the cap without re-measuring the guest byte
+  path against `budget::TURN_FUEL` (`READ_BYTE_FUEL`, `READ_FUEL_SHARE` and
+  the compile-time assertion beside them). Never
+  add a total byte bound without a named, host-capped constant, never let a
+  window outlive the bound, and never run a window while no read is armed.
+  Production budgets stay as they are; tests set `deadline_per_turn_ms`.
+- `net::HOST_REQUEST_HEADERS` are validated like every header, then dropped
+  under v2 only; the native host adds `accept-encoding:
+  net::NATIVE_ACCEPT_ENCODING` and fails a coded response
+  (`RequestFailure::Encoding`) before the head record exists. The browser
+  transport keeps its own copy of the list; its Node test compares it with
+  the generated `embedding-net-host-headers` block. Tests:
+  `net_tests` (long stream, stall, head window, ceiling, headers, v37
+  bound, production-budget burst), `net::client::tests` (per-read bound,
+  delivery cap, stalls), `net::tests`
+  (coded responses), `network-transport.test.mjs` and
+  `scripts/test-browser-streaming.mjs` (real Chrome against native).
 - Engine-internal members of the blob and fetch preludes (`Blob.byteString`,
   `Blob.adopt`, `Blob.encode`, `ArrayBuffer.storageOf`, `ArrayBuffer.adopt`,
   `FormData.multipart`, `Request.bodySource`) are instance methods listed in

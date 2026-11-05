@@ -101,6 +101,7 @@ export const registry = freeze({
     "maxPatternBytes": 512,
     "maxPatterns": 64,
     "maxPending": 8,
+    "maxReadBytes": 8192,
     "maxRequestBytes": 262144,
     "maxRequestHeaderBytes": 16384,
     "maxRequestHeaders": 64,

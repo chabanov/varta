@@ -15,7 +15,10 @@
 //!
 //! Under v38 (`net_request_start_v2`) the head record is canonical and shows
 //! only the response headers the grant declares (`responseHeaders`, or the
-//! CORS-safelisted names without a declaration): see [`HeadForm`].
+//! CORS-safelisted names without a declaration): see [`HeadForm`]. A v38
+//! transfer is bounded by inactivity rather than end to end, its body limit
+//! applies per read ([`BodyBound`]), and every host owns the
+//! [`HOST_REQUEST_HEADERS`].
 use std::collections::{BTreeMap, BTreeSet, btree_map};
 
 /// The exact capability every request requires (URL scopes plus an optional
@@ -41,8 +44,35 @@ pub const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 /// Body bytes delivered by one `net_body_read` completion (as UTF-16 text
 /// it stays far below the host result buffer).
 pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
-/// Body bytes of one response, across all its chunks: the largest ASCII body
-/// whose UTF-16 text still fits one string value (`abi::MAX_STRING_BYTES`).
+/// V38 (`net_request_start_v2`): body bytes one `net_body_read` or
+/// `net_body_read_bytes` completion delivers, at most (text reads: the bytes
+/// it decodes, held-back bytes of a split sequence included). A larger
+/// received chunk is split across successive reads. The guest handles each
+/// read in one event turn, and its byte path costs about
+/// [`READ_BYTE_FUEL`] fuel per delivered byte, so a read of
+/// [`MAX_CHUNK_BYTES`] (about 13 million fuel) would exhaust
+/// `budget::TURN_FUEL` and terminate the instance. The cap keeps the byte
+/// path within one [`READ_FUEL_SHARE`]-th of the turn fuel, leaving the
+/// rest to the application (a guest `TextDecoder` over each read, about
+/// 620 fuel per byte together with the byte path, still fits).
+pub const MAX_READ_DELIVERY_BYTES: usize = 8 * 1024;
+/// Measured v38 guest fuel per byte a `ReadableStreamDefaultReader.read()`
+/// delivers as a `Uint8Array` (`net_body_read_bytes`, the `/events` burst
+/// of the runtime's network tests: about 199 per byte, rounded up to the
+/// reviewed figure). Basis of [`MAX_READ_DELIVERY_BYTES`] only; no budget
+/// uses it.
+pub const READ_BYTE_FUEL: u64 = 205;
+/// The share of `budget::TURN_FUEL` one read's byte path may use: one
+/// quarter, so three quarters remain for the application's own work.
+pub const READ_FUEL_SHARE: u64 = 4;
+const _: () = assert!(
+    MAX_READ_DELIVERY_BYTES as u64 * READ_BYTE_FUEL <= crate::budget::TURN_FUEL / READ_FUEL_SHARE
+);
+const _: () = assert!(MAX_READ_DELIVERY_BYTES <= MAX_CHUNK_BYTES);
+/// Body bytes of one response (v37, across all its chunks: the largest ASCII
+/// body whose UTF-16 text still fits one v37 string value,
+/// `abi::MAX_STRING_BYTES`), or the bytes the host receives while serving
+/// one body read (v38, [`BodyBound::Read`]).
 pub const MAX_RESPONSE_BODY_BYTES: usize = crate::abi::MAX_STRING_BYTES / 2;
 /// Bytes of a request URL, as for the earlier network operations.
 pub const MAX_URL_BYTES: usize = 8192;
@@ -92,6 +122,73 @@ pub const RUNTIME_HEADERS: [&str; 9] = [
     "transfer-encoding",
     "upgrade",
 ];
+
+/// V38 (`net_request_start_v2`): request headers every host owns. A guest
+/// value is checked like any other header (header bytes, name, value) and
+/// then ignored, never sent: a browser always sends its own value, so no
+/// host sends the guest's. In byte order.
+pub const HOST_REQUEST_HEADERS: [&str; 2] = ["accept-encoding", "user-agent"];
+/// The content coding that means "no transformation".
+pub const IDENTITY_ENCODING: &str = "identity";
+/// V38: the `accept-encoding` value the native reference host sends on
+/// every request. It decompresses nothing, so it asks for the identity
+/// coding only.
+pub const NATIVE_ACCEPT_ENCODING: &str = IDENTITY_ENCODING;
+/// Separates the codings of one `content-encoding` value.
+pub const CODING_SEPARATOR: char = ',';
+
+/// Whether `name` (any case) is one of [`HOST_REQUEST_HEADERS`].
+#[must_use]
+pub fn host_request_header(name: &str) -> bool {
+    HOST_REQUEST_HEADERS
+        .iter()
+        .any(|owned| owned.eq_ignore_ascii_case(name))
+}
+
+/// The codings of `content-encoding` values other than the identity coding,
+/// in order (empty codings skipped), lowercased and joined with
+/// [`COMBINE_SEPARATOR`]; `None` when they leave the body untransformed.
+#[must_use]
+pub fn transformed_encoding<'a>(values: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let codings: Vec<String> = values
+        .into_iter()
+        .flat_map(|value| value.split(CODING_SEPARATOR))
+        .map(|coding| coding.trim().to_ascii_lowercase())
+        .filter(|coding| !coding.is_empty() && coding != IDENTITY_ENCODING)
+        .collect();
+    (!codings.is_empty()).then(|| codings.join(COMBINE_SEPARATOR))
+}
+
+/// Which body bytes [`MAX_RESPONSE_BODY_BYTES`] bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyBound {
+    /// V37 (`net_request_start`): the whole body, across all its chunks.
+    Response,
+    /// V38 (`net_request_start_v2`): the bytes the host receives while
+    /// serving one body read. A body has no total byte bound: a long-lived
+    /// stream is bounded by time (the inactivity window and the instance
+    /// lifetime), and what the guest keeps by its own memory budget.
+    Read,
+}
+impl BodyBound {
+    /// The bound of a descriptor version.
+    #[must_use]
+    pub fn of(version: DescriptorVersion) -> Self {
+        match version {
+            DescriptorVersion::V1 => Self::Response,
+            DescriptorVersion::V2 => Self::Read,
+        }
+    }
+    /// The most body bytes one read completion delivers: [`MAX_CHUNK_BYTES`]
+    /// (v37, frozen) or [`MAX_READ_DELIVERY_BYTES`] (v38).
+    #[must_use]
+    pub fn delivery(self) -> usize {
+        match self {
+            Self::Response => MAX_CHUNK_BYTES,
+            Self::Read => MAX_READ_DELIVERY_BYTES,
+        }
+    }
+}
 
 /// The first line of every request descriptor.
 pub const DESCRIPTOR_VERSION: &str = "varta-net-request-1";
@@ -339,16 +436,24 @@ pub enum RequestFailure {
     /// head beyond the response header limits).
     #[error("request failed: {0}")]
     Send(String),
-    /// Transfer: the head did not arrive before the deadline.
+    /// Transfer: the head did not arrive before the deadline (v37: the
+    /// transfer deadline; v38: one inactivity window after the start).
     #[error("request timed out")]
     Timeout,
+    /// Transfer (v38, native): the response has a content coding other than
+    /// the identity coding the request asked for; the payload lists the
+    /// codings ([`transformed_encoding`]).
+    #[error("response content-encoding {0} was not requested")]
+    Encoding(String),
     /// A body read: the body stream failed.
     #[error("response body failed: {0}")]
     Body(String),
-    /// A body read: the body exceeds [`MAX_RESPONSE_BODY_BYTES`].
+    /// A body read: the body (v37), or the bytes received while serving one
+    /// read (v38), exceed [`MAX_RESPONSE_BODY_BYTES`].
     #[error("response body exceeds {MAX_RESPONSE_BODY_BYTES} bytes")]
     BodyLimit,
-    /// A body read: no chunk arrived before the deadline.
+    /// A body read: no chunk arrived before the deadline (v37: the transfer
+    /// deadline; v38: within one inactivity window of the read).
     #[error("response body timed out")]
     BodyTimeout,
 }
@@ -672,6 +777,42 @@ mod tests {
                 .iter()
                 .all(|name| declarable_response_header(name))
         );
+    }
+
+    #[test]
+    fn host_request_headers_are_sorted_tokens_matched_in_any_case() {
+        let mut sorted = HOST_REQUEST_HEADERS;
+        sorted.sort_unstable();
+        assert_eq!(sorted, HOST_REQUEST_HEADERS);
+        assert!(HOST_REQUEST_HEADERS.iter().all(|name| token(name)));
+        assert!(
+            HOST_REQUEST_HEADERS
+                .iter()
+                .all(|name| !RUNTIME_HEADERS.contains(name))
+        );
+        for name in ["User-Agent", "user-agent", "ACCEPT-ENCODING"] {
+            assert!(host_request_header(name), "{name}");
+        }
+        for name in ["user-agent2", "accept", "x-user-agent", ""] {
+            assert!(!host_request_header(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn only_codings_other_than_identity_transform_a_body() {
+        assert_eq!(transformed_encoding([]), None);
+        assert_eq!(transformed_encoding(["identity"]), None);
+        assert_eq!(transformed_encoding([" Identity , ", ""]), None);
+        assert_eq!(transformed_encoding(["GZip"]).as_deref(), Some("gzip"));
+        assert_eq!(
+            transformed_encoding(["identity, br", "gzip"]).as_deref(),
+            Some("br, gzip")
+        );
+        assert_eq!(BodyBound::of(DescriptorVersion::V1), BodyBound::Response);
+        assert_eq!(BodyBound::of(DescriptorVersion::V2), BodyBound::Read);
+        // V37 keeps its chunk; v38 delivers at most the per-read cap.
+        assert_eq!(BodyBound::Response.delivery(), MAX_CHUNK_BYTES);
+        assert_eq!(BodyBound::Read.delivery(), MAX_READ_DELIVERY_BYTES);
     }
 
     #[test]

@@ -837,8 +837,9 @@ URL is bounded by the [limits table](#manifest-limits).
 | Request header name and value bytes | 16384 | `net::MAX_REQUEST_HEADER_BYTES` |
 | Response header fields | 100 | `net::MAX_RESPONSE_HEADERS` |
 | Response header name and value bytes | 65536 | `net::MAX_RESPONSE_HEADER_BYTES` |
-| Body bytes of one `net_body_read` completion | 65536 | `net::MAX_CHUNK_BYTES` |
-| Body bytes of one response | 524288 | `net::MAX_RESPONSE_BODY_BYTES` |
+| Body bytes of one `net_body_read` completion (v37) | 65536 | `net::MAX_CHUNK_BYTES` |
+| Body bytes one v38 read delivers (a text read: the bytes it decodes) | 8192 | `net::MAX_READ_DELIVERY_BYTES` |
+| Body bytes of one response (v37), or received while serving one read (v38) | 524288 | `net::MAX_RESPONSE_BODY_BYTES` |
 | First descriptor line: `net_request_start` / `net_request_start_v2` | `varta-net-request-1` / `varta-net-request-2` | `net::DESCRIPTOR_VERSION`, `net::DESCRIPTOR_VERSION_BYTES` |
 <!-- generated:embedding-net-limits:end -->
 
@@ -904,7 +905,74 @@ below is generated from `varta_common::net`.
 - A completion that a transfer reports for an aborted or released request is
   discarded. A request keeps the event loop alive only while an operation is
   armed **and** a waiter is registered. A request still in flight at the execution
-  deadline ends the execution with the deadline error, like a timer.
+  deadline of a bounded run ends the execution with the deadline error, like a
+  timer. In a long-lived application instance a v38 request has no end-to-end
+  deadline: it follows the [transfer timing](#transfer-timing-v38).
+
+#### Transfer timing (v38)
+
+`net_request_start` (v37) keeps one end-to-end deadline per transfer: name
+resolution, connect, TLS, the head and every body read must finish before the
+remaining execution deadline (in a v38 long-lived instance, which v37 modules
+never run in, that would be one per-turn allowance from the start).
+
+`net_request_start_v2` (v38) bounds a transfer by **inactivity** instead. The
+inactivity window is the instance's per-turn deadline (`deadlinePerTurnMs`,
+which a manifest can only lower and the host ceiling caps; see the
+[budget table](architecture.md#resource-limits)):
+
+1. The head (name resolution, connect, TLS, sending and the response head)
+   must arrive within one window of the start, or the request fails with the
+   `request timed out` text of the [failures](#request-failures).
+2. After the head, no window runs while no read is armed: an idle request
+   waits for the guest without a clock.
+3. Each wait of an armed body read lasts at most one window. Receiving any
+   bytes ends that wait, so every received chunk renews the window. A read
+   that receives nothing within one window fails with `response body timed
+   out`.
+4. No wait runs past the bound of the instance: the embedder's lifetime bound
+   of a long-lived application instance (none without one), or the execution
+   deadline of a bounded run. A bounded run therefore behaves as before: the
+   window equals the run's whole deadline.
+
+A server-sent event stream therefore lives as long as the instance while it
+sends something within every window. The body bound of the
+[limits](#network-request-limits-v37) counts the bytes the host receives while
+serving one read (`net::BodyBound::Read`), not the whole body, so such a
+stream may deliver any total. Each read delivers at most the per-read bytes
+of the limits (`net::MAX_READ_DELIVERY_BYTES`, the [per-read
+cap](#per-read-delivery-cap-v38)); host memory stays bounded by one received
+transport chunk plus the bytes held back for a split sequence (the transfer
+receives only while the guest has a read armed); what the guest keeps is
+bounded by its own memory budget.
+
+A browser host MUST observe the same rule: the window is its per-turn
+deadline, it starts when the head is requested and when each wait of a reader
+read starts, it ends when that wait settles, and an expired window fails the
+head or the read with the same texts and cancels the transfer (no later
+completion, no further bytes). How the host measures and cancels is its own
+choice; the generated host races each wait against a timer and then cancels
+the Fetch and its reader.
+
+#### Per-read delivery cap (v38)
+
+Every read of a body is served in one event turn of the guest, and a turn's
+work on the delivered bytes grows with their number: the v38 byte path
+(`net_body_read_bytes` into a `Uint8Array` of `ReadableStreamDefaultReader.read()`)
+costs about `net::READ_BYTE_FUEL` guest fuel per byte measured, so a read of the
+v37 chunk bytes would exhaust the production turn fuel (`budget::TURN_FUEL`)
+and terminate the instance, however well the program behaves. Under
+`net_request_start_v2` a host therefore MUST deliver at most
+`net::MAX_READ_DELIVERY_BYTES` per read completion (the
+[limits](#network-request-limits-v37)): a byte read counts the bytes held back
+by an earlier text read first; a text read counts the held-back bytes it
+completes plus the bytes it decodes. The cap keeps the byte path within one
+`net::READ_FUEL_SHARE`-th of the turn fuel, leaving the rest to the
+application. When the host has received more (one large transport chunk, or
+several ready chunks), the rest waits in the host for the next reads, which
+receive nothing new until it is delivered; it is never dropped and never
+merged beyond the cap. `net_request_start` (v37) keeps its chunk bytes
+unchanged.
 
 #### Request descriptor
 
@@ -1008,6 +1076,44 @@ header-size check, and before the header name is validated:
 | `transfer-encoding` |
 | `upgrade` |
 <!-- generated:embedding-net-runtime-headers:end -->
+
+#### Host-owned headers and content codings (v38)
+
+A browser always sends its own `User-Agent` and `Accept-Encoding` and
+decodes every content coding it accepts; no guest can change either. So that
+the same module behaves the same on every host, `net_request_start_v2` makes
+these request headers **host-owned** on every host. A guest that names one,
+in any case, is not refused (an unmodified SDK sets `User-Agent` on every
+request): the field is checked like any other header (header bytes, name and
+value, with their failures) and then ignored, never sent. Every host MUST
+ignore it the same way; `net_request_start` (v37) is frozen and sends both
+as given.
+
+<!-- generated:embedding-net-host-headers:begin (checked by crates/varta-common/tests/embedding_documentation/net.rs) -->
+| Header (matched ASCII case-insensitively) | What the native reference host sends instead |
+| --- | --- |
+| `accept-encoding` | `identity` (`net::NATIVE_ACCEPT_ENCODING`); a browser sends its own and decodes the body |
+| `user-agent` | Nothing; a browser sends its own |
+<!-- generated:embedding-net-host-headers:end -->
+
+Content codings follow from that. The native reference host decompresses
+nothing, so it asks for the identity coding only, and a response that
+nevertheless names another content coding fails before its head (the
+`response content-encoding … was not requested` text of the
+[failures](#request-failures)); a host that does decode MAY admit it. A
+browser host admits a body Fetch decoded and then shows neither
+`content-encoding` nor `content-length` (the coded length), whatever the
+visible set: the guest sees the decoded bytes, as from the identity coding.
+A browser sees a cross-origin `content-encoding` only when the server lists
+it in `Access-Control-Expose-Headers`; without it the browser host cannot
+tell the body was decoded and shows `content-length` as received. Exposing
+it is deployment configuration of the server, like declared response
+headers.
+
+Other headers a browser controls (`cookie`, `origin`, `referer`, the `sec-`
+and `proxy-` names and the rest of the Fetch forbidden request-header names)
+are not host-owned: the reference host sends them as given and a browser
+host refuses them with a failure of its own.
 
 #### Completions
 
@@ -1114,7 +1220,8 @@ when the browser exposes it.
 #### Body chunks
 
 Each chunk completion holds the bytes already received when the read is served,
-up to the chunk bytes of the [limits](#network-request-limits-v37). A text
+up to the chunk bytes of the [limits](#network-request-limits-v37) (v37) or
+the [per-read cap](#per-read-delivery-cap-v38) (v38). A text
 read also decodes the at most three bytes held back from the previous chunk.
 The read waits only while no byte is available. A chunk is never empty: the end of the
 body is the `End` completion. The two read imports return the same bytes in
@@ -1129,8 +1236,12 @@ different forms:
 - **`net_body_read_bytes`** (v38) delivers each byte as one UTF-16 code unit
   0x00–0xFF, undecoded. Bytes that an earlier text read held back come first.
 
-A body that grows beyond the response body bytes of the limits fails the read
-that crosses the bound.
+Under `net_request_start` (v37), a body that grows beyond the response body
+bytes of the limits fails the read that crosses the bound. Under
+`net_request_start_v2` (v38) the bound applies to the bytes the host receives
+while serving one read (from the transport, before the chunk bound splits
+them), so a read that receives more fails while a body of any total passes
+([transfer timing](#transfer-timing-v38)).
 
 #### Request failures
 
@@ -1162,10 +1273,11 @@ denial is also logged as `varta log: <denial text>`.
 | Transfer (head) | `Failed` | `HTTP handshake failed: <error>` | The HTTP/1.1 connection could not be set up |
 | Transfer (head) | `Failed` | `invalid request: <error>` | The request could not be built |
 | Transfer (head) | `Failed` | `request failed: <error>` | Sending the request or reading the head failed (a head beyond the response limits included) |
-| Transfer (head) | `Failed` | `request timed out` | The head did not arrive before the deadline |
+| Transfer (head) | `Failed` | `request timed out` | The head did not arrive before the deadline (v37: the transfer deadline; v38: one [inactivity window](#transfer-timing-v38) after the start) |
+| Transfer (head) | `Failed` | `response content-encoding <error> was not requested` | V38, native reference host: the response has a content coding other than the requested `identity`; `<error>` lists the codings, lowercased, joined with `, ` |
 | Body read | `Failed` | `response body failed: <error>` | The body stream failed |
-| Body read | `Failed` | `response body exceeds 524288 bytes` | The body exceeds the response body bytes |
-| Body read | `Failed` | `response body timed out` | No chunk arrived before the deadline |
+| Body read | `Failed` | `response body exceeds 524288 bytes` | The body (v37), or the bytes received while serving this read (v38), exceed the response body bytes |
+| Body read | `Failed` | `response body timed out` | No chunk arrived before the deadline (v37: the transfer deadline; v38: within one inactivity window of the read's wait) |
 <!-- generated:embedding-net-failures:end -->
 
 #### Request errors

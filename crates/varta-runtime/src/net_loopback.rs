@@ -1,4 +1,5 @@
-//! Test-only loopback HTTP/1.1 server for the v37 network request tests. It
+//! Test-only loopback HTTP/1.1 server for the v37 and v38 network request
+//! tests. It
 //! binds 127.0.0.1 on an ephemeral port, never reaches another host, and
 //! counts accepted connections so denial tests can prove that no socket was
 //! opened. Routes mirror `net_cases/server.mjs`, which serves the same
@@ -16,7 +17,16 @@ pub(crate) const PAD_BYTES: usize = 4096;
 /// Pause between the chunks of the streaming routes.
 const CHUNK_PAUSE: Duration = Duration::from_millis(20);
 /// How long a route that never answers keeps its connection.
-const SILENCE: Duration = Duration::from_secs(8);
+pub(crate) const SILENCE: Duration = Duration::from_secs(8);
+/// The `User-Agent` marker `/agent` looks for: present only when a host sent
+/// the guest's own value.
+pub(crate) const AGENT_MARKER: &str = "varta-test-sdk";
+
+/// One server-sent event of the `/events` and `/stall` routes: `size` data
+/// bytes, then its id, so the stream's last bytes name its last event.
+pub(crate) fn event(id: u64, size: usize) -> Vec<u8> {
+    format!("data: {}\nid: {id}\n\n", "x".repeat(size)).into_bytes()
+}
 
 pub(crate) struct Loopback {
     pub base: String,
@@ -300,6 +310,100 @@ fn answer<S: Read + Write>(mut stream: S) {
             );
         }
         "/slow" => std::thread::sleep(SILENCE),
+        // V38 long-lived streams: `count` events of `size` data bytes, one
+        // every `pause` ms; `/stall` sends one event, keeps silent for `gap`
+        // ms, then sends a second.
+        "/events" => {
+            let pause = Duration::from_millis(parameter(&request, "pause"));
+            let size = usize::try_from(parameter(&request, "size")).unwrap();
+            let events: Vec<(Duration, Vec<u8>)> = (1..=parameter(&request, "count"))
+                .map(|id| (pause, event(id, size)))
+                .collect();
+            event_stream(&mut stream, &events);
+        }
+        "/stall" => {
+            let gap = Duration::from_millis(parameter(&request, "gap"));
+            event_stream(
+                &mut stream,
+                &[(Duration::ZERO, event(1, 1)), (gap, event(2, 1))],
+            );
+        }
+        // V38 host-owned request headers: whether the guest's `User-Agent`
+        // arrived (`/agent`), and the values that did arrive (`/sent`).
+        "/agent" => {
+            let sent = header(&request, "user-agent").is_some_and(|ua| ua.contains(AGENT_MARKER));
+            fixed(
+                &mut stream,
+                "200 OK",
+                "content-type: application/json\r\n",
+                format!(r#"{{"guestAgent":{sent}}}"#).as_bytes(),
+            );
+        }
+        "/sent" => {
+            let body = format!(
+                r#"{{"agent":{},"encoding":{}}}"#,
+                json_text(header(&request, "user-agent")),
+                json_text(header(&request, "accept-encoding")),
+            );
+            fixed(
+                &mut stream,
+                "200 OK",
+                "content-type: application/json\r\n",
+                body.as_bytes(),
+            );
+        }
+        // A content coding the request did not ask for (the body is not
+        // really compressed: only the head is inspected).
+        "/coded" => fixed(
+            &mut stream,
+            "200 OK",
+            "content-type: text/plain\r\ncontent-encoding: gzip\r\n",
+            b"coded",
+        ),
+        // `server.mjs` compresses this text when the request accepts gzip;
+        // the native host asks for the identity coding, so only that branch
+        // exists here and any other request is refused.
+        "/compressed" => {
+            let identity = header(&request, "accept-encoding")
+                .is_some_and(|value| value == varta_common::net::IDENTITY_ENCODING);
+            if identity {
+                fixed(
+                    &mut stream,
+                    "200 OK",
+                    "content-type: text/plain\r\n",
+                    b"compressed text",
+                );
+            } else {
+                fixed(&mut stream, "406 Not Acceptable", "", b"");
+            }
+        }
         _ => fixed(&mut stream, "500 Internal Server Error", "", b""),
     }
+}
+
+/// A numeric query parameter of the request (0 when absent).
+fn parameter(request: &Request, name: &str) -> u64 {
+    let query = request.path.split_once('?').map_or("", |(_, query)| query);
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == name)
+        .and_then(|(_, value)| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// A chunked `text/event-stream`: each chunk after its pause.
+fn event_stream<S: Write>(stream: &mut S, chunks: &[(Duration, Vec<u8>)]) {
+    let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n";
+    let _ = stream.write_all(head.as_bytes());
+    let _ = stream.flush();
+    for (pause, chunk) in chunks {
+        std::thread::sleep(*pause);
+        let _ = stream.write_all(format!("{:x}\r\n", chunk.len()).as_bytes());
+        let _ = stream.write_all(chunk);
+        let _ = stream.write_all(b"\r\n");
+        let _ = stream.flush();
+    }
+    let _ = stream.write_all(b"0\r\n\r\n");
+    let _ = stream.flush();
 }
