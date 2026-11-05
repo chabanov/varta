@@ -223,9 +223,6 @@ fn embedded_sources(dom: bool) -> String {
         .into_iter()
         .map(|(name, bindings, source, exports)| module(name, bindings, source, exports))
         .collect::<String>();
-    if !dom {
-        source.push_str(&module("kvStore", "", KV_STORE, "createKvHost"));
-    }
     if dom {
         source.push_str(&module("uiTiming", "", UI_TIMING, "createUiTiming"));
         source.push_str(&module(
@@ -248,6 +245,9 @@ fn embedded_sources(dom: bool) -> String {
         ));
         source.push_str(&module("viewCustomProperties", "const {CssError}=viewCss;const {compileVariableValue,createVariableScope}=viewVariables;", VIEW_CUSTOM_PROPERTIES, "createCustomPropertyStyles"));
         source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;const {createCustomPropertyStyles}=viewCustomProperties;", VIEW_DOM, "createViewDom,encodeViewEvent"));
+    } else {
+        // The Worker's KV imports; the parent page never handles KV.
+        source.push_str(&module("kvStore", "", KV_STORE, "createKvHost"));
     }
     source
 }
