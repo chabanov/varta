@@ -3098,3 +3098,13 @@ repository with a copy of the pinned `uarp-sdk` 0.13.2 checks under v38
 when importing `UarpClient` from `"uarp-sdk"` (66 modules, no declaration
 or JavaScript file) and fails under v37 with the named diagnostic. The full
 gate is left to the wave integration.
+
+Review fixes: a mapped source's extension is classified ASCII-case-insensitively
+and must be lowercase (on case-insensitive APFS `./index.D.ts` had loaded the
+declaration as a module); an empty `exports` object exports nothing instead of
+falling back to the top-level `types`; declaration source maps are cached by
+path, so a map shared by several exports counts once against the metadata
+budget. Scoped verification: `verify.py local varta-project` (60 unit, 2
+boundary, 9 package tests), `verify.py local varta-compiler` (164 unit),
+`cargo test -p varta --test modules` (29), strict Clippy of `varta-project`
+and formatting pass.

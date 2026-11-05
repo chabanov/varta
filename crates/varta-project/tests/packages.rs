@@ -155,6 +155,44 @@ fn package_metadata_shares_one_aggregate_read_budget() {
 }
 
 #[test]
+fn a_shared_declaration_source_map_counts_once_against_the_budget() {
+    // Five subpaths export one declaration whose map alone is under the
+    // per-file bound; read once per subpath they would exceed the budget.
+    const SUBPATHS: usize = 5;
+    const MAP_BYTES: usize = 1_000_000;
+    let imports: String = (0..SUBPATHS)
+        .map(|n| format!("import {{ twice as t{n} }} from \"plain/s{n}\"; "))
+        .collect();
+    let project = Workspace::new(
+        V38,
+        &format!("{imports}\nexport function main(): void {{ console.log(t0(1)); }}\n"),
+    );
+    project.install("plain", "plain");
+    let exports: Vec<String> = (0..SUBPATHS)
+        .map(|n| format!(r#""./s{n}":{{"types":"./dist/index.d.ts"}}"#))
+        .collect();
+    project.write(
+        "node_modules/plain/package.json",
+        &format!(r#"{{"name":"plain","exports":{{{}}}}}"#, exports.join(",")),
+    );
+    let map = r#"{"version":3,"sources":["../src/index.ts"],"mappings":""}"#;
+    project.write(
+        "node_modules/plain/dist/index.d.ts.map",
+        &format!("{map}{}", " ".repeat(MAP_BYTES - map.len())),
+    );
+    let checked = project.load().unwrap_or_else(|e| panic!("{e}"));
+    let index = project.package("plain").join("src/index.ts");
+    assert_eq!(
+        checked
+            .modules
+            .iter()
+            .filter(|module| module.path == index)
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn plain_scoped_subpath_and_top_level_types_packages_link_and_run_in_v38() {
     let project = Workspace::installed(V38, MAIN);
     let checked = project.load().unwrap_or_else(|e| panic!("{e}"));
@@ -285,6 +323,12 @@ fn package_manifests_and_exports_are_refused_outside_the_policy() {
         manifest(r#"{"name":"plain","exports":{".":{"types":{"import":"./dist/index.d.ts"}}}}"#),
         "unsupported nested condition under 'types'",
     );
+    // An empty exports object exports nothing; the top-level types never
+    // stands in for it.
+    refused(
+        manifest(r#"{"name":"plain","exports":{},"types":"./dist/index.d.ts"}"#),
+        "package plain does not export .",
+    );
     refused(manifest("[]"), "package.json must be a JSON object");
     refused(manifest("{"), "invalid");
     refused(
@@ -399,6 +443,17 @@ fn declaration_source_maps_must_name_one_shipped_typescript_source_inside_the_pa
         map(r#"["./index.d.ts"]"#),
         "unsupported declarations-only package plain",
     );
+    // Extensions compare exactly: on a case-insensitive file system a
+    // differently cased name would open the same file under another identity.
+    for declaration in [r#"["./index.D.ts"]"#, r#"["./index.d.TS"]"#] {
+        refused(
+            map(declaration),
+            "unsupported declarations-only package plain",
+        );
+    }
+    for source in [r#"["../src/index.TS"]"#, r#"["../src/index.Ts"]"#] {
+        refused(map(source), "lowercase .ts");
+    }
     refused(
         map(r#"["../src/absent.ts"]"#),
         "unsupported declarations-only package plain",

@@ -136,9 +136,11 @@ dependencies are linked into the Wasm and native artifacts at build time.
 `varta check --json` includes the resolved dependency graph in `modules`.
 
 Dependencies must stay within the configuration directory; symlinks and cycles
-are rejected. Default/namespace imports, export-from, dynamic imports, npm and
-URL imports are not supported. See the [module contract](architecture.md#local-modules)
-for path rules and graph limits.
+are rejected. Namespace, side-effect and dynamic imports, namespace re-exports
+and URL imports are not supported. Default imports/exports and `export … from`
+re-exports need [v32](#module-re-exports-opt-in-v32) or later, and npm package
+names need v38 (below); earlier profiles reject them. See the
+[module contract](architecture.md#local-modules) for path rules and graph limits.
 
 With `"languageProfile": "checked-f64-utf16-v38"`, a typed npm package
 installed in `node_modules` next to `varta.config.json` is imported by name:

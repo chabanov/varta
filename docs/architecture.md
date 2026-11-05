@@ -13037,9 +13037,11 @@ import { extra } from "@scope/name/extra";
   links included).
 - **Manifest.** `package.json` is read once per package as a bounded
   regular UTF-8 JSON object (1 MiB). Manifests and source maps count against
-  one loader budget of 4 MiB across the graph; each specifier resolves once.
+  one loader budget of 4 MiB across the graph, each source map once per path
+  however many exports share it; each specifier resolves once.
 - **Export selection.** With `exports` (not `null`), the export key is `.`
-  or `./subpath`. A string, array or conditions object exports only `.`; a
+  or `./subpath`. A string, array or conditions object exports only `.`; an
+  empty object exports nothing, so the top-level `types` never applies; a
   subpath map is matched by exact key only. When no exact key matches and
   the map has a `*` or trailing-`/` key, the import is refused as an
   unsupported export pattern; otherwise the subpath is not exported. A
@@ -13061,7 +13063,9 @@ import { extra } from "@scope/name/extra";
   That path, relative to the map's directory without a scheme, an absolute
   path, `\`, `?` or `#`, is normalized lexically and must stay inside the
   package directory; it must name an existing `.ts` or `.tsx` source, not a
-  declaration. The source is then the module identity, loaded like any
+  declaration. Extensions are classified ASCII-case-insensitively and must
+  be lowercase: `index.D.ts` is a declaration and `index.TS` is refused, so a
+  case-insensitive file system cannot open a file under another identity. The source is then the module identity, loaded like any
   module: a package imported by name and by a relative path is one module.
 - **Typed packages only.** A package whose `types` export or top-level
   `types` is missing ("unsupported untyped package"), whose declarations

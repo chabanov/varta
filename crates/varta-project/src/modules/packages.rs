@@ -232,11 +232,14 @@ fn profile_name(profile: LanguageProfile) -> Option<String> {
 }
 
 /// Resolution state of one loader: each specifier resolves and each manifest
-/// is read once, and every metadata byte read counts against one budget.
+/// and source map is read once, and every metadata byte read counts against
+/// one budget.
 #[derive(Default)]
 pub(super) struct Packages {
     resolved: RefCell<BTreeMap<String, PathBuf>>,
     manifests: RefCell<BTreeMap<String, Arc<Value>>>,
+    /// Declaration source maps by path; several exports may share one.
+    maps: RefCell<BTreeMap<PathBuf, Arc<[u8]>>>,
     bytes: Cell<usize>,
 }
 
@@ -315,6 +318,18 @@ impl SourceLoader {
             .insert(package.to_owned(), Arc::clone(&manifest));
         Ok(manifest)
     }
+    /// The bytes of one declaration source map, read once per path.
+    fn source_map(&self, package: &str, path: &Path) -> Result<Arc<[u8]>, io::Error> {
+        if let Some(bytes) = self.packages.maps.borrow().get(path) {
+            return Ok(Arc::clone(bytes));
+        }
+        let bytes: Arc<[u8]> = self.metadata(package, path)?.into();
+        self.packages
+            .maps
+            .borrow_mut()
+            .insert(path.to_owned(), Arc::clone(&bytes));
+        Ok(bytes)
+    }
     /// The one TypeScript source the declaration's adjacent `.d.ts.map` names.
     fn mapped_source(
         &self,
@@ -340,7 +355,7 @@ impl SourceLoader {
         map.push(SOURCE_MAP_EXTENSION);
         let map = PathBuf::from(map);
         let bytes = self
-            .metadata(package, &map)
+            .source_map(package, &map)
             .map_err(|error| match error.kind() {
                 io::ErrorKind::NotFound => declarations_only(format!(
                     "{} has no adjacent source map {}",
@@ -394,15 +409,28 @@ impl SourceLoader {
         if !path.starts_with(directory) || path == directory {
             return Err(escapes());
         }
+        // Extensions are classified ASCII-case-insensitively and then required
+        // to be lowercase: on a case-insensitive file system `index.D.ts`
+        // opens the declaration under another identity.
         let name = path.to_string_lossy();
-        if name.ends_with(DECLARATION_EXTENSION) {
+        let folded = name.to_ascii_lowercase();
+        if folded.ends_with(DECLARATION_EXTENSION) {
             return Err(declarations_only(format!(
                 "{} maps to another declaration, {}",
                 declaration.display(),
                 path.display()
             )));
         }
-        if !(name.ends_with(TS_EXTENSION) || self.tsx_specifiers && name.ends_with(TSX_EXTENSION)) {
+        let typed = |name: &str| {
+            name.ends_with(TS_EXTENSION) || self.tsx_specifiers && name.ends_with(TSX_EXTENSION)
+        };
+        if typed(&folded) && !typed(&name) {
+            return Err(invalid(&format!(
+                "the source {} must have a lowercase .ts or .tsx extension",
+                path.display()
+            )));
+        }
+        if !typed(&name) {
             return Err(PackageError::Untyped {
                 package: package.to_owned(),
                 subpath: format!("the source {} of {}", path.display(), declaration.display()),
@@ -525,6 +553,9 @@ fn export_entry<'m>(exports: &'m Value, subpath: &str) -> Result<Option<&'m Valu
     let root = |value| Ok((subpath == ROOT_EXPORT).then_some(value));
     let map = match exports {
         Value::String(_) | Value::Array(_) => return root(exports),
+        // An empty object exports nothing, not even the package root
+        // (Node's ERR_PACKAGE_PATH_NOT_EXPORTED); no `types` fallback applies.
+        Value::Object(map) if map.is_empty() => return Ok(None),
         Value::Object(map) => map,
         _ => {
             return Err(EntryError::Invalid(
@@ -719,6 +750,9 @@ mod tests {
         let conditions = serde_json::json!({"types": "./a.d.ts", "import": "./a.js"});
         assert!(matches!(export_entry(&conditions, "."), Ok(Some(_))));
         assert!(matches!(export_entry(&conditions, "./sub"), Ok(None)));
+        let nothing = serde_json::json!({});
+        assert!(matches!(export_entry(&nothing, "."), Ok(None)));
+        assert!(matches!(export_entry(&nothing, "./sub"), Ok(None)));
         let mixed = serde_json::json!({".": "./a.js", "import": "./a.js"});
         assert!(matches!(
             export_entry(&mixed, "."),

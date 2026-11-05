@@ -4480,11 +4480,14 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   fallbacks without a contract change; patterns and fallback arrays stay
   explicit refusals.
 - The module is the one `.ts`/`.tsx` source the adjacent `.d.ts.map` names,
-  inside the package. Never load a `.d.ts` or JavaScript file and never
+  inside the package, with a lowercase extension (classify `.d.ts`
+  case-insensitively first). Never load a `.d.ts` or JavaScript file and never
   admit a package without a mapped source: untyped and declarations-only
   packages stay "unsupported …" module errors, without exceptions.
 - Keep the per-file (1 MiB) and aggregate metadata budgets, the per-loader
-  specifier and manifest caches, and the module graph budgets unchanged.
+  specifier, manifest and source-map caches (each metadata file counts
+  once), and the module graph budgets unchanged. An empty `exports` object
+  exports nothing; never fall back to the top-level `types` for it.
   Earlier profiles name the admitting profile from the registry
   (`required_profile`), never a literal.
 
