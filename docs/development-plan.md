@@ -727,9 +727,11 @@ Owner decisions (2026-11-05):
 
 Open after integration:
 
-- `font-family` with a CSS-wide keyword (`revert`, `initial`, …) rolls back to
-  Chrome's own font in the browser while native refuses it.
-- Unsized controls: Chrome computes 13.33px, native inherits the parent size.
+- (Closed in wave 3 by `w3-native-controls`: a CSS-wide keyword in
+  `font-family` is refused by the shared validator and the browser's font
+  namespace, and a custom property holding one takes its inherited or
+  initial value on both renderers, so it never reaches `font-family`;
+  unsized controls use Chrome's control font size natively.)
 - The manual trusted-gesture run (copy target and link in a live
   `varta-shell` window) needs a human.
 - The Taffy-measurement mapping of a refused text node to its flow has no
