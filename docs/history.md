@@ -3429,3 +3429,25 @@ at most `MAX_RUNNING_LAUNCHERS` launchers instead of a reaper thread per
 opening, the prototype `varta-web-host` refuses artifacts with a resource
 section, and the sfnt record offsets and the renderer's family/alias limits
 are named. The manual trusted-gesture run is still open.
+
+### Browser oracle gate (wave 3) — 2026-11-05
+
+`python3 scripts/verify.py browser` and the CI `browser` and `gpu` jobs were
+added ([gate](verification.md#browser-oracle-gate)). The first local pass, on
+an uncommitted tree over `49186cf`, ran 32 commands with Playwright 1.62.1,
+Chrome 156.0.8078.80, Firefox 153.0 and WebKit 26.5 and waived the Firefox
+selection of `test-browser-variables.mjs` as a known gap. A review on committed
+`ce412d4` passed the same scope and the waived selection passed 6 of 6
+standalone runs, so the waiver was removed.
+
+Review fixes. The scope runs only `view-model.test.mjs`, without and then with
+the oracle, and fails unless the oracle run passes more tests (7 and 11 locally);
+renaming the oracle variable in that suite failed the scope at that step, and an
+injected failing assertion failed it one step earlier. The report's
+`devtoolsChrome` replaces `chrome`. With the waiver removed, whole gate runs
+on `56bd6bd` and `f407d64` failed at the Firefox variables selection (`too much
+recursion` in `rewriteRootSelector`) after the 31 earlier commands passed; that
+command and its standalone form failed 45 of 51 runs at load averages between
+about 34 and 81, after 19 earlier standalone passes, and is recorded as an open
+intermittent defect. Chrome and WebKit selections and the compiled variable
+bundle passed 3 of 3 each. No CI run has been observed.
