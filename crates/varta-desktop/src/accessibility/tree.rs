@@ -156,7 +156,7 @@ impl Projection {
                 },
             );
         }
-        let bounds = metadata.node_bounds_map();
+        let bounds = metadata.accessibility_bounds_map();
         let mut bindings = BTreeMap::new();
         let mut text_runs = BTreeMap::new();
         let mut nodes = Vec::with_capacity(source.nodes.len() + 1);

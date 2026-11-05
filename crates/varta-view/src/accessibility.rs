@@ -1,4 +1,5 @@
 //! Host-owned semantic projection. No platform toolkit, I/O or guest execution.
+mod geometry;
 mod scroll;
 mod text;
 use crate::name::Names;

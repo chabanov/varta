@@ -587,3 +587,193 @@ fn curved_geometry_work_refusal_clears_actions_and_recovers_without_a_guest_fail
     assert!(update.nodes.iter().all(|(id, _)| *id != field));
     assert!(!bridge.state.lock().unwrap().text_runs.is_empty());
 }
+
+/// The published node whose AccessKit label or value is `text`.
+fn named<'a>(update: &'a accesskit::TreeUpdate, text: &str) -> &'a accesskit::Node {
+    &update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(text) || node.value() == Some(text))
+        .unwrap_or_else(|| panic!("{text}"))
+        .1
+}
+fn bounds_of(update: &accesskit::TreeUpdate, text: &str) -> accesskit::Rect {
+    named(update, text)
+        .bounds()
+        .unwrap_or_else(|| panic!("{text} has no bounds"))
+}
+
+const SCALE: f32 = 2.0;
+const OPTIONS: std::ops::Range<u32> = 20..32;
+const FIRST: usize = 4;
+const LABEL_OFFSET: u32 = 100;
+
+fn offscreen_view() -> View {
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(1, ".pane {height:50px;width:100px;overflow:auto}.space {height:120px}.below {height:20px}.clip {height:30px;width:100px;overflow:hidden}.clipped {margin-top:40px;height:10px}.pick {display:block; width:80px; height:30px; min-width:0; min-height:0; padding:4px; border:2px solid #000; border-radius:0; outline:none; background-color:#fff; color:#000; font-family:\"Varta Password Fixture\"; font-size:20px; font-weight:400; font-style:normal; line-height:20px}")
+        .create_element(2, Tag::Div).set_class(2, "pane").insert(1, 2, 0)
+        .create_element(3, Tag::Div).set_class(3, "space").insert(2, 3, 0)
+        .create_element(4, Tag::Section).set_class(4, "below").set_attribute(4, A::AriaLabel, "Below").insert(2, 4, 0)
+        .create_element(5, Tag::Div).set_class(5, "clip").insert(1, 5, 0)
+        .create_element(6, Tag::Section).set_class(6, "clipped").set_attribute(6, A::AriaLabel, "Clipped").insert(5, 6, 0)
+        .create_element(7, Tag::Div).insert(1, 7, 0)
+        .create_text(8, "Lone text").insert(7, 8, 0)
+        .create_element(9, Tag::Select).set_class(9, "pick").insert(1, 9, 0);
+    for id in OPTIONS {
+        b.create_element(id, Tag::Option)
+            .set_attribute(id, A::Value, &id.to_string())
+            .create_text(id + LABEL_OFFSET, &format!("O{id}"))
+            .insert(id, id + LABEL_OFFSET, 0)
+            .insert(9, id, 0);
+    }
+    commit(&mut view, &b);
+    view
+}
+fn present(view: &View, revision: u64, bridge: &Bridge) -> (FrameMetadata, accesskit::TreeUpdate) {
+    let mut font = TextMeasurer::new(
+        include_bytes!("../../../varta-view/tests/fixtures/password.ttf").to_vec(),
+        "Varta Password Fixture",
+    )
+    .unwrap();
+    let metadata = view
+        .rasterize_scaled(400, 600, SCALE, Some((&mut font, 20.0)))
+        .unwrap()
+        .into_metadata();
+    let version = Version {
+        revision,
+        dimensions: 400u64 << 32 | 600,
+        dark: false,
+        scale: f64::from(SCALE).to_bits(),
+    };
+    let update = bridge
+        .publish(
+            revision,
+            &view.accessibility_tree(),
+            &metadata,
+            version,
+            "geometry",
+        )
+        .unwrap();
+    (metadata, update)
+}
+fn active_bridge() -> Bridge {
+    let bridge = Bridge::new(
+        None,
+        Arc::default(),
+        Arc::new(AtomicBool::new(false)),
+        crate::shell::window::Console::SILENT,
+    );
+    assert!(bridge.activate().is_none());
+    bridge
+}
+
+#[test]
+fn scrolled_out_clipped_and_text_nodes_publish_presented_layout_bounds() {
+    let mut view = offscreen_view();
+    let bridge = active_bridge();
+    let (metadata, update) = present(&view, 1, &bridge);
+    let visible = metadata.node_bounds_map();
+    // Neither offscreen section has a visible fragment.
+    assert!(!visible.contains_key(&4) && !visible.contains_key(&6));
+    let scale = f64::from(SCALE);
+    let below = bounds_of(&update, "Below");
+    let pane_top = f64::from(visible[&2].y);
+    // Below the 50px scrollport, at its unscrolled layout position.
+    assert_eq!(below.y0, pane_top + 120.0 * scale);
+    assert_eq!(
+        (below.width(), below.height()),
+        (100.0 * scale, 20.0 * scale)
+    );
+    assert!(below.y0 >= f64::from(visible[&2].y + visible[&2].height));
+    let clipped = bounds_of(&update, "Clipped");
+    let clip_top = f64::from(visible[&5].y);
+    assert_eq!(clipped.y0, clip_top + 40.0 * scale);
+    assert_eq!(clipped.height(), 10.0 * scale);
+    assert!(clipped.y0 >= clip_top + 30.0 * scale);
+    // The text node's own box contains its painted line fragment.
+    let text = bounds_of(&update, "Lone text");
+    let line = visible[&7];
+    assert!(text.x0 <= f64::from(line.x) && text.y0 <= f64::from(line.y));
+    assert!(
+        text.x1 >= f64::from(line.x + line.width) && text.y1 >= f64::from(line.y + line.height)
+    );
+    // Options of a closed select have no box of their own.
+    assert!(named(&update, "O20").bounds().is_none());
+    // Bounds follow the presented scroll offset of the acknowledged frame.
+    let source = view.accessibility_tree().unwrap().nodes[&2]
+        .identity
+        .clone();
+    assert!(
+        view.accessibility_input_from_frame(
+            &source,
+            &AccessibilityAction::Scroll(varta_view::AccessibilityScrollAction::To(
+                varta_view::AccessibilityScrollOffset::new(90.0).unwrap()
+            )),
+            &metadata,
+            &mut Deny
+        )
+        .unwrap()
+    );
+    let (metadata, update) = present(&view, 2, &bridge);
+    let below = bounds_of(&update, "Below");
+    assert_eq!(below.y0, pane_top + 30.0 * scale);
+    // Fully scrolled: now inside the scrollport.
+    let pane = metadata.accessibility_bounds_map()[&2];
+    assert!(below.y1 <= f64::from(pane.y + pane.height));
+}
+
+#[test]
+fn open_select_list_options_publish_row_bounds_including_scrolled_out_rows() {
+    let mut view = offscreen_view();
+    view.input(
+        &Input::Click {
+            target: Target::Node(9),
+        },
+        &mut Deny,
+    )
+    .unwrap();
+    view.input(
+        &Input::SelectScroll {
+            target: Target::Node(9),
+            first: FIRST,
+        },
+        &mut Deny,
+    )
+    .unwrap();
+    let bridge = active_bridge();
+    let (metadata, update) = present(&view, 1, &bridge);
+    let menu = metadata.select_menu().unwrap();
+    assert_eq!(menu.first, FIRST);
+    let row = f64::from(menu.row_height * SCALE);
+    let top = f64::from(menu.viewport.y);
+    let bottom = top + f64::from(menu.viewport.height);
+    let mut shown = 0;
+    for (index, id) in OPTIONS.enumerate() {
+        let bounds = bounds_of(&update, &format!("O{id}"));
+        assert_eq!(bounds.x0, f64::from(menu.viewport.x));
+        assert_eq!(bounds.width(), f64::from(menu.viewport.width));
+        let expected = top + (index as f64 - FIRST as f64) * row;
+        assert!(
+            (bounds.y0 - expected).abs() < 1e-3,
+            "O{id}: {} {expected}",
+            bounds.y0
+        );
+        let center = ((bounds.x0 + bounds.x1) / 2.0, (bounds.y0 + bounds.y1) / 2.0);
+        if center.1 > top && center.1 < bottom {
+            // A visible row is the rectangle its pointer hit uses.
+            shown += 1;
+            assert_eq!(
+                metadata.select_hit(center.0 as f32, center.1 as f32),
+                Some(varta_view::SelectHit::Choice {
+                    select: 9,
+                    option: id
+                })
+            );
+        } else {
+            // Scrolled out of the list, above or below it.
+            assert!(bounds.y1 <= top + 1e-3 || bounds.y0 >= bottom - 1e-3);
+        }
+    }
+    assert!(shown > 0 && shown < OPTIONS.len());
+}
