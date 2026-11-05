@@ -120,6 +120,8 @@ export interface Segment {
   entries: Entry[];
   /** `<runId>:<seq>` of the last new run event, for Last-Event-ID; null before any. */
   lastEventId: string | null;
+  /** The UTC day the session was created (`YYYY-MM-DD`), shown as the segment's date line; empty when unknown. */
+  date: string;
 }
 
 export interface ContextMeter {
@@ -140,9 +142,27 @@ export function timeline(): Timeline {
 }
 
 export function openSegment(t: Timeline, sessionId: string): Segment {
-  const segment: Segment = { sessionId: sessionId, state: "live", entries: [], lastEventId: null };
+  const segment: Segment = { sessionId: sessionId, state: "live", entries: [], lastEventId: null, date: "" };
   t.segments.push(segment);
   return segment;
+}
+
+/** An older session loaded as history: it goes before every segment already there. */
+export function prependSegment(t: Timeline, sessionId: string, date: string): Segment {
+  const segment: Segment = { sessionId: sessionId, state: "history", entries: [], lastEventId: null, date: date };
+  const segments: Segment[] = [segment];
+  for (const s of t.segments) segments.push(s);
+  t.segments = segments;
+  return segment;
+}
+
+/** Length of the `YYYY-MM-DD` day at the start of an ISO 8601 timestamp. */
+const DAY_LENGTH = 10;
+
+/** The UTC day of an API timestamp (`2026-01-01T00:00:00.000Z`); empty when there is none. */
+export function dayOf(timestamp: string | null | undefined): string {
+  if (timestamp === null || timestamp === undefined || timestamp.length < DAY_LENGTH) return "";
+  return timestamp.slice(0, DAY_LENGTH);
 }
 
 /** Key of an entry in its segment: stable for the entry's whole life. */

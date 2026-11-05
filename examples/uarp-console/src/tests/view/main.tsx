@@ -1,7 +1,8 @@
 // View test entry, rendered headlessly by `varta dev --view-script`;
 // scripts/test.sh compares the final tree and accessibility snapshot with the
-// reviewed expected output. TEST_VIEW picks the scenario. Data arrives one part
-// per turn, as stream frames and transcripts do.
+// reviewed expected output. TEST_VIEW picks the scenario: `chat` and `stream`
+// render the timeline alone, data arriving one part per turn, as stream frames
+// and transcripts do; every other name is a console screen (screens.tsx).
 import type {
   GetSessionMessagesResponse,
   RunEventV1LLMChunk,
@@ -48,6 +49,7 @@ import {
   ERROR_CANCELLED,
 } from "../frames.js";
 import { PLAIN_TRANSCRIPT } from "../transcripts.js";
+import { consoleScreen } from "./screens.js";
 
 const AGENT_NAME = "Chief of Staff";
 const RECORDED_RUN = '"run_id":"run-1"';
@@ -123,14 +125,19 @@ export function main(): void {
     effect(rt, run);
   });
   installStyles();
+  const view = varta.env.get("TEST_VIEW");
+  if (view !== "chat" && view !== "stream") {
+    consoleScreen(rt, view);
+    return;
+  }
   const store = new ChatStore(rt);
   store.afterChange = commitSoon;
-  if (varta.env.get("TEST_VIEW") === "stream") streamScenario(store);
+  if (view === "stream") streamScenario(store);
   else chatScenario(store);
   View.mount(
     <main id="app" class="main">
       <ChatView store={store} agentName={AGENT_NAME} />
-      <Composer store={store} agentName={AGENT_NAME} />
+      <Composer store={store} agentName={AGENT_NAME} enabled={() => true} />
     </main>,
   );
 }

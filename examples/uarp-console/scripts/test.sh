@@ -3,7 +3,8 @@
 #   VARTA_BIN=/path/to/varta scripts/test.sh [group…]
 # 1. The `app-*` groups need the product build and the loopback mock: the run
 #    builds varta.json (`app-manifest` reads its manifest) and starts the mock
-#    (scripts/mock.sh) for app-start, app-e2e and app-e2e-long.
+#    (scripts/mock.sh) for app-start, app-e2e, app-e2e-long, app-stitch and
+#    app-settings. `app-reconnects` is a measurement, run only when named.
 # 2. varta.test.json grants `net.request` on a placeholder origin; the run writes
 #    a copy with the mock's bound origin (an exact grant: ports are never
 #    wildcards) as `varta.test.loopback-<pid>.json` (git-ignored, removed on exit)
@@ -21,6 +22,14 @@
 # 4. Without arguments, each src/tests/view/<name>.script.json is performed
 #    headlessly (TEST_VIEW=<name>) by `varta dev --view-script` and its output must
 #    equal <name>.expected.json.
+# 5. The API key never leaves the settings store: the test key (API_KEY in
+#    src/tests/sdk/contract.ts) must not appear in the output (logs included) of
+#    app-settings, and the key a view script types into #api-key must not appear
+#    in that view's output (snapshot and logs). No API key is built into the
+#    product: no string of the key form (`uarp_<prefix>_<secret>`, the test key
+#    included) may appear in dist/app.wasm or dist/app.manifest.json. The
+#    module stores string literals as UTF-16 code units, so the search drops
+#    NUL bytes first; a plain search of the module would never find one.
 set -eu
 # A relative VARTA_BIN names a path from the caller's directory.
 varta="${VARTA_BIN:-varta}"
@@ -34,9 +43,21 @@ cd "$(dirname "$0")/.."
 placeholder="http://127.0.0.1:1"
 # The host ceiling budgets of the app groups, one JSON object.
 app_ceiling="src/tests/app-ceiling.json"
-unit_groups="markdown-inline markdown-blocks markdown-code markdown-stream-early markdown-stream-late reactive list-mapping list-update list-move list-remove chat-turns chat-waits chat-strict chat-stream chat-dispatch chat-history chat-history-merge chat-store chat-requests scenario-plain scenario-reasoning scenario-tool_call scenario-delegation scenario-approval_approve scenario-approval_reject scenario-ask_user scenario-error scenario-session_end"
-app_groups="app-manifest app-start app-e2e app-e2e-long"
+unit_groups="markdown-inline markdown-blocks markdown-code markdown-stream-early markdown-stream-late reactive list-mapping list-update list-move list-remove chat-turns chat-waits chat-strict chat-stream chat-dispatch chat-history chat-history-merge chat-store chat-requests chat-stitch ui-notices scenario-plain scenario-reasoning scenario-tool_call scenario-delegation scenario-approval_approve scenario-approval_reject scenario-ask_user scenario-error scenario-session_end"
+app_groups="app-manifest app-start app-e2e app-e2e-long app-stitch app-settings"
 groups="${*:-$unit_groups $app_groups}"
+# The test key the mock accepts (step 5).
+test_key=$(sed -n 's/^export const API_KEY = "\([^"]*\)";$/\1/p' src/tests/sdk/contract.ts)
+if [ -z "$test_key" ]; then
+  echo "FAIL config: no API_KEY in src/tests/sdk/contract.ts" >&2
+  exit 1
+fi
+# The API key form (uarp-sdk: `uarp_<prefix>_<secret>`) searched for in the product build (step 5).
+key_form='uarp_[A-Za-z0-9]+_[A-Za-z0-9_-]+'
+if ! printf '%s\n' "$test_key" | grep -qE "^$key_form\$"; then
+  echo "FAIL config: the test key does not have the API key form" >&2
+  exit 1
+fi
 
 if [ ! -d node_modules/uarp-sdk/src ]; then
   echo "missing node_modules/uarp-sdk/src: run npm ci --ignore-scripts" >&2
@@ -137,6 +158,18 @@ for group in $groups; do
     printf '[%s] did not pass: %s\n' "$group" "$(printf '%s\n' "$output" | grep -m1 -E 'varta failed|fuel|deadline' || echo 'see output')"
     status=1
   fi
+  if [ "$group" = app-settings ] && printf '%s\n' "$output" | grep -qF "$test_key"; then
+    printf '[%s] FAIL the test key appears in the output\n' "$group"
+    status=1
+  fi
+  if [ "$group" = app-manifest ]; then
+    for built in dist/app.wasm dist/app.manifest.json; do
+      if tr -d '\000' < "$built" | LC_ALL=C grep -aqE "$key_form"; then
+        printf '[%s] FAIL a string of the API key form appears in %s\n' "$group" "$built"
+        status=1
+      fi
+    done
+  fi
 done
 if [ "$needs_mock" = true ] && ! mock_alive; then
   echo "FAIL server: exited during the run" >&2
@@ -148,10 +181,16 @@ if [ $# -eq 0 ]; then
   for script in src/tests/view/*.script.json; do
     name=$(basename "$script" .script.json)
     expected="src/tests/view/$name.expected.json"
-    if TEST_VIEW="$name" "$varta" dev --config varta.view.json --view-script "$script" 2>/dev/null | cmp -s - "$expected"; then
+    TEST_VIEW="$name" "$varta" dev --config varta.view.json --view-script "$script" > "$work/view.out" 2> "$work/view.err" || true
+    if cmp -s "$work/view.out" "$expected"; then
       printf '[view %s] matches %s\n' "$name" "$expected"
     else
       printf '[view %s] differs from %s\n' "$name" "$expected"
+      status=1
+    fi
+    typed_key=$(sed -n 's/.*"target":"#api-key","text":"\([^"]*\)".*/\1/p' "$script")
+    if [ -n "$typed_key" ] && grep -qF "$typed_key" "$work/view.out" "$work/view.err"; then
+      printf '[view %s] FAIL the typed key appears in the snapshot or the log\n' "$name"
       status=1
     fi
   done

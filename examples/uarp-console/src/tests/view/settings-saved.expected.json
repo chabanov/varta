@@ -1,0 +1,1651 @@
+{
+  "accessibility": {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "level": 1,
+                "name": "Головний агент",
+                "role": "heading"
+              },
+              {
+                "name": "Простір Loopback",
+                "role": "text"
+              },
+              {
+                "expanded": "false",
+                "name": "Контекст",
+                "role": "button"
+              },
+              {
+                "name": "Налаштування",
+                "role": "button"
+              }
+            ],
+            "role": "banner"
+          },
+          {
+            "busy": "false",
+            "children": [
+              {
+                "level": 2,
+                "name": "Чим допомогти сьогодні?",
+                "role": "heading"
+              },
+              {
+                "children": [
+                  {
+                    "name": "Головний агент керує всіма агентами простору: делегує задачі, стежить за запусками і питає вашого дозволу на важливі дії.",
+                    "role": "text"
+                  }
+                ],
+                "role": "paragraph"
+              },
+              {
+                "name": "Що зараз відбувається?",
+                "role": "button"
+              },
+              {
+                "name": "Підсумок за тиждень",
+                "role": "button"
+              },
+              {
+                "name": "Створи агента для підтримки",
+                "role": "button"
+              }
+            ],
+            "live": "polite",
+            "name": "Розмова",
+            "role": "region"
+          },
+          {
+            "children": [
+              {
+                "multiline": true,
+                "name": "Повідомлення",
+                "role": "textbox",
+                "value": ""
+              },
+              {
+                "name": "Enter — надіслати · Shift+Enter — новий рядок",
+                "role": "text"
+              },
+              {
+                "disabled": true,
+                "name": "Надіслати",
+                "role": "button"
+              }
+            ],
+            "role": "form"
+          }
+        ],
+        "role": "main"
+      },
+      {
+        "children": [
+          {
+            "name": "Налаштування збережено.",
+            "role": "text"
+          }
+        ],
+        "live": "polite",
+        "role": "status"
+      }
+    ],
+    "role": "application"
+  },
+  "clipboard": null,
+  "focus": 15,
+  "opened": [],
+  "prompts": 0,
+  "stylesheets": [
+    {
+      "id": 1,
+      "text": ":root {\n  --bg: #ffffff;\n  --bg-subtle: #f5f6f8;\n  --surface: #ffffff;\n  --border: #e2e4e9;\n  --fg: #16181d;\n  --fg-muted: #5b616e;\n  --fg-subtle: #8a909c;\n  --accent: #3b5bdb;\n  --accent-fg: #ffffff;\n  --accent-subtle: #edf1ff;\n  --ok: #2b8a3e;\n  --ok-subtle: #e8f6eb;\n  --warn: #a35200;\n  --warn-subtle: #fff3e3;\n  --danger: #c92a2a;\n  --danger-subtle: #fdeced;\n  --code-bg: #f2f3f5;\n  --toast-bg: #16181d;\n  --toast-fg: #ffffff;\n}\n\n@media (prefers-color-scheme: dark) {\n  :root {\n    --bg: #111317;\n    --bg-subtle: #181b20;\n    --surface: #1b1e24;\n    --border: #2c3038;\n    --fg: #e9ebef;\n    --fg-muted: #a2a8b4;\n    --fg-subtle: #757c88;\n    --accent: #7c95ff;\n    --accent-fg: #0d1020;\n    --accent-subtle: #1f2640;\n    --ok: #69c47e;\n    --ok-subtle: #16281b;\n    --warn: #f0a24a;\n    --warn-subtle: #2c2111;\n    --danger: #ff8787;\n    --danger-subtle: #321619;\n    --code-bg: #15171c;\n    --toast-bg: #e9ebef;\n    --toast-fg: #111317;\n  }\n}\n\n.app {\n  display: grid;\n  grid-template-columns: 1fr;\n  height: 100%;\n  background-color: var(--bg);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 15px;\n  line-height: 1.5;\n}\n\n.app.with-panel {\n  grid-template-columns: 1fr 360px;\n}\n\n.main {\n  display: flex;\n  flex-direction: column;\n  min-height: 0;\n  min-width: 0;\n}\n\n.topbar {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 10px 16px;\n  border-bottom: 1px solid var(--border);\n  background-color: var(--surface);\n}\n\n.avatar {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  flex-shrink: 0;\n  width: 32px;\n  height: 32px;\n  border-radius: 50%;\n  background-color: var(--accent);\n  color: var(--accent-fg);\n  font-size: 13px;\n  font-weight: 600;\n}\n\n.avatar.small {\n  width: 28px;\n  height: 28px;\n  font-size: 12px;\n}\n\n.avatar.user {\n  background-color: var(--bg-subtle);\n  color: var(--fg-muted);\n  border: 1px solid var(--border);\n}\n\n.avatar.agent {\n  background-color: var(--ok-subtle);\n  color: var(--ok);\n}\n\n.heading {\n  display: flex;\n  flex-direction: column;\n  flex-grow: 1;\n  min-width: 0;\n}\n\n.title {\n  margin: 0;\n  font-size: 15px;\n  font-weight: 600;\n  line-height: 1.3;\n}\n\n.subtitle {\n  color: var(--fg-muted);\n  font-size: 13px;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.badge {\n  display: inline;\n  padding: 1px 8px;\n  border-radius: 999px;\n  background-color: var(--bg-subtle);\n  color: var(--fg-muted);\n  font-size: 12px;\n  font-weight: 500;\n  white-space: nowrap;\n}\n\n.badge.ok {\n  background-color: var(--ok-subtle);\n  color: var(--ok);\n}\n\n.badge.warn {\n  background-color: var(--warn-subtle);\n  color: var(--warn);\n}\n\n.badge.danger {\n  background-color: var(--danger-subtle);\n  color: var(--danger);\n}\n\n.badge.accent {\n  background-color: var(--accent-subtle);\n  color: var(--accent);\n}\n\n.button {\n  padding: 6px 12px;\n  border: 1px solid var(--border);\n  border-radius: 8px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 14px;\n  font-weight: 500;\n  line-height: 1.4;\n  cursor: pointer;\n  transition-property: background-color, color;\n  transition-duration: 120ms;\n}\n\n.button:hover {\n  background-color: var(--bg-subtle);\n}\n\n.button:active {\n  transform: translateY(1px);\n}\n\n.button:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.button:disabled {\n  opacity: 0.5;\n  cursor: not-allowed;\n}\n\n.button.primary {\n  border-color: var(--accent);\n  background-color: var(--accent);\n  color: var(--accent-fg);\n}\n\n.button.danger {\n  border-color: var(--danger);\n  color: var(--danger);\n}\n\n.button.ghost {\n  border-color: transparent;\n  background-color: transparent;\n  color: var(--fg-muted);\n}\n\n.button.ghost:hover {\n  background-color: var(--bg-subtle);\n  color: var(--fg);\n}\n\n.button.small {\n  padding: 2px 8px;\n  font-size: 12px;\n}\n\n.button.round {\n  width: 34px;\n  height: 34px;\n  padding: 0;\n  border-radius: 50%;\n  font-size: 16px;\n}\n\n.link {\n  padding: 0;\n  border: none;\n  background-color: transparent;\n  color: var(--accent);\n  font-family: system-ui, sans-serif;\n  font-size: 15px;\n  text-decoration: underline;\n  cursor: pointer;\n}\n\n.link:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.banner {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 16px;\n  background-color: var(--warn-subtle);\n  color: var(--warn);\n  font-size: 13px;\n}\n\n.banner.hidden {\n  display: none;\n}\n\n.timeline {\n  flex-grow: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 24px 16px;\n}\n\n.thread {\n  display: flex;\n  flex-direction: column;\n  gap: 22px;\n  max-width: 48rem;\n  margin: 0 auto;\n}\n\n.separator {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  color: var(--fg-subtle);\n  font-size: 12px;\n}\n\n.separator-line {\n  flex-grow: 1;\n  height: 1px;\n  background-color: var(--border);\n}\n\n.msg {\n  display: flex;\n  gap: 12px;\n}\n\n.msg.user {\n  justify-content: flex-end;\n}\n\n.bubble {\n  max-width: 80%;\n  padding: 10px 14px;\n  border-radius: 14px;\n  background-color: var(--accent-subtle);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.msg-body {\n  display: flex;\n  flex-direction: column;\n  flex-grow: 1;\n  gap: 10px;\n  min-width: 0;\n}\n\n.author {\n  color: var(--fg-muted);\n  font-size: 13px;\n}\n\n.author-name {\n  color: var(--fg);\n  font-weight: 600;\n}\n\n.prose {\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n  overflow-wrap: anywhere;\n}\n\n.p {\n  margin: 0;\n}\n\n.h {\n  margin: 4px 0 0;\n  font-size: 16px;\n  font-weight: 600;\n}\n\n.list {\n  margin: 0;\n  padding-left: 22px;\n}\n\n.inline-code {\n  padding: 1px 5px;\n  border-radius: 4px;\n  background-color: var(--code-bg);\n  font-family: monospace;\n  font-size: 13px;\n}\n\n.caret {\n  color: var(--accent);\n}\n\n.code-block {\n  display: flex;\n  flex-direction: column;\n  border: 1px solid var(--border);\n  border-radius: 10px;\n  overflow: hidden;\n}\n\n.code-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 4px 6px 4px 12px;\n  background-color: var(--bg-subtle);\n  color: var(--fg-muted);\n  font-size: 12px;\n}\n\n.pre {\n  margin: 0;\n  padding: 12px;\n  background-color: var(--code-bg);\n  font-family: monospace;\n  font-size: 13px;\n  line-height: 1.55;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.pre.small {\n  padding: 8px 10px;\n  font-size: 12px;\n}\n\n.event {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  padding: 8px 12px;\n  border: 1px solid var(--border);\n  border-radius: 10px;\n  background-color: var(--surface);\n  font-size: 13px;\n}\n\n.toggle {\n  width: 100%;\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  text-align: left;\n  cursor: pointer;\n}\n\n.toggle:hover {\n  background-color: var(--bg-subtle);\n}\n\n.toggle:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.event-icon {\n  flex-shrink: 0;\n  width: 18px;\n  color: var(--fg-muted);\n  text-align: center;\n}\n\n.event-text {\n  flex-grow: 1;\n  min-width: 0;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.event-title {\n  font-weight: 500;\n}\n\n.muted {\n  color: var(--fg-muted);\n}\n\n.subtle {\n  color: var(--fg-subtle);\n}\n\n.mono {\n  font-family: monospace;\n  font-size: 12px;\n}\n\n.details {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px 12px 12px 40px;\n  color: var(--fg-muted);\n  font-size: 13px;\n}\n\n.details.collapsed {\n  display: none;\n}\n\n.meta {\n  display: flex;\n  flex-wrap: wrap;\n  align-items: center;\n  gap: 4px 14px;\n  color: var(--fg-subtle);\n  font-size: 12px;\n}\n\n.actions {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n}\n\n.card {\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  padding: 14px 16px;\n  border: 1px solid var(--border);\n  border-radius: 12px;\n  background-color: var(--surface);\n}\n\n.card.attention {\n  border-color: var(--warn);\n  background-color: var(--warn-subtle);\n}\n\n.card.error {\n  border-color: var(--danger);\n  background-color: var(--danger-subtle);\n}\n\n.card-head {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.card-title {\n  margin: 0;\n  flex-grow: 1;\n  font-size: 14px;\n  font-weight: 600;\n}\n\n.kv {\n  display: grid;\n  grid-template-columns: 128px 1fr;\n  gap: 4px 12px;\n  font-size: 13px;\n}\n\n.kv-key {\n  color: var(--fg-muted);\n}\n\n.kv-value {\n  min-width: 0;\n  overflow-wrap: anywhere;\n}\n\n.composer-wrap {\n  padding: 8px 16px 16px;\n  background-color: var(--bg);\n}\n\n.composer {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 48rem;\n  margin: 0 auto;\n  padding: 10px 12px;\n  border: 1px solid var(--border);\n  border-radius: 16px;\n  background-color: var(--surface);\n}\n\n.composer-input {\n  width: 100%;\n  min-height: 24px;\n  max-height: 200px;\n  field-sizing: content;\n  resize: none;\n  padding: 0;\n  border: none;\n  background-color: transparent;\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 15px;\n  line-height: 1.5;\n}\n\n.composer-input:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 4px;\n}\n\n.composer-bar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.hint {\n  flex-grow: 1;\n  color: var(--fg-subtle);\n  font-size: 12px;\n}\n\n.empty {\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  gap: 14px;\n  padding: 48px 0 8px;\n  text-align: center;\n}\n\n.empty-title {\n  margin: 0;\n  font-size: 22px;\n  font-weight: 600;\n}\n\n.suggestions {\n  display: grid;\n  grid-template-columns: repeat(2, minmax(0, 1fr));\n  gap: 10px;\n  width: 100%;\n  margin-top: 8px;\n}\n\n.suggestion {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n  padding: 12px 14px;\n  border: 1px solid var(--border);\n  border-radius: 12px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 14px;\n  text-align: left;\n  cursor: pointer;\n}\n\n.suggestion:hover {\n  background-color: var(--bg-subtle);\n}\n\n.suggestion:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 2px;\n}\n\n.panel {\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px;\n  border-left: 1px solid var(--border);\n  background-color: var(--bg-subtle);\n}\n\n.panel-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n}\n\n.panel-title {\n  margin: 0;\n  font-size: 14px;\n  font-weight: 600;\n}\n\n.dialog {\n  width: 440px;\n  max-width: 92%;\n  padding: 0;\n  border: 1px solid var(--border);\n  border-radius: 16px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n}\n\n.dialog-body {\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n  padding: 20px;\n}\n\n.dialog-title {\n  margin: 0;\n  font-size: 17px;\n  font-weight: 600;\n}\n\n.field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.label {\n  font-size: 13px;\n  font-weight: 500;\n}\n\n.input {\n  padding: 8px 10px;\n  border: 1px solid var(--border);\n  border-radius: 8px;\n  background-color: var(--surface);\n  color: var(--fg);\n  font-family: system-ui, sans-serif;\n  font-size: 14px;\n}\n\n.input:focus-visible {\n  outline: 2px solid var(--accent);\n  outline-offset: 1px;\n}\n\n.help {\n  color: var(--fg-muted);\n  font-size: 12px;\n}\n\n.toasts {\n  position: fixed;\n  right: 16px;\n  bottom: 112px;\n  z-index: 10;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  font-family: system-ui, sans-serif;\n}\n\n.toast {\n  padding: 10px 14px;\n  border-radius: 10px;\n  background-color: var(--toast-bg);\n  color: var(--toast-fg);\n  font-size: 14px;\n}\n\n@media (max-width: 900px) {\n  .app.with-panel {\n    grid-template-columns: 1fr;\n  }\n\n  .panel {\n    position: fixed;\n    top: 0;\n    right: 0;\n    bottom: 0;\n    z-index: 20;\n    width: 340px;\n    max-width: 88%;\n    border: 1px solid var(--border);\n  }\n}\n\n@media (max-width: 600px) {\n  .app {\n    font-size: 14px;\n  }\n\n  .timeline {\n    padding: 16px 12px;\n  }\n\n  .bubble {\n    max-width: 90%;\n  }\n\n  .hint {\n    display: none;\n  }\n\n  .composer-wrap {\n    padding: 6px 8px 8px;\n  }\n\n  .suggestions {\n    grid-template-columns: 1fr;\n  }\n\n  .kv {\n    grid-template-columns: 1fr;\n  }\n}\n"
+    }
+  ],
+  "title": "",
+  "tree": {
+    "children": [
+      {
+        "attributes": {
+          "id": "app"
+        },
+        "children": [
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "attributes": {
+                      "aria-hidden": "true"
+                    },
+                    "children": [
+                      {
+                        "id": 30,
+                        "text": "ГА"
+                      }
+                    ],
+                    "class": "avatar",
+                    "id": 29,
+                    "style": {
+                      "align-items": "center",
+                      "background-color": "#3b5bdb",
+                      "border-radius": "50%",
+                      "color": "#ffffff",
+                      "display": "flex",
+                      "flex-shrink": "0",
+                      "font-size": "13px",
+                      "font-weight": "600",
+                      "height": "32px",
+                      "justify-content": "center",
+                      "width": "32px"
+                    },
+                    "tag": "div"
+                  },
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "id": 33,
+                            "text": "Головний агент"
+                          }
+                        ],
+                        "class": "title",
+                        "id": 32,
+                        "style": {
+                          "font-size": "15px",
+                          "font-weight": "600",
+                          "line-height": "1.3",
+                          "margin": "0"
+                        },
+                        "tag": "h1"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": 35,
+                            "text": "Простір Loopback"
+                          }
+                        ],
+                        "class": "subtitle",
+                        "id": 34,
+                        "style": {
+                          "color": "#5b616e",
+                          "font-size": "13px",
+                          "overflow": "hidden",
+                          "text-overflow": "ellipsis",
+                          "white-space": "nowrap"
+                        },
+                        "tag": "span"
+                      }
+                    ],
+                    "class": "heading",
+                    "id": 31,
+                    "style": {
+                      "display": "flex",
+                      "flex-direction": "column",
+                      "flex-grow": "1",
+                      "min-width": "0"
+                    },
+                    "tag": "div"
+                  },
+                  {
+                    "attributes": {
+                      "aria-expanded": "false",
+                      "id": "context-toggle",
+                      "type": "button"
+                    },
+                    "children": [
+                      {
+                        "id": 37,
+                        "text": "Контекст"
+                      }
+                    ],
+                    "class": "button ghost",
+                    "id": 36,
+                    "listeners": [
+                      "click"
+                    ],
+                    "style": {
+                      "background-color": "transparent",
+                      "border": "1px solid #e2e4e9",
+                      "border-color": "transparent",
+                      "border-radius": "8px",
+                      "color": "#5b616e",
+                      "cursor": "pointer",
+                      "font-family": "system-ui, sans-serif",
+                      "font-size": "14px",
+                      "font-weight": "500",
+                      "line-height": "1.4",
+                      "padding": "6px 12px",
+                      "transition-duration": "120ms",
+                      "transition-property": "background-color, color"
+                    },
+                    "tag": "button"
+                  },
+                  {
+                    "attributes": {
+                      "aria-label": "Налаштування",
+                      "id": "settings-open",
+                      "type": "button"
+                    },
+                    "children": [
+                      {
+                        "id": 39,
+                        "text": "⚙"
+                      }
+                    ],
+                    "class": "button ghost round",
+                    "id": 38,
+                    "listeners": [
+                      "click"
+                    ],
+                    "style": {
+                      "background-color": "transparent",
+                      "border": "1px solid #e2e4e9",
+                      "border-color": "transparent",
+                      "border-radius": "50%",
+                      "color": "#5b616e",
+                      "cursor": "pointer",
+                      "font-family": "system-ui, sans-serif",
+                      "font-size": "16px",
+                      "font-weight": "500",
+                      "height": "34px",
+                      "line-height": "1.4",
+                      "padding": "0",
+                      "transition-duration": "120ms",
+                      "transition-property": "background-color, color",
+                      "width": "34px"
+                    },
+                    "tag": "button"
+                  }
+                ],
+                "class": "topbar",
+                "id": 28,
+                "style": {
+                  "align-items": "center",
+                  "background-color": "#ffffff",
+                  "border-bottom": "1px solid #e2e4e9",
+                  "display": "flex",
+                  "gap": "12px",
+                  "padding": "10px 16px"
+                },
+                "tag": "header"
+              },
+              {
+                "attributes": {
+                  "role": "status"
+                },
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "id": 42,
+                        "text": ""
+                      }
+                    ],
+                    "id": 41,
+                    "tag": "span"
+                  },
+                  {
+                    "attributes": {
+                      "id": "banner-settings",
+                      "type": "button"
+                    },
+                    "children": [
+                      {
+                        "id": 44,
+                        "text": "Налаштування"
+                      }
+                    ],
+                    "class": "button small",
+                    "id": 43,
+                    "listeners": [
+                      "click"
+                    ],
+                    "style": {
+                      "background-color": "#ffffff",
+                      "border": "1px solid #e2e4e9",
+                      "border-radius": "8px",
+                      "color": "#16181d",
+                      "cursor": "pointer",
+                      "display": "none",
+                      "font-family": "system-ui, sans-serif",
+                      "font-size": "12px",
+                      "font-weight": "500",
+                      "line-height": "1.4",
+                      "padding": "2px 8px",
+                      "transition-duration": "120ms",
+                      "transition-property": "background-color, color"
+                    },
+                    "tag": "button"
+                  }
+                ],
+                "class": "banner hidden",
+                "id": 40,
+                "style": {
+                  "align-items": "center",
+                  "background-color": "#fff3e3",
+                  "color": "#a35200",
+                  "display": "none",
+                  "font-size": "13px",
+                  "gap": "10px",
+                  "padding": "8px 16px"
+                },
+                "tag": "div"
+              },
+              {
+                "attributes": {
+                  "aria-busy": "false",
+                  "aria-label": "Розмова",
+                  "aria-live": "polite",
+                  "id": "timeline"
+                },
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "class": "separator-line",
+                            "id": 46,
+                            "style": {
+                              "background-color": "#e2e4e9",
+                              "flex-grow": "1",
+                              "height": "1px"
+                            },
+                            "tag": "span"
+                          },
+                          {
+                            "attributes": {
+                              "id": "older",
+                              "type": "button"
+                            },
+                            "children": [
+                              {
+                                "id": 48,
+                                "text": "Показати раніші розмови"
+                              }
+                            ],
+                            "class": "link",
+                            "id": 47,
+                            "listeners": [
+                              "click"
+                            ],
+                            "style": {
+                              "background-color": "transparent",
+                              "border": "none",
+                              "color": "#3b5bdb",
+                              "cursor": "pointer",
+                              "font-family": "system-ui, sans-serif",
+                              "font-size": "15px",
+                              "padding": "0",
+                              "text-decoration": "underline"
+                            },
+                            "tag": "button"
+                          },
+                          {
+                            "class": "separator-line",
+                            "id": 49,
+                            "style": {
+                              "background-color": "#e2e4e9",
+                              "flex-grow": "1",
+                              "height": "1px"
+                            },
+                            "tag": "span"
+                          }
+                        ],
+                        "class": "separator",
+                        "id": 45,
+                        "style": {
+                          "align-items": "center",
+                          "color": "#8a909c",
+                          "display": "none",
+                          "font-size": "12px",
+                          "gap": "12px"
+                        },
+                        "tag": "div"
+                      },
+                      {
+                        "children": [
+                          {
+                            "attributes": {
+                              "aria-hidden": "true"
+                            },
+                            "children": [
+                              {
+                                "id": 68,
+                                "text": "ГА"
+                              }
+                            ],
+                            "class": "avatar",
+                            "id": 67,
+                            "style": {
+                              "align-items": "center",
+                              "background-color": "#3b5bdb",
+                              "border-radius": "50%",
+                              "color": "#ffffff",
+                              "display": "flex",
+                              "flex-shrink": "0",
+                              "font-size": "13px",
+                              "font-weight": "600",
+                              "height": "32px",
+                              "justify-content": "center",
+                              "width": "32px"
+                            },
+                            "tag": "div"
+                          },
+                          {
+                            "children": [
+                              {
+                                "id": 70,
+                                "text": "Чим допомогти сьогодні?"
+                              }
+                            ],
+                            "class": "empty-title",
+                            "id": 69,
+                            "style": {
+                              "font-size": "22px",
+                              "font-weight": "600",
+                              "margin": "0"
+                            },
+                            "tag": "h2"
+                          },
+                          {
+                            "children": [
+                              {
+                                "id": 72,
+                                "text": "Головний агент керує всіма агентами простору: делегує задачі, стежить за запусками і питає вашого дозволу на важливі дії."
+                              }
+                            ],
+                            "class": "p muted",
+                            "id": 71,
+                            "style": {
+                              "color": "#5b616e",
+                              "margin": "0"
+                            },
+                            "tag": "p"
+                          },
+                          {
+                            "children": [
+                              {
+                                "attributes": {
+                                  "aria-describedby": "suggestion-hint-0",
+                                  "aria-label": "Що зараз відбувається?",
+                                  "id": "suggestion-0",
+                                  "type": "button"
+                                },
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 53,
+                                        "text": "Що зараз відбувається?"
+                                      }
+                                    ],
+                                    "id": 52,
+                                    "tag": "strong"
+                                  },
+                                  {
+                                    "attributes": {
+                                      "id": "suggestion-hint-0"
+                                    },
+                                    "children": [
+                                      {
+                                        "id": 55,
+                                        "text": "Активні запуски й агенти, що чекають на мене"
+                                      }
+                                    ],
+                                    "class": "muted",
+                                    "id": 54,
+                                    "style": {
+                                      "color": "#5b616e"
+                                    },
+                                    "tag": "span"
+                                  }
+                                ],
+                                "class": "suggestion",
+                                "id": 51,
+                                "listeners": [
+                                  "click"
+                                ],
+                                "style": {
+                                  "background-color": "#ffffff",
+                                  "border": "1px solid #e2e4e9",
+                                  "border-radius": "12px",
+                                  "color": "#16181d",
+                                  "cursor": "pointer",
+                                  "display": "flex",
+                                  "flex-direction": "column",
+                                  "font-family": "system-ui, sans-serif",
+                                  "font-size": "14px",
+                                  "gap": "2px",
+                                  "padding": "12px 14px",
+                                  "text-align": "left"
+                                },
+                                "tag": "button"
+                              },
+                              {
+                                "attributes": {
+                                  "aria-describedby": "suggestion-hint-1",
+                                  "aria-label": "Підсумок за тиждень",
+                                  "id": "suggestion-1",
+                                  "type": "button"
+                                },
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 58,
+                                        "text": "Підсумок за тиждень"
+                                      }
+                                    ],
+                                    "id": 57,
+                                    "tag": "strong"
+                                  },
+                                  {
+                                    "attributes": {
+                                      "id": "suggestion-hint-1"
+                                    },
+                                    "children": [
+                                      {
+                                        "id": 60,
+                                        "text": "Витрати, успішні й невдалі запуски"
+                                      }
+                                    ],
+                                    "class": "muted",
+                                    "id": 59,
+                                    "style": {
+                                      "color": "#5b616e"
+                                    },
+                                    "tag": "span"
+                                  }
+                                ],
+                                "class": "suggestion",
+                                "id": 56,
+                                "listeners": [
+                                  "click"
+                                ],
+                                "style": {
+                                  "background-color": "#ffffff",
+                                  "border": "1px solid #e2e4e9",
+                                  "border-radius": "12px",
+                                  "color": "#16181d",
+                                  "cursor": "pointer",
+                                  "display": "flex",
+                                  "flex-direction": "column",
+                                  "font-family": "system-ui, sans-serif",
+                                  "font-size": "14px",
+                                  "gap": "2px",
+                                  "padding": "12px 14px",
+                                  "text-align": "left"
+                                },
+                                "tag": "button"
+                              },
+                              {
+                                "attributes": {
+                                  "aria-describedby": "suggestion-hint-2",
+                                  "aria-label": "Створи агента для підтримки",
+                                  "id": "suggestion-2",
+                                  "type": "button"
+                                },
+                                "children": [
+                                  {
+                                    "children": [
+                                      {
+                                        "id": 63,
+                                        "text": "Створи агента для підтримки"
+                                      }
+                                    ],
+                                    "id": 62,
+                                    "tag": "strong"
+                                  },
+                                  {
+                                    "attributes": {
+                                      "id": "suggestion-hint-2"
+                                    },
+                                    "children": [
+                                      {
+                                        "id": 65,
+                                        "text": "Відповіді клієнтам з бази знань"
+                                      }
+                                    ],
+                                    "class": "muted",
+                                    "id": 64,
+                                    "style": {
+                                      "color": "#5b616e"
+                                    },
+                                    "tag": "span"
+                                  }
+                                ],
+                                "class": "suggestion",
+                                "id": 61,
+                                "listeners": [
+                                  "click"
+                                ],
+                                "style": {
+                                  "background-color": "#ffffff",
+                                  "border": "1px solid #e2e4e9",
+                                  "border-radius": "12px",
+                                  "color": "#16181d",
+                                  "cursor": "pointer",
+                                  "display": "flex",
+                                  "flex-direction": "column",
+                                  "font-family": "system-ui, sans-serif",
+                                  "font-size": "14px",
+                                  "gap": "2px",
+                                  "padding": "12px 14px",
+                                  "text-align": "left"
+                                },
+                                "tag": "button"
+                              }
+                            ],
+                            "class": "suggestions",
+                            "id": 50,
+                            "style": {
+                              "display": "grid",
+                              "gap": "10px",
+                              "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                              "margin-top": "8px",
+                              "width": "100%"
+                            },
+                            "tag": "div"
+                          }
+                        ],
+                        "class": "empty",
+                        "id": 66,
+                        "style": {
+                          "align-items": "center",
+                          "display": "flex",
+                          "flex-direction": "column",
+                          "gap": "14px",
+                          "padding": "48px 0 8px",
+                          "text-align": "center"
+                        },
+                        "tag": "div"
+                      }
+                    ],
+                    "class": "thread",
+                    "id": 73,
+                    "style": {
+                      "display": "flex",
+                      "flex-direction": "column",
+                      "gap": "22px",
+                      "margin": "0 auto",
+                      "max-width": "48rem"
+                    },
+                    "tag": "div"
+                  }
+                ],
+                "class": "timeline",
+                "id": 74,
+                "listeners": [
+                  "scroll"
+                ],
+                "style": {
+                  "flex-grow": "1",
+                  "min-height": "0",
+                  "overflow": "auto",
+                  "padding": "24px 16px"
+                },
+                "tag": "section"
+              },
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "attributes": {
+                          "aria-label": "Повідомлення",
+                          "id": "composer",
+                          "placeholder": "Напишіть Головний агент…",
+                          "rows": "1"
+                        },
+                        "class": "composer-input",
+                        "id": 77,
+                        "listeners": [
+                          "input",
+                          "keydown"
+                        ],
+                        "seq": 0,
+                        "style": {
+                          "background-color": "transparent",
+                          "border": "none",
+                          "color": "#16181d",
+                          "field-sizing": "content",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "15px",
+                          "line-height": "1.5",
+                          "max-height": "200px",
+                          "min-height": "24px",
+                          "padding": "0",
+                          "resize": "none",
+                          "width": "100%"
+                        },
+                        "tag": "textarea",
+                        "value": ""
+                      },
+                      {
+                        "children": [
+                          {
+                            "children": [
+                              {
+                                "id": 80,
+                                "text": "Enter — надіслати · Shift+Enter — новий рядок"
+                              }
+                            ],
+                            "class": "hint",
+                            "id": 79,
+                            "style": {
+                              "color": "#8a909c",
+                              "flex-grow": "1",
+                              "font-size": "12px"
+                            },
+                            "tag": "span"
+                          },
+                          {
+                            "attributes": {
+                              "aria-label": "Надіслати",
+                              "disabled": "",
+                              "id": "send",
+                              "type": "submit"
+                            },
+                            "children": [
+                              {
+                                "id": 82,
+                                "text": "↑"
+                              }
+                            ],
+                            "class": "button round primary",
+                            "id": 81,
+                            "style": {
+                              "background-color": "#3b5bdb",
+                              "border": "1px solid #e2e4e9",
+                              "border-color": "#3b5bdb",
+                              "border-radius": "50%",
+                              "color": "#ffffff",
+                              "cursor": "not-allowed",
+                              "font-family": "system-ui, sans-serif",
+                              "font-size": "16px",
+                              "font-weight": "500",
+                              "height": "34px",
+                              "line-height": "1.4",
+                              "opacity": "0.5",
+                              "padding": "0",
+                              "transition-duration": "120ms",
+                              "transition-property": "background-color, color",
+                              "width": "34px"
+                            },
+                            "tag": "button"
+                          }
+                        ],
+                        "class": "composer-bar",
+                        "id": 78,
+                        "style": {
+                          "align-items": "center",
+                          "display": "flex",
+                          "gap": "8px"
+                        },
+                        "tag": "div"
+                      }
+                    ],
+                    "class": "composer",
+                    "id": 76,
+                    "listeners": [
+                      "submit"
+                    ],
+                    "style": {
+                      "background-color": "#ffffff",
+                      "border": "1px solid #e2e4e9",
+                      "border-radius": "16px",
+                      "display": "flex",
+                      "flex-direction": "column",
+                      "gap": "8px",
+                      "margin": "0 auto",
+                      "max-width": "48rem",
+                      "padding": "10px 12px"
+                    },
+                    "tag": "form"
+                  }
+                ],
+                "class": "composer-wrap",
+                "id": 75,
+                "style": {
+                  "background-color": "#ffffff",
+                  "padding": "8px 16px 16px"
+                },
+                "tag": "div"
+              }
+            ],
+            "class": "main",
+            "id": 27,
+            "style": {
+              "display": "flex",
+              "flex-direction": "column",
+              "min-height": "0",
+              "min-width": "0"
+            },
+            "tag": "main"
+          },
+          {
+            "attributes": {
+              "aria-label": "Контекст розмови",
+              "id": "context"
+            },
+            "children": [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "id": 87,
+                        "text": "Контекст"
+                      }
+                    ],
+                    "class": "panel-title",
+                    "id": 86,
+                    "style": {
+                      "font-size": "14px",
+                      "font-weight": "600",
+                      "margin": "0"
+                    },
+                    "tag": "h2"
+                  },
+                  {
+                    "attributes": {
+                      "aria-label": "Закрити контекст",
+                      "id": "context-close",
+                      "type": "button"
+                    },
+                    "children": [
+                      {
+                        "id": 89,
+                        "text": "✕"
+                      }
+                    ],
+                    "class": "button ghost round",
+                    "id": 88,
+                    "listeners": [
+                      "click"
+                    ],
+                    "style": {
+                      "background-color": "transparent",
+                      "border": "1px solid #e2e4e9",
+                      "border-color": "transparent",
+                      "border-radius": "50%",
+                      "color": "#5b616e",
+                      "cursor": "pointer",
+                      "font-family": "system-ui, sans-serif",
+                      "font-size": "16px",
+                      "font-weight": "500",
+                      "height": "34px",
+                      "line-height": "1.4",
+                      "padding": "0",
+                      "transition-duration": "120ms",
+                      "transition-property": "background-color, color",
+                      "width": "34px"
+                    },
+                    "tag": "button"
+                  }
+                ],
+                "class": "panel-head",
+                "id": 85,
+                "style": {
+                  "align-items": "center",
+                  "display": "flex",
+                  "justify-content": "space-between"
+                },
+                "tag": "div"
+              },
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "id": 92,
+                        "text": "Контекст моделі"
+                      }
+                    ],
+                    "class": "kv-key",
+                    "id": 91,
+                    "style": {
+                      "color": "#5b616e"
+                    },
+                    "tag": "span"
+                  },
+                  {
+                    "children": [
+                      {
+                        "id": 94,
+                        "text": ""
+                      }
+                    ],
+                    "class": "kv-value",
+                    "id": 93,
+                    "style": {
+                      "min-width": "0",
+                      "overflow-wrap": "anywhere"
+                    },
+                    "tag": "span"
+                  }
+                ],
+                "class": "kv",
+                "id": 90,
+                "style": {
+                  "display": "none",
+                  "font-size": "13px",
+                  "gap": "4px 12px",
+                  "grid-template-columns": "128px 1fr"
+                },
+                "tag": "div"
+              },
+              {
+                "children": [
+                  {
+                    "id": 96,
+                    "text": "У розмові ще немає запусків."
+                  }
+                ],
+                "class": "p muted",
+                "id": 95,
+                "style": {
+                  "color": "#5b616e",
+                  "display": "block",
+                  "margin": "0"
+                },
+                "tag": "p"
+              },
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "id": 100,
+                            "text": "Агенти"
+                          }
+                        ],
+                        "class": "card-title",
+                        "id": 99,
+                        "style": {
+                          "flex-grow": "1",
+                          "font-size": "14px",
+                          "font-weight": "600",
+                          "margin": "0"
+                        },
+                        "tag": "h3"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": 102,
+                            "text": "0"
+                          }
+                        ],
+                        "class": "badge accent",
+                        "id": 101,
+                        "style": {
+                          "background-color": "#edf1ff",
+                          "border-radius": "999px",
+                          "color": "#3b5bdb",
+                          "display": "inline",
+                          "font-size": "12px",
+                          "font-weight": "500",
+                          "padding": "1px 8px",
+                          "white-space": "nowrap"
+                        },
+                        "tag": "span"
+                      }
+                    ],
+                    "class": "card-head",
+                    "id": 98,
+                    "style": {
+                      "align-items": "center",
+                      "display": "flex",
+                      "gap": "8px"
+                    },
+                    "tag": "div"
+                  }
+                ],
+                "class": "card",
+                "id": 97,
+                "style": {
+                  "background-color": "#ffffff",
+                  "border": "1px solid #e2e4e9",
+                  "border-radius": "12px",
+                  "display": "none",
+                  "flex-direction": "column",
+                  "gap": "12px",
+                  "padding": "14px 16px"
+                },
+                "tag": "div"
+              },
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "id": 106,
+                            "text": "Запуски"
+                          }
+                        ],
+                        "class": "card-title",
+                        "id": 105,
+                        "style": {
+                          "flex-grow": "1",
+                          "font-size": "14px",
+                          "font-weight": "600",
+                          "margin": "0"
+                        },
+                        "tag": "h3"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": 108,
+                            "text": "0"
+                          }
+                        ],
+                        "class": "badge accent",
+                        "id": 107,
+                        "style": {
+                          "background-color": "#edf1ff",
+                          "border-radius": "999px",
+                          "color": "#3b5bdb",
+                          "display": "inline",
+                          "font-size": "12px",
+                          "font-weight": "500",
+                          "padding": "1px 8px",
+                          "white-space": "nowrap"
+                        },
+                        "tag": "span"
+                      }
+                    ],
+                    "class": "card-head",
+                    "id": 104,
+                    "style": {
+                      "align-items": "center",
+                      "display": "flex",
+                      "gap": "8px"
+                    },
+                    "tag": "div"
+                  }
+                ],
+                "class": "card",
+                "id": 103,
+                "style": {
+                  "background-color": "#ffffff",
+                  "border": "1px solid #e2e4e9",
+                  "border-radius": "12px",
+                  "display": "none",
+                  "flex-direction": "column",
+                  "gap": "12px",
+                  "padding": "14px 16px"
+                },
+                "tag": "div"
+              }
+            ],
+            "class": "panel",
+            "id": 84,
+            "style": {
+              "background-color": "#f5f6f8",
+              "border-left": "1px solid #e2e4e9",
+              "display": "none",
+              "flex-direction": "column",
+              "gap": "16px",
+              "min-height": "0",
+              "overflow": "auto",
+              "padding": "16px"
+            },
+            "tag": "aside"
+          },
+          {
+            "attributes": {
+              "aria-labelledby": "settings-title",
+              "id": "settings"
+            },
+            "children": [
+              {
+                "children": [
+                  {
+                    "attributes": {
+                      "id": "settings-title"
+                    },
+                    "children": [
+                      {
+                        "id": 5,
+                        "text": "Підключення до UARP"
+                      }
+                    ],
+                    "class": "dialog-title",
+                    "id": 4,
+                    "style": {
+                      "font-size": "17px",
+                      "font-weight": "600",
+                      "margin": "0"
+                    },
+                    "tag": "h2"
+                  },
+                  {
+                    "children": [
+                      {
+                        "attributes": {
+                          "for": "base-url"
+                        },
+                        "children": [
+                          {
+                            "id": 8,
+                            "text": "Адреса API"
+                          }
+                        ],
+                        "class": "label",
+                        "id": 7,
+                        "style": {
+                          "font-size": "13px",
+                          "font-weight": "500"
+                        },
+                        "tag": "label"
+                      },
+                      {
+                        "attributes": {
+                          "aria-invalid": "false",
+                          "id": "base-url",
+                          "type": "text"
+                        },
+                        "class": "input",
+                        "id": 9,
+                        "listeners": [
+                          "input"
+                        ],
+                        "seq": 0,
+                        "style": {
+                          "background-color": "#ffffff",
+                          "border": "1px solid #e2e4e9",
+                          "border-radius": "8px",
+                          "color": "#16181d",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "14px",
+                          "padding": "8px 10px"
+                        },
+                        "tag": "input",
+                        "value": "https://api.snaga.ai"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": 11,
+                            "text": "Лише https://. Зазвичай змінювати не потрібно."
+                          }
+                        ],
+                        "class": "help",
+                        "id": 10,
+                        "style": {
+                          "color": "#5b616e",
+                          "font-size": "12px"
+                        },
+                        "tag": "span"
+                      }
+                    ],
+                    "class": "field",
+                    "id": 6,
+                    "style": {
+                      "display": "flex",
+                      "flex-direction": "column",
+                      "gap": "6px"
+                    },
+                    "tag": "div"
+                  },
+                  {
+                    "children": [
+                      {
+                        "attributes": {
+                          "for": "api-key"
+                        },
+                        "children": [
+                          {
+                            "id": 14,
+                            "text": "Ключ API"
+                          }
+                        ],
+                        "class": "label",
+                        "id": 13,
+                        "style": {
+                          "font-size": "13px",
+                          "font-weight": "500"
+                        },
+                        "tag": "label"
+                      },
+                      {
+                        "attributes": {
+                          "aria-describedby": "api-key-help",
+                          "aria-invalid": "false",
+                          "id": "api-key",
+                          "placeholder": "uarp_…",
+                          "type": "password"
+                        },
+                        "class": "input",
+                        "id": 15,
+                        "listeners": [
+                          "input"
+                        ],
+                        "seq": 1,
+                        "style": {
+                          "background-color": "#ffffff",
+                          "border": "1px solid #e2e4e9",
+                          "border-radius": "8px",
+                          "color": "#16181d",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "14px",
+                          "outline": "2px solid #3b5bdb",
+                          "outline-offset": "1px",
+                          "padding": "8px 10px"
+                        },
+                        "tag": "input",
+                        "value": ""
+                      },
+                      {
+                        "attributes": {
+                          "id": "api-key-help"
+                        },
+                        "children": [
+                          {
+                            "id": 17,
+                            "text": "Ключ зберігається лише на цьому пристрої. Створити його можна в налаштуваннях простору на snaga.ai."
+                          }
+                        ],
+                        "class": "help",
+                        "id": 16,
+                        "style": {
+                          "color": "#5b616e",
+                          "font-size": "12px"
+                        },
+                        "tag": "span"
+                      }
+                    ],
+                    "class": "field",
+                    "id": 12,
+                    "style": {
+                      "display": "flex",
+                      "flex-direction": "column",
+                      "gap": "6px"
+                    },
+                    "tag": "div"
+                  },
+                  {
+                    "attributes": {
+                      "role": "alert"
+                    },
+                    "children": [
+                      {
+                        "id": 19,
+                        "text": ""
+                      }
+                    ],
+                    "class": "help",
+                    "id": 18,
+                    "style": {
+                      "color": "#5b616e",
+                      "display": "none",
+                      "font-size": "12px"
+                    },
+                    "tag": "p"
+                  },
+                  {
+                    "children": [
+                      {
+                        "attributes": {
+                          "id": "settings-save",
+                          "type": "submit"
+                        },
+                        "children": [
+                          {
+                            "id": 22,
+                            "text": "Зберегти й підключитись"
+                          }
+                        ],
+                        "class": "button primary",
+                        "id": 21,
+                        "style": {
+                          "background-color": "#3b5bdb",
+                          "border": "1px solid #e2e4e9",
+                          "border-color": "#3b5bdb",
+                          "border-radius": "8px",
+                          "color": "#ffffff",
+                          "cursor": "pointer",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "14px",
+                          "font-weight": "500",
+                          "line-height": "1.4",
+                          "padding": "6px 12px",
+                          "transition-duration": "120ms",
+                          "transition-property": "background-color, color"
+                        },
+                        "tag": "button"
+                      },
+                      {
+                        "attributes": {
+                          "id": "settings-cancel",
+                          "type": "button"
+                        },
+                        "children": [
+                          {
+                            "id": 24,
+                            "text": "Скасувати"
+                          }
+                        ],
+                        "class": "button",
+                        "id": 23,
+                        "listeners": [
+                          "click"
+                        ],
+                        "style": {
+                          "background-color": "#ffffff",
+                          "border": "1px solid #e2e4e9",
+                          "border-radius": "8px",
+                          "color": "#16181d",
+                          "cursor": "pointer",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "14px",
+                          "font-weight": "500",
+                          "line-height": "1.4",
+                          "padding": "6px 12px",
+                          "transition-duration": "120ms",
+                          "transition-property": "background-color, color"
+                        },
+                        "tag": "button"
+                      },
+                      {
+                        "attributes": {
+                          "id": "settings-forget",
+                          "type": "button"
+                        },
+                        "children": [
+                          {
+                            "id": 26,
+                            "text": "Забути ключ"
+                          }
+                        ],
+                        "class": "button danger",
+                        "id": 25,
+                        "listeners": [
+                          "click"
+                        ],
+                        "style": {
+                          "background-color": "#ffffff",
+                          "border": "1px solid #e2e4e9",
+                          "border-color": "#c92a2a",
+                          "border-radius": "8px",
+                          "color": "#c92a2a",
+                          "cursor": "pointer",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "14px",
+                          "font-weight": "500",
+                          "line-height": "1.4",
+                          "padding": "6px 12px",
+                          "transition-duration": "120ms",
+                          "transition-property": "background-color, color"
+                        },
+                        "tag": "button"
+                      }
+                    ],
+                    "class": "actions",
+                    "id": 20,
+                    "style": {
+                      "display": "flex",
+                      "flex-wrap": "wrap",
+                      "gap": "8px"
+                    },
+                    "tag": "div"
+                  }
+                ],
+                "class": "dialog-body",
+                "id": 3,
+                "listeners": [
+                  "submit"
+                ],
+                "style": {
+                  "display": "flex",
+                  "flex-direction": "column",
+                  "gap": "16px",
+                  "padding": "20px"
+                },
+                "tag": "form"
+              }
+            ],
+            "class": "dialog",
+            "id": 2,
+            "listeners": [
+              "close"
+            ],
+            "open": false,
+            "style": {
+              "background-color": "#ffffff",
+              "border": "1px solid #e2e4e9",
+              "border-radius": "16px",
+              "color": "#16181d",
+              "font-family": "system-ui, sans-serif",
+              "max-width": "92%",
+              "padding": "0",
+              "width": "440px"
+            },
+            "tag": "dialog"
+          },
+          {
+            "attributes": {
+              "aria-describedby": "confirm-text",
+              "aria-labelledby": "confirm-title",
+              "id": "confirm"
+            },
+            "children": [
+              {
+                "children": [
+                  {
+                    "attributes": {
+                      "id": "confirm-title"
+                    },
+                    "children": [
+                      {
+                        "id": 112,
+                        "text": ""
+                      }
+                    ],
+                    "class": "dialog-title",
+                    "id": 111,
+                    "style": {
+                      "font-size": "17px",
+                      "font-weight": "600",
+                      "margin": "0"
+                    },
+                    "tag": "h2"
+                  },
+                  {
+                    "attributes": {
+                      "id": "confirm-text"
+                    },
+                    "children": [
+                      {
+                        "id": 114,
+                        "text": ""
+                      }
+                    ],
+                    "class": "p",
+                    "id": 113,
+                    "style": {
+                      "margin": "0"
+                    },
+                    "tag": "p"
+                  },
+                  {
+                    "children": [
+                      {
+                        "attributes": {
+                          "id": "confirm-yes",
+                          "type": "button"
+                        },
+                        "children": [
+                          {
+                            "id": 117,
+                            "text": ""
+                          }
+                        ],
+                        "class": "button danger",
+                        "id": 116,
+                        "listeners": [
+                          "click"
+                        ],
+                        "style": {
+                          "background-color": "#ffffff",
+                          "border": "1px solid #e2e4e9",
+                          "border-color": "#c92a2a",
+                          "border-radius": "8px",
+                          "color": "#c92a2a",
+                          "cursor": "pointer",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "14px",
+                          "font-weight": "500",
+                          "line-height": "1.4",
+                          "padding": "6px 12px",
+                          "transition-duration": "120ms",
+                          "transition-property": "background-color, color"
+                        },
+                        "tag": "button"
+                      },
+                      {
+                        "attributes": {
+                          "id": "confirm-no",
+                          "type": "button"
+                        },
+                        "children": [
+                          {
+                            "id": 119,
+                            "text": "Скасувати"
+                          }
+                        ],
+                        "class": "button",
+                        "id": 118,
+                        "listeners": [
+                          "click"
+                        ],
+                        "style": {
+                          "background-color": "#ffffff",
+                          "border": "1px solid #e2e4e9",
+                          "border-radius": "8px",
+                          "color": "#16181d",
+                          "cursor": "pointer",
+                          "font-family": "system-ui, sans-serif",
+                          "font-size": "14px",
+                          "font-weight": "500",
+                          "line-height": "1.4",
+                          "padding": "6px 12px",
+                          "transition-duration": "120ms",
+                          "transition-property": "background-color, color"
+                        },
+                        "tag": "button"
+                      }
+                    ],
+                    "class": "actions",
+                    "id": 115,
+                    "style": {
+                      "display": "flex",
+                      "flex-wrap": "wrap",
+                      "gap": "8px"
+                    },
+                    "tag": "div"
+                  }
+                ],
+                "class": "dialog-body",
+                "id": 110,
+                "style": {
+                  "display": "flex",
+                  "flex-direction": "column",
+                  "gap": "16px",
+                  "padding": "20px"
+                },
+                "tag": "div"
+              }
+            ],
+            "class": "dialog",
+            "id": 109,
+            "listeners": [
+              "close"
+            ],
+            "open": false,
+            "style": {
+              "background-color": "#ffffff",
+              "border": "1px solid #e2e4e9",
+              "border-radius": "16px",
+              "color": "#16181d",
+              "font-family": "system-ui, sans-serif",
+              "max-width": "92%",
+              "padding": "0",
+              "width": "440px"
+            },
+            "tag": "dialog"
+          },
+          {
+            "attributes": {
+              "aria-live": "polite",
+              "role": "status"
+            },
+            "children": [
+              {
+                "children": [
+                  {
+                    "id": 122,
+                    "text": "Налаштування збережено."
+                  }
+                ],
+                "class": "toast",
+                "id": 121,
+                "style": {
+                  "background-color": "#16181d",
+                  "border-radius": "10px",
+                  "color": "#ffffff",
+                  "font-size": "14px",
+                  "padding": "10px 14px"
+                },
+                "tag": "div"
+              }
+            ],
+            "class": "toasts",
+            "id": 120,
+            "style": {
+              "bottom": "112px",
+              "display": "flex",
+              "flex-direction": "column",
+              "font-family": "system-ui, sans-serif",
+              "gap": "8px",
+              "position": "fixed",
+              "right": "16px",
+              "z-index": "10"
+            },
+            "tag": "div"
+          }
+        ],
+        "class": "app",
+        "id": 83,
+        "style": {
+          "background-color": "#ffffff",
+          "color": "#16181d",
+          "display": "grid",
+          "font-family": "system-ui, sans-serif",
+          "font-size": "15px",
+          "grid-template-columns": "1fr",
+          "height": "100%",
+          "line-height": "1.5"
+        },
+        "tag": "div"
+      }
+    ],
+    "id": 1,
+    "tag": "root"
+  }
+}
+varta dev: completed

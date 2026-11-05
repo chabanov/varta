@@ -7,7 +7,15 @@
 // later connections run to the end of the recording, which ends without
 // `[DONE]` unless the recording has it (session_end). The client test labels
 // each stream connection with `x-loopback-attempt`, so the mock can fail one.
+//
+// The console starts with the Head Agent's session list (stitch.ts). A recorded
+// scenario lists no session, so the person's message creates one with the
+// recorded `create_session`; a generated stream's scenario lists one live
+// session, `session-1`, with an empty transcript, which the console follows at
+// once. The stitch scenarios replay the recorded plain scenario.
 import { END_SESSION_CLOSED, PLAIN_COMPLETED, PLAIN_CONTENT, PLAIN_RUN_ADDED, PLAIN_RUN_DONE, PLAIN_STARTED, WIRE_SESSION_NOT_FOUND } from "../frames.js";
+import { EMPTY_PAGE, EMPTY_TRANSCRIPT, liveOnlyPage } from "../sessions.js";
+import { listSessions, stitched, transcript } from "./stitch.js";
 import {
   ANSWER,
   ATTEMPT_HEADER,
@@ -40,20 +48,9 @@ import {
   UNAVAILABLE_PROBLEM,
 } from "../sdk/contract.js";
 import { recordingText, type RecordedFrame, type RecordedRequest, type Recording } from "./recordings.js";
-
-/** What the routes need from the server's helpers (main.ts). */
-export interface Responder {
-  header(request: VartaHttpRequest, name: string): string;
-  json(status: number, body: string): VartaHttpResponse;
-  problem(status: number, title: string, detail: string): VartaHttpResponse;
-  stream(body: string): VartaHttpResponse;
-  unavailable(body: string): VartaHttpResponse;
-  /** Resolves after `ms` (a timer of the mock's own `time.timer` grant). */
-  wait(ms: number): Promise<void>;
-}
+import type { Responder } from "./responder.js";
 
 const OK = 200;
-const CREATED = 201;
 const BAD_REQUEST = 400;
 const UNAUTHORIZED = 401;
 const FORBIDDEN = 403;
@@ -86,8 +83,8 @@ const CREATE_STEP = "create_session";
 const SEND_STEP = "send_message";
 const APPROVE_STEP = "approve";
 const RESPOND_STEP = "respond";
-/** The session a scenario without a recording creates: the required fields of `Session`. */
-const GENERATED_SESSION = "{\"session_id\":\"" + SESSION_ID + "\",\"tenant_id\":\"tenant-1\",\"agent_id\":\"" + HEAD_AGENT_ID + "\",\"status\":\"active\"}";
+/** The recording the stitch scenarios replay: the live stream, the creation and the message. */
+const STITCH_RECORDING = "plain";
 /** `requests.ts` approves with an empty body. */
 const EMPTY_BODY = "{}";
 
@@ -224,14 +221,18 @@ export async function e2e(r: Responder, request: VartaHttpRequest, route: string
   if (slash < 0) return r.problem(NOT_FOUND, "Not Found", "no scenario path " + route);
   const scenario = rest.slice(0, slash);
   const path = rest.slice(slash);
-  const text = recordingText(scenario);
+  const text = recordingText(stitched(scenario) ? STITCH_RECORDING : scenario);
   const recording = text === null ? null : (JSON.parse(text) as Recording);
   if (path === TENANT_PATH && request.method === "GET") return r.json(OK, scenario === NO_HEAD_SCENARIO ? TENANT_WITHOUT_HEAD : TENANT);
+  if (path === SESSIONS_PATH && request.method === "GET") return listSessions(r, scenario, query, recording === null ? liveOnlyPage() : EMPTY_PAGE);
+  if (request.method === "GET" && stitched(scenario)) {
+    const served = transcript(r, path);
+    if (served !== null) return served;
+  }
+  if (path === MESSAGES_PATH && request.method === "GET" && recording === null) return r.json(OK, EMPTY_TRANSCRIPT);
   if (path === SESSIONS_PATH && request.method === "POST") {
-    const expected = JSON.stringify({ agent_id: HEAD_AGENT_ID });
-    if (recording !== null) return replay(r, request, recording, CREATE_STEP, expected);
-    if (request.body !== expected) return r.problem(BAD_REQUEST, "Bad Request", "expected body " + expected);
-    return r.json(CREATED, GENERATED_SESSION);
+    if (recording === null) return r.problem(NOT_FOUND, "Not Found", "no recorded " + CREATE_STEP + " for " + scenario);
+    return replay(r, request, recording, CREATE_STEP, JSON.stringify({ agent_id: HEAD_AGENT_ID }));
   }
   if (path === EVENTS_PATH && request.method === "GET") return await events(r, request, scenario, recording, query);
   if (recording !== null && request.method === "POST") {

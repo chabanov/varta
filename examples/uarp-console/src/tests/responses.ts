@@ -1,6 +1,8 @@
 // API responses copied verbatim (as compact JSON text) from the `requests` of the
 // API lane's event_schema=1 recordings (e2e-canon, 2026-10-30; anonymised ids).
 
+/** plain · create_session · 201 */
+export const SESSION_CREATED = "{\"session_id\":\"session-1\",\"tenant_id\":\"tenant-1\",\"agent_id\":\"agent-head\",\"created_by\":\"id-1\",\"status\":\"active\",\"conversation_history\":[],\"metadata\":{\"canon_key\":\"event-fixture-plain\"},\"runs\":[],\"branches\":[],\"active_branch\":\"main\",\"created_at\":\"2026-01-01T00:00:00.000Z\",\"updated_at\":\"2026-01-01T00:00:00.000Z\",\"expires_at\":\"2026-01-02T00:00:00.000Z\",\"title\":null}";
 /** plain · send_message · 202 */
 export const SEND_ACCEPTED = "{\"run_id\":\"run-1\"}";
 /** approval_approve · approve · 200 */
