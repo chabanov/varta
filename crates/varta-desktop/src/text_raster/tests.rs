@@ -395,10 +395,14 @@ fn variation_instances_do_not_depend_on_the_process_language() {
 #[test]
 #[ignore = "run under each pinned language by variation_instances_do_not_depend_on_the_process_language"]
 fn variation_instances_under_the_pinned_languages() {
-    let languages = std::env::args()
+    // Only the parent test passes a pinned language list; a plain
+    // `--include-ignored` run has none, so there is nothing to check.
+    let Some(languages) = std::env::args()
         .skip_while(|arg| arg != LANGUAGES_OPTION)
         .nth(1)
-        .expect("pinned languages");
+    else {
+        return;
+    };
     let face = sfnt::Face::parse(VARIABLE_AXES, 0).unwrap();
     let axes = sfnt::axes(&face).unwrap();
     let graphics = Graphics::new(&Arc::new(VARIABLE_AXES.to_vec()), &axes).unwrap();

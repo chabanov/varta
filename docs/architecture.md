@@ -13474,8 +13474,9 @@ edge from the platform tree until scrolling brings them next to the area;
 scrolling the nearest included one into view brings the next one in.
 
 A node with a vertical scroll range also publishes a geometry-free vertical
-`ScrollBar` child at its 0..1 scroll position, on every platform the AccessKit
-adapter serves; its native ID is kept while the owner keeps its identity and a
+`ScrollBar` child at its 0..1 scroll position in the platform-independent
+projection (built and observed on macOS only; the Linux and Windows adapters
+are not yet compiled or run); its native ID is kept while the owner keeps its identity and a
 scroll range (a changed range keeps it). The pinned macOS adapter maps
 AppKit's scroll-area `AXScrollUpByPage`/`AXScrollDownByPage` to page scrolls,
 exposes that child as `AXVerticalScrollBar`, and maps the bar's
