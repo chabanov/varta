@@ -5,3 +5,7 @@
 # The checked-in v38 guest intrinsic library (`scripts/build-intrinsics.py`).
 !/crates/varta-compiler/src/link/intrinsics.wasm
 .DS_Store
+# uarp-sdk's own test sources, fetched at the pinned commit by
+# examples/uarp-console/scripts/fetch-sdk-tests.py; never vendored.
+/examples/uarp-console/pins/uarp-sdk-tests/
+/examples/uarp-console/pins/.uarp-sdk-tests.staging-*/

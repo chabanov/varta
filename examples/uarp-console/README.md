@@ -211,6 +211,44 @@ Checkpoint 2026-11-04 (debug `varta` of `978b793`): `check-sdk.sh` printed
 and `generic bodies reached: 6/6`. `sdk-loopback.sh` passed all six groups with 43
 cases.
 
+## SDK own test sources
+
+The npm tarball of `uarp-sdk` does not ship the package's own tests (its `files` are
+`dist`, `src`, `README.md` and `LICENSE`; its test script is
+`npm run build && node --test test/*.test.ts`). `pins/uarp-sdk-tests.json` pins them
+at commit `9fc7776e7d78b17bf69baf5400dcfcb73123066b` of
+`github.com/Snaga-AI/uarp-sdks` (tag `v0.13.2`) with the sha256 of each pinned file:
+the three `packages/typescript/test/*.test.ts` files and the two
+`contract/sse-fixtures/` files that `sse-parity.test.ts` reads from the repository
+root. They are fetched into the git-ignored `pins/uarp-sdk-tests/` with their
+repository paths, so the tests' relative fixture URL keeps working, and are never
+vendored.
+
+```sh
+python3 scripts/fetch-sdk-tests.py           # fetch at the pinned commit, verify, install
+python3 scripts/fetch-sdk-tests.py --check   # offline: verify the installed copy
+python3 scripts/fetch-sdk-tests.test.py      # offline tests of the script
+```
+
+Fetching contacts only `https://github.com/Snaga-AI/uarp-sdks.git` (HTTPS only, no
+redirects, credentials or caller git configuration) and fetches the commit by its
+hash. Before the ignored directory is replaced, every pinned file must match its
+sha256, and every file of the installed `node_modules/uarp-sdk` except `dist/` must
+equal the same path under the commit's `packages/typescript`. That comparison is how
+the commit was identified: all 68 such files of the 0.13.2 tarball equal `v0.13.2`,
+while `v0.13.1` and `v0.13.3` differ in 3 and 9 files. A mismatch, a missing or extra
+file, or a symlink fails closed and keeps the previous copy; `--check` applies the
+same file rules offline.
+
+Checkpoint 2026-11-05 (the main checkout's debug `varta`, built after `a842166`;
+`49186cf` changes only `docs/`):
+`varta check` of each test file as the entry of a `checked-f64-utf16-v38` project
+that maps no `node:` module refuses all three. `stream.test.ts` and
+`transport.test.ts` are refused at their first import, `node:assert/strict`
+(1:20). `sse-parity.test.ts` is refused earlier, at parse time, on
+`import.meta.url` (12:64), with the message that `import.meta` cannot be used
+outside module code. Running the suite under Varta needs a harness (M7).
+
 ## Product entry and the console end to end
 
 `varta build --config varta.json` builds the product entry `src/app/main.tsx` into
