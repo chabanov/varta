@@ -18,6 +18,15 @@
                  Some(event_generator.into_result())
              }
          }
+@@ -289,7 +290,7 @@
+         let state = tree.state();
+         let root = state.root();
+         let point = from_ns_point(&view, &root, point);
+-        let node = root.node_at_point(point, &filter).unwrap_or(root);
++        let node = crate::hit_test::node_at_point(&root, point, &filter).unwrap_or(root);
+         Id::autorelease_return(context.get_or_create_platform_node(node.id())) as *mut _
+     }
+ }
 --- a/src/context.rs
 +++ b/src/context.rs
 @@ -37,6 +37,7 @@
@@ -133,9 +142,70 @@
          self.insert_text_change_if_needed(node);
          if let Some(true) = node.is_selected() {
              self.enqueue_selected_rows_change_if_needed(node);
+--- /dev/null
++++ b/src/hit_test.rs
+@@ -0,0 +1,58 @@
++// Varta addition, under the package's Apache-2.0 OR MIT licenses.
++//! A clip-aware hit test; no native calls.
++//!
++//! `accesskit_consumer`'s `node_at_point` returns the deepest filtered node
++//! whose bounds contain the point and ignores `clips_children`. A producer that
++//! publishes the layout boxes of scrolled-out or clipped-away content (so that
++//! assistive clients can see where it is) would then answer a point over
++//! visible content with an invisible node. This search is the same, except
++//! that a node which clips its children has its descendants searched only
++//! where the point lies inside its own bounds. A clipping node without bounds
++//! has no area to clip to and is searched as before.
++use accesskit::Point;
++use accesskit_consumer::{FilterResult, NodeRef};
++
++/// The deepest filtered node, either `root` or a descendant, at `point` in
++/// `root`'s coordinate space, outside no clipping ancestor's bounds.
++pub(crate) fn node_at_point<'a>(
++    root: &NodeRef<'a>,
++    point: Point,
++    filter: &impl Fn(&NodeRef) -> FilterResult,
++) -> Option<NodeRef<'a>> {
++    // As upstream: a node's `Test` frame is pushed before its children, then
++    // children in forward order, so children are searched last-to-first and
++    // the node's own bounds are tested only after all descendants miss.
++    enum Frame<'n> {
++        Visit(NodeRef<'n>, Point),
++        Test(NodeRef<'n>, Point),
++    }
++    let mut stack = vec![Frame::Visit(*root, point)];
++    while let Some(frame) = stack.pop() {
++        match frame {
++            Frame::Test(node, point) => {
++                if node.raw_bounds().is_some_and(|rect| rect.contains(point)) {
++                    return Some(node);
++                }
++            }
++            Frame::Visit(node, point) => {
++                let filter_result = filter(&node);
++                if filter_result == FilterResult::ExcludeSubtree {
++                    continue;
++                }
++                if filter_result == FilterResult::Include {
++                    stack.push(Frame::Test(node, point));
++                }
++                let clipped = node.clips_children()
++                    && node.raw_bounds().is_some_and(|rect| !rect.contains(point));
++                if clipped {
++                    continue;
++                }
++                for child in node.children() {
++                    let child_point = child.direct_transform().inverse() * point;
++                    stack.push(Frame::Visit(child, child_point));
++                }
++            }
++        }
++    }
++    None
++}
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -23,3 +23,9 @@
+@@ -23,3 +23,11 @@
  pub use subclass::SubclassingAdapter;
  
  pub use objc2_foundation::{NSArray, NSObject, NSPoint};
@@ -145,6 +215,8 @@
 +mod text_scroll;
 +
 +mod scroll;
++
++mod hit_test;
 --- /dev/null
 +++ b/src/live.rs
 @@ -0,0 +1,403 @@

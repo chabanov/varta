@@ -719,12 +719,12 @@ fn scrolled_out_clipped_and_text_nodes_publish_presented_layout_bounds() {
     let below = bounds_of(&update, "Below");
     assert_eq!(below.y0, pane_top + 30.0 * scale);
     // Fully scrolled: now inside the scrollport.
-    let pane = metadata.accessibility_bounds_map()[&2];
+    let pane = metadata.node_bounds_map()[&2];
     assert!(below.y1 <= f64::from(pane.y + pane.height));
 }
 
 #[test]
-fn open_select_list_options_publish_row_bounds_including_scrolled_out_rows() {
+fn open_select_list_options_publish_presented_rows_and_no_reachable_hidden_rows() {
     let mut view = offscreen_view();
     view.input(
         &Input::Click {
@@ -748,32 +748,194 @@ fn open_select_list_options_publish_row_bounds_including_scrolled_out_rows() {
     let row = f64::from(menu.row_height * SCALE);
     let top = f64::from(menu.viewport.y);
     let bottom = top + f64::from(menu.viewport.height);
-    let mut shown = 0;
+    let (mut shown, mut refused, mut outside) = (0, 0, 0);
     for (index, id) in OPTIONS.enumerate() {
-        let bounds = bounds_of(&update, &format!("O{id}"));
+        let expected = top + (index as f64 - FIRST as f64) * row;
+        let Some(bounds) = named(&update, &format!("O{id}")).bounds() else {
+            // Scrolled out of the list: no published node clips to the list,
+            // so a hidden row over the page would win the hit test there.
+            assert!(expected + row <= top + 1e-3 || expected >= bottom - 1e-3);
+            refused += 1;
+            continue;
+        };
         assert_eq!(bounds.x0, f64::from(menu.viewport.x));
         assert_eq!(bounds.width(), f64::from(menu.viewport.width));
-        let expected = top + (index as f64 - FIRST as f64) * row;
         assert!(
             (bounds.y0 - expected).abs() < 1e-3,
             "O{id}: {} {expected}",
             bounds.y0
         );
         let center = ((bounds.x0 + bounds.x1) / 2.0, (bounds.y0 + bounds.y1) / 2.0);
-        if center.1 > top && center.1 < bottom {
-            // A visible row is the rectangle its pointer hit uses.
-            shown += 1;
-            assert_eq!(
-                metadata.select_hit(center.0 as f32, center.1 as f32),
-                Some(varta_view::SelectHit::Choice {
-                    select: 9,
-                    option: id
-                })
-            );
-        } else {
-            // Scrolled out of the list, above or below it.
-            assert!(bounds.y1 <= top + 1e-3 || bounds.y0 >= bottom - 1e-3);
+        if !(center.1 > top && center.1 < bottom) {
+            // A published hidden row lies wholly outside the frame.
+            assert!(bounds.y1 <= 0.0 || bounds.y0 >= f64::from(metadata.height));
+            outside += 1;
+            continue;
         }
+        // A presented row is the rectangle its pointer hit uses.
+        shown += 1;
+        assert_eq!(
+            metadata.select_hit(center.0 as f32, center.1 as f32),
+            Some(varta_view::SelectHit::Choice {
+                select: 9,
+                option: id
+            })
+        );
     }
-    assert!(shown > 0 && shown < OPTIONS.len());
+    assert!(shown > 0 && refused > 0 && outside > 0);
+    assert_eq!(shown + refused + outside, OPTIONS.len());
+}
+
+/// The labelled node a hit test at (`x`, `y`) returns: through the pinned
+/// clip-aware search, and through `accesskit_consumer`'s own search.
+fn hit_labels(update: &accesskit::TreeUpdate, x: f64, y: f64) -> (Option<String>, Option<String>) {
+    let tree = accesskit_consumer::Tree::new(update.clone(), true);
+    let state = tree.state();
+    let root = state.root();
+    let point = accesskit::Point::new(x, y);
+    let label = |node: Option<accesskit_consumer::NodeRef>| {
+        let id = node?.locate().0;
+        let (_, node) = update.nodes.iter().find(|(native, _)| *native == id)?;
+        node.label().map(str::to_owned)
+    };
+    (
+        label(super::hit_test_planner::node_at_point(
+            &root,
+            point,
+            &accesskit_consumer::common_filter,
+        )),
+        label(root.node_at_point(point, &accesskit_consumer::common_filter)),
+    )
+}
+
+/// A 20px heading over a 50px scroll pane of four 40px items.
+fn heading_and_pane() -> View {
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(1, ".head {margin:0;height:20px} .pane {height:50px;width:100px;overflow:auto} .item {height:40px}")
+        .create_element(2, Tag::H1).set_class(2, "head").set_attribute(2, A::AriaLabel, "Head").insert(1, 2, 0)
+        .create_element(3, Tag::Div).set_class(3, "pane").insert(1, 3, 0);
+    for (index, label) in ["One", "Two", "Three", "Four"].into_iter().enumerate() {
+        let id = 10 + index as u32;
+        b.create_element(id, Tag::Section)
+            .set_class(id, "item")
+            .set_attribute(id, A::AriaLabel, label)
+            .insert(3, id, 0);
+    }
+    commit(&mut view, &b);
+    view
+}
+
+#[test]
+fn hit_tests_over_visible_content_never_return_scrolled_out_items() {
+    let mut view = heading_and_pane();
+    let bridge = active_bridge();
+    let (metadata, _) = present(&view, 1, &bridge);
+    let source = view.accessibility_tree().unwrap().nodes[&3]
+        .identity
+        .clone();
+    assert!(
+        view.accessibility_input_from_frame(
+            &source,
+            &AccessibilityAction::Scroll(varta_view::AccessibilityScrollAction::To(
+                varta_view::AccessibilityScrollOffset::new(90.0).unwrap()
+            )),
+            &metadata,
+            &mut Deny
+        )
+        .unwrap()
+    );
+    let (_, update) = present(&view, 2, &bridge);
+    let scale = f64::from(SCALE);
+    // "Two" (40..80 in the pane) is scrolled to -50..-10 under the pane top at
+    // 20: its published box overlaps the visible heading.
+    let two = bounds_of(&update, "Two");
+    assert_eq!((two.y0, two.y1), (-30.0 * scale, 10.0 * scale));
+    let pane = &update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.role() == accesskit::Role::ScrollView)
+        .unwrap()
+        .1;
+    assert!(pane.clips_children());
+    let on_heading = (10.0 * scale, 5.0 * scale);
+    let (clipped, upstream) = hit_labels(&update, on_heading.0, on_heading.1);
+    assert_eq!(clipped.as_deref(), Some("Head"));
+    // The unpatched search returns the invisible item there.
+    assert_eq!(upstream.as_deref(), Some("Two"));
+    // Inside the pane the visible items answer: "Three" at 80..120 is shown
+    // at 10..50 and "Four" at 50..90, cut at the pane bottom (70).
+    for (y, label) in [(30.0, "Three"), (65.0, "Four")] {
+        let (clipped, _) = hit_labels(&update, 10.0 * scale, y * scale);
+        assert_eq!(clipped.as_deref(), Some(label), "{y}");
+    }
+    // Below the pane, where "Four"'s layout box continues, nothing is hit
+    // but the window.
+    let (clipped, _) = hit_labels(&update, 10.0 * scale, 75.0 * scale);
+    assert_ne!(clipped.as_deref(), Some("Four"));
+    // AccessKit's own filter, which the adapter uses for the platform tree,
+    // keeps a clipping area's children inside it and the nearest one beyond
+    // each edge ("Two"), and omits farther ones ("One") until scrolling
+    // brings them next to the area.
+    let tree = accesskit_consumer::Tree::new(update.clone(), true);
+    let state = tree.state();
+    let filtered = |label: &str| {
+        let id = update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(label))
+            .unwrap()
+            .0;
+        accesskit_consumer::common_filter(&state.node_by_tree_local_id(id, TreeId::ROOT).unwrap())
+    };
+    use accesskit_consumer::FilterResult::{ExcludeSubtree, Include};
+    assert_eq!(
+        ["One", "Two", "Three", "Four"].map(filtered),
+        [ExcludeSubtree, Include, Include, Include]
+    );
+}
+
+#[test]
+fn hit_tests_over_visible_content_never_return_clipped_away_boxes() {
+    let mut view = View::default();
+    let mut b = B::new();
+    // The section is moved 30px up out of its 30px clip box, back over the
+    // heading before it.
+    b.stylesheet(1, ".head {margin:0;height:20px} .clip {height:30px;width:100px;overflow:hidden} .up {position:relative;top:-30px;height:20px}")
+        .create_element(2, Tag::H1).set_class(2, "head").set_attribute(2, A::AriaLabel, "Head").insert(1, 2, 0)
+        .create_element(3, Tag::Div).set_class(3, "clip").insert(1, 3, 0)
+        .create_element(4, Tag::Section).set_class(4, "up").set_attribute(4, A::AriaLabel, "Up").insert(3, 4, 0);
+    commit(&mut view, &b);
+    let bridge = active_bridge();
+    let (metadata, update) = present(&view, 1, &bridge);
+    let scale = f64::from(SCALE);
+    assert!(!metadata.node_bounds_map().contains_key(&4));
+    let up = bounds_of(&update, "Up");
+    assert_eq!((up.y0, up.y1), (-10.0 * scale, 10.0 * scale));
+    let (clipped, upstream) = hit_labels(&update, 10.0 * scale, 5.0 * scale);
+    assert_eq!(clipped.as_deref(), Some("Head"));
+    assert_eq!(upstream.as_deref(), Some("Up"));
+}
+
+#[test]
+fn hidden_boxes_under_a_scroll_border_stay_unbounded() {
+    let mut view = View::default();
+    let mut b = B::new();
+    // The pane's bottom border lies inside its bounds but outside its
+    // scrollport; the third item's box ends under it.
+    b.stylesheet(1, ".pane {height:50px;width:100px;overflow:auto;border-bottom:40px solid #000} .item {height:40px}")
+        .create_element(3, Tag::Div).set_class(3, "pane").insert(1, 3, 0);
+    for (index, label) in ["One", "Two", "Three", "Four"].into_iter().enumerate() {
+        let id = 10 + index as u32;
+        b.create_element(id, Tag::Section)
+            .set_class(id, "item")
+            .set_attribute(id, A::AriaLabel, label)
+            .insert(3, id, 0);
+    }
+    commit(&mut view, &b);
+    let bridge = active_bridge();
+    let (_, update) = present(&view, 1, &bridge);
+    assert!(named(&update, "Three").bounds().is_none());
+    // "Four" (120..160) lies wholly below the border (50..90).
+    assert_eq!(bounds_of(&update, "Four").y0, 120.0 * f64::from(SCALE));
 }

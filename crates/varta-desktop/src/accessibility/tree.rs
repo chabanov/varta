@@ -59,8 +59,8 @@ struct Slot {
     identity: NodeIdentity,
     native: NodeId,
     text: Option<super::text::TextSlot>,
-    /// The vertical scroll-bar child of a scroll area, kept while its source
-    /// identity and scroll range remain.
+    /// The vertical scroll-bar child of a scroll area, kept while the source
+    /// keeps its identity and a scroll range (a changed range keeps it).
     scroll_bar: Option<NodeId>,
 }
 /// A scroll bar's position range, as AppKit's `NSScroller` reports it. The
@@ -156,7 +156,8 @@ impl Projection {
                 },
             );
         }
-        let bounds = metadata.accessibility_bounds_map();
+        let geometry = metadata.accessibility_geometry(source);
+        let bounds = &geometry.bounds;
         let mut bindings = BTreeMap::new();
         let mut text_runs = BTreeMap::new();
         let mut nodes = Vec::with_capacity(source.nodes.len() + 1);
@@ -207,6 +208,11 @@ impl Projection {
                     f64::from(rect.x + rect.width),
                     f64::from(rect.y + rect.height),
                 ));
+            }
+            // The pinned macOS hit test searches a clipping node's descendants
+            // only inside its bounds; hidden boxes rely on it (see varta-view).
+            if geometry.clips.contains(&id) {
+                node.set_clips_children();
             }
             let rich_text = source
                 .text

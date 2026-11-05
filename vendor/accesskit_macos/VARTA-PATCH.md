@@ -82,6 +82,19 @@ those ordinary AccessKit properties without changing its public API:
   `SetScrollOffset` at that fraction of the area's `scroll_y_min..scroll_y_max`,
   keeping `scroll_x`. Selector checks advertise only routes the area supports.
   Horizontal page actions are not listed: Varta's scrolling is vertical.
+- `src/hit_test.rs` (wave 3) makes `accessibilityHitTest:` clip-aware; no new
+  platform `unsafe` block is added. `accesskit_consumer`'s `node_at_point`
+  ignores `clips_children`, so once Varta publishes the layout boxes of
+  scrolled-out or clipped-away content, a point over visible content returned
+  the invisible node whose box lay there. `src/adapter.rs` now calls this
+  search, which is upstream's (same filter, same last-to-first order) except
+  that a node with `clips_children` and bounds has its descendants searched
+  only where the point lies inside those bounds. Varta sets `clips_children`
+  only where every presented descendant lies inside the node, and publishes a
+  hidden box only where the frame and its clipping ancestors exclude it
+  (`FrameMetadata::accessibility_geometry`). AccessKit's own filter is
+  unchanged: for a clipping node that is a filtered parent (a scroll area),
+  it omits children beyond the nearest one past each edge.
 
 The planner is used only by Varta's bounded native observer tree. Projected
 labels/values occur once in a flat fragment buffer, with range indexes for atomic
@@ -107,7 +120,10 @@ scroll routing without selection/focus/value changes or stale-range acceptance.
 The scroll-route regression compiles the exact `src/scroll.rs` and applies its
 page, item and position requests from a real Varta publication through the
 desktop's semantic FIFO to the core page/item/absolute scroll actions, including
-refused non-finite positions and clamping. The patched Objective-C methods are
+refused non-finite positions and clamping. The hit-test regressions compile the
+exact `src/hit_test.rs` and search real Varta publications (a pane scrolled
+over the heading before it, a box moved out of its clip box over earlier
+content), comparing with the unpatched search. The patched Objective-C methods are
 compiled against the macOS SDK; they were not driven by an external assistive
 client (see the desktop README).
 Reassess/remove the patch when an upstream release supplies

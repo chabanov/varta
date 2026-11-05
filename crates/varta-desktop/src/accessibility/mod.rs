@@ -655,6 +655,9 @@ mod live_planner;
 mod live_tests;
 
 #[cfg(test)]
+#[path = "../../../../vendor/accesskit_macos/src/hit_test.rs"]
+mod hit_test_planner;
+#[cfg(test)]
 mod platform_scroll_tests;
 #[cfg(test)]
 #[path = "../../../../vendor/accesskit_macos/src/scroll.rs"]
