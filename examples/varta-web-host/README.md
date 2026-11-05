@@ -30,6 +30,7 @@ per-read body bound deviation below: 116 of the 117 cases pass under Node.
 | `net.request` (v37/v38) | The eight `net_request_*`/`net_body_read*` imports over the host's `fetch`: the descriptor parser is checked at start against the contract's accepted and rejected examples, and the head record against its head example; method, URL, grant (URL-aware: scheme, host and port exact, `*` after the authority; methods), slot, body and header checks in the order of the failure table (v38 checks the pending-request limit before the broker, v37 after the decision); a v38 bounded run whose deadline passes with a timer due at or beyond it still armed fails with `TimerDeadline`; completions in one FIFO queue, one per turn, a due timer first in bounded runs and the earliest instant first in application instances; UTF-8 held back across chunks; the body bound. Under v38 the head record is the contract's canonical head: Fetch `Headers` already sort and combine, and only the visible names (the grant's `responseHeaders` or the safelist, narrowed by the ceiling; never `set-cookie`) are kept, so the loopback case, whose grant declares two of the names the server sends, matches the native runtime byte for byte. **Deviations:** v37 response headers come from Fetch `Headers` too (sorted, repeated fields combined except `set-cookie`), which the guest `Headers` sort-and-combine list makes unobservable, a browser reads only CORS-exposed headers (a cross-origin server must list declared names in `Access-Control-Expose-Headers`, which is deployment configuration) and adds its own request headers, and a browser cannot observe redirects (an opaque redirect is a `Failed` completion). **V38 deviations (not implemented, the contract's MUST rules for `net_request_start_v2`):** host-owned request headers (`user-agent` and `accept-encoding` are sent as the guest gives them instead of being checked and ignored), the inactivity window (one end-to-end deadline per transfer instead of one window per wait, renewed by each chunk), the per-read body bound (the whole body is bounded instead of what one read receives, so a long stream fails past the v37 total) and the per-read delivery cap (a read delivers up to the v37 chunk bytes instead of `net::MAX_READ_DELIVERY_BYTES`, so a burst can exceed a turn's work that the cap bounds natively; this host meters no fuel) |
 | v38 effects still missing | File roots for `fs.*`, `env_snapshot`, host events, permission prompts, `copy_text` and external links through a broker |
 | H1 HTTP host | Not implemented; HTTP modules are refused |
+| Packaged fonts | Not implemented, so refused: an artifact with a `*.resources` sidecar (the CLI passes it as `options.resources`) or a VARTA3 container (format 2 carries the resource section; other formats are refused too, since only portable Wasm is read) fails every host entry before validation with a message naming the resource section (`artifact.js`). **Deviation:** embedding.md requires a view-rendering host to load the section's faces or refuse the artifact; this prototype always refuses and loads no fonts at all (neither the resource section nor `browser.fonts`) |
 
 Modules that import layout-bound intrinsics (`json_*`, `value_*`, `union_*`,
 `primitive_*`, `bigint_*`, `number_to_*`, `number_parse_*`) or `fs`/`net`/`http`
@@ -111,6 +112,7 @@ contract admits, so turns carry the full cost of garbage collection.
 | `strict-json.js`, `policy.js` | Duplicate-rejecting JSON; manifests, ceilings and patterns |
 | `net.js`, `net-descriptor.js` | `net.request`: imports over `fetch`, completions, the request descriptor grammar |
 | `cli.mjs` | Node runner: `run`, `invoke`, `validate` |
+| `artifact.js`, `tests/artifact.test.mjs` | Refusal of artifacts with packaged fonts (resource sidecar, VARTA3 container) before validation, and its test |
 | `fixtures/` | Programs compiled by the native `varta` for comparison |
 | `tests/compare.mjs` | Differential test against the native runtime, including a loopback HTTP server for `net.request`; writes `tests/out/expected.json` |
 | `tests/browser.html` | The same cases in a real browser, compared with `expected.json` |
@@ -122,7 +124,7 @@ contract admits, so turns carry the full cost of garbage collection.
 
 ```bash
 node tools/extract-contract.mjs ../../docs/embedding.md ../../docs/architecture.md contract.json
-node --test tools/extract-contract.test.mjs
+node --test tools/extract-contract.test.mjs tests/artifact.test.mjs
 VARTA_BIN=/path/to/varta node tests/compare.mjs
 python3 scripts/serve.py 8766
 ```

@@ -7,7 +7,7 @@ export class WasmFormatError extends Error {}
 const VALUE_TYPES = { 0x7f: "i32", 0x7e: "i64", 0x7d: "f32", 0x7c: "f64", 0x7b: "v128", 0x70: "funcref", 0x6f: "externref" };
 const SECTION = { custom: 0, type: 1, import: 2, function: 3, table: 4, memory: 5, global: 6, export: 7, start: 8, element: 9, code: 10, data: 11, dataCount: 12 };
 const EXTERNAL_KIND = ["function", "table", "memory", "global"];
-const WASM_MAGIC = [0x00, 0x61, 0x73, 0x6d];
+export const WASM_MAGIC = [0x00, 0x61, 0x73, 0x6d];
 const WASM_VERSION = [0x01, 0x00, 0x00, 0x00];
 const MEMORY_FLAG_MAXIMUM = 0x01;
 const MEMORY_FLAG_SHARED = 0x02;

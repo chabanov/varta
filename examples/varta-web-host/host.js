@@ -17,6 +17,7 @@ import { parseManifest, checkRootNameGrammar, PolicyError } from "./policy.js";
 import { ValidationError, ExecutionFailure, GuestExit } from "./errors.js";
 import { createContext, LEGACY_HOST_ABI, TOOL_NAME, utf8 } from "./context.js";
 import { createValidator, VIEW_PROFILES } from "./validate.js";
+import { refuseUnsupportedArtifact } from "./artifact.js";
 import { createExecution } from "./execution.js";
 import { checkException } from "./exception.js";
 import { eventLoop, applicationLoop, createInbox } from "./scheduler.js";
@@ -28,7 +29,12 @@ export { formatLegacyF64 } from "./execution.js";
 export function createHost(contract) {
   const ctx = createContext(contract);
   const { C, hostAbis } = ctx;
-  const validate = createValidator(ctx);
+  const validateModule = createValidator(ctx);
+  // Artifacts with packaged fonts are refused before module validation.
+  const validate = (bytes, options = {}) => {
+    refuseUnsupportedArtifact(bytes, options);
+    return validateModule(bytes);
+  };
   const manifestOptions = { hostAbis, grantKinds: contract.grantKinds, budgetTable: contract.manifestBudgets, limits: contract.manifestLimits };
   checkRootNameGrammar(contract.manifestLimits, contract.rootNameExamples);
 
@@ -66,7 +72,7 @@ export function createHost(contract) {
    */
   async function run(bytes, options = {}) {
     const policies = parsePolicies(options);
-    const info = validate(bytes);
+    const info = validate(bytes, options);
     checkManifestAbi(policies, info);
     const { exec, imports } = createExecution(ctx, info, policies, options);
     // A JavaScript host caps memory only through the module's declared maximum.
@@ -96,7 +102,7 @@ export function createHost(contract) {
    */
   function start(bytes, options = {}) {
     const policies = parsePolicies(options);
-    const info = validate(bytes);
+    const info = validate(bytes, options);
     checkManifestAbi(policies, info);
     if (!info.profile || !VIEW_PROFILES.has(info.profile.name)) throw new ValidationError("application instances need a view profile");
     const { exec, imports } = createExecution(ctx, info, policies, options);
@@ -141,7 +147,7 @@ export function createHost(contract) {
     }
     let info;
     try {
-      info = validate(bytes);
+      info = validate(bytes, options);
       checkManifestAbi(policies, info);
     } catch (error) {
       if (error instanceof ValidationError) return toolFailure("invalid_artifact", error.message);
