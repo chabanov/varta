@@ -245,11 +245,12 @@ fn record_unions_convert_by_strict_matching() {
     );
 }
 
-/// A record holding a `Uint8Array` may enter `unknown`; its JSON-object view
-/// throws `TypeError` for the bytes, while `Blob` and `ArrayBuffer` fields
-/// pass. A `Uint8Array` itself still cannot be held by `unknown`.
+/// A record holding a `Uint8Array` enters `unknown`, and its JSON-object
+/// view lists the bytes field like any other (Node: `photo,slots` and
+/// `photo`); a `Uint8Array` itself is held by `unknown` too (v38
+/// `byte_values`, see `sdk_path_tests`).
 #[test]
-fn bytes_inside_unknown_records_are_checked() {
+fn bytes_inside_unknown_records_read_as_json_objects() {
     run(
         "type BinaryInput = Blob | ArrayBuffer | ArrayBufferView | string;
          interface Upload { photo: BinaryInput | Uint8Array; slots?: string }
@@ -265,19 +266,12 @@ fn bytes_inside_unknown_records_are_checked() {
            console.log(names(blob));
            const bytes: Upload = { photo: new Uint8Array(2) };
            console.log(names(bytes));
+           const u: unknown = new Uint8Array(1);
+           console.log(typeof u);
          }",
         &[],
-        &[
-            "photo,slots",
-            "TypeError: a Uint8Array held by unknown cannot be read as a JSON value",
-        ],
+        &["photo,slots", "photo", "object"],
     );
-    let error = varta_compiler::compile_typescript_with_profile(
-        "export function main(): void { const u: unknown = new Uint8Array(1); console.log(typeof u); }",
-        V38,
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("Uint8Array"), "{error}");
 }
 
 /// `process.env` lists only exactly granted names and never enumerates the

@@ -30,8 +30,8 @@ use varta_common::{
         ARRAY_META_BYTES, ARRAY_SLOT_BYTES, Dictionary, ErrorObject,
         HASHED_DICTIONARY_VALUE_VERSION as VERSION, ModuleBounds, PRIVATE_KEY_PREFIX,
         PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD, PrimitiveBox, PromiseState,
-        RecordShape, ReferenceBox, ValueKind as Kind, Vector, function_field_layout,
-        read_record_with, record_descriptor, string_range,
+        RecordShape, ReferenceBox, ValueKind as Kind, Vector, byte_at, byte_vector,
+        function_field_layout, read_record_with, record_descriptor, string_range,
     },
 };
 
@@ -215,7 +215,7 @@ pub fn format<M: Memory + ?Sized, S: Sink + ?Sized>(
     // `ReferenceBox::read_in` validates it.
     let header = ReferenceBox::read_envelope(memory, cell, VERSION).map_err(layout)?;
     let value = match header.kind {
-        Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise => header,
+        Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise | Kind::Bytes => header,
         _ => ReferenceBox::read_in(memory, cell, VERSION, bounds).map_err(layout)?,
     };
     match value.kind {
@@ -247,7 +247,7 @@ pub fn format<M: Memory + ?Sized, S: Sink + ?Sized>(
             }
         }
         Kind::Function => sink.ascii(FUNCTION_DISPLAY.as_bytes()),
-        Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise => {
+        Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise | Kind::Bytes => {
             let mut encoder = Encoder::new(memory, bounds, Mode::Diagnostic, sink, Some(budget));
             let (kind, payload) = encoder.resolve(value.kind as u32, value.payload)?;
             if kind == Kind::Undefined as u32 {
@@ -291,6 +291,13 @@ struct Field {
 /// An aggregate whose members are being written.
 enum Frame {
     Array {
+        ptr: usize,
+        vector: Vector,
+        index: usize,
+        depth: usize,
+    },
+    /// A `Uint8Array` (v38 `byte_values`) whose index keys are being written.
+    Bytes {
         ptr: usize,
         vector: Vector,
         index: usize,
@@ -681,6 +688,7 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
             Kind::Array => self.array(payload, depth),
             Kind::Dictionary => self.dictionary(payload, depth),
             Kind::Promise => self.promise(payload, depth),
+            Kind::Bytes => self.bytes(payload, depth),
             Kind::Function if self.mode == Mode::Diagnostic => {
                 self.ascii(FUNCTION_DISPLAY.as_bytes())
             }
@@ -730,6 +738,22 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
         self.enter(vector.ptr)?;
         self.punct(b'[')?;
         self.stack.push(Frame::Array {
+            ptr: vector.ptr,
+            vector,
+            index: 0,
+            depth,
+        });
+        Ok(())
+    }
+    /// A `Uint8Array` (v38 `byte_values`): an object of its elements under
+    /// their index keys, as `JSON.stringify` writes one (`{"0":1,"1":2}`);
+    /// the diagnostic text uses the same notation. Its byte storage is
+    /// validated whole first.
+    fn bytes(&mut self, payload: u64, depth: usize) -> Result<(), EncodeError> {
+        let vector = byte_vector(self.memory, payload, VERSION, self.bounds).map_err(layout)?;
+        self.enter(vector.ptr)?;
+        self.punct(b'{')?;
+        self.stack.push(Frame::Bytes {
             ptr: vector.ptr,
             vector,
             index: 0,
@@ -986,6 +1010,28 @@ impl<'m, 's, 'b, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, 'b, M, S>
                 }
                 let element = self.slot(storage + ARRAY_META_BYTES + at * ARRAY_SLOT_BYTES)?;
                 self.value(kind as u32, element, depth + 1)
+            }
+            Some(Frame::Bytes {
+                ptr,
+                vector,
+                index,
+                depth,
+            }) => {
+                let (ptr, vector, at, depth) = (*ptr, *vector, *index, *depth);
+                if at == vector.length {
+                    return self.close(ptr, b'}');
+                }
+                *index += 1;
+                if at != 0 {
+                    self.punct(b',')?;
+                }
+                let byte = byte_at(self.memory, &vector, at).map_err(layout)?;
+                self.visit(depth + 1)?;
+                self.punct(b'"')?;
+                self.integer(i32::try_from(at).map_err(layout)?)?;
+                self.punct(b'"')?;
+                self.punct(b':')?;
+                self.integer(i32::from(byte))
             }
             Some(Frame::Dictionary { .. }) => self.dictionary_step(),
             Some(Frame::Record { .. }) => self.record_step(),

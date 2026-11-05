@@ -48,10 +48,6 @@ pub(crate) struct Views {
     /// reads a closed record held by an `unknown` cell as a JSON object, and
     /// that dictionary type; `resolve` adds one branch per boxed shape.
     graph: Option<(usize, Type)>,
-    /// V38 (`web_bytes`): the `TypeError` the JSON-object view throws for a
-    /// field that holds a `Uint8Array` (its storage cannot be held by
-    /// `unknown`).
-    bytes_error: Option<ir::Statement>,
     /// Function values converted to another signature (`coerce`): (source
     /// function type, target function type). Each conversion is a
     /// `Reinterpret` of the value that `resolve` replaces by a call of the
@@ -950,7 +946,7 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
         }
     }
     if let Some((index, graph)) = program.types.subtyping.graph {
-        let dispatch = rewriter.graph_branches(graph)?;
+        let dispatch = rewriter.graph_branches(graph, &mut program.functions[index].locals)?;
         program.functions[index].body.splice(0..0, dispatch);
     }
     // Synthesized functions read exact layouts: only their function
@@ -1829,9 +1825,11 @@ impl Rewriter<'_> {
         convert(value, result, types)
     }
     /// The branches of the reserved record-to-JSON-object function: for each
-    /// boxed closed record shape, a dictionary of its present fields (in
-    /// canonical field order), each value as `unknown`.
-    fn graph_branches(&self, graph: Type) -> Result<Vec<S>> {
+    /// boxed closed record shape, a dictionary of its present fields in the
+    /// record's own-key order (canonical array indices, then insertion
+    /// order, as `Object.entries` enumerates them), each value as `unknown`.
+    /// The function's `locals` gain the field caches and enumeration slots.
+    fn graph_branches(&self, graph: Type, locals: &mut Vec<Type>) -> Result<Vec<S>> {
         let types = self.types;
         let span = swc_common::DUMMY_SP;
         let Type::Dictionary(id) = graph else {
@@ -1846,110 +1844,88 @@ impl Rewriter<'_> {
                 .ok_or_else(|| CompilerError::Internal("empty record shape".into()))?
                 as u32,
         );
-        // Locals: 0 the record, 1 the descriptor, 2 keys, 3 values.
+        // Locals: 0 the record, 1 the descriptor, 2 keys, 3 values, then the
+        // enumeration slots and one `unknown` cache per field.
         let (descriptor, keys, values) = (1, 2, 3);
-        let push = |array: u32, ty: Type, item: Expr| {
-            S::Expr(Expr {
-                span,
-                ty: types.number(),
-                kind: E::ArrayPush(
-                    Box::new(local(span, array, ty)),
-                    Box::new(Expr {
-                        span,
-                        ty,
-                        kind: E::Array(vec![Some(item)]),
-                    }),
-                ),
-            })
+        let mut hidden = |ty: Type| {
+            locals.push(ty);
+            (locals.len() - 1) as u32
         };
-        let mut body = Vec::new();
+        let slots = [(); 4].map(|()| hidden(Type::Number));
         let boxed: Vec<u32> = types.subtyping.boxed.borrow().iter().copied().collect();
+        let widest = boxed
+            .iter()
+            .map(|shape| types.records[*shape as usize].fields.len())
+            .max()
+            .unwrap_or(0);
+        let caches: Vec<u32> = (0..widest).map(|_| hidden(Type::Unknown)).collect();
+        let undefined = unknown::widen(
+            Expr {
+                span,
+                ty: Type::Undefined,
+                kind: E::Integer(0),
+            },
+            types,
+        )?;
+        let mut body = Vec::new();
         for shape in boxed {
             let record = Type::Record(shape);
-            let mut branch = vec![
-                S::Set(
-                    keys,
-                    Expr {
-                        span,
-                        ty: dictionary.keys,
-                        kind: E::Array(Vec::new()),
-                    },
-                ),
-                S::Set(
-                    values,
-                    Expr {
-                        span,
-                        ty: dictionary.values,
-                        kind: E::Array(Vec::new()),
-                    },
-                ),
-            ];
-            for (slot, field) in types.records[shape as usize].fields.iter().enumerate() {
+            let fields = &types.records[shape as usize].fields;
+            let mut branch = Vec::new();
+            let mut names = Vec::new();
+            let mut cached = Vec::new();
+            for ((slot, field), cache) in fields.iter().enumerate().zip(&caches) {
                 let read = Expr {
                     span,
                     ty: field.ty,
                     kind: E::Field(Box::new(local(span, 0, record)), slot as u32),
                 };
-                let key = Expr {
+                names.push(Expr {
                     span,
                     ty: Type::String,
                     kind: E::String(types.profile.string_bytes(&field.name)),
-                };
-                // V38 (`web_bytes`): a field that holds a `Uint8Array` (the
-                // field reads have no effect, so it is read twice).
-                let bytes = types
-                    .subtyping
-                    .bytes_error
-                    .clone()
-                    .filter(|_| collections::holds_bytes(field.ty, types));
-                let entry = if let Some(throw) = bytes {
-                    let byte_member = unions::members(field.ty, types)
-                        .into_iter()
-                        .find(|member| matches!(member, Type::Collection(..)))
-                        .ok_or_else(|| CompilerError::Internal("missing byte member".into()))?;
-                    if field.ty.is_union() {
-                        vec![S::If(
-                            Expr {
-                                span,
-                                ty: Type::Boolean,
-                                kind: E::IsUnionMember(Box::new(read.clone()), byte_member),
-                            },
-                            vec![throw],
-                            vec![
-                                push(keys, dictionary.keys, key),
-                                push(
-                                    values,
-                                    dictionary.values,
-                                    Expr {
-                                        ty: Type::Unknown,
-                                        ..read
-                                    },
-                                ),
-                            ],
-                        )]
-                    } else {
-                        vec![throw]
-                    }
-                } else {
-                    let value = unknown::widen(read, types)?;
-                    vec![
-                        push(keys, dictionary.keys, key),
-                        push(values, dictionary.values, value),
-                    ]
-                };
-                if field.optional {
-                    branch.push(S::If(
+                });
+                cached.push(local(span, *cache, Type::Unknown));
+                // V38 (`byte_values`): a `Uint8Array` field enters `unknown`
+                // with its own tag, as every other field does. An absent
+                // field is left out by the enumeration below.
+                let value = unknown::widen(read, types)?;
+                branch.push(if field.optional {
+                    S::If(
                         Expr {
                             span,
                             ty: Type::Boolean,
                             kind: E::HasOwn(Box::new(local(span, 0, record)), Some(slot as u32)),
                         },
-                        entry,
-                        Vec::new(),
-                    ));
+                        vec![S::Set(*cache, value)],
+                        vec![S::Set(*cache, undefined.clone())],
+                    )
                 } else {
-                    branch.extend(entry);
-                }
+                    S::Set(*cache, value)
+                });
+            }
+            // Every field's entry, then only the present ones in own-key
+            // order: the values are literals and rooted locals, so the
+            // rearrangement does not allocate.
+            for (target, ty, entries) in [
+                (keys, dictionary.keys, names),
+                (values, dictionary.values, cached),
+            ] {
+                branch.push(S::Set(
+                    target,
+                    Expr {
+                        span,
+                        ty,
+                        kind: E::Array(entries.iter().cloned().map(Some).collect()),
+                    },
+                ));
+                branch.push(S::RecordEnumerate {
+                    source: 0,
+                    target,
+                    shape,
+                    slots,
+                    values: entries,
+                });
             }
             // Value18: built unindexed.
             branch.push(S::Return(Some(Expr {
@@ -2188,14 +2164,6 @@ impl Lower<'_> {
                     "a class instance held by unknown cannot be read as a JSON object",
                     span,
                 )?;
-                if self.types.profile.web_bytes() {
-                    let bytes = self.array_error(
-                        varta_common::value::ErrorClass::TypeError,
-                        "a Uint8Array held by unknown cannot be read as a JSON value",
-                        span,
-                    )?;
-                    self.types.subtyping.bytes_error = Some(S::Throw(bytes));
-                }
                 self.generated.insert(
                     index,
                     ir::Function {

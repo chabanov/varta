@@ -10220,7 +10220,9 @@ Not yet admitted: `A[] | B[]` of record element types, `instanceof
 Map/Set/Uint8Array`, a `Uint8Array` held by `unknown`, record spreads that
 keep JavaScript's key order, and converting a function value already held by
 a union (`F | undefined`, such as an optional function member) to another
-signature. Exhaustive switches over discriminant paths are
+signature. Of these, `instanceof` of collections and key-order spreads came
+with the wave-2 [SDK paths](#sdk-paths-sdk_paths) and a `Uint8Array` held by
+`unknown` with the wave-3 [bytes stream](#bytes-held-by-unknown-byte_values). Exhaustive switches over discriminant paths are
 admitted by [strict members](#strict-members-and-wide-unions-strict_members).
 Web byte bodies, `Blob`/`FormData`/`ArrayBuffer`, typed `globalThis`,
 `Promise.race` over differently typed promises and strict conversions to
@@ -10950,7 +10952,9 @@ Wave 2 of v38 admits byte bodies and the Web types around them under
 `web_bytes()`, with three host imports at minimum host ABI 34; v37 and
 earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
 `Blob`, `FormData`, `ArrayBuffer`, `ReadableStream<Uint8Array>` and
-`globalThis`). No value tag or layout is added.
+`globalThis`). No value tag or layout is added; the wave-3
+[bytes stream](#bytes-held-by-unknown-byte_values) later gives a
+`Uint8Array` a value tag of its own.
 
 - **Byte bodies.** Under v38 the `fetch` prelude is
   `<varta>/web/fetch.ts` with the source `prelude/fetch_bytes.ts` (the
@@ -11082,7 +11086,9 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   the `number[]` storage that `new Uint8Array(buffer)` views (shared, so
   writes through the view are seen by the buffer; there are no offsets).
   `ArrayBufferView` is `Uint8Array` (no other typed array exists), so
-  `ArrayBuffer.isView` of an `unknown` value is false. `Blob` (parts of
+  `ArrayBuffer.isView(value)` is `value instanceof Uint8Array`, which tests
+  the byte-array tag of an `unknown` cell
+  ([bytes](#bytes-held-by-unknown-byte_values)). `Blob` (parts of
   `string`, `Blob`, `ArrayBuffer` or `Uint8Array`, strings as UTF-8 with lone
   surrogates as U+FFFD; `type` normalized as WHATWG; `size`, `slice`,
   `arrayBuffer`, `bytes`, `text`) is immutable and holds a byte string, so
@@ -11172,23 +11178,12 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
 - **Unions and `unknown` with bytes.** `x as U` from a union to a union of
   some of its members (a `BodyInit` to a `BlobPart`) tests the cell against
   `U`'s members, `TypeError` otherwise; `o.p instanceof C ? o.p : y` narrows
-  the property of a record or dictionary in the consequent. `unknown` never
-  holds a `Uint8Array` (its storage is private): converting `unknown` to a
-  union with a `Uint8Array` member tests the other members. A record, array
+  the property of a record or dictionary in the consequent. A record, array
   or dictionary whose fields reach a `Uint8Array` (and no `Map`, `Set` or
-  opaque builtin) may enter `unknown` or `object` as it is; its JSON-object
-  view (`as Record<string, unknown>`, `Object.keys`, checked conversions)
-  throws `TypeError("a Uint8Array held by unknown cannot be read as a JSON
-  value")` for a field that holds the bytes. Deviation: a host reader
-  (`JSON.stringify` or logging of such an `unknown`) sees the field's storage
-  and prints a number array where JavaScript prints `{"0":…}`. A
-  `Uint8Array`, or a union that may hold one, still cannot itself be
-  converted to `unknown`: the compile error names the conversion. This is a
-  known subset gap planned for a later increment (owner decision of
-  2026-10-30: no boxing now). The pilot hits it only in a generator bug of
-  uarp-sdk 0.13.0 (`uploadPublicSessionImage` passes its `BinaryInput` as the
-  JSON `body`, so a `Blob` would be sent as `{}`; every other upload uses
-  `binary:`), which the SDK owner fixes.
+  opaque builtin) may enter `unknown` or `object` as it is. How `unknown`
+  holds the `Uint8Array` itself and what its readers and the JSON-object view
+  do with it is the wave-3
+  [bytes stream](#bytes-held-by-unknown-byte_values).
 - **Classes merged with an interface.** `interface C extends A, B { … }` and
   `class C` in one module merge: the interface's members (own and inherited,
   optional ones as `T | undefined`) become ordinary public instance fields of
@@ -11248,13 +11243,18 @@ import, value layout or ABI changes; v1–v37 keep rejecting every form below.
   exhaustive over the element type.
 - **`instanceof Map`, `Set` and `Uint8Array`.** Of a closed union, the test
   is a member tag test and narrows the union both ways; of any other closed
-  type it is a constant (the operand is still evaluated). These collections
-  have no value tag of their own (a map or set shares the record tag, a
-  `Uint8Array` the array tag), so the test is refused for an `unknown` or
-  `object` operand, which never holds one, and for a union whose other
-  members share the selected member's tag. Union formation already refuses
-  two members with one tag: a `Map` or `Set` with another map, set, record
-  or class instance, and a `Uint8Array` with another array type. A
+  type it is a constant (the operand is still evaluated). A map or set has
+  no value tag of its own (it shares the record tag), so `instanceof Map`
+  and `instanceof Set` are refused for an `unknown` or `object` operand,
+  which never holds one, and for a union whose other members share the
+  selected member's tag. `instanceof Uint8Array` of an `unknown` or
+  `object` operand, and of a closed union, tests the byte-array tag of the
+  wave-3 [bytes stream](#bytes-held-by-unknown-byte_values). Union formation
+  refuses two members with one tag (a `Map` or `Set` with another map, set,
+  record or class instance) and keeps the wave-2 rule that counts a
+  `Uint8Array` as an array member, so `Uint8Array | T[]` stays refused even
+  though the cells carry different tags: telling the two apart in a closed
+  union is not implemented. A
   `Uint8Array` with records or class instances (`Blob | ArrayBuffer |
   Uint8Array | string`) and a `Map` or `Set` with primitives or arrays are
   admitted.
@@ -11283,16 +11283,132 @@ import, value layout or ABI changes; v1–v37 keep rejecting every form below.
   SDK's `{ ...spec, headers, query }` passed back as a `RequestSpec`) is
   admitted, as are dictionary spreads (`{ ...spec.query, ...options.query }`
   merges and serializes byte for byte as Node does).
-- **Not admitted.** A `Uint8Array`, or a union that may hold one, held by
-  `unknown`, and the record view of a class instance held by `unknown`
-  (`value as Record<string, unknown>`), keep their named diagnostics and
-  `TypeError`s. On the SDK's `appendPart(form, key, value: unknown)` this
-  means a `Blob` or `File` part and primitive or JSON fields reach the wire
-  as in Node, while a `Uint8Array`, `ArrayBuffer` or `{ data: Uint8Array }`
-  part throws `TypeError` when the multipart record is read. `A[] | B[]` of
-  records, `Blob.stream()`, `Response`/`Request` `formData()` and the
-  `FormData` `keys()`/`values()`/`entries()` iterator objects (they return
-  array snapshots) stay as they were.
+- **Not admitted.** `A[] | B[]` of records, `Blob.stream()`,
+  `Response`/`Request` `formData()` and the `FormData`
+  `keys()`/`values()`/`entries()` iterator objects (they return array
+  snapshots) stay as they were. A `Uint8Array` held by `unknown` and the
+  SDK's byte parts are the wave-3
+  [bytes stream](#bytes-held-by-unknown-byte_values).
+
+#### Bytes held by unknown (`byte_values`)
+
+Wave 3 of v38, selector `LanguageProfile::byte_values()` (owner decision of
+2026-11-05, replacing the earlier refusal): a `Uint8Array` carries a value
+tag of its own, so `unknown` holds one and every value reader serializes
+or refuses it by name. No host import or budget changes; v37 and earlier
+keep value layout 17, which has no byte-array tag, and their diagnostics
+(`sdk_path_forms_stay_refused_by_v37`). Owner decision (2026-11-05): the
+value ABI number stays 18, and `ValueKind::Bytes` (tag 15) is an additive
+tag of the in-development value layout 18, not a step to a new value ABI.
+
+- **Tag and layout.** `value::ValueKind::Bytes` is an additive tag of the
+  in-development value layout 18 (`value::bytes_layout`): only value18
+  readers accept it, every other value18 tag keeps its meaning, and value17
+  and earlier readers reject it. The value ABI number stays 18 (v38 is in
+  development; an artifact built before the tag never contains it, and a
+  reader built before it fails on it as noncanonical). The payload of a
+  Bytes kind (in a union or `unknown` cell, a record or class field, an
+  array element or a dictionary value) is the handle of the `Uint8Array`'s
+  byte storage: a canonical value18 vector of Numbers whose every element is
+  present and an integer from 0 to 255 (`value::byte_vector`, which checks
+  every element with `value::byte_at`; a hole, a fraction, 256, `-0` or NaN
+  is a noncanonical layout). It is a reference kind, so a cell holding it
+  has the reference flag. The browser registry lists it among each v38
+  profile's `supportedKinds` and the layout's `tags`.
+- **Compilation.** The compiler erases a `Uint8Array` type to an array type
+  of its own (`ValueTypes::bytes`), physically the byte storage's `number[]`,
+  so every tag it writes for one (cell tags, descriptor field kinds, vector
+  element kinds, the kind word of `JSON.stringify` and `kv_stage`) is Bytes,
+  while the binary prelude keeps operating on the storage. Unions keep the
+  wave-2 rule: a `Uint8Array` shares no union with another array type.
+- **`unknown` and `object`.** Both hold a `Uint8Array` and every value that
+  reaches one without a `Map`, `Set` or opaque builtin, without copying:
+  writes through either reference are seen through the other. The identity
+  of a `Uint8Array` is its byte storage, which every view of one
+  `ArrayBuffer` shares (`new Uint8Array(buffer)` twice), so two such views
+  would compare equal where JavaScript tells them apart. Identity
+  comparisons of two values that may both hold a `Uint8Array` (a
+  `Uint8Array`, `unknown`, `object` or a union with such a member, in a
+  program with the binary prelude) are refused at compile time with
+  `unsupported <operation> of two values that may both hold a Uint8Array`:
+  `===`, `!==` (also as `switch` case tests), `Object.is` and the
+  `includes`/`indexOf`/`lastIndexOf` searches of an array whose elements may
+  hold one (`lower::byte_values::refuse_view_identity`). A comparison with a
+  value that cannot hold one (a primitive, a record) is admitted and
+  answers as Node does. `typeof` is `"object"`, the value is truthy and
+  `Array.isArray` is false. `x instanceof Uint8Array` and
+  `ArrayBuffer.isView(x)` test the tag, and the positive branch narrows
+  `x` to `Uint8Array`; a checked `x as Uint8Array`, and `x as` a union with a
+  `Uint8Array` member (such as `BlobPart`), tests it too. `String(x)` joins
+  the elements with commas, as `Uint8Array.prototype.toString` does.
+- **Readers.** `JSON.stringify` (the linked `json_stringify_owned` and the
+  runtime's value18 encoder) writes a `Uint8Array` as an object of its index
+  keys, `{"0":1,"1":255}`, and `{}` when it is empty, as Node does; an
+  `ArrayBuffer` instance is `{}` (its storage is private state). The logged
+  text of a cell holding one (`value_format_v12`) uses the same notation.
+  Typed `JSON.stringify` of a `Uint8Array`, or of a value reaching one, is
+  admitted; logging a typed `Uint8Array` stays `cannot log Uint8Array`, like
+  any typed array, while a union that may hold one logs through its cell.
+  `kv_stage` refuses a tagged `Uint8Array` (held by `unknown` or nested in
+  another value) with the recoverable `TypeError("a Uint8Array held by
+  unknown or nested in another value cannot be stored in a KV value")`; a
+  top-level `Uint8Array` keeps its raw-byte staging. A thrown `unknown`
+  holding one fails the v34 thrown-value check; a thrown Error instance with
+  a field holding one is read as before (the exception channel copies only
+  its `name` and `message`).
+- **Checked JSON decoding.** JSON never produces a `Uint8Array`, and a
+  decoder would tag a JSON number array (of any numbers) as one, so a
+  checked decode target that reaches a `Uint8Array` (through fields,
+  elements, dictionary values, the declared fields of mixed records or
+  union members) is refused at compile time with `unsupported checked JSON
+  decode target: … reaching a Uint8Array`: `JSON.parse(text) as T` (the
+  checked and the direct decoder) and `varta.json.parse<T>`. KV reads keep
+  their own rule: keys decode at the prelude's fixed `KvKey`, a top-level
+  `Uint8Array` value is stored as raw bytes, and a nested one, including
+  one in a mixed record's declared field, is refused by `kv_checked`. `Response.json()` returns
+  `Promise<unknown>`, a JSON graph that never holds a `Uint8Array`, so a
+  later checked `as T` reaching one throws its `type assertion to T failed`
+  `TypeError` unless the bytes field is absent. V37 keeps its targets.
+- **JSON-object view.** A closed record held by `unknown`, read as
+  `Record<string, unknown>` (`as`, `Object.keys`/`values`/`entries`,
+  checked conversions), lists its present fields in its own-key order
+  (canonical array indices ascending, then insertion order, as
+  `Object.entries` does; the wave-1 view used the canonical field order)
+  and a `Uint8Array` field as an `unknown` cell holding it (wave 2 threw a
+  `TypeError`). A `Uint8Array`, an array or a class instance (an
+  `ArrayBuffer`, `Blob`, `File` or any other) held by `unknown` still has no
+  JSON-object view: the conversion throws its `TypeError` (`type assertion to
+  … failed`, `object held by unknown is not a Record<string, unknown>
+  dictionary`, `a class instance held by unknown cannot be read as a JSON
+  object`), because reads through a snapshot dictionary would miss the
+  object's prototype members.
+- **`in`.** `"key" in (x as Record<string, unknown>)` of an `unknown` or
+  `object` value and `"key" in x` of a value narrowed to `object`, with a
+  string literal key, answer from the cell as Node 24.20.0 does: for a
+  `Uint8Array`, true for a canonical array index below its length and for a
+  string member of `Uint8Array.prototype`, `%TypedArray%.prototype` or
+  `Object.prototype`, false for any other key; for an exact `ArrayBuffer`,
+  `Blob` or `File` instance (a program's subclass is not matched), true for
+  a string member of its prototype chain (none has an own enumerable
+  property). The member lists (`lower::byte_values`) are Node's
+  `Object.getOwnPropertyNames` along each chain, pinned by
+  `sdk_path_cases/byte_in.ts`. Any other value, and a key that is no string
+  literal, takes the JSON-object view and its `TypeError`.
+- **SDK multipart parts.** The SDK's own `encodeBody`/`appendPart`/
+  `toBodyInit` (`multipart?: object` read through
+  `Object.entries(… as Record<string, unknown>)`, then `'data' in`,
+  `instanceof ArrayBuffer`, `ArrayBuffer.isView` and `as BlobPart` on
+  `unknown`) produce Node's wire bytes, part order included, for
+  `Uint8Array`, `ArrayBuffer`, `string`, `Blob`/`File` and `{ data,
+  filename, contentType }` parts (`sdk_path_cases/byte_parts.ts`).
+- **Not admitted.** Own-key enumeration of a `Uint8Array`, an array or an
+  engine instance held by `unknown`, and `in` with a key that is no string
+  literal on one (the JSON-object view's `TypeError`; Node enumerates and
+  answers); `'data' in` an array part of `appendPart` (a `TypeError`, where
+  Node answers false); a `Uint8Array` with another array type in one union;
+  logging a typed `Uint8Array`; a tagged `Uint8Array` in a KV value;
+  identity comparisons of two values that may both hold a `Uint8Array`;
+  checked JSON decode targets that reach a `Uint8Array`.
 
 #### Virtual file roots (`file_roots`)
 

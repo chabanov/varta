@@ -46,6 +46,11 @@ impl Lower<'_> {
             return Err(invalid("Object.is has no type arguments"));
         }
         let span = call.span;
+        // The compared operand types, and whether one is not a language
+        // value. V38 (`byte_values`) names the view-identity refusal first,
+        // for any operand form, before that generic rejection.
+        let mut compared = Vec::new();
+        let mut foreign = false;
         let mut inputs = Vec::new();
         let mut roots = Vec::new();
         let mut body = Vec::new();
@@ -68,6 +73,7 @@ impl Lower<'_> {
                 value
             };
             let ty = value.ty;
+            compared.push(ty);
             if unions::members(ty, self.types).into_iter().any(|t| {
                 !reference(t)
                     && !matches!(
@@ -80,14 +86,21 @@ impl Lower<'_> {
                             | Type::BigInt
                     )
             }) {
-                return Err(type_error(
-                    "Object.is requires language values; native result pairs require explicit fields",
-                ));
+                foreign = true;
+                continue;
             }
             let slot = self.hidden(ty);
             roots.push(slot);
             body.push(S::Init(slot, value));
             inputs.push((slot, ty));
+        }
+        if let [left, right] = compared[..] {
+            self.refuse_view_identity("Object.is", left, right, span)?;
+        }
+        if foreign {
+            return Err(type_error(
+                "Object.is requires language values; native result pairs require explicit fields",
+            ));
         }
         while inputs.len() < 2 {
             let slot = self.hidden(Type::Undefined);

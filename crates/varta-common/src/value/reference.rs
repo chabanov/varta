@@ -150,6 +150,10 @@ impl ReferenceBox {
             // no value reader invokes or decodes the function. Value14 cells
             // still need their owner catalog (`read_with_catalog`).
             crate::function::check_closure_envelope(data, cell.payload, &module.limits)?;
+        } else if cell.kind == ValueKind::Bytes {
+            // Value18 `Uint8Array` (v38 `byte_values`): its byte storage,
+            // every element checked.
+            byte_vector(data, cell.payload, version, module)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version, module)?;
         } else {

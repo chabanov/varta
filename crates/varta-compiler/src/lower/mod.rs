@@ -346,6 +346,7 @@ mod binary;
 mod bindings;
 mod bitwise;
 mod builtin_methods;
+mod byte_values;
 mod callback_inference;
 pub(crate) mod classes;
 mod closure_narrowing;

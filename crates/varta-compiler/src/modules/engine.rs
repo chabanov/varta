@@ -322,8 +322,8 @@ pub(crate) const BLOB: Prelude = Prelude {
     source: include_str!("../prelude/blob.ts"),
     exports: &[
         (ARRAY_BUFFER_CLASS, Namespace::Class),
-        ("Blob", Namespace::Class),
-        ("File", Namespace::Class),
+        (BLOB_CLASS, Namespace::Class),
+        (FILE_CLASS, Namespace::Class),
         ("FormData", Namespace::Class),
         ("ArrayBufferView", Namespace::Type),
         ("BlobPart", Namespace::Type),
@@ -339,6 +339,8 @@ pub(crate) const BLOB: Prelude = Prelude {
     lifted: None,
 };
 pub(crate) const ARRAY_BUFFER_CLASS: &str = "ArrayBuffer";
+pub(crate) const BLOB_CLASS: &str = "Blob";
+pub(crate) const FILE_CLASS: &str = "File";
 /// The blob prelude function behind `new Uint8Array(buffer)`.
 pub(crate) const BLOB_VIEW: &str = "viewOf";
 /// The typed global object (v38 `web_bytes`): `globalThis` evaluates to

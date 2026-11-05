@@ -16,7 +16,8 @@ use super::*;
 use ir::RecordField;
 
 /// The `TypeError` message of an `object` that is not a JSON-style dictionary.
-const NOT_A_DICTIONARY: &str = "object held by unknown is not a Record<string, unknown> dictionary";
+pub(super) const NOT_A_DICTIONARY: &str =
+    "object held by unknown is not a Record<string, unknown> dictionary";
 
 /// Whether `test` is `typeof <identifier> === "object"` (either operand order).
 pub(super) fn typeof_object(test: &ast::Expr) -> bool {

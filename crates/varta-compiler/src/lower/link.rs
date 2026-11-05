@@ -255,7 +255,7 @@ pub(crate) fn lower(
     subtyping::resolve(&mut program)?;
     if profile.literal_types() {
         json::preserve_direct_types(&mut program.types);
-        literal_erasure::erase_program(&mut program);
+        literal_erasure::erase_program(&mut program)?;
         classes::hide_prelude_state(&mut program.types);
     }
     super::suspension::prepare(&mut program, graph)?;

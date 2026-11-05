@@ -9241,7 +9241,8 @@ export const registry = freeze({
         11,
         12,
         13,
-        14
+        14,
+        15
       ],
       "toolEntries": false,
       "valueAbi": 18
@@ -10367,7 +10368,8 @@ export const registry = freeze({
       11,
       12,
       13,
-      14
+      14,
+      15
     ],
     "slotBytes": 8,
     "staticSection": "varta.static",
@@ -10375,6 +10377,7 @@ export const registry = freeze({
       "Array": 5,
       "BigInt": 11,
       "Boolean": 2,
+      "Bytes": 15,
       "Dictionary": 13,
       "Error": 10,
       "Float64": 6,

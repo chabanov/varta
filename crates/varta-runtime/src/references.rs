@@ -110,7 +110,12 @@ fn register_log(
                 }
                 // Value17: a function shows as Node shows an anonymous one.
                 Kind::Function => crate::json::FUNCTION_DISPLAY.into(),
-                Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise => {
+                // Value18 `Uint8Array` (v38 `byte_values`): only the value18
+                // reader accepts the byte-array tag, and it renders as the
+                // JSON diagnostic notation of `render_diagnostic`. No profile
+                // admits `value_log_v12` (v38 links `value_format_v12`), so
+                // this arm serves embedders that link the import directly.
+                Kind::Record | Kind::Array | Kind::Dictionary | Kind::Promise | Kind::Bytes => {
                     if matches!(
                         version,
                         varta_common::value::BIGINT_VALUE_VERSION

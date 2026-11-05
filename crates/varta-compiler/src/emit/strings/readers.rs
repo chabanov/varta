@@ -17,7 +17,7 @@ use varta_common::value::{ERROR_CLASS_SHIFT, ErrorClass, ValueKind as K};
 
 /// Value18 reference-cell kinds (`ReferenceBox::read_in` of value layout
 /// 18): every kind but `I32` and the union cell kinds.
-const KINDS: [K; 12] = [
+const KINDS: [K; 13] = [
     K::Null,
     K::Boolean,
     K::String,
@@ -30,24 +30,27 @@ const KINDS: [K; 12] = [
     K::Function,
     K::Dictionary,
     K::Promise,
+    K::Bytes,
 ];
 /// The kinds whose `typeof` is `"object"`.
-const OBJECTS: [K; 6] = [
+const OBJECTS: [K; 7] = [
     K::Null,
     K::Error,
     K::Record,
     K::Array,
     K::Dictionary,
     K::Promise,
+    K::Bytes,
 ];
 /// The always truthy kinds.
-const OBJECT_VALUES: [K; 6] = [
+const OBJECT_VALUES: [K; 7] = [
     K::Error,
     K::Record,
     K::Array,
     K::Dictionary,
     K::Function,
     K::Promise,
+    K::Bytes,
 ];
 /// Leave with the linked reader's answer unless `tag` is a value18 kind.
 fn checked(function: &mut Function, tag: u32, fallback: &[I<'static>]) {

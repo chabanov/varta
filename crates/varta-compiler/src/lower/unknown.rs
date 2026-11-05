@@ -47,28 +47,36 @@ fn or(span: Span, a: Expr, b: Expr) -> Expr {
 
 /// Whether `unknown` can hold a value of `ty`: every type whose values carry a
 /// reference-cell tag under the profile's value layout, including value15
-/// dictionaries and wide records. Function values have no cell tag in the
-/// value13/value15 layouts; generators, promises and result pairs have none at all.
-pub(super) fn admissible(ty: Type) -> bool {
-    matches!(
-        ty.erased(),
-        Type::Float64
-            | Type::Boolean
-            | Type::String
-            | Type::Null
-            | Type::Undefined
-            | Type::BigInt
-            | Type::Error
-            | Type::NativeError(_)
-            | Type::Record(_)
-            | Type::Dictionary(_)
-            | Type::Class(_)
-            | Type::Array(_)
-            | Type::Union(_)
-            | Type::ReferenceUnion(_)
-            | Type::Unknown
-            | Type::Object(_)
-    )
+/// dictionaries and wide records, and under v38 (`byte_values`) a
+/// `Uint8Array`. Function values have no cell tag in the value13/value15
+/// layouts; generators, promises and result pairs have none at all.
+pub(super) fn admissible(ty: Type, types: &ir::ValueTypes) -> bool {
+    bytes(ty, types)
+        || matches!(
+            ty.erased(),
+            Type::Float64
+                | Type::Boolean
+                | Type::String
+                | Type::Null
+                | Type::Undefined
+                | Type::BigInt
+                | Type::Error
+                | Type::NativeError(_)
+                | Type::Record(_)
+                | Type::Dictionary(_)
+                | Type::Class(_)
+                | Type::Array(_)
+                | Type::Union(_)
+                | Type::ReferenceUnion(_)
+                | Type::Unknown
+                | Type::Object(_)
+        )
+}
+
+/// Whether `ty` is a `Uint8Array` that carries the byte-array tag of its own
+/// (v38 `byte_values`), so `unknown` holds it.
+pub(super) fn bytes(ty: Type, types: &ir::ValueTypes) -> bool {
+    types.profile.byte_values() && matches!(ty, Type::Collection(ir::CollectionKind::Uint8Array, _))
 }
 
 /// Whether every value of `ty` is a non-primitive (TypeScript's `object`,
@@ -104,14 +112,10 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
             kind: E::Reinterpret(Box::new(value)),
         });
     }
-    // V38 (`web_bytes`): a record, array or dictionary whose fields reach a
-    // `Uint8Array` may enter `unknown` as it is; its typed slots keep the
-    // bytes, and the JSON-object view of such a field throws `TypeError`.
-    // The value itself must not be (or directly hold) the byte storage.
-    let bytes_inside = types.profile.web_bytes()
-        && !collections::reaches_private(value.ty, types)
-        && !collections::holds_bytes(value.ty, types);
-    if collections::reaches(value.ty, types) && !bytes_inside {
+    // V38 (`byte_values`): a `Uint8Array` carries its own tag in every cell,
+    // slot and element, so it and every value reaching one enter `unknown`
+    // as they are; Map and Set storage stays private.
+    if collections::reaches_hidden(value.ty, types) {
         return Err(collections::opaque("conversion to unknown"));
     }
     // A tuple (v37) is an ordinary array to every dynamic reader.
@@ -132,7 +136,7 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     // Value16 promises (v35) are tagged cells; the check above rejects them
     // for earlier profiles.
     // Value17 function values (v36 `function_fields`) are tagged cells too.
-    if !admissible(value.ty)
+    if !admissible(value.ty, types)
         && !matches!(value.ty, Type::Promise(_))
         && !(types.profile.function_fields() && matches!(value.ty, Type::Function(_)))
     {
@@ -237,7 +241,7 @@ pub(super) fn upcast(source: Type, target: Type, types: &ir::ValueTypes) -> bool
     }
     match target {
         Type::Unknown => {
-            admissible(source)
+            admissible(source, types)
                 || types.profile.function_fields() && matches!(source, Type::Function(_))
         }
         Type::Union(_) | Type::ReferenceUnion(_) => {
@@ -314,6 +318,8 @@ fn checkable_visit(
         | Type::Literal(..)
         | Type::Class(_) => true,
         Type::Record(shape) => types.records[shape as usize].class.is_none(),
+        // V38 (`byte_values`): the byte-array tag proves a `Uint8Array`.
+        Type::Collection(..) => bytes(target, types),
         Type::Array(id) => primitive_kind(types.arrays[id as usize]).is_some(),
         Type::Dictionary(id) => {
             storage_descriptor(types)
@@ -338,7 +344,7 @@ fn comparable(a: Type, b: Type, types: &ir::ValueTypes) -> bool {
 
 impl Lower<'_> {
     /// The quoted source text of an assertion target.
-    fn quoted(&self, span: Span, fallback: Type) -> String {
+    pub(super) fn quoted(&self, span: Span, fallback: Type) -> String {
         let text = self
             .source
             .text(span)
@@ -449,7 +455,7 @@ impl Lower<'_> {
         {
             return self.dictionary_from_record(value, target);
         }
-        if !admissible(source) || !admissible(target) {
+        if !admissible(source, self.types) || !admissible(target, self.types) {
             return Err(unsupported(&format!("type assertion to {name}")));
         }
         // V36: a downcast between dictionaries of one storage (a plain
@@ -679,8 +685,10 @@ impl Lower<'_> {
                     test(span, E::ArrayKind(Box::new(values), kind)),
                 )
             }
-            // V38 (`web_bytes`): `unknown` never holds a collection (its state
-            // is private), so a collection member of an asserted union never
+            // V38 (`byte_values`): a `Uint8Array` has a tag of its own.
+            Type::Collection(..) if bytes(target, self.types) => member(target),
+            // V38 (`web_bytes`): `unknown` never holds a Map or Set (its state
+            // is private), so such a member of an asserted union never
             // matches; the union's other members are tested.
             Type::Collection(..) if self.types.profile.web_bytes() && source == Type::Unknown => {
                 boolean(span, false)
@@ -778,8 +786,9 @@ impl Lower<'_> {
         )
     }
     /// `String(x)` for `x: unknown`: primitives convert as `String`, native
-    /// errors and Error-class instances as `Error.prototype.toString`, other
-    /// records as `[object Object]`. Arrays and records of a program with a
+    /// errors and Error-class instances as `Error.prototype.toString`, a
+    /// `Uint8Array` (v38) as its joined elements, other records as
+    /// `[object Object]`. Arrays and records of a program with a
     /// user `toString` method would need user dispatch and throw `TypeError`.
     pub(super) fn unknown_string(&mut self, value: Expr, span: Span) -> Result<Expr> {
         let saved = self.hidden(Type::Unknown);
@@ -791,7 +800,7 @@ impl Lower<'_> {
             Type::Undefined,
             Type::BigInt,
         ];
-        primitives.retain(|ty| admissible(*ty));
+        primitives.retain(|ty| admissible(*ty, self.types));
         let primitive = unions::intern(primitives, self.types)?;
         let is_primitive = self.cell_test(span, saved, Type::Unknown, primitive, "a primitive")?;
         let text = self.primitive_convert(local(span, saved, primitive), &[], false, span)?;
@@ -832,6 +841,30 @@ impl Lower<'_> {
             };
             let instance = self.class_error_text(instance, span)?;
             object = vec![S::If(is_instance, vec![assign(instance)], object)];
+        }
+        // V38 (`byte_values`): a `Uint8Array` converts as
+        // `Uint8Array.prototype.toString`, its elements joined by commas. A
+        // module without the binary prelude has no `Uint8Array` value.
+        if self.types.profile.byte_values()
+            && engine::module(&crate::modules::engine::BINARY, self.types).is_some()
+        {
+            let bytes = collections::bytes(self.types)?;
+            let held = test(
+                span,
+                E::IsUnionMember(Box::new(local(span, saved, Type::Unknown)), bytes),
+            );
+            let storage = self.storage(Expr {
+                span,
+                ty: bytes,
+                kind: E::UnboxUnion(Box::new(local(span, saved, Type::Unknown))),
+            });
+            let joined = self.engine_call(
+                (&crate::modules::engine::BINARY, "bytesJoin", &[]),
+                vec![storage],
+                &[],
+                span,
+            )?;
+            object = vec![S::If(held, vec![assign(joined)], object)];
         }
         let is_array = test(
             span,

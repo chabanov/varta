@@ -99,7 +99,7 @@ fn profile(profile: LanguageProfile) -> Value {
             "timers":profile.limits().data.pending_timers,
             "timerError":if profile.limits().data.pending_timers==crate::scheduler::MAX_PENDING_TIMERS {crate::scheduler::SchedulerError::TimerBudget.to_string()}else{crate::scheduler::SchedulerError::TimerLimit{limit:profile.limits().data.pending_timers}.to_string()},
             "queueError":if profile.limits().data.pending_continuations==crate::scheduler::MAX_PENDING_CONTINUATIONS {crate::scheduler::SchedulerError::QueueFull.to_string()}else{crate::scheduler::SchedulerError::ContinuationLimit{limit:profile.limits().data.pending_continuations}.to_string()}},
-        "supportedKinds":(0..=value::ValueKind::Promise as u32).filter_map(value::ValueKind::from_tag).filter(|kind|kind.supported_by(profile.value_abi())).map(|k|k as u32).collect::<Vec<_>>(),
+        "supportedKinds":(0..=value::ValueKind::LAST as u32).filter_map(value::ValueKind::from_tag).filter(|kind|kind.supported_by(profile.value_abi())).map(|k|k as u32).collect::<Vec<_>>(),
         "admittedImports":HostOperation::ALL.iter().filter(|&&op|admits(profile,op)).count(),
         "acceptance":{
             "values":(value::LEGACY_VALUE_VERSION..=value::HASHED_DICTIONARY_VALUE_VERSION)

@@ -462,6 +462,10 @@ impl Lower<'_> {
                 {
                     return self.private_in(name, &binary.right, expression.span());
                 }
+                // `"key" in` an `unknown` cell (v38 `byte_values`).
+                if let Some(test) = self.cell_in(binary)? {
+                    return Ok(test);
+                }
                 if binary.op == ast::BinaryOp::NullishCoalescing {
                     self.optional_index(&binary.left);
                 }
@@ -1188,7 +1192,7 @@ impl Lower<'_> {
                     ),
                 });
             }
-            if collections::reaches(value.ty, self.types) {
+            if collections::reaches_hidden(value.ty, self.types) {
                 return Err(self
                     .source
                     .locate(collections::opaque("JSON.stringify"), value.span));
@@ -1355,7 +1359,7 @@ impl Lower<'_> {
                     return Err(invalid("log expects one argument"));
                 }
                 let mut arg = self.expr(&call.args[0].expr)?;
-                if collections::reaches(arg.ty, self.types) {
+                if collections::reaches_hidden(arg.ty, self.types) {
                     return Err(self.source.locate(collections::opaque("logging"), arg.span));
                 }
                 if arg.ty == Type::BigInt {

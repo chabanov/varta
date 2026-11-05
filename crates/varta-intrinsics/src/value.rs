@@ -58,7 +58,8 @@ pub fn type_of(value: ReferenceBox) -> Result<&'static str, ValueError> {
         | Kind::Record
         | Kind::Array
         | Kind::Dictionary
-        | Kind::Promise => "object",
+        | Kind::Promise
+        | Kind::Bytes => "object",
         Kind::Undefined => "undefined",
         Kind::String => "string",
         Kind::Float64 => "number",
@@ -87,7 +88,8 @@ pub fn truthy<M: Memory + ?Sized>(memory: &M, value: ReferenceBox) -> Result<boo
         | Kind::Array
         | Kind::Dictionary
         | Kind::Function
-        | Kind::Promise => true,
+        | Kind::Promise
+        | Kind::Bytes => true,
         Kind::BigInt => !BigIntView::check(memory, value.payload)?,
         Kind::Boolean => value.payload != 0,
         Kind::String => value.payload >> i32::BITS != 0,

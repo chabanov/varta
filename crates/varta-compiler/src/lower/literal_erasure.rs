@@ -2,15 +2,25 @@
 //! becomes its base primitive, every engine collection (v37) its private
 //! storage and every tuple (v37) its dense array, and function types that
 //! become identical are merged so signature dispatch and the capture catalog
-//! stay unambiguous.
+//! stay unambiguous. Under v38 (`byte_values`) a `Uint8Array` erases to an
+//! array type of its own (`ValueTypes::bytes`), which emission tags with the
+//! byte-array value tag.
 use super::*;
 use std::collections::BTreeMap;
 
 /// Replace every literal type in the lowered program by its base primitive.
-pub(super) fn erase_program(program: &mut ir::Program) {
+pub(super) fn erase_program(program: &mut ir::Program) -> Result<()> {
     let types = &mut program.types;
+    let bytes = byte_array(types)?;
     let views = Views {
-        collections: types.collections.iter().map(|c| c.storage).collect(),
+        collections: types
+            .collections
+            .iter()
+            .map(|c| match bytes {
+                Some(id) if c.kind == ir::CollectionKind::Uint8Array => Type::Array(id),
+                _ => c.storage,
+            })
+            .collect(),
         tuples: types.tuples.iter().map(|t| t.array).collect(),
         objects: types.profile.structural_subtyping(),
     };
@@ -68,6 +78,28 @@ pub(super) fn erase_program(program: &mut ir::Program) {
         }
         eraser.statements(&mut function.body);
     }
+    Ok(())
+}
+
+/// V38 (`byte_values`): the array type every `Uint8Array` value erases to,
+/// appended after lowering (no later interning can return it for a
+/// `number[]`), when the program has the `Uint8Array` type at all.
+fn byte_array(types: &mut ir::ValueTypes) -> Result<Option<u32>> {
+    if !types.profile.byte_values()
+        || !types
+            .collections
+            .iter()
+            .any(|c| c.kind == ir::CollectionKind::Uint8Array)
+    {
+        return Ok(None);
+    }
+    if types.arrays.len() >= types.profile.limits().array_types {
+        return Err(invalid("array type count exceeds limit"));
+    }
+    let id = types.arrays.len() as u32;
+    types.arrays.push(types.number());
+    types.bytes = Some(id);
+    Ok(Some(id))
 }
 
 /// The physical storage of the v37 erased types, by type id.
