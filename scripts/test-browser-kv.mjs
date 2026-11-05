@@ -484,7 +484,12 @@ export async function runKv(varta, driver) {
         await tab.close();
         pass('dag');
       }
-    } finally { await new Promise((done) => server.close(done)); }
+    } finally {
+      // A browser may keep an idle keep-alive connection to the server
+      // (Playwright's Chrome does): close it, or close() never completes.
+      server.closeAllConnections();
+      await new Promise((done) => server.close(done));
+    }
   } finally { await rm(root, {recursive: true, force: true}); }
   return passed;
 }
