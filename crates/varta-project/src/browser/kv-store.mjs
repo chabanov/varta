@@ -19,6 +19,8 @@ import {registry} from '../../../varta-common/browser/registry.mjs';
 //   database.
 // - `kv_text` returns the last failure text through the shared result
 //   writer; `kv_close` of an id that was never opened does nothing.
+// The bytes of one UTF-16 code unit: a path's byte length is a multiple.
+const UTF16_UNIT_BYTES=Uint16Array.BYTES_PER_ELEMENT;
 export function createKvHost({memory, broker, emit, writeResult, chargeBytes}) {
   const K=registry.kv, encoder=new TextEncoder();
   let text='';
@@ -29,7 +31,7 @@ export function createKvHost({memory, broker, emit, writeResult, chargeBytes}) {
     if(!Number.isInteger(ptr)||ptr<0||!Number.isInteger(len)||len<0||len>K.maxDescriptorBytes)throw fatal('invalid database path');
     chargeBytes(len);
     const buffer=memory().buffer;
-    if(len%2||ptr+len>buffer.byteLength)throw fatal('invalid database path');
+    if(len%UTF16_UNIT_BYTES||ptr+len>buffer.byteLength)throw fatal('invalid database path');
     let name;
     try{name=new TextDecoder('utf-16le',{fatal:true,ignoreBOM:true}).decode(new Uint8Array(buffer,ptr,len));}
     catch{throw fatal('invalid database path');}

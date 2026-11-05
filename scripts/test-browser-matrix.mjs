@@ -16,6 +16,17 @@ for (let at = FIXED_ARGUMENTS; at < process.argv.length; at += 2) {
 if (process.argv.length < FIXED_ARGUMENTS) throw new Error(USAGE);
 const effectsExecutable = options.get('--effects'), kvExecutable = options.get('--kv');
 const {firefox,webkit,chromium} = await import(pathToFileURL(resolve(process.argv[3])).href);
+// The report records the version of the Playwright package that owns the
+// loaded module: the nearest package.json above its real path.
+const PACKAGE_FILE='package.json';
+async function loadedPlaywrightVersion(module){
+ const {realpath}=await import('node:fs/promises');const {dirname}=await import('node:path');
+ for(let directory=dirname(await realpath(module));;directory=dirname(directory)){
+  const text=await readFile(join(directory,PACKAGE_FILE),'utf8').catch((error)=>{if(error.code==='ENOENT')return undefined;throw error;});
+  if(text!==undefined){const {version}=JSON.parse(text);if(typeof version!=='string')throw new Error(`no version in ${join(directory,PACKAGE_FILE)}`);return version;}
+  if(dirname(directory)===directory)throw new Error(`no ${PACKAGE_FILE} above ${module}`);
+ }
+}
 import {readFile,readdir} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {join} from 'node:path';
@@ -30,7 +41,8 @@ const runEffects=effectsExecutable?(await import('./test-browser-effects.mjs')).
 const runKv=kvExecutable?(await import('./test-browser-kv.mjs')).runKv:undefined;
 const server=createServer((request,response)=>{const path=request.url.split('?')[0],bytes=files.get(path);if(!bytes){response.writeHead(404).end();return;}response.setHeader('Content-Type',path.endsWith('.js')?'text/javascript':path.endsWith('.html')?'text/html':path.endsWith('.json')?'application/json':path.endsWith('.wasm')?'application/wasm':'application/octet-stream');response.setHeader('Cache-Control','no-store');response.end(bytes);});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-const report={playwright:'1.64.1',fixtureRoot:root,cases:[],errors:[]};
+const report={playwright:await loadedPlaywrightVersion(resolve(process.argv[3])),fixtureRoot:root,cases:[],errors:[]};
+console.log('PLAYWRIGHT',report.playwright);
 try{for(const [engine,type,options] of [['firefox',firefox,{}],['webkit',webkit,{}],['chrome',chromium,{channel:'chrome',chromiumSandbox:true}]]){
  let browser;try{
   browser=await type.launch({headless:true,timeout:45000,...options});console.log(engine,browser.version());
