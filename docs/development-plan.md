@@ -458,6 +458,36 @@ side colors and other border styles, device-pixel border-width snapping (open fo
 all boxes), bidi edge reordering, horizontal percentages and
 real-font/window/platform acceptance remain open.
 
+### Direct GPU color fields — wave-3 package `w3-gpu-color-fields`, scoped 2026-11-05
+
+Borders with distinct side colors no longer switch a GPU frame to CPU. Vector
+preparation lowers the private color field to a public `DrawPrimitive::ColorField`:
+the even-odd border contour plus disjoint whole-pixel cells whose colors come
+from the unchanged CPU partition. The GPU clips to the contour once and fills the
+cells, with no layer textures; the software display-list consumer replays the
+same cells. Budgets, caches and GPU limits are unchanged
+([contract](architecture.md#native-structure-and-user-agent-defaults)).
+
+Scoped evidence on `wave3/w3-gpu-color-fields` (M1 Max, Metal):
+`gpu_clip_probe` in Debug and in Release each covers 34 scenes with **120 actual
+GPU and 16 explicit CPU-fallback observations** (previously 108 and 28). The
+three mixed-border scenes report `gpu_rendered:true` at both scales, before and
+after mutation, with mean RGB delta 0.0249–0.0780 under the unchanged 2/255
+bound. Their maximum channel deltas (45–71) do not exceed those of the existing
+one-color `border` (64–66) and `huge-inset` (75–77) scenes in the same runs.
+Opacity scenes remain CPU fallback. Unit
+tests check that every covered pixel gets the software color exactly once,
+the lowering's peak byte budget, the over-budget display-list refusal and the
+viewport-edge clamp. Border-color integration tests check vector frames, field
+reuse, CPU retained damage after a mutation and the software consumer within one
+channel unit, with and without an ancestor clip.
+After the review follow-up, `verify.py local varta-view` (153 library + 351
+integration), `cargo test -p varta-desktop --features gpu` (89 + 7 + 18), strict
+all-target Clippy for View and Desktop with GPU and both probes (unchanged counts,
+deltas and cells) pass. Probe timings were taken on a shared machine and
+support no speed claim. Direct GPU opacity groups, window/platform acceptance and
+other GPU devices remain open.
+
 ### Wave 2 integration — 2026-11-05
 
 Nine wave-2 packages are merged on `main` after review, two fix rounds and
@@ -1307,7 +1337,9 @@ guest operation, public drawing primitive, source allowance or cache/GPU ceiling
 
 The expanded offscreen probe has20 scenes:15 actually render on GPU (60 observations
 per build), while opacity and three mixed-color scenes explicitly return CPU
-fallback (20 observations). Source/fixture failures and the slow initial probe are
+fallback (20 observations). The three mixed-color scenes now render on GPU; see
+[direct GPU color fields](#direct-gpu-color-fields--wave-3-package-w3-gpu-color-fields-scoped-2026-11-05)
+for the current count. Source/fixture failures and the slow initial probe are
 retained under `target/paint-next-stage/`. At that committed checkpoint, Debug mixed-border preparation
 is still slower than the common-color path, especially opposing large corners;
 no general smoothness or whole-application latency acceptance is claimed. Optimize

@@ -2099,14 +2099,19 @@ fn rasterize_inner(
     }
 }
 
+/// The largest native viewport edge, in physical pixels, that
+/// `validate_dimensions` admits. Vector consumers never present a pixel at or
+/// beyond it.
+pub(crate) const MAX_VIEWPORT_EDGE: u32 = 4096;
+
 pub(crate) fn validate_dimensions(width: u32, height: u32, scale: f32) -> Result<(), PaintError> {
     // A bounded image prevents a guest-controlled viewport exhausting host memory.
     if !scale.is_finite()
         || !(0.25..=8.0).contains(&scale)
         || width == 0
         || height == 0
-        || width > 4096
-        || height > 4096
+        || width > MAX_VIEWPORT_EDGE
+        || height > MAX_VIEWPORT_EDGE
         || u64::from(width) * u64::from(height) > 16_777_216
     {
         return Err(PaintError::Dimensions);

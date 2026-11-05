@@ -1,5 +1,14 @@
+use std::sync::Arc;
 use varta_common::view::{CssProperty as P, Tag};
-use varta_view::{Access, BatchWriter as B, Broker, PreparedFrame, Renderer, View};
+use varta_view::{
+    Access, BatchWriter as B, Broker, ColorCell, DisplayList, DrawPrimitive, PreparedFrame,
+    RasterImage, Renderer, View,
+};
+// The software display-list consumer fills each cell with a solid paint
+// through the contour coverage mask, while the CPU painter composites a
+// premultiplied pixmap through the same mask; tiny-skia's two pipelines may
+// round one channel unit apart.
+const SOFTWARE_CONSUMER_TOLERANCE: u8 = 1;
 struct Deny;
 impl Broker for Deny {
     fn link_requested(&self, _: &str) -> bool {
@@ -39,6 +48,48 @@ fn pixel(image: &varta_view::RasterImage, x: u32, y: u32) -> [u8; 4] {
         .try_into()
         .unwrap()
 }
+/// The single color field of a vector frame; its cells are whole disjoint
+/// pixels inside the viewport.
+fn field(scene: &DisplayList, width: u32, height: u32) -> Arc<[ColorCell]> {
+    let mut fields = scene
+        .commands()
+        .iter()
+        .filter_map(|draw| match &draw.primitive {
+            DrawPrimitive::ColorField { cells, .. } => Some(cells.clone()),
+            _ => None,
+        });
+    let cells = fields.next().expect("one color field");
+    assert!(fields.next().is_none());
+    let mut owned = vec![false; (width * height) as usize];
+    for cell in cells.iter() {
+        let r = cell.rect;
+        assert!(
+            [r.x, r.y, r.width, r.height]
+                .iter()
+                .all(|v| v.fract() == 0.0)
+        );
+        assert!(r.width > 0.0 && r.height > 0.0 && cell.color[3] > 0.0);
+        for y in r.y as u32..(r.y + r.height) as u32 {
+            for x in r.x as u32..(r.x + r.width) as u32 {
+                let slot = &mut owned[(y * width + x) as usize];
+                assert!(!*slot, "overlapping cells at{x},{y}");
+                *slot = true;
+            }
+        }
+    }
+    cells
+}
+/// Pixel-for-pixel agreement within the rounding tolerance, and identical
+/// input geometry.
+fn assert_close(actual: &RasterImage, expected: &RasterImage) {
+    assert!(actual.same_input_geometry(expected));
+    for (index, (a, b)) in actual.pixels.iter().zip(&expected.pixels).enumerate() {
+        assert!(
+            a.abs_diff(*b) <= SOFTWARE_CONSUMER_TOLERANCE,
+            "byte{index}: {a}/{b}"
+        );
+    }
+}
 #[test]
 fn square_and_rounded_distinct_sides_keep_their_colors_and_transparent_hole() {
     for radius in ["0", "12px", "50%"] {
@@ -57,11 +108,14 @@ fn square_and_rounded_distinct_sides_keep_their_colors_and_transparent_hole() {
         assert_eq!(v.snapshot(), before);
         let mut renderer = Renderer::new(None, 16.0).unwrap();
         assert_eq!(renderer.render(&v, 120, 100, 1.0).unwrap(), frame);
-        let PreparedFrame::Raster(actual) = renderer.prepare(&v, 120, 100, 1.0).unwrap() else {
-            panic!("colored border has explicit CPU fallback")
+        let PreparedFrame::Vector { metadata, scene } =
+            renderer.prepare(&v, 120, 100, 1.0).unwrap()
+        else {
+            panic!("distinct side colors keep the vector path")
         };
-        assert_eq!(actual, frame);
-        assert_eq!(renderer.stats().dirty_pixels, 0);
+        assert_eq!(&metadata, &*frame);
+        field(&scene, 120, 100);
+        assert_close(&scene.rasterize(metadata).unwrap(), &frame);
     }
 }
 #[test]
@@ -91,6 +145,15 @@ fn colored_seams_preserve_common_contour_alpha_without_an_opaque_underpaint() {
         for scale in [1.0, 1.25, 2.0] {
             let (w, h) = ((210.0 * scale) as u32, (150.0 * scale) as u32);
             let mixed = v.rasterize_scaled(w, h, scale, None).unwrap();
+            let PreparedFrame::Vector { metadata, scene } = Renderer::new(None, 16.0)
+                .unwrap()
+                .prepare(&v, w, h, scale)
+                .unwrap()
+            else {
+                panic!("{radius} at{scale}: distinct side colors keep the vector path")
+            };
+            field(&scene, w, h);
+            assert_close(&scene.rasterize(metadata).unwrap(), &mixed);
             let mut common = B::new();
             for property in [P::BorderRight, P::BorderBottom, P::BorderLeft] {
                 common.set_style(2, property, "8px solid #ff000080");
@@ -127,27 +190,28 @@ fn colored_seams_preserve_common_contour_alpha_without_an_opaque_underpaint() {
     }
 }
 #[test]
-fn retained_color_mutations_keep_damage_reuse_and_recover_ordinary_vector_painting() {
+fn color_mutations_reuse_unchanged_fields_and_recover_ordinary_vector_painting() {
     let mut v = view(fixture("20px", "80"));
     let mut renderer = Renderer::new(None, 16.0).unwrap();
-    let PreparedFrame::Raster(first) = renderer.prepare(&v, 160, 120, 1.0).unwrap() else {
-        panic!("colored border fallback")
+    let vector = |renderer: &mut Renderer, v: &View| {
+        let PreparedFrame::Vector { metadata, scene } = renderer.prepare(v, 160, 120, 1.0).unwrap()
+        else {
+            panic!("distinct side colors keep the vector path")
+        };
+        let image = scene.rasterize(metadata).unwrap();
+        (field(&scene, 160, 120), image)
     };
-    assert_eq!(first, v.rasterize_boxes(160, 120).unwrap());
-    let PreparedFrame::Raster(repeated) = renderer.prepare(&v, 160, 120, 1.0).unwrap() else {
-        panic!("same fallback")
-    };
-    assert_eq!(first, repeated);
-    assert_eq!(renderer.stats().dirty_pixels, 0);
+    let (first, image) = vector(&mut renderer, &v);
+    assert_close(&image, &v.rasterize_boxes(160, 120).unwrap());
+    let (repeated, _) = vector(&mut renderer, &v);
+    assert!(Arc::ptr_eq(&first, &repeated), "unchanged field is reused");
+    assert!(renderer.stats().drawing_cache_hits > 0);
     let mut b = B::new();
     b.set_style(2, P::BorderRight, "8px solid #ff00ff40");
     commit(&mut v, &b);
-    let PreparedFrame::Raster(changed) = renderer.prepare(&v, 160, 120, 1.0).unwrap() else {
-        panic!("mutated fallback")
-    };
-    assert_eq!(changed, v.rasterize_boxes(160, 120).unwrap());
-    assert_ne!(changed.pixels, first.pixels);
-    assert!(renderer.stats().dirty_pixels > 0 && renderer.stats().dirty_pixels < 160 * 120);
+    let (changed, image) = vector(&mut renderer, &v);
+    assert_close(&image, &v.rasterize_boxes(160, 120).unwrap());
+    assert_ne!(changed, first);
     for p in [P::BorderRight, P::BorderBottom, P::BorderLeft] {
         b.set_style(2, p, "8px solid #ff000080");
     }
@@ -159,6 +223,94 @@ fn retained_color_mutations_keep_damage_reuse_and_recover_ordinary_vector_painti
     let reference = v.rasterize_boxes(160, 120).unwrap();
     assert_eq!(scene.rasterize(metadata).unwrap(), reference);
     assert_eq!(renderer.render(&v, 160, 120, 1.0).unwrap(), reference);
+}
+#[test]
+fn clipped_color_fields_replay_through_one_coverage_mask_within_tolerance() {
+    for (radius, scale) in [("0", 1.0), ("24px", 1.0), ("24px", 1.25)] {
+        let mut b = B::new();
+        b.create_element(3, Tag::Div)
+            .insert(1, 3, 0)
+            .set_style(3, P::Width, "70px")
+            .set_style(3, P::Height, "50px")
+            .set_style(3, P::Margin, "10.5px")
+            .set_style(3, P::Overflow, "hidden")
+            .set_style(3, P::BorderRadius, radius)
+            .create_element(2, Tag::Div)
+            .insert(3, 2, 0)
+            .set_style(2, P::Width, "60px")
+            .set_style(2, P::Height, "40px")
+            .set_style(2, P::Margin, "-6px 0 0 -9px")
+            .set_style(2, P::BorderRadius, "50%")
+            .set_style(2, P::Border, "8px solid #ff000080")
+            .set_style(2, P::BorderRight, "8px solid #0000ff80")
+            .set_style(2, P::BorderBottom, "8px solid #00ff0080")
+            .set_style(2, P::BorderLeft, "8px solid #ffff0080");
+        let v = view(b);
+        let (w, h) = ((120.0 * scale) as u32, (100.0 * scale) as u32);
+        let reference = v.rasterize_scaled(w, h, scale, None).unwrap();
+        let PreparedFrame::Vector { metadata, scene } = Renderer::new(None, 16.0)
+            .unwrap()
+            .prepare(&v, w, h, scale)
+            .unwrap()
+        else {
+            panic!("{radius} at{scale}: a clipped field keeps the vector path")
+        };
+        assert!(
+            scene
+                .commands()
+                .iter()
+                .any(|draw| (draw.clip.is_some() || draw.clips.is_some())
+                    && matches!(draw.primitive, DrawPrimitive::ColorField { .. })),
+            "{radius}: the field carries its clip"
+        );
+        field(&scene, w, h);
+        assert_close(&scene.rasterize(metadata).unwrap(), &reference);
+    }
+}
+#[test]
+fn cpu_rendering_replays_only_the_damage_of_a_color_field_mutation() {
+    const W: u32 = 160;
+    const H: u32 = 120;
+    let mut v = view(fixture("20px", "80"));
+    let mut renderer = Renderer::new(None, 16.0).unwrap();
+    let first = renderer.render(&v, W, H, 1.0).unwrap();
+    assert_eq!(first, v.rasterize_boxes(W, H).unwrap());
+    let repeated = renderer.render(&v, W, H, 1.0).unwrap();
+    assert_eq!(repeated, first);
+    assert_eq!(renderer.stats().dirty_pixels, 0);
+    assert_eq!(renderer.damage(), None);
+    let mut b = B::new();
+    b.set_style(2, P::BorderRight, "8px solid #ff00ff40");
+    commit(&mut v, &b);
+    let changed = renderer.render(&v, W, H, 1.0).unwrap();
+    assert_eq!(changed, v.rasterize_boxes(W, H).unwrap());
+    assert_ne!(changed.pixels, first.pixels);
+    let dirty = renderer.stats().dirty_pixels;
+    assert!(
+        dirty > 0 && dirty < (W * H) as usize,
+        "{dirty} dirty pixels"
+    );
+    let damage = renderer.damage().expect("the mutated side is damaged");
+    assert!(damage.width * damage.height < (W * H) as f32);
+    // A vector frame drops the retained pixels; CPU rendering recovers them
+    // with one full frame and then reuses damage again.
+    assert!(matches!(
+        renderer.prepare(&v, W, H, 1.0).unwrap(),
+        PreparedFrame::Vector { .. }
+    ));
+    assert_eq!(renderer.render(&v, W, H, 1.0).unwrap(), changed);
+    assert_eq!(renderer.stats().dirty_pixels, (W * H) as usize);
+    b.set_style(2, P::BorderRight, "8px solid #0000ff80");
+    commit(&mut v, &b);
+    assert_eq!(
+        renderer.render(&v, W, H, 1.0).unwrap(),
+        v.rasterize_boxes(W, H).unwrap()
+    );
+    let dirty = renderer.stats().dirty_pixels;
+    assert!(
+        dirty > 0 && dirty < (W * H) as usize,
+        "{dirty} dirty pixels"
+    );
 }
 
 #[test]

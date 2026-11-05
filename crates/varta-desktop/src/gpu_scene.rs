@@ -29,16 +29,7 @@ pub(crate) fn populate(scene: &mut vello_gpu::Scene, list: &DisplayList, display
             scene.push_clip_rect(&rect(clip));
         }
         scene.set_transform(Affine::new(draw.transform.map(f64::from)));
-        let source = Color::new(draw.color);
-        // Vello emits the paint's encoded components. Tag the window explicitly
-        // and convert primaries before emission, rather than inherit a display
-        // profile from an untagged CAMetalLayer on wide-gamut macOS displays.
-        let components = if display_p3 {
-            source.convert::<vello_gpu::color::DisplayP3>().components
-        } else {
-            draw.color
-        };
-        scene.set_paint(Color::new(components));
+        scene.set_paint(paint(draw.color, display_p3));
         scene.set_fill_rule(Fill::NonZero);
         match &draw.primitive {
             DrawPrimitive::Rect(r) => scene.fill_rect(&rect(*r)),
@@ -50,6 +41,21 @@ pub(crate) fn populate(scene: &mut vello_gpu::Scene, list: &DisplayList, display
                 });
                 scene.fill_path(&path(segments));
             }
+            DrawPrimitive::ColorField { contour, cells } => {
+                // The contour's coverage applies once, as a clip. Disjoint
+                // whole-pixel cells then take full coverage inside it, so an
+                // internal color seam is never composited twice. No layer or
+                // intermediate texture is needed.
+                scene.set_fill_rule(Fill::EvenOdd);
+                scene.push_clip_path(&path(contour));
+                scene.reset_transform();
+                scene.set_fill_rule(Fill::NonZero);
+                for cell in cells.iter() {
+                    scene.set_paint(paint(cell.color, display_p3));
+                    scene.fill_rect(&rect(cell.rect));
+                }
+                scene.pop_clip();
+            }
         }
         if draw.clip.is_some() {
             scene.pop_clip();
@@ -57,6 +63,18 @@ pub(crate) fn populate(scene: &mut vello_gpu::Scene, list: &DisplayList, display
         for _ in &clips {
             scene.pop_clip();
         }
+    }
+}
+
+fn paint(color: [f32; 4], display_p3: bool) -> Color {
+    // Vello emits the paint's encoded components. Tag the window explicitly
+    // and convert primaries before emission, rather than inherit a display
+    // profile from an untagged CAMetalLayer on wide-gamut macOS displays.
+    let source = Color::new(color);
+    if display_p3 {
+        Color::new(source.convert::<vello_gpu::color::DisplayP3>().components)
+    } else {
+        source
     }
 }
 

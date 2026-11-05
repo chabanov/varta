@@ -335,6 +335,38 @@ pub(crate) fn replay(image: &mut Pixmap, commands: &[Draw]) -> Result<(), PaintE
     }
     Ok(())
 }
+/// Composite one lowered color field: each whole-pixel cell fills through a
+/// single coverage mask, the contour (`draw`'s path) multiplied by the draw's
+/// clips, as the tiled border painter composites its field tile. The cost is
+/// one viewport mask plus the cells' area, independent of the cell count.
+pub(crate) fn replay_field(
+    image: &mut Pixmap,
+    draw: &Draw,
+    cells: impl Iterator<Item = Result<(Rect, Color), PaintError>>,
+) -> Result<(), PaintError> {
+    let Primitive::Path(contour, rule) = &draw.primitive else {
+        return Err(PaintError::Dimensions);
+    };
+    let (width, height) = (image.width(), image.height());
+    let viewport =
+        Rect::from_xywh(0.0, 0.0, width as f32, height as f32).ok_or(PaintError::Dimensions)?;
+    let mut masks = Masks::new(std::slice::from_ref(draw), viewport, width, height)?;
+    if !masks.visible(draw) {
+        return Ok(());
+    }
+    let mut coverage = Mask::new(width, height).ok_or(PaintError::Dimensions)?;
+    coverage.fill_path(contour, *rule, true, draw.transform);
+    if let Some(clip) = masks.mask(draw) {
+        super::clips::multiply(&mut coverage, clip);
+    }
+    for cell in cells {
+        let (rect, color) = cell?;
+        let mut paint = Paint::default();
+        paint.set_color(color);
+        fill_rect(image, rect, &paint, Transform::identity(), Some(&coverage));
+    }
+    Ok(())
+}
 impl Scene {
     pub fn prepare(
         &mut self,
@@ -342,10 +374,17 @@ impl Scene {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, PaintError> {
-        // Group/color-field commands cannot enter the current vector contract. Preserve
+        // Group commands cannot enter the current vector contract. Preserve
         // their software scene so repeated prepare() calls still reuse pixels
         // and local changes replay only their damage, like ordinary CPU frames.
-        if self.record_only && !groups::present(&commands) {
+        // Color fields lower to vector cells (`DrawPrimitive::ColorField`).
+        let grouped = commands.iter().any(|draw| {
+            matches!(
+                draw.primitive,
+                Primitive::BeginGroup { .. } | Primitive::EndGroup
+            )
+        });
+        if self.record_only && !grouped {
             self.record(commands);
             Ok(Vec::new())
         } else {
