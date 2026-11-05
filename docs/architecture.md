@@ -13181,12 +13181,15 @@ it has bounds and every presented descendant lies inside them; a descendant
 that escapes it (an absolute box whose containing block is outside, or an open
 list drawn over it) keeps it from clipping. Other hidden nodes, such as a box
 under a scroll container's border or a row scrolled out of the open list over
-the page, and options of a closed select stay unbounded. The pinned macOS
-adapter's hit test searches a clipping node's descendants only inside its
-bounds (`accesskit_consumer`'s own search ignores clipping), so a point returns
-only a node presented there. AccessKit's unchanged filter omits a clipping
-scroll area's children beyond the nearest one past each edge from the platform
-tree until scrolling brings them next to the area.
+the page, and options of a closed select stay unbounded. Every AccessKit
+platform adapter (macOS, AT-SPI on Linux, UIA on Windows) hit-tests through
+`accesskit_consumer`'s `node_at_point`, which upstream ignores clipping; the
+vendored consumer searches a clipping node's descendants only inside its bounds
+([patch record](../vendor/accesskit_consumer/VARTA-PATCH.md)), so on every
+platform a point returns only a node presented there. AccessKit's unchanged
+filter omits a clipping scroll area's children beyond the nearest one past each
+edge from the platform tree until scrolling brings them next to the area;
+scrolling the nearest included one into view brings the next one in.
 
 A node with a vertical scroll range also publishes a geometry-free vertical
 `ScrollBar` child at its 0..1 scroll position, on every platform the AccessKit

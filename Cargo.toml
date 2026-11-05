@@ -16,7 +16,12 @@ members = [
   "crates/varta-desktop",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
-exclude = ["vendor/parley", "vendor/harfrust", "vendor/accesskit_macos"]
+exclude = [
+    "vendor/parley",
+    "vendor/harfrust",
+    "vendor/accesskit_macos",
+    "vendor/accesskit_consumer",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -172,3 +177,5 @@ parley = { path = "vendor/parley" }
 harfrust = { path = "vendor/harfrust" }
 # Coalesced live announcements with busy/atomic semantics; see its patch record.
 accesskit_macos = { path = "vendor/accesskit_macos" }
+# Clip-aware node_at_point for every platform adapter; see its patch record.
+accesskit_consumer = { path = "vendor/accesskit_consumer" }

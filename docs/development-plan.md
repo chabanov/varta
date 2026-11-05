@@ -468,8 +468,9 @@ Branch `wave3/w3-native-macos-adapters` (on `49186cf`).
   list, all from the presented frame; see the native accessibility text on
   `FrameMetadata::accessibility_geometry` in
   [the architecture contract](architecture.md). A hidden box is published only
-  where clipping containers (`clips_children`) and the frame keep the pinned
-  clip-aware hit test away from it; other hidden nodes (under a scroll border,
+  where clipping containers (`clips_children`) and the frame keep the
+  clip-aware hit test of the vendored `accesskit_consumer` (shared by the
+  macOS, AT-SPI and UIA adapters) away from it; other hidden nodes (under a scroll border,
   rows scrolled out of the open list) and closed-select options stay
   unbounded.
 - **macOS assistive scrolling.** The pinned adapter routes AppKit's scroll-area

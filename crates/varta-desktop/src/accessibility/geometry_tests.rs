@@ -786,26 +786,47 @@ fn open_select_list_options_publish_presented_rows_and_no_reachable_hidden_rows(
     assert_eq!(shown + refused + outside, OPTIONS.len());
 }
 
-/// The labelled node a hit test at (`x`, `y`) returns: through the pinned
-/// clip-aware search, and through `accesskit_consumer`'s own search.
-fn hit_labels(update: &accesskit::TreeUpdate, x: f64, y: f64) -> (Option<String>, Option<String>) {
+/// The labelled node `accesskit_consumer`'s `node_at_point` returns at
+/// (`x`, `y`) under AccessKit's common filter. Every platform adapter (macOS,
+/// AT-SPI, UIA) hit-tests through this one consumer search, which the
+/// vendored patch makes clip-aware.
+fn hit_label(update: &accesskit::TreeUpdate, x: f64, y: f64) -> Option<String> {
     let tree = accesskit_consumer::Tree::new(update.clone(), true);
     let state = tree.state();
-    let root = state.root();
-    let point = accesskit::Point::new(x, y);
-    let label = |node: Option<accesskit_consumer::NodeRef>| {
-        let id = node?.locate().0;
-        let (_, node) = update.nodes.iter().find(|(native, _)| *native == id)?;
-        node.label().map(str::to_owned)
-    };
-    (
-        label(super::hit_test_planner::node_at_point(
-            &root,
-            point,
-            &accesskit_consumer::common_filter,
-        )),
-        label(root.node_at_point(point, &accesskit_consumer::common_filter)),
-    )
+    let node = state.root().node_at_point(
+        accesskit::Point::new(x, y),
+        &accesskit_consumer::common_filter,
+    )?;
+    let id = node.locate().0;
+    let (_, node) = update.nodes.iter().find(|(native, _)| *native == id)?;
+    node.label().map(str::to_owned)
+}
+
+/// AccessKit's common filter result for the node labelled `label`.
+fn filtered(update: &accesskit::TreeUpdate, label: &str) -> accesskit_consumer::FilterResult {
+    let tree = accesskit_consumer::Tree::new(update.clone(), true);
+    let state = tree.state();
+    let id = update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some(label))
+        .unwrap_or_else(|| panic!("{label}"))
+        .0;
+    accesskit_consumer::common_filter(&state.node_by_tree_local_id(id, TreeId::ROOT).unwrap())
+}
+
+/// The point lies in `label`'s published box and the filter keeps that node,
+/// so a search that ignored `clips_children` (upstream's) would return it.
+fn reachable_without_clipping(update: &accesskit::TreeUpdate, label: &str, x: f64, y: f64) {
+    assert!(
+        bounds_of(update, label).contains(accesskit::Point::new(x, y)),
+        "{label}"
+    );
+    assert_eq!(
+        filtered(update, label),
+        accesskit_consumer::FilterResult::Include,
+        "{label}"
+    );
 }
 
 /// A 20px heading over a 50px scroll pane of four 40px items.
@@ -859,39 +880,90 @@ fn hit_tests_over_visible_content_never_return_scrolled_out_items() {
         .1;
     assert!(pane.clips_children());
     let on_heading = (10.0 * scale, 5.0 * scale);
-    let (clipped, upstream) = hit_labels(&update, on_heading.0, on_heading.1);
-    assert_eq!(clipped.as_deref(), Some("Head"));
-    // The unpatched search returns the invisible item there.
-    assert_eq!(upstream.as_deref(), Some("Two"));
+    // Without the clip the invisible item would answer there.
+    reachable_without_clipping(&update, "Two", on_heading.0, on_heading.1);
+    assert_eq!(
+        hit_label(&update, on_heading.0, on_heading.1).as_deref(),
+        Some("Head")
+    );
     // Inside the pane the visible items answer: "Three" at 80..120 is shown
     // at 10..50 and "Four" at 50..90, cut at the pane bottom (70).
     for (y, label) in [(30.0, "Three"), (65.0, "Four")] {
-        let (clipped, _) = hit_labels(&update, 10.0 * scale, y * scale);
-        assert_eq!(clipped.as_deref(), Some(label), "{y}");
+        assert_eq!(
+            hit_label(&update, 10.0 * scale, y * scale).as_deref(),
+            Some(label),
+            "{y}"
+        );
     }
-    // Below the pane, where "Four"'s layout box continues, nothing is hit
-    // but the window.
-    let (clipped, _) = hit_labels(&update, 10.0 * scale, 75.0 * scale);
-    assert_ne!(clipped.as_deref(), Some("Four"));
-    // AccessKit's own filter, which the adapter uses for the platform tree,
+    // Below the pane, where "Four"'s layout box continues (it is published
+    // only as its presented part), nothing is hit but the window.
+    assert_ne!(
+        hit_label(&update, 10.0 * scale, 75.0 * scale).as_deref(),
+        Some("Four")
+    );
+    // AccessKit's own filter, which every adapter uses for the platform tree,
     // keeps a clipping area's children inside it and the nearest one beyond
     // each edge ("Two"), and omits farther ones ("One") until scrolling
     // brings them next to the area.
-    let tree = accesskit_consumer::Tree::new(update.clone(), true);
-    let state = tree.state();
-    let filtered = |label: &str| {
-        let id = update
-            .nodes
-            .iter()
-            .find(|(_, node)| node.label() == Some(label))
-            .unwrap()
-            .0;
-        accesskit_consumer::common_filter(&state.node_by_tree_local_id(id, TreeId::ROOT).unwrap())
-    };
     use accesskit_consumer::FilterResult::{ExcludeSubtree, Include};
     assert_eq!(
-        ["One", "Two", "Three", "Four"].map(filtered),
+        ["One", "Two", "Three", "Four"].map(|label| filtered(&update, label)),
         [ExcludeSubtree, Include, Include, Include]
+    );
+}
+
+#[test]
+fn scrolling_an_included_neighbour_into_view_brings_an_omitted_item_into_the_tree() {
+    use accesskit_consumer::FilterResult::{ExcludeSubtree, Include};
+    let mut view = heading_and_pane();
+    let bridge = active_bridge();
+    let (metadata, _) = present(&view, 1, &bridge);
+    let source = view.accessibility_tree().unwrap().nodes[&3]
+        .identity
+        .clone();
+    assert!(
+        view.accessibility_input_from_frame(
+            &source,
+            &AccessibilityAction::Scroll(varta_view::AccessibilityScrollAction::To(
+                varta_view::AccessibilityScrollOffset::new(90.0).unwrap()
+            )),
+            &metadata,
+            &mut Deny
+        )
+        .unwrap()
+    );
+    let revision = 2;
+    let (metadata, update) = present(&view, revision, &bridge);
+    assert_eq!(filtered(&update, "One"), ExcludeSubtree);
+    // An assistive client reaches the nearest included item past the top
+    // edge and asks it to scroll into view; the item before it, omitted until
+    // then, joins the platform tree.
+    let two = update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("Two"))
+        .unwrap()
+        .0;
+    bridge.enqueue(request(two, Action::ScrollIntoView, None));
+    let version = Version {
+        revision,
+        dimensions: 400u64 << 32 | 600,
+        dark: false,
+        scale: f64::from(SCALE).to_bits(),
+    };
+    let input = bridge.take_current(version).unwrap();
+    assert!(
+        view.accessibility_input_from_frame(&input.identity, &input.action, &metadata, &mut Deny)
+            .unwrap()
+    );
+    let (_, update) = present(&view, revision + 1, &bridge);
+    let scale = f64::from(SCALE);
+    // "Two" (40..80) now starts at the pane top (20); "One" is the nearest
+    // item past the top edge and "Four" the nearest past the bottom.
+    assert_eq!(bounds_of(&update, "Two").y0, 20.0 * scale);
+    assert_eq!(
+        ["One", "Two", "Three", "Four"].map(|label| filtered(&update, label)),
+        [Include; 4]
     );
 }
 
@@ -912,9 +984,11 @@ fn hit_tests_over_visible_content_never_return_clipped_away_boxes() {
     assert!(!metadata.node_bounds_map().contains_key(&4));
     let up = bounds_of(&update, "Up");
     assert_eq!((up.y0, up.y1), (-10.0 * scale, 10.0 * scale));
-    let (clipped, upstream) = hit_labels(&update, 10.0 * scale, 5.0 * scale);
-    assert_eq!(clipped.as_deref(), Some("Head"));
-    assert_eq!(upstream.as_deref(), Some("Up"));
+    reachable_without_clipping(&update, "Up", 10.0 * scale, 5.0 * scale);
+    assert_eq!(
+        hit_label(&update, 10.0 * scale, 5.0 * scale).as_deref(),
+        Some("Head")
+    );
 }
 
 #[test]

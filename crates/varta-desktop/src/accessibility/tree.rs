@@ -209,8 +209,9 @@ impl Projection {
                     f64::from(rect.y + rect.height),
                 ));
             }
-            // The pinned macOS hit test searches a clipping node's descendants
-            // only inside its bounds; hidden boxes rely on it (see varta-view).
+            // The vendored accesskit_consumer hit test, which every platform
+            // adapter uses, searches a clipping node's descendants only inside
+            // its bounds; hidden boxes rely on it (see varta-view).
             if geometry.clips.contains(&id) {
                 node.set_clips_children();
             }

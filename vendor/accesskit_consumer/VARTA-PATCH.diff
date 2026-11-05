@@ -1,0 +1,28 @@
+--- a/src/node.rs
++++ b/src/node.rs
+@@ -372,6 +372,15 @@
+                     }
+                     if filter_result == FilterResult::Include {
+                         stack.push(Frame::Test(node, point));
++                    }
++                    // Varta patch: a node that clips its children has its
++                    // descendants searched only where the point lies inside
++                    // its own bounds. A clipping node without bounds has no
++                    // area to clip to and is searched as before.
++                    let clipped = node.clips_children()
++                        && node.raw_bounds().is_some_and(|rect| !rect.contains(point));
++                    if clipped {
++                        continue;
+                     }
+                     for child in node.children() {
+                         let child_point = child.direct_transform().inverse() * point;
+@@ -386,6 +395,9 @@
+ 
+     /// Returns the deepest filtered node, either this node or a descendant,
+     /// at the given point in this node's coordinate space.
++    ///
++    /// Varta patch: descendants of a node with `clips_children` and bounds
++    /// are found only where the point lies inside those bounds.
+     pub fn node_at_point(
+         &self,
+         point: Point,

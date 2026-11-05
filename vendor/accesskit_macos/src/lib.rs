@@ -29,5 +29,3 @@ mod live;
 mod text_scroll;
 
 mod scroll;
-
-mod hit_test;

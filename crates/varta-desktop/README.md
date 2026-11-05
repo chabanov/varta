@@ -155,15 +155,21 @@ clipped away by `overflow: hidden`, or a row scrolled out of the open list)
 gets its unclipped layout box at the presented scroll offsets only where a hit
 test cannot reach it: outside the frame or outside a clipping ancestor. Clipping
 containers publish `clips_children` when every presented descendant lies inside
-them, and the pinned macOS adapter's hit test searches their descendants only
-inside their bounds, so a point returns only a node presented there. Other
+them. Every AccessKit platform adapter (macOS, AT-SPI, UIA) hit-tests through
+`accesskit_consumer`'s `node_at_point`; the vendored consumer
+([patch record](../../vendor/accesskit_consumer/VARTA-PATCH.md)) searches a
+clipping node's descendants only inside its bounds, so on every platform a
+point returns only a node presented there. Other
 hidden nodes (under a scroll border, a row scrolled out of the open list over
 the page) and options of a closed select stay unbounded. AccessKit's filter
 then omits a clipping scroll area's children beyond the nearest one past each
 edge until scrolling brings them next to it. Desktop tests cover scrolled-out,
 clipped, text-only and open-list options at 2× scale, bounds following an
-assistive scroll, and hit tests over visible content beside scrolled-out and
-clipped-away boxes (with the unpatched search returning the hidden node).
+assistive scroll, hit tests over visible content beside scrolled-out and
+clipped-away boxes through the consumer search all adapters share (the hidden
+box contains the point and passes the filter, so the unpatched search returns
+it), and an omitted item joining the tree once its neighbour is scrolled into
+view.
 
 Native structure elements keep their headless roles: `h1`–`h3` publish heading
 levels 1–3, `ul`/`ol` publish lists and rendered `li` items publish list items.
@@ -214,9 +220,10 @@ The auxiliary-run ceiling includes visual spans; refusal still leaves the guest
 running. Native geometry/caret checks are separate from platform acceptance.
 [Current geometry checks, artifact hashes and native timeout](../../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
 
-Assistive scrolling on macOS: a scroll area also publishes a geometry-free
-vertical `ScrollBar` child whose value is its 0..1 scroll position (the
-projection is the same on every AccessKit platform). The pinned macOS adapter (see `vendor/accesskit_macos/VARTA-PATCH.md`) lists AppKit's
+Assistive scrolling. On every AccessKit platform a scroll area also publishes a
+geometry-free vertical `ScrollBar` child whose value is its 0..1 scroll
+position. On macOS only, the pinned adapter (see
+`vendor/accesskit_macos/VARTA-PATCH.md`) lists AppKit's
 `AXScrollUpByPage`/`AXScrollDownByPage` on the area and sends page scrolls,
 returns that child as the area's `AXVerticalScrollBar`, and routes the bar's
 increment/decrement to item scrolls and its settable value to an absolute
