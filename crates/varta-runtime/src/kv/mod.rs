@@ -230,21 +230,23 @@ fn stage(
     let deadline = Deadline(context.deadline);
     let staged = {
         let mut stager = stage::Stager::new(memory.data(&*caller), context.module, &deadline);
-        stager.value(kind as u32, packed, 0)
+        stager
+            .value(kind as u32, packed, 0)
+            .map(|value| (value, stager.extent()))
     };
     let context = caller.data_mut();
     if context.kv.staged.len() == kv::MAX_STAGED {
         return Err(fatal("too many staged values"));
     }
-    let value = match staged {
-        Ok(value) => value,
+    let (value, extent) = match staged {
+        Ok(staged) => staged,
         Err(stage::StageError::Unsupported(message)) => {
             return Ok(context.kv.fail(&KvError::type_error(message)));
         }
         Err(stage::StageError::Fatal(message)) => return Err(wasmtime::Error::msg(message)),
         Err(stage::StageError::Abi(error)) => return Err(wasmtime::Error::new(error)),
     };
-    let staged = match protocol::staged_value(mode, &value) {
+    let staged = match protocol::staged_value(mode, &value, extent) {
         Ok(staged) => staged,
         Err(error) => return Ok(context.kv.fail(&error)),
     };

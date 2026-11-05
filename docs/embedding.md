@@ -759,11 +759,15 @@ differences:
 
 Values nest at most `varta_kv_codec::MAX_VALUE_DEPTH` levels on every host
 (`registry.kv.maxValueDepth`, [contract](architecture.md#kv-storage-kv)), a
-part shared within a value counted at its deepest reach; the limit keeps the shared codec's recursion within the engine's native stack,
-where the codec's wasm frames live. The KV wire facts and the bookkeeping flag (`kvBookkeeping`) are
-generated registry data (`browser::registry().kv`); `scripts/test-browser-kv.mjs`
-compares browser and reference runs in Chrome and, through Playwright, in
-WebKit.
+part shared within a value counted at its deepest reach; the limit keeps the
+shared codec's recursion within the engine's native stack, where the codec's
+wasm frames live. A value also decodes to at most the values and code units
+of text in the [KV limits](#kv-storage-v38) (`registry.kv.valueExtent`), a
+shared part counted at every reach, so a small stored value cannot make a
+host build an exponential expansion. The KV wire facts and the bookkeeping flag
+(`kvBookkeeping`) are generated registry data (`browser::registry().kv`);
+`scripts/test-browser-kv.mjs` compares browser and reference runs in Chrome
+and, through Playwright, in WebKit.
 
 The `environmentInputs` an embedder passes to `run` or `mount` are the
 per-run snapshot behind `env.get`, `env.has` and `env_snapshot`, not a
@@ -924,6 +928,8 @@ row says fatal.
 | Encoded key to write (bytes) | 2048 | `kv::MAX_WRITE_KEY_BYTES` |
 | Encoded key of a range selector (bytes) | 2049 | `kv::MAX_READ_KEY_BYTES` |
 | Encoded value (bytes) | 65536 | `kv::MAX_VALUE_BYTES` |
+| Values a value decodes to (shared parts at every reach, absent optional fields included) | 2048 | `kv::MAX_VALUE_NODES` |
+| Code units of text a value decodes to (shared parts at every reach) | 65536 | `kv::MAX_VALUE_UNITS` |
 | Ranges per read | 10 | `kv::MAX_READ_RANGES` |
 | Entries per read | 1000 | `kv::MAX_READ_ENTRIES` |
 | Checks per commit | 100 | `kv::MAX_CHECKS` |

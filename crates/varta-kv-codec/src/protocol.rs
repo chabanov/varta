@@ -171,29 +171,42 @@ impl Staged {
     }
 }
 
-/// The stored form of `value` staged in `mode`.
-pub fn staged_value(mode: StageMode, value: &v8::Value) -> Result<Staged, KvError> {
+/// The stored form of `value` staged in `mode`. A value (`StageMode::Value`)
+/// fails after Deno's own size check (whose message wins) when its
+/// `extent`, the stage walk's ([`crate::stage::Stager::extent`]), or the V8
+/// encoder's is beyond the [`crate::Extent`] bounds.
+pub fn staged_value(
+    mode: StageMode,
+    value: &v8::Value,
+    extent: crate::Extent,
+) -> Result<Staged, KvError> {
     let text = || match value {
         v8::Value::String(units) => Ok(units),
         _ => Err(KvError::type_error("invalid staged KV value")),
     };
-    let value_form =
-        match mode {
-            StageMode::Value => Stored::V8(v8::encode(value, wire::MAX_VALUE_BYTES).map_err(
-                |error| match error {
-                    v8::V8Error::Depth(_) => KvError::type_error(crate::too_deep()),
-                    _ => value_too_large(),
-                },
-            )?),
-            StageMode::U64 => {
-                let digits = String::from_utf16(text()?)
-                    .map_err(|_| KvError::type_error("invalid KvU64"))?;
-                Stored::U64(digits.parse().map_err(|_| {
-                    KvError::range_error("Value must fit in a 64-bit unsigned integer")
-                })?)
+    let value_form = match mode {
+        StageMode::Value => {
+            let bytes = v8::encode(value, wire::MAX_VALUE_BYTES).map_err(|error| match error {
+                v8::V8Error::Depth(_) => KvError::type_error(crate::too_deep()),
+                v8::V8Error::Expanded => KvError::type_error(crate::too_expanded()),
+                _ => value_too_large(),
+            })?;
+            if !extent.within() {
+                return Err(KvError::type_error(crate::too_expanded()));
             }
-            StageMode::Bytes => Stored::Bytes(byte_values(value)?),
-        };
+            Stored::V8(bytes)
+        }
+        StageMode::U64 => {
+            let digits =
+                String::from_utf16(text()?).map_err(|_| KvError::type_error("invalid KvU64"))?;
+            Stored::U64(
+                digits.parse().map_err(|_| {
+                    KvError::range_error("Value must fit in a 64-bit unsigned integer")
+                })?,
+            )
+        }
+        StageMode::Bytes => Stored::Bytes(byte_values(value)?),
+    };
     Ok(Staged {
         value: value_form,
         key: key_bytes(value),
@@ -804,5 +817,33 @@ mod tests {
         assert_eq!(expire_at_ms(0, last), Some(MAX_EXPIRATION_MS));
         assert_eq!(expire_at_ms(1, last), None);
         assert_eq!(expire_at_ms(0, u64::MAX), None);
+    }
+
+    /// A staged value beyond the extent bounds fails by name, after Deno's
+    /// own size check, whose message wins for a value both refuse; the
+    /// extent applies to values only, not to a top-level `Uint8Array`.
+    #[test]
+    fn staging_refuses_an_extent_after_denos_size_check() {
+        let message = |result: Result<Staged, KvError>| result.unwrap_err().text();
+        let beyond = crate::Extent {
+            values: crate::MAX_VALUE_NODES + 1,
+            units: 0,
+        };
+        let small = v8::Value::Null;
+        assert_eq!(
+            message(staged_value(StageMode::Value, &small, beyond)),
+            KvError::type_error(crate::too_expanded()).text()
+        );
+        assert!(staged_value(StageMode::Value, &small, crate::Extent::default()).is_ok());
+        let long = v8::Value::String(alloc::vec![u16::from(b'x'); crate::MAX_VALUE_UNITS + 1]);
+        assert_eq!(
+            message(staged_value(StageMode::Value, &long, beyond)),
+            value_too_large().text()
+        );
+        let bytes = v8::Value::Object(alloc::rc::Rc::new(v8::Object::Dense(alloc::vec![
+            Some(v8::Value::Number(1.0));
+            crate::MAX_VALUE_NODES + 1
+        ])));
+        assert!(staged_value(StageMode::Bytes, &bytes, beyond).is_ok());
     }
 }

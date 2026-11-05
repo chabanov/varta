@@ -6,10 +6,11 @@
 //! and JSON drops: present fields and dictionary entries holding `undefined`,
 //! `-0`, NaN and the infinities. A record reached twice is one object written
 //! once (V8's back-reference), and counts toward the shared depth limit at
-//! its deepest reach, as a reader that expands it sees it; a cycle, a
-//! function, a promise, an Error, a
-//! BigInt, an array hole and a record with private state (an engine class or
-//! `#private` fields) fail with a `TypeError`, before anything is stored.
+//! its deepest reach and toward the value's [`crate::Extent`] at every
+//! reach, as a reader that expands it sees it; a cycle, a function, a
+//! promise, an Error, a BigInt, an array hole, a record with private state
+//! (an engine class or `#private` fields) and a value beyond the depth limit
+//! or the extent bounds fail with a `TypeError`, before anything is stored.
 //!
 //! Guest memory is read through [`Memory`]: the native runtime passes the
 //! instance's memory as a byte slice, the browser host its bounded copy
@@ -60,10 +61,13 @@ pub struct Stager<'a, M: Memory + ?Sized, D: Deadline + ?Sized> {
     /// Aggregates on the current path (a cycle check).
     path: BTreeSet<usize>,
     /// Aggregates already read, by handle address: written once by V8, with
-    /// their height (the levels below them), checked again at every reach.
-    seen: BTreeMap<usize, (Rc<Object>, usize)>,
+    /// their height (the levels below them) and the extent below them,
+    /// checked again at every reach.
+    seen: BTreeMap<usize, (Rc<Object>, usize, crate::Extent)>,
     /// The deepest level reached inside the aggregate being read.
     deepest: usize,
+    /// The extent of the value read so far, shared aggregates at every reach.
+    extent: crate::Extent,
 }
 
 impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
@@ -76,6 +80,7 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
             path: BTreeSet::new(),
             seen: BTreeMap::new(),
             deepest: 0,
+            extent: crate::Extent::default(),
         }
     }
 
@@ -103,6 +108,20 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
         }
         self.deepest = self.deepest.max(depth);
         Ok(())
+    }
+
+    /// Count `values` and `units` toward the value's extent. The walk reads
+    /// a shared aggregate once, so it never expands one and need not stop;
+    /// [`crate::protocol::staged_value`] refuses a value beyond the bounds
+    /// after Deno's own size check.
+    fn count(&mut self, values: usize, units: usize) {
+        self.extent.add(values, units);
+    }
+
+    /// The extent of the value read: what a `get` at its type builds.
+    #[must_use]
+    pub fn extent(&self) -> crate::Extent {
+        self.extent
     }
 
     fn bytes(&self, ptr: usize, len: usize) -> Result<Cow<'a, [u8]>, StageError> {
@@ -165,6 +184,7 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
     /// Read the value of kind word `kind` and packed slot `packed`.
     pub fn value(&mut self, kind: u32, packed: u64, depth: usize) -> Result<Value, StageError> {
         self.visit(depth)?;
+        self.count(1, 0);
         let (kind, packed) = self.resolve(kind, packed)?;
         Ok(match kind {
             ValueKind::Undefined if packed == 0 => Value::Undefined,
@@ -174,7 +194,11 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
             ValueKind::I32 => Value::Number(f64::from(
                 i32::try_from(packed as i64).map_err(|_| fatal("noncanonical integer"))?,
             )),
-            ValueKind::String => Value::String(self.units(packed)?),
+            ValueKind::String => {
+                let units = self.units(packed)?;
+                self.count(0, units.len());
+                Value::String(units)
+            }
             ValueKind::Record => Value::Object(self.aggregate(packed, depth, Self::record)?),
             ValueKind::Array => Value::Object(self.aggregate(packed, depth, Self::array)?),
             ValueKind::Dictionary => {
@@ -190,9 +214,9 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
 
     /// Read an aggregate once: a second reach shares the first object, a
     /// reach from inside itself is a cycle. Every reach keeps the depth
-    /// limit for the whole aggregate below it, so a value stored with
-    /// shared parts is never deeper, expanded, than one stored without:
-    /// whatever `set` accepts, a `get` (which expands shared parts) reads.
+    /// limit and counts the extent for the whole aggregate below it, so the
+    /// depth limit and the extent bounds never refuse on a `get` of the same
+    /// type (which expands shared parts) what a `set` stored.
     fn aggregate(
         &mut self,
         packed: u64,
@@ -200,20 +224,23 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
         read: fn(&mut Self, u64, usize) -> Result<Object, StageError>,
     ) -> Result<Rc<Object>, StageError> {
         let ptr = packed as u32 as usize;
-        if let Some((object, height)) = self.seen.get(&ptr) {
-            let (object, height) = (Rc::clone(object), *height);
+        if let Some((object, height, below)) = self.seen.get(&ptr) {
+            let (object, height, below) = (Rc::clone(object), *height, *below);
             self.reach(depth + height)?;
+            self.count(below.values, below.units);
             return Ok(object);
         }
         if !self.path.insert(ptr) {
             return Err(unsupported("a cyclic value"));
         }
         let outer = core::mem::replace(&mut self.deepest, depth);
+        let start = self.extent;
         let object = Rc::new(read(self, packed, depth)?);
         let height = self.deepest - depth;
         self.deepest = self.deepest.max(outer);
         self.path.remove(&ptr);
-        self.seen.insert(ptr, (Rc::clone(&object), height));
+        self.seen
+            .insert(ptr, (Rc::clone(&object), height, self.extent.since(start)));
         Ok(object)
     }
 
@@ -241,6 +268,7 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
                 continue;
             };
             let key = Key::of(self.units(key)?);
+            self.count(0, key.units());
             properties.push((
                 key,
                 self.value(dictionary.values.kind as u32, value, depth + 1)?,
@@ -276,6 +304,9 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
         if present & !wide_field_mask(count) != 0 {
             return Err(fatal("presence outside record shape"));
         }
+        // A read of this type builds the `undefined` of every absent
+        // (optional) field.
+        self.count(count - present.count_ones() as usize, 0);
         let mut order = Vec::new();
         for index in 0..present.count_ones() as usize {
             let [slot] = self.words::<1>(ptr + order_offset(count) + index * 4)?;
@@ -329,6 +360,7 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
                 .as_ref()
                 .ok_or_else(|| fatal("missing field slot"))?;
             let key = Key::of(name.encode_utf16().collect());
+            self.count(0, key.units());
             let kind = *kind;
             let value = self.slot(ptr + RECORD_META_BYTES + slot as usize * RECORD_SLOT_BYTES)?;
             properties.push((key, self.value(kind, value, depth + 1)?));

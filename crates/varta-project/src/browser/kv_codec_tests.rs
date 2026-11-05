@@ -406,7 +406,8 @@ fn native_decode(guest: Fake, entry: Entry<'_>, schema_len: usize) -> (u32, Vec<
 
 /// The native stage as the codec's `kv_stage` reports it.
 fn native_stage(guest: &Fake, kind: u32, packed: u64) -> (u32, Vec<u8>) {
-    let staged = Stager::new(&guest.memory[..], module(), &Never).value(kind, packed, 0);
+    let mut stager = Stager::new(&guest.memory[..], module(), &Never);
+    let staged = stager.value(kind, packed, 0);
     let value = match staged {
         Ok(value) => value,
         Err(StageError::Unsupported(message)) => {
@@ -418,7 +419,7 @@ fn native_stage(guest: &Fake, kind: u32, packed: u64) -> (u32, Vec<u8>) {
         Err(StageError::Fatal(message)) => return (C::FATAL, message.into_bytes()),
         Err(StageError::Abi(error)) => return (C::FATAL, error.to_string().into_bytes()),
     };
-    match protocol::staged_value(StageMode::Value, &value) {
+    match protocol::staged_value(StageMode::Value, &value, stager.extent()) {
         Ok(staged) => {
             let mut writer = Writer::default();
             writer.u64(charge::staged(staged.size()));
@@ -687,4 +688,160 @@ fn the_wasm32_codec_keeps_the_depth_limit_of_shared_parts_as_natively() {
 
 fn hex_text(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Levels of the largest `Nested` diamond within the value bound: level `k`
+/// is `[x, x]` of the one below (`null` at the bottom), and a read builds
+/// [`diamond_values`]`(k)` values.
+fn diamond_fits() -> usize {
+    (varta_kv_codec::MAX_VALUE_NODES + 1).ilog2() as usize - 1
+}
+
+fn diamond_values(levels: usize) -> usize {
+    (1 << (levels + 1)) - 1
+}
+
+/// A diamond far beyond the bound: millions of values from a few hundred
+/// bytes.
+const FAR_DIAMOND: usize = 22;
+
+/// Memory the codec may add while it refuses [`FAR_DIAMOND`]: a generous
+/// kibibyte per value of the bound it builds at most (its V8 value, its
+/// classified value and their bookkeeping), where the expansion would need
+/// gigabytes.
+const REFUSAL_GROWTH_BYTES: usize = varta_kv_codec::MAX_VALUE_NODES * 1024;
+
+/// The V8 bytes of a `Nested` diamond of `levels`: level 1 is `[null,
+/// null]`, every level above `[x, x]` of the one below, written once and
+/// back-referenced (level `k` has object id `levels - k`).
+fn diamond_bytes(levels: usize) -> Vec<u8> {
+    fn body(bytes: &mut Vec<u8>, level: usize, levels: usize) {
+        if level == 0 {
+            bytes.push(b'0');
+            return;
+        }
+        bytes.extend([b'A', 2]);
+        body(bytes, level - 1, levels);
+        if level == 1 {
+            bytes.push(b'0');
+        } else {
+            let id = u8::try_from(levels - level + 1).unwrap();
+            assert!(id < 0x80, "a one-byte varint");
+            bytes.extend([b'^', id]);
+        }
+        bytes.extend([b'$', 0, 2]);
+    }
+    let mut bytes = vec![
+        0xFF,
+        u8::try_from(varta_kv_codec::v8::WRITE_VERSION).unwrap(),
+    ];
+    body(&mut bytes, levels, levels);
+    bytes
+}
+
+/// The V8 bytes of a `Nested` ladder of `levels`: `[x, null]` of the level
+/// below, `null` at the bottom, nothing shared.
+fn ladder_bytes(levels: usize) -> Vec<u8> {
+    let mut bytes = vec![
+        0xFF,
+        u8::try_from(varta_kv_codec::v8::WRITE_VERSION).unwrap(),
+    ];
+    bytes.extend(std::iter::repeat_n([b'A', 2], levels).flatten());
+    bytes.push(b'0');
+    bytes.extend(std::iter::repeat_n([b'0', b'$', 0, 2], levels).flatten());
+    bytes
+}
+
+impl Wasm {
+    /// The codec module's own linear memory, in bytes.
+    fn memory_bytes(&mut self) -> usize {
+        self.instance
+            .get_memory(&mut self.store, C::EXPORT_MEMORY)
+            .unwrap()
+            .data_size(&self.store)
+    }
+}
+
+/// Both builds keep the value bound alike when they read a stored diamond:
+/// within the bound it decodes and stages back; past it, and far past it,
+/// it is the same recoverable `TypeError`, and refusing the far one grows
+/// the wasm32 codec's memory by at most [`REFUSAL_GROWTH_BYTES`].
+#[test]
+fn the_wasm32_codec_keeps_the_value_bound_of_stored_values_as_natively() {
+    let mut wasm = Wasm::new();
+    let fits = diamond_fits();
+    assert!(diamond_values(fits) <= varta_kv_codec::MAX_VALUE_NODES);
+    assert!(diamond_values(fits + 1) > varta_kv_codec::MAX_VALUE_NODES);
+    for (levels, expected) in [
+        (fits, Outcome::Staged),
+        (fits + 1, Outcome::Thrown),
+        (FAR_DIAMOND, Outcome::Thrown),
+    ] {
+        let stored = Stored::V8(diamond_bytes(levels));
+        let mut input = vec![C::ENTRY_VALUE, u8::try_from(stored.encoding()).unwrap()];
+        input.extend(stored.bytes());
+        let before = wasm.memory_bytes();
+        assert_eq!(
+            agree(&mut wasm, NESTED, (false, &input, Entry::Value(&stored))),
+            expected,
+            "{levels}"
+        );
+        if levels == FAR_DIAMOND {
+            let grown = wasm.memory_bytes() - before;
+            assert!(grown <= REFUSAL_GROWTH_BYTES, "{grown}");
+        }
+    }
+}
+
+/// Both builds stage a guest diamond alike: a ladder decoded into the
+/// guest has the second element of every level replaced by the very cell
+/// of its first, so each level holds the one below twice. Within the bound
+/// both stage it, and what they stage decodes and stages back alike (the
+/// read-back guarantee); past it, and far past it, both refuse it by name
+/// before encoding anything.
+#[test]
+fn the_wasm32_codec_keeps_the_value_bound_of_staged_values_as_natively() {
+    let mut wasm = Wasm::new();
+    let fits = diamond_fits();
+    let refused = protocol::KvError::type_error(varta_kv_codec::too_expanded())
+        .text()
+        .into_bytes();
+    let kind = value::ValueKind::ReferenceUnion as u32;
+    for levels in [fits, fits + 1, FAR_DIAMOND] {
+        let stored = Stored::V8(ladder_bytes(levels));
+        let (status, handle, mut guest) =
+            native_decode(Fake::new(NESTED), Entry::Value(&stored), NESTED.len());
+        assert_eq!((status, guest.thrown), (C::OK, None), "{levels}");
+        let handle = u64::from_le_bytes(handle.try_into().unwrap());
+        let mut at = handle;
+        for level in (1..=levels).rev() {
+            let array = nested_array(&guest, at);
+            let first = guest.memory[element_at(&array, 0)].to_vec();
+            guest.memory[element_at(&array, 1)].copy_from_slice(&first);
+            if level > 1 {
+                at = u64::from_le_bytes(first.try_into().unwrap());
+            }
+        }
+        let native = native_stage(&guest, kind, handle);
+        assert_eq!(wasm.stage(guest.clone(), kind, handle), native, "{levels}");
+        if levels > fits {
+            assert_eq!(native, (C::FAILED, refused.clone()), "{levels}");
+            continue;
+        }
+        assert_eq!(native.0, C::OK, "{levels}");
+        let staged = Stager::new(&guest.memory[..], module(), &Never)
+            .value(kind, handle, 0)
+            .unwrap();
+        let stored = Stored::V8(
+            varta_kv_codec::v8::encode(&staged, varta_kv_codec::wire::MAX_VALUE_BYTES).unwrap(),
+        );
+        assert_eq!(stored, Stored::V8(diamond_bytes(levels)), "shared once");
+        let mut input = vec![C::ENTRY_VALUE, u8::try_from(stored.encoding()).unwrap()];
+        input.extend(stored.bytes());
+        assert_eq!(
+            agree(&mut wasm, NESTED, (false, &input, Entry::Value(&stored))),
+            Outcome::Staged,
+            "{levels}"
+        );
+    }
 }

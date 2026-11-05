@@ -806,6 +806,19 @@ fn kv_texts_equal_the_native_texts() {
         kv["valueTooDeep"].as_str().unwrap(),
         varta_kv_codec::too_deep()
     );
+    // The extent bounds the codec enforces.
+    assert_eq!(
+        kv["valueExtent"]["maxValues"],
+        serde_json::json!(varta_kv_codec::MAX_VALUE_NODES)
+    );
+    assert_eq!(
+        kv["valueExtent"]["maxUnits"],
+        serde_json::json!(varta_kv_codec::MAX_VALUE_UNITS)
+    );
+    assert_eq!(
+        kv["valueExtent"]["tooExpanded"].as_str().unwrap(),
+        varta_kv_codec::too_expanded()
+    );
 }
 
 /// KV admission is the native profile's import admission: every KV import

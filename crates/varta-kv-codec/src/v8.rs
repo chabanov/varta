@@ -24,7 +24,8 @@
 //!   (`B` then `V` with subtag `B`);
 //! - back-references (`^`) to completed objects; a reference to an object
 //!   still being read is a cycle and is rejected. A shared object keeps the
-//!   depth limit at its deepest reach, read or written, as an expanding
+//!   depth limit at its deepest reach and counts toward the value's
+//!   [`crate::Extent`] at every reach, read or written, as an expanding
 //!   reader sees it.
 //!
 //! Every other tag (other typed arrays, standalone or shared buffers,
@@ -130,6 +131,15 @@ pub enum V8Error {
     /// [`crate::MAX_VALUE_DEPTH`]); the text is [`crate::too_deep`]'s form.
     #[error("a KV value cannot nest deeper than {0} levels")]
     Depth(usize),
+    /// An [`crate::Extent`] beyond [`crate::MAX_VALUE_NODES`] values or
+    /// [`crate::MAX_VALUE_UNITS`] code units; the text is
+    /// [`crate::too_expanded`]'s.
+    #[error(
+        "a KV value cannot expand to more than {} values or {} code units of text",
+        crate::MAX_VALUE_NODES,
+        crate::MAX_VALUE_UNITS
+    )]
+    Expanded,
 }
 
 /// A property key: an array index or any other string.
@@ -145,6 +155,16 @@ impl Key {
         match varta_common::value::array_index(&units) {
             Some(index) => Self::Index(index as u32),
             None => Self::Name(units),
+        }
+    }
+
+    /// The code units of the key's text (an index as its decimal digits),
+    /// as a value's [`crate::Extent`] counts it.
+    #[must_use]
+    pub fn units(&self) -> usize {
+        match self {
+            Self::Index(index) => crate::index_units(*index),
+            Self::Name(units) => units.len(),
         }
     }
 }
@@ -226,6 +246,7 @@ pub fn decode(bytes: &[u8], limits: Limits) -> Result<Value, V8Error> {
         objects: Vec::new(),
         nodes: 0,
         deepest: 0,
+        extent: crate::Extent::default(),
         limits,
     };
     if reader.byte()? != tag::VERSION {
@@ -247,8 +268,9 @@ pub fn decode(bytes: &[u8], limits: Limits) -> Result<Value, V8Error> {
 enum Slot {
     /// Being read: a reference to it is a cycle.
     Open,
-    /// A complete object and its height (the levels below it).
-    Done(Rc<Object>, usize),
+    /// A complete object, its height (the levels below it) and the extent
+    /// below it.
+    Done(Rc<Object>, usize, crate::Extent),
     /// The buffer of a `Uint8Array`, which has no value of its own here.
     Buffer,
 }
@@ -262,6 +284,8 @@ struct Reader<'a> {
     nodes: usize,
     /// The deepest level reached inside the object being read.
     deepest: usize,
+    /// The extent of the value read so far, shared objects at every reach.
+    extent: crate::Extent,
     limits: Limits,
 }
 
@@ -337,8 +361,28 @@ impl Reader<'_> {
         self.deepest = self.deepest.max(depth);
         Ok(())
     }
+    /// Count `values` and `units` toward the value's extent.
+    fn grow(&mut self, values: usize, units: usize) -> Result<(), V8Error> {
+        if self.extent.grow(values, units) {
+            Ok(())
+        } else {
+            Err(V8Error::Expanded)
+        }
+    }
+    /// A value: an element, a property's value, a `Map` key or value or a
+    /// `Set` value, one value of the extent (and a string's code units).
     fn value(&mut self, depth: usize) -> Result<Value, V8Error> {
         self.visit(depth)?;
+        self.grow(1, 0)?;
+        let value = self.item(depth)?;
+        if let Value::String(units) = &value {
+            self.grow(0, units.len())?;
+        }
+        Ok(value)
+    }
+    /// The value at the next tag, not itself one value of the extent (a
+    /// property key, whose text its caller counts).
+    fn item(&mut self, depth: usize) -> Result<Value, V8Error> {
         let tag = self.tag()?;
         Ok(match tag {
             tag::UNDEFINED => Value::Undefined,
@@ -355,9 +399,10 @@ impl Reader<'_> {
             tag::OBJECT_REFERENCE => {
                 let id = self.varint()? as usize;
                 match self.objects.get(id) {
-                    Some(Slot::Done(object, height)) => {
-                        let (object, height) = (Rc::clone(object), *height);
+                    Some(Slot::Done(object, height, below)) => {
+                        let (object, height, below) = (Rc::clone(object), *height, *below);
                         self.reach(depth + height)?;
+                        self.grow(below.values, below.units)?;
                         Value::Object(object)
                     }
                     Some(Slot::Open) => return Err(V8Error::Cycle),
@@ -442,15 +487,22 @@ impl Reader<'_> {
     }
     /// A property key: a string, or an array index written as a number.
     fn key(&mut self, depth: usize) -> Result<Key, V8Error> {
-        match self.value(depth)? {
+        self.visit(depth)?;
+        match self.item(depth)? {
             Value::String(units) => Ok(Key::of(units)),
             Value::Number(number) => index_of(number).map(Key::Index),
             _ => Err(V8Error::Malformed("property key")),
         }
     }
     /// Read `key: value` pairs until `end`; returns them and checks the
-    /// trailing property count.
-    fn properties(&mut self, end: u8, depth: usize) -> Result<Vec<(Key, Value)>, V8Error> {
+    /// trailing property count. A plain object's keys (`text`) count toward
+    /// the extent, as the text a read builds; an array's keys are indices.
+    fn properties(
+        &mut self,
+        end: u8,
+        depth: usize,
+        text: bool,
+    ) -> Result<Vec<(Key, Value)>, V8Error> {
         let mut properties = Vec::new();
         let mut seen = alloc::collections::BTreeSet::new();
         while self.peek_tag()? != end {
@@ -458,6 +510,9 @@ impl Reader<'_> {
                 return Err(V8Error::Limit("entry"));
             }
             let key = self.key(depth + 1)?;
+            if text {
+                self.grow(0, key.units())?;
+            }
             let value = self.value(depth + 1)?;
             if !seen.insert(key.clone()) {
                 return Err(V8Error::DuplicateKey);
@@ -481,8 +536,9 @@ impl Reader<'_> {
     fn contents(&mut self, tag: u8, depth: usize) -> Result<Rc<Object>, V8Error> {
         let id = self.objects.len();
         self.objects.push(Slot::Open);
+        let start = self.extent;
         let object = match tag {
-            tag::BEGIN_OBJECT => Object::Plain(self.properties(tag::END_OBJECT, depth)?),
+            tag::BEGIN_OBJECT => Object::Plain(self.properties(tag::END_OBJECT, depth, true)?),
             tag::BEGIN_DENSE_ARRAY => self.dense(depth)?,
             tag::BEGIN_SPARSE_ARRAY => self.sparse(depth)?,
             tag::DATE => Object::Date(self.double()?),
@@ -521,7 +577,11 @@ impl Reader<'_> {
             }
         };
         let object = Rc::new(object);
-        self.objects[id] = Slot::Done(Rc::clone(&object), self.deepest - depth);
+        self.objects[id] = Slot::Done(
+            Rc::clone(&object),
+            self.deepest - depth,
+            self.extent.since(start),
+        );
         Ok(object)
     }
     fn dense(&mut self, depth: usize) -> Result<Object, V8Error> {
@@ -540,7 +600,10 @@ impl Reader<'_> {
                 elements.push(Some(self.value(depth + 1)?));
             }
         }
-        if !self.properties(tag::END_DENSE_ARRAY, depth)?.is_empty() {
+        if !self
+            .properties(tag::END_DENSE_ARRAY, depth, false)?
+            .is_empty()
+        {
             return Err(V8Error::Unsupported("array with named properties"));
         }
         if self.varint()? as usize != length {
@@ -551,7 +614,7 @@ impl Reader<'_> {
     fn sparse(&mut self, depth: usize) -> Result<Object, V8Error> {
         let length = self.length("array", self.limits.elements)?;
         let mut elements = Vec::new();
-        for (key, value) in self.properties(tag::END_SPARSE_ARRAY, depth)? {
+        for (key, value) in self.properties(tag::END_SPARSE_ARRAY, depth, false)? {
             match key {
                 Key::Index(index) if (index as usize) < length => elements.push((index, value)),
                 Key::Index(_) => return Err(V8Error::Malformed("array index")),
@@ -597,7 +660,7 @@ impl Reader<'_> {
             length: view,
         });
         // A view holds no values: nothing below it.
-        self.objects[view_id] = Slot::Done(Rc::clone(&object), 0);
+        self.objects[view_id] = Slot::Done(Rc::clone(&object), 0, crate::Extent::default());
         Ok(object)
     }
 }
@@ -621,14 +684,18 @@ fn index_of(number: f64) -> Result<u32, V8Error> {
 
 /// Encode `value` with the serializer header Deno 2.9.x writes. Objects
 /// shared by `Rc` are written once and back-referenced after, as V8 writes
-/// one object reached twice. Fails beyond `max_bytes` of output and below
-/// [`crate::MAX_VALUE_DEPTH`] levels, a shared object at its deepest reach.
+/// one object reached twice. Fails beyond `max_bytes` of output, below
+/// [`crate::MAX_VALUE_DEPTH`] levels, a shared object at its deepest reach,
+/// and then, once the whole value fits `max_bytes`, beyond the bounds of a
+/// [`crate::Extent`], a shared object counted at every reach (the writer
+/// never expands one, so it need not stop early).
 pub fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
     let mut writer = Writer {
         out: Vec::new(),
         ids: BTreeMap::new(),
-        heights: BTreeMap::new(),
+        written: BTreeMap::new(),
         deepest: 0,
+        extent: crate::Extent::default(),
         next: 0,
         max_bytes,
     };
@@ -636,17 +703,23 @@ pub fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
     writer.varint(WRITE_VERSION);
     writer.value(value, 0)?;
     writer.check()?;
+    if !writer.extent.within() {
+        return Err(V8Error::Expanded);
+    }
     Ok(writer.out)
 }
 
 struct Writer {
     out: Vec<u8>,
     ids: BTreeMap<*const Object, u32>,
-    /// The height (levels below it) of every object written, checked again
-    /// at each back-reference to it.
-    heights: BTreeMap<*const Object, usize>,
+    /// The height (levels below it) and the extent below every object
+    /// written, checked again at each back-reference to it.
+    written: BTreeMap<*const Object, (usize, crate::Extent)>,
     /// The deepest level reached inside the object being written.
     deepest: usize,
+    /// The extent of the value written so far, shared objects at every
+    /// reach.
+    extent: crate::Extent,
     next: u32,
     max_bytes: usize,
 }
@@ -659,6 +732,10 @@ impl Writer {
         }
         self.deepest = self.deepest.max(depth);
         Ok(())
+    }
+    /// Count `values` and `units` toward the value's extent.
+    fn count(&mut self, values: usize, units: usize) {
+        self.extent.add(values, units);
     }
     fn check(&self) -> Result<(), V8Error> {
         if self.out.len() > self.max_bytes {
@@ -734,6 +811,10 @@ impl Writer {
     fn value(&mut self, value: &Value, depth: usize) -> Result<(), V8Error> {
         self.check()?;
         self.reach(depth)?;
+        self.count(1, 0);
+        if let Value::String(units) = value {
+            self.count(0, units.len());
+        }
         match value {
             Value::Undefined => self.out.push(tag::UNDEFINED),
             Value::Null => self.out.push(tag::NULL),
@@ -752,20 +833,23 @@ impl Writer {
         id
     }
     /// Write `object` once; a later reach writes a back-reference and keeps
-    /// the depth limit for the whole object below it.
+    /// the depth limit and the extent bounds for the whole object below it.
     fn object(&mut self, object: &Rc<Object>, depth: usize) -> Result<(), V8Error> {
         let identity = Rc::as_ptr(object);
         if let Some(id) = self.ids.get(&identity).copied() {
             // An `Rc` graph has no cycles: a written object is complete.
-            let height = *self.heights.get(&identity).ok_or(V8Error::Cycle)?;
+            let (height, below) = *self.written.get(&identity).ok_or(V8Error::Cycle)?;
             self.reach(depth + height)?;
+            self.count(below.values, below.units);
             self.out.push(tag::OBJECT_REFERENCE);
             self.varint(id);
             return Ok(());
         }
         let outer = core::mem::replace(&mut self.deepest, depth);
+        let start = self.extent;
         self.contents(object, identity, depth)?;
-        self.heights.insert(identity, self.deepest - depth);
+        self.written
+            .insert(identity, (self.deepest - depth, self.extent.since(start)));
         self.deepest = self.deepest.max(outer);
         self.check()
     }
@@ -786,6 +870,7 @@ impl Writer {
                 self.out.push(tag::BEGIN_OBJECT);
                 for (key, value) in properties {
                     self.key(key);
+                    self.count(0, key.units());
                     self.value(value, depth + 1)?;
                 }
                 self.out.push(tag::END_OBJECT);

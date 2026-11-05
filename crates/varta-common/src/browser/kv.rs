@@ -103,6 +103,18 @@ const OPERATION_PLACEHOLDER: &str = "{operation}";
 /// (`kv-store.mjs`).
 pub const CONTAINER_FORMAT: u32 = 1;
 
+/// The extent bounds of a KV value, shared parts counted at every reach
+/// (`varta_kv_codec::Extent`), and their recoverable `TypeError` text, which
+/// the codec enforces on both hosts; `varta-project`'s browser tests compare
+/// them.
+fn value_extent() -> Value {
+    json!({
+        "maxValues":kv::MAX_VALUE_NODES,"maxUnits":kv::MAX_VALUE_UNITS,
+        "tooExpanded":format!("a KV value cannot expand to more than {} values or {} code units of text",
+            kv::MAX_VALUE_NODES,kv::MAX_VALUE_UNITS),
+    })
+}
+
 pub(super) fn registry() -> Value {
     use kv::{EntryField as F, MutationCode as M};
     json!({
@@ -119,6 +131,7 @@ pub(super) fn registry() -> Value {
         // hosts; `varta-project`'s browser tests compare them.
         "maxValueDepth":crate::value::MAX_JSON_DEPTH,
         "valueTooDeep":format!("a KV value cannot nest deeper than {} levels",crate::value::MAX_JSON_DEPTH),
+        "valueExtent":value_extent(),
         "maxDescriptorBytes":kv::MAX_DESCRIPTOR_BYTES,
         "maxOpenDatabases":kv::MAX_OPEN_DATABASES,
         "maxStaged":kv::MAX_STAGED,"maxStagedBytes":kv::MAX_STAGED_BYTES,

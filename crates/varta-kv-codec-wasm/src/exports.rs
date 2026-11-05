@@ -130,14 +130,14 @@ pub extern "C" fn kv_stage(mode: i32, kind: i32, packed: i64) -> u32 {
         return malformed_input();
     };
     let memory = host::GuestMemory;
-    let value = match Stager::new(&memory, module, &host::Turn).value(kind as u32, packed as u64, 0)
-    {
+    let mut stager = Stager::new(&memory, module, &host::Turn);
+    let value = match stager.value(kind as u32, packed as u64, 0) {
         Ok(value) => value,
         Err(StageError::Unsupported(message)) => return failed(&KvError::type_error(message)),
         Err(StageError::Fatal(message)) => return fatal(&message),
         Err(StageError::Abi(error)) => return fatal(&format!("{error}")),
     };
-    let staged = match protocol::staged_value(mode, &value) {
+    let staged = match protocol::staged_value(mode, &value, stager.extent()) {
         Ok(staged) => staged,
         Err(error) => return failed(&error),
     };

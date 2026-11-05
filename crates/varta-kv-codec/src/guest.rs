@@ -110,14 +110,16 @@ fn descriptors<G: Guest>(
         .map_err(|error| guest.json_fatal(error.to_string()))
 }
 
-/// The decoded value of `entry` and the values classified, before any
-/// guest allocation.
+/// The decoded value of `entry`, before any guest allocation, with every
+/// value classified paid for through `pay` (as it goes and at the end,
+/// whatever the outcome).
 pub fn classify<D: Deadline + ?Sized>(
     schema: &JsonSchema,
     limits: DataLimits,
     deadline: &D,
     entry: Entry<'_>,
-) -> (Result<JsonValue, DecodeError>, usize) {
+    pay: decode::Pay<'_>,
+) -> Result<JsonValue, DecodeError> {
     let value = match entry {
         Entry::Key(bytes) => decode::key_value(bytes),
         Entry::Value(Stored::V8(bytes)) => v8::decode(
@@ -132,6 +134,7 @@ pub fn classify<D: Deadline + ?Sized>(
         .map_err(|error| match error {
             // The shared depth limit is named alike on every walk.
             v8::V8Error::Depth(_) => DecodeError::Mismatch(crate::too_deep()),
+            v8::V8Error::Expanded => DecodeError::Mismatch(crate::too_expanded()),
             error => DecodeError::Mismatch(format!("invalid stored value: {error}")),
         }),
         Entry::Value(Stored::U64(_)) => {
@@ -141,9 +144,9 @@ pub fn classify<D: Deadline + ?Sized>(
             "the stored value is a Uint8Array".into(),
         )),
     };
-    let mut classifier = Classifier::new(schema, limits, deadline);
+    let mut classifier = Classifier::new(schema, limits, deadline, pay);
     let classified = value.and_then(|value| classifier.root(&value));
-    (classified, classifier.values())
+    classifier.settle().and(classified)
 }
 
 /// `kv_key` (`key`) or `kv_value` of `entry` (`None`: no such entry, fatal
@@ -163,10 +166,22 @@ pub fn decode<G: Guest, D: Deadline + ?Sized>(
         return Err(guest.kv_fatal("entry index"));
     };
     let limits = module.limits.data;
-    let (classified, values) = classify(&schema, limits, deadline, entry);
-    // V38 fair fuel: the schema and the values decoded, before the first
-    // guest allocation (as checked JSON charges).
-    guest.charge(crate::charge::decoded(&schema, values))?;
+    // V38 fair fuel: the schema, then the values decoded as they are
+    // classified, all before the first guest allocation (as checked JSON
+    // charges).
+    guest.charge(crate::charge::schema(&schema))?;
+    let mut refused = None;
+    let mut pay = |values| match guest.charge(crate::charge::values(values)) {
+        Ok(()) => true,
+        Err(error) => {
+            refused = Some(error);
+            false
+        }
+    };
+    let classified = classify(&schema, limits, deadline, entry, &mut pay);
+    if let Some(error) = refused {
+        return Err(error);
+    }
     match classified {
         Ok(value) => materialize(guest, module, &schema, value),
         Err(DecodeError::Mismatch(message)) => {
@@ -181,6 +196,8 @@ pub fn decode<G: Guest, D: Deadline + ?Sized>(
             type_error(guest, module, &schema, &message)
         }
         Err(DecodeError::Deadline) => Err(guest.deadline_error()),
+        // A refused payment returned its host error above.
+        Err(DecodeError::Fuel) => Err(guest.kv_fatal("fuel")),
     }
 }
 

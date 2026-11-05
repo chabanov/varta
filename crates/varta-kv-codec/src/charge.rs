@@ -24,11 +24,21 @@ pub fn committed(bytes: usize) -> u64 {
 
 /// Decoding an entry's key or value into `schema`: the schema's types and
 /// fields and the values decoded, at the checked JSON rates (its bytes were
-/// charged when the read returned them).
+/// charged when the read returned them). A decode pays [`schema`] before it
+/// classifies and [`values`] as it classifies.
 pub fn decoded(schema: &JsonSchema, values: usize) -> u64 {
+    self::schema(schema).saturating_add(self::values(values))
+}
+
+/// The schema's types and fields a decode reads and checks.
+pub fn schema(schema: &JsonSchema) -> u64 {
     fuel::work(schema.types.len(), fuel::JSON_SCHEMA_TYPE)
         .saturating_add(fuel::work(schema.fields(), fuel::JSON_SCHEMA_FIELD))
-        .saturating_add(fuel::work(values, fuel::JSON_PARSE_VALUE))
+}
+
+/// `values` decoded values.
+pub fn values(values: usize) -> u64 {
+    fuel::work(values, fuel::JSON_PARSE_VALUE)
 }
 
 #[cfg(test)]
@@ -48,5 +58,19 @@ mod tests {
         assert_eq!(committed(5), fuel::KV_OPERATION + 5 * fuel::KV_BYTE);
         assert_eq!(staged(usize::MAX), u64::MAX, "saturating");
         assert_eq!(returned([usize::MAX, 1].into_iter()), u64::MAX);
+    }
+
+    /// A decode pays its schema, then its values as it goes: together the
+    /// published decode charge.
+    #[test]
+    fn a_decode_pays_its_schema_and_values() {
+        let null = JsonSchema {
+            version: varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION,
+            root: 0,
+            types: alloc::vec![varta_common::json::JsonType::Null],
+        };
+        assert_eq!(schema(&null), fuel::JSON_SCHEMA_TYPE);
+        assert_eq!(values(3), 3 * fuel::JSON_PARSE_VALUE);
+        assert_eq!(decoded(&null, 3), schema(&null) + values(3));
     }
 }

@@ -70,7 +70,7 @@ pub const DEADLINE_STRIDE: usize = 1024;
 /// [`too_deep`], on every host; the construction ([`build`]) is iterative.
 /// An object reached more than once (written once, then back-referenced)
 /// counts at its deepest reach, as the classifier, which expands it, sees
-/// it: the limit never refuses on a `get` what a `set` stored.
+/// it: the depth limit never refuses on a `get` what a `set` stored.
 ///
 /// Derivation. Each of those walks recurses once per level, and in a
 /// browser a wasm call frame lives on the engine's native stack, which a
@@ -90,4 +90,95 @@ pub const MAX_VALUE_DEPTH: usize = varta_common::value::MAX_JSON_DEPTH;
 #[must_use]
 pub fn too_deep() -> alloc::string::String {
     alloc::format!("a KV value cannot nest deeper than {MAX_VALUE_DEPTH} levels")
+}
+
+/// The most values a KV value decodes to ([`wire::MAX_VALUE_NODES`]).
+pub const MAX_VALUE_NODES: usize = wire::MAX_VALUE_NODES;
+/// The most code units of text a KV value decodes to
+/// ([`wire::MAX_VALUE_UNITS`]).
+pub const MAX_VALUE_UNITS: usize = wire::MAX_VALUE_UNITS;
+
+/// The recoverable `TypeError` text of a value whose [`Extent`] exceeds
+/// [`MAX_VALUE_NODES`] or [`MAX_VALUE_UNITS`], staged, encoded or decoded.
+#[must_use]
+pub fn too_expanded() -> alloc::string::String {
+    alloc::format!(
+        "a KV value cannot expand to more than {MAX_VALUE_NODES} values or {MAX_VALUE_UNITS} code units of text"
+    )
+}
+
+/// What a KV value expands to when a `get` decodes it: its values and its
+/// code units of text, a part shared within the value (stored once, then
+/// back-referenced) counted again at every reach.
+///
+/// Sharing makes a small stored value expand exponentially (`x = { a: x,
+/// b: x }` repeated), and a read builds every reach. So each walk keeps the
+/// running extent of the whole value, and a value beyond [`MAX_VALUE_NODES`]
+/// values or [`MAX_VALUE_UNITS`] code units fails with the recoverable
+/// `TypeError` [`too_expanded`] on every host. A `set` fails before anything
+/// is stored ([`protocol::staged_value`], over the extent of the stage walk
+/// [`stage::Stager`] and the V8 encoder [`v8::encode`]), after Deno's own
+/// encoded-size check, whose message wins for a value both refuse; neither
+/// walk expands a shared part, so neither needs to stop early. The V8
+/// decoder ([`v8::decode`]) and the classifier ([`decode::Classifier`])
+/// refuse a value stored elsewhere (by Deno or an earlier build) as soon as
+/// it passes the bounds, before the host builds more. Each aggregate's
+/// extent below it is recorded with its height and added again at every
+/// later reach, in constant time.
+///
+/// What counts, alike on every walk: every value (an element, a property's
+/// value, a `Map` key or value, a `Set` value; not a hole), every code unit
+/// of a string and of a property key (an array-index key as its decimal
+/// digits). The stage walk and the classifier, which see the record's type,
+/// also count the `undefined` of every absent optional field, which a read
+/// builds; the V8 codec cannot see absent fields, so its count is never
+/// larger. A `get` of the type a value was stored at therefore never
+/// refuses what its `set` stored; a `get` of another type may count more
+/// absent fields and refuse by name.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Extent {
+    /// Values, each reach of a shared part counted.
+    pub values: usize,
+    /// Code units of text, each reach of a shared part counted.
+    pub units: usize,
+}
+
+impl Extent {
+    /// Add `values` and `units`.
+    pub fn add(&mut self, values: usize, units: usize) {
+        self.values = self.values.saturating_add(values);
+        self.units = self.units.saturating_add(units);
+    }
+
+    /// Whether the value is within both bounds.
+    #[must_use]
+    pub fn within(self) -> bool {
+        self.values <= MAX_VALUE_NODES && self.units <= MAX_VALUE_UNITS
+    }
+
+    /// Add `values` and `units`: false once the value is beyond either
+    /// bound.
+    #[must_use]
+    pub fn grow(&mut self, values: usize, units: usize) -> bool {
+        self.add(values, units);
+        self.within()
+    }
+
+    /// The extent added since `start` (an earlier state of the same walk,
+    /// which only grows).
+    #[must_use]
+    pub fn since(self, start: Self) -> Self {
+        Self {
+            values: self.values - start.values,
+            units: self.units - start.units,
+        }
+    }
+}
+
+/// The code units of an array-index property key as decimal text.
+#[must_use]
+pub fn index_units(index: u32) -> usize {
+    index
+        .checked_ilog10()
+        .map_or(1, |digits| digits as usize + 1)
 }

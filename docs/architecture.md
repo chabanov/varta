@@ -11533,8 +11533,8 @@ into the static type the program names. V37 and earlier profiles reject
   part reached more than once (one object, written once with
   back-references) counts at its deepest reach, so a value stores exactly
   when its expansion, which a read classifies, is within the limit,
-  whatever the property order, and the limit never refuses on a `get` what
-  a `set` stored. The stage walk and the V8 writer refuse a deeper value
+  whatever the property order, and the depth limit never refuses on a `get`
+  what a `set` stored. The stage walk and the V8 writer refuse a deeper value
   before anything is stored, and the V8 reader and the classifier refuse a
   deeper stored value (one Deno wrote), each with the recoverable
   `TypeError` `a KV value cannot
@@ -11545,6 +11545,35 @@ into the static type the program names. V37 and earlier profiles reject
   and a browser's wasm frames live on the engine's native stack, which
   Chrome and WebKit exhaust at a few hundred levels and a native debug build
   at about 1500.
+- **Extent.** A read builds a part shared within a value at every reach, so
+  a small stored value can expand exponentially (`x = { a: x, b: x }`
+  repeated). A value decodes to at most `kv::MAX_VALUE_NODES` values and
+  `kv::MAX_VALUE_UNITS` code units of text (its
+  `varta_kv_codec::Extent`): every value, string code unit and property-key
+  code unit (an array index as its decimal digits) counts at every reach of
+  a shared part, and the `undefined` of every absent optional field counts
+  as a value. A `set` of a larger value fails before anything is stored,
+  after Deno's encoded-size check (whose `Value too large` wins for a value
+  both refuse), over the extents the stage walk and the V8 writer count
+  (neither expands a shared part); the V8 reader and the classifier refuse
+  a larger stored value (one Deno or an earlier build wrote) before the
+  host builds past the bounds, each with the recoverable `TypeError` `a KV value cannot
+  expand to more than <values> values or <units> code units of text` (on a
+  read prefixed as above), on every host. Each walk records the extent
+  below every aggregate with its height and adds it again at every later
+  reach. The V8 codec cannot see absent fields and never counts more than
+  the stage walk, so a `get` at the type a value was stored at never
+  refuses what its `set` stored; a `get` at another type may count more
+  absent fields and refuse by name. The value bound keeps the decode of the
+  largest value within `kv::DECODE_FUEL_SHARE` of a production turn's fuel
+  (asserted in `budget`); the text bound is what an unshared value of
+  `kv::MAX_VALUE_BYTES` can hold. Deno, which keeps shared parts shared, has
+  neither bound: a value beyond them that Deno stores and reads, whether
+  shared or not (an array of more numbers than the value bound fits in
+  `kv::MAX_VALUE_BYTES`), is refused here.
+  The classifier also pays the decoded values' fuel as it goes, every
+  `varta_kv_codec::DEADLINE_STRIDE` values, so neither a stored value nor
+  the turn's fuel lets it build past what the turn pays for.
 - **V8 codec** (`varta-runtime` `kv::v8`, owned code, no V8). The writer emits
   the header `0xFF 0x10` (serializer version 16, what V8 15.0 in Deno 2.9.x
   writes) and one value: an integral number in the 32-bit Smi range other than

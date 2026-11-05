@@ -556,3 +556,160 @@ fn values_built_for_writing_match_deno() {
         );
     }
 }
+
+/// Append the base-128 varint of `value`.
+fn varint(bytes: &mut Vec<u8>, value: usize) {
+    let mut rest = u32::try_from(value).unwrap();
+    loop {
+        let low = (rest & 0x7F) as u8;
+        rest >>= 7;
+        if rest == 0 {
+            bytes.push(low);
+            return;
+        }
+        bytes.push(low | 0x80);
+    }
+}
+
+/// The serializer header Varta writes.
+fn header() -> Vec<u8> {
+    vec![0xFF, u8::try_from(WRITE_VERSION).unwrap()]
+}
+
+/// `levels` diamonds over `{}`: each level `{ a: x, b: x }` of the level
+/// below, one object written once and back-referenced.
+fn diamond(levels: usize) -> Value {
+    (0..levels).fold(Value::Object(Rc::new(Object::Plain(vec![]))), |x, _| {
+        Value::Object(Rc::new(Object::Plain(vec![
+            (Key::Name(units("a")), x.clone()),
+            (Key::Name(units("b")), x),
+        ])))
+    })
+}
+
+/// The bytes V8 writes for [`diamond`]: level `k` (object id
+/// `levels - k`) back-references level `k - 1` in `b`.
+fn diamond_bytes(levels: usize) -> Vec<u8> {
+    fn body(bytes: &mut Vec<u8>, level: usize, levels: usize) {
+        bytes.push(b'o');
+        if level == 0 {
+            bytes.extend([b'{', 0]);
+            return;
+        }
+        bytes.extend([b'"', 1, b'a']);
+        body(bytes, level - 1, levels);
+        bytes.extend([b'"', 1, b'b', b'^']);
+        varint(bytes, levels - level + 1);
+        bytes.extend([b'{', 2]);
+    }
+    let mut bytes = header();
+    body(&mut bytes, levels, levels);
+    bytes
+}
+
+/// The values of [`diamond`]`(levels)` expanded: `2^(levels + 1) - 1`.
+fn diamond_values(levels: usize) -> usize {
+    (1 << (levels + 1)) - 1
+}
+
+/// A shared object counts toward the extent at every reach, written and
+/// read: the largest diamond within [`crate::MAX_VALUE_NODES`] round-trips
+/// with its sharing; the next one and a far larger one (a few hundred
+/// bytes, millions of values expanded) fail by name.
+#[test]
+fn shared_objects_count_toward_the_extent_at_every_reach() {
+    let fits = (crate::MAX_VALUE_NODES + 1).ilog2() as usize - 1;
+    assert!(diamond_values(fits) <= crate::MAX_VALUE_NODES);
+    assert!(diamond_values(fits + 1) > crate::MAX_VALUE_NODES);
+    let bytes = encode(&diamond(fits), usize::MAX).unwrap();
+    assert_eq!(bytes, diamond_bytes(fits));
+    assert_eq!(decode(&bytes, LIMITS), Ok(diamond(fits)));
+    assert_eq!(
+        encode(&diamond(fits + 1), usize::MAX),
+        Err(V8Error::Expanded)
+    );
+    const FAR: usize = 22;
+    for levels in [fits + 1, FAR] {
+        assert_eq!(
+            decode(&diamond_bytes(levels), LIMITS),
+            Err(V8Error::Expanded),
+            "{levels}"
+        );
+    }
+    assert_eq!(V8Error::Expanded.to_string(), crate::too_expanded());
+}
+
+/// Without sharing a value holds at most [`crate::MAX_VALUE_NODES`] values:
+/// an array of one fewer element is written and read, one more fails.
+#[test]
+fn unshared_values_keep_the_value_bound() {
+    let nulls =
+        |count: usize| Value::Object(Rc::new(Object::Dense(vec![Some(Value::Null); count])));
+    let bytes = |count: usize| {
+        let mut bytes = header();
+        bytes.push(b'A');
+        varint(&mut bytes, count);
+        bytes.extend(core::iter::repeat_n(b'0', count));
+        bytes.extend([b'$', 0]);
+        varint(&mut bytes, count);
+        bytes
+    };
+    let fits = crate::MAX_VALUE_NODES - 1;
+    let written = encode(&nulls(fits), usize::MAX).unwrap();
+    assert_eq!(written, bytes(fits));
+    assert_eq!(decode(&written, LIMITS), Ok(nulls(fits)));
+    assert_eq!(encode(&nulls(fits + 1), usize::MAX), Err(V8Error::Expanded));
+    assert_eq!(decode(&bytes(fits + 1), LIMITS), Err(V8Error::Expanded));
+}
+
+/// Text counts at every reach too: `count` elements of an array share one
+/// object `{ s: "x…" }`; they fit [`crate::MAX_VALUE_UNITS`] up to the
+/// reach that would exceed it, written and read.
+#[test]
+fn shared_text_counts_toward_the_extent_at_every_reach() {
+    const TEXT: usize = 1000;
+    // The key `s` and the text, at every reach.
+    let fits = crate::MAX_VALUE_UNITS / (1 + TEXT);
+    let shared = Value::Object(Rc::new(Object::Plain(vec![(
+        Key::Name(units("s")),
+        Value::String(vec![u16::from(b'x'); TEXT]),
+    )])));
+    let reaches =
+        |count: usize| Value::Object(Rc::new(Object::Dense(vec![Some(shared.clone()); count])));
+    // The array is object 0, the shared object 1.
+    let bytes = |count: usize| {
+        let mut bytes = header();
+        bytes.push(b'A');
+        varint(&mut bytes, count);
+        bytes.extend([b'o', b'"', 1, b's', b'"']);
+        varint(&mut bytes, TEXT);
+        bytes.extend(core::iter::repeat_n(b'x', TEXT));
+        bytes.extend([b'{', 1]);
+        for _ in 1..count {
+            bytes.extend([b'^', 1]);
+        }
+        bytes.extend([b'$', 0]);
+        varint(&mut bytes, count);
+        bytes
+    };
+    let written = encode(&reaches(fits), usize::MAX).unwrap();
+    assert_eq!(written, bytes(fits));
+    assert_eq!(decode(&written, LIMITS), Ok(reaches(fits)));
+    assert_eq!(
+        encode(&reaches(fits + 1), usize::MAX),
+        Err(V8Error::Expanded)
+    );
+    assert_eq!(decode(&bytes(fits + 1), LIMITS), Err(V8Error::Expanded));
+}
+
+#[test]
+fn keys_count_their_text() {
+    assert_eq!(Key::Index(0).units(), 1);
+    assert_eq!(Key::Index(9).units(), 1);
+    assert_eq!(Key::Index(10).units(), 2);
+    assert_eq!(
+        Key::Index(MAX_ARRAY_INDEX).units(),
+        MAX_ARRAY_INDEX.to_string().len()
+    );
+    assert_eq!(Key::Name(units("ab")).units(), 2);
+}

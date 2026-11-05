@@ -54,6 +54,26 @@ pub const MAX_OPEN_DATABASES: usize = 8;
 pub const MAX_STAGED: usize = 2 * MAX_MUTATIONS + MAX_CHECKS;
 /// Encoded bytes staged at once (the largest commit's keys and values).
 pub const MAX_STAGED_BYTES: usize = MAX_TOTAL_MUTATION_BYTES + MAX_TOTAL_KEY_BYTES;
+/// Values one KV value decodes to: every stored value, a part shared within
+/// the value counted again at every reach (a read expands it), and the
+/// `undefined` of every absent optional field of its records. A `get` pays
+/// `fuel::JSON_PARSE_VALUE` for each, so the bound keeps the
+/// decode of the largest value within [`DECODE_FUEL_SHARE`] of a production
+/// v38 turn (`budget::TURN_FUEL`, asserted there). Deno KV, which keeps
+/// shared parts shared and has no fuel, has no such bound.
+pub const MAX_VALUE_NODES: usize = 2 * 1024;
+/// UTF-16 code units of text one KV value decodes to (its strings and
+/// property keys, an array-index key as its decimal digits), a shared part
+/// counted again at every reach: what a value without shared parts of
+/// [`MAX_VALUE_BYTES`] encoded bytes can hold (a Latin-1 code unit takes one
+/// byte), so sharing never makes a read build more text than an unshared
+/// value of the largest size.
+pub const MAX_VALUE_UNITS: usize = MAX_VALUE_BYTES;
+/// The share of a production v38 turn's fuel the decode of a KV value at
+/// [`MAX_VALUE_NODES`] may use: one half, leaving the other half to the read
+/// itself (its operation, entry and byte charges), the guest allocator that
+/// builds the result and the application.
+pub const DECODE_FUEL_SHARE: u64 = 2;
 
 /// Deno KV's limits (`deno_kv::KvConfig` defaults of Deno 2.9.4).
 pub const MAX_WRITE_KEY_BYTES: usize = 2048;
