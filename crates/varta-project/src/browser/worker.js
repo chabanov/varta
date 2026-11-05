@@ -143,6 +143,11 @@ self.onmessage = async ({ data }) => {
     implementations.env_has16=(ptr,len)=>environmentImport('env_has16',ptr,len);
     const snapshotOperation=registry.effects.environment.operation;
     implementations[snapshotOperation]=(ptr,len)=>environmentImport(snapshotOperation,ptr,len);
+    // V38 KV storage: the contract of a host without KV storage (kvStore),
+    // created by the first KV call like the environment imports.
+    let kvHost;
+    for(const name of Object.values(registry.kv.operations))implementations[name]=(...args)=>(kvHost??=kvStore.createKvHost({memory:()=>instance.exports[descriptor.memoryExport],broker,emit,writeResult,
+      chargeBytes:n=>{if(profile.fairFuel)tank.charge('byte',n);}}))[name](...args);
     // Pilot effects, each equal to its native handler after the shared call
     // charge. The clock is an audited `time.now` operation (exact package
     // request and the ceiling's own `true`, decided before the clock is read);
@@ -245,12 +250,12 @@ self.onmessage = async ({ data }) => {
     const varta = Object.create(null);
     // Capabilities whose checks this Worker implements; any other gated
     // import is refused before instantiation.
-    const checkedCapabilities = new Set([registry.scheduler.timer.capability, registry.network.capability, 'env.get', 'env.has', clock.capability, exit.capability]);
+    const checkedCapabilities = new Set([registry.scheduler.timer.capability, registry.network.capability, 'env.get', 'env.has', clock.capability, exit.capability, registry.kv.capabilities.read, registry.kv.capabilities.write]);
     for (const item of descriptor.imports) {
       const operation = registry.operations.find((operation) => operation.name === item.name);
       if (!operation || !operation.admittedUnder.includes(profile.name) || operation.capability !== null && !checkedCapabilities.has(operation.capability) || !Object.hasOwn(implementations, item.name)) throw new Error(`unsupported browser effect: ${item.name}`);
       varta[item.name] = (...args) => {
-        if (operation.scheduler || operation.timerBookkeeping || operation.networkBookkeeping || operation.instanceBookkeeping) { if (profile.fairFuel) tank.charge("call"); }
+        if (operation.scheduler || operation.timerBookkeeping || operation.networkBookkeeping || operation.instanceBookkeeping || operation.kvBookkeeping) { if (profile.fairFuel) tank.charge("call"); }
         else tick();
         return implementations[item.name](...args);
       };

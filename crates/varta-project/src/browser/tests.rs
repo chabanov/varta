@@ -616,3 +616,101 @@ fn invalid_input_failure_text_equals_the_native_runtime_diagnostic() {
         ]
     );
 }
+
+/// A v38 program that opens a KV database, writes and reads a credential
+/// and logs what rejects.
+const KV_SOURCE: &str = "export async function main(): Promise<void> {\
+  try {\
+    const kv = await varta.kv.open('/data/app.kv');\
+    await kv.set(['credentials', 'apiKey'], 'secret');\
+    const entry = await kv.get<string>(['credentials', 'apiKey']);\
+    console.log(entry.value ?? 'none');\
+    kv.close();\
+  } catch (error) {\
+    if (error instanceof Error) { console.log(error.name + ': ' + error.message); }\
+  }\
+}";
+
+/// The KV imports are admitted under v38: a program using every one gets a
+/// bundle whose Worker carries the KV host (the contract of a host without
+/// KV storage, `kv-store.mjs`), and the loader does not.
+#[test]
+fn bundle_admits_the_v38_kv_imports() {
+    use varta_common::HostOperation as H;
+    let prepared = BrowserArtifact::prepare(&v38_source(KV_SOURCE), None).unwrap();
+    for operation in H::ALL.iter().filter(|operation| operation.kv()) {
+        assert!(
+            prepared
+                .inspection()
+                .imports
+                .iter()
+                .any(|import| import.name == operation.name()),
+            "{} not imported",
+            operation.name()
+        );
+    }
+    let bundle = prepared.bundle().unwrap();
+    let worker = std::str::from_utf8(&bundle.files()["varta-worker.js"]).unwrap();
+    assert!(worker.contains("const kvStore=(()=>{"));
+    assert!(worker.contains("kvStore.createKvHost"));
+    assert!(!worker.contains("import {registry}"));
+    let loader = std::str::from_utf8(&bundle.files()["varta-host.js"]).unwrap();
+    assert!(!loader.contains("createKvHost"));
+}
+
+/// KV admission is the native profile's import admission: every KV import
+/// is admitted under v38 and refused under the profile before it.
+#[test]
+fn kv_admission_follows_the_native_profile_imports() {
+    use super::bundle::unimplemented_effects;
+    use varta_common::{HostOperation as H, language::SUPPORTED_PROFILES};
+    let operations = H::ALL
+        .iter()
+        .copied()
+        .filter(|operation| operation.kv())
+        .collect::<Vec<_>>();
+    assert_eq!(operations.len(), 9);
+    for profile in SUPPORTED_PROFILES.iter().copied() {
+        for operation in &operations {
+            assert_eq!(
+                unimplemented_effects(profile, [operation.name()]).is_empty(),
+                varta_common::browser::admits(profile, *operation),
+                "{} under {:?}",
+                operation.name(),
+                profile
+            );
+        }
+    }
+    let names = operations.iter().map(|operation| operation.name());
+    assert!(unimplemented_effects(LanguageProfile::CheckedF64Utf16V38, names.clone()).is_empty());
+    assert_eq!(
+        unimplemented_effects(LanguageProfile::CheckedF64Utf16V37, names.clone()),
+        names.collect::<Vec<_>>()
+    );
+}
+
+/// The browser registry's KV denial is the native runtime's: an open that no
+/// grant covers logs it and rejects with `NotAllowedError` and the same text,
+/// which is what the browser host's every open produces.
+#[test]
+fn kv_denial_text_equals_the_native_runtime_denial() {
+    let kv = &varta_common::browser::registry()["kv"];
+    let path = "/data/app.kv";
+    let denial = kv["denialText"]
+        .as_str()
+        .unwrap()
+        .replace(kv["pathPlaceholder"].as_str().unwrap(), path);
+    let output = varta_runtime::VartaRuntime::new()
+        .run_wasm_bytes(&v38_source(KV_SOURCE).wasm, &[])
+        .unwrap();
+    assert_eq!(
+        output.lines,
+        [
+            format!("{LOG_PREFIX}{denial}"),
+            format!(
+                "{LOG_PREFIX}{}: {denial}",
+                kv["notAllowed"].as_str().unwrap()
+            )
+        ]
+    );
+}

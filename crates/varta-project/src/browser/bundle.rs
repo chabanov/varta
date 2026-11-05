@@ -40,6 +40,7 @@ const PERMISSION_PROMPT: &str = include_str!("permission-prompt.mjs");
 const EVENT_SOURCES: &str = include_str!("event-sources.mjs");
 const ENVIRONMENT: &str = include_str!("environment.mjs");
 const ENVIRONMENT_ABI: &str = include_str!("environment-abi.mjs");
+const KV_STORE: &str = include_str!("kv-store.mjs");
 const FUEL: &str = include_str!("../../../varta-common/browser/fuel.mjs");
 const ORIGINAL: &str = "app.wasm";
 const IMAGE: &str = "app.private.wasm";
@@ -92,6 +93,17 @@ const EFFECTS: &[H] = &[
     H::MathRandom,
     H::EnvSnapshot,
     H::ExitFloat,
+    // V38 KV storage: the contract of a host without KV storage (every
+    // `kv_open` is denied like an open no grant covers; `kv-store.mjs`).
+    H::KvOpen,
+    H::KvRead,
+    H::KvCommit,
+    H::KvStage,
+    H::KvEntry,
+    H::KvKey,
+    H::KvValue,
+    H::KvText,
+    H::KvClose,
 ];
 
 /// Whether the browser host implements `name` for a `profile` module: an
@@ -211,6 +223,9 @@ fn embedded_sources(dom: bool) -> String {
         .into_iter()
         .map(|(name, bindings, source, exports)| module(name, bindings, source, exports))
         .collect::<String>();
+    if !dom {
+        source.push_str(&module("kvStore", "", KV_STORE, "createKvHost"));
+    }
     if dom {
         source.push_str(&module("uiTiming", "", UI_TIMING, "createUiTiming"));
         source.push_str(&module(

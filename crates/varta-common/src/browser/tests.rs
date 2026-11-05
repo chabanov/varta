@@ -162,3 +162,74 @@ fn pilot_effect_facts_name_registered_operations_capabilities_and_collector_cons
         assert!(text.contains(collector["limitPlaceholder"].as_str().unwrap()));
     }
 }
+
+#[test]
+fn kv_facts_name_the_registered_operations_capabilities_and_bookkeeping() {
+    let data = registry();
+    let facts = &data["kv"];
+    let names = facts["operations"].as_object().unwrap();
+    let operations = HostOperation::ALL
+        .iter()
+        .copied()
+        .filter(|op| op.kv())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), operations.len());
+    for op in &operations {
+        assert!(
+            names.values().any(|name| name == op.name()),
+            "{}",
+            op.name()
+        );
+        assert!(admits(LanguageProfile::CheckedF64Utf16V38, *op));
+        assert!(!admits(LanguageProfile::CheckedF64Utf16V37, *op));
+    }
+    // The capabilities are the gated operations' own patterns grants.
+    assert_eq!(
+        facts["capabilities"]["read"],
+        json!(HostOperation::KvOpen.capability())
+    );
+    assert_eq!(
+        facts["capabilities"]["read"],
+        json!(HostOperation::KvRead.capability())
+    );
+    assert_eq!(
+        facts["capabilities"]["write"],
+        json!(HostOperation::KvCommit.capability())
+    );
+    for id in [crate::kv::READ_CAPABILITY, crate::kv::WRITE_CAPABILITY] {
+        assert_eq!(crate::capability_kind(id), Some(crate::GrantKind::Patterns));
+    }
+    // Bookkeeping is the entry, text and close handlers: no capability and
+    // no host-call charge.
+    let bookkeeping = data["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|op| op["kvBookkeeping"] == json!(true))
+        .map(|op| op["name"].as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        bookkeeping,
+        BTreeSet::from([
+            HostOperation::KvEntry.name(),
+            HostOperation::KvText.name(),
+            HostOperation::KvClose.name()
+        ])
+    );
+    assert!(bookkeeping.iter().all(|name| {
+        HostOperation::from_name(name).is_some_and(|op| op.kv() && op.capability().is_none())
+    }));
+    assert_eq!(facts["failed"], json!(crate::kv::FAILED));
+    assert_eq!(
+        facts["separator"],
+        json!(crate::kv::DESCRIPTOR_SEPARATOR.to_string())
+    );
+    assert_eq!(
+        facts["maxDescriptorBytes"],
+        json!(crate::kv::MAX_DESCRIPTOR_BYTES)
+    );
+    assert_eq!(facts["notAllowed"], json!(crate::kv::error::NOT_ALLOWED));
+    let denial = facts["denialText"].as_str().unwrap();
+    assert!(denial.contains(facts["pathPlaceholder"].as_str().unwrap()));
+    assert!(denial.contains(crate::kv::READ_CAPABILITY));
+}
