@@ -73,7 +73,8 @@ const FONT_FIXTURES: &str = "../varta-view/tests/fixtures";
 const VIEW_PROBE_FONT_DIRECTORY: &str = "fonts";
 
 /// The consent probe's sources and configuration: a required `kv.write`,
-/// an optional `kv.read` and buttons that request it.
+/// an optional `kv.read` and buttons that request it, and an optional
+/// any-HTTPS `ui.open_url` with a link longer than a native prompt shows.
 const CONSENT_PROBE_DIRECTORY: &str = "tests/fixtures/consent-probe";
 
 /// The probe artifact as `varta build` wrote it (Wasm and manifest), built

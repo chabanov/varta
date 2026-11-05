@@ -13,10 +13,14 @@
     "kv": {
       "read": ["/data/app.kv"],
       "write": ["/data/app.kv"]
+    },
+    "ui": {
+      "open_url": ["https://*"]
     }
   },
   "permissions": {
     "kv.write": { "required": true, "purpose": "Save your notes on this device" },
-    "kv.read": { "required": false, "purpose": "Read your saved notes" }
+    "kv.read": { "required": false, "purpose": "Read your saved notes" },
+    "ui.open_url": { "required": false, "purpose": "Open the documentation" }
   }
 }

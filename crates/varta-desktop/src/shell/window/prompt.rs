@@ -13,8 +13,10 @@
 //! window dismisses; closing the application's window ends the session
 //! and dismisses. At most `permission::MAX_OPEN_PROMPTS` prompt is open: a
 //! further request is dismissed at once. A request the layer cannot show
-//! in full is denied without a window (the consent seam refuses it before
-//! it gets here; this is the window's own check).
+//! in full is denied without a window and reported as a host diagnostic
+//! (the consent seam refuses it before it gets here; this is the window's
+//! own check). A page counts as shown only once its frame was presented on
+//! a surface that holds the whole prompt (`Host::prompt_presented`).
 use super::{GuiEvent, Host};
 use crate::shell::consent::{PromptKey, PromptLayer};
 use std::num::NonZeroU32;
@@ -84,6 +86,8 @@ pub(super) struct OpenPrompt {
     surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
     cursor: Option<(f32, f32)>,
     modifiers: ModifiersState,
+    /// Whether a frame clipped by a too small surface was reported.
+    clipped: bool,
 }
 impl OpenPrompt {
     pub(super) fn window(&self) -> Option<&Arc<Window>> {
@@ -157,15 +161,7 @@ impl Host {
     /// already open or the window cannot be created; deny it when it
     /// cannot be shown in full.
     pub(super) fn open_prompt(&mut self, event_loop: &ActiveEventLoop, request: PromptRequest) {
-        let layer = match PromptLayer::new(&request.prompt, Instant::now()) {
-            Ok(layer) => layer,
-            Err(error) => {
-                self.console.report(&error);
-                let _ = request.answer.send(PromptAnswer::Deny);
-                return;
-            }
-        };
-        let Some(mut open) = self.begin_prompt(layer, request.answer) else {
+        let Some(mut open) = self.admit_prompt(request, Instant::now()) else {
             return;
         };
         let (width, height) = open.layer.logical_size();
@@ -204,6 +200,24 @@ impl Host {
         }
     }
 
+    /// The prompt state of `request` shown at `now`, before its window
+    /// exists: denied (and reported as a host diagnostic) when it cannot be
+    /// shown in full, dismissed when a prompt is already open.
+    pub(super) fn admit_prompt(
+        &mut self,
+        request: PromptRequest,
+        now: Instant,
+    ) -> Option<OpenPrompt> {
+        match PromptLayer::new(&request.prompt, now) {
+            Ok(layer) => self.begin_prompt(layer, request.answer),
+            Err(error) => {
+                self.console.report(&error);
+                let _ = request.answer.send(PromptAnswer::Deny);
+                None
+            }
+        }
+    }
+
     /// Open the prompt state of `layer` and stop guest input in flight;
     /// `None` (the request dismissed) when a prompt is already open.
     pub(super) fn begin_prompt(
@@ -230,6 +244,7 @@ impl Host {
             surface: None,
             cursor: None,
             modifiers: ModifiersState::empty(),
+            clipped: false,
         })
     }
 
@@ -327,6 +342,27 @@ impl Host {
             return Err("prompt presentation dimensions differ".into());
         }
         buffer.copy_from_slice(&pixels);
-        buffer.present().map_err(|e| e.to_string())
+        buffer.present().map_err(|e| e.to_string())?;
+        self.prompt_presented(width, height, Instant::now());
+        Ok(())
+    }
+
+    /// The open prompt's frame for a `width`x`height` surface was presented
+    /// at `now`: its page counts as seen only when the surface holds the
+    /// whole layer. A surface that clips it (a display smaller than the
+    /// prompt) is reported once; Allow then stays unusable, while Deny,
+    /// Dismiss, Escape and the close button still answer.
+    pub(super) fn prompt_presented(&mut self, width: u32, height: u32, now: Instant) {
+        let Some(open) = &mut self.prompt else {
+            return;
+        };
+        if open.layer.presented(width, height, now) || open.clipped {
+            return;
+        }
+        open.clipped = true;
+        let (needed_width, needed_height) = open.layer.logical_size();
+        self.console.report(format_args!(
+            "the permission prompt needs at least {needed_width}x{needed_height} pixels and its window has {width}x{height}; a clipped page is not counted as shown, so Allow stays unavailable"
+        ));
     }
 }

@@ -10,6 +10,7 @@
 use super::prompt::NativePrompter;
 use super::{Console, GuiEvent, PointerState, PresentedFrame, ROOT_FONT_SIZE, WorkerMessage};
 use crate::pixels::update_rgb;
+use crate::shell::consent::HostPrompt;
 use crate::shell::{Launch, NativeEffects};
 use crate::{clipboard, timing, wake};
 use std::sync::{
@@ -102,7 +103,10 @@ pub(super) fn worker(
             .start_with(
                 layout,
                 Arc::new(NativeEffects::default()),
-                Some(Box::new(NativePrompter::new(proxy.clone()))),
+                Some(HostPrompt {
+                    prompter: Box::new(NativePrompter::new(proxy.clone())),
+                    unpresentable: Box::new(move |refused| console.report(refused)),
+                }),
             )
             .map_err(|e| e.to_string())?;
         let mut app = started.application;
@@ -417,7 +421,7 @@ pub(super) fn worker(
         // The session's last decisions and audit entries, on every exit;
         // after a failure the failure is reported, not the sync's error.
         match &mut consent {
-            Some(consent) => outcome.and(consent.sync(&mut app).map_err(|e| e.to_string())),
+            Some(consent) => consent.end(&mut app, outcome, |e| e.to_string()),
             None => outcome,
         }
     };

@@ -1,15 +1,13 @@
 //! Preparing an application instance: the packaged artifact, its fonts, its
 //! grants within the host ceiling, its stored permission decisions and its
 //! storage.
-use super::consent::{Consent, ConsentStore};
+use super::consent::{Consent, ConsentStore, HostPrompt};
 use super::{FontSet, ShellError, storage};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use varta_artifact::{Artifact, MAX_MANIFEST_BYTES, read_bounded};
 use varta_common::{CapabilityGrant, Manifest, VartaError};
-use varta_runtime::{
-    Application, ApplicationOptions, PermissionPrompter, RunOptions, VartaRuntime, ViewLayout,
-};
+use varta_runtime::{Application, ApplicationOptions, RunOptions, VartaRuntime, ViewLayout};
 use varta_view::PlatformEffects;
 
 /// The largest font file the shell reads from the command line: the
@@ -197,13 +195,14 @@ impl Launch {
     /// given so far are stored and audited even then. Optional grants
     /// without a decision are in `prompt` state: the runtime asks only for
     /// a `varta.permissions.request` of a user-gesture turn, between turns.
-    /// The returned [`Consent`] has already stored the first-run answers
-    /// and audited the start.
+    /// A request that cannot be shown in full is denied without asking and
+    /// reported to [`HostPrompt::unpresentable`]. The returned [`Consent`]
+    /// has already stored the first-run answers and audited the start.
     pub fn start_with(
         self,
         layout: ViewLayout,
         effects: Arc<dyn PlatformEffects>,
-        prompter: Option<Box<dyn PermissionPrompter>>,
+        prompt: Option<HostPrompt>,
     ) -> Result<Started, ShellError> {
         let Self {
             wasm,
@@ -211,8 +210,8 @@ impl Launch {
             mut consent,
             ..
         } = self;
-        let prompter = match (&consent, prompter) {
-            (Some(consent), Some(prompter)) => Some(consent.prompter(prompter)),
+        let prompter = match (&consent, prompt) {
+            (Some(consent), Some(prompt)) => Some(consent.prompter(prompt)),
             _ => None,
         };
         let started = VartaRuntime::new().start_application(

@@ -450,13 +450,18 @@ fn permission_prompt(required: bool) -> varta_common::permission::PermissionProm
     }
 }
 
-/// A layer that accepts input at once (shown one input delay ago).
+/// A layer that accepts input at once (shown and presented one input
+/// delay ago).
 fn ready_layer(required: bool) -> crate::shell::consent::PromptLayer {
     let now = Instant::now();
     let shown = now
         .checked_sub(crate::shell::consent::PROMPT_INPUT_DELAY)
         .unwrap_or(now);
-    crate::shell::consent::PromptLayer::new(&permission_prompt(required), shown).unwrap()
+    let mut layer =
+        crate::shell::consent::PromptLayer::new(&permission_prompt(required), shown).unwrap();
+    let (width, height) = layer.logical_size();
+    assert!(layer.presented(width, height, shown));
+    layer
 }
 
 fn mouse(state: winit::event::ElementState) -> winit::event::WindowEvent {
@@ -663,16 +668,130 @@ fn a_paged_prompt_answers_allow_only_after_every_page_was_shown() {
     click(&mut host);
     assert!(answers.try_recv().is_err());
     assert!(host.prompt.is_some());
-    // Every page shown, the last one an input delay ago: Allow answers.
+    // Every page selected but only the last one presented: still no.
     let turned = now.checked_sub(PROMPT_INPUT_DELAY).unwrap_or(now);
-    let layer = &mut host.prompt.as_mut().unwrap().layer;
+    let (width, height) = host.prompt.as_ref().unwrap().layer.logical_size();
     for _ in 1..pages {
+        let layer = &mut host.prompt.as_mut().unwrap().layer;
         assert_eq!(layer.key(PromptKey::NextPage, turned), None);
     }
-    assert_eq!(layer.page(), (pages - 1, pages));
+    host.prompt_presented(width, height, turned);
+    click(&mut host);
+    assert!(answers.try_recv().is_err());
+    // Every page presented, the last one an input delay ago: Allow answers.
+    for _ in 0..pages {
+        let layer = &mut host.prompt.as_mut().unwrap().layer;
+        assert_eq!(layer.key(PromptKey::NextPage, turned), None);
+        host.prompt_presented(width, height, turned);
+    }
+    assert_eq!(
+        host.prompt.as_ref().unwrap().layer.page(),
+        (pages - 1, pages)
+    );
     click(&mut host);
     assert_eq!(answers.try_recv(), Ok(PromptAnswer::Allow));
     assert!(host.prompt.is_none());
+}
+
+/// Host diagnostics of the tests that record them.
+static DIAGNOSTICS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+const RECORDING: super::Console = super::Console {
+    label: "varta-test",
+    output: |_| {},
+    diagnostic: |line| DIAGNOSTICS.lock().unwrap().push(line.to_owned()),
+};
+/// The recorded diagnostics that mention `text`.
+fn diagnostics(text: &str) -> Vec<String> {
+    DIAGNOSTICS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|line| line.contains(text))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_request_that_cannot_be_shown_in_full_is_denied_and_reported_by_the_window() {
+    use crate::shell::consent::MAX_RESOURCE_LINES;
+    use varta_common::permission::PromptAnswer;
+    let (mut host, _receiver) = headless_preview();
+    host.console = RECORDING;
+    // A link URL at the network URL limit needs more lines than a prompt
+    // shows.
+    let url = format!(
+        "https://a.test/{}",
+        "p".repeat(varta_common::net::MAX_URL_BYTES - "https://a.test/".len())
+    );
+    let capability = varta_common::view::OPEN_URL_CAPABILITY;
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    let request = super::prompt::PromptRequest {
+        prompt: varta_common::permission::PermissionPrompt {
+            capability: capability.into(),
+            scope: vec![url],
+            purpose: None,
+            ..permission_prompt(false)
+        },
+        answer,
+    };
+    assert!(host.admit_prompt(request, Instant::now()).is_none());
+    assert_eq!(answers.try_recv(), Ok(PromptAnswer::Deny));
+    assert!(host.prompt.is_none());
+    let reported = diagnostics(capability);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(
+        reported[0]
+            .starts_with("varta-test: denied the ui.open_url permission request without asking")
+    );
+    assert!(reported[0].contains(&format!("at most {MAX_RESOURCE_LINES}")));
+    // A request that fits opens the prompt state.
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    let request = super::prompt::PromptRequest {
+        prompt: permission_prompt(false),
+        answer,
+    };
+    assert!(host.admit_prompt(request, Instant::now()).is_some());
+    assert!(answers.try_recv().is_err());
+}
+
+#[test]
+fn a_clipped_prompt_frame_never_counts_as_shown_and_is_reported_once() {
+    use crate::shell::consent::{PROMPT_INPUT_DELAY, PromptLayer};
+    use varta_common::permission::PromptAnswer;
+    let (mut host, _receiver) = headless_preview();
+    host.console = RECORDING;
+    let now = Instant::now();
+    let shown = now.checked_sub(PROMPT_INPUT_DELAY * 2).unwrap_or(now);
+    let request = varta_common::permission::PermissionPrompt {
+        capability: "kv.read".into(),
+        ..permission_prompt(false)
+    };
+    let layer = PromptLayer::new(&request, shown).unwrap();
+    let (width, height) = layer.logical_size();
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    host.prompt = host.begin_prompt(layer, answer);
+    let short = height - 1;
+    for _ in 0..2 {
+        host.prompt_presented(width, short, shown);
+    }
+    let reported = diagnostics(&format!("its window has {width}x{short}"));
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    let layer = &host.prompt.as_ref().unwrap().layer;
+    assert!(!layer.allow_ready(now));
+    // Keyboard Allow is out of reach; Escape still dismisses.
+    let layer = &mut host.prompt.as_mut().unwrap().layer;
+    for _ in 0..4 {
+        layer.key(crate::shell::consent::PromptKey::Next, now);
+        assert_ne!(layer.focused(), Some(PromptAnswer::Allow));
+    }
+    assert_eq!(
+        layer.key(crate::shell::consent::PromptKey::Cancel, now),
+        Some(PromptAnswer::Dismiss)
+    );
+    // Presented whole, the page counts.
+    host.prompt_presented(width, height, shown);
+    assert!(host.prompt.as_ref().unwrap().layer.allow_ready(now));
+    assert!(answers.try_recv().is_err());
 }
 
 #[test]

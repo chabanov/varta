@@ -18,8 +18,10 @@
 //!   ([`PromptLayer`]), which the window presents in its own host window.
 //!   Every requested pattern is shown in full (paged); a request that
 //!   cannot be shown in full within [`MAX_RESOURCE_LINES`] is never shown:
-//!   the seam answers it Deny without asking and audits an
-//!   [`UNPRESENTABLE_PROMPT`] row.
+//!   the seam answers it Deny without asking, tells the host
+//!   ([`HostPrompt::unpresentable`], stderr in `varta-shell`) and audits an
+//!   [`UNPRESENTABLE_PROMPT`] row. The browser host shows such a request; this
+//!   is a documented difference between the hosts.
 //! - **Revocation** of a stored grant from outside the instance
 //!   ([`ConsentStore::revoke`]): a running instance applies it to new
 //!   operations when [`Consent::sync`] next rereads the file, which it does
@@ -30,8 +32,10 @@
 //!
 //! Every read-modify-write of the decision file (an instance's sync, a
 //! refused start's answers, `--revoke`) holds the store's advisory lock
-//! ([`LOCK_FILE`]), so an outside denial is never overwritten by a
-//! concurrent answer: the instance sees it under the lock and revokes.
+//! ([`LOCK_FILE`]) and keeps every decision that changed from outside since
+//! the writer last read the file, so an outside denial is never overwritten
+//! by a concurrent answer: a running instance sees it under the lock and
+//! revokes, and a refused start stores none of its answers over it.
 //!
 //! Prompts are rate-limited by the broker exactly as in the browser host:
 //! `permission::MAX_OPEN_PROMPTS` open prompt and
@@ -97,22 +101,34 @@ pub struct Consent {
     unpresentable: Arc<Mutex<Vec<Unpresentable>>>,
 }
 
+/// The host's permission prompt for `Launch::start_with`.
+pub struct HostPrompt {
+    /// Asks the user: the window's prompt, or a scripted provider.
+    pub prompter: Box<dyn PermissionPrompter>,
+    /// Told of every request the consent seam denies without asking
+    /// because it cannot be shown in full ([`PromptTooLong`], whose message
+    /// says so). The window writes it as a host diagnostic, which
+    /// `varta-shell` prints on stderr.
+    pub unpresentable: Box<dyn FnMut(&PromptTooLong) + Send>,
+}
+
 /// The prompt seam the runtime receives: the host's prompter, recording
 /// first-run answers so a refused start can still store them. A request
 /// that cannot be shown in full never reaches the host's prompter: it is
 /// answered [`PromptAnswer::Deny`] (stored like any Deny of a grant, since
 /// the package's request never changes; never stored for a `ui.open_url`
-/// link) and recorded for the audit log.
+/// link), reported to the host and recorded for the audit log.
 struct Recording {
-    inner: Box<dyn PermissionPrompter>,
+    host: HostPrompt,
     first_run: Arc<Mutex<Vec<Answered>>>,
     unpresentable: Arc<Mutex<Vec<Unpresentable>>>,
 }
 impl PermissionPrompter for Recording {
     fn prompt(&mut self, prompt: &PermissionPrompt) -> PromptAnswer {
         let answer = match PromptLayer::check(prompt) {
-            Ok(_) => self.inner.prompt(prompt),
+            Ok(_) => self.host.prompter.prompt(prompt),
             Err(error) => {
+                (self.host.unpresentable)(&error);
                 locked(&self.unpresentable).push(Unpresentable {
                     error,
                     at: Instant::now(),
@@ -169,13 +185,10 @@ impl Consent {
         self.store.file(&self.observed)
     }
 
-    /// Wrap the host's prompter for the runtime.
-    pub(super) fn prompter(
-        &self,
-        inner: Box<dyn PermissionPrompter>,
-    ) -> Box<dyn PermissionPrompter> {
+    /// Wrap the host's prompt for the runtime.
+    pub(super) fn prompter(&self, host: HostPrompt) -> Box<dyn PermissionPrompter> {
         Box::new(Recording {
-            inner,
+            host,
             first_run: self.first_run.clone(),
             unpresentable: self.unpresentable.clone(),
         })
@@ -183,7 +196,10 @@ impl Consent {
 
     /// A start the runtime refused: store the Allow and Deny answers of
     /// its first-run prompts (a dismissal stores nothing) and audit them,
-    /// after the requests refused without a prompt.
+    /// after the requests refused without a prompt. An answer is not
+    /// stored over a decision that changed from outside since the file was
+    /// read at [`Self::open`] (a `--revoke` while the prompt was open):
+    /// the outside change wins, as in [`Self::sync`].
     pub(super) fn refused(&mut self, error: &RuntimeError) -> Result<(), ShellError> {
         let mut rows = self.unpresentable_rows();
         let answered = if matches!(
@@ -216,8 +232,16 @@ impl Consent {
         if !stored.is_empty() {
             self.store.locked(|| {
                 let mut decisions = self.store.load()?;
-                decisions.extend(stored);
-                self.store.save(&decisions)
+                let mut write = false;
+                for (id, decision) in stored {
+                    if decisions.get(&id) == self.observed.get(&id) {
+                        write |= decisions.insert(id, decision) != Some(decision);
+                    }
+                }
+                if write {
+                    self.store.save(&decisions)?;
+                }
+                Ok(())
             })?;
         }
         self.store.append_audit(&rows)
@@ -334,6 +358,20 @@ impl Consent {
         self.stamp = self.store.stamp();
         self.baseline = own;
         Ok(())
+    }
+
+    /// End the session, whatever ended it: one last [`Self::sync`], so the
+    /// decisions and audit entries of turns since the previous sync are
+    /// kept. A failed session's `outcome` is returned in preference to an
+    /// error of the sync itself, which `error` converts otherwise.
+    pub fn end<E>(
+        &mut self,
+        app: &mut Application,
+        outcome: Result<(), E>,
+        error: impl FnOnce(ShellError) -> E,
+    ) -> Result<(), E> {
+        let synced = self.sync(app);
+        outcome.and_then(|()| synced.map_err(error))
     }
 
     fn audit(&mut self, app: &Application) -> Result<(), ShellError> {

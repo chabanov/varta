@@ -6,6 +6,9 @@
 //! font the guest can influence. Every character outside printable ASCII
 //! is shown as its Unicode escape (`\u{...}`, [`visible`]), so a lookalike
 //! letter or an invisible character in a purpose or resource stays visible.
+//! A backslash is shown doubled, so text that itself reads `\u{430}` can
+//! never pass for the escape of a character. Lines are broken only between
+//! the [`units`] of shown text, never inside an escape.
 
 /// Columns and rows of one glyph cell, and the rows above the baseline.
 pub(super) const COLUMNS: usize = 5;
@@ -167,19 +170,74 @@ pub(super) fn rows(character: char) -> Option<&'static [u8; ROWS]> {
     drawable(character).then(|| &GLYPHS[character as usize - FIRST as usize])
 }
 
+/// The character that starts an escape; shown doubled ([`ESCAPED_BACKSLASH`]).
+const BACKSLASH: char = '\\';
+/// How the prompt shows a backslash of the text itself.
+const ESCAPED_BACKSLASH: &str = "\\\\";
+/// The character that ends a Unicode escape.
+const ESCAPE_END: u8 = b'}';
+/// The most characters one unit of shown text takes: the escape of the
+/// largest code point, `\u{10ffff}`.
+pub(super) const MAX_UNIT_CHARS: usize = 10;
+
 /// `text` with every character the table cannot draw replaced by its
-/// Unicode escape, so the prompt shows exactly which code points it holds.
+/// Unicode escape and every backslash doubled, so the prompt shows exactly
+/// which code points it holds and no escape can be imitated.
 #[must_use]
 pub(super) fn visible(text: &str) -> String {
     let mut shown = String::with_capacity(text.len());
     for character in text.chars() {
-        if drawable(character) {
+        if character == BACKSLASH {
+            shown.push_str(ESCAPED_BACKSLASH);
+        } else if drawable(character) {
             shown.push(character);
         } else {
             shown.extend(character.escape_unicode());
         }
     }
     shown
+}
+
+/// The units of `shown` ([`visible`] output) in order: one drawable
+/// character, a doubled backslash or one whole `\u{...}` escape. A line
+/// break between units never splits an escape.
+#[must_use]
+pub(super) fn units(shown: &str) -> Vec<&str> {
+    let bytes = shown.as_bytes();
+    let mut units = Vec::new();
+    let mut start = 0;
+    while start < bytes.len() {
+        let length = if bytes[start] == BACKSLASH as u8 {
+            if bytes.get(start + 1) == Some(&(BACKSLASH as u8)) {
+                ESCAPED_BACKSLASH.len()
+            } else {
+                bytes[start..]
+                    .iter()
+                    .position(|byte| *byte == ESCAPE_END)
+                    .map_or(1, |end| end + 1)
+            }
+        } else {
+            shown[start..].chars().next().map_or(1, char::len_utf8)
+        };
+        units.push(&shown[start..start + length]);
+        start += length;
+    }
+    units
+}
+
+/// The byte length of the longest prefix of `shown` ([`visible`] output)
+/// made of whole [`units`] and at most `width` characters; at least its
+/// first unit, so a caller always makes progress.
+#[must_use]
+pub(super) fn fit(shown: &str, width: usize) -> usize {
+    let mut length = 0;
+    for unit in units(shown) {
+        if length > 0 && length + unit.len() > width {
+            break;
+        }
+        length += unit.len();
+    }
+    length
 }
 
 #[cfg(test)]
@@ -198,6 +256,19 @@ mod tests {
             "p\\u{430}y\\u{200b}.test"
         );
         assert!(visible("\u{1F600}").chars().all(drawable));
+        // A text that spells an escape is not one: its backslash is doubled.
+        assert_eq!(visible("p\\u{430}y"), "p\\\\u{430}y");
+        assert_ne!(visible("p\\u{430}y"), visible("p\u{430}y"));
+        assert_eq!(
+            units(&visible("a\\\u{430}\u{10ffff}b")),
+            ["a", "\\\\", "\\u{430}", "\\u{10ffff}", "b"]
+        );
+        assert_eq!(char::MAX.escape_unicode().count(), MAX_UNIT_CHARS);
+        // A cut keeps whole units, and always at least the first one.
+        let shown = visible("ab\u{430}c");
+        assert_eq!(fit(&shown, 4), "ab".len());
+        assert_eq!(fit(&shown, 9), "ab\\u{430}".len());
+        assert_eq!(fit(&visible("\u{430}"), 1), "\\u{430}".len());
         // Every visible glyph lights at least one pixel and no row uses
         // more than the cell's columns.
         for character in '!'..=LAST {

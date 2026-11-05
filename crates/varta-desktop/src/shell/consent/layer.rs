@@ -13,13 +13,17 @@
 //!
 //! Every requested pattern is shown in full, never cut or left out: the
 //! resource lines are paged, [`RESOURCE_PAGE_LINES`] per page, and the
-//! first line of each pattern is marked in the margin. While a page has
-//! not been shown, Allow is drawn disabled and ignores presses and keys; it
-//! answers only once every page has been on screen and
-//! [`PROMPT_INPUT_DELAY`] has passed since the last unseen page appeared.
+//! first line of each pattern is marked in the margin. A page counts as
+//! shown only once the window reports it presented whole
+//! ([`PromptLayer::presented`]) on a surface that holds the entire layer;
+//! selecting it is not enough. While a page has not been shown, Allow is
+//! drawn disabled and ignores presses and keys; it answers only once every
+//! page has been presented and [`PROMPT_INPUT_DELAY`] has passed since the
+//! last unseen page was.
 //! A request whose resources need more than [`MAX_RESOURCE_LINES`] lines is
-//! never shown ([`PromptTooLong`]); the consent seam answers it Deny and
-//! audits why.
+//! never shown ([`PromptTooLong`]); the consent seam answers it Deny without
+//! asking, reports it to the host's diagnostics and audits why. The browser
+//! host shows such a request (a documented cross-host difference).
 use super::glyphs::{self, CAP_ROWS, COLUMNS, ROWS};
 use std::time::{Duration, Instant};
 use varta_common::permission::{PermissionPrompt, PromptAnswer};
@@ -133,7 +137,7 @@ pub enum PromptKey {
 /// [`MAX_RESOURCE_LINES`]; it is never shown.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "the {capability} permission request needs {lines} lines of requested resources; a prompt shows at most {MAX_RESOURCE_LINES}, so it is not shown and is denied"
+    "denied the {capability} permission request without asking: its requested resources need {lines} lines and a native permission prompt shows at most {MAX_RESOURCE_LINES} in full, so no prompt was shown and no user decided"
 )]
 pub struct PromptTooLong {
     pub capability: String,
@@ -229,10 +233,10 @@ pub struct PromptLayer {
     resource_top: u32,
     pager: Option<u32>,
     page: usize,
-    /// Which resource pages have been shown.
+    /// Which resource pages have been presented ([`Self::presented`]).
     seen: Vec<bool>,
-    /// When the last unseen page appeared (when the layer was shown, for a
-    /// single page); `None` while a page is unseen.
+    /// When the last unseen page was presented; `None` while a page (the
+    /// only one, for a single page) has not been.
     all_seen: Option<Instant>,
     buttons: Vec<Button>,
     height: u32,
@@ -265,8 +269,10 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
                 lines.push(std::mem::take(&mut current));
                 continue;
             }
-            // A word longer than a line: hard break (ASCII only here).
-            let (head, tail) = word.split_at(width);
+            // A word longer than a line: hard break between whole units
+            // (`text` is [`glyphs::visible`] output, so every cut falls
+            // between characters and never inside an escape).
+            let (head, tail) = word.split_at(glyphs::fit(word, width));
             lines.push(head.to_owned());
             word = tail;
         }
@@ -277,17 +283,24 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Lines of `text` cut every `width` characters (identifiers and patterns,
-/// where every character matters). `text` is [`glyphs::visible`] output,
-/// so it is ASCII and every cut falls between characters.
+/// Lines of `text` at most `width` characters wide, filled with whole
+/// [`glyphs::units`] (identifiers and patterns, where every character
+/// matters): a `\u{...}` escape or a doubled backslash is never split
+/// across lines or pages. `text` is [`glyphs::visible`] output.
 fn wrap_hard(text: &str, width: usize) -> Vec<String> {
-    if text.is_empty() {
-        return vec![String::new()];
+    // Every unit fits a line, so no line is ever wider than `width`.
+    debug_assert!(width >= glyphs::MAX_UNIT_CHARS);
+    let mut lines = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let (line, tail) = rest.split_at(glyphs::fit(rest, width));
+        lines.push(line.to_owned());
+        rest = tail;
     }
-    text.as_bytes()
-        .chunks(width)
-        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
-        .collect()
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 /// Every line of every requested pattern, in request order.
@@ -430,7 +443,9 @@ impl PromptLayer {
                 lines.truncate(MAX_QUOTE_LINES);
                 if let Some(last) = lines.last_mut() {
                     let keep = columns(Style::Quote) - CUT.len();
-                    last.truncate(keep.min(last.len()));
+                    if last.len() > keep {
+                        last.truncate(glyphs::fit(last, keep));
+                    }
                     last.push_str(CUT);
                 }
             }
@@ -447,8 +462,6 @@ impl PromptLayer {
             .iter()
             .position(|button| button.action == Action::Answer(PromptAnswer::Deny))
             .unwrap_or_default();
-        let mut seen = vec![false; pages];
-        seen[0] = true;
         Ok(Self {
             height: text.y + BUTTON_HEIGHT + PADDING,
             lines: text.lines,
@@ -456,8 +469,8 @@ impl PromptLayer {
             resource_top,
             pager,
             page: 0,
-            seen,
-            all_seen: (pages == 1).then_some(shown),
+            seen: vec![false; pages],
+            all_seen: None,
             buttons,
             focus,
             pressed: None,
@@ -492,8 +505,8 @@ impl PromptLayer {
         now.saturating_duration_since(self.shown) >= PROMPT_INPUT_DELAY
     }
 
-    /// Whether Allow answers at `now`: every resource page has been shown,
-    /// the last unseen one at least [`PROMPT_INPUT_DELAY`] ago.
+    /// Whether Allow answers at `now`: every resource page has been
+    /// presented, the last unseen one at least [`PROMPT_INPUT_DELAY`] ago.
     #[must_use]
     pub fn allow_ready(&self, now: Instant) -> bool {
         self.ready(now)
@@ -503,23 +516,50 @@ impl PromptLayer {
     }
 
     /// Whether the button at `index` can take focus and presses: Allow only
-    /// once every page has been shown.
+    /// once every page has been presented.
     fn enabled(&self, index: usize) -> bool {
         self.buttons[index].action != Action::Answer(PromptAnswer::Allow) || self.all_seen.is_some()
     }
 
-    /// Show the next (or previous) resource page.
-    fn turn(&mut self, forward: bool, now: Instant) {
+    /// Whether a `width`x`height` surface holds the whole layer, so a frame
+    /// presented on it shows every line and button.
+    #[must_use]
+    pub fn fits(&self, width: u32, height: u32) -> bool {
+        width >= LAYER_WIDTH && height >= self.height
+    }
+
+    /// The window presented the layer's pixels for a `width`x`height`
+    /// surface ([`Self::render`]) at `now`: the shown page counts as seen
+    /// when the surface holds the whole layer ([`Self::fits`]). Returns
+    /// whether it did; a clipped frame shows nothing as seen.
+    pub fn presented(&mut self, width: u32, height: u32, now: Instant) -> bool {
+        if !self.fits(width, height) {
+            return false;
+        }
+        self.seen[self.page] = true;
+        if self.all_seen.is_none() && self.seen.iter().all(|seen| *seen) {
+            self.all_seen = Some(now);
+        }
+        true
+    }
+
+    /// Whether Allow is drawn usable on a `width`x`height` surface: it is
+    /// usable, or presenting this frame whole shows the last unseen page.
+    fn allow_drawn_enabled(&self, width: u32, height: u32) -> bool {
+        self.all_seen.is_some()
+            || (self.fits(width, height)
+                && (0..self.seen.len()).all(|page| self.seen[page] || page == self.page))
+    }
+
+    /// Select the next (or previous) resource page; it counts as seen once
+    /// it is presented.
+    fn turn(&mut self, forward: bool) {
         let pages = self.seen.len();
         self.page = if forward {
             (self.page + 1) % pages
         } else {
             (self.page + pages - 1) % pages
         };
-        self.seen[self.page] = true;
-        if self.all_seen.is_none() && self.seen.iter().all(|seen| *seen) {
-            self.all_seen = Some(now);
-        }
     }
 
     /// Activate the button at `index`: its answer, or a page turn.
@@ -529,7 +569,7 @@ impl PromptLayer {
         }
         match self.buttons[index].action {
             Action::NextPage => {
-                self.turn(true, now);
+                self.turn(true);
                 None
             }
             Action::Answer(PromptAnswer::Allow) => {
@@ -625,7 +665,7 @@ impl PromptLayer {
             PromptKey::Cancel => self.ready(now).then_some(PromptAnswer::Dismiss),
             PromptKey::NextPage | PromptKey::PreviousPage => {
                 if self.ready(now) && self.seen.len() > 1 {
-                    self.turn(key == PromptKey::NextPage, now);
+                    self.turn(key == PromptKey::NextPage);
                 }
                 None
             }
@@ -747,7 +787,12 @@ impl PromptLayer {
                     BACKGROUND,
                 );
             }
-            let (edge, fill, label) = if self.enabled(index) {
+            let usable = if button.action == Action::Answer(PromptAnswer::Allow) {
+                self.allow_drawn_enabled(width, height)
+            } else {
+                self.enabled(index)
+            };
+            let (edge, fill, label) = if usable {
                 (BUTTON_EDGE, BUTTON_FILL, TEXT)
             } else {
                 (DISABLED_EDGE, DISABLED_FILL, DISABLED_TEXT)
@@ -836,8 +881,18 @@ mod tests {
         }
     }
 
+    /// The layer of `prompt` as the window first presents it, at `shown`.
     fn layer(prompt: &PermissionPrompt, shown: Instant) -> PromptLayer {
-        PromptLayer::new(prompt, shown).unwrap()
+        let mut layer = PromptLayer::new(prompt, shown).unwrap();
+        present(&mut layer, shown);
+        layer
+    }
+
+    /// Present the shown page whole at `now`, as the window does after
+    /// each frame.
+    fn present(layer: &mut PromptLayer, now: Instant) {
+        let (width, height) = layer.logical_size();
+        assert!(layer.presented(width, height, now));
     }
 
     fn texts(layer: &PromptLayer, style: Style) -> Vec<String> {
@@ -851,7 +906,7 @@ mod tests {
 
     /// Every requested pattern as the layer shows it, read page by page
     /// from each marked first line through its continued lines. Turns
-    /// every page once (back to the first) at `now`.
+    /// and presents every page once (back to the first) at `now`.
     fn read_every_page(layer: &mut PromptLayer, now: Instant) -> Vec<String> {
         let mut patterns: Vec<String> = Vec::new();
         let (_, pages) = layer.page();
@@ -870,6 +925,7 @@ mod tests {
                     .push_str(&line.text);
             }
             layer.key(PromptKey::NextPage, now);
+            present(layer, now);
         }
         patterns
     }
@@ -1042,6 +1098,7 @@ mod tests {
         // between: Allow stays unusable until each page was shown.
         let mut skipped = layer(&request, shown);
         assert_eq!(skipped.key(PromptKey::PreviousPage, ready), None);
+        present(&mut skipped, ready);
         assert_eq!(skipped.page(), (pages - 1, pages));
         assert!(!skipped.allow_ready(ready + PROMPT_INPUT_DELAY));
         assert_eq!(click(&mut skipped, ALLOW, ready + PROMPT_INPUT_DELAY), None);
@@ -1118,6 +1175,7 @@ mod tests {
             }
             if page + 1 < pages {
                 assert_eq!(click(&mut layer, Action::NextPage, ready), None);
+                present(&mut layer, ready);
                 assert_eq!(click(&mut layer, ALLOW, ready), None);
             }
         }
@@ -1171,6 +1229,144 @@ mod tests {
     }
 
     #[test]
+    fn escapes_are_never_split_and_a_spelled_escape_never_passes_for_one() {
+        let shown = Instant::now();
+        let ready = shown + PROMPT_INPUT_DELAY;
+        // An odd ASCII prefix puts every escape boundary off the column
+        // grid, so a fixed-width cut would split them.
+        let pattern = format!(
+            "https://{}.test/{}",
+            "\u{43f}".repeat(30),
+            "\u{1F600}".repeat(40)
+        );
+        let mut paged = layer(&prompt(None, &[pattern.as_str()]), shown);
+        assert!(paged.page().1 > 1);
+        let (_, pages) = paged.page();
+        let mut lines = Vec::new();
+        for _ in 0..pages {
+            lines.extend(
+                paged
+                    .shown_lines()
+                    .into_iter()
+                    .filter(|line| line.style == Style::Code && line.y >= paged.resource_top)
+                    .map(|line| line.text),
+            );
+            paged.key(PromptKey::NextPage, ready);
+            present(&mut paged, ready);
+        }
+        assert_eq!(lines.concat(), glyphs::visible(&pattern));
+        for line in &lines {
+            assert!(line.len() <= columns(Style::Code));
+            // Every line is whole units: a backslash starts a doubled
+            // backslash or a complete escape.
+            for unit in glyphs::units(line) {
+                assert!(
+                    unit.len() == 1
+                        || unit == "\\\\"
+                        || (unit.starts_with("\\u{") && unit.ends_with('}')),
+                    "{line:?}: {unit:?}"
+                );
+            }
+        }
+        // A pattern that spells `\u{430}` with a backslash is shown
+        // differently from one holding the Cyrillic letter.
+        let spelled = layer(&prompt(None, &["/p\\u{430}y"]), shown);
+        let letter = layer(&prompt(None, &["/p\u{430}y"]), shown);
+        assert_eq!(
+            texts(&spelled, Style::Code).last().unwrap(),
+            "/p\\\\u{430}y"
+        );
+        assert_eq!(texts(&letter, Style::Code).last().unwrap(), "/p\\u{430}y");
+        // The quote's visible cut keeps whole escapes too.
+        let quote = "\u{430}".repeat(MAX_QUOTE_LINES * columns(Style::Quote));
+        let quoted = layer(&prompt(Some(&quote), &[]), shown);
+        let last = texts(&quoted, Style::Quote).pop().unwrap();
+        let kept = last.strip_suffix(CUT).unwrap();
+        assert!(glyphs::units(kept).iter().all(|unit| *unit == "\\u{430}"));
+    }
+
+    #[test]
+    fn one_longest_pattern_always_fits_whatever_its_characters() {
+        // The most shown characters one byte of a pattern can take (the
+        // escape of a one-byte control character), over every code point.
+        let widest = (0..=u32::from(char::MAX))
+            .filter_map(char::from_u32)
+            .map(|character| {
+                glyphs::visible(character.encode_utf8(&mut [0; 4]))
+                    .len()
+                    .div_ceil(character.len_utf8())
+            })
+            .max()
+            .unwrap();
+        // A line ends only when the next unit does not fit, so every line
+        // but the last holds more than a line minus the widest unit; the
+        // full lines and one last line fit the bound.
+        let full_line = columns(Style::Code) - (glyphs::MAX_UNIT_CHARS - 1);
+        let bytes_per_line = full_line.div_ceil(widest);
+        let full_lines = MAX_PATTERN_BYTES / bytes_per_line;
+        assert!(full_lines < MAX_RESOURCE_LINES, "{full_lines}");
+    }
+
+    #[test]
+    fn a_page_counts_as_seen_only_once_presented_whole() {
+        let shown = Instant::now();
+        let ready = shown + PROMPT_INPUT_DELAY;
+        let scope: Vec<String> = (0..MAX_GRANT_PATTERNS)
+            .map(|index| format!("/data/{index}/{}", "x".repeat(40)))
+            .collect();
+        let request = PermissionPrompt {
+            scope,
+            ..prompt(None, &[])
+        };
+        let mut layer = layer(&request, shown);
+        let (width, height) = layer.logical_size();
+        let (_, pages) = layer.page();
+        assert!(pages > 2);
+        // Paging to the last page in one burst, with no frame presented
+        // between, shows only what is presented: the last page.
+        for _ in 1..pages {
+            layer.key(PromptKey::NextPage, ready);
+        }
+        present(&mut layer, ready);
+        assert_eq!(layer.page(), (pages - 1, pages));
+        let later = ready + PROMPT_INPUT_DELAY;
+        assert!(!layer.allow_ready(later));
+        assert_eq!(click(&mut layer, ALLOW, later), None);
+        // A frame on a surface that clips the layer counts nothing.
+        let mut clipped = PromptLayer::new(&request, shown).unwrap();
+        for _ in 0..pages {
+            assert!(!clipped.presented(width, height - 1, ready));
+            assert!(!clipped.presented(width - 1, height, ready));
+            clipped.key(PromptKey::NextPage, ready);
+        }
+        assert!(!clipped.allow_ready(later));
+        // Allow is drawn usable exactly when this frame, presented whole,
+        // shows the last unseen page.
+        assert_eq!(allow_fill(&layer), DISABLED_FILL);
+        let mut single = PromptLayer::new(&prompt(None, &["/data/app.kv"]), shown).unwrap();
+        assert_eq!(allow_fill(&single), BUTTON_FILL);
+        // On a surface one row short of the layer it stays drawn disabled.
+        let (single_width, single_height) = single.logical_size();
+        let allow = single.buttons[single.buttons.len() - 1].rect;
+        let inside = (allow.y + BUTTON_HEIGHT / 2) * single_width + allow.x + BUTTON_BORDER + 1;
+        assert_eq!(
+            single.render(single_width, single_height - 1)[inside as usize],
+            DISABLED_FILL
+        );
+        assert!(!single.allow_ready(later));
+        present(&mut single, ready);
+        assert!(single.allow_ready(later));
+    }
+
+    /// The fill color inside Allow's border at the layer's logical size.
+    fn allow_fill(layer: &PromptLayer) -> u32 {
+        let (width, height) = layer.logical_size();
+        let allow = layer.buttons[layer.buttons.len() - 1].rect;
+        let index = (allow.y + BUTTON_HEIGHT / 2) * width + allow.x + BUTTON_BORDER + 1;
+        layer.render(width, height)[index as usize]
+    }
+
+    #[test]
     fn answers_need_the_input_delay_and_a_press_and_release_on_one_button() {
         let shown = Instant::now();
         let early = shown + PROMPT_INPUT_DELAY / 2;
@@ -1202,6 +1398,7 @@ mod tests {
         // Keys: focus wraps both ways; Escape dismisses; page keys do
         // nothing on a single page.
         let mut layer = PromptLayer::new(&prompt(None, &[]), shown).unwrap();
+        present(&mut layer, shown);
         assert_eq!(layer.key(PromptKey::Previous, early), None);
         assert_eq!(layer.focused(), Some(PromptAnswer::Allow));
         assert_eq!(layer.key(PromptKey::Next, early), None);

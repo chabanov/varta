@@ -26,7 +26,7 @@ use varta_common::Manifest;
 use varta_common::permission::{PermissionError, PermissionPrompt, PromptAnswer, StoredDecision};
 use varta_desktop::shell::Started;
 use varta_desktop::shell::consent::{
-    AUDIT_FILE, CONSENT_FILES, ConsentStore, DECISIONS_FILE, MAX_RESOURCE_LINES,
+    AUDIT_FILE, CONSENT_FILES, ConsentStore, DECISIONS_FILE, HostPrompt, MAX_RESOURCE_LINES,
     STORE_POLL_INTERVAL, UNPRESENTABLE_PROMPT,
 };
 use varta_desktop::shell::{FontSet, Launch, Package, ShellError, storage_directory};
@@ -1251,11 +1251,13 @@ const DATABASE_PATH: &str = "/data/app.kv";
 const READY: &str = "probe ready";
 
 /// A decision provider that answers from a script and records every prompt
-/// it was shown; an unscripted prompt is dismissed.
+/// it was shown, and every request the consent seam refused to show; an
+/// unscripted prompt is dismissed.
 #[derive(Clone, Default)]
 struct Scripted {
     answers: Arc<Mutex<VecDeque<PromptAnswer>>>,
     shown: Arc<Mutex<Vec<PermissionPrompt>>>,
+    refused: Arc<Mutex<Vec<String>>>,
     /// How long the "user" takes to answer.
     delay: Duration,
 }
@@ -1270,6 +1272,18 @@ impl Scripted {
     }
     fn shown(&self) -> Vec<PermissionPrompt> {
         self.shown.lock().unwrap().clone()
+    }
+    /// The host diagnostics of requests refused without a prompt.
+    fn refused(&self) -> Vec<String> {
+        self.refused.lock().unwrap().clone()
+    }
+    /// The host prompt `prompter` stands in for, reporting refusals here.
+    fn host(&self, prompter: Box<dyn varta_runtime::PermissionPrompter>) -> HostPrompt {
+        let refused = self.refused.clone();
+        HostPrompt {
+            prompter,
+            unpresentable: Box::new(move |error| refused.lock().unwrap().push(error.to_string())),
+        }
     }
     /// `(capability, required)` of every prompt shown.
     fn asked(&self) -> Vec<(String, bool)> {
@@ -1308,7 +1322,11 @@ fn package_consent(temp: &Temp, edit: impl FnOnce(&mut serde_json::Value)) -> Pa
 }
 
 fn start_consent(temp: &Temp, artifact: &Path, scripted: &Scripted) -> Result<Started, ShellError> {
-    prepare(temp, artifact, None)?.start_with(layout(), effects(), Some(Box::new(scripted.clone())))
+    prepare(temp, artifact, None)?.start_with(
+        layout(),
+        effects(),
+        Some(scripted.host(Box::new(scripted.clone()))),
+    )
 }
 
 /// Step the instance, syncing its consent state between turns as the
@@ -1512,8 +1530,17 @@ fn a_request_that_cannot_be_shown_in_full_is_denied_without_a_prompt_and_audited
     let store = store_of(&temp, &artifact);
     let scripted = Scripted::new(&[PromptAnswer::Allow]);
     assert!(required_denied(start_consent(&temp, &artifact, &scripted)));
-    // Never shown, so the scripted "user" never answered it.
+    // Never shown, so the scripted "user" never answered it; the host was
+    // told why, in words that say no user decided.
     assert!(scripted.shown().is_empty());
+    let refused = scripted.refused();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].starts_with(&format!(
+            "denied the {REQUIRED_GRANT} permission request without asking"
+        )) && refused[0].contains("no user decided"),
+        "{refused:?}"
+    );
     assert_eq!(
         store.load().unwrap(),
         decisions(&[(REQUIRED_GRANT, StoredDecision::Deny)])
@@ -1531,6 +1558,180 @@ fn a_request_that_cannot_be_shown_in_full_is_denied_without_a_prompt_and_audited
         "{rows:?}"
     );
     assert!(audited(&rows, REQUIRED_GRANT, "", "prompt", "denied"));
+}
+
+/// The consent probe's optional any-HTTPS link grant.
+const LINK_GRANT: &str = varta_common::view::OPEN_URL_CAPABILITY;
+
+#[test]
+fn a_link_that_cannot_be_shown_in_full_is_denied_reported_audited_and_never_stored() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    // The link grant was allowed earlier; as the any-HTTPS form, each
+    // activation still prompts with the full URL.
+    store
+        .save(&decisions(&[(LINK_GRANT, StoredDecision::Allow)]))
+        .unwrap();
+    let scripted = Scripted::new(&[PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    // The "user" would allow the link if it were shown; it is not.
+    scripted.answer(&[PromptAnswer::Allow]);
+    click_until(&mut started, &mut lines, "long", &open_url(NOT_ALLOWED));
+    assert_eq!(scripted.asked(), [(REQUIRED_GRANT.to_owned(), true)]);
+    let refused = scripted.refused();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].starts_with(&format!(
+            "denied the {LINK_GRANT} permission request without asking"
+        )),
+        "{refused:?}"
+    );
+    // No Deny is stored for a link: the earlier decision stays.
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (LINK_GRANT, StoredDecision::Allow),
+            (REQUIRED_GRANT, StoredDecision::Allow),
+        ])
+    );
+    let rows = audit_rows(&store);
+    assert!(
+        rows.iter().any(|row| row["operation"] == LINK_GRANT
+            && row["refused"] == UNPRESENTABLE_PROMPT
+            && row["outcome"] == "denied"
+            && row["resource_lines"]
+                .as_u64()
+                .is_some_and(|lines| lines > MAX_RESOURCE_LINES as u64)),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row["operation"] == LINK_GRANT
+            && row["source"] == "prompt"
+            && row["outcome"] == "denied"
+            && row["resource"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("https://docs.test/"))),
+        "{rows:?}"
+    );
+}
+
+/// A decision provider that answers like [`Scripted`] and, while asking
+/// the prompt after an Allow, stores a revocation of the allowed grant from
+/// outside the instance (`varta-shell ARTIFACT --revoke` while the prompt
+/// is open).
+struct RevokingWhileAsked {
+    scripted: Scripted,
+    revoke: Box<dyn FnMut(&str) + Send>,
+    allowed: Option<String>,
+}
+impl varta_runtime::PermissionPrompter for RevokingWhileAsked {
+    fn prompt(&mut self, prompt: &PermissionPrompt) -> PromptAnswer {
+        if let Some(id) = self.allowed.take() {
+            (self.revoke)(&id);
+        }
+        let answer = self.scripted.prompt(prompt);
+        if answer == PromptAnswer::Allow {
+            self.allowed = Some(prompt.capability.clone());
+        }
+        answer
+    }
+}
+
+#[test]
+fn a_refused_start_never_stores_an_answer_over_a_revocation_made_while_asking() {
+    let temp = Temp::new();
+    // Both KV grants required: the first is allowed, the second denied,
+    // and the first is revoked from outside while the second is asked.
+    let artifact = package_consent(&temp, |manifest| {
+        for grant in manifest["capabilities"].as_array_mut().unwrap() {
+            if grant["id"] == OPTIONAL_GRANT {
+                grant["required"] = true.into();
+            }
+        }
+    });
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow, PromptAnswer::Deny]);
+    let (revoked, storage) = (artifact.clone(), temp.storage());
+    let prompter = RevokingWhileAsked {
+        scripted: scripted.clone(),
+        revoke: Box::new(move |id| {
+            varta_desktop::shell::revoke(&revoked, &storage, id).unwrap();
+        }),
+        allowed: None,
+    };
+    let started = prepare(&temp, &artifact, None).unwrap().start_with(
+        layout(),
+        effects(),
+        Some(scripted.host(Box::new(prompter))),
+    );
+    assert!(matches!(
+        started,
+        Err(ShellError::Runtime(
+            varta_runtime::RuntimeError::Permission(PermissionError::RequiredDenied { .. })
+        ))
+    ));
+    let asked = scripted.asked();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    let (allowed, denied) = (asked[0].0.as_str(), asked[1].0.as_str());
+    // The revocation wins over the earlier Allow; the Deny is stored.
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (allowed, StoredDecision::Deny),
+            (denied, StoredDecision::Deny)
+        ])
+    );
+    // The user's answers are still audited as given.
+    let rows = audit_rows(&store);
+    assert!(audited(&rows, allowed, "", "prompt", "granted"), "{rows:?}");
+    assert!(audited(&rows, denied, "", "prompt", "denied"), "{rows:?}");
+}
+
+#[test]
+fn ending_a_session_stores_and_audits_what_turns_decided_since_the_last_sync() {
+    const TURN_FAILED: &str = "turn failed";
+    const SYNC_FAILED: &str = "sync failed";
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow, PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    // A gesture's answer in turns that run without a sync, as when the
+    // window closes or a turn fails right after it.
+    click(&mut started.application, "ask");
+    settle(&mut started.application, &mut lines, "ask kv ok");
+    assert_eq!(store.load().unwrap().get(OPTIONAL_GRANT), None);
+    let consent = started.consent.as_mut().unwrap();
+    // The session failed: the last sync still runs and the failure, not
+    // the sync's outcome, is what the session reports.
+    assert_eq!(
+        consent.end(&mut started.application, Err(TURN_FAILED), |_| SYNC_FAILED),
+        Err(TURN_FAILED)
+    );
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (OPTIONAL_GRANT, StoredDecision::Allow),
+            (REQUIRED_GRANT, StoredDecision::Allow),
+        ])
+    );
+    assert!(audited(
+        &audit_rows(&store),
+        OPTIONAL_GRANT,
+        "",
+        "prompt",
+        "granted"
+    ));
+    // A session that ended normally reports the sync's own outcome.
+    assert_eq!(
+        consent.end(&mut started.application, Ok(()), |_| SYNC_FAILED),
+        Ok(())
+    );
 }
 
 #[test]
