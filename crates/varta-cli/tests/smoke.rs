@@ -17368,7 +17368,11 @@ fn an_application_run_records_and_replays_its_network_log() {
     };
     assert_eq!(
         lines(&recorded),
-        ["varta log: started", "varta log: 200 Привіт 🦀", "varta log: timer"]
+        [
+            "varta log: started",
+            "varta log: 200 Привіт 🦀",
+            "varta log: timer"
+        ]
     );
     let total = |output: &std::process::Output| {
         String::from_utf8_lossy(&output.stderr)
@@ -17387,16 +17391,27 @@ fn an_application_run_records_and_replays_its_network_log() {
     for args in [
         &["dev", "--network-replay", "log.json"][..],
         &["dev", "--network-record", "other.json"][..],
-        &["dev", "--target", "browser", "--app", "--network-replay", "log.json"][..],
+        &[
+            "dev",
+            "--target",
+            "browser",
+            "--app",
+            "--network-replay",
+            "log.json",
+        ][..],
     ] {
         let refused = project.command(args);
         assert!(!refused.status.success(), "{args:?}");
-        assert!(!combined(&refused).contains("varta log: started"), "{args:?}");
+        assert!(
+            !combined(&refused).contains("varta log: started"),
+            "{args:?}"
+        );
         assert!(!project.0.join("other.json").exists());
     }
     let refused = project.command(&["dev", "--network-replay", "log.json"]);
     assert!(
-        combined(&refused).contains("--network-record and --network-replay need --view-script or --app"),
+        combined(&refused)
+            .contains("--network-record and --network-replay need --view-script or --app"),
         "{}",
         combined(&refused)
     );
