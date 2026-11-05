@@ -43,7 +43,7 @@ impl Value {
     fn literal(text: &str) -> Part {
         Part::Literal {
             units: text.encode_utf16().count(),
-            wide: ["initial", "inherit", "unset", "revert", "revert-layer"]
+            wide: super::css::CSS_WIDE_KEYWORDS
                 .iter()
                 .any(|keyword| text.trim().eq_ignore_ascii_case(keyword)),
         }

@@ -39,13 +39,20 @@ try {
       const fresh=input.value;
       const stable=app.inspectNode(2)===button&&app.inspectNode(4)===input;
       let assetDenied=false;try{app.apply(batch(op('create_element',{node:5,tag:'img'}),op('set_attribute',{node:5,attribute:'src',text:'unpackaged.png'})));}catch{assetDenied=true;}
-      return {rollback,unchanged,closedShadow:host.firstElementChild.shadowRoot===null,title,text:button.textContent,color:getComputedStyle(button).color,events,stale,fresh,stable,assetDenied,nodes:app.snapshot().nodes.length};
+      // CSS-wide font-family keywords fail as indexed protocol errors before
+      // the batch commits, in set_style and in stylesheets.
+      const refusal=(ops)=>{const html=host.firstElementChild&&button.outerHTML;try{app.apply(batch(...ops));return null;}catch(error){return {name:error.constructor.name,rule:error.rule,operation:error.operation,unchanged:button.outerHTML===html};}};
+      const fontKeyword=refusal([op('set_text',{node:3,text:'must roll back'}),op('set_style',{node:2,property:'font-family',text:'serif, inherit'})]);
+      const sheetKeyword=refusal([op('set_text',{node:3,text:'must roll back'}),op('stylesheet',{sheet:1,text:'.a { font-family: unset }'})]);
+      return {fontKeyword,sheetKeyword,rollback,unchanged,closedShadow:host.firstElementChild.shadowRoot===null,title,text:button.textContent,color:getComputedStyle(button).color,events,stale,fresh,stable,assetDenied,nodes:app.snapshot().nodes.length};
     })()` });
     assert(!result.exceptionDetails, JSON.stringify(result.exceptionDetails));
     const value = result.result.value;
     assert.equal(value.rollback, true); assert.equal(value.unchanged, true); assert.equal(value.closedShadow, true);
     assert.equal(value.title, "Varta view"); assert.equal(value.text, "Привіт 😀"); assert.equal(value.color, "rgb(18, 52, 86)");
     assert.equal(value.stale, "local edit"); assert.equal(value.fresh, "acknowledged"); assert.equal(value.stable, true); assert.equal(value.assetDenied, true); assert.equal(value.nodes, 4);
+    assert.deepEqual(value.fontKeyword, { name: "ViewProtocolError", rule: "font-family keyword", operation: 1, unchanged: true });
+    assert.deepEqual(value.sheetKeyword, { name: "ViewProtocolError", rule: "stylesheet value", operation: 1, unchanged: true });
     assert.equal(value.events.length, 2); assert.equal(value.events[0].gesture, false); assert.equal(value.events[1].gesture, false);
     if (process.env.VARTA_VIEW_ORACLE) {
       const oracle=JSON.parse(await readFile(resolve(process.env.VARTA_VIEW_ORACLE),'utf8'));

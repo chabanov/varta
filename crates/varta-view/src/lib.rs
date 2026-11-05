@@ -153,6 +153,8 @@ pub enum Violation {
     InvalidClass,
     #[error("invalid style value")]
     InvalidStyleValue,
+    #[error("`font-family` names the CSS-wide keyword `{0}`, which L0 does not admit")]
+    FontFamilyKeyword(&'static str),
     #[error("CSS property not allowed on this element")]
     PropertyNotAllowed,
     #[error("the root cannot be inserted or removed")]

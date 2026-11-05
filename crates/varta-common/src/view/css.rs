@@ -16,14 +16,16 @@ use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE};
 pub const MAX_VALUE_TOKENS: usize = 128;
 /// Hexadecimal digits a `<hex>` colour admits: `#rgb`, `#rrggbb`, `#rrggbbaa`.
 pub const HEX_COLOR_DIGITS: [usize; 3] = [3, 6, 8];
-/// CSS-wide keywords. A family name is a custom identifier, which excludes
-/// them, and the subset does not admit them as `font-family` values: the
-/// browser would roll back to its own font, which no native host can supply.
+/// CSS-wide keywords, shared by every keyword check of the subset. A family
+/// name is a custom identifier, which excludes them, and the subset does not
+/// admit them as `font-family` values: the browser would roll back to its own
+/// font, which no native host can supply.
 pub const CSS_WIDE_KEYWORDS: &[&str] = &["inherit", "initial", "unset", "revert", "revert-layer"];
 
 /// The CSS-wide keyword an unquoted `font-family` component of `value`
 /// names (ASCII case-insensitively), if any: the diagnostic for a value
-/// [`property_value`] refuses for that reason.
+/// [`property_value`] refuses for that reason. Native `set_style`, the
+/// stylesheet checker and the compiler name it in their errors.
 #[must_use]
 pub fn font_family_css_wide_keyword(value: &str) -> Option<&'static str> {
     lex_value(value)?.iter().find_map(|token| match token {

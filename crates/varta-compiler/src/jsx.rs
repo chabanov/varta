@@ -920,12 +920,20 @@ impl Desugar<'_> {
             ));
         }
         if !css::property_value(property, value) {
+            let keyword = (property == CssProperty::FontFamily)
+                .then(|| css::font_family_css_wide_keyword(value))
+                .flatten();
             return Err(self.fail(
-                format!(
-                    "invalid value `{value}` for CSS property `{}` (grammar: {})",
-                    property.name(),
-                    property.grammar()
-                ),
+                match keyword {
+                    Some(keyword) => format!(
+                        "`font-family` value `{value}` names the CSS-wide keyword `{keyword}`, which the view subset does not admit"
+                    ),
+                    None => format!(
+                        "invalid value `{value}` for CSS property `{}` (grammar: {})",
+                        property.name(),
+                        property.grammar()
+                    ),
+                },
                 span,
             ));
         }

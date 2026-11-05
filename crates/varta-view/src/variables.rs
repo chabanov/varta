@@ -34,7 +34,7 @@ impl Token {
             Self::Blank
         } else if text.eq_ignore_ascii_case("initial") {
             Self::Initial
-        } else if ["inherit", "unset", "revert", "revert-layer"]
+        } else if varta_common::view::css::CSS_WIDE_KEYWORDS
             .iter()
             .any(|word| text.eq_ignore_ascii_case(word))
         {

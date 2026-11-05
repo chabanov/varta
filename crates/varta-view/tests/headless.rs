@@ -3798,6 +3798,12 @@ fn semantic_rules_reject_the_whole_batch() {
         ),
         (
             Box::new(|b| {
+                b.set_style(2, CssProperty::FontFamily, "serif, REVERT-layer");
+            }),
+            Violation::FontFamilyKeyword("revert-layer"),
+        ),
+        (
+            Box::new(|b| {
                 b.set_style(2, CssProperty::FieldSizing, "content");
             }),
             Violation::PropertyNotAllowed,

@@ -137,6 +137,8 @@ pub enum Violation {
     Media,
     #[error("invalid declaration: unknown property or value outside the subset grammar")]
     Declaration,
+    #[error("`font-family` names the CSS-wide keyword `{0}`, which the subset does not admit")]
+    FontFamilyKeyword(&'static str),
     #[error("empty declaration")]
     EmptyDeclaration,
     #[error("stylesheet work limit exceeded")]
@@ -339,7 +341,8 @@ impl Parser {
                 });
             }
             let entry = declaration(part).ok_or(StylesheetError {
-                violation: Violation::Declaration,
+                violation: font_family_keyword(part)
+                    .map_or(Violation::Declaration, Violation::FontFamilyKeyword),
                 offset: start,
             })?;
             self.node()?;
@@ -426,6 +429,14 @@ fn length(text: &str) -> Option<f64> {
         .then(|| number.parse::<f64>().ok())
         .flatten()
         .map(|value| value * scale)
+}
+
+/// The CSS-wide keyword a `font-family` declaration names, if any.
+fn font_family_keyword(text: &str) -> Option<&'static str> {
+    let (name, value) = text.split_once(':')?;
+    (name.trim() == CssProperty::FontFamily.name())
+        .then(|| css::font_family_css_wide_keyword(value.trim()))
+        .flatten()
 }
 
 fn declaration(text: &str) -> Option<(Name, String)> {
@@ -602,6 +613,14 @@ mod tests {
         assert_eq!(error(text).violation, Violation::Selector);
         assert_eq!(error(text).offset, 1);
         assert_eq!(error(".a { color: #fff").violation, Violation::Unterminated);
+        assert_eq!(
+            error(".a { color: #fff; font-family: \"A\", Inherit }").violation,
+            Violation::FontFamilyKeyword("inherit")
+        );
+        assert_eq!(
+            error(".a { font-family: 1px }").violation,
+            Violation::Declaration
+        );
         assert_eq!(
             error("@media (orientation: landscape) { }").violation,
             Violation::Media

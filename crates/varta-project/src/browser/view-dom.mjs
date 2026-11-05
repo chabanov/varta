@@ -3,7 +3,7 @@ import { createFontNamespace } from './view-fonts.mjs';
 import { createCustomPropertyStyles } from './view-custom-properties.mjs';
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { createViewModel } from "./view-model.mjs";
-import { rewriteRootSelector, checkStylesheet, StylesheetWorkError } from "./view-css.mjs";
+import { rewriteRootSelector, checkStylesheet, StylesheetWorkError, CssError } from "./view-css.mjs";
 
 const V = registry.view, W = V.wire, F = V.filters;
 const field = Object.fromEntries(W.eventFields.map((entry) => [entry.name, entry]));
@@ -125,9 +125,15 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
         catch(error){throw new ViewProtocolError(error instanceof StylesheetWorkError?'stylesheet work budget':'stylesheet value',i);}
         if(checked.errors.length)throw new ViewProtocolError('stylesheet value',i);
         stylesheetWork+=checked.work;
-        const sheet=new Sheet();sheet.replaceSync(rewriteRootSelector(decoded[i].text,D.rootSelector));preparedCustom.set(i,variables.prepare(sheet));preparedSheets.set(i,sheet);
+        const sheet=new Sheet();sheet.replaceSync(rewriteRootSelector(decoded[i].text,D.rootSelector));
+        // The font namespace refuses CSS-wide font-family keywords (CssError);
+        // report them like any other refused value, with the operation index.
+        try{preparedCustom.set(i,variables.prepare(sheet));}catch(error){throw error instanceof CssError?new ViewProtocolError('stylesheet value',i):error;}
+        preparedSheets.set(i,sheet);
       }
-      if (decoded[i].name === "set_style" && decoded[i].property === "font-family") preparedFonts.set(i, fonts.value(decoded[i].text));
+      if (decoded[i].name === "set_style" && decoded[i].property === "font-family") {
+        try{preparedFonts.set(i, fonts.value(decoded[i].text));}catch(error){throw error instanceof CssError?new ViewProtocolError('font-family keyword',i):error;}
+      }
     }
     const { operations, effects, skippedValues } = model.commit(bytes), current = snapshots();
     applying = true;
