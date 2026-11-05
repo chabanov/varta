@@ -490,6 +490,38 @@ Open after integration:
 - Not run: real-window shell sessions, Linux/Windows, CI with the new Node
   step, WebKit/Firefox after the fix round.
 
+### Aborted fetch closes its connection — wave-2 package `w2-net-abort`, scoped 2026-11-04
+
+Fixes pilot finding F2 (`examples/uarp-console/README.md`); both sides were at
+fault. Client: `net_request_abort` dropped the transfer's task handle, which
+only marks a Tokio task cancelled. The current-thread request runtime dropped
+the task, and the separately spawned hyper connection task that owns the
+socket, only when the event loop next drove it, which a guest waiting only on
+timers never does. Now the transfer shares its connection task with its owner
+(`ConnectionSlot`), and an abort cancels both tasks and runs the runtime until
+both are dropped before the call returns. Server: a client disconnect cancels
+the v2 worker, but it holds the single worker permit until it stops, and the
+transport accepted the next connection at once and refused it with 503. The v2
+accept loop now waits for the permit first (v1 unchanged). Contract text:
+[net_request cancellation](architecture.md#network-requests-net_request) and
+the HTTP v2 native server section.
+
+Regressions in `net_tests`, each shown failing before its half of the fix:
+`aborted_requests_close_their_connection_before_the_guest_wakes` (v37 and
+v38 against the loopback server's new `/held` route, which records the
+client's end of stream; before: the close came 602 ms after the abort, at the
+guest's wake) and
+`aborted_requests_leave_the_server_worker_free_for_the_next_request` (a v38
+client and a Varta v2 service; the test observer holds the cancelled worker
+for 300 ms; before: `hello: 503`). Scoped verification: `verify.py local
+varta-runtime --filter net` (55) and `--filter server` (32), the runtime
+`abort`, `web_bytes`, `v37_integration`, `frozen_profile` and `cancellation`
+groups, strict Clippy of `varta-runtime` and formatting. The README
+reproducer, run with a debug `varta` against a scratch copy of the mock's
+`/slow/health` and `/unary/health` routes, now reports the cancelled request
+after about 200 ms of wall time and `200` for the next request, with no wait
+and with a 1 s wait. The full gate is the wave lead's.
+
 ### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
 
 Branch `wave1/w1-native-structure-text` (on `cc3a94d`) admits `h1`–`h3`, `ul`,

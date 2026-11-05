@@ -216,8 +216,19 @@ code, never by changing the SDK.
   }
   ```
   `sdk-sse` binds the event to a local first.
-- **F2. An aborted request's connection stays open until the client's event loop
-  next wakes.** The architecture's `net_request` cancellation rule says aborting
+- **F2 (fixed in `06d1594`). An aborted request's connection stayed open until the
+  client's event loop next woke.** Both sides were at fault: the client's abort
+  only marked the transfer cancelled until the event loop next drove the request
+  runtime, and the server accepted the next connection while the cancelled
+  worker still held its permit. Now the abort closes the socket before it
+  returns, and a v2 server serves the next connection once the permit is free
+  (`net_tests::aborted_requests_close_their_connection_before_the_guest_wakes`
+  and `net_tests::aborted_requests_leave_the_server_worker_free_for_the_next_request`).
+  The reproducer below, run against a scratch copy of the mock's `/slow/health`
+  and `/unary/health` routes without its `user-agent` check, now logs the cancelled request after about 200 ms of
+  wall time and gets `200` for the next request, with or without the 1 s wait.
+  `sdk-timeout` still runs as its own execution; nothing requires that any
+  more. The original report follows. The architecture's `net_request` cancellation rule says aborting
   while the head is pending closes the connection at once. In `sdk-abort`, the
   SDK's abort path (`core/transport.ts:139-146`) aborts a request to the slow
   route after 200 ms. In a run where the client then waited 2 s, `lsof` (sampled

@@ -8855,7 +8855,13 @@ as unknown names and keep their bytes and diagnostics.
   closes at once) and rejects with the signal's reason; aborting during the
   body rejects the pending or next `read()` with the reason; `cancel()` on
   the body releases the request. `AbortSignal.timeout(ms)` therefore bounds a
-  request, as in Node.
+  request, as in Node. "At once" means within the `net_request_abort` call:
+  the native host cancels the transfer's request and connection tasks and
+  runs the request runtime until both are dropped, so the socket is closed
+  before the call returns, even when the guest then waits only for timers
+  (and so does not drive the request runtime). Other transfers may make
+  progress during that call; their completions are queued like any that
+  arrive during a turn.
 - **Redirects** default to `"error"`, as the accepted platform design
   requires (WHATWG and Node default to `"follow"`): a 3xx response with a
   `Location` rejects with `TypeError: fetch failed` (cause `unexpected
@@ -15310,6 +15316,14 @@ epoch checks interrupt guest loops, while timer/network waits check the same tok
 in bounded slices without advancing guest time or delivering extra guest events.
 Other Stores sharing the engine remain live. A completed worker disarms the guard
 and releases guest/network resources before invoking trusted output observers.
+A cancelled worker keeps the one worker permit until it stops (its next
+cancellation check, then its report and output delivery). The v2 transport
+accepts the next connection only once that permit is free, so a request sent
+right after a client disconnected waits in the listener's backlog instead of
+being refused with the transport's `503 request failed`; the wait is bounded by
+the worker's cancellation checks and its own request deadline, and shutdown
+ends it. V1 workers are not cancelled and keep the earlier immediate 503 while
+busy.
 Shutdown stops acceptance, immediately closes idle/partial-header connections and
 drains the active response under its original connection and request deadlines.
 These paths have real loopback/disconnect, guest-loop and timer verification.
