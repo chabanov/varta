@@ -9,6 +9,7 @@ mod layout;
 mod network;
 mod permissions;
 mod view;
+pub use kv::storage_refusal as kv_storage_refusal;
 
 /// CSP origin ceiling derived only from validated package requests. Runtime
 /// URL/method checks still enforce the narrower package and host scopes.

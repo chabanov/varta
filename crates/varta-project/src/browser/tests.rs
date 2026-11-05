@@ -714,3 +714,54 @@ fn kv_denial_text_equals_the_native_runtime_denial() {
         ]
     );
 }
+
+/// This host offers no KV storage, so a manifest granting `kv.read` or
+/// `kv.write` is refused before any bundle exists, whether or not the
+/// program links the KV imports; the same program without a grant still
+/// builds (every open is then denied as natively without a grant).
+#[test]
+fn bundle_refuses_kv_grants_the_browser_host_cannot_honour() {
+    use varta_common::{CapabilityGrant, CapabilityValue, kv};
+    let grant = |id: &str| CapabilityGrant {
+        id: id.into(),
+        value: CapabilityValue::PathGlobs(vec!["/data/*.kv".into()]),
+    };
+    let without_kv = "export function main():void{console.log(1);}";
+    for (source, grants, named) in [
+        (
+            KV_SOURCE,
+            vec![grant(kv::READ_CAPABILITY), grant(kv::WRITE_CAPABILITY)],
+            format!("{}, {}", kv::READ_CAPABILITY, kv::WRITE_CAPABILITY),
+        ),
+        (
+            KV_SOURCE,
+            vec![grant(kv::WRITE_CAPABILITY)],
+            kv::WRITE_CAPABILITY.to_owned(),
+        ),
+        (
+            without_kv,
+            vec![grant(kv::READ_CAPABILITY)],
+            kv::READ_CAPABILITY.to_owned(),
+        ),
+    ] {
+        let mut artifact = v38_source(source);
+        artifact.manifest = Manifest::new(&grants);
+        artifact.manifest.abi_version = LanguageProfile::CheckedF64Utf16V38.host_abi();
+        artifact.manifest.fs_roots = Some(varta_common::files::FsRoots::Names(vec!["data".into()]));
+        artifact.manifest.validate_package().unwrap();
+        let prepared = BrowserArtifact::prepare(&artifact, None).unwrap();
+        for result in [prepared.bundle(), prepared.development_bundle(&[])] {
+            let error = result.err().expect("a KV grant is refused");
+            assert_eq!(
+                error.to_string(),
+                crate::ProjectError::Usage(format!(
+                    "browser KV storage is not implemented; the manifest grants {named}"
+                ))
+                .to_string()
+            );
+        }
+    }
+    let ungranted = BrowserArtifact::prepare(&v38_source(KV_SOURCE), None).unwrap();
+    assert!(ungranted.bundle().is_ok());
+    assert!(ungranted.development_bundle(&[]).is_ok());
+}

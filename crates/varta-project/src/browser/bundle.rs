@@ -326,6 +326,26 @@ impl BrowserArtifact {
                 gaps.join(", ")
             )));
         }
+        // This host offers no KV storage (`kv-store.mjs`): a KV grant could
+        // never be honoured, so it is refused here rather than at every open.
+        let mut kv_grants = self
+            .original
+            .manifest
+            .capabilities
+            .iter()
+            .filter(|grant| {
+                matches!(
+                    grant.id.as_str(),
+                    varta_common::kv::READ_CAPABILITY | varta_common::kv::WRITE_CAPABILITY
+                )
+            })
+            .map(|grant| grant.id.as_str())
+            .peekable();
+        if kv_grants.peek().is_some() {
+            return Err(ProjectError::Usage(
+                varta_common::browser::kv_storage_refusal(kv_grants),
+            ));
+        }
         if self.inspection.imports.iter().any(|import| {
             [H::PermissionQuery, H::PermissionRequest]
                 .iter()

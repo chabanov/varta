@@ -5,24 +5,26 @@
 //
 // One program opens two databases, commits a checked write and reads it
 // back, logging what rejects. It runs natively (`varta dev --budget-report`)
-// and in the browser host served by `varta dev --target browser`:
+// and, when the manifest grants no KV capability, in the browser host served
+// by `varta dev --target browser`:
 //
 // - no grant: the native and browser runs are equal (logs, exact fuel,
 //   host calls, microtasks, output bytes and turns), and the browser audits
 //   each denied `kv.read`;
-// - granted, with an empty host ceiling: native denies through the ceiling
-//   and the browser through `permissionCeiling: {}`; the runs are equal;
+// - granted, with an empty host ceiling: native denies through the ceiling;
+//   the browser host could never honour the grant, so both
+//   `varta build --target browser` and `varta dev --target browser` refuse
+//   the manifest by name before any output;
 // - granted and mapped: native opens, commits and reads the database; the
-//   browser still denies, and its run equals the native run without a grant,
-//   while the broker records the grant's initial state and the denied
-//   operations. Native success here is the documented gap (no browser KV
-//   storage), not an equivalence.
+//   browser build and dev server refuse the manifest the same way. Native
+//   success here is the documented gap (no browser KV storage).
 //
 //   node scripts/test-browser-kv.mjs <varta-executable>
 //
 // Real local Chrome (VARTA_CHROME_BIN overrides the path). Other engines run
 // the same cases through scripts/test-browser-matrix.mjs --kv.
 import {mkdtemp, mkdir, writeFile, rm} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
@@ -37,6 +39,9 @@ const ROOT = 'data';
 // The second path keeps a `$&` replacement pattern literal in the denial.
 const PATHS = [`/${ROOT}/app.kv`, `/${ROOT}/$&.kv`];
 const STARTUP_POLLS = 500, STARTUP_POLL_MS = 30;
+// A refused dev server exits during preparation; one that serves instead is
+// stopped (it is our own child) after the startup allowance.
+const REFUSAL_TIMEOUT_MS = STARTUP_POLLS * STARTUP_POLL_MS;
 const LOG_PREFIX = 'varta log: ';
 
 const SOURCE = `export async function main(): Promise<void> {
@@ -60,9 +65,11 @@ const GRANTS = {kv: {read: [`/${ROOT}/*.kv`], write: [`/${ROOT}/*.kv`]}};
 
 const CASES = [
   {name: 'no-grant', capabilities: {}},
-  {name: 'empty-ceiling', capabilities: GRANTS, policy: [], ceiling: {}},
-  {name: 'granted', capabilities: GRANTS, nativeOpens: true},
+  {name: 'empty-ceiling-build-refused', capabilities: GRANTS, policy: []},
+  {name: 'granted-build-refused', capabilities: GRANTS, nativeOpens: true},
 ];
+// The grants in manifest order, as the browser build refusal names them.
+const REFUSAL = K.storageRefusal + [K.capabilities.read, K.capabilities.write].join(K.refusalSeparator);
 
 async function project(root, item) {
   const directory = join(root, item.name);
@@ -92,6 +99,17 @@ function nativeRun(varta, directory, item) {
   };
 }
 
+// Both browser entry points refuse a KV grant by name and write nothing.
+function assertRefused(varta, directory, label) {
+  for (const args of [['build', '--target', 'browser'], ['dev', '--target', 'browser']]) {
+    const run = spawnSync(varta, args, {cwd: directory, encoding: 'utf8', timeout: REFUSAL_TIMEOUT_MS, killSignal: 'SIGINT'});
+    if (run.error) throw run.error;
+    assert.notEqual(run.status, 0, label(`${args.join(' ')} refuses the KV grant`));
+    assert(run.stderr.includes(REFUSAL), label(`${args.join(' ')} names the refusal: ${run.stderr}`));
+  }
+  assert(!existsSync(join(directory, 'dist')), label('no browser output'));
+}
+
 async function serve(varta, directory) {
   const child = spawn(varta, ['dev', '--target', 'browser'], {cwd: directory, stdio: ['ignore', 'pipe', 'pipe']});
   let stdout = '', stderr = '';
@@ -115,9 +133,8 @@ async function stop(child) {
 
 // One browser execution; the expression is self-contained so that both the
 // CDP and the Playwright drivers evaluate it unchanged.
-function expression(item) {
-  const options = JSON.stringify(item.ceiling ? {permissionCeiling: item.ceiling} : {});
-  return `(async()=>{const {run}=await import(document.querySelector('script[data-varta-dev]').src);const r=await run(${options});return {status:r.status,error:r.error,logs:r.logs,usage:{turns:r.turns,fuelUsed:r.fuelUsed,outputBytes:r.outputBytes,hostCalls:r.hostCalls,microtasks:r.microtasks},audit:r.permissions.audit.map(a=>[a.operation,a.resource,a.outcome])};})()`;
+function expression() {
+  return `(async()=>{const {run}=await import(document.querySelector('script[data-varta-dev]').src);const r=await run({});return {status:r.status,error:r.error,logs:r.logs,usage:{turns:r.turns,fuelUsed:r.fuelUsed,outputBytes:r.outputBytes,hostCalls:r.hostCalls,microtasks:r.microtasks},audit:r.permissions.audit.map(a=>[a.operation,a.resource,a.outcome])};})()`;
 }
 
 const denial = (path) => K.denialText.replace(K.pathPlaceholder, () => path);
@@ -127,33 +144,26 @@ const deniedAudit = PATHS.map((path) => [K.capabilities.read, path, 'denied']);
 /** Run every case; `open(url, evaluate => …)` drives one browser page. */
 export async function runKv(varta, open) {
   const root = await mkdtemp(join(tmpdir(), 'varta-browser-kv-'));
-  const results = new Map();
   try {
     for (const item of CASES) {
       const directory = await project(root, item);
       const native = nativeRun(varta, directory, item);
+      const label = (what) => `${item.name}: ${what}`;
+      if (item.capabilities.kv) {
+        assert.deepEqual(native.logs, item.nativeOpens ? PATHS.map((path) => `${LOG_PREFIX}${path} true secret`) : deniedLogs,
+          label(item.nativeOpens ? 'native opens the granted database' : 'native denies through the ceiling'));
+        assertRefused(varta, directory, label);
+        continue;
+      }
       const {url, child} = await serve(varta, directory);
       let browser;
-      try { browser = await open(url, (evaluate) => evaluate(expression(item))); } finally { await stop(child); }
-      results.set(item.name, {native, browser});
-      const label = (what) => `${item.name}: ${what}`;
+      try { browser = await open(url, (evaluate) => evaluate(expression())); } finally { await stop(child); }
       assert.equal(browser.status, 'ok', label(browser.error));
       assert.deepEqual(browser.logs, deniedLogs, label('browser logs'));
-      // Only operation records: grant states are recorded before them.
       assert.deepEqual(browser.audit.filter(([, resource]) => resource !== ''), deniedAudit, label('browser audit'));
-      if (item.nativeOpens) {
-        assert.deepEqual(native.logs, PATHS.map((path) => `${LOG_PREFIX}${path} true secret`), label('native opens the granted database'));
-        assert.deepEqual(browser.audit.filter(([, resource]) => resource === '').map(([id, , outcome]) => [id, outcome]),
-          [[K.capabilities.read, 'granted'], [K.capabilities.write, 'granted']], label('granted initial states'));
-      } else {
-        assert.deepEqual(browser.logs, native.logs, label('logs equal native'));
-        assert.deepEqual(browser.usage, native.usage, label('usage equals native'));
-      }
+      assert.deepEqual(browser.logs, native.logs, label('logs equal native'));
+      assert.deepEqual(browser.usage, native.usage, label('usage equals native'));
     }
-    // Granted, the browser run is the run of a host without a grant.
-    const granted = results.get('granted').browser, noGrant = results.get('no-grant').native;
-    assert.deepEqual(granted.logs, noGrant.logs, 'granted browser logs equal the native run without a grant');
-    assert.deepEqual(granted.usage, noGrant.usage, 'granted browser usage equals the native run without a grant');
   } finally { await rm(root, {recursive: true, force: true}); }
   return CASES.map(({name}) => name);
 }
@@ -166,5 +176,5 @@ if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href) {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   })));
-  console.log(`Chrome KV acceptance passed (${passed.join(', ')}): every open is denied as a host without KV storage must deny it, with native logs, exact fuel, host calls, microtasks, output bytes and turns, and audited kv.read denials`);
+  console.log(`Chrome KV acceptance passed (${passed.join(', ')}): without a grant every open is denied as a host without KV storage must deny it, with native logs, exact fuel, host calls, microtasks, output bytes and turns, and audited kv.read denials; a manifest granting KV is refused by the browser build and dev server`);
 }

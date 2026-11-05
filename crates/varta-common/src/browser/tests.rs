@@ -232,4 +232,15 @@ fn kv_facts_name_the_registered_operations_capabilities_and_bookkeeping() {
     let denial = facts["denialText"].as_str().unwrap();
     assert!(denial.contains(facts["pathPlaceholder"].as_str().unwrap()));
     assert!(denial.contains(crate::kv::READ_CAPABILITY));
+    // The build refusal of KV grants is the registry's prefix followed by
+    // the granted ids, so scripts can expect it exactly.
+    let grants = [crate::kv::READ_CAPABILITY, crate::kv::WRITE_CAPABILITY];
+    assert_eq!(
+        kv_storage_refusal(grants),
+        format!(
+            "{}{}",
+            facts["storageRefusal"].as_str().unwrap(),
+            grants.join(facts["refusalSeparator"].as_str().unwrap())
+        )
+    );
 }

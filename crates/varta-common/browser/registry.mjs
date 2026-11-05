@@ -108,7 +108,9 @@ export const registry = freeze({
       "value": "kv_value"
     },
     "pathPlaceholder": "{path}",
-    "separator": "\n"
+    "refusalSeparator": ", ",
+    "separator": "\n",
+    "storageRefusal": "browser KV storage is not implemented; the manifest grants "
   },
   "maxTurnFuel": 1000000000,
   "meter": {
