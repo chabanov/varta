@@ -372,7 +372,10 @@ impl Lower<'_> {
     }
     /// A KV key or value decode at `ty` (v38 `kv`): the targets, schema and
     /// declared-field checks of checked parsing, over the stored entry
-    /// `index` of the last read instead of JSON text.
+    /// `index` of the last read instead of JSON text. No target reaching a
+    /// `Uint8Array` gets here: keys decode at the prelude's fixed `KvKey`,
+    /// and a value target is either a top-level `Uint8Array` (read raw by
+    /// `bytesAt`) or passed `kv_checked`, which refuses nested ones.
     pub(super) fn kv_decode(
         &mut self,
         host: Host,
@@ -388,7 +391,6 @@ impl Lower<'_> {
                 span,
             ));
         }
-        self.refuse_byte_target("KV decode at", &ty.to_string(), ty, span)?;
         if !json_type(ty, self.types, false, false)
             || reaches_type(ty, Type::BigInt, self.types, &mut BTreeSet::new())
         {

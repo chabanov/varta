@@ -3473,7 +3473,7 @@ integration.
 Review follow-up (2026-11-05). Owner decision: the value ABI number stays
 18 and `ValueKind::Bytes` (tag 15) is an additive tag of the in-development
 value layout 18. Checked JSON decode targets that reach a `Uint8Array`
-(`JSON.parse(text) as T`, `varta.json.parse<T>`, the KV key decoder) are
+(`JSON.parse(text) as T`, `varta.json.parse<T>`) are
 compile errors under v38: the decoder tagged any JSON number array as bytes
 (`[300,1.5]` reached a fatal trap in `JSON.stringify`); v37 keeps its
 targets. Two views of one `ArrayBuffer` share their storage, the identity
@@ -3486,3 +3486,14 @@ Bytes cell, `byte_in.ts` tests all 77 keys in one function (the earlier
 grouping was not needed by the compiler), and the language guide's
 `appendPart` example shows a typed caller and the exact-shape requirement
 of its checked `as`.
+
+Second review follow-up (2026-11-05). `collections::reaches_bytes` (and so
+every reach visitor) and the KV `storable` check now visit the declared
+fields of mixed records, so `interface A { [k: string]: unknown; data:
+Uint8Array }` is refused as a `JSON.parse(text) as A` and `varta.json.parse`
+target, and a KV value type with a declared `Uint8Array` or `Date` field is
+refused by `kv_checked` (it compiled before). The KV decoder's byte-target
+refusal was unreachable (keys decode at the fixed `KvKey`, values pass
+`kv_checked` first) and was removed. `Object.is` names the view-identity
+refusal for any operand form, and its hint now points to comparing with a
+primitive or record, or comparing contents.

@@ -172,7 +172,8 @@ fn store(types: &mut ir::ValueTypes, name: &str, args: &[Type]) -> Result<Type> 
 
 /// Whether a value of `ty` may reach a collection of a kind `leaf` selects
 /// (or, with `opaque`, an opaque builtin class instance) through classes,
-/// fields, elements, values, union members and promises.
+/// fields, elements, dictionary values and the declared fields of mixed
+/// records, union members and promises.
 fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: bool) -> bool {
     fn visit(
         ty: Type,
@@ -198,7 +199,12 @@ fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: 
                 .elements
                 .iter()
                 .any(|ty| child(*ty)),
-            Type::Dictionary(id) => child(types.dictionaries[id as usize].value),
+            Type::Dictionary(id) => {
+                child(types.dictionaries[id as usize].value)
+                    || types
+                        .declared(ty)
+                        .is_some_and(|members| members.fields.iter().any(|f| child(f.ty)))
+            }
             Type::Union(id) | Type::ReferenceUnion(id) => {
                 types.unions[id as usize].iter().any(|t| child(*t))
             }

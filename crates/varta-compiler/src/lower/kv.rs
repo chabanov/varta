@@ -225,7 +225,15 @@ fn storable(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool
             .into_iter()
             .all(|field| storable(field.ty, types, seen)),
         Type::Array(id) => storable(types.arrays[id as usize], types, seen),
-        Type::Dictionary(id) => storable(types.dictionaries[id as usize].value, types, seen),
+        Type::Dictionary(id) => {
+            storable(types.dictionaries[id as usize].value, types, seen)
+                && types.declared(ty).is_none_or(|members| {
+                    members
+                        .fields
+                        .iter()
+                        .all(|field| storable(field.ty, types, seen))
+                })
+        }
         _ => false,
     }
 }

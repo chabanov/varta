@@ -11359,12 +11359,13 @@ tag of the in-development value layout 18, not a step to a new value ABI.
 - **Checked JSON decoding.** JSON never produces a `Uint8Array`, and a
   decoder would tag a JSON number array (of any numbers) as one, so a
   checked decode target that reaches a `Uint8Array` (through fields,
-  elements, dictionary values or union members) is refused at compile time
-  with `unsupported checked JSON decode target: … reaching a Uint8Array`:
-  `JSON.parse(text) as T` (the checked and the direct decoder),
-  `varta.json.parse<T>` and the KV key decoder (KV values keep their own
-  rule: a top-level `Uint8Array` is stored as raw bytes and a nested one is
-  refused by `kv_checked`). `Response.json()` returns
+  elements, dictionary values, the declared fields of mixed records or
+  union members) is refused at compile time with `unsupported checked JSON
+  decode target: … reaching a Uint8Array`: `JSON.parse(text) as T` (the
+  checked and the direct decoder) and `varta.json.parse<T>`. KV reads keep
+  their own rule: keys decode at the prelude's fixed `KvKey`, a top-level
+  `Uint8Array` value is stored as raw bytes, and a nested one, including
+  one in a mixed record's declared field, is refused by `kv_checked`. `Response.json()` returns
   `Promise<unknown>`, a JSON graph that never holds a `Uint8Array`, so a
   later checked `as T` reaching one throws its `type assertion to T failed`
   `TypeError` unless the bytes field is absent. V37 keeps its targets.

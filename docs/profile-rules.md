@@ -3939,9 +3939,12 @@ Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).
   `includes`/`indexOf`/`lastIndexOf`); a new identity-comparing form must
   call it too. Do not compare storage handles as view identity.
 - Checked JSON decoding never builds a `Uint8Array`: `Lower::refuse_byte_target`
-  refuses every decode target reaching one (`collections::reaches_bytes`)
-  in `varta.json.parse<T>`, `JSON.parse(text) as T` (before the direct
-  decoder) and the KV key decoder. A new checked decode entry must call it.
+  refuses every decode target reaching one (`collections::reaches_bytes`,
+  which also visits the declared fields of mixed records) in
+  `varta.json.parse<T>` and `JSON.parse(text) as T` (before the direct
+  decoder). A new checked decode entry must call it. KV reads need no call:
+  keys decode at the fixed `KvKey`, and `kv_checked` (`storable`, which
+  visits mixed-record declared fields too) refuses nested bytes in values.
 - Tests: `varta-runtime` `sdk_path_tests` (`byte_parts`, `byte_values` and
   `byte_in` cases with Node 24.20.0 expected files, the named `TypeError`s,
   the corrupt-storage rejections of the host and linked encoders, v37

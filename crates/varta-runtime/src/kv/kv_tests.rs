@@ -1292,6 +1292,9 @@ fn values_outside_the_subset_are_rejected() {
         "bigint",
         "{ at: Date }",
         "() => void",
+        // Declared fields of a mixed record count like record fields.
+        "{ [k: string]: unknown; data: Uint8Array }",
+        "{ [k: string]: unknown; at: Date }",
     ] {
         let source = format!(
             "export async function main(): Promise<void> {{ const kv = await varta.kv.open('/data/a.kv'); await kv.get<{ty}>(['x']); }}"
