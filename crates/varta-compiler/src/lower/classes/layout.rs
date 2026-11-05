@@ -701,6 +701,25 @@ fn method(
             ));
         }
         Some(base) => {
+            // V38 (`sdk_paths`): an engine-internal member of a prelude class
+            // (`Blob.byteString`, ...) is engine code the preludes dispatch
+            // to; a program's subclass must not replace it.
+            let inherited_from = types.classes.get(base.owner);
+            if types.profile.sdk_paths()
+                && !prelude
+                && inherited_from.prelude
+                && crate::modules::engine::INTERNAL_MEMBERS
+                    .iter()
+                    .any(|(class, member)| *class == inherited_from.name && *member == name)
+            {
+                return Err(source.locate(
+                    unsupported(&format!(
+                        "override of the engine-internal member {name} of {}",
+                        inherited_from.name
+                    )),
+                    method.key.span(),
+                ));
+            }
             if base.access == Access::Private || base.access != access {
                 return Err(source.locate(
                     type_error(format!(

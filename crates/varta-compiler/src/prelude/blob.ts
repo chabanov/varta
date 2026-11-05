@@ -1,7 +1,7 @@
 // Engine prelude of checked-f64-utf16-v38 (`web_bytes`): `ArrayBuffer`,
-// `Blob` and `FormData` in typed guest code with no host import. The
-// compiler loads it when a module names one of its exports; see
-// docs/architecture.md (Web bytes).
+// `Blob`, `File` (`sdk_paths`) and `FormData` in typed guest code with no
+// host import. The compiler loads it when a module names one of its exports;
+// see docs/architecture.md (Web bytes).
 //
 // A `Blob` holds its bytes as an immutable byte string: one UTF-16 code unit
 // (0..=0xFF) per byte, the form network chunks and byte request bodies take
@@ -234,32 +234,59 @@ function blobOf(bytes: string, type: string): Blob {
   return new Blob(undefined, { type: type });
 }
 
-export type FormDataEntryValue = string | Blob;
+export interface FilePropertyBag {
+  type?: string;
+}
+
+// A `File` (v38 `sdk_paths`): a `Blob` with a name. `lastModified` is not
+// declared: its WHATWG default is the current wall-clock time, which needs
+// a clock capability, so reading it is a compile error rather than a guess.
+export class File extends Blob {
+  readonly name: string;
+
+  constructor(fileBits: BlobPart[], fileName: string, options?: FilePropertyBag) {
+    super(fileBits, options);
+    this.name = scalarString(fileName);
+  }
+}
+
+// An entry value as `get`, `getAll` and iteration return it: a string or a
+// `File` (WHATWG "create an entry").
+export type FormDataEntryValue = string | File;
 
 class FormEntry {
   readonly name: string;
   readonly value: FormDataEntryValue;
-  // The file name of a blob entry (WHATWG: the `File` it becomes).
-  readonly filename: string;
-  constructor(name: string, value: FormDataEntryValue, filename: string) {
+  constructor(name: string, value: FormDataEntryValue) {
     this.name = name;
     this.value = value;
-    this.filename = filename;
   }
 }
 
-function entry(name: string, value: FormDataEntryValue, filename: string | undefined, method: string): FormEntry {
+// WHATWG "create an entry": a `Blob` that is no `File` becomes a `File`
+// named `blob`, and a given file name makes a new `File` of that name; both
+// keep the bytes and the type. The test is `instanceof File` and the name a
+// `File` field, never a method that a program's subclass could override. A
+// `File` stays the same object; the `unknown` cell narrows it by its class
+// descriptor (a `Blob` binding does not narrow to its subclass).
+function entry(name: string, value: string | Blob, filename: string | undefined, method: string): FormEntry {
   if (typeof value === 'string') {
     if (filename !== undefined) {
       throw new TypeError(`Failed to execute '${method}' on 'FormData': parameter 2 is not of type 'Blob'.`);
     }
-    return new FormEntry(scalarString(name), scalarString(value), '');
+    return new FormEntry(scalarString(name), scalarString(value));
   }
-  return new FormEntry(
-    scalarString(name),
-    value,
-    filename === undefined ? DEFAULT_FILENAME : scalarString(filename),
-  );
+  const held: unknown = value;
+  let file: File;
+  if (held instanceof File) {
+    file = held;
+  } else {
+    file = new File([value], DEFAULT_FILENAME, { type: value.type });
+  }
+  if (filename !== undefined) {
+    file = new File([file], filename, { type: file.type });
+  }
+  return new FormEntry(scalarString(name), file);
 }
 
 export class FormData {
@@ -269,11 +296,11 @@ export class FormData {
     this.list = [];
   }
 
-  append(name: string, value: FormDataEntryValue, filename?: string): void {
+  append(name: string, value: string | Blob, filename?: string): void {
     this.list.push(entry(name, value, filename, 'append'));
   }
 
-  set(name: string, value: FormDataEntryValue, filename?: string): void {
+  set(name: string, value: string | Blob, filename?: string): void {
     const replacement = entry(name, value, filename, 'set');
     const kept: FormEntry[] = [];
     let placed = false;
@@ -399,7 +426,7 @@ function multipartBody(list: FormEntry[]): MultipartBody {
     } else {
       const type = value.type === '' ? OCTET_STREAM : value.type;
       const head = utf8Bytes(
-        `Content-Disposition: form-data; name="${name}"; filename="${escapeName(item.filename)}"${CRLF}Content-Type: ${type}${CRLF}${CRLF}`,
+        `Content-Disposition: form-data; name="${name}"; filename="${escapeName(value.name)}"${CRLF}Content-Type: ${type}${CRLF}${CRLF}`,
       );
       parts.push(head + value.byteString());
     }

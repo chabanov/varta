@@ -1,0 +1,5 @@
+u8 2, blob 3, buffer 4, string s
+X 7
+map 1, s, none
+set true, number 3
+true false false

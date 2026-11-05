@@ -1,10 +1,42 @@
 use super::*;
 use varta_common::{language::LanguageProfile, value::ErrorClass};
+/// `new Error(message, options)`: the arguments of the options form (v38).
+pub(super) const ERROR_OPTIONS_ARGUMENTS: usize = 2;
 pub(super) fn classes(profile: LanguageProfile) -> impl Iterator<Item = ErrorClass> {
     ErrorClass::ALL
         .iter()
         .copied()
         .filter(move |class| profile.error_families() || *class == ErrorClass::Error)
+}
+/// The native families that a module constructs with an options argument,
+/// `new TypeError(message, options)` (v38 `sdk_paths`). Each becomes an
+/// instance of the family's Error root, which must exist before any catch
+/// union or `unknown` analysis, so `link` creates the roots up front. A name
+/// that a binding shadows is still counted: an unused root is harmless.
+pub(super) fn options_constructors(
+    module: &ast::Module,
+    profile: LanguageProfile,
+) -> std::collections::BTreeSet<ErrorClass> {
+    use swc_ecma_visit::{Visit, VisitWith};
+    struct Scan(std::collections::BTreeSet<ErrorClass>, LanguageProfile);
+    impl Visit for Scan {
+        fn visit_ts_type(&mut self, _: &ast::TsType) {}
+        fn visit_new_expr(&mut self, node: &ast::NewExpr) {
+            if let ast::Expr::Ident(name) = &*node.callee
+                && let Some(class) = ErrorClass::from_name(name.sym.as_ref())
+                && classes(self.1).any(|admitted| admitted == class)
+                && node.args.as_ref().map(Vec::len) == Some(ERROR_OPTIONS_ARGUMENTS)
+            {
+                self.0.insert(class);
+            }
+            node.visit_children_with(self);
+        }
+    }
+    let mut scan = Scan(std::collections::BTreeSet::new(), profile);
+    if profile.sdk_paths() {
+        module.visit_with(&mut scan);
+    }
+    scan.0
 }
 pub(super) fn annotation(class: ErrorClass, types: &mut ir::ValueTypes) -> Result<Type> {
     if !types.profile.errors() {
@@ -53,10 +85,23 @@ impl Lower<'_> {
                 "native error families require checked-f64-utf16-v9",
             ));
         }
+        // V38 (`sdk_paths`): `new Error(message, options)` is an instance of
+        // the family's Error root, whose `cause` slot a native error lacks.
+        if self.types.profile.sdk_paths()
+            && !generic
+            && args.len() == ERROR_OPTIONS_ARGUMENTS
+            && args.iter().all(|a| a.spread.is_none())
+        {
+            return self.error_root_new(class, args, span);
+        }
         if generic || args.len() > 1 || args.iter().any(|a| a.spread.is_some()) {
-            return Err(unsupported(
-                "error constructor accepts zero or one string/undefined argument",
-            ));
+            return Err(unsupported(if self.types.profile.sdk_paths() {
+                "error constructor arguments other than (message?, options?): a string or \
+                 undefined message and one options object, with no argument spread and no \
+                 type arguments"
+            } else {
+                "error constructor accepts zero or one string/undefined argument"
+            }));
         }
         let value = if let Some(arg) = args.first() {
             self.expr(&arg.expr)?
@@ -163,6 +208,9 @@ impl Lower<'_> {
         let kind = match name.sym.as_ref() {
             "message" => E::ErrorMessage(Box::new(value)),
             "name" => E::ErrorName(Box::new(value)),
+            classes::CAUSE if self.types.profile.sdk_paths() => {
+                return self.error_cause_read(value, member.span);
+            }
             _ => return Err(unsupported("Error property other than name/message")),
         };
         Ok(Expr {

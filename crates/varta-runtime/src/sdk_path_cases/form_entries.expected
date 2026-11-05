@@ -1,0 +1,24 @@
+true
+File=true Blob=true blob image/png 1
+File=true Blob=true other.txt text/plain 1
+File=true Blob=true pic.png image/png 1
+string v
+true false false
+all File=true Blob=true blob image/png 1
+blob File=true Blob=true blob image/png 1
+file File=true Blob=true other.txt text/plain 1
+same File=true Blob=true n.txt text/plain 1
+named File=true Blob=true pic.png image/png 1
+text string v
+value File=true Blob=true blob image/png 1
+value File=true Blob=true other.txt text/plain 1
+value File=true Blob=true n.txt text/plain 1
+value File=true Blob=true pic.png image/png 1
+value string v
+entry blob File=true Blob=true blob image/png 1
+entry file File=true Blob=true other.txt text/plain 1
+entry same File=true Blob=true n.txt text/plain 1
+entry named File=true Blob=true pic.png image/png 1
+entry text string v
+File=true Blob=true set.bin  2
+"--<b>\r\nContent-Disposition: form-data; name=\"blob\"; filename=\"blob\"\r\nContent-Type: image/png\r\n\r\nx\r\n--<b>\r\nContent-Disposition: form-data; name=\"file\"; filename=\"other.txt\"\r\nContent-Type: text/plain\r\n\r\ny\r\n--<b>\r\nContent-Disposition: form-data; name=\"same\"; filename=\"set.bin\"\r\nContent-Type: application/octet-stream\r\n\r\nzz\r\n--<b>\r\nContent-Disposition: form-data; name=\"named\"; filename=\"pic.png\"\r\nContent-Type: image/png\r\n\r\nx\r\n--<b>\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nv\r\n--<b>--\r\n"

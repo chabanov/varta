@@ -323,10 +323,12 @@ pub(crate) const BLOB: Prelude = Prelude {
     exports: &[
         (ARRAY_BUFFER_CLASS, Namespace::Class),
         ("Blob", Namespace::Class),
+        ("File", Namespace::Class),
         ("FormData", Namespace::Class),
         ("ArrayBufferView", Namespace::Type),
         ("BlobPart", Namespace::Type),
         ("BlobPropertyBag", Namespace::Type),
+        ("FilePropertyBag", Namespace::Type),
         ("FormDataEntryValue", Namespace::Type),
     ],
     members: &[],

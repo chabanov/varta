@@ -1,0 +1,12 @@
+outer Error true false
+RangeError(inner)
+undefined
+text
+undefined
+undefined
+Error: outer
+{"e":{}}
+TypeError(thrown) 42 true
+Error(outer)
+ConnectionError(Connection error) <- SyntaxError(s) <- Error(outer)
+undefined

@@ -438,6 +438,9 @@ impl Lower<'_> {
                 if let Some(class) = self.class_callee(&binary.right) {
                     return self.class_instance_of(binary, class);
                 }
+                if let Some(test) = self.collection_instance_of(binary)? {
+                    return Ok(test);
+                }
                 return self.instance_of_error(binary);
             }
             ast::Expr::Yield(expression) if self.types.profile.generators() => {

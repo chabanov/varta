@@ -11211,6 +11211,89 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   serialization run per byte in guest code; network `text()` keeps the host
   decoder. Production budgets are unchanged.
 
+#### SDK paths (`sdk_paths`)
+
+Wave-2 additions to v38 for the multipart, query and error paths of the pinned
+uarp-sdk 0.13.2, under the selector `LanguageProfile::sdk_paths()`. No host
+import, value layout or ABI changes; v1–v37 keep rejecting every form below.
+
+- **Error causes.** `error.cause` reads a native error, an Error subclass
+  instance or a union of both after `instanceof Error`: the instance's
+  `cause` slot, and `undefined` for a native error. `new Error(message,
+  options)` (and `new TypeError(…)` and the other native families) builds
+  an instance of the family's synthetic Error root, the class an Error
+  subclass extends, with `message`, the family's `name` and `options.cause`
+  installed exactly as `super(message, options)` does. Its static type is
+  that root class, so it passes `instanceof` of its family and of `Error`,
+  is reported like a subclass instance when uncaught and serializes as `{}`,
+  as in JavaScript; like a subclass instance it is not assignable to a
+  parameter annotated `Error` (the native error union). Native error values
+  never own a `cause`, so the `undefined` read is exact. Before any body is
+  lowered, `link` creates the root of every family that some module
+  constructs with two arguments, so catch unions and `unknown` analyses see
+  the class from the start. Any other argument list (more than two
+  arguments, an argument spread, type arguments) fails with `error
+  constructor arguments other than (message?, options?)`. `"cause" in` an
+  Error-class instance (an Error root or subclass instance) is refused:
+  JavaScript defines the own `cause` only when the options object has one
+  (`'cause' in new Error('m', {})` is false), and the instance's `cause`
+  slot records no presence. `"message" in` and `"name" in` stay true, as
+  the prototype provides both.
+- **Generic method calls on element receivers.** `xs[i].m<T>()` reaches a
+  function field of the element type like `x.m<T>()` of a binding does: the
+  element is read once (an absent element fails with `TypeError` when the
+  field is read) and the erased generic call checks its result. Only a
+  computed key other than a string literal is an element read, as in member
+  lowering: `xs['length']` stays the length, so a `switch` over it is never
+  exhaustive over the element type.
+- **`instanceof Map`, `Set` and `Uint8Array`.** Of a closed union, the test
+  is a member tag test and narrows the union both ways; of any other closed
+  type it is a constant (the operand is still evaluated). These collections
+  have no value tag of their own (a map or set shares the record tag, a
+  `Uint8Array` the array tag), so the test is refused for an `unknown` or
+  `object` operand, which never holds one, and for a union whose other
+  members share the selected member's tag. Union formation already refuses
+  two members with one tag: a `Map` or `Set` with another map, set, record
+  or class instance, and a `Uint8Array` with another array type. A
+  `Uint8Array` with records or class instances (`Blob | ArrayBuffer |
+  Uint8Array | string`) and a `Map` or `Set` with primitives or arrays are
+  admitted.
+- **`File` and `FormData` entries.** The blob prelude's `File` is a `Blob`
+  with a `name` (a USVString). `FormData.append`/`set` take `string | Blob`
+  and follow WHATWG "create an entry": a `Blob` that is no `File` becomes a
+  `File` named `blob` with the same bytes and type, a given file name makes
+  a new `File` of that name, and a `File` without one stays the same object.
+  `FormDataEntryValue` is `string | File`, so `get`, `getAll`, iteration and
+  the multipart `filename` (the entry's `File` name) agree with Node. The
+  entry test is `instanceof File` and the name the `File` field; a
+  program's subclass cannot override an engine-internal member of a prelude
+  class (`override of the engine-internal member byteString of Blob`).
+  `lastModified` is not declared: its default is the wall-clock time, which
+  needs a clock grant, so reading it is a compile error. `for (const [name,
+  value] of form)` iterates the snapshot `FormData.prototype.entries()`
+  returns.
+- **Spreads and enumeration through views.** A record spread (into a record
+  or a dictionary context) and an own-key enumeration (`Object.keys`,
+  `Object.values`, `Object.entries`, an `Object.assign` source, `for...in`)
+  whose source type is a view of a wider object type, one with other field
+  names or another field order, fail when `resolve` sees the view: the
+  lowering would copy or list the view's declared fields in the view's
+  order, where JavaScript takes every own property in the object's own key
+  order. A view whose sources declare exactly its fields in its order (the
+  SDK's `{ ...spec, headers, query }` passed back as a `RequestSpec`) is
+  admitted, as are dictionary spreads (`{ ...spec.query, ...options.query }`
+  merges and serializes byte for byte as Node does).
+- **Not admitted.** A `Uint8Array`, or a union that may hold one, held by
+  `unknown`, and the record view of a class instance held by `unknown`
+  (`value as Record<string, unknown>`), keep their named diagnostics and
+  `TypeError`s. On the SDK's `appendPart(form, key, value: unknown)` this
+  means a `Blob` or `File` part and primitive or JSON fields reach the wire
+  as in Node, while a `Uint8Array`, `ArrayBuffer` or `{ data: Uint8Array }`
+  part throws `TypeError` when the multipart record is read. `A[] | B[]` of
+  records, `Blob.stream()`, `Response`/`Request` `formData()` and the
+  `FormData` `keys()`/`values()`/`entries()` iterator objects (they return
+  array snapshots) stay as they were.
+
 #### Virtual file roots (`file_roots`)
 
 Under v38 a guest never sees or names a host path. Every `fs.read`/`fs.print`

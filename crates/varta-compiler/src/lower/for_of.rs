@@ -21,22 +21,34 @@ fn binary(span: swc_common::Span, op: ast::BinaryOp, left: Expr, right: Expr, ty
         kind: E::Binary(op, Box::new(left), Box::new(right)),
     }
 }
-/// The `Headers` method that is also its `[Symbol.iterator]`.
-const HEADERS_ITERATOR: &str = "entries";
+/// The `Headers` and `FormData` method that is also its `[Symbol.iterator]`.
+const ENTRIES_ITERATOR: &str = "entries";
+/// The prelude class `FormData` (v38 `sdk_paths` iterates it).
+const FORM_DATA_CLASS: &str = "FormData";
 impl Lower<'_> {
     /// `for (… of headers)` (v35 `web_headers`) iterates the fresh snapshot of
     /// the sorted and combined header list that `Headers.prototype.entries`
-    /// returns. Like `[Symbol.iterator]`, it ignores a subclass override.
+    /// returns, and `for (… of form)` (v38 `sdk_paths`) the snapshot of the
+    /// entry list that `FormData.prototype.entries` returns. Like
+    /// `[Symbol.iterator]`, it ignores a subclass override.
     fn headers_iteration(&mut self, value: Expr) -> Result<Expr> {
         let Type::Class(class) = value.ty else {
             return Ok(value);
         };
-        let Some(headers) = self
-            .types
-            .classes
-            .prelude_class(crate::modules::engine::HEADERS_CLASS)
-            .filter(|headers| self.types.classes.descends(class, *headers))
-        else {
+        let iterable = |name: &str| {
+            self.types
+                .classes
+                .prelude_class(name)
+                .filter(|owner| self.types.classes.descends(class, *owner))
+        };
+        let owner = iterable(crate::modules::engine::HEADERS_CLASS).or_else(|| {
+            self.types
+                .profile
+                .sdk_paths()
+                .then(|| iterable(FORM_DATA_CLASS))
+                .flatten()
+        });
+        let Some(headers) = owner else {
             return Ok(value);
         };
         let signature = self
@@ -44,9 +56,9 @@ impl Lower<'_> {
             .classes
             .get(headers)
             .methods
-            .get(HEADERS_ITERATOR)
+            .get(ENTRIES_ITERATOR)
             .map(|method| method.signature.clone())
-            .ok_or_else(|| CompilerError::Internal("missing Headers iterator".into()))?;
+            .ok_or_else(|| CompilerError::Internal("missing entries iterator".into()))?;
         Ok(Expr {
             span: value.span,
             ty: signature.result,

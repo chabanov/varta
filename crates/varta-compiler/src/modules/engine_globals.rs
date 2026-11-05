@@ -118,6 +118,7 @@ mod tests {
         ("DOMException", "function"),
         ("Date", "function"),
         ("Error", "function"),
+        ("File", "function"),
         ("FormData", "function"),
         ("Headers", "function"),
         ("JSON", "object"),

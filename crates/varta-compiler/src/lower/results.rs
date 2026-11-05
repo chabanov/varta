@@ -78,6 +78,10 @@ impl Lower<'_> {
                 ast::MemberProp::Ident(name) if [classes::MESSAGE, classes::NAME].contains(&name.sym.as_ref()) => {
                     self.error_union_read(value, name.sym.as_ref(), false, member.span)
                 }
+                // V38 (`sdk_paths`): the class member's `cause`, else undefined.
+                ast::MemberProp::Ident(name) if name.sym == classes::CAUSE && self.types.profile.sdk_paths() => {
+                    self.error_cause_read(value, member.span)
+                }
                 _ => Err(self.source.locate(
                     unsupported("property other than name/message of a native error or Error subclass union; narrow with instanceof"),
                     member.prop.span(),

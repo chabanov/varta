@@ -334,6 +334,17 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         root: u32,
     ) -> Result<Expr> {
+        let receiver = self.this_value(call.span)?;
+        self.error_initialize(call, root, receiver)
+    }
+    /// Initialize the Error-root slots of `receiver` from the arguments of
+    /// `call` (`super(...)`, or `new Error(message, options)` under v38).
+    fn error_initialize(
+        &mut self,
+        call: &ast::CallExpr,
+        root: u32,
+        receiver: Expr,
+    ) -> Result<Expr> {
         let span = call.span;
         if call.type_args.is_some()
             || call.args.len() > OPTIONS_PARAMETER + 1
@@ -420,7 +431,7 @@ impl Lower<'_> {
             .into_iter()
             .zip([text, self.text(span, family.name()), cause])
         {
-            body.push(S::SetField(self.this_value(span)?, slot, value));
+            body.push(S::SetField(receiver.clone(), slot, value));
         }
         Ok(Expr {
             span,
@@ -694,6 +705,143 @@ impl Lower<'_> {
                 ],
             },
         })
+    }
+    /// `error.cause` of a native error or a mixed native error / Error-instance
+    /// union (v38 `sdk_paths`): the class member's `cause` slot, `undefined`
+    /// for a native error. Native Error values never own a `cause`: a
+    /// constructor call with options builds an instance of the family's
+    /// Error root (`error_root_new`), and host-created errors carry none.
+    pub(in crate::lower) fn error_cause_read(&mut self, value: Expr, span: Span) -> Result<Expr> {
+        let target = exceptions::cause_type(self.types)?;
+        let absent = unions::widen(undefined(span), Some(target), self.types)?;
+        let Some((class, _)) = self.error_union(value.ty) else {
+            // Evaluate the receiver once for its effects.
+            return Ok(Expr {
+                span,
+                ty: target,
+                kind: E::Sequence(Box::new(value), Box::new(absent)),
+            });
+        };
+        let union = value.ty;
+        let saved = self.hidden(union);
+        let output = self.hidden(target);
+        let marker = self.hidden(Type::Number);
+        let instance = Expr {
+            span,
+            ty: class,
+            kind: E::UnboxUnion(Box::new(local(span, saved, union))),
+        };
+        let present = Expr {
+            span,
+            ty: target,
+            kind: E::Field(Box::new(instance), self.root_slot(CAUSE)?),
+        };
+        let test = Expr {
+            span,
+            ty: Type::Boolean,
+            kind: E::IsUnionMember(Box::new(local(span, saved, union)), class),
+        };
+        Ok(Expr {
+            span,
+            ty: target,
+            kind: E::ValueBlock {
+                output,
+                marker,
+                roots: vec![saved],
+                body: vec![
+                    S::Init(saved, value),
+                    S::Init(output, conditional(span, target, test, present, absent)),
+                ],
+            },
+        })
+    }
+    /// `new Error(message, options)` of a native family (v38 `sdk_paths`):
+    /// an instance of the family's Error root, so the `cause` has a slot.
+    /// The root exists because `link` creates it for every such call it
+    /// finds in the program before any body is lowered.
+    pub(in crate::lower) fn error_root_new(
+        &mut self,
+        family: ErrorClass,
+        args: &[ast::ExprOrSpread],
+        span: Span,
+    ) -> Result<Expr> {
+        let root = self.types.classes.error_root(family).ok_or_else(|| {
+            CompilerError::Internal("missing Error root of an options constructor".into())
+        })?;
+        let instance = self.hidden(Type::Class(root));
+        let shape = self.types.classes.get(root).shape;
+        let fields: Vec<Type> = self
+            .types
+            .classes
+            .get(root)
+            .fields
+            .iter()
+            .map(|field| field.ty)
+            .collect();
+        let marker = self.hidden(Type::Number);
+        let cause = exceptions::cause_type(self.types)?;
+        // Placeholders until the initializer sets every slot: the root holds
+        // the `message` and `name` strings and the `cause`.
+        let defaults = fields
+            .into_iter()
+            .enumerate()
+            .map(|(slot, ty)| {
+                let value = match ty {
+                    Type::String => Expr {
+                        span,
+                        ty,
+                        kind: E::String(Vec::new()),
+                    },
+                    _ if ty == cause => unions::widen(undefined(span), Some(cause), self.types)?,
+                    _ => return Err(CompilerError::Internal("Error root slot type".into())),
+                };
+                Ok((slot as u32, value))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let call = ast::CallExpr {
+            span,
+            ctxt: Default::default(),
+            callee: ast::Callee::Super(ast::Super { span }),
+            args: args.to_vec(),
+            type_args: None,
+        };
+        let initialize =
+            self.error_initialize(&call, root, local(span, instance, Type::Class(root)))?;
+        Ok(Expr {
+            span,
+            ty: Type::Class(root),
+            kind: E::ValueBlock {
+                output: instance,
+                marker,
+                roots: vec![instance],
+                body: vec![
+                    S::Init(
+                        instance,
+                        Expr {
+                            span,
+                            ty: Type::Record(shape),
+                            kind: E::Record(defaults),
+                        },
+                    ),
+                    S::Expr(initialize),
+                ],
+            },
+        })
+    }
+    /// Refuse `"cause" in value` of an Error-class instance (v38 `sdk_paths`).
+    /// JavaScript defines the own `cause` only when the options object had
+    /// one (`new Error('m', {})` has none), while every Error-root instance
+    /// carries a `cause` slot and records no presence, so the answer would be
+    /// a guess.
+    pub(in crate::lower) fn refuse_cause_in(&self, class: u32, name: &str) -> Result<()> {
+        if self.types.profile.sdk_paths() && name == CAUSE && self.types.classes.is_error(class) {
+            return Err(unsupported(
+                "\"cause\" in an Error instance (JavaScript defines an own cause only when the \
+                 options object has one, which the instance does not record); read error.cause \
+                 instead",
+            ));
+        }
+        Ok(())
     }
     /// Whether some member of `ty` is an Error-instance class.
     pub(in crate::lower) fn has_error_instances(&self, ty: Type) -> bool {

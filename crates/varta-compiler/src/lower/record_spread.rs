@@ -108,6 +108,14 @@ impl Lower<'_> {
                     if self.types.records[shape as usize].class.is_some() {
                         return Err(unsupported("object spread of a class instance"));
                     }
+                    if self.types.profile.sdk_paths() {
+                        self.types.subtyping.note_key_copy(
+                            shape,
+                            subtyping::KeyCopy::Spread,
+                            self.source,
+                            spread.expr.span(),
+                        );
+                    }
                     let slot = self.hidden(value.ty);
                     roots.push(slot);
                     body.push(S::Init(slot, value));

@@ -548,6 +548,9 @@ impl Lower<'_> {
         {
             return self.refine_class(id.sym.as_ref(), class, yes);
         }
+        if self.collection_guard(test, yes)? {
+            return Ok(());
+        }
         if let ast::Expr::Bin(binary) = test
             && binary.op == ast::BinaryOp::InstanceOf
             && let Some(class) = self.error_callee(&binary.right)
