@@ -1,45 +1,69 @@
 // Browser transport limits supplement package/host policy. Redirects are never
 // followed here: an opaque manual redirect cannot expose its checked next hop.
+// V38 timing: plan.timeoutMs (the per-turn deadline) is an inactivity window.
+// The head must arrive within one window of the start, and each body read
+// waits at most one window for its next bytes, so a chunk renews it.
 function browserTransport(plan, fetcher = fetch) {
   const N = registry.network, C = N.completion, controller = new AbortController();
-  let timeout;
-  let reader, buffer = new Uint8Array(0), carry = new Uint8Array(0), total = 0, ended = false;
+  let reader, buffer = new Uint8Array(0), carry = new Uint8Array(0), ended = false, timer;
   const utf8 = new TextDecoder("utf-8", { ignoreBOM: true }), strict = new TextDecoder("utf-8", { fatal: true });
   const failed = (text) => ({ kind: C.failed, text });
-  const cancel = () => { clearTimeout(timeout); controller.abort(); reader?.cancel().catch(() => {}); buffer = carry = new Uint8Array(0); ended = true; };
+  const cancel = () => { clearTimeout(timer); controller.abort(); reader?.cancel().catch(() => {}); buffer = carry = new Uint8Array(0); ended = true; };
   // Headers the browser owns in addition to native framing headers. Refuse
   // them instead of allowing Fetch to silently discard a guest's requested field.
-  const browserHeaders = new Set(["accept-charset", "accept-encoding", "access-control-request-headers", "access-control-request-method", "cookie", "cookie2", "date", "dnt", "origin", "permissions-policy", "referer", "set-cookie", "user-agent", "via", "x-http-method", "x-http-method-override", "x-method-override"]);
-  if (Number.isFinite(plan.timeoutMs)) timeout = setTimeout(() => controller.abort(), plan.timeoutMs);
+  const browserHeaders = new Set(["accept-charset", "access-control-request-headers", "access-control-request-method", "cookie", "cookie2", "date", "dnt", "origin", "permissions-policy", "referer", "set-cookie", "via", "x-http-method", "x-http-method-override", "x-method-override"]);
+  // net::HOST_REQUEST_HEADERS: every host owns them. The guest's value was
+  // checked like any header and is ignored here exactly as the native host
+  // ignores it; the browser sends its own.
+  const hostHeaders = new Set(["accept-encoding", "user-agent"]);
+  // A response the browser decoded no longer has these as received.
+  const decodedHeaders = new Set(["content-encoding", "content-length"]);
+  const expired = Symbol("inactivity window");
+  // Settle with `promise`, or reject with `expired` after one window.
+  const within = (promise) => {
+    if (!Number.isFinite(plan.timeoutMs)) return promise;
+    return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(expired), plan.timeoutMs); })])
+      .finally(() => clearTimeout(timer));
+  };
   const head = (async () => {
-    for (const [name] of plan.headers) {
+    const headers = [];
+    for (const [name, value] of plan.headers) {
       const lower = name.toLowerCase();
       if (browserHeaders.has(lower) || lower.startsWith("sec-") || lower.startsWith("proxy-")) { cancel(); return failed(`browser transport cannot set header ${name}`); }
+      if (!hostHeaders.has(lower)) headers.push([name, value]);
     }
     try {
-      const response = await fetcher(plan.url, { method: plan.method, headers: plan.headers, body: plan.body,
-        credentials: "omit", redirect: "manual", mode: "cors", cache: "no-store", referrerPolicy: "no-referrer", signal: controller.signal });
+      const response = await within(fetcher(plan.url, { method: plan.method, headers, body: plan.body,
+        credentials: "omit", redirect: "manual", mode: "cors", cache: "no-store", referrerPolicy: "no-referrer", signal: controller.signal }));
       if (response.type === "opaqueredirect" || response.status === 0) { cancel(); return failed("browser transport cannot inspect a manual redirect"); }
+      // Fetch decodes every content coding; the native host asks for the
+      // identity coding. A decoded body shows neither its coding nor the
+      // coded length (a cross-origin coding is visible only when exposed).
+      let coded = false;
+      for (const coding of (response.headers.get("content-encoding") ?? "").split(",")) {
+        const name = coding.trim().toLowerCase();
+        if (name && name !== "identity") coded = true;
+      }
       let count = 0, size = 0;
       const visible = [];
       for (const [name, value] of response.headers) {
         count++; size += name.length + value.length;
         if (count > N.maxResponseHeaders || size > N.maxResponseHeaderBytes) { cancel(); return failed("response headers exceed browser host limits"); }
+        if (coded && decodedHeaders.has(name)) continue;
         if (plan.visible.has(name) && !N.forbiddenResponseHeaders.includes(name)) visible.push([name, value]);
       }
-      // Fetch transparently decompresses. Do not claim native byte-body parity
-      // for an encoding the browser exposes as having transformed the body.
-      const encoding = response.headers.get("content-encoding");
-      if (encoding && encoding.toLowerCase() !== "identity") { cancel(); return failed("browser transport cannot expose an encoded response body unchanged"); }
       visible.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
       const location = response.headers.get("location");
       let target = ""; if (location) { try { target = new URL(location, plan.url).href; } catch {} }
-      const [status, statusText, url, locationField, headers] = N.headFields;
-      const fields = { [status]: response.status, [statusText]: response.statusText, [url]: plan.url, [locationField]: target, [headers]: visible.flat() };
-      const text = JSON.stringify(Object.fromEntries(Object.entries(fields).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)));
+      const [status, statusText, url, locationField, fields] = N.headFields;
+      const record = { [status]: response.status, [statusText]: response.statusText, [url]: plan.url, [locationField]: target, [fields]: visible.flat() };
+      const text = JSON.stringify(Object.fromEntries(Object.entries(record).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)));
       reader = response.body?.getReader(); ended = !reader;
       return { kind: C.head, text };
-    } catch (error) { cancel(); return failed(`browser request failed: ${error.message ?? error}`); }
+    } catch (error) {
+      cancel();
+      return failed(error === expired ? N.errors.timeout : `browser request failed: ${error.message ?? error}`);
+    }
   })();
   const incomplete = (bytes) => {
     for (let back = 1; back <= Math.min(3, bytes.length); back++) {
@@ -52,6 +76,9 @@ function browserTransport(plan, fetcher = fetch) {
     return 0;
   };
   const pull = async (bytes) => {
+    // V38 (net::BodyBound::Read): the bound counts what this read receives;
+    // a body has no total byte bound.
+    let received = 0;
     try {
       while (true) {
         if (bytes && (carry.length || buffer.length)) {
@@ -72,17 +99,20 @@ function browserTransport(plan, fetcher = fetch) {
           continue;
         }
         if (ended) {
-          if (carry.length) { carry = new Uint8Array(0); return { kind: C.chunk, text: "\ufffd" }; }
-          clearTimeout(timeout); return { kind: C.end, text: "" };
+          if (carry.length) { carry = new Uint8Array(0); return { kind: C.chunk, text: "�" }; }
+          return { kind: C.end, text: "" };
         }
-        const { value, done } = await reader.read(); ended = done;
+        const { value, done } = await within(reader.read()); ended = done;
         if (!done) {
-          total += value.byteLength;
-          if (total > N.maxBodyBytes) { cancel(); return failed(N.errors.bodyLimit); }
+          received += value.byteLength;
+          if (received > N.maxBodyBytes) { cancel(); return failed(N.errors.bodyLimit); }
           buffer = value;
         }
       }
-    } catch (error) { cancel(); return failed(`browser response body failed: ${error.message ?? error}`); }
+    } catch (error) {
+      cancel();
+      return failed(error === expired ? N.errors.bodyTimeout : `browser response body failed: ${error.message ?? error}`);
+    }
   };
   return { head, pull, cancel };
 }

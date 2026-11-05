@@ -257,7 +257,7 @@ fn net_limits() -> String {
             "net::MAX_CHUNK_BYTES",
         ),
         row(
-            "Body bytes of one response",
+            "Body bytes of one response (v37), or received while serving one read (v38)",
             net::MAX_RESPONSE_BODY_BYTES,
             "net::MAX_RESPONSE_BODY_BYTES",
         ),

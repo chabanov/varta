@@ -8813,14 +8813,17 @@ as unknown names and keep their bytes and diagnostics.
   automatic redirects and no decompression. The runtime sets `host` and the
   framing headers; a request that sets one of `net::RUNTIME_HEADERS` fails.
   Name resolution, connect, TLS, the request and every body read share the
-  remaining execution deadline. Response heads are bounded by
+  remaining execution deadline (v38 bounds a transfer by inactivity instead:
+  [long-lived transfers](#long-lived-transfers-and-host-owned-headers-v38)).
+  Response heads are bounded by
   `net::MAX_RESPONSE_HEADERS` fields and `net::MAX_RESPONSE_HEADER_BYTES`;
   request headers by `net::MAX_REQUEST_HEADERS` and
   `net::MAX_REQUEST_HEADER_BYTES`. A body chunk carries every frame already
   received up to `net::MAX_CHUNK_BYTES` without waiting for more (so SSE events
   arrive as soon as they are sent) and is decoded as UTF-8 across chunk
   boundaries (U+FFFD for invalid bytes, as a non-fatal `TextDecoder`). A body
-  beyond `net::MAX_RESPONSE_BODY_BYTES` fails the read. Each body read costs
+  beyond `net::MAX_RESPONSE_BODY_BYTES` fails the read (v38: a read that
+  receives more). Each body read costs
   guest fuel proportional to its text (about 2.6 fuel per byte measured), and
   a request head about 65 000 fuel, so under the production budget an
   execution makes roughly ten requests or reads a few hundred kilobytes;
@@ -8878,7 +8881,8 @@ as unknown names and keep their bytes and diagnostics.
   `Response.error()`, `Response.redirect()`, `keepalive`, `mode`,
   `credentials`, `cache`, `referrer` or `integrity`; request headers are sent
   as given, without Node's default `accept`, `accept-language`, `user-agent`
-  and `accept-encoding`.
+  and `accept-encoding` (v38 owns `user-agent` and `accept-encoding`:
+  [host-owned headers](#long-lived-transfers-and-host-owned-headers-v38)).
 - **URL subset** (pure guest code; `varta.web.unitAt` reads one code unit in
   place): the special schemes `http`, `https`, `ws` and `wss` (other schemes
   throw `TypeError: Invalid URL`), lowercased ASCII hosts (IPv6 literals kept
@@ -9127,8 +9131,11 @@ Its deadline renews per turn; it has no lifetime bound unless the embedder sets
 unhandled rejection after the turn, fatal host error) **terminates the
 instance**: no later turn runs and nothing restarts it automatically; only an
 explicit new instance starts again from `main`. A guest exit finishes it with
-its code. Network transfers started in an application turn get a fresh
-per-turn allowance as their end-to-end deadline. Tool and HTTP entry points
+its code. A network transfer of the instance has no end-to-end deadline:
+each wait for its bytes lasts at most one per-turn deadline from the moment
+it starts and never passes the lifetime bound, so a stream lives while it
+stays active ([long-lived transfers](#long-lived-transfers-and-host-owned-headers-v38)).
+Tool and HTTP entry points
 stay stateless fresh-store invocations.
 
 **Measured profile (working UI budget).** An external web developer measured a
@@ -10970,7 +10977,8 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   `net_body_read` but delivers its bytes undecoded (bytes a text read kept for
   an unfinished UTF-8 sequence come first); it is bookkeeping (no
   capability, no host-call charge, the deadline observed). Chunks keep
-  `net::MAX_CHUNK_BYTES` and the body keeps `net::MAX_RESPONSE_BODY_BYTES`;
+  `net::MAX_CHUNK_BYTES`; `net::MAX_RESPONSE_BODY_BYTES` bounds what one read
+  receives ([long-lived transfers](#long-lived-transfers-and-host-owned-headers-v38));
   a byte request body is at most half of `net::MAX_REQUEST_BYTES`
   ([values](embedding.md#network-request-limits-v37)).
   `env_snapshot (ptr:i32, len:i32) -> i32` is below.
@@ -11006,6 +11014,44 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   The normative rule, the examples and the browser note
   (`Access-Control-Expose-Headers` is deployment configuration) are in
   [Canonical head](embedding.md#canonical-head-v38).
+- <a id="long-lived-transfers-and-host-owned-headers-v38"></a>**Long-lived
+  transfers and host-owned headers.** A typed SDK's session stream
+  (server-sent events) runs for minutes and may carry any total, and an
+  unmodified SDK sets `User-Agent` on every request; `net_request_start_v2`
+  therefore differs from the frozen v37 start in four ways, identically on
+  every host. (1) **Inactivity, not an end-to-end deadline:** the head must
+  arrive within one window of the start and each wait of an armed body read
+  lasts at most one window, where the window is the per-turn deadline
+  (`Budgets::deadline_per_turn`, capped by `budget::MAX_DEADLINE_PER_TURN_MS`
+  and the host ceiling; no production value changed). Receiving bytes ends a
+  wait, so every chunk renews the window; no window runs while no read is
+  armed; and no wait passes the instance's bound (the embedder's lifetime of
+  a long-lived instance, none without one, or the execution deadline of a
+  bounded run, where the rule therefore changes nothing). Expiry fails the
+  head with `request timed out` or the read with `response body timed out`,
+  recoverably (`TypeError: fetch failed` / `terminated`). (2) **Per-read body
+  bound:** `net::MAX_RESPONSE_BODY_BYTES` bounds the bytes the host receives
+  while serving one read (`net::BodyBound::Read`), not the body; there is no
+  total byte bound. A body is bounded in time by the window and the
+  instance lifetime, in host memory by one chunk (the transfer reads only
+  when the guest arms a read), and what the guest keeps by its memory budget
+  (the v37 rationale, one string value of `abi::MAX_STRING_BYTES`, does not
+  hold under the v38 data limits). (3) **Host-owned request headers**
+  (`net::HOST_REQUEST_HEADERS`: `accept-encoding`, `user-agent`): a guest
+  value is checked like any header, then ignored and never sent, because a
+  browser always sends its own; the native reference host sends no
+  `user-agent`. (4) **Content codings:** the native host decompresses nothing,
+  so it sends `accept-encoding: identity` (`net::NATIVE_ACCEPT_ENCODING`) and
+  fails a response that names another coding before its head
+  (`RequestFailure::Encoding`); a browser host admits a body Fetch decoded and
+  shows neither `content-encoding` nor `content-length` for it. Other headers
+  a browser controls (cookie, origin, referer, `sec-*`, `proxy-*`, …) are not
+  host-owned: the native host sends them, a browser host refuses them (owner
+  decision pending). `net_request_start` (v37) keeps one end-to-end deadline,
+  the whole-body bound and every header as given. The wire rules, failure
+  texts and the browser hosts' implementation are in
+  [Transfer timing](embedding.md#transfer-timing-v38) and
+  [Host-owned headers](embedding.md#host-owned-headers-and-content-codings-v38).
 - **`ArrayBuffer`, `Blob`, `FormData`** (`<varta>/web/blob.ts`, guest code,
   no host import, loaded when a module names one of them). `ArrayBuffer`
   (`new ArrayBuffer(n)`, `byteLength`, `slice`, `ArrayBuffer.isView`) owns

@@ -316,6 +316,28 @@ fn runtime_headers() -> String {
     )
 }
 
+/// The v38 host-owned request headers and what each host sends instead.
+fn host_headers() -> String {
+    // A new host-owned header fails this test until its row is written.
+    let sent = |name: &str| match name {
+        "accept-encoding" => format!(
+            "`{}` (`net::NATIVE_ACCEPT_ENCODING`); a browser sends its own and decodes the body",
+            net::NATIVE_ACCEPT_ENCODING
+        ),
+        "user-agent" => "Nothing; a browser sends its own".to_owned(),
+        other => panic!("undocumented host-owned header {other}"),
+    };
+    table(
+        &[
+            "Header (matched ASCII case-insensitively)",
+            "What the native reference host sends instead",
+        ],
+        net::HOST_REQUEST_HEADERS
+            .iter()
+            .map(|name| vec![code(name), sent(name)]),
+    )
+}
+
 fn completions() -> String {
     table(
         &["Code", "Kind", "Releases the request", "`net_request_text`"],
@@ -545,10 +567,23 @@ fn failure_cause(failure: &RequestFailure) -> (&'static str, &'static str) {
             TRANSFER,
             "Sending the request or reading the head failed (a head beyond the response limits included)",
         ),
-        F::Timeout => (TRANSFER, "The head did not arrive before the deadline"),
+        F::Timeout => (
+            TRANSFER,
+            "The head did not arrive before the deadline (v37: the transfer deadline; v38: one [inactivity window](#transfer-timing-v38) after the start)",
+        ),
+        F::Encoding(_) => (
+            TRANSFER,
+            "V38, native reference host: the response has a content coding other than the requested `identity`; `<error>` lists the codings, lowercased, joined with `, `",
+        ),
         F::Body(_) => (BODY, "The body stream failed"),
-        F::BodyLimit => (BODY, "The body exceeds the response body bytes"),
-        F::BodyTimeout => (BODY, "No chunk arrived before the deadline"),
+        F::BodyLimit => (
+            BODY,
+            "The body (v37), or the bytes received while serving this read (v38), exceed the response body bytes",
+        ),
+        F::BodyTimeout => (
+            BODY,
+            "No chunk arrived before the deadline (v37: the transfer deadline; v38: within one inactivity window of the read's wait)",
+        ),
     }
 }
 
@@ -595,6 +630,7 @@ fn failures() -> String {
             F::Request(ERROR.into()),
             F::Send(ERROR.into()),
             F::Timeout,
+            F::Encoding(ERROR.into()),
             F::Body(ERROR.into()),
             F::BodyLimit,
             F::BodyTimeout,
@@ -676,6 +712,7 @@ fn embedding_network_requests_match_the_contract() {
         "embedding-net-runtime-headers",
         &runtime_headers(),
     );
+    assert_block(DOCUMENT, "embedding-net-host-headers", &host_headers());
     assert_block(DOCUMENT, "embedding-net-completions", &completions());
     assert_block(DOCUMENT, "embedding-net-head-fields", &head_fields());
     assert_block(DOCUMENT, "embedding-net-head-canonical", &head_canonical());

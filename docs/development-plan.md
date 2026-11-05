@@ -3448,6 +3448,39 @@ stated); the review correction batch does not close these optimization items:
   the typed memory resource (owner decision: a consequence of the
   effects-only host).
 
+#### SDK network contract (v38, wave 1 `w1-sdk-network-contract`)
+
+Inventory items `long-lived-stream-transfer-limits` and
+`browser-transport-sdk-headers`: the unmodified uarp-sdk's session stream
+(server-sent events for minutes, beyond 512 KiB in total) and its ordinary
+requests (which always set `User-Agent`) must work natively and in the
+browser host. Implemented on the `net_request_start_v2` path only
+([contract](architecture.md#long-lived-transfers-and-host-owned-headers-v38),
+[wire rules](embedding.md#transfer-timing-v38)); v37 and earlier keep their
+end-to-end deadline, whole-body bound and headers as given.
+
+- Inactivity instead of an end-to-end deadline: the head within one
+  per-turn deadline of the start, each body wait within one window, renewed
+  by every received chunk, never past the instance lifetime (bounded runs:
+  their deadline). No production budget changed.
+- `net::MAX_RESPONSE_BODY_BYTES` counts what one read receives; there is no
+  total byte bound (time, one host chunk and the guest memory budget bound a
+  stream).
+- `user-agent` and `accept-encoding` are host-owned (checked, ignored, never
+  sent) on both hosts; the native host sends `accept-encoding: identity` and
+  fails another coding; the browser admits Fetch-decoded bodies and hides
+  `content-encoding`/`content-length` for them.
+- Verification: native loopback tests (`net_tests`, `net::tests`,
+  `net::client::tests`), the transport's Node tests and
+  `scripts/test-browser-streaming.mjs` (local Chrome against native, same
+  lines). Open items: the other browser-controlled request headers
+  (`cookie`, `origin`, `referer`, `sec-*`, …) still differ between hosts
+  (owner decision); the v38 byte read path costs about 205 fuel per byte
+  (1 KiB about 0.23 M, 8 KiB about 1.7 M, 32 KiB about 6.7 M fuel per read
+  turn), so one read of more than about 38 KiB exceeds `budget::TURN_FUEL`
+  and a stream whose chunks coalesce up to `net::MAX_CHUNK_BYTES` ends the
+  instance with a fuel budget error.
+
 ### Current integration backlog
 
 Current outstanding items, grouped by delivery boundary rather than old branches:
