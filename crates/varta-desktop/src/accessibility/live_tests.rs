@@ -26,7 +26,12 @@ impl Session {
     fn new(batch: &B) -> Self {
         let mut view = View::default();
         commit(&mut view, batch);
-        let bridge = Bridge::new(None, Arc::default(), Arc::new(AtomicBool::new(false)));
+        let bridge = Bridge::new(
+            None,
+            Arc::default(),
+            Arc::new(AtomicBool::new(false)),
+            crate::shell::window::Console::SILENT,
+        );
         bridge.activate();
         let update = bridge
             .publish(

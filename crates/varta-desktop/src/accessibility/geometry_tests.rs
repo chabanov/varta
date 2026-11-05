@@ -28,7 +28,12 @@ pub(super) fn setup(
         .create_element(2,tag).set_class(2,"field").set_style(2,P::Width,&format!("{width}px")).set_value(2,value,0).insert(1,2,0);
     commit(&mut view, &b);
     let metadata = render(&view);
-    let bridge = Bridge::new(None, Arc::default(), Arc::new(AtomicBool::new(false)));
+    let bridge = Bridge::new(
+        None,
+        Arc::default(),
+        Arc::new(AtomicBool::new(false)),
+        crate::shell::window::Console::SILENT,
+    );
     assert!(bridge.activate().is_none());
     let version = Version {
         revision: 1,

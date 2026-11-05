@@ -11,6 +11,7 @@ mod text_layout;
 mod text_tests;
 mod tree;
 use crate::input_queue::{MAX_PENDING_TEXT_BYTES, WORKER_QUEUE_CAPACITY};
+use crate::shell::window::Console;
 use accesskit::{
     Action, ActionData, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler,
     NodeId, TreeId, TreeUpdate,
@@ -83,18 +84,22 @@ pub(crate) struct Bridge {
     pub active: Arc<AtomicBool>,
     wake: Arc<crate::wake::Wake>,
     events: Option<EventLoopProxy<crate::GuiEvent>>,
+    /// Where observer warnings go, labelled with the running binary.
+    console: Console,
 }
 impl Bridge {
     pub fn new(
         events: Option<EventLoopProxy<crate::GuiEvent>>,
         wake: Arc<crate::wake::Wake>,
         active: Arc<AtomicBool>,
+        console: Console,
     ) -> Self {
         Self {
             state: Arc::default(),
             active,
             wake,
             events,
+            console,
         }
     }
     pub fn install(
@@ -170,7 +175,7 @@ impl Bridge {
             Ok(publication) => publication,
             Err(ProjectionError::Observer(error)) => {
                 if !state.observer_warning_emitted {
-                    eprintln!("varta-preview: {error}");
+                    self.console.report(error);
                     state.observer_warning_emitted = true;
                 }
                 state.queue.clear();
@@ -412,7 +417,12 @@ mod tests {
         view.commit(&batch.finish(), false, &mut Deny).unwrap();
     }
     pub(super) fn fixture() -> (Bridge, View, FrameMetadata, Version, NodeId) {
-        let bridge = Bridge::new(None, Arc::default(), Arc::new(AtomicBool::new(false)));
+        let bridge = Bridge::new(
+            None,
+            Arc::default(),
+            Arc::new(AtomicBool::new(false)),
+            crate::shell::window::Console::SILENT,
+        );
         let mut view = View::default();
         let mut batch = BatchWriter::new();
         batch.create_element(2, Tag::Input).insert(1, 2, 0);

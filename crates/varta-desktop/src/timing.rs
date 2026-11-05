@@ -92,9 +92,18 @@ pub(crate) struct FrameTiming {
     prepared: Instant,
 }
 impl FrameTiming {
-    pub fn report(self, sequence: u64, backend: &str, copy_started: Instant, returned: Instant) {
+    /// The machine-readable timing line of one presented frame, which the
+    /// window writes to its console's diagnostic stream.
+    #[must_use]
+    pub fn report(
+        self,
+        sequence: u64,
+        backend: &str,
+        copy_started: Instant,
+        returned: Instant,
+    ) -> String {
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        eprintln!(
+        format!(
             "varta-ui-timing: {{\"boundary\":\"queue-to-present-return\",\"frame\":{sequence},\"backend\":\"{backend}\",\"kind\":\"{}\",\"inputs\":{},\"queue_ms\":{:.3},\"guest_ms\":{:.3},\"deferred_ms\":{:.3},\"prepare_ms\":{:.3},\"frame_wait_ms\":{:.3},\"host_present_ms\":{:.3},\"total_ms\":{:.3}}}",
             self.input.kind,
             self.inputs,
@@ -105,7 +114,7 @@ impl FrameTiming {
             ms(copy_started.saturating_duration_since(self.prepared)),
             ms(returned.saturating_duration_since(copy_started)),
             ms(returned.saturating_duration_since(self.input.queued)),
-        );
+        )
     }
 }
 

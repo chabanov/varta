@@ -27,7 +27,12 @@ fn setup() -> (Bridge, View, FrameMetadata, Version, NodeId, NodeId) {
     .insert(2, 4, 0);
     commit(&mut view, &b);
     let metadata = view.rasterize_boxes(150, 100).unwrap().into_metadata();
-    let bridge = Bridge::new(None, Arc::default(), Arc::new(AtomicBool::new(false)));
+    let bridge = Bridge::new(
+        None,
+        Arc::default(),
+        Arc::new(AtomicBool::new(false)),
+        crate::shell::window::Console::SILENT,
+    );
     assert!(bridge.activate().is_none());
     let version = Version {
         revision: 1,

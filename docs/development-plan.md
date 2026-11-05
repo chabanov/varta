@@ -4179,6 +4179,23 @@ action, never a prompt triggered by guest code.
 new payload hash and shell version; the shell verifies the signature and runs the
 normal artifact validation before replacing itself.
 
+**Shell status (wave 1, 2026-11-04).** The `varta-shell` binary exists in
+`varta-desktop` beside `varta-preview`; both share one window/input/render core
+(`src/shell/`). It runs a packaged artifact read and validated exactly as the
+companion reads it, with the manifest as the request, an optional `--policy`
+host ceiling, exact-operation matching, denied optional grants (no prompt yet)
+and KV roots pinned to host-owned storage per artifact hash
+([contract](architecture.md#native-shell-varta-shell)). Headless tests cover
+tampered/truncated/foreign artifacts, request-only, narrower, empty and
+exact-operation ceilings, denial before effect for `net.request` and KV, a
+loopback request and a KV round-trip across instances, and a rendered first
+frame. On the development Mac `varta-shell` opened a window and presented the
+first frame of a packaged view example (log evidence; no screen capture was
+possible). Still open: the first-run grant list and prompts with stored
+decisions, `ui.open_url` and guest clipboard effects, manifest `app` metadata,
+artifact-declared fonts, OS bundles, prebuilt per-target shells, the code cache
+and UARP console acceptance in the shell.
+
 #### Browser security model and honest guarantees
 
 | Guarantee | Browser (guest in a Worker) | Notes |
@@ -4450,7 +4467,7 @@ full acceptance in the following design table remains required.
 | P7 | L0 validation, headless tree/cascade/accessibility and official transactional browser DOM/event adapters | Headless geometry and cross-renderer layout/accessibility acceptance |
 | P8 | Compiler TSX/templates and example-local reactive L1/keyed lists | Reusable package delivery and complete cross-host example acceptance |
 | P9 | Official bundles/CSP/SRI/metering, views/resources/consent/events and local dev/reload covered by the consolidated gate; scoped Chrome/Firefox/WebKit matrix passes | Portable matrix driver, wider controls/effects/layout, three-browser pilot acceptance and measured target costs |
-| P10–P10d | Experimental CPU controls/layout, retained renderer and pointer feedback with scoped macOS Showcase evidence; production shell still planned | Full admitted painting, clipboard/IME/accessibility, current UARP session, trusted delivery policy, macOS/Pi/other-target acceptance and end-to-end measurements |
+| P10–P10d | Experimental CPU controls/layout, retained renderer and pointer feedback with scoped macOS Showcase evidence; `varta-shell` runs packaged artifacts with manifest grants, a host ceiling and per-artifact KV storage ([status](#desktop-packaging)) | Full admitted painting, clipboard/IME/accessibility, current UARP session, trusted delivery policy, macOS/Pi/other-target acceptance and end-to-end measurements |
 | P11 | Accepted later hooks-subset direction | Specification and implementation after L1 acceptance |
 | P12 | Native KV plus selected binary/encoding/Date/crypto APIs | KV async/watch/queues, wider values, remaining binary/crypto/Intl providers and cross-host parity |
 | P13a–P13c | Optional GPU UI prototype implemented with Metal recovery; application graphics and 3D-library work remain planned | Prototype and measurements, versioned GPU contract, device/resource acceptance and separately proven library reach; [scope](#gpu-and-game-graphics-future-direction) |

@@ -5057,6 +5057,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "softbuffer",
+ "thiserror 2.0.21",
+ "varta-artifact",
  "varta-common",
  "varta-runtime",
  "varta-view",

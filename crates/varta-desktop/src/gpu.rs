@@ -1,4 +1,5 @@
 //! Optional native UI backend; consumes host-validated scenes, no guest GPU API.
+use crate::shell::window::Console;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -22,11 +23,13 @@ pub(crate) struct Backend {
     submitted_at: std::time::Instant,
     occluded: bool,
     test_loss_after: Option<u64>,
+    console: Console,
 }
 impl Backend {
     pub fn new(
         window: Arc<Window>,
         events: Option<winit::event_loop::EventLoopProxy<crate::GuiEvent>>,
+        console: Console,
     ) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
             Box::new(window.clone()),
@@ -111,11 +114,11 @@ impl Backend {
                 height: height as u16,
             },
         );
-        eprintln!(
-            "varta-preview: GPU {:?} ({:?})",
+        console.report(format_args!(
+            "GPU {:?} ({:?})",
             adapter.get_info().name,
             adapter.get_info().backend
-        );
+        ));
         Ok(Self {
             surface,
             device,
@@ -134,6 +137,7 @@ impl Backend {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .filter(|n| *n > 0 && *n <= 1_000_000),
+            console,
         })
     }
     pub fn visible(&self) -> bool {
@@ -239,7 +243,9 @@ impl Backend {
         });
         self.queue.present(frame);
         if self.test_loss_after == Some(sequence) {
-            eprintln!("varta-preview: diagnostic GPU device loss after frame {sequence}");
+            self.console.report(format_args!(
+                "diagnostic GPU device loss after frame {sequence}"
+            ));
             self.device.destroy();
         }
         Ok(true)
