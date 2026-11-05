@@ -10,7 +10,10 @@
 //! is spawned: view input handling never waits for it, because some
 //! launchers (`xdg-open` on some Linux desktops) stay in the foreground until
 //! the browser exits, and a real opening must never be reported as refused.
-//! A reaper thread collects the launcher's exit; its status is not observed.
+//! No thread waits for a launcher: the shell keeps at most
+//! [`MAX_RUNNING_LAUNCHERS`] started launchers, collects the exit of those
+//! that finished before each new opening (their status is not observed), and
+//! refuses an opening while that many still run.
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -33,8 +36,10 @@ const BROWSER_LAUNCHER: Option<(&str, &[&str])> = None;
 /// interrupt) do not reach the browser it starts.
 #[cfg(unix)]
 const OWN_PROCESS_GROUP: i32 = 0;
-/// The name of the thread that collects a launcher's exit.
-const REAPER_THREAD: &str = "varta-browser-launcher";
+/// The most launchers that may still run at once. A launcher that stays in
+/// the foreground holds its place until it exits, so repeated link
+/// activations cannot accumulate processes without bound.
+const MAX_RUNNING_LAUNCHERS: usize = 8;
 
 /// A program that hands a URL to the system browser.
 #[derive(Debug, Clone)]
@@ -56,7 +61,7 @@ impl Launcher {
     /// Start the launcher for `url`, detached, without waiting for it: the
     /// opening succeeds when the launcher is spawned and is refused only
     /// when it cannot be started.
-    fn open(&self, url: &str) -> Result<(), PlatformRefusal> {
+    fn open(&self, url: &str) -> Result<Child, PlatformRefusal> {
         let mut command = Command::new(Path::new(&self.program));
         command
             .args(&self.arguments)
@@ -69,23 +74,33 @@ impl Launcher {
             use std::os::unix::process::CommandExt;
             command.process_group(OWN_PROCESS_GROUP);
         }
-        let child = command.spawn().map_err(|_| PlatformRefusal)?;
-        reap(child);
-        Ok(())
+        command.spawn().map_err(|_| PlatformRefusal)
     }
 }
 
-/// Collect a detached launcher's exit on its own thread. If that thread
-/// cannot be created the launcher still runs; only its exit status stays
-/// uncollected until the shell exits.
-fn reap(mut child: Child) {
-    // The launcher was started, so the opening already succeeded; the
-    // thread only waits, and failing to create it changes nothing else.
-    let _ = std::thread::Builder::new()
-        .name(REAPER_THREAD.into())
-        .spawn(move || {
-            let _ = child.wait();
-        });
+/// Started launchers whose exit has not been collected yet.
+#[derive(Debug, Default)]
+struct Launched {
+    running: Vec<Child>,
+}
+impl Launched {
+    /// Collect the exit of every launcher that finished, without waiting,
+    /// and return how many still run. A launcher whose state cannot be read
+    /// keeps its place, so the bound holds.
+    fn collect(&mut self) -> usize {
+        self.running
+            .retain_mut(|child| !matches!(child.try_wait(), Ok(Some(_))));
+        self.running.len()
+    }
+
+    /// Start `launcher` for `url` unless [`MAX_RUNNING_LAUNCHERS`] still run.
+    fn open(&mut self, launcher: &Launcher, url: &str) -> Result<(), PlatformRefusal> {
+        if self.collect() >= MAX_RUNNING_LAUNCHERS {
+            return Err(PlatformRefusal);
+        }
+        self.running.push(launcher.open(url)?);
+        Ok(())
+    }
 }
 
 /// An absolute `https:`/`http:` URL without control characters or
@@ -100,6 +115,7 @@ fn launchable(url: &str) -> bool {
 pub struct NativeEffects {
     clipboard: Mutex<Option<arboard::Clipboard>>,
     browser: Option<Launcher>,
+    launched: Mutex<Launched>,
 }
 impl std::fmt::Debug for NativeEffects {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -113,6 +129,7 @@ impl Default for NativeEffects {
         Self {
             clipboard: Mutex::new(None),
             browser: Launcher::system(),
+            launched: Mutex::default(),
         }
     }
 }
@@ -132,7 +149,11 @@ impl PlatformEffects for NativeEffects {
         if !launchable(url) {
             return Err(PlatformRefusal);
         }
-        self.browser.as_ref().ok_or(PlatformRefusal)?.open(url)
+        let launcher = self.browser.as_ref().ok_or(PlatformRefusal)?;
+        self.launched
+            .lock()
+            .map_err(|_| PlatformRefusal)?
+            .open(launcher, url)
     }
 }
 
@@ -145,11 +166,15 @@ mod tests {
     /// Programs that exit successfully, fail, or stay in the foreground.
     const SUCCEEDS: &str = "/usr/bin/true";
     const FAILS: &str = "/usr/bin/false";
-    const WAITS: &str = "/bin/sleep";
-    /// How long the foreground launcher stays; the opening must return well
-    /// before it exits.
-    const WAIT_SECONDS: &str = "2";
+    /// A shell that sleeps and ignores the URL it receives as `$1` (`sleep`
+    /// itself would exit at once on the extra operand).
+    const WAITS: &str = "/bin/sh";
+    /// The foreground launcher's arguments: it stays for two seconds, and
+    /// the opening must return well before it exits.
+    const FOREGROUND_LAUNCHER: &[&str] = &["-c", "sleep 2", "launcher"];
     const FOREGROUND: Duration = Duration::from_secs(2);
+    /// How often a test checks whether finished launchers were collected.
+    const POLL: Duration = Duration::from_millis(10);
 
     /// Effects whose browser is `program`; the clipboard is never touched.
     fn effects(program: &str, arguments: &[&str]) -> NativeEffects {
@@ -162,7 +187,18 @@ mod tests {
                     .map(|argument| (*argument).into())
                     .collect(),
             }),
+            launched: Mutex::default(),
         }
+    }
+
+    /// Stop the launchers this test started (only their own PIDs).
+    fn stop(effects: &NativeEffects) {
+        let mut launched = effects.launched.lock().unwrap();
+        for child in &mut launched.running {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        launched.running.clear();
     }
 
     #[test]
@@ -178,8 +214,47 @@ mod tests {
         // A launcher that stays in the foreground (as `xdg-open` can) is an
         // opening, reported without waiting for it.
         let started = Instant::now();
-        assert_eq!(effects(WAITS, &[WAIT_SECONDS]).open_url(URL), Ok(()));
+        let waiting = effects(WAITS, FOREGROUND_LAUNCHER);
+        assert_eq!(waiting.open_url(URL), Ok(()));
         assert!(started.elapsed() < FOREGROUND);
+        stop(&waiting);
+    }
+
+    #[test]
+    fn launchers_that_stay_in_the_foreground_are_bounded_and_finished_ones_free_their_place() {
+        // While the bound's worth of launchers runs, a further opening is
+        // refused before anything is started.
+        let waiting = effects(WAITS, FOREGROUND_LAUNCHER);
+        for _ in 0..MAX_RUNNING_LAUNCHERS {
+            assert_eq!(waiting.open_url(URL), Ok(()));
+        }
+        assert_eq!(waiting.open_url(URL), Err(PlatformRefusal));
+        assert_eq!(
+            waiting.launched.lock().unwrap().running.len(),
+            MAX_RUNNING_LAUNCHERS
+        );
+        stop(&waiting);
+        assert_eq!(waiting.open_url(URL), Ok(()));
+        stop(&waiting);
+        // Launchers that exit are collected before the next opening, so
+        // openings beyond the bound keep succeeding and no exit is left
+        // uncollected beyond it.
+        let finishing = effects(SUCCEEDS, &[]);
+        for _ in 0..MAX_RUNNING_LAUNCHERS {
+            assert_eq!(finishing.open_url(URL), Ok(()));
+        }
+        let deadline = Instant::now() + FOREGROUND;
+        while finishing.launched.lock().unwrap().collect() != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "finished launchers were not collected"
+            );
+            std::thread::sleep(POLL);
+        }
+        for _ in 0..MAX_RUNNING_LAUNCHERS {
+            assert_eq!(finishing.open_url(URL), Ok(()));
+        }
+        stop(&finishing);
     }
 
     #[test]
@@ -199,6 +274,7 @@ mod tests {
         let none = NativeEffects {
             clipboard: Mutex::new(None),
             browser: None,
+            launched: Mutex::default(),
         };
         assert_eq!(none.open_url(URL), Err(PlatformRefusal));
     }
