@@ -49,7 +49,7 @@ Administration (creating or suspending agents) is not designed yet.
 | `fixtures/events-v1/` | The API lane's nine recorded `event_schema=1` session streams and their transcripts (anonymised; provenance in its README), read by the scenario tests through the virtual root `/project` |
 | `src/tests/sdk/` | SDK client tests executed by Varta (`varta.sdk-test.json`): the real, unmodified `UarpClient` against the loopback mock, one execution per group; `contract.ts` holds the canned bodies, headers and timings both sides share |
 | `src/tests/sdk-server/` | The loopback mock of the UARP API, itself a Varta HTTP/1 application (`varta.sdk-server.json`); `e2e.ts` replays the recorded scenarios for the console end to end |
-| `src/tests/app.test.ts` | The console end to end: the product's start, request layer and follower with the real `UarpClient` against the mock, and the product manifest; `loopback.ts` is the instrumented `fetch` those tests pass to the client |
+| `src/tests/app.test.ts` | The console end to end: the product's start, request layer and follower with the real `UarpClient` against the mock, and the product manifest; `loopback.ts` is the instrumented `fetch` those tests pass to the client, `app-ceiling.json` the host ceiling budgets of the app groups |
 | `src/tests/view/` | View tests: a timeline from recorded frames rendered headlessly by `varta dev --view-script` (`varta.view.json`), compared with the reviewed tree and accessibility snapshot |
 | `design/agent-studio.md` | Draft of Agent Studio (building a personal agent with Varta tools); built after the rest of the console works |
 | `design/chat-timeline.md` | Draft model of the chat timeline: sources, entries, reducer, transport, session stitching |
@@ -73,10 +73,11 @@ repository.
 
 ## Status
 
-Checkpoint 2026-11-04 (debug `varta` of `4fce278` with this example's working
-tree): `scripts/test.sh` passes **146 tests in 32 groups and two headless view
-checks**: the 107 tests in 28 groups below plus the four `app-*` groups (39 tests)
-of the product entry against the loopback mock ([product entry](#product-entry-and-the-console-end-to-end)).
+Checkpoint 2026-11-05 (debug `varta` of `4fce278` with this example's working
+tree, after the review fixes): `scripts/test.sh` passes **179 tests in 32 groups
+and two headless view checks**: the 107 tests in 28 groups below plus the four
+`app-*` groups (72 tests) of the product entry against the loopback mock
+([product entry](#product-entry-and-the-console-end-to-end)).
 The product entry `varta.json` builds into one `dist/app.wasm` and
 `dist/app.manifest.json`. Headless, without a stored key, its screen shows the
 "no key" banner (`varta dev --config varta.json --view-script`, checked by hand,
@@ -121,7 +122,7 @@ performance limits or production capacity.
 | Single Chat screen | Live timeline over the store with the stylesheet, checked headlessly and deterministically (tree with cascaded styles, accessibility snapshot): thinking toggle, tool lines, approval, question and failure cards with their actions, streaming Markdown, the composer | Full cross-target acceptance beyond the focused official-browser interaction probes |
 | SDK source admission | `scripts/check-sdk.sh` checks 65/65 pinned 0.13.2 files unmodified under v38, plus the bodies of all six generic functions and methods through an instantiation probe (2026-11-04, debug build of `978b793`) | SDK-own tests (M7); generic bodies only for the probed type arguments |
 | Real requests to UARP | The real `UarpClient` runs natively under Varta against the loopback mock: unary JSON, problem documents and bare error bodies, retry after a 503 with `Retry-After` (and none with `x-should-retry: false`), `AbortSignal`, timeout, and `sessions.streamSessionEvents` to `[DONE]`; 43 cases in 6 groups pass (2026-11-04) | Live-service validation, streams with gaps between frames or of real size (finding F4), cross-target acceptance; findings below |
-| Product entry | `src/app/` with `varta.json`: key from KV, the real client, a new session with the Head Agent, the request layer and the followed session stream with the stream.ts reconnect rules; send, approve, answer, drop, reconnect (also after a 503) and the ends after `session_closed`, a final `error`, `[DONE]` alone and a 401 pass end to end against the recorded scenarios (2026-11-04); giving up and a refused frame are not exercised end to end | The settings screen (the key is only read), the session list and history stitching, live-service validation, the view under scripted input with the live stream, cross-target acceptance |
+| Product entry | `src/app/` with `varta.json`: key from KV, the real client, a new session with the Head Agent, the request layer and the followed session stream with the stream.ts reconnect rules; send, approve, answer, drop, reconnect (also after a 503) and the ends after `session_closed`, a final `error`, `[DONE]` alone and a 401 pass end to end against the recorded scenarios (2026-11-04); giving up after connections without progress, a frame strict parsing refuses and a refused stream open (403, capability denial) with the real reason in the note pass end to end (2026-11-05) | The settings screen (the key is only read), the session list and history stitching, live-service validation, the view under scripted input with the live stream, cross-target acceptance |
 
 ## Running the checks
 
@@ -223,8 +224,11 @@ requests exactly:
 | `time.timer` | — | The SDK's `Transport.request` arms a `setTimeout` for its timeout on every request, so without it every request fails before the network (`NotAllowedError: <capability denied: time.timer> (setTimeout)`, observed) |
 | `time.now` | — | The SDK's `EventStream` reads `Date.now` (its default clock) when each connection opens (`core/sse.ts`, `connectedAt`) |
 
-The two `time` grants go beyond the brief, which asked for `net.request` and `kv`
-only; they are what the unmodified SDK needs. `varta dev --config varta.json` maps
+**Owner decision (2026-11-05): the two `time` grants are accepted.** The brief
+asked for `net.request` and `kv` only; the unmodified SDK arms `setTimeout` on every
+request and reads `Date.now` on every stream connection, so the product manifest
+requests `time.timer` and `time.now` as well, and nothing wider: the `app-manifest`
+group fails on any other grant. `varta dev --config varta.json` maps
 the `data` root to `data/` here (git-ignored except its `.gitignore`).
 
 At start the console reads the key from KV, constructs `UarpClient` with it and the
@@ -242,16 +246,30 @@ follows the session (`src/chat/follow.ts`):
   reconnects with `Last-Event-ID` of the last run event the model applied
   (`resumeId`), not the SDK's last SSE id (which can be `run-1:done`). The SDK
   reports a drop or a failed connection as `onState` `reconnecting` and never after
-  `[DONE]`; the follower stops the SDK's stream there and reconnects itself.
-- Waits between reconnects start at `retryMs` and double per connection in a row
-  that delivered nothing, up to `maxRetryMs`; after `maxReconnects` such
-  connections it gives up. The product uses the SDK's own defaults (2 s, 8 s, 5).
-  A 401 on connecting, or `[DONE]` with nothing before it, ends following with
-  "authenticate"; the screen shows a note for every end but `over` and `stopped`.
+  `[DONE]`; after `connected` the follower stops the SDK's stream there and
+  reconnects itself.
+- A connection that fails to open is announced before `connected`, and the SDK
+  keeps its error. The follower lets the SDK make its one reconnect (same request,
+  same `Last-Event-ID`), so the second failure surfaces the error itself: a 401
+  ends following with "authenticate"; a status outside the SDK's retryable set
+  (403, 404, …) or a capability denial (`NotAllowedError`) ends it as `refused`
+  with that error in the note; a retryable status (408, 429, 5xx) or a connection
+  error counts as a connection without progress, and its error is the reason if
+  the follower gives up. A failed open therefore costs two requests.
+- Only run and session frames are progress: the `connected` frame every connection
+  opens with, and an `error` frame before `[DONE]`, are not. Waits between
+  reconnects start at `retryMs` and double per connection in a row without
+  progress, up to `maxRetryMs`; after `maxReconnects` such connections the
+  follower gives up (`gave_up`, with how the last one ended). The product uses the
+  SDK's own defaults (2 s, 8 s, 5). `[DONE]` with nothing before it also ends
+  following with "authenticate"; a frame strict parsing refuses ends it as
+  `invalid`. The screen shows a note for every end but `over` and `stopped`.
 
 `scripts/test.sh` runs the end-to-end groups as `varta run --app` application
-instances of the one test build, under a host ceiling that lowers the per-turn
-deadline to 250 ms (`app_deadline_ms`). The client is the real, unmodified
+instances of the one test build. Every group runs under a host policy derived from
+the built `dist/tests.manifest.json` (its ABI version and grants, the roots mapped);
+the app groups add the budgets of `src/tests/app-ceiling.json`, which lower the
+per-turn deadline to 250 ms and which `app.test.ts` reads too. The client is the real, unmodified
 `UarpClient`, given an instrumented `fetch` through `ClientOptions.fetch`
 (`src/tests/loopback.ts`): it delegates to the engine's `fetch`, records every
 request, numbers each stream connection in `x-loopback-attempt` and, where a
@@ -266,8 +284,8 @@ connection ends without `[DONE]` at its drop point (`DROP_AFTER`).
 | Group | What runs |
 | --- | --- |
 | `app-manifest` | The built `dist/app.manifest.json` requests exactly the grants above, with the `data` root only |
-| `app-start` | No stored key: no request. An ungranted database: `NotAllowedError` from `kv.read` before any effect. An ungranted origin (the product's own `fetch`): the SDK's `APIConnectionError`, nothing followed. A tenant without a Head Agent: the tenant is read and no session is created |
-| `app-e2e` | `approval_approve` and `ask_user`: send, the stream to the wait, the drop, approve or answer, the reconnect with the model's `Last-Event-ID`, the run to its end; the timeline equals the reviewed expectation of that recording (scenarios.test.ts) plus the person's message, and the requests come in the expected order. `session_end`: a drop mid-run, a reconnect the mock answers with a 503, a second reconnect from the same event, then `session_closed` and `[DONE]` end following with `over`. A final `error` frame (`SESSION_NOT_FOUND`), `[DONE]` alone and a 401 end following without a reconnect, each with a note |
+| `app-start` | No stored key: no request. An ungranted database: `NotAllowedError` from `kv.read` before any effect. An ungranted origin (the product's own `fetch`): the SDK's `APIConnectionError` caused by the engine's `NotAllowedError` for `net.request`, which the reason shows, nothing followed. A tenant without a Head Agent: the tenant is read and no session is created. A key entry that does not decode as a string: the start reports the read's `TypeError`, and more such starts than the engine keeps databases open all report it, so the database is closed on that path too |
+| `app-e2e` | `approval_approve` and `ask_user`: send, the stream to the wait, the drop, approve or answer, the reconnect with the model's `Last-Event-ID`, the run to its end; the timeline equals the reviewed expectation of that recording (scenarios.test.ts) plus the person's message, and the requests come in the expected order. `session_end`: a drop mid-run, a reconnect the mock answers with a 503, the SDK's reconnect from the same event, then `session_closed` and `[DONE]` end following with `over`. A final `error` frame (`SESSION_NOT_FOUND`), `[DONE]` alone and a 401 end following without a reconnect. Connections that deliver only `connected`, and connections that deliver only a keep-alive comment, end with `gave_up` after `maxReconnects`. A run event missing a required field ends with `invalid` and the strict parser's `TypeError`. A stream open answered 403, or sent to an ungranted origin, ends with `refused` and the `PermissionDeniedError` or `NotAllowedError` after two requests; one answered 503 every time ends with `gave_up` and the `ServiceUnavailableError`. Each end checks the streams opened, the stream requests and the note with the real reason |
 | `app-e2e-long` | One connection whose head the mock delays 200 ms (within the 250 ms window) and whose 100 content chunks (about 24 KB, several reads) are applied one per turn: the stream lasts longer than one per-turn deadline although no single wait does, every chunk is applied and `session_closed` + `[DONE]` end it |
 
 ## Pilot findings

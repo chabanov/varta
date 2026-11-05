@@ -4671,7 +4671,9 @@ with the model's `Last-Event-ID` by the console's stream rules. Its manifest
 requests `net.request` on the API base URL (`GET`, `POST`, four declared response
 headers), `kv.read`/`kv.write` on the key database and, beyond the manifest
 described above, `time.timer` and `time.now`, which the unmodified SDK needs on
-every request and stream connection (console README). `scripts/test.sh` runs the
+every request and stream connection (console README). Owner decision
+(2026-11-05): these two `time` grants are accepted for the product manifest, with
+every grant kept exact (no wildcard beyond the API base URL). `scripts/test.sh` runs the
 product's start, send, approve, answer, drop and reconnect end to end against the
 loopback mock replaying the recorded scenarios, including a stream that outlives
 one per-turn deadline; the settings screen, session stitching, live-service and
