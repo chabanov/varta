@@ -472,7 +472,8 @@ checked-in Wasm fixture.
 
 Open after integration:
 
-- Pilot findings F1–F3 (`examples/uarp-console/README.md`): an explicit generic
+- Pilot findings F1–F3 (`examples/uarp-console/README.md`), closed in wave 2
+  (F1 and F3 by `w2-v38-sdk-path-gaps`, F2 by `w2-net-abort`): an explicit generic
   call on an element-access receiver, an aborted fetch's connection held until
   the client's next wake, and `cause` through `instanceof Error` /
   `new Error(msg, { cause })`.

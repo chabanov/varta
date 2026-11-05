@@ -294,7 +294,9 @@ Engine refusals and wrong behaviour met while running the SDK; reported to the
 core, not worked around in the SDK. The tests avoid each one only in their own
 code, never by changing the SDK.
 
-- **F1. A generic method call on an element-access receiver is refused.** The
+- **F1 (fixed by the wave-2 package `w2-v38-sdk-path-gaps`: v38 admits a
+  generic method call on an array element receiver). A generic method call on
+  an element-access receiver was refused.** The original report follows. The
   call `events[0].json<RunAdded>()` stops with `unsupported generic call: outside
   the supported TypeScript subset`. The same call on a local binding compiles and
   runs. The method is `UarpEvent.json<T = JsonValue>()` (`core/sse.ts:16`, built by
@@ -351,7 +353,10 @@ code, never by changing the SDK.
   const next = await fetch(origin + "/unary/health", { headers: HEADERS }); // 503 "request failed\n"
   ```
   `sdk-timeout` therefore runs as its own execution.
-- **F3. `cause` cannot be read through `instanceof Error`.** The SDK puts the
+- **F3 (fixed by the wave-2 package `w2-v38-sdk-path-gaps`: v38 reads `cause`
+  after `instanceof Error` and admits `new Error(message, options)` for the
+  native error families). `cause` could not be read through `instanceof
+  Error`.** The original report follows. The SDK puts the
   transport error in `cause` (`core/transport.ts:154`,
   `new APIConnectionError('Connection error', { cause: error })`). Reading it as
   `error instanceof Error ? error.cause : undefined` stops with `unsupported property
