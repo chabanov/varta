@@ -1,5 +1,7 @@
 //! Host-authorized source loading. Dependencies remain under the configuration
 //! directory and are opened through pinned descriptors, never ambient paths.
+//! V38 bare package specifiers resolve to shipped TypeScript sources under
+//! `<config dir>/node_modules` ([`packages`]).
 use crate::{ProjectError, Result};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
 use cap_std::fs::{Dir, OpenOptions};
@@ -8,6 +10,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 use varta_compiler::{CompilerError, ModuleLoader, ModuleSource};
+mod packages;
 mod watch;
 
 pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
@@ -33,6 +36,10 @@ pub(crate) struct SourceLoader {
     tsx_specifiers: bool,
     /// V38 (`text_imports()`): `with { type: "text" }` imports of any file.
     text_resources: bool,
+    /// V38 (`package_specifiers()`): `"pkg"` and `"@scope/pkg/sub"` name the
+    /// TypeScript source of a package under `<root>/node_modules`.
+    package_specifiers: bool,
+    packages: packages::Packages,
     watch: Option<watch::Observations>,
 }
 impl SourceLoader {
@@ -48,6 +55,8 @@ impl SourceLoader {
             js_specifiers: profile.named_types(),
             tsx_specifiers: profile.tsx(),
             text_resources: profile.text_imports(),
+            package_specifiers: profile.package_specifiers(),
+            packages: packages::Packages::default(),
             watch: None,
         })
     }
@@ -247,6 +256,23 @@ impl ModuleLoader for SourceLoader {
         importer: &Path,
         specifier: &str,
     ) -> std::result::Result<PathBuf, CompilerError> {
+        if specifier.len() <= MAX_SPECIFIER_BYTES {
+            match packages::Specifier::parse(specifier) {
+                Some(Ok(package)) if self.package_specifiers => {
+                    return Ok(self.resolve_package(specifier, &package)?);
+                }
+                Some(Err(error)) if self.package_specifiers => return Err(error.into()),
+                // Earlier profiles name the profile that admits packages.
+                Some(Ok(_)) => {
+                    return Err(packages::PackageError::Profile {
+                        specifier: specifier.to_owned(),
+                        profile: packages::required_profile(),
+                    }
+                    .into());
+                }
+                Some(Err(_)) | None => {}
+            }
+        }
         if specifier.len() > MAX_SPECIFIER_BYTES
             || !(specifier.starts_with("./") || specifier.starts_with("../"))
             || specifier.chars().any(|c| c.is_control())
@@ -257,7 +283,9 @@ impl ModuleLoader for SourceLoader {
                     && (specifier.ends_with(".tsx") || specifier.ends_with(".jsx")))
         {
             return Err(CompilerError::Module(
-                if self.tsx_specifiers {
+                if self.package_specifiers {
+                    "imports require explicit relative .ts, .tsx, .js or .jsx paths or package names without URL/query syntax; import another file as text with `with { type: \"text\" }`"
+                } else if self.tsx_specifiers {
                     "imports require explicit relative .ts, .tsx, .js or .jsx paths without URL/query syntax; import another file as text with `with { type: \"text\" }`"
                 } else if self.js_specifiers {
                     "imports require explicit relative .ts or .js paths without URL/query syntax"

@@ -1191,3 +1191,191 @@ fn direct_union_json_decoders_link_and_run_without_sources() {
             .unwrap(),
     );
 }
+
+const PACKAGE_MAIN: &str = r#"import {twice} from "plain";
+import {greet} from "@fixture/scoped/extra";
+export function main():void{console.log(`${twice(21)} ${greet("pkg")}`);}"#;
+
+/// `plain` and `@fixture/scoped` as npm installs them: package.json, a
+/// `.d.ts` with its adjacent `.d.ts.map`, compiled JavaScript and the
+/// shipped TypeScript sources.
+fn install_packages(project: &Project) {
+    project.write(
+        "node_modules/plain/package.json",
+        r#"{"name":"plain","type":"module","exports":{".":{"types":"./dist/index.d.ts","default":"./dist/index.js"}}}"#,
+    );
+    project.write(
+        "node_modules/plain/dist/index.d.ts",
+        "export declare function twice(n: number): number;",
+    );
+    project.write(
+        "node_modules/plain/dist/index.d.ts.map",
+        r#"{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../src/index.ts"],"names":[],"mappings":""}"#,
+    );
+    project.write(
+        "node_modules/plain/dist/index.js",
+        "PRIVATE_JS_MUST_NOT_BE_READ",
+    );
+    project.write(
+        "node_modules/plain/src/index.ts",
+        r#"import {offset} from "./offset.js";export function twice(n:number):number{return n*2+offset();}"#,
+    );
+    project.write(
+        "node_modules/plain/src/offset.ts",
+        "export function offset():number{return 0;}",
+    );
+    project.write(
+        "node_modules/@fixture/scoped/package.json",
+        r#"{"name":"@fixture/scoped","exports":{"./extra":{"types":"./lib/extra.d.ts"}}}"#,
+    );
+    project.write(
+        "node_modules/@fixture/scoped/lib/extra.d.ts",
+        "export declare function greet(name: string): string;",
+    );
+    project.write(
+        "node_modules/@fixture/scoped/lib/extra.d.ts.map",
+        r#"{"version":3,"sources":["../source/extra.ts"],"mappings":""}"#,
+    );
+    project.write(
+        "node_modules/@fixture/scoped/source/extra.ts",
+        r#"export function greet(name:string):string{return "hi "+name;}"#,
+    );
+}
+
+#[test]
+fn bare_package_specifiers_link_shipped_typescript_sources_in_v38() {
+    let project = Project::new(PACKAGE_MAIN);
+    project.write("varta.config.json", V38_CONFIG);
+    install_packages(&project);
+    let check = project.command(&["check", "--json"]);
+    assert!(check.status.success(), "{}", text(&check));
+    assert!(!text(&check).contains("PRIVATE_JS_MUST_NOT_BE_READ"));
+    let json: serde_json::Value = serde_json::from_slice(&check.stdout).unwrap();
+    let main = json["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|module| module["path"].as_str().unwrap().ends_with("src/main.ts"))
+        .unwrap()
+        .clone();
+    assert_eq!(
+        main["imports"],
+        serde_json::json!([
+            project.canonical("node_modules/@fixture/scoped/source/extra.ts"),
+            project.canonical("node_modules/plain/src/index.ts"),
+        ])
+    );
+    assert!(success(project.command(&["dev"])).contains("varta log: 42 hi pkg"));
+    // Packages are linked at build time; the artifacts run without them.
+    success(project.command(&["build", "--single"]));
+    fs::remove_dir_all(project.root.join("node_modules")).unwrap();
+    assert!(success(project.command(&["run", "dist/app.wasm"])).contains("varta log: 42 hi pkg"));
+    let native = Command::new(project.root.join("dist/app"))
+        .current_dir(&project.root)
+        .output()
+        .unwrap();
+    assert!(success(native).contains("varta log: 42 hi pkg"));
+}
+
+#[test]
+fn v37_rejects_bare_package_specifiers_at_the_import() {
+    let project = Project::new(PACKAGE_MAIN);
+    project.write("varta.config.json", V37_CONFIG);
+    install_packages(&project);
+    let error = project.diagnostic();
+    assert_eq!(error["code"], "module_error", "{error}");
+    assert_eq!(
+        error["message"],
+        "package specifier plain requires profile checked-f64-utf16-v38; earlier profiles import explicit relative paths"
+    );
+    assert_eq!(
+        error["file"],
+        serde_json::json!(project.canonical("src/main.ts"))
+    );
+    assert_eq!(error["range"]["start"]["line"], 1, "{error}");
+    assert_eq!(error["range"]["start"]["column"], 21, "{error}");
+    assert_eq!(error["range"]["end"]["column"], 28, "{error}");
+    assert!(!project.root.join("dist").exists());
+}
+
+#[test]
+fn untyped_declaration_only_and_escaping_packages_fail_before_artifact_creation() {
+    let project = Project::new(PACKAGE_MAIN);
+    project.write("varta.config.json", V38_CONFIG);
+    install_packages(&project);
+    fs::write(
+        project.workspace.join("outside.ts"),
+        "PRIVATE_SOURCE_MUST_NOT_BE_READ",
+    )
+    .unwrap();
+    let cases = [
+        (
+            "node_modules/plain/package.json",
+            r#"{"name":"plain","main":"./dist/index.js"}"#,
+            "unsupported untyped package plain",
+        ),
+        (
+            "node_modules/plain/dist/index.d.ts.map",
+            r#"{"version":3,"sources":["../../../../outside.ts"],"mappings":""}"#,
+            "outside the package",
+        ),
+        (
+            "node_modules/plain/package.json",
+            r#"{"name":"plain","exports":{".":{"types":"./../../outside.d.ts"}}}"#,
+            "cannot leave the package directory",
+        ),
+    ];
+    for (path, replacement, expected) in cases {
+        let original = fs::read_to_string(project.root.join(path)).unwrap();
+        project.write(path, replacement);
+        let error = project.diagnostic();
+        assert_eq!(error["code"], "module_error", "{error}");
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains(expected), "{message}");
+        assert!(
+            !error
+                .to_string()
+                .contains("PRIVATE_SOURCE_MUST_NOT_BE_READ")
+        );
+        assert!(!project.root.join("dist").exists());
+        project.write(path, &original);
+    }
+    // Declarations without a source map ship no TypeScript source.
+    fs::remove_file(project.root.join("node_modules/plain/dist/index.d.ts.map")).unwrap();
+    let message = project.diagnostic()["message"].as_str().unwrap().to_owned();
+    assert!(
+        message.contains("unsupported declarations-only package plain"),
+        "{message}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn symlinked_packages_are_rejected() {
+    use std::os::unix::fs::symlink;
+    let project = Project::new(PACKAGE_MAIN);
+    project.write("varta.config.json", V38_CONFIG);
+    install_packages(&project);
+    fs::rename(
+        project.root.join("node_modules/plain"),
+        project.workspace.join("plain"),
+    )
+    .unwrap();
+    fs::write(
+        project.workspace.join("plain/src/index.ts"),
+        "PRIVATE_SOURCE_MUST_NOT_BE_READ",
+    )
+    .unwrap();
+    symlink(
+        project.workspace.join("plain"),
+        project.root.join("node_modules/plain"),
+    )
+    .unwrap();
+    let error = project.diagnostic();
+    assert_eq!(error["code"], "module_error", "{error}");
+    assert!(
+        !error
+            .to_string()
+            .contains("PRIVATE_SOURCE_MUST_NOT_BE_READ")
+    );
+}

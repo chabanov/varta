@@ -686,6 +686,16 @@ impl LanguageProfile {
     pub fn text_imports(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave-1 package stream: bare package specifiers
+    /// (`import { C } from "pkg"`, `"@scope/pkg/sub"`) resolve through
+    /// `<config dir>/node_modules`, the package's `types` export and the
+    /// adjacent declaration source map to the shipped TypeScript source.
+    /// Earlier profiles reject them. Admits no other syntax and changes no
+    /// ABI; the resolution policy is the project loader's.
+    #[must_use]
+    pub fn package_specifiers(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, TSX stream: TypeScript 5.4's narrowing in closures created
     /// after the last assignment, for parameters and `let` bindings that no
     /// nested function assigns (`const` bindings keep theirs since v24).
@@ -3186,6 +3196,7 @@ mod tests {
                 profile.view_protocol(),
                 profile.tsx(),
                 profile.text_imports(),
+                profile.package_specifiers(),
                 profile.closure_narrowing(),
                 profile.structural_subtyping(),
                 profile.codegen_v2(),
