@@ -1242,3 +1242,111 @@ pub(crate) fn frames(
     }
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{Access, BatchWriter, Broker, TextFont, TextMeasurer, View};
+    use varta_common::view::{CssProperty as P, Tag};
+
+    struct Deny;
+    impl Broker for Deny {
+        fn link_requested(&self, _: &str) -> bool {
+            false
+        }
+        fn open_url(&mut self, _: &str) -> Access {
+            Access::Denied
+        }
+        fn clipboard_write(&mut self) -> Access {
+            Access::Denied
+        }
+    }
+
+    const FAMILY: &str = "\"Varta Controls Fixture\"";
+
+    fn boxes(
+        fill: impl FnOnce(&mut BatchWriter),
+    ) -> std::collections::BTreeMap<u32, crate::BoxRect> {
+        let mut b = BatchWriter::new();
+        b.create_element(2, Tag::Div)
+            .insert(1, 2, 0)
+            .set_style(2, P::FontFamily, FAMILY);
+        fill(&mut b);
+        let mut view = View::default();
+        view.commit(&b.finish(), false, &mut Deny).unwrap();
+        let mut font = TextMeasurer::new_with_fonts(vec![TextFont {
+            data: include_bytes!("../tests/fixtures/controls.ttf").to_vec(),
+            family: "Varta Controls Fixture".into(),
+            aliases: Vec::new(),
+        }])
+        .unwrap();
+        view.layout_boxes_with_text(400.0, 200.0, &mut font, 16.0)
+            .unwrap()
+    }
+
+    /// A run takes the line height of the span owning it, not of the span
+    /// whose font-size change ends it (parley reports the latter). Chrome
+    /// 156 line heights and span offsets for `A<span>B</span>C` with the
+    /// root's and the span's font-size/line-height; parley's own run line
+    /// heights give 44, 44, 53, 66, 66, 39 and 39.
+    #[test]
+    fn runs_take_their_owning_span_line_height() {
+        for ((root_size, root_line), (span_size, span_line), height, offset) in [
+            (("20px", "20px"), ("8px", "40px"), 40.0, 16.0),
+            (("8px", "40px"), ("20px", "20px"), 40.0, 6.0),
+            (("20px", "10px"), ("30px", "50px"), 50.0, 10.0),
+            (("30px", "10px"), ("10px", "60px"), 60.0, 25.0),
+            (("10px", "60px"), ("30px", "10px"), 60.0, 9.0),
+            (("40px", "4px"), ("10px", "30px"), 30.0, 10.0),
+            (("10px", "30px"), ("40px", "4px"), 30.0, -14.0),
+        ] {
+            let boxes = boxes(|b| {
+                b.set_style(2, P::FontSize, root_size)
+                    .set_style(2, P::LineHeight, root_line)
+                    .create_text(3, "A")
+                    .insert(2, 3, 0)
+                    .create_element(4, Tag::Span)
+                    .set_style(4, P::FontSize, span_size)
+                    .set_style(4, P::LineHeight, span_line)
+                    .insert(2, 4, 0)
+                    .create_text(5, "B")
+                    .insert(4, 5, 0)
+                    .create_text(6, "C")
+                    .insert(2, 6, 0);
+            });
+            assert_eq!(
+                (boxes[&2].height, boxes[&4].y - boxes[&2].y),
+                (height, offset),
+                "{root_size}/{root_line} {span_size}/{span_line}"
+            );
+        }
+    }
+
+    /// A rich button label keeps the control's whole-pixel line spacing in
+    /// its text and inline elements: Chrome 156 gives 20px for `A <span>B`
+    /// and 23px with a 17px span.
+    #[test]
+    fn rich_control_labels_keep_whole_pixel_line_spacing() {
+        let boxes = boxes(|b| {
+            for (button, span, size, text) in [
+                (3, 5, None, ["A ", "B"]),
+                (8, 10, Some("17px"), ["x ", "AB"]),
+            ] {
+                b.create_element(button, Tag::Button)
+                    .set_style(button, P::Display, "block")
+                    .set_style(button, P::Width, "60px")
+                    .insert(2, button, 0)
+                    .create_text(button + 1, text[0])
+                    .insert(button, button + 1, 0)
+                    .create_element(span, Tag::Span)
+                    .insert(button, span, 0)
+                    .create_text(span + 1, text[1])
+                    .insert(span, span + 1, 0);
+                if let Some(size) = size {
+                    b.set_style(span, P::FontSize, size);
+                }
+            }
+        });
+        assert_eq!(boxes[&3].height, 20.0);
+        assert_eq!(boxes[&8].height, 23.0);
+    }
+}
