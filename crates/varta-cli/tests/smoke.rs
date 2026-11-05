@@ -17306,6 +17306,102 @@ fn a_view_script_records_and_replays_its_network_log() {
     }
 }
 
+/// `--network-record` and `--network-replay` also run an application
+/// instance without a view (`--app`): the replay with the server gone prints
+/// the recorded output and uses the recording's budgets. Without `--app` or
+/// a view script, and with the browser target, the flags are refused.
+#[test]
+fn an_application_run_records_and_replays_its_network_log() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        loop {
+            let mut line = String::new();
+            assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let body = "Привіт 🦀".as_bytes();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+    });
+    let source = r#"
+      async function load():Promise<void>{
+        const response=await fetch("__BASE__/hello");
+        console.log(`${response.status} ${await response.text()}`);
+        setTimeout(()=>{console.log("timer");},1);
+      }
+      export function main():void{console.log("started");load();}
+    "#
+    .replace("__BASE__", &base);
+    let project = RegressionProject::new(
+        &source,
+        serde_json::json!({"net":{"request":{"urls":[format!("{base}/**")],"methods":["GET"]}},"time":{"timer":true}}),
+    );
+    project.language_profile(V38_PROFILE);
+    let dev = |extra: &[&str]| {
+        let mut args = vec!["dev", "--app", "--budget-report"];
+        args.extend_from_slice(extra);
+        project.command(&args)
+    };
+    let recorded = dev(&["--network-record", "log.json"]);
+    assert!(recorded.status.success(), "{}", combined(&recorded));
+    server.join().unwrap();
+    let lines = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.starts_with("varta log: "))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        lines(&recorded),
+        ["varta log: started", "varta log: 200 Привіт 🦀", "varta log: timer"]
+    );
+    let total = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .find(|line| line.starts_with("varta budget: total: "))
+            .map(str::to_owned)
+    };
+    // The server is gone: the replay prints the recorded output and uses the
+    // same budgets.
+    let replayed = dev(&["--network-replay", "log.json"]);
+    assert!(replayed.status.success(), "{}", combined(&replayed));
+    assert_eq!(lines(&replayed), lines(&recorded));
+    assert_eq!(total(&replayed), total(&recorded));
+    assert!(total(&replayed).is_some());
+    // Without --app or a view script, and for the browser target, refused.
+    for args in [
+        &["dev", "--network-replay", "log.json"][..],
+        &["dev", "--network-record", "other.json"][..],
+        &["dev", "--target", "browser", "--app", "--network-replay", "log.json"][..],
+    ] {
+        let refused = project.command(args);
+        assert!(!refused.status.success(), "{args:?}");
+        assert!(!combined(&refused).contains("varta log: started"), "{args:?}");
+        assert!(!project.0.join("other.json").exists());
+    }
+    let refused = project.command(&["dev", "--network-replay", "log.json"]);
+    assert!(
+        combined(&refused).contains("--network-record and --network-replay need --view-script or --app"),
+        "{}",
+        combined(&refused)
+    );
+}
+
 fn view_node<'a>(node: &'a serde_json::Value, ident: &str) -> &'a serde_json::Value {
     fn find<'a>(node: &'a serde_json::Value, ident: &str) -> Option<&'a serde_json::Value> {
         if node["attributes"]["id"] == ident {

@@ -168,7 +168,9 @@ impl BudgetReport {
             self.output_bytes,
             budgets.output_bytes,
         ));
-        if self.total_maintenance_periods > 0 {
+        // Idle periods that ran no step are not listed but their fuel counts,
+        // so the total is printed whenever any maintenance fuel was spent.
+        if self.total_maintenance_periods > 0 || self.total_maintenance_fuel > 0 {
             lines.push(format!(
                 "{BUDGET_REPORT_PREFIX}maintenance total: {} idle periods, fuel {}",
                 self.total_maintenance_periods, self.total_maintenance_fuel,
@@ -524,5 +526,40 @@ mod tests {
             bound: Some(bound),
         };
         assert_eq!(bounded.until(), bound);
+    }
+
+    /// Idle periods that ran no step are not listed, but their fuel counts:
+    /// the report prints the maintenance total whenever any was spent, so a
+    /// host comparing it (the browser acceptances) sees the same number.
+    #[test]
+    fn the_maintenance_total_is_printed_whenever_fuel_was_spent() {
+        const IDLE_FUEL: u64 = 54;
+        let report = |periods, fuel| BudgetReport {
+            budgets: Budgets::PRODUCTION,
+            capped: Vec::new(),
+            per_turn: true,
+            deadline_per_turn: true,
+            turns: Vec::new(),
+            total_turns: 0,
+            total_fuel: 0,
+            peak_memory_bytes: 0,
+            output_bytes: 0,
+            maintenance: Vec::new(),
+            total_maintenance_periods: periods,
+            total_maintenance_fuel: fuel,
+        };
+        let total = |report: BudgetReport| {
+            report
+                .lines()
+                .into_iter()
+                .find(|line| line.contains("maintenance total"))
+        };
+        assert_eq!(total(report(0, 0)), None);
+        assert_eq!(
+            total(report(0, IDLE_FUEL)),
+            Some(format!(
+                "{BUDGET_REPORT_PREFIX}maintenance total: 0 idle periods, fuel {IDLE_FUEL}"
+            ))
+        );
     }
 }

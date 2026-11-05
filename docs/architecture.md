@@ -12132,7 +12132,9 @@ prompt, guest code or socket) with `ReplayError::Unserved`.
   above 0xFF, a request that is no `fetch` method or no URL in its own
   serialization, and the [resource limits](#resource-limits)
   (`NetworkLogError`).
-- **Recording** (`varta dev --view-script S --network-record LOG`) keeps the
+- **Recording** (`varta dev --view-script S --network-record LOG`, or
+  `varta dev --app --network-record LOG` for an application instance without
+  a scripted session, whose events carry `UNSCRIPTED_STEP`) keeps the
   real transfers. It logs a request when it reaches the transport, every
   completion when the guest receives it (`Net::deliver`, so a completion
   discarded after an abort is not logged), and every abort of a transfer
@@ -12169,7 +12171,11 @@ prompt, guest code or socket) with `ReplayError::Unserved`.
   period's maintenance, every completion released by then arrives at once,
   in log order, and each is one network turn. Nothing waits for the wall
   clock and no socket opens (a module importing a direct network read is
-  refused before it starts, above).
+  refused before it starts, above). An unscripted `--app` replay
+  (`varta dev --app --network-replay LOG`) keeps real timers: its timers
+  fire on the wall clock as in the recording, so a program whose timers race
+  its network completions (a request timeout, a backoff) replays the order
+  the log holds only when the guest's own timers produce it.
 - **Failures.** A `wait_network` step that ends with a watched request armed,
   or an unscripted application that ends so, fails with
   `ReplayError::Stalled` naming the next log event. A session that ends without

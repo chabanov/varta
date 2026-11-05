@@ -58,6 +58,7 @@ Administration (creating or suspending agents) is not designed yet.
 | `scripts/check-sdk.sh` | `varta check` of every pinned SDK source file, one file at a time, then of the instantiated SDK generics |
 | `scripts/check-sdk-generics.ts` | The entry that instantiates every generic function and method of the pinned SDK, used by `check-sdk.sh` |
 | `scripts/sdk-loopback.sh` | Runs the loopback mock and the SDK client tests as two `varta dev` processes |
+| `scripts/test-browser-sdk.mjs` | Records every SDK group natively against the loopback mock, replays it natively and in local Chrome from the program's own browser bundle, and requires identical lines and usage |
 | `mockups/` | Static Single Chat screens in plain HTML/CSS restricted to the L0 v1 subset. `console.css` is the guest stylesheet, `frame.css` the embedding page, `lint.html` checks every screen against the common registry and official host model |
 | `mockups/conformance/` | Renders every screen through the official browser host and compares structure, live control state and boxes with the mockup |
 
@@ -157,6 +158,7 @@ VARTA_BIN=/path/to/varta scripts/test.sh [group…]
 /path/to/varta build --config varta.json
 VARTA_BIN=/path/to/varta scripts/check-sdk.sh
 VARTA_BIN=/path/to/varta scripts/sdk-loopback.sh [group…]
+node scripts/test-browser-sdk.mjs /path/to/varta [group…]
 node scripts/serve-mockups.mjs 8766
 ```
 
@@ -236,6 +238,25 @@ Checkpoint 2026-11-04 (debug `varta` of `978b793`): `check-sdk.sh` printed
 `65/65 passed`, the generic inventory (7 declaration sites), the instantiation probe
 and `generic bodies reached: 6/6`. `sdk-loopback.sh` passed all six groups with 43
 cases.
+
+### The SDK in the browser host
+
+`scripts/test-browser-sdk.mjs` runs every group of the table above three
+times. First natively against the loopback mock as an application instance
+that records its network completions (`varta dev --app --network-record`);
+then natively again with the mock stopped, replaying that log
+(`--network-replay`, no socket opens); then in local Chrome from the
+program's own `varta build --target browser` bundle, mounted with the same
+log as the embedder's `networkReplay`, so no browser-side mock exists. The
+browser run must print the native replay's lines and use exactly its fuel,
+host calls, microtasks, output bytes, turns and idle maintenance.
+
+Checkpoint 2026-11-05 (debug `varta`, local Chrome 156): all six groups pass
+(`sdk-unary` 8, `sdk-problem` 17, `sdk-retry` 6, `sdk-abort` 3, `sdk-timeout` 3,
+`sdk-sse` 6; 43 cases). The native recording and its native replay agree on
+every turn; their idle-maintenance fuel can differ (the recording idles while
+the network answers), so Chrome is compared with the native replay. Firefox
+and WebKit were not run.
 
 ## SDK own test sources
 

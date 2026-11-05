@@ -105,12 +105,13 @@ enum Commands {
             requires = "view_geometry"
         )]
         view_font: Vec<String>,
-        /// With --view-script: perform real transfers and write every
-        /// completion the session received from them (heads, body chunks
-        /// with their read mode, ends, failures) and every abort of an open
-        /// transfer, in delivery order and with its script step, to this
-        /// new network log file (never overwritten; also written when the
-        /// session fails after it started). Heads keep only the response
+        /// With --view-script or --app: perform real transfers and write
+        /// every completion the instance received from them (heads, body
+        /// chunks with their read mode, ends, failures) and every abort of
+        /// an open transfer, in delivery order and with its script step (an
+        /// --app run has no script), to this new network log file (never
+        /// overwritten; also written when the instance fails after it
+        /// started). Heads keep only the response
         /// headers the grant showed. The log is bounded; exceeding it fails
         /// the session. Only fetch requests are recorded: a module that
         /// imports varta.net.get or varta.net.fetch is refused before it
@@ -118,22 +119,27 @@ enum Commands {
         #[arg(
             long,
             value_name = "PATH",
-            requires = "view_script",
-            conflicts_with = "network_replay"
+            conflicts_with_all = ["network_replay", "profile_fuel", "target"]
         )]
         network_record: Option<PathBuf>,
-        /// With --view-script: serve this recorded network log instead of
-        /// the network (no socket is opened). A module that imports
+        /// With --view-script or --app: serve this recorded network log
+        /// instead of the network (no socket is opened). A module that imports
         /// varta.net.get or varta.net.fetch, which the log cannot serve, is
         /// refused before it starts. Every logged request must be granted,
         /// or the session fails before it starts; each request is
         /// still authorized when it starts and must match the next logged
         /// request's method and URL. Logged events reach the guest in log
         /// order, each once its operation is armed and the script reached
-        /// its step, without waiting for the wall clock. A divergence, an
-        /// armed request a wait_network step cannot complete from the log,
-        /// or logged events left undelivered fail the session.
-        #[arg(long, value_name = "PATH", requires = "view_script")]
+        /// its step (an --app run has no script, so only arming orders
+        /// them), without waiting for the wall clock; timers keep the wall
+        /// clock. A divergence, an armed request a wait_network step cannot
+        /// complete from the log, or logged events left undelivered fail
+        /// the instance.
+        #[arg(
+            long,
+            value_name = "PATH",
+            conflicts_with_all = ["profile_fuel", "target"]
+        )]
         network_replay: Option<PathBuf>,
     },
     /// Build validated Wasm; --single embeds it in a native launcher.
@@ -330,19 +336,7 @@ fn execute(
         }) => {
             let project = CheckedProject::load(&config)?;
             let script = varta_project::read_view_script(&script)?;
-            let network = match (&network_record, &network_replay) {
-                (Some(path), _) if path.symlink_metadata().is_ok() => {
-                    return Err(ProjectError::Usage(format!(
-                        "network log {} already exists",
-                        path.display()
-                    )));
-                }
-                (Some(_), _) => varta_project::NetworkMode::Record,
-                (None, Some(path)) => {
-                    varta_project::NetworkMode::Replay(varta_project::read_network_log(path)?)
-                }
-                (None, None) => varta_project::NetworkMode::Live,
-            };
+            let network = network_mode(network_record.as_deref(), network_replay.as_deref())?;
             let mut geometry = if view_geometry {
                 let fonts: Vec<(PathBuf, String)> = view_font
                     .as_chunks::<VIEW_FONT_VALUES>()
@@ -421,14 +415,31 @@ fn execute(
             return Ok(code);
         }
         Some(Commands::Dev {
-            config, execution, ..
+            config,
+            execution,
+            network_record,
+            network_replay,
+            ..
         }) => {
+            let recording = network_record.is_some() || network_replay.is_some();
+            if recording && !execution.app {
+                return Err(ProjectError::Usage(
+                    "--network-record and --network-replay need --view-script or --app".into(),
+                ));
+            }
+            let network = network_mode(network_record.as_deref(), network_replay.as_deref())?;
             let project = CheckedProject::load(&config)?;
-            let report = varta_project::run_report(
+            let mut report = varta_project::run_report(
                 &project.artifact,
                 policy.as_ref(),
-                project.dev_settings(settings(decisions, &execution)),
+                project.dev_settings(varta_project::RunSettings {
+                    network,
+                    ..settings(decisions, &execution)
+                }),
             )?;
+            if let (Some(path), Some(log)) = (&network_record, report.network_log.take()) {
+                varta_project::write_network_log(path, &log)?;
+            }
             let code = finish(report, execution.budget_report)?;
             println!("varta dev: completed");
             return Ok(code);
@@ -615,6 +626,27 @@ fn run_report(
     flags: &ExecutionFlags,
 ) -> Result<varta_project::RunReport, ProjectError> {
     varta_project::run_report(artifact, policy, settings(decisions, flags))
+}
+
+/// The network mode of `--network-record`/`--network-replay`: a recording
+/// never overwrites an existing file.
+fn network_mode(
+    record: Option<&std::path::Path>,
+    replay: Option<&std::path::Path>,
+) -> Result<varta_project::NetworkMode, ProjectError> {
+    Ok(match (record, replay) {
+        (Some(path), _) if path.symlink_metadata().is_ok() => {
+            return Err(ProjectError::Usage(format!(
+                "network log {} already exists",
+                path.display()
+            )));
+        }
+        (Some(_), _) => varta_project::NetworkMode::Record,
+        (None, Some(path)) => {
+            varta_project::NetworkMode::Replay(varta_project::read_network_log(path)?)
+        }
+        (None, None) => varta_project::NetworkMode::Live,
+    })
 }
 
 /// How the execution flags run a program.
