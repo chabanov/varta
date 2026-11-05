@@ -98,6 +98,12 @@ impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
     }
 
     fn classify(&mut self, value: &Value, ty: u32, depth: usize) -> Result<JsonValue, DecodeError> {
+        // The shared KV depth counts the stored values, as the stage walk
+        // and the V8 codec do; the `undefined` of a missing optional field
+        // stores nothing and is not counted here.
+        if depth > crate::MAX_VALUE_DEPTH {
+            return Err(mismatch(crate::too_deep()));
+        }
         let schema = self.schema;
         let expected = &schema.types[ty as usize];
         if let JsonType::PrimitiveUnion { members } | JsonType::ReferenceUnion { members } =
@@ -299,4 +305,53 @@ pub fn key_value(bytes: &[u8]) -> Result<Value, DecodeError> {
     Ok(Value::Object(Rc::new(Object::Dense(
         parts.into_iter().map(Some).collect(),
     ))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION;
+
+    struct Never;
+    impl Deadline for Never {
+        fn passed(&self) -> bool {
+            false
+        }
+    }
+
+    /// A chain of `depth` single-element arrays around `null`.
+    fn chain(depth: usize) -> Value {
+        (0..depth).fold(Value::Null, |inner, _| {
+            Value::Object(Rc::new(Object::Dense(vec![Some(inner)])))
+        })
+    }
+
+    /// The classifier keeps the shared KV depth whatever the module's JSON
+    /// depth (v38: far deeper), with the named recoverable text.
+    #[test]
+    fn classification_keeps_the_shared_depth_limit() {
+        // `type Nested = Nested[] | null`: a union of an array of itself and null.
+        let schema = JsonSchema {
+            version: HASHED_DICTIONARY_SCHEMA_VERSION,
+            root: 0,
+            types: vec![
+                JsonType::ReferenceUnion {
+                    members: vec![1, 2],
+                },
+                JsonType::Array { element: 0 },
+                JsonType::Null,
+            ],
+        };
+        let limits = DataLimits::V38;
+        assert!(limits.json_depth > crate::MAX_VALUE_DEPTH);
+        let classify = |depth| Classifier::new(&schema, limits, &Never).root(&chain(depth));
+        for depth in [crate::MAX_VALUE_DEPTH - 1, crate::MAX_VALUE_DEPTH] {
+            assert!(classify(depth).is_ok(), "{depth}");
+        }
+        match classify(crate::MAX_VALUE_DEPTH + 1) {
+            Err(DecodeError::Mismatch(message)) => assert_eq!(message, crate::too_deep()),
+            other => panic!("{other:?}"),
+        }
+    }
 }

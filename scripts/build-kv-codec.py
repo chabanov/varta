@@ -63,10 +63,13 @@ OUTPUT = ROOT / "crates/varta-project/src/browser/kv-codec.wasm"
 METADATA = ROOT / "crates/varta-project/src/browser/kv-codec.json"
 PACKAGE = "varta-kv-codec-wasm"
 PROFILE = "intrinsics"
-# The codec's own shadow stack: the V8 decode and the classifier recurse once
-# per nesting level of a stored value, up to the v38 JSON depth ceiling
-# (`limits::V38_MAX_JSON_DEPTH`). Stack overflow traps (the stack comes
-# first in memory), so a deeper walk fails closed.
+# The codec's linear-memory (shadow) stack, which holds only its address-taken
+# locals; it comes first in memory, so an overflow traps instead of
+# corrupting data. It does not bound recursion: a wasm call frame lives on the
+# engine's native stack, which no module can size. The stage walk, the V8
+# codec and the classifier recurse once per nesting level, and the shared
+# limit `varta_kv_codec::MAX_VALUE_DEPTH` (derived and measured in
+# crates/varta-kv-codec/src/lib.rs) keeps them within every engine's stack.
 STACK_BYTES = 16 * 1024 * 1024
 FNV_OFFSET = 0xCBF29CE484222325
 FNV_PRIME = 0x100000001B3

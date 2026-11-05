@@ -61,3 +61,29 @@ pub trait Deadline {
 
 /// Work items between two deadline polls of a walk.
 pub const DEADLINE_STRIDE: usize = 1024;
+
+/// The deepest a KV value nests: the root is at level 0 and every element,
+/// property or entry one level below its aggregate. The stage walk
+/// ([`stage::Stager`]), the V8 encoder and decoder ([`v8::encode`],
+/// [`v8::decode`]) and the classifier ([`decode::Classifier`]) refuse a
+/// value with anything below this level with the recoverable `TypeError`
+/// [`too_deep`], on every host; the construction ([`build`]) is iterative.
+///
+/// Derivation. Each of those walks recurses once per level, and in a
+/// browser a wasm call frame lives on the engine's native stack, which a
+/// module cannot size (the codec's linear-memory stack holds only its
+/// address-taken locals). Measured on 2026-11-05 with a shallow guest and a
+/// chain of records: Chrome 156 sustained about 700 levels (the decode of a
+/// `get`), WebKit 26.5 about 150 (the stage walk of a `set`), and an
+/// unoptimized native build overflowed its 8 MiB main thread at 1500 (the
+/// process aborted). The limit is the legacy checked-JSON depth
+/// ([`varta_common::value::MAX_JSON_DEPTH`]), under half of the smallest
+/// measured bound, so at least half of the engine stack stays the guest's.
+pub const MAX_VALUE_DEPTH: usize = varta_common::value::MAX_JSON_DEPTH;
+
+/// The recoverable `TypeError` text of a value nesting deeper than
+/// [`MAX_VALUE_DEPTH`], staged, encoded or decoded.
+#[must_use]
+pub fn too_deep() -> alloc::string::String {
+    alloc::format!("a KV value cannot nest deeper than {MAX_VALUE_DEPTH} levels")
+}

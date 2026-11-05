@@ -124,6 +124,10 @@ pub enum V8Error {
     DuplicateKey,
     #[error("the value exceeds the {0} limit")]
     Limit(&'static str),
+    /// Nesting below the depth limit ([`Limits::depth`], at most
+    /// [`crate::MAX_VALUE_DEPTH`]); the text is [`crate::too_deep`]'s form.
+    #[error("a KV value cannot nest deeper than {0} levels")]
+    Depth(usize),
 }
 
 /// A property key: an array index or any other string.
@@ -199,7 +203,8 @@ impl Object {
 /// Structural bounds of one read.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
-    /// Nesting depth of objects.
+    /// Nesting depth of objects; a read never goes below
+    /// [`crate::MAX_VALUE_DEPTH`], whatever this says.
     pub depth: usize,
     /// Values read, back-references included.
     pub nodes: usize,
@@ -315,8 +320,9 @@ impl Reader<'_> {
         if self.nodes > self.limits.nodes {
             return Err(V8Error::Limit("node"));
         }
-        if depth > self.limits.depth {
-            return Err(V8Error::Limit("depth"));
+        let limit = self.limits.depth.min(crate::MAX_VALUE_DEPTH);
+        if depth > limit {
+            return Err(V8Error::Depth(limit));
         }
         Ok(())
     }
@@ -592,7 +598,8 @@ fn index_of(number: f64) -> Result<u32, V8Error> {
 
 /// Encode `value` with the serializer header Deno 2.9.x writes. Objects
 /// shared by `Rc` are written once and back-referenced after, as V8 writes
-/// one object reached twice. Fails beyond `max_bytes` of output.
+/// one object reached twice. Fails beyond `max_bytes` of output and below
+/// [`crate::MAX_VALUE_DEPTH`] levels.
 pub fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
     let mut writer = Writer {
         out: Vec::new(),
@@ -602,7 +609,7 @@ pub fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
     };
     writer.out.push(tag::VERSION);
     writer.varint(WRITE_VERSION);
-    writer.value(value)?;
+    writer.value(value, 0)?;
     writer.check()?;
     Ok(writer.out)
 }
@@ -686,8 +693,11 @@ impl Writer {
             Key::Name(units) => self.string(units),
         }
     }
-    fn value(&mut self, value: &Value) -> Result<(), V8Error> {
+    fn value(&mut self, value: &Value, depth: usize) -> Result<(), V8Error> {
         self.check()?;
+        if depth > crate::MAX_VALUE_DEPTH {
+            return Err(V8Error::Depth(crate::MAX_VALUE_DEPTH));
+        }
         match value {
             Value::Undefined => self.out.push(tag::UNDEFINED),
             Value::Null => self.out.push(tag::NULL),
@@ -696,7 +706,7 @@ impl Writer {
             Value::Number(number) => self.number(*number),
             Value::BigInt(value) => self.bigint(value),
             Value::String(units) => self.string(units),
-            Value::Object(object) => self.object(object)?,
+            Value::Object(object) => self.object(object, depth)?,
         }
         Ok(())
     }
@@ -705,7 +715,7 @@ impl Writer {
         self.next += 1;
         id
     }
-    fn object(&mut self, object: &Rc<Object>) -> Result<(), V8Error> {
+    fn object(&mut self, object: &Rc<Object>, depth: usize) -> Result<(), V8Error> {
         let identity = Rc::as_ptr(object);
         if let Some(id) = self.ids.get(&identity) {
             self.out.push(tag::OBJECT_REFERENCE);
@@ -723,7 +733,7 @@ impl Writer {
                 self.out.push(tag::BEGIN_OBJECT);
                 for (key, value) in properties {
                     self.key(key);
-                    self.value(value)?;
+                    self.value(value, depth + 1)?;
                 }
                 self.out.push(tag::END_OBJECT);
                 self.varint(properties.len() as u32);
@@ -733,7 +743,7 @@ impl Writer {
                 self.varint(elements.len() as u32);
                 for element in elements {
                     match element {
-                        Some(value) => self.value(value)?,
+                        Some(value) => self.value(value, depth + 1)?,
                         None => self.out.push(tag::THE_HOLE),
                     }
                 }
@@ -746,7 +756,7 @@ impl Writer {
                 self.varint(*length);
                 for (index, value) in elements {
                     self.number(f64::from(*index));
-                    self.value(value)?;
+                    self.value(value, depth + 1)?;
                 }
                 self.out.push(tag::END_SPARSE_ARRAY);
                 self.varint(elements.len() as u32);
@@ -759,8 +769,8 @@ impl Writer {
             Object::Map(entries) => {
                 self.out.push(tag::BEGIN_MAP);
                 for (key, value) in entries {
-                    self.value(key)?;
-                    self.value(value)?;
+                    self.value(key, depth + 1)?;
+                    self.value(value, depth + 1)?;
                 }
                 self.out.push(tag::END_MAP);
                 self.varint((entries.len() * 2) as u32);
@@ -768,7 +778,7 @@ impl Writer {
             Object::Set(values) => {
                 self.out.push(tag::BEGIN_SET);
                 for value in values {
-                    self.value(value)?;
+                    self.value(value, depth + 1)?;
                 }
                 self.out.push(tag::END_SET);
                 self.varint(values.len() as u32);

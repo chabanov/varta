@@ -1,7 +1,12 @@
 //! The V8 codec against bytes Deno wrote: the Deno 2.9.4 fixture rows
 //! (`kv_cases/deno-2.9.4`) and the Deno 2.9.7 probe (`kv_cases/deno-2.9.7-probe`).
 use super::*;
-use alloc::{borrow::ToOwned, string::String, vec, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 const ROWS: &str = include_str!("../../varta-runtime/src/kv_cases/deno-2.9.4/rows.json");
 const PROBE: &str = include_str!("../../varta-runtime/src/kv_cases/deno-2.9.7-probe/rows.txt");
@@ -364,7 +369,19 @@ fn reads_are_bounded() {
     };
     let limits = Limits { depth: 8, ..LIMITS };
     assert!(decode(&nested(8), limits).is_ok());
-    assert_eq!(decode(&nested(9), limits), Err(V8Error::Limit("depth")));
+    assert_eq!(decode(&nested(9), limits), Err(V8Error::Depth(8)));
+    // The shared KV depth caps every read, whatever its limits say.
+    let deep = Limits {
+        depth: crate::MAX_VALUE_DEPTH * 2,
+        ..LIMITS
+    };
+    let max = crate::MAX_VALUE_DEPTH;
+    assert!(decode(&nested(max - 1), deep).is_ok());
+    assert!(decode(&nested(max), deep).is_ok());
+    assert_eq!(
+        decode(&nested(max + 1), deep),
+        Err(V8Error::Depth(crate::MAX_VALUE_DEPTH))
+    );
     let few = Limits { nodes: 3, ..LIMITS };
     assert_eq!(
         decode(&hex("ff104103490249044906240003"), few),
@@ -382,6 +399,29 @@ fn reads_are_bounded() {
         encode(&Value::String(vec![0x78; 100]), 64),
         Err(V8Error::Limit("value size"))
     );
+}
+
+/// A chain of `depth` single-element dense arrays around `undefined`.
+fn chain(depth: usize) -> Value {
+    (0..depth).fold(Value::Undefined, |inner, _| {
+        Value::Object(Rc::new(Object::Dense(vec![Some(inner)])))
+    })
+}
+
+#[test]
+fn writes_keep_the_shared_depth_limit_and_read_back() {
+    let max = crate::MAX_VALUE_DEPTH;
+    let deep = Limits {
+        depth: max * 2,
+        ..LIMITS
+    };
+    for depth in [max - 1, max] {
+        let bytes = encode(&chain(depth), 1 << 16).unwrap();
+        assert_eq!(decode(&bytes, deep), Ok(chain(depth)), "{depth}");
+    }
+    assert_eq!(encode(&chain(max + 1), 1 << 16), Err(V8Error::Depth(max)));
+    // The error text is the named one every host reports.
+    assert_eq!(V8Error::Depth(max).to_string(), crate::too_deep());
 }
 
 #[test]

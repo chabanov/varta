@@ -78,6 +78,11 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
         if self.nodes.is_multiple_of(crate::DEADLINE_STRIDE) && self.deadline.passed() {
             return Err(fatal("execution deadline"));
         }
+        // The shared KV depth first: recoverable on every host, before the
+        // module's (deeper) fatal JSON limits.
+        if depth > crate::MAX_VALUE_DEPTH {
+            return Err(StageError::Unsupported(crate::too_deep()));
+        }
         let limits = self.module.limits.data;
         if depth > limits.json_depth || self.nodes > limits.json_nodes {
             return Err(fatal("depth or node limit"));

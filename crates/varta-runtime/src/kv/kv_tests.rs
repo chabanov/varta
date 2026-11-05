@@ -1343,6 +1343,143 @@ fn values_outside_the_subset_are_rejected() {
     );
 }
 
+/// The parity target the browser container replicates (kv-store.test.mjs):
+/// in `denokv_sqlite` 0.14.0 a commit whose `sum` meets a value that is not
+/// a KvU64 fails with that TypeError, yet the mutations before it and the
+/// version step stay committed and the mutations after it are not applied
+/// (`atomic_write_batched` swallows the per-write error and `run_tx`
+/// commits). A change of the engine's atomicity fails here first.
+#[test]
+fn a_failing_sum_keeps_the_earlier_mutations_of_its_commit() {
+    let tree = Tree::new();
+    let path = tree.root().join("partial.kv");
+    let runtime = waiting_runtime();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let key = |name: &str| {
+        denokv_proto::encode_key(&denokv_proto::Key(vec![KeyPart::String(name.into())])).unwrap()
+    };
+    let value = v8::encode(
+        &v8::Value::String(vec![u16::from(b'x')]),
+        kv::MAX_VALUE_BYTES,
+    )
+    .unwrap();
+    let set = |name: &str| denokv_proto::Mutation {
+        key: key(name),
+        kind: MutationKind::Set(KvValue::V8(value.clone())),
+        expire_at: None,
+    };
+    let sum = denokv_proto::Mutation {
+        key: key("before"),
+        kind: MutationKind::Sum {
+            value: KvValue::U64(1),
+            min_v8: Vec::new(),
+            max_v8: Vec::new(),
+            clamp: false,
+        },
+        expire_at: None,
+    };
+    let mut database = open_at(&tree, "/data/partial.kv", true);
+    let version = data_version(&path);
+    let outcome = database.commit(
+        &runtime,
+        deadline,
+        Vec::new(),
+        vec![set("before"), sum, set("after")],
+    );
+    assert_eq!(
+        failed_message(outcome),
+        "Failed to perform 'sum' mutation on a non-U64 value in the database"
+    );
+    assert_eq!(
+        present(&mut database, &[key("before"), key("after")]),
+        [true, false]
+    );
+    drop(database);
+    assert!(data_version(&path) > version);
+}
+
+/// The V8 bytes of a chain of `depth` objects `{ next }` around `{}`, as
+/// Deno writes it: deeper than Varta itself stores.
+fn chain_bytes(depth: usize) -> Vec<u8> {
+    const NEXT: &[u8] = b"next";
+    let mut bytes = vec![0xFF, u8::try_from(v8::WRITE_VERSION).unwrap()];
+    for _ in 0..depth {
+        bytes.extend([b'o', b'"', u8::try_from(NEXT.len()).unwrap()]);
+        bytes.extend(NEXT);
+    }
+    bytes.extend([b'o', b'{', 0]);
+    bytes.extend(std::iter::repeat_n([b'{', 1], depth).flatten());
+    bytes
+}
+
+/// One shared depth limit (`varta_kv_codec::MAX_VALUE_DEPTH`) for every
+/// walk of a KV value: a value at or just below it stores and reads back,
+/// one level deeper is the named recoverable `TypeError` on `set`, far
+/// deeper never reaches host recursion (it aborted the process before),
+/// and a stored value deeper than the limit fails its `get` by the same
+/// name.
+#[test]
+fn values_keep_the_shared_kv_depth_limit() {
+    let tree = Tree::new();
+    let max = varta_kv_codec::MAX_VALUE_DEPTH;
+    let far = 2000;
+    let runtime = waiting_runtime();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut database = open_at(&tree, "/data/deep.kv", true);
+    let stored = denokv_proto::Mutation {
+        key: denokv_proto::encode_key(&denokv_proto::Key(vec![KeyPart::String("stored".into())]))
+            .unwrap(),
+        kind: MutationKind::Set(KvValue::V8(chain_bytes(max + 1))),
+        expire_at: None,
+    };
+    assert!(
+        database
+            .commit(&runtime, deadline, Vec::new(), vec![stored])
+            .unwrap()
+            .is_some()
+    );
+    drop(database);
+    let source = guarded(
+        "/data/deep.kv",
+        &format!(
+            "    for (const depth of [{below}, {max}, {above}, {far}]) {{\n\
+             let value: Chain = {{}};\n\
+             for (let i = 0; i < depth; i++) {{ value = {{ next: value }}; }}\n\
+             try {{ await kv.set(['deep', depth], value); console.log('set ' + String(depth)); }}\n\
+             catch (e) {{ if (e instanceof Error) {{ console.log(e.name + ': ' + e.message); }} }}\n\
+             const got = await kv.get<Chain>(['deep', depth]);\n\
+             let n = 0; let at = got.value;\n\
+             while (at !== null && at.next !== undefined) {{ at = at.next; n++; }}\n\
+             console.log('get ' + String(n));\n\
+             }}\n\
+             try {{ await kv.get<Chain>(['stored']); }}\n\
+             catch (e) {{ if (e instanceof Error) {{ console.log(e.name + ': ' + e.message); }} }}",
+            below = max - 1,
+            above = max + 1,
+        ),
+    );
+    let source = format!("interface Chain {{ next?: Chain }}\n{source}");
+    let refused = format!("TypeError: {}", varta_kv_codec::too_deep());
+    assert_eq!(
+        run(&source, read_write(), tree.roots()),
+        [
+            format!("set {}", max - 1),
+            format!("get {}", max - 1),
+            format!("set {max}"),
+            format!("get {max}"),
+            refused.clone(),
+            "get 0".into(),
+            refused,
+            "get 0".into(),
+            format!(
+                "TypeError: KV value does not match the checked type: {}",
+                varta_kv_codec::too_deep()
+            ),
+            "done".into(),
+        ]
+    );
+}
+
 #[test]
 fn earlier_profiles_have_no_kv() {
     let source = "export async function main(): Promise<void> { const kv = await varta.kv.open('/data/a.kv'); }";

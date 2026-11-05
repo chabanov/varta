@@ -179,9 +179,12 @@ pub fn staged_value(mode: StageMode, value: &v8::Value) -> Result<Staged, KvErro
     };
     let value_form =
         match mode {
-            StageMode::Value => {
-                Stored::V8(v8::encode(value, wire::MAX_VALUE_BYTES).map_err(|_| value_too_large())?)
-            }
+            StageMode::Value => Stored::V8(v8::encode(value, wire::MAX_VALUE_BYTES).map_err(
+                |error| match error {
+                    v8::V8Error::Depth(_) => KvError::type_error(crate::too_deep()),
+                    _ => value_too_large(),
+                },
+            )?),
             StageMode::U64 => {
                 let digits = String::from_utf16(text()?)
                     .map_err(|_| KvError::type_error("invalid KvU64"))?;

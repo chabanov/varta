@@ -129,7 +129,11 @@ pub fn classify<D: Deadline + ?Sized>(
                 string_units: limits.string_bytes / 2,
             },
         )
-        .map_err(|error| DecodeError::Mismatch(format!("invalid stored value: {error}"))),
+        .map_err(|error| match error {
+            // The shared depth limit is named alike on every walk.
+            v8::V8Error::Depth(_) => DecodeError::Mismatch(crate::too_deep()),
+            error => DecodeError::Mismatch(format!("invalid stored value: {error}")),
+        }),
         Entry::Value(Stored::U64(_)) => {
             Err(DecodeError::Mismatch("the stored value is a KvU64".into()))
         }
