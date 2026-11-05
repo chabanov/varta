@@ -1,16 +1,27 @@
 #![forbid(unsafe_code)]
 //! `varta-shell`: run a validated packaged view application in a native
-//! window with its manifest grants, narrowed by an optional host ceiling.
+//! window with its manifest grants, narrowed by an optional host ceiling,
+//! asking for permissions in host-owned prompts; or store a revocation.
 use std::process::ExitCode;
 use std::time::Instant;
 use varta_desktop::shell::{
     FontSet, Launch, Package,
     args::{self, Command, USAGE},
-    default_storage_base, read_font,
+    default_storage_base, read_font, revoke,
     window::{self, Console, WindowConfig},
 };
 
 const LABEL: &str = "varta-shell";
+
+/// The storage base: `--data-dir` made absolute, or the platform default.
+fn storage_base(
+    data_dir: Option<std::path::PathBuf>,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    Ok(match data_dir {
+        Some(directory) => std::path::absolute(directory)?,
+        None => default_storage_base()?,
+    })
+}
 
 fn run(arguments: args::ShellArgs, started: Instant) -> Result<(), Box<dyn std::error::Error>> {
     // Every cheap input is checked before the artifact is prepared, because
@@ -21,10 +32,7 @@ fn run(arguments: args::ShellArgs, started: Instant) -> Result<(), Box<dyn std::
         .font
         .map(|(path, family)| read_font(&path).map(|bytes| FontSet::single(bytes, family)))
         .transpose()?;
-    let storage = match arguments.data_dir {
-        Some(directory) => std::path::absolute(directory)?,
-        None => default_storage_base()?,
-    };
+    let storage = storage_base(arguments.data_dir)?;
     let launch = Launch::packaged(&Package {
         artifact: &arguments.artifact,
         policy: arguments.policy.as_deref(),
@@ -66,6 +74,25 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Command::Run(arguments) => arguments,
+        Command::Revoke(arguments) => {
+            let result = storage_base(arguments.data_dir).and_then(|storage| {
+                Ok(revoke(
+                    &arguments.artifact,
+                    &storage,
+                    &arguments.capability,
+                )?)
+            });
+            return match result {
+                Ok(identity) => {
+                    println!("{LABEL}: revoked {} for {identity}", arguments.capability);
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{LABEL}: {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
     };
     match run(arguments, started) {
         Ok(()) => ExitCode::SUCCESS,

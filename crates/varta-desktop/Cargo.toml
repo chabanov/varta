@@ -33,6 +33,9 @@ varta-common = { path = "../varta-common" }
 varta-runtime = { path = "../varta-runtime" }
 varta-view = { path = "../varta-view" }
 thiserror.workspace = true
+# The host-owned permission decision file and audit log (already locked
+# through varta-common and the runtime).
+serde_json.workspace = true
 # Windowing and CPU presentation; Apache-2.0 and MIT OR Apache-2.0 respectively.
 winit.workspace = true
 softbuffer.workspace = true
@@ -47,7 +50,6 @@ pollster = { workspace = true, optional = true }
 # Exercise the same safe live planner compiled by the patched platform adapter.
 accesskit_consumer = "=0.39.2"
 sha2.workspace = true
-serde_json.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-text.workspace = true

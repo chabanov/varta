@@ -2,10 +2,13 @@
 //! event loop on the main thread presents bounded frames, and one worker
 //! thread owns the application instance started from a [`Launch`]. The
 //! window never decides authority: every effect goes through the runtime's
-//! capability-checked host with the grants the launch carries.
+//! capability-checked host with the grants the launch carries, and every
+//! permission prompt the broker asks is shown in a separate host window
+//! ([`prompt`]).
 mod events;
 mod host;
 mod ime;
+mod prompt;
 #[cfg(test)]
 mod tests;
 mod worker;
@@ -87,6 +90,8 @@ pub(crate) enum GuiEvent {
     #[cfg(feature = "gpu")]
     GpuLost,
     Frame(Box<PresentedFrame>),
+    /// A permission prompt the worker waits on.
+    Prompt(Box<prompt::PromptRequest>),
     Error(String),
 }
 pub(crate) struct PresentedFrame {
@@ -171,6 +176,8 @@ struct Host {
     #[cfg(feature = "gpu")]
     gpu_failure: Option<String>,
     console: Console,
+    /// The open permission prompt; guest input is dropped while it is.
+    prompt: Option<prompt::OpenPrompt>,
 }
 struct Pressed {
     node: u32,
@@ -264,6 +271,7 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         #[cfg(feature = "gpu")]
         gpu_failure: None,
         console: config.console,
+        prompt: None,
     };
     event_loop
         .run_app(&mut host)

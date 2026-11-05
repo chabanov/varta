@@ -3429,3 +3429,49 @@ at most `MAX_RUNNING_LAUNCHERS` launchers instead of a reaper thread per
 opening, the prototype `varta-web-host` refuses artifacts with a resource
 section, and the sfnt record offsets and the renderer's family/alias limits
 are named. The manual trusted-gesture run is still open.
+
+### Native consent in `varta-shell` (P10b) — wave 3, scoped 2026-11-05
+
+`varta-desktop` gained `shell::consent`: `ConsentStore` (the per-identity
+decision file `permissions.json` and audit log `permission-audit.jsonl` in the
+artifact's storage directory, private files, atomic replacement of the
+decision file, rotation of the log at `MAX_AUDIT_LOG_BYTES`), `Consent` (reads
+the stored decisions into `RunOptions::decisions` at `Launch::packaged`,
+records first-run answers so a refused start still stores and audits them, and
+`sync` reconciles the instance with the file between turns: outside denials
+revoke for new operations and win over concurrent answers, own decisions are
+written, new broker audit entries appended), and `PromptLayer` with its own
+5x9 bitmap font (`glyphs.rs`; non-ASCII shown as escapes). `Launch::start_with`
+takes a prompter and returns `Started`; `shell::revoke` and `varta-shell
+ARTIFACT --revoke CAPABILITY` store a denial. The window's worker installs
+`NativePrompter`, which blocks the worker while the event loop shows a separate
+always-on-top prompt window (`window/prompt.rs`); the application's window
+drops user input while it is open, cancels a pending press and hands focus
+back, and a second prompt is dismissed. Answers need a press and release on
+one button or a non-repeated key after `PROMPT_INPUT_DELAY`.
+
+The runtime's `Execution::with_setup` now starts an application instance's
+first-turn deadline after the broker decided the required grants, so waiting
+for first-run approval no longer exhausts turn 1 (`BudgetExhausted { turn: 1,
+kind: Main, budget: Deadline }` before the change, reproduced by the new
+`permission::tests::waiting_for_first_run_approval_spends_no_turn_deadline`
+with the fix reverted). `serde_json` (already locked) became a production
+dependency of `varta-desktop` for the decision file and audit rows.
+
+Tests: glyph, layer (description order, bounded and escaped package text,
+fixed buttons, input delay, press/release, keys, scaling), store and argument
+unit tests; window tests showing that a covering guest frame cannot cover or
+hit an open prompt and that one prompt is open at a time; headless shell tests
+with a scripted decision provider and the new `consent-probe` fixture for
+first-run approval, refusal (stored or dismissed), gesture-only prompts,
+persisted allow and deny, revocation from outside and inside, two-request and
+dismissal rate limits, audit rows, the deadline and invalid decision files; a
+binary test for `--revoke`. Existing shell tests now check that no KV root is
+created instead of no directory, since every start writes the audit log.
+Scoped verification: `verify.py local varta-desktop`, `verify.py local
+varta-runtime --filter permission`, the runtime library and integration tests,
+the boundary tests, formatting and strict Clippy (desktop also with `gpu`,
+runtime). A manual run on the development Mac showed the first-run prompt
+window over the blank application window with no guest output, and a start
+with the required grant stored ran without a prompt; the gesture-triggered
+prompt was not clicked manually. No full gate was run for this package.

@@ -1,0 +1,22 @@
+{
+  "entry": "main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "probe",
+  "languageProfile": "checked-f64-utf16-v38",
+  "fs": {
+    "roots": {
+      "data": "."
+    }
+  },
+  "capabilities": {
+    "kv": {
+      "read": ["/data/app.kv"],
+      "write": ["/data/app.kv"]
+    }
+  },
+  "permissions": {
+    "kv.write": { "required": true, "purpose": "Save your notes on this device" },
+    "kv.read": { "required": false, "purpose": "Read your saved notes" }
+  }
+}

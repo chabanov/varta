@@ -1,5 +1,10 @@
 //! The worker thread: owns the application instance, applies queued input
-//! between guest turns and renders frames for the window to present.
+//! between guest turns and renders frames for the window to present. It
+//! starts the instance with the native permission prompt and keeps its
+//! consent state in sync between turns: stored decisions and the audit log
+//! are written, and revocations stored from outside apply before the next
+//! turns run.
+use super::prompt::NativePrompter;
 use super::{Console, GuiEvent, PointerState, PresentedFrame, ROOT_FONT_SIZE, WorkerMessage};
 use crate::pixels::update_rgb;
 use crate::shell::{Launch, NativeEffects};
@@ -87,9 +92,17 @@ pub(super) fn worker(
         )
         .map_err(|e| e.to_string())?
         .with_dark_mode(initial_dark);
-        let mut app = launch
-            .start(layout, Arc::new(NativeEffects::default()))
+        let started = launch
+            .start_with(
+                layout,
+                Arc::new(NativeEffects::default()),
+                Some(Box::new(NativePrompter::new(proxy.clone()))),
+            )
             .map_err(|e| e.to_string())?;
+        let mut app = started.application;
+        let mut consent = started.consent;
+        // Whether turns ran since the consent state was last synced.
+        let mut unsynced = false;
         if let Some(error) = app.failure() {
             return Err(error.to_string());
         }
@@ -238,11 +251,18 @@ pub(super) fn worker(
                 environment_dark = current_dark;
                 revision = revision.checked_add(1).ok_or("view revision exhausted")?;
             }
+            if let Some(consent) = &mut consent
+                && (unsynced || consent.poll_due(Instant::now()))
+            {
+                consent.sync(&mut app).map_err(|e| e.to_string())?;
+                unsynced = false;
+            }
             let guest_started = Instant::now();
             for _ in 0..TURNS_PER_ITERATION {
                 match app.step(Some(Duration::ZERO)) {
                     Step::Turn(_) => {
                         active = true;
+                        unsynced = true;
                     }
                     Step::Failed => {
                         return Err(app

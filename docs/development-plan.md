@@ -4679,6 +4679,39 @@ decisions (so `https://*` links are denied), real-font typography acceptance
 beyond the synthetic fixtures, manifest `app` metadata, OS bundles, prebuilt
 per-target shells, the code cache and UARP console acceptance in the shell.
 
+**Shell status (wave 3, P10b native consent, 2026-11-05).** `varta-shell` is a
+host with a prompt seam for the permission broker
+([native permissions](architecture.md#native-permissions-p10b)). Decisions
+persist per artifact hash in the host-owned
+`<data-dir>/sha256-<digest>/permissions.json`, read before the start and
+written between turns; required grants without a decision are asked once
+before any guest code (Allow and Deny stored even when the start is refused,
+Dismiss not); optional grants are asked only for `request()` in a
+user-gesture turn. The question appears in a separate always-on-top host
+window drawn from the broker's prompt with the shell's own bitmap font; while
+it is open the application's window sends no user input to the guest, and an
+input delay keeps a click or key meant for the application from answering it.
+Rate limits are the browser's decided values (`permission::MAX_OPEN_PROMPTS`
+open prompts, and `permission::MAX_DISMISSALS` dismissals before a stored
+denial); `--revoke CAPABILITY` stores a denial that a running shell applies to
+new operations once it rereads the file; every broker decision is appended to
+`permission-audit.jsonl`. The first turn's deadline
+now starts after first-run approval. Headless tests with a scripted decision
+provider and the `consent-probe` fixture cover first-run approval, refusal,
+gesture-only prompts, persisted allow and deny, revocation, rate limits,
+audit rows and the deadline; window unit tests show that a covering guest
+frame cannot reach an open prompt. On the development Mac the first-run
+prompt window appeared over the blank application window with no guest
+output, and a start with the required grant stored ran main without any
+prompt (`start prompt`, `start kv NotAllowedError`); the gesture-triggered
+prompt was not clicked manually (no UI automation was available), so that
+path rests on the headless trusted-click tests. Still open (owner
+decisions): "allow for this session", a cool-down and its value, the
+presentation of a refused required permission beyond the stderr message, the
+identity key before C3, and confirmation of the input delay value; also an
+accessible and dark-mode prompt, non-ASCII text in the prompt (escaped
+today) and non-macOS prompt windows.
+
 #### Browser security model and honest guarantees
 
 | Guarantee | Browser (guest in a Worker) | Notes |
@@ -4762,8 +4795,10 @@ until then this is the agreed target. Part 1 has landed in v37, and parts 2 to
 6 for headless and embedder hosts in v38
 ([broker v1](architecture.md#permission-broker-v1-turn_budgets): states, `query`, user-gesture `request`, `required`/`purpose`, decisions keyed by
 the artifact hash, the prompt seam, audit log). Browser prompt UI and the async
-answer path now have focused acceptance below; native target UI (P10b), broader P9
-effects and "allow for this session" remain. V1 narrows two points: a
+answer path now have focused acceptance below; the native shell's first-run
+approval, prompt window, stored decisions and audit log have focused headless
+acceptance ([shell status, wave 3](#desktop-packaging)); broader P9 effects and
+"allow for this session" remain. V1 narrows two points: a
 permission in `prompt` state is not asked at its first use (only through
 `request()`), and persistence is supplied by the host. Native hosts use decision
 files; the generated browser host now offers an explicit origin-local IndexedDB
@@ -4951,7 +4986,7 @@ full acceptance in the following design table remains required.
 | P7 | L0 validation, headless tree/cascade/accessibility, opt-in headless geometry with explicit fonts for the admitted layout subset (local Chrome oracle within ±1 px) and official transactional browser DOM/event adapters | Geometry beyond that subset (the UARP console views are refused), patch-stream replay through the official applier and cross-renderer layout/accessibility acceptance |
 | P8 | Compiler TSX/templates and example-local reactive L1/keyed lists | Reusable package delivery and complete cross-host example acceptance |
 | P9 | Official bundles/CSP/SRI/metering, views/resources/consent/events and local dev/reload covered by the consolidated gate; scoped Chrome/Firefox/WebKit matrix passes | Portable matrix driver, wider controls/effects/layout, three-browser pilot acceptance and measured target costs |
-| P10–P10d | Experimental CPU controls/layout, retained renderer and pointer feedback with scoped macOS Showcase evidence; `varta-shell` runs packaged artifacts with manifest grants, a host ceiling and per-artifact KV storage ([status](#desktop-packaging)) | Full admitted painting, clipboard/IME/accessibility, current UARP session, trusted delivery policy, macOS/Pi/other-target acceptance and end-to-end measurements |
+| P10–P10d | Experimental CPU controls/layout, retained renderer and pointer feedback with scoped macOS Showcase evidence; `varta-shell` runs packaged artifacts with manifest grants, a host ceiling, per-artifact KV storage and host-owned consent (first-run approval, gesture-only prompts in a separate host window, stored decisions, revocation, audit log) ([status](#desktop-packaging)) | Full admitted painting, clipboard/IME/accessibility, current UARP session, trusted delivery policy, macOS/Pi/other-target acceptance and end-to-end measurements |
 | P11 | Accepted later hooks-subset direction | Specification and implementation after L1 acceptance |
 | P12 | Native KV plus selected binary/encoding/Date/crypto APIs | KV async/watch/queues, wider values, remaining binary/crypto/Intl providers and cross-host parity |
 | P13a–P13c | Optional GPU UI prototype implemented with Metal recovery; application graphics and 3D-library work remain planned | Prototype and measurements, versioned GPU contract, device/resource acceptance and separately proven library reach; [scope](#gpu-and-game-graphics-future-direction) |

@@ -1,11 +1,15 @@
 //! Preparing an application instance: the packaged artifact, its fonts, its
-//! grants within the host ceiling and its storage.
+//! grants within the host ceiling, its stored permission decisions and its
+//! storage.
+use super::consent::{Consent, ConsentStore};
 use super::{FontSet, ShellError, storage};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use varta_artifact::{Artifact, MAX_MANIFEST_BYTES, read_bounded};
 use varta_common::{CapabilityGrant, Manifest, VartaError};
-use varta_runtime::{Application, ApplicationOptions, RunOptions, VartaRuntime, ViewLayout};
+use varta_runtime::{
+    Application, ApplicationOptions, PermissionPrompter, RunOptions, VartaRuntime, ViewLayout,
+};
 use varta_view::PlatformEffects;
 
 /// The largest font file the shell reads from the command line: the
@@ -27,7 +31,8 @@ pub struct Package<'a> {
     /// The optional host ceiling: a host policy in the launcher's format.
     pub policy: Option<&'a Path>,
     /// The absolute host directory under which each artifact hash gets its
-    /// own storage directory.
+    /// own storage directory, which also holds its permission decisions and
+    /// audit log.
     pub storage: &'a Path,
     /// An explicit font (`--font`) for an artifact that ships no fonts; an
     /// artifact that ships fonts refuses it.
@@ -35,19 +40,27 @@ pub struct Package<'a> {
 }
 
 /// A validated application ready to start: its portable Wasm, its fonts,
-/// the resolved run options and its identity (the `sha256:` digest of the
-/// Wasm).
+/// the resolved run options, its identity (the `sha256:` digest of the
+/// Wasm) and, for a packaged application, its consent state.
 pub struct Launch {
     wasm: Vec<u8>,
     run: RunOptions,
     identity: String,
     fonts: Option<FontSet>,
+    consent: Option<Consent>,
+}
+
+/// A started application instance and, for a packaged application, the
+/// consent state to [`Consent::sync`] with it between turns.
+pub struct Started {
+    pub application: Application,
+    pub consent: Option<Consent>,
 }
 
 impl Launch {
     /// A precompiled module with no manifest: no grants, no host ceiling, no
-    /// file roots and no storage (`varta-preview`), with an optional
-    /// explicit font, parsed here.
+    /// file roots, no storage and no consent state, so it is never prompted
+    /// (`varta-preview`), with an optional explicit font, parsed here.
     pub fn unprivileged(wasm: Vec<u8>, font: Option<FontSet>) -> Result<Self, ShellError> {
         if let Some(font) = &font {
             validate(font)?;
@@ -57,6 +70,7 @@ impl Launch {
             wasm,
             run: RunOptions::default(),
             fonts: font,
+            consent: None,
         })
     }
 
@@ -72,9 +86,14 @@ impl Launch {
     /// given, narrows it: the runtime admits a concrete resource only when
     /// both have a grant for its exact `namespace.operation` id that
     /// matches it. An empty ceiling denies everything; nothing falls back to
-    /// the package request. Optional grants stay denied, because this host
-    /// has no prompt and reads no stored decisions. Nothing here runs guest
-    /// code.
+    /// the package request. The stored permission decisions of the
+    /// artifact's identity are read from its host-owned
+    /// [`ConsentStore`] under `storage` (none when the file does not
+    /// exist; an invalid file is [`ShellError::Decisions`]) and apply at
+    /// start: a stored allow never exceeds the request or the ceiling.
+    /// Optional grants without a decision stay denied unless the instance
+    /// is started with a prompt ([`Self::start_with`]). Nothing here runs
+    /// guest code.
     ///
     /// This is where the per-artifact KV storage directories are created:
     /// after the artifact (payload bounds, host ABI, package manifest,
@@ -105,6 +124,8 @@ impl Launch {
         let ceiling = package.policy.map(read_policy).transpose()?;
         let mut run = RunOptions::from_manifests(&artifact.manifest, ceiling.as_ref())?;
         let identity = varta_runtime::artifact_identity(&artifact.wasm);
+        let consent = Consent::open(ConsentStore::new(package.storage, &identity)?)?;
+        run.decisions = Some(consent.decision_file());
         storage::pin(
             &mut run.file_roots,
             &artifact.manifest,
@@ -117,6 +138,7 @@ impl Launch {
             run,
             identity,
             fonts,
+            consent: Some(consent),
         })
     }
 
@@ -151,25 +173,92 @@ impl Launch {
     }
 
     /// Validate the module and start its application instance with the
-    /// given view layout. Validation (code, profile, contracts, required
-    /// grants and budgets) completes before any guest code runs. Granted
-    /// `copy_text` and external link effects of trusted user gestures go to
-    /// `effects` (the window passes the system clipboard and browser).
+    /// given view layout, without a permission prompt (a headless host):
+    /// required grants within the request and the ceiling are granted by
+    /// policy unless a stored decision denies one, and optional grants
+    /// follow their stored decisions or stay denied. Validation (code,
+    /// profile, contracts, required grants and budgets) completes before
+    /// any guest code runs. Granted `copy_text` and external link effects
+    /// of trusted user gestures go to `effects` (the window passes the
+    /// system clipboard and browser).
     pub fn start(
         self,
         layout: ViewLayout,
         effects: Arc<dyn PlatformEffects>,
     ) -> Result<Application, ShellError> {
-        Ok(VartaRuntime::new().start_application(
-            &self.wasm,
+        Ok(self.start_with(layout, effects, None)?.application)
+    }
+
+    /// [`Self::start`] with the host's permission prompt for a packaged
+    /// application (an unprivileged module is never prompted). Before any
+    /// guest code runs, every required grant without a stored decision is
+    /// asked once (first-run approval); a refusal fails the start with
+    /// `PermissionError::RequiredDenied`, and the Allow and Deny answers
+    /// given so far are stored and audited even then. Optional grants
+    /// without a decision are in `prompt` state: the runtime asks only for
+    /// a `varta.permissions.request` of a user-gesture turn, between turns.
+    /// The returned [`Consent`] has already stored the first-run answers
+    /// and audited the start.
+    pub fn start_with(
+        self,
+        layout: ViewLayout,
+        effects: Arc<dyn PlatformEffects>,
+        prompter: Option<Box<dyn PermissionPrompter>>,
+    ) -> Result<Started, ShellError> {
+        let Self {
+            wasm,
+            run,
+            mut consent,
+            ..
+        } = self;
+        let prompter = match (&consent, prompter) {
+            (Some(consent), Some(prompter)) => Some(consent.prompter(prompter)),
+            _ => None,
+        };
+        let started = VartaRuntime::new().start_application(
+            &wasm,
             ApplicationOptions {
-                run: self.run,
+                run,
+                prompter,
                 view_layout: Some(layout),
                 platform_effects: Some(effects),
                 ..ApplicationOptions::default()
             },
-        )?)
+        );
+        match started {
+            Ok(mut application) => {
+                if let Some(consent) = &mut consent {
+                    consent.sync(&mut application)?;
+                }
+                Ok(Started {
+                    application,
+                    consent,
+                })
+            }
+            Err(error) => {
+                if let Some(consent) = &mut consent {
+                    consent.refused(&error)?;
+                }
+                Err(error.into())
+            }
+        }
     }
+}
+
+/// Store a denial of `capability` for the packaged `artifact` (read and
+/// validated as [`Launch::packaged`] reads it) in its host-owned consent
+/// store under the absolute `storage` base: later instances start with it,
+/// and a running instance of the same artifact revokes the grant for new
+/// operations when its [`Consent::sync`] next rereads the file. Returns the
+/// application identity.
+pub fn revoke(artifact: &Path, storage: &Path, capability: &str) -> Result<String, ShellError> {
+    let packaged = Artifact::read_packaged(artifact).map_err(|source| ShellError::Artifact {
+        path: artifact.to_path_buf(),
+        source,
+    })?;
+    let identity = varta_runtime::artifact_identity(&packaged.artifact.wasm);
+    ConsentStore::new(storage, &identity)?.revoke(capability)?;
+    Ok(identity)
 }
 
 /// Parse every face with the text shaper, as the renderer will.

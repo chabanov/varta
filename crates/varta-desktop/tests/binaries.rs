@@ -4,7 +4,7 @@ mod support;
 
 use std::path::Path;
 use std::process::{Command, Output};
-use support::{Temp, probe, view_probe};
+use support::{Temp, consent_probe, probe, view_probe};
 use varta_desktop::shell::MAX_FONT_BYTES;
 
 const SHELL_LABEL: &str = "varta-shell: ";
@@ -36,7 +36,8 @@ fn shell_arguments_are_checked_without_a_cli_framework() {
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("varta-shell ARTIFACT"), "{help}");
     assert!(help.contains("--policy PATH"), "{help}");
-    assert!(help.contains("Optional permissions are denied"), "{help}");
+    assert!(help.contains("--revoke CAPABILITY"), "{help}");
+    assert!(help.contains("asked once"), "{help}");
     let output = shell().arg("--version").output().unwrap();
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("varta-shell "));
@@ -54,6 +55,50 @@ fn shell_arguments_are_checked_without_a_cli_framework() {
         assert!(!output.status.success(), "{arguments:?}");
         assert!(stderr(&output).starts_with(SHELL_LABEL), "{arguments:?}");
     }
+}
+
+#[test]
+fn shell_revoke_stores_a_denial_for_the_artifact_identity_without_a_window() {
+    let temp = Temp::new("varta-shell-binary-test");
+    let storage = temp.storage();
+    let artifact = temp.path("consent.wasm");
+    consent_probe().write_wasm(&artifact).unwrap();
+    let identity = varta_runtime::artifact_identity(&consent_probe().wasm);
+    let output = shell()
+        .arg(&artifact)
+        .arg("--revoke")
+        .arg("kv.read")
+        .arg("--data-dir")
+        .arg(&storage)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&format!("revoked kv.read for {identity}")),
+        "{stdout}"
+    );
+    let store = varta_desktop::shell::consent::ConsentStore::new(&storage, &identity).unwrap();
+    assert_eq!(
+        store.load().unwrap().get("kv.read"),
+        Some(&varta_common::permission::StoredDecision::Deny)
+    );
+    // Unknown capabilities and run options are refused; nothing changes.
+    for arguments in [
+        vec!["--revoke", "kv.everything"],
+        vec!["--revoke", "kv.read", "--renderer", "cpu"],
+    ] {
+        let output = shell()
+            .arg(&artifact)
+            .args(&arguments)
+            .arg("--data-dir")
+            .arg(&storage)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{arguments:?}");
+        assert!(stderr(&output).starts_with(SHELL_LABEL), "{arguments:?}");
+    }
+    assert_eq!(store.load().unwrap().len(), 1);
 }
 
 #[test]

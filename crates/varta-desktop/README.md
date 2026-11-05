@@ -21,6 +21,7 @@ dev-dependency, directly or transitively
 varta build --config app/varta.config.json          # writes app.wasm + app.manifest.json (+ app.resources with fonts)
 cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
   [--policy ceiling.json] [--data-dir /abs/storage] [--font font.ttf 'Family'] [--renderer cpu|gpu|auto]
+cargo run -p varta-desktop --bin varta-shell -- app/app.wasm --revoke net.request [--data-dir /abs/storage]
 ```
 
 - **Artifact.** Read with `varta_artifact::Artifact::read_packaged`, the
@@ -34,8 +35,8 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
 - **Grants.** The manifest is the package request. `--policy` is a host
   ceiling in the launcher's host policy format; a resource must match the
   exact `namespace.operation` grant in both. An empty ceiling denies
-  everything. Optional grants are denied: there is no prompt yet and no
-  stored decisions are read.
+  everything. Within both, stored decisions, first-run approval and prompts
+  decide (below).
 - **Storage.** A root gets a host-owned directory
   `<data-dir>/sha256-<wasm digest>/<root>`, created private to the user,
   when a package `kv.read` pattern names it, the ceiling (if any) has a
@@ -72,8 +73,8 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
   Denials (`not_allowed`) and non-gesture copies (`invalid_context`) happen
   before any effect; platform failures report `refused_by_platform`. Tests
   use a recording sink and never touch the system clipboard or browser.
-  Permission prompts (and so `https://*` links), manifest `app` metadata and
-  OS bundles are later steps.
+  A `ui.open_url` matched only by `https://*` asks in the permission window
+  on each activation. Manifest `app` metadata and OS bundles are later steps.
 - **Renderer.** `--renderer cpu` (default), `gpu` or `auto`. Without the
   `gpu` feature an explicit `gpu` is refused before anything else; with it,
   a GPU that does not initialize is an error, while `auto` falls back to the
@@ -113,6 +114,50 @@ rules (`view-fonts.mjs`):
 cargo run -p varta-desktop --example native_font_probe -- 1.25 [ARTIFACT] > fonts.json
 node scripts/test-native-inline.mjs fonts.json
 ```
+
+## Permissions (P10b)
+
+The shell is a host with a prompt seam for the runtime's permission broker
+(contract: [native permissions](../../docs/architecture.md#native-permissions-p10b)).
+
+- **Stored decisions** live in the artifact's storage directory,
+  `<data-dir>/sha256-<wasm digest>/permissions.json`, beside its KV roots
+  (a name with a `.`, which no root can have). `Launch::packaged` reads them
+  before anything is created; a malformed file or one for another identity
+  is `ShellError::Decisions`.
+- **First run.** A required grant without a decision is asked once, before
+  any guest code runs and without spending a turn deadline. Allow and Deny
+  are stored, also when the start is refused; Dismiss stores nothing. A
+  refusal ends the shell with `required permission ... cannot run`.
+- **Optional grants** are asked only when the application calls
+  `varta.permissions.request` in a user-gesture turn; other requests resolve
+  to the current state, and use in `prompt` state is denied recoverably.
+- **The prompt** is a separate always-on-top host window (`Varta permission
+  request`) drawn by `shell::consent::PromptLayer` with its own bitmap font:
+  capability, application identity and exact patterns first, the package's
+  `purpose` only as a marked quote, non-ASCII as `\u{...}` escapes. Deny has
+  focus; answers need a real press and release (or Enter/Space) after
+  `PROMPT_INPUT_DELAY`; Escape or closing the window dismisses. While it is
+  open the application's window drops keys, IME, pointer and wheel input.
+- **Rate limits** are the broker's: at most `permission::MAX_OPEN_PROMPTS`
+  open prompts and a stored denial after `permission::MAX_DISMISSALS`
+  dismissals.
+- **Revocation.** `--revoke CAPABILITY` stores a denial and exits; a running
+  shell of the same artifact denies new operations of it once it rereads the
+  decision file (checked between turns, at most once per
+  `consent::STORE_POLL_INTERVAL`).
+- **Audit log.** `permission-audit.jsonl` in the same directory gets one
+  JSON row per broker decision (sequence, time, source, operation, resource,
+  outcome, artifact and run), rotated once at `MAX_AUDIT_LOG_BYTES`.
+
+`tests/shell.rs` drives all of this headlessly with a scripted decision
+provider and `tests/fixtures/consent-probe/` (a required `kv.write`, an
+optional `kv.read` and buttons that request it); `src/shell/window/tests.rs`
+checks that a covering guest frame cannot reach an open prompt and that the
+application's input stops while it is open. Open points: "allow for this
+session", a cool-down, the presentation of a refused required permission
+beyond stderr, an accessible and dark-mode prompt, and non-macOS prompt
+windows.
 
 ## Host-owned copy, cut and paste
 
