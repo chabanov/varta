@@ -270,14 +270,23 @@ pub(crate) fn control_box(
 
 /// Finish a control's box after author declarations: an automatic width of a
 /// block-level control fits its content (Blink's
-/// `LayoutBox::AutoWidthShouldFitContent`), and a block button centers its
-/// content like Chrome's anonymous button content box.
+/// `LayoutBox::AutoWidthShouldFitContent`), a block button centers its
+/// content like Chrome's anonymous button content box, and a themed checkbox
+/// or radio drops author padding and borders, so its theme square stays the
+/// border box (Blink's `AdjustCheckboxStyle`/`AdjustRadioStyle` reset both;
+/// any author border makes Varta's checkable author-styled instead).
 pub(crate) fn control_finish(
     tree: &Tree,
     env: &Environment,
     (id, kind): (u32, ControlKind),
     style: &mut Style,
 ) -> Result<(), LayoutError> {
+    if matches!(kind, ControlKind::Checkbox | ControlKind::Radio)
+        && style::themed(&tree.computed_read(id, env))
+    {
+        style.padding = Rect::zero();
+        style.border = Rect::zero();
+    }
     let properties = super::layout_properties(tree, env, id)?;
     if !crate::inline::blockified(tree, env, id) && automatic(properties.get(&CssProperty::Width)) {
         style.size.width = Dimension::fit_content();
@@ -322,6 +331,8 @@ pub(crate) fn apply_defaults(
 /// alignment in a flex line or grid area still grows an automatic axis, and
 /// the square is also the automatic minimum, so a flex item does not shrink
 /// below it unless the author allows it. Author sizes win as known sizes.
+/// A themed square has no padding or border ([`control_finish`]), so the
+/// content size is also its border box.
 pub(crate) fn square(tree: &Tree, id: u32) -> Option<ControlSize> {
     let element = tree.element(id)?;
     match style::control_defaults(ControlKind::of(element)?).intrinsic {
@@ -490,6 +501,60 @@ mod tests {
             size(grid.layout_boxes(VIEWPORT.0, VIEWPORT.1).unwrap()[&3]),
             (150.0, 34.0)
         );
+    }
+
+    /// Chrome 156 resets a themed checkable's padding: with author padding
+    /// it stays 13×13 at flex-start, 13×40 stretched in a 40px row, fills a
+    /// stretch grid area, keeps its square when an overflowing row shrinks
+    /// it, and an author width is the border box (20×13).
+    #[test]
+    fn themed_checkable_squares_ignore_author_padding() {
+        let checkable = |b: &mut BatchWriter, id: u32, kind: &str, padding: &str| {
+            b.create_element(id, Tag::Input)
+                .set_attribute(id, Attribute::Type, kind)
+                .set_style(id, P::Padding, padding)
+                .insert(2, id, 0);
+        };
+        let start = view("flex", |b| {
+            checkable(b, 3, "checkbox", "5px");
+            checkable(b, 4, "radio", "6px");
+            checkable(b, 5, "checkbox", "10px");
+            checkable(b, 6, "checkbox", "5px");
+            b.set_style(6, P::Width, "20px");
+        });
+        let sizes = boxes(&start).unwrap();
+        assert_eq!(size(sizes[&3]), (13.0, 13.0));
+        assert_eq!(size(sizes[&4]), (13.0, 13.0));
+        assert_eq!(size(sizes[&5]), (13.0, 13.0));
+        assert_eq!(size(sizes[&6]), (20.0, 13.0));
+        assert_eq!((sizes[&4].x, sizes[&6].x), (13.0, 39.0));
+        let stretched = view("flex", |b| {
+            b.remove_style(2, P::AlignItems)
+                .set_style(2, P::Height, "40px");
+            checkable(b, 3, "checkbox", "6px");
+            checkable(b, 4, "radio", "6px");
+        });
+        let sizes = boxes(&stretched).unwrap();
+        assert_eq!(size(sizes[&3]), (13.0, 40.0));
+        assert_eq!(size(sizes[&4]), (13.0, 40.0));
+        let grid = view("grid", |b| {
+            b.remove_style(2, P::AlignItems)
+                .set_style(2, P::GridTemplateColumns, "150px 150px")
+                .set_style(2, P::GridTemplateRows, "34px");
+            checkable(b, 3, "checkbox", "6px");
+            checkable(b, 4, "radio", "10px");
+        });
+        let sizes = boxes(&grid).unwrap();
+        assert_eq!(size(sizes[&3]), (150.0, 34.0));
+        assert_eq!(size(sizes[&4]), (150.0, 34.0));
+        let shrunk = view("flex", |b| {
+            b.set_style(2, P::Width, "10px");
+            checkable(b, 3, "checkbox", "6px");
+            checkable(b, 4, "checkbox", "6px");
+        });
+        let sizes = boxes(&shrunk).unwrap();
+        assert_eq!(size(sizes[&3]), (13.0, 13.0));
+        assert_eq!((sizes[&4].x, sizes[&4].width), (13.0, 13.0));
     }
 
     #[test]

@@ -390,6 +390,46 @@ fn case(name: &str) -> (B, Option<u32>) {
             input(&mut b, 14, "radio");
             None
         }
+        // A themed checkable resets author padding (Blink's
+        // `AdjustCheckboxStyle`): its 13px square stays the border box at
+        // flex-start, stretched beside a textarea and in a grid area.
+        "padding-flex" => {
+            for (id, kind, padding) in [
+                (10, "checkbox", "5px"),
+                (12, "radio", "6px"),
+                (13, "checkbox", "10px"),
+                (14, "radio", "6px"),
+                (15, "checkbox", "5px"),
+            ] {
+                input(&mut b, id, kind);
+                b.set_style(id, P::Padding, padding);
+            }
+            b.set_checked(13, 1, 0)
+                .set_checked(14, 1, 0)
+                .set_style(15, P::Width, "20px")
+                .command(10, Command::Focus, 0.0);
+            Some(10)
+        }
+        "padding-stretch" => {
+            b.remove_style(2, P::AlignItems);
+            control(&mut b, 10, Tag::Textarea);
+            b.set_attribute(10, Attribute::Rows, "4");
+            for (id, kind) in [(12, "checkbox"), (13, "radio")] {
+                input(&mut b, id, kind);
+                b.set_style(id, P::Padding, "6px").set_checked(id, 1, 0);
+            }
+            None
+        }
+        "padding-grid" => {
+            b.set_style(2, P::Display, "grid")
+                .set_style(2, P::GridTemplateColumns, "150px 150px")
+                .set_style(2, P::GridTemplateRows, "34px");
+            input(&mut b, 10, "checkbox");
+            b.set_style(10, P::Padding, "6px").set_checked(10, 1, 0);
+            input(&mut b, 12, "radio");
+            b.set_style(12, P::Padding, "10px");
+            None
+        }
         _ => unreachable!("listed case"),
     };
     (b, focus)
@@ -421,6 +461,9 @@ const CASES: &[&str] = &[
     "stretch-grid",
     "focus-stretch-checkbox",
     "focus-stretch-radio",
+    "padding-flex",
+    "padding-stretch",
+    "padding-grid",
 ];
 
 /// `input type=number` values set by the guest and the Up/Down presses

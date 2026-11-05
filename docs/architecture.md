@@ -13353,7 +13353,11 @@ intrinsic size, not a specified one: stretch alignment grows an automatic axis
 checkbox is 13×62, and in a 150×34 stretch grid area 150×34, as in Chrome),
 and the theme paints the largest centered square. The square is also the
 automatic minimum, while a textarea flex item can shrink to its padding and
-borders. Themed controls paint a fill and a one-pixel frame with a 2px radius
+borders. A themed checkable drops author padding (Blink's
+`AdjustCheckboxStyle`/`AdjustRadioStyle` reset padding and borders), so its
+square stays the border box: with `padding: 6px` it is 13×13 at `flex-start`,
+13×40 stretched in a 40px row and fills a stretch grid area, as in Chrome; any
+author border makes the checkable author-styled instead. Themed controls paint a fill and a one-pixel frame with a 2px radius
 (the fill inset by half the frame): buttons `#efefef`, fields and unchecked
 checkables `#ffffff`, frames `#767676`. Field themes snap to device pixels with
 a whole-pixel frame; a button frame scales with the device. A checked checkbox
