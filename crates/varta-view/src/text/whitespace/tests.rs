@@ -392,6 +392,17 @@ fn native_white_space_refusals_name_their_node() {
         flow(&[], &[(None, "A"), (Some("pre-wrap"), rtl)]),
         Err(crate::LayoutError::Unsupported(2))
     ));
+    // The preserved-tab limit refuses a plain flow by its parent (2) too,
+    // as it refuses a rich flow by its root.
+    let tabs = "\t".repeat(super::MAX_PRESERVED_TABS + 1);
+    assert!(matches!(
+        flow(&[(P::WhiteSpace, "pre-wrap")], &[(None, tabs.as_str())]),
+        Err(crate::LayoutError::Unsupported(2))
+    ));
+    assert!(matches!(
+        flow(&[], &[(None, "A"), (Some("pre-wrap"), tabs.as_str())]),
+        Err(crate::LayoutError::Unsupported(2))
+    ));
 }
 
 #[test]

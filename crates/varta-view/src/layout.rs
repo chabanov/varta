@@ -1679,18 +1679,19 @@ fn geometry_and_text_inner(
             inventory.text(text.len())?;
             let (options, families) = text_style(tree, &layout_env, parent, font_size, measurer)?;
             let text = if options.white_space.preserves() {
+                // Every white-space refusal of a plain text flow names its
+                // flow's node, the parent element, as the shaping and
+                // alignment refusals below do.
                 if !crate::inline::preserved_text_admitted(text, options.white_space) {
-                    return Err(LayoutError::Unsupported(id));
+                    return Err(LayoutError::Unsupported(parent));
                 }
                 text.replace("\r\n", "\n").replace('\r', "\n")
             } else {
                 text.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
             };
             if text.is_empty() {
-                return Err(LayoutError::Unsupported(id));
+                return Err(LayoutError::Unsupported(parent));
             }
-            // Every refusal of a plain text flow names its flow's node, the
-            // parent element, as the alignment refusal below does.
             let (measured, shaped) = measurer
                 .shape_styled(&text, None, &families, options)
                 .map_err(LayoutError::text(parent))?;
@@ -2170,7 +2171,13 @@ mod positioning_tests {
             (14, ROOT_NODE, Tag::P, &[(P::FontSize, "8px")]),
             (15, 14, Tag::Code, &[]),
         ]);
-        let resolve = |id| resolve_text(&view.tree, &view.environment, id, MEDIUM).unwrap();
+        // No packaged monospace face: the generic switch keeps Chrome's fixed
+        // monospace size rule, as layout without a measurer does.
+        let base = crate::style::FontBase {
+            px: MEDIUM,
+            fixed_monospace: true,
+        };
+        let resolve = |id| resolve_text(&view.tree, &view.environment, id, base).unwrap();
         // 50% of medium computes to the minimum; em lengths keep 8px.
         let half = resolve(2);
         assert_eq!(
