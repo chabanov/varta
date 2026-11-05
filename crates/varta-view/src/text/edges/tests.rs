@@ -18,6 +18,7 @@ fn options() -> TextOptions {
         white_space: WhiteSpaceMode::Normal,
         break_anywhere: false,
         source: TextSource::General,
+        align: crate::text::TextAlign::Start,
     }
 }
 fn edge(index: usize, opening: bool, advance: f32) -> TextEdge {

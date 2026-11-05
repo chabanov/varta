@@ -31,6 +31,7 @@ mod retained_text;
 mod rounded;
 mod selects;
 mod snapshot_export;
+mod structure;
 mod style_work;
 mod text;
 mod text_geometry;

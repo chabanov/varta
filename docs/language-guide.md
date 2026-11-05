@@ -5863,7 +5863,13 @@ clock:
 click, key or submit turn; an external `<a href>` needs a matching
 `"ui": {"open_url": [...]}` pattern (`"https://*"` admits any HTTPS link and
 prompts on every activation). Denials arrive as statuses, never as failures.
-Unknown elements or attributes, invalid static values (`rows="0"`,
+The experimental native renderer draws `h1`–`h3`, `ul`/`ol`/`li` (with disc,
+circle, square or `1.` markers), `pre` and `label` with the browser's default
+sizes, margins and indentation, honors `text-align: left | center | right`, and
+truncates a `white-space: nowrap; overflow: hidden; text-overflow: ellipsis`
+line with `…`. `pre` and `code` default to the `monospace` family, so a native
+host must map that family to a supplied font; content it cannot reproduce
+exactly is refused rather than approximated. Unknown elements or attributes, invalid static values (`rows="0"`,
 `style="color: red"`), unknown filters, fragments, spreads and component
 children are compile errors.
 

@@ -59,6 +59,14 @@ pub(super) struct Style {
     pub paragraph: bool,
 }
 impl Style {
+    /// Undecorated glyphs at their own baseline, such as list marker text.
+    pub fn plain(color: Color) -> Self {
+        Self {
+            color,
+            decorations: Vec::new(),
+            paragraph: false,
+        }
+    }
     pub fn resolve(
         tree: &Tree,
         env: &Environment,

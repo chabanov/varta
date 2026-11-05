@@ -154,6 +154,170 @@ impl<'a> Variables<'a> {
     }
 }
 
+/// Version of the native user-agent default table, [`NATIVE_UA_DEFAULTS`].
+/// Any change to a row's value or to the set of rows is a new version, so a
+/// recorded native observation names the defaults it was taken with.
+pub const NATIVE_UA_VERSION: u32 = 1;
+
+/// Font weight of `h1`–`h3` in the browser user-agent stylesheet (`bold`).
+pub(crate) const UA_BOLD_WEIGHT: f32 = 700.0;
+/// Inline-start padding of `ul`/`ol` (`padding-inline-start: 40px`).
+pub(crate) const UA_LIST_PADDING_PX: f32 = 40.0;
+/// Chrome's default fixed (monospace) font size over its default proportional
+/// size (13px / 16px). A generic `monospace`-only family whose size is still the
+/// initial keyword `medium` uses this fraction of the host's medium size.
+pub(crate) const UA_MONOSPACE_MEDIUM_RATIO: f32 = 13.0 / 16.0;
+/// The generic family name the user-agent table gives `pre` and `code`.
+pub(crate) const UA_MONOSPACE_FAMILY: &str = "monospace";
+
+/// How a row changes the inherited font weight when the author sets none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum UaWeight {
+    Inherit,
+    /// CSS `bolder` relative to the inherited weight (`strong`).
+    Bolder,
+    /// An absolute weight (`bold` for headings).
+    Absolute(f32),
+}
+
+/// The list container kind of `ul`/`ol`; it selects the item marker style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ListKind {
+    Unordered,
+    Ordered,
+}
+
+/// One tag's defaults from the browser user-agent stylesheet. Author
+/// declarations (inline or stylesheet) always win over these values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct UaDefaults {
+    pub tag: varta_common::view::Tag,
+    /// Block-level by default (`display: block` or, for `li`, `list-item`).
+    pub block: bool,
+    /// `display: list-item`: the box generates an outside list marker.
+    pub list_item: bool,
+    /// `font-size` as a multiple of the inherited size (`2em` for `h1`).
+    pub font_scale: Option<f32>,
+    pub weight: UaWeight,
+    /// `font-style: italic`.
+    pub italic: bool,
+    /// `font-family: monospace`.
+    pub monospace: bool,
+    /// `white-space: pre`.
+    pub preformatted: bool,
+    /// Top and bottom margins in em of the element's own font size.
+    pub margin_block_em: f32,
+    /// Margins become zero for a list nested in another list (`ul ul`, `ol ul`, …).
+    pub nested_list_margin_zero: bool,
+    /// `padding-inline-start` in CSS pixels.
+    pub padding_inline_start: f32,
+    pub list: Option<ListKind>,
+    /// `text-align` of form controls: `center` for `button`, `start` otherwise.
+    /// These stop an ancestor's inherited alignment at the control.
+    pub text_align: Option<crate::text::TextAlign>,
+}
+impl UaDefaults {
+    const fn new(tag: varta_common::view::Tag) -> Self {
+        Self {
+            tag,
+            block: false,
+            list_item: false,
+            font_scale: None,
+            weight: UaWeight::Inherit,
+            italic: false,
+            monospace: false,
+            preformatted: false,
+            margin_block_em: 0.0,
+            nested_list_margin_zero: false,
+            padding_inline_start: 0.0,
+            list: None,
+            text_align: None,
+        }
+    }
+    const fn heading(tag: varta_common::view::Tag, scale: f32, margin: f32) -> Self {
+        Self {
+            block: true,
+            font_scale: Some(scale),
+            weight: UaWeight::Absolute(UA_BOLD_WEIGHT),
+            margin_block_em: margin,
+            ..Self::new(tag)
+        }
+    }
+    const fn list(tag: varta_common::view::Tag, kind: ListKind) -> Self {
+        Self {
+            block: true,
+            margin_block_em: 1.0,
+            nested_list_margin_zero: true,
+            padding_inline_start: UA_LIST_PADDING_PX,
+            list: Some(kind),
+            ..Self::new(tag)
+        }
+    }
+    const fn control(tag: varta_common::view::Tag, align: crate::text::TextAlign) -> Self {
+        Self {
+            text_align: Some(align),
+            ..Self::new(tag)
+        }
+    }
+}
+
+/// Native user-agent defaults, version [`NATIVE_UA_VERSION`]. The official
+/// browser host adds no normalization for these tags, so each row mirrors the
+/// Chrome user-agent stylesheet (`h1 { font-size: 2em; margin-block: 0.67em;
+/// font-weight: bold }`, `ul { margin-block: 1em; padding-inline-start: 40px }`,
+/// `pre { font-family: monospace; white-space: pre; margin: 1em 0 }`, …).
+/// Control rows carry only `text-align`; their box defaults remain explicit.
+pub(crate) const NATIVE_UA_DEFAULTS: &[UaDefaults] = {
+    use crate::text::TextAlign;
+    use varta_common::view::Tag;
+    &[
+        UaDefaults {
+            block: true,
+            margin_block_em: 1.0,
+            ..UaDefaults::new(Tag::P)
+        },
+        UaDefaults::heading(Tag::H1, 2.0, 0.67),
+        UaDefaults::heading(Tag::H2, 1.5, 0.83),
+        UaDefaults::heading(Tag::H3, 1.17, 1.0),
+        UaDefaults::list(Tag::Ul, ListKind::Unordered),
+        UaDefaults::list(Tag::Ol, ListKind::Ordered),
+        UaDefaults {
+            block: true,
+            list_item: true,
+            ..UaDefaults::new(Tag::Li)
+        },
+        UaDefaults {
+            block: true,
+            monospace: true,
+            preformatted: true,
+            margin_block_em: 1.0,
+            ..UaDefaults::new(Tag::Pre)
+        },
+        UaDefaults {
+            weight: UaWeight::Bolder,
+            ..UaDefaults::new(Tag::Strong)
+        },
+        UaDefaults {
+            italic: true,
+            ..UaDefaults::new(Tag::Em)
+        },
+        UaDefaults {
+            monospace: true,
+            ..UaDefaults::new(Tag::Code)
+        },
+        UaDefaults::new(Tag::Label),
+        UaDefaults::control(Tag::Button, TextAlign::Center),
+        UaDefaults::control(Tag::Input, TextAlign::Start),
+        UaDefaults::control(Tag::Textarea, TextAlign::Start),
+        UaDefaults::control(Tag::Select, TextAlign::Start),
+    ]
+};
+
+/// The user-agent row of `tag`, if the native table has one.
+pub(crate) fn ua_defaults(tag: varta_common::view::Tag) -> Option<&'static UaDefaults> {
+    NATIVE_UA_DEFAULTS.iter().find(|row| row.tag == tag)
+}
+
 /// Incremental cross-sheet anchors avoid scanning unrelated (or empty) sheets.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct CascadeIndex {
@@ -210,6 +374,41 @@ impl CascadeIndex {
             }
         }
         candidates.into_iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod ua_tests {
+    use super::*;
+    use varta_common::view::Tag;
+    #[test]
+    fn native_ua_table_has_one_row_per_tag_and_browser_values() {
+        let mut tags: Vec<_> = NATIVE_UA_DEFAULTS.iter().map(|row| row.tag).collect();
+        tags.sort();
+        tags.dedup();
+        assert_eq!(tags.len(), NATIVE_UA_DEFAULTS.len());
+        let h1 = ua_defaults(Tag::H1).unwrap();
+        assert_eq!(
+            (h1.font_scale, h1.weight, h1.margin_block_em),
+            (Some(2.0), UaWeight::Absolute(700.0), 0.67)
+        );
+        let h3 = ua_defaults(Tag::H3).unwrap();
+        assert_eq!((h3.font_scale, h3.margin_block_em), (Some(1.17), 1.0));
+        let ul = ua_defaults(Tag::Ul).unwrap();
+        assert_eq!(
+            (ul.padding_inline_start, ul.list, ul.nested_list_margin_zero),
+            (40.0, Some(ListKind::Unordered), true)
+        );
+        assert!(ua_defaults(Tag::Li).unwrap().list_item);
+        let pre = ua_defaults(Tag::Pre).unwrap();
+        assert!(pre.monospace && pre.preformatted && pre.block);
+        assert!(!ua_defaults(Tag::Label).unwrap().block);
+        assert_eq!(
+            ua_defaults(Tag::Button).unwrap().text_align,
+            Some(crate::text::TextAlign::Center)
+        );
+        assert!(ua_defaults(Tag::Div).is_none());
+        assert_eq!(NATIVE_UA_VERSION, 1);
     }
 }
 

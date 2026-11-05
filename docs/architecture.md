@@ -11731,8 +11731,9 @@ size. Symbols, supplementary scalars, combining marks, bidirectional runs and
 Unicode line breaking use the same bounded shaper as fields. NUL is rejected
 by the view protocol; other control characters except TAB/LF/CR/FF are rejected
 by native text layout. The general 64 KiB UTF-8 source allowance still applies.
-Supported `white-space` modes include `normal`, `nowrap`, and a `pre-wrap` subset; tabs
-and leading/trailing line spaces in `pre-wrap` are rejected. Pixel/rem/percentage
+Supported `white-space` modes include `normal`, `nowrap`, a `pre-wrap` subset and
+the user-agent `pre` of `<pre>` (below); tabs and leading/trailing line spaces in
+`pre-wrap` are rejected. Pixel/rem/percentage
 font sizes, supported weights/styles, and normal, numeric, pixel/rem or percentage line heights inherit along
 the element tree. A CSS family list resolves against the supplied fonts; an
 unmapped generic family before a match is rejected. The embedding host may
@@ -11745,7 +11746,7 @@ path. Inline-only formatting contexts instead expose unions of their font-box
 fragments for descendants; those unions are not themselves hit regions.
 
 The text-aware native path admits adjacent text and nested `span`, `strong`,
-`em`, `code`, explicitly styled links and `br` inside supported block containers.
+`em`, `code`, `label`, explicitly styled links and `br` inside supported block containers.
 Inline flex/grid items are blockified by their parent; ordinary inline nodes
 share one shaped paragraph with style ranges. Whitespace collapses across node
 boundaries, line breaks preserve source order, and hanging break spaces do not
@@ -11912,6 +11913,69 @@ line's targets and before the line's own. A point in a later line's margin gap
 therefore hits the block even where an earlier line's decorated fragment
 overlaps it, while a point inside a later fragment's rectangle (even outside its
 curve) or beyond the line's contents still reaches earlier fragments.
+
+#### Native structure and user-agent defaults
+
+Native layout admits `h1`–`h3`,
+`ul`, `ol`, `li` and `pre` as block boxes and `label` as an inline box (blockified
+in flex/grid like `span`). Their defaults come from one versioned native
+user-agent table in `varta-view` (`style::NATIVE_UA_DEFAULTS`, published as
+`varta_view::NATIVE_UA_VERSION`); any change of a row's value is a new version.
+The official browser host adds no normalization for these tags, so each row
+mirrors Chrome's user-agent stylesheet: headings scale the inherited size
+(2/1.5/1.17em), are bold and have 0.67/0.83/1em block margins of their own size;
+`p` keeps 1em margins; `ul`/`ol` have 1em block margins (zero for a list nested
+in a list) and 40px inline-start padding; `pre` is `font-family: monospace` and
+`white-space: pre` with 1em margins; `strong`, `em` and `code` keep their bolder,
+italic and monospace defaults; `button` is `text-align: center` and the other
+form controls `start`, which stops inherited alignment at the control. Author
+declarations always replace a row's value. A generic `monospace`-only family whose
+size is still the initial `medium` keyword (no author or user-agent `font-size`
+on the path) uses 13/16 of the host medium size, like Chrome's default fixed
+font size. The user-agent family must resolve through the host's explicit
+aliases; an unmapped `monospace` is refused, and bold without a bold face stays
+a refused synthesized face. Em margins need the host text size, so the
+geometry-only path refuses them.
+
+`white-space: pre` preserves spaces and forced breaks and never wraps softly;
+leading indentation is measured exactly, while tabs and trailing line spaces
+(not modeled) are refused, as for `pre-wrap`. A `li` whose display is the
+user-agent `list-item` paints an outside marker: `ul` items a disc, a `ul`
+inside one list a circle and inside two or more a square, `ol` items `N. ` with
+the `list-item` counter over rendered sibling items. Symbols follow Blink's
+integer arithmetic on the item font's rounded ascent `a` in CSS pixels: a square
+of `(⌊2a/3⌋+1)/2` at one pixel inside a marker box ending `⌊2a/3⌋+8` pixels
+before the content edge, `3(a−⌊2a/3⌋)/2` below the box top; a disc fills, a circle
+strokes a one-pixel ring centered on the inscribed ellipse. Decimal text ends at
+the content edge in the item's font and color. The marker aligns with the first
+line baseline found in the item's leading content (through nested blocks) and its
+box, the line box united with the font's content area, is the item's pointer
+target and part of its frame bounds. Markers never change layout. An item without
+a line, an item with a non-visible overflow, an `ol` item that is not a direct
+child and a missing font are refused. Ordinal attributes, `list-style`, marker
+`font-variant-numeric: tabular-nums` feature shaping and `::marker` styling are
+not admitted.
+
+`text-align: left | center | right` is inherited along the element path and
+applied with Parley alignment to lines broken at the box's definite width, after
+inline edges, so wrapped, decorated and bidirectional lines move as whole lines;
+overflowing lines stay at the start edge. CSS `direction` is always `ltr`, while
+the shaper derives a paragraph's base direction from its first strong character;
+center/right alignment of a right-to-left-based paragraph is refused. Field text,
+caret and selection geometry ignore alignment; an authored `text-align` on a
+field is refused.
+
+`text-overflow: ellipsis` with `overflow: hidden` truncates a single unbroken
+line (`nowrap` or `pre`) of an inline formatting root without inline paint
+decorations or edges; `clip` and a visible overflow are no-ops, and a scroll
+container, wrapping text, forced breaks, decorated inline content and
+right-to-left runs are refused. The ellipsis is U+2026 (three full stops if the
+resolved families do not map it) in the root's font and color, placed after the
+last whole cluster or ligature that fits before the content edge minus its width;
+an overflowing line is start-aligned first. As in Chrome, truncation only hides
+glyphs: element geometry and pointer fragments stay untruncated, so hidden text
+positions still hit their element, and the accessible name keeps the full text.
+The truncated projection shares the existing fragment and inline-work allowances.
 
 Native `rem` resolution uses `Environment::root_font_size`, a host-supplied
 document-root reference in CSS pixels, initially the subset's initial font size.

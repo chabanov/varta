@@ -1557,6 +1557,101 @@ fn paint_checkable(
     Ok(())
 }
 
+/// Blink strokes a `circle` marker with a one-pixel line centered on the
+/// ellipse inscribed in the symbol rect.
+const MARKER_RING_HALF_WIDTH: f32 = 0.5;
+
+/// Paint an outside list marker in the item's color and clip.
+fn paint_marker(
+    surface: &mut Surface,
+    marker: &crate::list::Marker,
+    color: Color,
+    id: u32,
+    work: &mut usize,
+) -> Result<(), PaintError> {
+    use crate::list::{MarkerInk, MarkerStyle};
+    let clip = surface.local_clip(marker.clip);
+    match &marker.ink {
+        MarkerInk::Symbol(symbol) => {
+            let rect = |inset: f32| {
+                Rect::from_xywh(
+                    symbol.x + inset,
+                    symbol.y + inset,
+                    symbol.width - 2.0 * inset,
+                    symbol.height - 2.0 * inset,
+                )
+            };
+            let mut path = PathBuilder::new();
+            let rule = match marker.style {
+                MarkerStyle::Square => {
+                    path.push_rect(rect(0.0).ok_or(PaintError::Unsupported(id))?);
+                    FillRule::Winding
+                }
+                MarkerStyle::Circle => {
+                    path.push_oval(
+                        rect(-MARKER_RING_HALF_WIDTH).ok_or(PaintError::Unsupported(id))?,
+                    );
+                    if let Some(inner) = rect(MARKER_RING_HALF_WIDTH) {
+                        path.push_oval(inner);
+                    }
+                    FillRule::EvenOdd
+                }
+                MarkerStyle::Disc | MarkerStyle::Decimal(_) => {
+                    path.push_oval(rect(0.0).ok_or(PaintError::Unsupported(id))?);
+                    FillRule::Winding
+                }
+            };
+            let Some(path) = path.finish() else {
+                return Ok(());
+            };
+            let ink = BoxRect {
+                x: symbol.x - MARKER_RING_HALF_WIDTH,
+                y: symbol.y - MARKER_RING_HALF_WIDTH,
+                width: symbol.width + 2.0 * MARKER_RING_HALF_WIDTH,
+                height: symbol.height + 2.0 * MARKER_RING_HALF_WIDTH,
+            };
+            let Some(visible) = clipped(ink, clip) else {
+                return Ok(());
+            };
+            let contained = clip.x <= ink.x
+                && clip.y <= ink.y
+                && clip.x + clip.width >= ink.x + ink.width
+                && clip.y + clip.height >= ink.y + ink.height;
+            let mask = if contained {
+                None
+            } else {
+                Some(surface.mask(visible)?)
+            };
+            let mut paint = Paint::default();
+            paint.set_color(color);
+            surface.fill_path(&path, &paint, rule, Transform::identity(), mask.as_ref());
+            Ok(())
+        }
+        MarkerInk::Text { layout, origin } => {
+            let rect = BoxRect {
+                x: origin[0],
+                y: origin[1],
+                width: layout.full_width(),
+                height: layout.height(),
+            };
+            paint_shaped(
+                surface,
+                layout,
+                layout::BoxGeometry {
+                    rect,
+                    content: rect,
+                    clip,
+                    scroll: None,
+                    programmatic_scroll: None,
+                },
+                (&underline::Style::plain(color), "", WhiteSpaceMode::Pre),
+                id,
+                work,
+            )
+        }
+    }
+}
+
 fn paint_input(
     pixmap: &mut Surface,
     tree: &Tree,
@@ -2074,6 +2169,19 @@ fn rasterize_inner_scoped(
             BTreeMap::new(),
         )
     };
+    let markers = crate::list::markers(
+        &crate::list::Inputs {
+            tree,
+            env: &env,
+            geometry: &geometry,
+            shapes: &shapes,
+            flows: &flows,
+            snap: |value| snap::edge(f64::from(value)) as f32,
+        },
+        text_input
+            .as_mut()
+            .map(|(measurer, size)| (&mut **measurer, *size)),
+    )?;
     let (scene, glyphs) = match cache {
         Some((s, g)) => (Some(s), Some(g)),
         None => (None, None),
@@ -2315,6 +2423,25 @@ fn rasterize_inner_scoped(
                     &mut inline_programs,
                 )?;
             }
+            if let Some(marker) = markers.get(&id) {
+                let color = current_color(tree, &env, id).ok_or(PaintError::Unsupported(id))?;
+                paint_marker(&mut pixmap, marker, color, id, &mut text_work)?;
+                // The marker box is the item's pointer target.
+                if let Some(rect) = clipped(marker.area, marker.clip) {
+                    if let Some(clip) = &pixmap.active_clip {
+                        hit_clips.insert(hit_regions.len(), clip.clone());
+                    }
+                    hit_regions.push((
+                        id,
+                        BoxRect {
+                            x: rect.x(),
+                            y: rect.y(),
+                            width: rect.width(),
+                            height: rect.height(),
+                        },
+                    ));
+                }
+            }
             continue;
         }
         let properties = tree.computed_read(id, &env);
@@ -2529,6 +2656,7 @@ fn rasterize_inner_scoped(
             pending.outline(id);
         }
         if flows.contains_key(&id)
+            || markers.contains_key(&id)
             || matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
         {
             pending.content(id);

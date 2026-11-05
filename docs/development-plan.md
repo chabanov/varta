@@ -34,7 +34,7 @@ ECMAScript, Node or npm compatibility.
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. The old UARP node-16 refusal is historical. |
+| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. The console view still stops at the button/textarea control-box rules (nodes 16/12); its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
@@ -456,6 +456,50 @@ result/status documentation annotations follow it. Distinct border
 side colors and other border styles, device-pixel border-width snapping (open for
 all boxes), bidi edge reordering, horizontal percentages and
 real-font/window/platform acceptance remain open.
+
+### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
+
+Branch `wave1/w1-native-structure-text` (on `cc3a94d`) admits `h1`–`h3`, `ul`,
+`ol`, `li` with outside disc/circle/square/decimal markers, `pre` and `label`,
+inherited `text-align: left | center | right` and one-line `text-overflow:
+ellipsis` in native layout and paint. Defaults come from the new versioned
+native user-agent table in `varta-view` (`NATIVE_UA_DEFAULTS`); see the
+[architecture contract](architecture.md#native-structure-and-user-agent-defaults).
+Labels forward clicks through the existing headless `for` activation; headings,
+lists and items publish their levels/roles with frame bounds in the headless and
+AccessKit trees. A second Chrome comparison showed that truncated text keeps its
+pointer targets, so native ellipsis keeps untruncated hits (the brief asked for
+visible-glyph-only hits; that would diverge from the browser host).
+
+Console refusal triage, unchanged artifact (SHA-256 `ac764bd1…3043164`), Arial
+(regular/bold) for `system-ui`/`sans-serif` and Courier New for `monospace`,
+1024×768. `headless_frame` still stops at node 16 (chat) and node 12 (stream)
+before and after; a scratch triage that neutralizes each refusal and continues
+lists them in order. Before: chat 16 `button` control box rule plus
+`text-align: left`, 17 `text-align: center`, 19 `text-overflow: ellipsis`, 39
+`textarea` control rule, 43 `button` control rule plus transition properties,
+then paint refusals of synthesized weight 500 (19, 43); stream 12 `textarea`, 16
+`button` and transitions, weight 500. The final reviewed trees additionally
+refuse `h2` (190, 208, 178; stream 69) and `pre` (202; stream 81). After: only the
+`button`/`textarea` control box rules, the transition properties and weight 500
+remain; replacing 500 with an available face admits every remaining text,
+heading, `pre`, alignment and ellipsis node. Control defaults belong to the
+controls package; weight 500 is font coverage, not engine policy.
+
+`native_structure_probe` covers 9 cases (headings, overrides, lists, nested
+lists, list spans, `pre`, `label`, aligned wrapped/bidi/decorated paragraphs,
+ellipsis) against Chrome through `scripts/test-native-structure.mjs` with two
+original weighted faces: **30246 checks** pass at each of 1×, 1.25× and 2×,
+maximum whole-viewport RGB mean 0.577/255 under the unchanged 2/255 bound.
+`portable_edge_probe` (68837) and `native_paragraph_probe` (81) pass, and the
+native outputs of the inline, edge, opacity, spacing, outline, decoration,
+fields and lengths probes are byte-identical to `cc3a94d`. The
+`native_inline_probe` oracle fails `paint-overlap-hits` (RGB mean 5.39/3.94/5.37)
+with byte-identical native output to `cc3a94d`, so that failure predates this
+package (Chrome 156 here). Still open: normal line height with fractional
+ascent/descent (Chrome rounds each), ordinal attributes, `list-style`, marker
+`tabular-nums`, multi-line ellipsis, decorated or bidi ellipsis, author
+`text-align` on fields and the full gate after merge.
 
 ### Native inline painting commit gate — 2026-11-04
 
