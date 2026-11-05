@@ -772,17 +772,15 @@ const PERCENT: f32 = 100.0;
 pub(crate) const MINIMUM_LOGICAL_FONT_SIZE: f32 = 9.0;
 
 /// Apply an author `font-size`: a percentage scales the inherited size and
-/// keeps its absolute flag; `px` and `rem` lengths are absolute. Returns
-/// whether the declaration was an absolute length.
-fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Option<bool> {
+/// keeps its absolute flag; `px` and `rem` lengths are absolute.
+fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Option<()> {
     if let Some(number) = value.strip_suffix('%') {
         let number: f32 = number.parse().ok()?;
         size.scale(number / PERCENT);
-        Some(false)
     } else {
         size.absolute(units.pixels(value, false)?);
-        Some(true)
     }
+    Some(())
 }
 
 /// Blink's `GetComputedSizeFromSpecifiedSize` at page zoom 1: a size derived
@@ -790,11 +788,11 @@ fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Op
 /// absolute length on the path, computes to at least
 /// [`MINIMUM_LOGICAL_FONT_SIZE`]. Descendant percentages and em lengths keep
 /// deriving from the unclamped specified size.
-fn computed_font_size(specified: f32, absolute: bool) -> f32 {
-    if absolute {
-        specified
+fn computed_font_size(size: style::FontSize) -> f32 {
+    if size.is_absolute() {
+        size.px
     } else {
-        specified.max(MINIMUM_LOGICAL_FONT_SIZE)
+        size.px.max(MINIMUM_LOGICAL_FONT_SIZE)
     }
 }
 
@@ -808,9 +806,6 @@ pub(crate) fn resolve_text(
 ) -> Result<ResolvedText, LayoutError> {
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     let mut size = style::FontSize::medium(base_size);
-    // Whether an absolute length fixes the size; percentages and user-agent
-    // scales inherit it, as in `style::FontSize`.
-    let mut absolute = false;
     // The view root's parent is the document body: proportional `medium`.
     let mut parent_monospace = false;
     let mut line_height = None;
@@ -898,8 +893,7 @@ pub(crate) fn resolve_text(
             };
         }
         if let Some(value) = properties.get(&CssProperty::FontSize) {
-            absolute |= author_font_size(&mut size, units, value)
-                .ok_or(LayoutError::Unsupported(ancestor))?;
+            author_font_size(&mut size, units, value).ok_or(LayoutError::Unsupported(ancestor))?;
         }
         // Chrome re-derives the size where the generic family switches to or
         // from monospace, before a line-height percentage resolves against it.
@@ -929,7 +923,7 @@ pub(crate) fn resolve_text(
                 let percentage: f32 = value
                     .parse()
                     .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                let px = computed_font_size(size.px, absolute) * percentage / PERCENT;
+                let px = computed_font_size(size) * percentage / PERCENT;
                 if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
                     return Err(LayoutError::Unsupported(ancestor));
                 }
@@ -948,7 +942,7 @@ pub(crate) fn resolve_text(
     Ok(ResolvedText {
         specified_size: size.px,
         options: TextOptions {
-            size: computed_font_size(size.px, absolute),
+            size: computed_font_size(size),
             line_height,
             weight,
             italic,
@@ -2120,6 +2114,10 @@ mod positioning_tests {
             (9, ROOT_NODE, Tag::Div, &[(P::FontSize, "25%")]),
             (10, 9, Tag::H1, &[]),
             (11, ROOT_NODE, Tag::Div, &[(P::FontSize, "0.5rem")]),
+            (12, ROOT_NODE, Tag::P, &[(P::FontSize, "50%")]),
+            (13, 12, Tag::Code, &[]),
+            (14, ROOT_NODE, Tag::P, &[(P::FontSize, "8px")]),
+            (15, 14, Tag::Code, &[]),
         ]);
         let resolve = |id| resolve_text(&view.tree, &view.environment, id, MEDIUM).unwrap();
         // 50% of medium computes to the minimum; em lengths keep 8px.
@@ -2151,6 +2149,18 @@ mod positioning_tests {
             (heading.options.size, heading.specified_size),
             (MINIMUM_LOGICAL_FONT_SIZE, 8.0)
         );
+        // The monospace switch re-derives the non-absolute 8px as 6.5px, which
+        // still computes to the minimum; an absolute 8px stays unchanged.
+        let code = resolve(13);
+        assert_eq!(
+            (code.options.size, code.specified_size),
+            (
+                MINIMUM_LOGICAL_FONT_SIZE,
+                8.0 * crate::style::UA_MONOSPACE_RATIO
+            )
+        );
+        let fixed = resolve(15);
+        assert_eq!((fixed.options.size, fixed.specified_size), (8.0, 8.0));
     }
 
     #[test]

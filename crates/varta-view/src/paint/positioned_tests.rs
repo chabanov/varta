@@ -300,6 +300,66 @@ fn zero_level_opacity_contexts_paint_in_tree_order_across_flex_items() {
     assert_eq!(image.hit_test(10.5, 10.5), Some(6));
 }
 
+#[test]
+fn static_opacity_contexts_ignore_z_index() {
+    // Opacity makes these static blocks stacking contexts, but z-index does
+    // not apply to them: both paint at level zero in tree order.
+    const TRANSLUCENT: &str = "0.99";
+    let view = view(|b| {
+        let block = |b: &mut B, id: u32, z: &str, height: &str, color: [u8; 4]| {
+            div(
+                b,
+                id,
+                1,
+                &[
+                    (P::Opacity, TRANSLUCENT),
+                    (P::ZIndex, z),
+                    (P::Width, "40px"),
+                    (P::Height, height),
+                    (P::BackgroundColor, &hex(color)),
+                ],
+            );
+        };
+        // z-index -1 does not sink below the later in-flow block.
+        block(b, 2, "-1", "40px", RED);
+        div(
+            b,
+            3,
+            1,
+            &[
+                (P::MarginTop, "-20px"),
+                (P::Width, "60px"),
+                (P::Height, "30px"),
+                (P::BackgroundColor, &hex(BLUE)),
+            ],
+        );
+        // z-index 5 does not rise above a later positioned z-index 1 box.
+        block(b, 4, "5", "20px", YELLOW);
+        div(
+            b,
+            5,
+            1,
+            &[
+                (P::Position, "relative"),
+                (P::ZIndex, "1"),
+                (P::Top, "-10px"),
+                (P::Left, "20px"),
+                (P::Width, "40px"),
+                (P::Height, "20px"),
+                (P::BackgroundColor, &hex(GREEN)),
+            ],
+        );
+    });
+    let image = view.rasterize_boxes(SIDE, SIDE).unwrap();
+    let [red, _, blue, _] = pixel(&image, 10, 30);
+    assert!(red > blue, "the opacity block stays above: {red} {blue}");
+    assert_eq!(image.hit_test(10.5, 30.5), Some(2));
+    expect(
+        &image,
+        &[((30, 65), GREEN, Some(5)), ((50, 45), BLUE, Some(3))],
+    );
+}
+
 fn scrolled_fixed() -> View {
     let mut view = view(|b| {
         div(

@@ -207,6 +207,11 @@ impl FontSize {
         self.keyword = false;
         self.absolute = true;
     }
+    /// Whether an absolute length fixes the size on the path: then neither a
+    /// family switch nor the minimum logical font size changes it.
+    pub(crate) fn is_absolute(&self) -> bool {
+        self.absolute
+    }
     /// Blink's `CheckForGenericFamilyChange`: where the family switches between
     /// the sole generic `monospace` and anything else, a non-absolute size is
     /// re-derived. The `medium` keyword takes the host medium size, scaled by
@@ -499,14 +504,16 @@ mod ua_tests {
         let mut span = code;
         span.switch_family(BASE, true, false);
         assert!(close(span, 32.0));
-        // Absolute lengths (px, rem) are never re-derived.
+        // Absolute lengths (px, rem) are never re-derived, and percentages of
+        // them keep the absolute state; em-like scales of medium never set it.
+        assert!(!code.is_absolute() && !span.is_absolute());
         let mut fixed = FontSize::medium(BASE);
         fixed.absolute(16.0);
         fixed.switch_family(BASE, false, true);
         assert!(close(fixed, 16.0));
         fixed.scale(1.5);
         fixed.switch_family(BASE, true, false);
-        assert!(close(fixed, 24.0));
+        assert!(close(fixed, 24.0) && fixed.is_absolute());
         assert!(sole_monospace(" Monospace ") && !sole_monospace("monospace, monospace"));
         assert!(!sole_monospace("\"monospace\""));
     }

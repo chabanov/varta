@@ -29,6 +29,8 @@ const MEDIUM: f32 = 16.0;
 const HIT_STEP: usize = 3;
 const MIN_SCALE: f32 = 0.25;
 const MAX_SCALE: f32 = 8.0;
+/// Prefix of the cases that start from the initial `medium` font size.
+const MINIMUM_FONT_CASES: &str = "minimum-font";
 
 const GRAY: &str = "#c0c0c0";
 const RED: &str = "#e00000";
@@ -38,6 +40,8 @@ const YELLOW: &str = "#e0c000";
 const MAGENTA: &str = "#c000c0";
 const CYAN: &str = "#00b0b0";
 const DARK: &str = "#202020";
+/// Below one, so the box is a stacking context, while staying near opaque.
+const TRANSLUCENT: &str = "0.99";
 
 type Styles<'a> = &'a [(P, &'a str)];
 
@@ -490,6 +494,68 @@ fn build(name: &str, b: &mut B) {
             }
             b.create_text(10, "AA").insert(9, 10, 0);
         }
+        // Opacity makes static blocks stacking contexts, but z-index does not
+        // apply to them: z-index -1 stays above a later in-flow block, and
+        // z-index 5 stays below a later positioned z-index 1 box.
+        "opacity-z-index" => {
+            for (id, z, height, color) in [(2, "-1", "40px", RED), (4, "5", "20px", YELLOW)] {
+                div(
+                    b,
+                    id,
+                    1,
+                    &[
+                        (P::Opacity, TRANSLUCENT),
+                        (P::ZIndex, z),
+                        (P::Width, "40px"),
+                        (P::Height, height),
+                        (P::BackgroundColor, color),
+                    ],
+                );
+                if id == 2 {
+                    div(
+                        b,
+                        3,
+                        1,
+                        &[
+                            (P::MarginTop, "-20px"),
+                            (P::Width, "60px"),
+                            (P::Height, "30px"),
+                            (P::BackgroundColor, BLUE),
+                        ],
+                    );
+                }
+            }
+            div(
+                b,
+                5,
+                1,
+                &[
+                    (P::Position, "relative"),
+                    (P::ZIndex, "1"),
+                    (P::Top, "-10px"),
+                    (P::Left, "20px"),
+                    (P::Width, "40px"),
+                    (P::Height, "20px"),
+                    (P::BackgroundColor, GREEN),
+                ],
+            );
+        }
+        // p { font-size: 50% } > code: the monospace switch re-derives 8px as
+        // 6.5px, which computes to the minimum. Chrome draws generic monospace
+        // with a system face, so the code element is a flex container whose
+        // line-height records its computed size, and its only item returns to
+        // the fixture font.
+        "minimum-font-mono" => {
+            b.create_element(2, Tag::P).insert(1, 2, 0);
+            b.set_style(2, P::FontSize, "50%")
+                .set_style(2, P::Color, MAGENTA);
+            b.create_element(3, Tag::Code).insert(2, 3, 0);
+            b.set_style(3, P::Display, "flex")
+                .set_style(3, P::LineHeight, "100%");
+            b.create_element(4, Tag::Span).insert(3, 4, 0);
+            b.set_style(4, P::FontFamily, &format!("\"{FAMILY}\""));
+            b.create_text(5, "AA").insert(4, 5, 0);
+        }
         _ => unreachable!("every case name has a builder"),
     }
 }
@@ -561,10 +627,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             scrolls: &[],
             reveal: None,
         },
+        Case {
+            name: "opacity-z-index",
+            scrolls: &[],
+            reveal: None,
+        },
+        Case {
+            name: "minimum-font-mono",
+            scrolls: &[],
+            reveal: None,
+        },
     ] {
         let mut b = B::new();
         b.set_style(1, P::FontFamily, "\"Varta Inline Fixture\"");
-        if case.name != "minimum-font" {
+        if !case.name.starts_with(MINIMUM_FONT_CASES) {
             b.set_style(1, P::FontSize, "20px")
                 .set_style(1, P::LineHeight, "20px");
         }

@@ -3,10 +3,11 @@
 //! `position: fixed`, or a z-index on a positioned box or flex/grid item) paints
 //! its own background, then negative layers, ordinary block backgrounds,
 //! atomic/inline content, zero and positive layers, then outlines. Layers are
-//! ordered by z-index and then tree order. Positioned boxes with `z-index: auto`
-//! paint atomically in the zero layer, like flex/grid items in the content
-//! phase: these pseudo contexts let descendant layers join the nearest real
-//! context.
+//! ordered by z-index and then tree order; z-index applies only to positioned
+//! boxes and flex/grid items, so any other context (opacity) takes level zero.
+//! Positioned boxes with `z-index: auto` paint atomically in the zero layer,
+//! like flex/grid items in the content phase: these pseudo contexts let
+//! descendant layers join the nearest real context.
 use super::*;
 use crate::layout::Scheme;
 use std::collections::BTreeSet;
@@ -167,9 +168,11 @@ impl Order {
                 // CSS Flexbox/Grid: z-index applies to in-flow items even
                 // when they are not positioned.
                 let item = flex_parent && !scheme.out_of_flow();
-                let real = translucent
-                    || scheme == Scheme::Fixed
-                    || (z.is_some() && (scheme.positioned() || item));
+                // z-index has no effect on any other box, even one that
+                // opacity makes a stacking context: that box paints at level
+                // zero in tree order.
+                let z = if scheme.positioned() || item { z } else { None };
+                let real = translucent || scheme == Scheme::Fixed || z.is_some();
                 self.placements.insert(
                     id,
                     Placement {
@@ -184,7 +187,7 @@ impl Order {
                 self.elements.push(id);
                 if real || scheme.positioned() {
                     self.layered.insert(id);
-                    let level = if real { z.unwrap_or(0) } else { 0 };
+                    let level = z.unwrap_or(0);
                     self.layers.entry(owner).or_default().insert(
                         (level, self.tree_order[&id]),
                         (id, if real { Phase::Context } else { Phase::Atomic }),
