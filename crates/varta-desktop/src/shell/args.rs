@@ -4,14 +4,24 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// The `--help` text.
-pub const USAGE: &str = "Varta native shell\n\nUsage:\n  varta-shell ARTIFACT [--policy PATH] [--data-dir DIR] [--font PATH FAMILY] [--renderer cpu|gpu|auto]\n  varta-shell --help | --version\n\nARTIFACT is a packaged checked-f64-utf16-v38 view application written by\n'varta build': app.wasm beside app.manifest.json (and app.resources when it\nships fonts), or a fixed-footer container. Its manifest is the package\nrequest; nothing is ambient. Text uses the artifact's fonts.\n\nOptions:\n  --policy PATH      host ceiling (the varta-runtime host policy format); a\n                     resource must satisfy the request and the ceiling, and an\n                     empty ceiling denies everything\n  --data-dir DIR     host directory for application storage; each artifact\n                     hash gets its own directory (default: the platform's\n                     per-user application data directory)\n  --font PATH FAMILY explicit layout and render font for an artifact that\n                     ships no fonts (refused for one that does)\n  --renderer MODE    cpu (default), gpu or auto. gpu needs a build with the\n                     gpu feature and fails when the GPU does not initialize\n                     (a GPU lost later falls back to the CPU); auto uses the\n                     GPU when it initializes, otherwise the CPU\n\nOptional permissions are denied: this shell has no permission prompt yet.\nGranted copy_text and external links of a user gesture use the system\nclipboard and browser.\n";
+pub const USAGE: &str = "Varta native shell\n\nUsage:\n  varta-shell ARTIFACT [--policy PATH] [--data-dir DIR] [--font PATH FAMILY] [--renderer cpu|gpu|auto]\n  varta-shell ARTIFACT --revoke CAPABILITY [--data-dir DIR]\n  varta-shell --help | --version\n\nARTIFACT is a packaged checked-f64-utf16-v38 view application written by\n'varta build': app.wasm beside app.manifest.json (and app.resources when it\nships fonts), or a fixed-footer container. Its manifest is the package\nrequest; nothing is ambient. Text uses the artifact's fonts.\n\nOptions:\n  --policy PATH      host ceiling (the varta-runtime host policy format); a\n                     resource must satisfy the request and the ceiling, and an\n                     empty ceiling denies everything\n  --data-dir DIR     host directory for application storage; each artifact\n                     hash gets its own directory (default: the platform's\n                     per-user application data directory)\n  --font PATH FAMILY explicit layout and render font for an artifact that\n                     ships no fonts (refused for one that does)\n  --renderer MODE    cpu (default), gpu or auto. gpu needs a build with the\n                     gpu feature and fails when the GPU does not initialize\n                     (a GPU lost later falls back to the CPU); auto uses the\n                     GPU when it initializes, otherwise the CPU\n  --revoke CAPABILITY store a denial of CAPABILITY for ARTIFACT and exit; a\n                     running shell of that artifact denies new operations of\n                     it, and later starts keep it denied\n\nPermissions: a required permission without a stored decision is asked once,\nin a separate host window, before the application starts; refusing it stops\nthe start. An optional permission is asked only when the application\nrequests it during a user gesture. Allow and Deny are stored per artifact\nhash under the storage directory, with an audit log of every decision.\nGranted copy_text and external links of a user gesture use the system\nclipboard and browser.\n";
 
 /// One `varta-shell` invocation.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Run(ShellArgs),
+    /// Store a denial of a capability for an artifact.
+    Revoke(RevokeArgs),
     Help,
     Version,
+}
+
+/// `--revoke`: which capability of which artifact, in which storage.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RevokeArgs {
+    pub artifact: PathBuf,
+    pub capability: String,
+    pub data_dir: Option<PathBuf>,
 }
 
 /// What to run and with which host inputs.
@@ -70,12 +80,15 @@ pub enum ArgsError {
     NotUtf8(&'static str),
     #[error("unknown renderer {0:?}; use cpu, gpu or auto")]
     Renderer(String),
+    #[error("{0} takes only ARTIFACT and --data-dir; use --help")]
+    Exclusive(&'static str),
 }
 
 const POLICY: &str = "--policy";
 const DATA_DIR: &str = "--data-dir";
 const FONT: &str = "--font";
 const RENDERER: &str = "--renderer";
+const REVOKE: &str = "--revoke";
 const HELP: [&str; 2] = ["--help", "-h"];
 const VERSION: [&str; 2] = ["--version", "-V"];
 const OPTION_PREFIX: &str = "-";
@@ -95,6 +108,7 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
     let mut data_dir = None;
     let mut font = None;
     let mut renderer = None;
+    let mut revoke = None;
     while let Some(value) = values.next() {
         match value.to_str() {
             Some(POLICY) => set(&mut policy, POLICY, path(&mut values, POLICY)?)?,
@@ -117,6 +131,14 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
                 let selected = Renderer::from_name(&mode).ok_or(ArgsError::Renderer(mode))?;
                 set(&mut renderer, RENDERER, selected)?;
             }
+            Some(REVOKE) => {
+                let capability = values
+                    .next()
+                    .ok_or(ArgsError::MissingValue(REVOKE))?
+                    .into_string()
+                    .map_err(|_| ArgsError::NotUtf8(REVOKE))?;
+                set(&mut revoke, REVOKE, capability)?;
+            }
             Some(other) if other.starts_with(OPTION_PREFIX) => {
                 return Err(ArgsError::Unknown(value));
             }
@@ -124,8 +146,19 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
             _ => return Err(ArgsError::Unknown(value)),
         }
     }
+    let artifact = artifact.ok_or(ArgsError::MissingArtifact)?;
+    if let Some(capability) = revoke {
+        if policy.is_some() || font.is_some() || renderer.is_some() {
+            return Err(ArgsError::Exclusive(REVOKE));
+        }
+        return Ok(Command::Revoke(RevokeArgs {
+            artifact,
+            capability,
+            data_dir,
+        }));
+    }
     Ok(Command::Run(ShellArgs {
-        artifact: artifact.ok_or(ArgsError::MissingArtifact)?,
+        artifact,
         policy,
         data_dir,
         font,
@@ -192,6 +225,14 @@ mod tests {
             }))
         );
         assert_eq!(parse_all(&["--help"]), Ok(Command::Help));
+        assert_eq!(
+            parse_all(&["app.wasm", "--revoke", "net.request", "--data-dir", "/data"]),
+            Ok(Command::Revoke(RevokeArgs {
+                artifact: "app.wasm".into(),
+                capability: "net.request".into(),
+                data_dir: Some("/data".into()),
+            }))
+        );
         assert_eq!(parse_all(&["-V"]), Ok(Command::Version));
     }
 
@@ -229,6 +270,22 @@ mod tests {
         assert_eq!(
             parse_all(&["app.wasm", "--renderer", "vulkan"]),
             Err(ArgsError::Renderer("vulkan".into()))
+        );
+        assert_eq!(
+            parse_all(&["app.wasm", "--revoke"]),
+            Err(ArgsError::MissingValue(REVOKE))
+        );
+        assert_eq!(
+            parse_all(&["--revoke", "net.request"]),
+            Err(ArgsError::MissingArtifact)
+        );
+        assert_eq!(
+            parse_all(&["app.wasm", "--revoke", "a.b", "--revoke", "c.d"]),
+            Err(ArgsError::Repeated(REVOKE))
+        );
+        assert_eq!(
+            parse_all(&["app.wasm", "--revoke", "net.request", "--policy", "p.json"]),
+            Err(ArgsError::Exclusive(REVOKE))
         );
     }
 }

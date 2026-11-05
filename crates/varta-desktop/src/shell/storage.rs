@@ -155,7 +155,7 @@ pub(super) fn pin(
 }
 
 /// Create `path` and its missing parents, private to the user on Unix.
-fn create_private(path: &Path) -> Result<(), ShellError> {
+pub(super) fn create_private(path: &Path) -> Result<(), ShellError> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]

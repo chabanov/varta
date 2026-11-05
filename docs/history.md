@@ -3611,3 +3611,97 @@ refusal was unreachable (keys decode at the fixed `KvKey`, values pass
 `kv_checked` first) and was removed. `Object.is` names the view-identity
 refusal for any operand form, and its hint now points to comparing with a
 primitive or record, or comparing contents.
+
+### Native consent in `varta-shell` (P10b) — wave 3, scoped 2026-11-05
+
+`varta-desktop` gained `shell::consent`: `ConsentStore` (the per-identity
+decision file `permissions.json` and audit log `permission-audit.jsonl` in the
+artifact's storage directory, private files, atomic replacement of the
+decision file, rotation of the log at `MAX_AUDIT_LOG_BYTES`), `Consent` (reads
+the stored decisions into `RunOptions::decisions` at `Launch::packaged`,
+records first-run answers so a refused start still stores and audits them, and
+`sync` reconciles the instance with the file between turns: outside denials
+revoke for new operations and win over concurrent answers, own decisions are
+written, new broker audit entries appended), and `PromptLayer` with its own
+5x9 bitmap font (`glyphs.rs`; non-ASCII shown as escapes). `Launch::start_with`
+takes a prompter and returns `Started`; `shell::revoke` and `varta-shell
+ARTIFACT --revoke CAPABILITY` store a denial. The window's worker installs
+`NativePrompter`, which blocks the worker while the event loop shows a separate
+always-on-top prompt window (`window/prompt.rs`); the application's window
+drops user input while it is open, cancels a pending press and hands focus
+back, and a second prompt is dismissed. Answers need a press and release on
+one button or a non-repeated key after `PROMPT_INPUT_DELAY`.
+
+The runtime's `Execution::with_setup` now starts an application instance's
+first-turn deadline after the broker decided the required grants, so waiting
+for first-run approval no longer exhausts turn 1 (`BudgetExhausted { turn: 1,
+kind: Main, budget: Deadline }` before the change, reproduced by the new
+`permission::tests::waiting_for_first_run_approval_spends_no_turn_deadline`
+with the fix reverted). `serde_json` (already locked) became a production
+dependency of `varta-desktop` for the decision file and audit rows.
+
+Tests: glyph, layer (description order, bounded and escaped package text,
+fixed buttons, input delay, press/release, keys, scaling), store and argument
+unit tests; window tests showing that a covering guest frame cannot cover or
+hit an open prompt and that one prompt is open at a time; headless shell tests
+with a scripted decision provider and the new `consent-probe` fixture for
+first-run approval, refusal (stored or dismissed), gesture-only prompts,
+persisted allow and deny, revocation from outside and inside, two-request and
+dismissal rate limits, audit rows, the deadline and invalid decision files; a
+binary test for `--revoke`. Existing shell tests now check that host storage
+holds only the artifact's consent files (`consent::CONSENT_FILES`) instead of
+no directory, since every start writes the audit log.
+Scoped verification: `verify.py local varta-desktop`, `verify.py local
+varta-runtime --filter permission`, the boundary tests, formatting and strict
+Clippy (desktop also with `gpu`, runtime). The whole runtime library run had
+one load-induced wall-clock failure (`codegen_v2_tests` case corpus, passing
+alone), so cargo stopped before the runtime integration tests; those were run
+separately only by the review (112 passed). A manual run on the development Mac showed the first-run prompt
+window over the blank application window with no guest output, and a start
+with the required grant stored ran without a prompt; the gesture-triggered
+prompt was not clicked manually. No full gate was run for this package.
+
+Review fixes (same day). The prompt hid every pattern after one that did not
+fit its eight resource lines, so a long first pattern or a long `ui.open_url`
+link left nothing visible. It now shows every pattern in full on pages
+(`RESOURCE_PAGE_LINES`, first lines marked, "Next page", Page Down/Up), keeps
+Allow disabled until every page was shown and for `PROMPT_INPUT_DELAY` after
+the last one appeared, and never shows a request needing more than
+`MAX_RESOURCE_LINES`: the consent seam answers it Deny and audits a
+`prompt-too-long` row (layer tests: a 512-byte pattern of ASCII, Cyrillic and
+control characters, a grant's 64 patterns, a long non-ASCII URL; a window
+test; a shell test of the refusal and its row). Decision-file writers hold an
+advisory lock (`permissions.lock`), so `--revoke` and an instance's sync no
+longer lose updates; the worker syncs consent on every exit and the window
+waits up to `WORKER_EXIT_WAIT` for it; a guest title containing the prompt
+title is not applied. `PROMPT_INPUT_DELAY` = 500 ms was confirmed by the
+owner. The manual gesture-prompt acceptance remains unmet.
+
+Second review fixes. A refused start merged its first-run answers into the
+decision file without comparing with what it read at open, so a first-run
+Allow could overwrite a `--revoke` Deny stored while the next prompt was
+open; it now skips every entry changed from outside (shell test with two
+required grants, the first revoked while the second is asked; reverting the
+check makes it fail). A request too long for the native prompt was denied
+with only an audit row and the broker's "refused at first run" message; the
+seam now reports it through `HostPrompt::unpresentable`, which the window
+prints as a host diagnostic on stderr, and the native-only denial (the
+browser shows such a request) is documented as a cross-host difference;
+no build-time warning exists. Prompt text is wrapped between whole units,
+so a `\u{...}` escape is never split across lines or pages, and a backslash
+is shown doubled. A page counts as shown only once the window has presented
+it whole (`PromptLayer::presented`), so a burst of Page Down presses no
+longer marks unpresented pages, and a surface smaller than the prompt never
+counts and is reported once. New tests: the `ui.open_url` refusal through
+the shell (the consent probe gained an optional any-HTTPS link longer than a
+prompt shows: denied without a prompt, reported, audited, no Deny stored),
+the window's own refusal branch, a clipped prompt surface, presentation
+counting, unit wrapping and the escaped backslash, the one-pattern bound for
+any characters, and `Consent::end`, the final sync the worker runs on every
+exit. The first-turn deadline starting after first-run approval was accepted
+by the lead. Scoped verification: `verify.py local varta-desktop` (lib 109,
+binaries 8, shell 30 passed), `verify.py local varta-runtime --filter
+permission` (9 passed), the boundary tests (2 passed), the documentation
+tests, formatting and strict Clippy (desktop, also with `gpu`). The worker's
+stop flag and `WORKER_EXIT_WAIT` still have no test (no headless event
+loop), and no full gate was run.

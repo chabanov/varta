@@ -9331,7 +9331,11 @@ this application identity; (3) the prompt seam, or `denied` where none exists.
 - **Required grants** are granted by policy at start (request ∩ ceiling); a
   host with a prompt seam asks once before instantiation when no decision is
   stored. A stored or first-run refusal fails with `PermissionError::
-  RequiredDenied` before any guest code: the application cannot run.
+  RequiredDenied` before any guest code: the application cannot run. Waiting
+  for first-run answers spends no turn deadline: an application instance's
+  first turn (instantiation and `main`) gets its full `deadline_per_turn` from
+  the moment every required grant is decided; an instance `lifetime` still
+  counts from setup.
 - **Optional grants** start from the stored decision; without one they are in
   `prompt` state on a host with a prompt seam and `denied` on headless and
   server hosts. A withheld grant (`denied` or `prompt`) fails every check of
@@ -15725,10 +15729,9 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   roots and the conjunction follow the companion: every concrete resource must
   match a grant of its exact `namespace.operation` id in the request and, when a
   ceiling is given, in the ceiling. An empty ceiling denies everything and never
-  falls back to the request. Required grants within both are granted by policy;
-  optional grants (`"required": false`) are denied, because this shell has no
-  prompt yet and reads no stored decisions. A `ui.open_url` that needs a prompt
-  (a URL matched only by `https://*`) is therefore denied (`not_allowed`).
+  falls back to the request. Stored decisions, first-run approval and prompts
+  of the grants within both follow [native permissions](#native-permissions-p10b)
+  below.
 - **Guest platform effects.** `copy_text` and external link activations follow
   the [command results](embedding.md#view-draft-v0-round-5-command-results) and
   [gesture rules](embedding.md#view-draft-v0-round-6-gestures-and-platform-refusals)
@@ -15769,7 +15772,12 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   by `kv.write`, or a ceiling `kv.read` for other roots, creates nothing. A
   ceiling's own `fsRoots` mapping of the root wins, and then no per-artifact
   directory is created for it. The shell creates the directory private to the
-  user (mode 0700 on Unix). `--data-dir DIR` selects the base; by default it is
+  user (mode 0700 on Unix). The same per-artifact directory holds the shell's
+  permission decision file and audit log
+  ([native permissions](#native-permissions-p10b)); their names contain a `.`,
+  which no root name may, so no root can reach them. `--data-dir DIR` selects
+  the base (made absolute by the binary; `Launch::packaged` refuses a relative
+  base with `ShellError::StorageNotAbsolute`); by default it is
   the per-user data directory (`~/Library/Application Support/Varta/storage` on
   macOS, `$XDG_DATA_HOME/varta/storage` or `~/.local/share/varta/storage` on
   other Unix hosts). The directories are created by `Launch::packaged`, after
@@ -15806,15 +15814,181 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
 - **Embedding.** `varta_desktop::shell::Launch::packaged(&Package { artifact,
   policy, storage, font })` prepares an application without a window (`font`
   is the optional explicit `FontSet` of `--font`, refused for an artifact that
-  ships fonts), `Launch::unprivileged(wasm, font: Option<FontSet>) ->
-  Result<Launch, ShellError>` prepares a manifest-less module and parses its
-  optional font, and `Launch::start(ViewLayout, Arc<dyn PlatformEffects>)`
-  starts it with the host's platform-effects sink; failures are the typed
-  `ShellError`.
-- **Not yet.** Permission prompts and stored decisions (so `https://*` links
-  are denied), manifest `app` metadata, OS bundles and prebuilt per-target
+  ships fonts) and reads its stored decisions,
+  `Launch::unprivileged(wasm, font: Option<FontSet>) -> Result<Launch,
+  ShellError>` prepares a manifest-less module and parses its optional font
+  (no consent state: it is never prompted), `Launch::start(ViewLayout,
+  Arc<dyn PlatformEffects>)` starts it with the host's platform-effects sink
+  and no prompt, and `Launch::start_with(ViewLayout, Arc<dyn PlatformEffects>,
+  Option<shell::consent::HostPrompt>) -> Result<Started, ShellError>` adds
+  the host's prompt seam (`HostPrompt { prompter: Box<dyn
+  PermissionPrompter>, unpresentable: Box<dyn FnMut(&PromptTooLong) + Send> }`)
+  and returns the instance with its `shell::consent::Consent`, which the
+  embedder calls `sync` on between turns and `end` on once when the session
+  ends. `shell::revoke(artifact, storage, capability)` stores a denial;
+  `shell::consent::ConsentStore` reads and writes one identity's decision
+  file. Failures are the typed `ShellError` (`Decisions` for an invalid
+  decision file, `UnknownCapability` for a revocation of an unregistered id).
+- **Not yet.** Manifest `app` metadata, OS bundles and prebuilt per-target
   shells
-  ([desktop packaging](development-plan.md#desktop-packaging)).
+  ([desktop packaging](development-plan.md#desktop-packaging)), and the open
+  permission points below.
+
+#### Native permissions (P10b)
+
+`varta-shell` is a host with a prompt seam for the
+[permission broker v1](#permission-broker-v1-turn_budgets). The broker
+decides; the shell stores, asks and audits.
+
+- **Stored decisions.** Per application identity, in the host-owned
+  `<base>/sha256-<digest>/permissions.json` (`consent::DECISIONS_FILE`): a
+  [decision file](#permission-broker-v1-turn_budgets) holding that identity
+  only, read bounded like a manifest by `Launch::packaged` before any storage
+  directory is created; a malformed or oversized file, or one naming another
+  identity, is `ShellError::Decisions`, never an empty set. The decisions
+  apply on every start, with or without a prompt (`Launch::start` too).
+  Writes validate the file, go to a private (0600 on Unix) temporary file in
+  the same directory and are renamed over the old one. Every
+  read-modify-write (an instance's sync, a refused start's answers,
+  `--revoke`) holds an exclusive advisory lock on `consent::LOCK_FILE` in the
+  same directory (`ConsentStore::locked`), so writers of one identity never
+  interleave, and an instance writes none of its decisions over an entry
+  that changed from outside since it last read the file (a refused start
+  compares with the file it read when it was prepared). `consent::CONSENT_FILES` lists every file the store creates;
+  each name contains a `.`, so none can be a guest file root.
+- **First-run approval.** `Launch::start_with` with a prompter asks for each
+  required grant within the request and the ceiling that has no stored
+  decision, once, before instantiation; no guest code runs while the user
+  decides and no turn deadline is spent. A refusal fails the start with
+  `PermissionError::RequiredDenied`; the binary reports it on stderr
+  (`varta-shell: application failed: required permission ... cannot run`)
+  and exits with failure. Allow and Deny answers are stored (and audited)
+  even when the start is refused, as in the browser host; a dismissal stores
+  nothing, so the next start asks again. A stored denial of a required grant
+  keeps the application from starting until the decision file changes.
+- **Optional grants.** Without a decision they are in `prompt` state; the
+  runtime asks only for `varta.permissions.request` in a user-gesture turn (a
+  trusted click, key or submit), between turns; any other turn resolves to
+  the current state without a prompt, and an operation in `prompt` state is
+  denied recoverably. A `ui.open_url` matched only by `https://*` prompts on
+  each activation through the same window and is never stored.
+- **Prompt window.** The worker thread blocks in the seam (`NativePrompter`)
+  while the event loop shows the question in a separate top-level window
+  titled `Varta permission request`, always on top and not resizable; it is
+  never an L0 node. Its content is `consent::PromptLayer`: the capability id,
+  the application identity and every exact requested pattern in full (the
+  broker's own description), then the package `purpose` as a quote marked by
+  a bar, all drawn with the layer's own 5x9 bitmap font, never with artifact
+  fonts; every character outside printable ASCII is shown as its `\u{...}`
+  escape and a backslash is shown doubled (`\\`), so text that spells
+  `\u{430}` never passes for an escaped character. A pattern is never cut
+  or left out: patterns are wrapped between whole characters, escapes and
+  doubled backslashes (never inside an escape), the first line of each is
+  marked by a host square in the margin, and the resource lines are paged,
+  `consent::RESOURCE_PAGE_LINES` per page, with a host page line ("Page N of
+  M") and a "Next page" button (also Page Down and Page Up). A page counts as
+  shown only once the window has presented its frame on a surface that holds
+  the whole prompt (`PromptLayer::presented`); selecting it with page keys
+  is not enough, so pages skipped in one burst of key presses stay unseen.
+  A surface smaller than the prompt (a display shorter than the prompt) is
+  reported once as a host diagnostic and its pages never count. Allow is
+  drawn disabled, cannot take focus and ignores presses and keys until every
+  page has been presented, and it answers only `consent::PROMPT_INPUT_DELAY`
+  after the last unseen page was; going back from the first page to the
+  last does not count the pages between. Deny and Dismiss work on any page.
+  A request whose resources need more than `consent::MAX_RESOURCE_LINES`
+  lines (`consent::MAX_RESOURCE_PAGES` pages) is never shown
+  (`consent::PromptTooLong`): the consent seam answers it Deny without
+  asking (stored like any Deny of a required or optional grant, whose
+  package request never changes; never stored for a `ui.open_url` link),
+  reports it to `HostPrompt::unpresentable`, which `varta-shell` prints on
+  stderr (`varta-shell: denied the ... permission request without asking:
+  ... no prompt was shown and no user decided`), and appends an audit row
+  with `refused` = `consent::UNPRESENTABLE_PROMPT`, `operation`, `outcome`
+  `denied`, `resource_lines` and `max_resource_lines`; the window repeats
+  the check, denies and reports too. The broker's own row for that answer
+  still has `source` `prompt`; a refused start then also reports the
+  broker's `RequiredDenied`, and later starts report the stored decision.
+  One pattern of `MAX_PATTERN_BYTES` always fits, whatever its characters;
+  as many longest patterns as one grant holds, or a link URL whose shown
+  text needs more lines than that (an ASCII URL near `net::MAX_URL_BYTES`),
+  do not. **Cross-host difference:** the browser
+  host's prompt lists every pattern however long and lets Allow answer at
+  once, so such a request is shown and can be allowed in the browser but is
+  denied without a prompt natively. No build or validation step warns about
+  a request the native prompt cannot show. Only the advisory purpose quote is bounded:
+  at most `consent::MAX_QUOTE_LINES` lines, a longer quote is cut with a
+  visible `...`. The answer buttons keep their place below the text on every
+  page. Deny has the initial focus; Tab and the arrow keys move it among the
+  usable buttons, Enter and Space activate, Escape and the close button
+  dismiss. Apart from the close button, an answer or a page turn needs a
+  press and release on the same button or a non-repeated, non-synthetic key,
+  and such input during the first `consent::PROMPT_INPUT_DELAY` after the
+  window appears is ignored, so a click or key meant for the application
+  cannot answer it. `PROMPT_INPUT_DELAY` is 500 ms (owner decision,
+  2026-11-05).
+- **Isolation from the guest.** The guest's frame, nodes, styles, fonts and
+  title are not inputs of the prompt layer, and the prompt window is a
+  separate surface, so guest content cannot paint over it. A guest title
+  containing `Varta permission request` (in any ASCII case) is not applied:
+  the application's window keeps the host's default title. A lookalike title
+  made of other characters remains possible; the prompt is identified as the
+  shell's only always-on-top window, not by its title alone. While a prompt is
+  open the application's window drops user input (keys, IME, pointer buttons
+  and motion, wheel, touch) instead of sending it to the guest, a press begun
+  there never completes as a click, the guest's pointer leaves, and focusing
+  the application's window hands focus back to the prompt. Window state
+  (resize, scale, theme, redraw, close) still applies; closing the
+  application's window ends the session and the pending prompt is dismissed.
+- **Rate limits.** The broker's, as in the browser host:
+  `permission::MAX_OPEN_PROMPTS` open prompts (the window also dismisses a
+  request beyond them at once) and `permission::MAX_DISMISSALS` dismissals of a
+  grant before they become a stored denial. No cool-down period is applied.
+- **Revocation.** `varta-shell ARTIFACT --revoke CAPABILITY [--data-dir DIR]`
+  (`shell::revoke`) reads and validates the artifact, stores a denial for its
+  identity and exits without a window; an unregistered id is refused. A
+  running instance applies it when `Consent::sync` next rereads the file,
+  before the turns that follow: the worker calls `sync` before running turns
+  whenever turns ran since the last call or `consent::STORE_POLL_INTERVAL`
+  elapsed since the last check, and `sync` rereads the file when the
+  instance's own decisions changed or, at most once per interval, when its
+  size, modification time or (on Unix) inode changed. While a prompt is open
+  the worker waits on it, so a revocation made meanwhile applies after the
+  answer, and wins over it. A denial stored
+  from outside revokes the grant for new operations (operations already
+  authorized keep running) and wins over a concurrent answer in the
+  instance: the instance's reread and write hold the store lock, so it sees
+  a revocation stored before its write and never writes over it, and a
+  revocation stored after its write is seen at the next sync. An allow stored from outside applies only to later starts. A
+  revocation inside the instance (`Application::revoke`) is stored at the
+  next sync.
+- **Audit log.** `Consent::sync` appends every new entry of the broker's
+  bounded audit log to `<base>/sha256-<digest>/permission-audit.jsonl`
+  (`consent::AUDIT_FILE`, mode 0600 on Unix): one JSON object per line with
+  the entry's `sequence`, `at_ms`, `source`, `operation`, `resource` and
+  `outcome`, plus `artifact` and `run` (the session's start in milliseconds
+  since the Unix epoch). Entries the broker dropped before a sync are counted
+  in a `dropped` row; the first-run answers of a refused start are written as
+  `prompt` rows. Once the log holds `consent::MAX_AUDIT_LOG_BYTES` it is
+  moved to `consent::PREVIOUS_AUDIT_FILE` (replacing an older one) before the
+  next rows. The guest can neither read nor write it. Every start of a
+  packaged application writes its start decisions, so the per-artifact
+  directory exists after any start. A failed write ends the session with an
+  error (fail closed). The worker syncs once more on every exit through
+  `Consent::end` (a closed window, a failed turn, a host error; after a
+  failure the failure is reported, not a sync error). Once the event loop ends, the worker runs no
+  new turn, any open prompt is dismissed, and the window waits up to
+  `WORKER_EXIT_WAIT` (1 s) for that final sync; a turn still running after
+  it is not waited for, and its entries are then lost.
+- **Open points (owner decisions, not implemented).** "Allow for this
+  session", a cool-down after refusals and its value, how a refused required
+  permission is presented beyond the stderr message, and the identity key
+  before C3 provenance. (`consent::PROMPT_INPUT_DELAY` = 500 ms was
+  confirmed by the owner on 2026-11-05.) The prompt window has no
+  AccessKit tree, follows no dark appearance and draws only printable ASCII
+  (other characters as escapes); `PermissionPrompt` does not say whether a
+  `ui.open_url` prompt is a one-time activation, so the native prompt uses
+  the same wording for both. Only the macOS prompt window has been run.
 
 ## Developer compatibility inventory
 

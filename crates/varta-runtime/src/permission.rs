@@ -734,6 +734,47 @@ mod tests {
         assert!(!policy.enabled("time.timer"));
     }
 
+    /// A first-run prompt the user answers only after a delay.
+    struct Slow(std::time::Duration);
+    impl PermissionPrompter for Slow {
+        fn prompt(&mut self, _: &PermissionPrompt) -> PromptAnswer {
+            std::thread::sleep(self.0);
+            PromptAnswer::Allow
+        }
+    }
+
+    #[test]
+    fn waiting_for_first_run_approval_spends_no_turn_deadline() {
+        // A test-only per-turn deadline far shorter than the user's answer.
+        const DEADLINE_MS: u64 = 100;
+        let answer = std::time::Duration::from_millis(3 * DEADLINE_MS);
+        let bytes = varta_compiler::compile_typescript_with_profile(
+            "export function main(): void { console.log('started'); }",
+            varta_common::language::LanguageProfile::CheckedF64Utf16V38,
+        )
+        .unwrap();
+        let mut run = crate::RunOptions {
+            requested: vec![grants()[0].clone()],
+            ..crate::RunOptions::default()
+        };
+        run.budgets.deadline_per_turn_ms = Some(DEADLINE_MS);
+        let mut app = crate::VartaRuntime::new()
+            .start_application(
+                &bytes,
+                crate::ApplicationOptions {
+                    run,
+                    prompter: Some(Box::new(Slow(answer))),
+                    ..crate::ApplicationOptions::default()
+                },
+            )
+            .unwrap();
+        // The required timer was asked and allowed before instantiation; the
+        // first turn then ran within its own deadline.
+        assert!(app.failure().is_none(), "{:?}", app.failure());
+        assert_eq!(app.take_output(), ["varta log: started"]);
+        assert_eq!(app.decisions()["time.timer"], StoredDecision::Allow);
+    }
+
     #[test]
     fn descriptors_are_versioned_and_bounded_fields() {
         let d = descriptor(&format!(

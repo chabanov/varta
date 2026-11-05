@@ -5,9 +5,9 @@
 //! (`crates/varta-project/tests/boundaries.rs`). So, as an outside user
 //! would, the tests run the workspace's `varta` binary as a separate
 //! process: Cargo builds it (offline and locked, into the same target
-//! directory) and `varta build` compiles `fixtures/shell-probe`, and
-//! `fixtures/view-probe` with its declared fonts, into portable v38
-//! artifacts in temporary directories. Each test then writes
+//! directory) and `varta build` compiles `fixtures/shell-probe`,
+//! `fixtures/consent-probe`, and `fixtures/view-probe` with its declared
+//! fonts, into portable v38 artifacts in temporary directories. Each test then writes
 //! its own packaged artifact with `varta_artifact::Artifact`, as the
 //! `varta-launcher` tests do, with the manifest (the package request) it
 //! needs.
@@ -72,6 +72,11 @@ const VIEW_PROBE_FONTS: [(&str, &str); 4] = [
 const FONT_FIXTURES: &str = "../varta-view/tests/fixtures";
 const VIEW_PROBE_FONT_DIRECTORY: &str = "fonts";
 
+/// The consent probe's sources and configuration: a required `kv.write`,
+/// an optional `kv.read` and buttons that request it, and an optional
+/// any-HTTPS `ui.open_url` with a link longer than a native prompt shows.
+const CONSENT_PROBE_DIRECTORY: &str = "tests/fixtures/consent-probe";
+
 /// The probe artifact as `varta build` wrote it (Wasm and manifest), built
 /// once per test binary.
 pub fn probe() -> &'static Artifact {
@@ -91,6 +96,13 @@ pub fn view_probe() -> &'static PackagedArtifact {
             .collect();
         build(VIEW_PROBE_DIRECTORY, &fonts)
     })
+}
+
+/// The consent probe as `varta build` wrote it (Wasm and a manifest with
+/// `required` and `purpose`), built once per test binary.
+pub fn consent_probe() -> &'static Artifact {
+    static PROBE: OnceLock<Artifact> = OnceLock::new();
+    PROBE.get_or_init(|| build(CONSENT_PROBE_DIRECTORY, &[]).artifact)
 }
 
 /// Copy a fixture project (and `fonts` into its `fonts` directory), build it

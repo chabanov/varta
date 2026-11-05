@@ -176,6 +176,7 @@ impl ApplicationHandler<GuiEvent> for Host {
                     window.request_redraw();
                 }
             }
+            GuiEvent::Prompt(request) => self.open_prompt(event_loop, *request),
             GuiEvent::Error(error) => {
                 self.error = Some(error);
                 event_loop.exit();
@@ -183,11 +184,34 @@ impl ApplicationHandler<GuiEvent> for Host {
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // The prompt window's events go to the prompt only.
+        if self
+            .prompt
+            .as_ref()
+            .and_then(|prompt| prompt.window())
+            .is_some_and(|window| window.id() == id)
+        {
+            if let Err(error) = self.prompt_event(event) {
+                self.error = Some(error);
+                event_loop.exit();
+            }
+            return;
+        }
         if self.window.as_ref().is_none_or(|window| window.id() != id) {
             return;
         }
         if let (Some(adapter), Some(window)) = (&mut self.accessibility_adapter, &self.window) {
             adapter.process_event(window, &event);
+        }
+        // While a prompt is open the guest receives no user input, and the
+        // application's window hands focus back to the prompt.
+        if !self.admits(&event) {
+            return;
+        }
+        if matches!(event, WindowEvent::Focused(true))
+            && let Some(window) = self.prompt.as_ref().and_then(|prompt| prompt.window())
+        {
+            window.focus_window();
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),

@@ -13,18 +13,23 @@
 //! the test needs. No test touches the system clipboard or browser.
 mod support;
 
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use support::{probe, view_probe};
+use support::{consent_probe, probe, view_probe};
 use varta_artifact::{Artifact, Resources};
 use varta_common::Manifest;
-use varta_desktop::shell::{
-    FontSet, Launch, Package, STORAGE_DIRECTORY_PREFIX, ShellError, storage_directory,
+use varta_common::permission::{PermissionError, PermissionPrompt, PromptAnswer, StoredDecision};
+use varta_desktop::shell::Started;
+use varta_desktop::shell::consent::{
+    AUDIT_FILE, CONSENT_FILES, ConsentStore, DECISIONS_FILE, HostPrompt, MAX_RESOURCE_LINES,
+    STORE_POLL_INTERVAL, UNPRESENTABLE_PROMPT,
 };
+use varta_desktop::shell::{FontSet, Launch, Package, ShellError, storage_directory};
 use varta_runtime::{Application, Step, ViewLayout};
 use varta_view::{PlatformEffects, PlatformRefusal};
 
@@ -272,6 +277,37 @@ fn storage_of(temp: &Temp, artifact: &Path) -> PathBuf {
     storage_directory(&temp.storage(), &varta_runtime::artifact_identity(&wasm)).unwrap()
 }
 
+/// The names in `directory`; none when it does not exist.
+fn entries(directory: &Path) -> Vec<String> {
+    std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Assert that host storage holds nothing but the artifact's own consent
+/// files (every packaged start writes its audit log): no KV root or file,
+/// no other artifact's directory and nothing else in the storage base.
+fn assert_only_consent_files(temp: &Temp, artifact: &Path) {
+    let directory = storage_of(temp, artifact);
+    let own = directory
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let base = entries(&temp.storage());
+    assert!(base.iter().all(|name| *name == own), "{base:?}");
+    let files = entries(&directory);
+    assert!(
+        files
+            .iter()
+            .all(|name| CONSENT_FILES.contains(&name.as_str())),
+        "{files:?}"
+    );
+}
+
 fn database_of(temp: &Temp, artifact: &Path) -> PathBuf {
     storage_of(temp, artifact).join("data").join(DATABASE)
 }
@@ -371,12 +407,12 @@ fn net_request_to_an_ungranted_url_is_denied_before_any_socket() {
         ]
     );
     assert_eq!(server.accepted(), 0);
-    // The package requests no KV: nothing is created for it.
-    assert!(!storage_of(&temp, &artifact).exists());
+    // The package requests no KV: no root is created for it.
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
-fn kv_without_a_grant_is_denied_before_any_file_exists() {
+fn kv_without_a_grant_is_denied_before_any_kv_file_exists() {
     let temp = Temp::new();
     // `fsRoots` still declares `data`, but nothing requests `kv.*`.
     let artifact = package(&temp, serde_json::json!([]));
@@ -393,8 +429,7 @@ fn kv_without_a_grant_is_denied_before_any_file_exists() {
             DONE
         ]
     );
-    assert!(!storage_of(&temp, &artifact).exists());
-    assert!(!temp.storage().exists());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -458,23 +493,10 @@ fn a_ceiling_mapping_of_a_kv_root_wins_over_host_owned_storage() {
         ]
     );
     // The database is in the directory the ceiling names, and the shell
-    // created no per-artifact directory (here, not even the base).
+    // created no root of its own (only its consent files, if any, under the
+    // artifact's directory).
     assert!(data.join(DATABASE).is_file());
-    assert!(!storage_of(&temp, &artifact).exists());
-    let artifact_directories = std::fs::read_dir(temp.storage())
-        .into_iter()
-        .flatten()
-        .filter(|entry| {
-            entry.as_ref().is_ok_and(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(STORAGE_DIRECTORY_PREFIX)
-            })
-        })
-        .count();
-    assert_eq!(artifact_directories, 0);
-    assert!(!temp.storage().exists());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -505,7 +527,7 @@ fn storage_is_created_only_for_roots_the_ceiling_can_open() {
             DONE
         ]
     );
-    assert!(!temp.storage().exists());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -530,7 +552,7 @@ fn an_empty_ceiling_denies_everything_and_never_falls_back() {
         ]
     );
     assert_eq!(server.accepted(), 0);
-    assert!(!temp.storage().exists());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -557,7 +579,7 @@ fn grants_match_the_exact_operation() {
             DONE
         ]
     );
-    assert!(!temp.storage().exists());
+    assert_only_consent_files(&temp, &artifact);
     // A ceiling never names an operation the registry does not know.
     let wildcard = policy(
         &temp,
@@ -1214,4 +1236,762 @@ fn tampered_oversized_and_malformed_fonts_are_refused_before_guest_start() {
 
 fn probe_wasm_of(artifact: &Path) -> Vec<u8> {
     Artifact::read(artifact).unwrap().wasm
+}
+
+// Native consent (P10b) without a window: a scripted decision provider
+// stands in for the host prompt window and answers the broker's prompts.
+
+/// The consent probe's required and optional grants and their purposes.
+const REQUIRED_GRANT: &str = "kv.write";
+const OPTIONAL_GRANT: &str = "kv.read";
+const REQUIRED_PURPOSE: &str = "Save your notes on this device";
+const OPTIONAL_PURPOSE: &str = "Read your saved notes";
+const DATABASE_PATH: &str = "/data/app.kv";
+/// The consent probe's last line of main.
+const READY: &str = "probe ready";
+
+/// A decision provider that answers from a script and records every prompt
+/// it was shown, and every request the consent seam refused to show; an
+/// unscripted prompt is dismissed.
+#[derive(Clone, Default)]
+struct Scripted {
+    answers: Arc<Mutex<VecDeque<PromptAnswer>>>,
+    shown: Arc<Mutex<Vec<PermissionPrompt>>>,
+    refused: Arc<Mutex<Vec<String>>>,
+    /// How long the "user" takes to answer.
+    delay: Duration,
+}
+impl Scripted {
+    fn new(answers: &[PromptAnswer]) -> Self {
+        let scripted = Self::default();
+        scripted.answer(answers);
+        scripted
+    }
+    fn answer(&self, answers: &[PromptAnswer]) {
+        self.answers.lock().unwrap().extend(answers);
+    }
+    fn shown(&self) -> Vec<PermissionPrompt> {
+        self.shown.lock().unwrap().clone()
+    }
+    /// The host diagnostics of requests refused without a prompt.
+    fn refused(&self) -> Vec<String> {
+        self.refused.lock().unwrap().clone()
+    }
+    /// The host prompt `prompter` stands in for, reporting refusals here.
+    fn host(&self, prompter: Box<dyn varta_runtime::PermissionPrompter>) -> HostPrompt {
+        let refused = self.refused.clone();
+        HostPrompt {
+            prompter,
+            unpresentable: Box::new(move |error| refused.lock().unwrap().push(error.to_string())),
+        }
+    }
+    /// `(capability, required)` of every prompt shown.
+    fn asked(&self) -> Vec<(String, bool)> {
+        self.shown()
+            .into_iter()
+            .map(|prompt| (prompt.capability, prompt.required))
+            .collect()
+    }
+}
+impl varta_runtime::PermissionPrompter for Scripted {
+    fn prompt(&mut self, prompt: &PermissionPrompt) -> PromptAnswer {
+        self.shown.lock().unwrap().push(prompt.clone());
+        std::thread::sleep(self.delay);
+        self.answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(PromptAnswer::Dismiss)
+    }
+}
+
+/// Write the consent probe as a packaged artifact, with `edit` applied to
+/// its built manifest.
+fn package_consent(temp: &Temp, edit: impl FnOnce(&mut serde_json::Value)) -> PathBuf {
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&consent_probe().manifest.to_bytes().unwrap()).unwrap();
+    edit(&mut manifest);
+    let path = temp.path("consent.wasm");
+    Artifact {
+        wasm: consent_probe().wasm.clone(),
+        manifest: Manifest::parse(&serde_json::to_vec(&manifest).unwrap()).unwrap(),
+    }
+    .write_wasm(&path)
+    .unwrap();
+    path
+}
+
+fn start_consent(temp: &Temp, artifact: &Path, scripted: &Scripted) -> Result<Started, ShellError> {
+    prepare(temp, artifact, None)?.start_with(
+        layout(),
+        effects(),
+        Some(scripted.host(Box::new(scripted.clone()))),
+    )
+}
+
+/// Step the instance, syncing its consent state between turns as the
+/// window's worker does, until a line after the first `from` lines is
+/// `expected`.
+fn settle_synced(started: &mut Started, lines: &mut Vec<String>, from: usize, expected: &str) {
+    let deadline = Instant::now() + PROBE_DEADLINE;
+    let consent = started.consent.as_mut().unwrap();
+    let app = &mut started.application;
+    loop {
+        consent.sync(app).unwrap();
+        lines.extend(
+            app.take_output()
+                .into_iter()
+                .map(|line| line.strip_prefix(LOG).unwrap_or(&line).to_owned()),
+        );
+        if lines[from.min(lines.len())..]
+            .iter()
+            .any(|line| line == expected)
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "no {expected:?}: {lines:?}");
+        match app.step(Some(STEP_WAIT)) {
+            Step::Turn(_) | Step::Idle | Step::Finished { .. } => {}
+            Step::Failed => panic!("consent probe failed: {:?} {lines:?}", app.failure()),
+        }
+    }
+}
+
+/// Click `id` and settle until a new line is `expected`.
+fn click_until(started: &mut Started, lines: &mut Vec<String>, id: &str, expected: &str) {
+    let from = lines.len();
+    click(&mut started.application, id);
+    settle_synced(started, lines, from, expected);
+}
+
+fn store_of(temp: &Temp, artifact: &Path) -> ConsentStore {
+    let wasm = Artifact::read(artifact).unwrap().wasm;
+    ConsentStore::new(&temp.storage(), &varta_runtime::artifact_identity(&wasm)).unwrap()
+}
+
+fn decisions(entries: &[(&str, StoredDecision)]) -> BTreeMap<String, StoredDecision> {
+    entries
+        .iter()
+        .map(|(id, decision)| ((*id).to_owned(), *decision))
+        .collect()
+}
+
+/// The audit log's rows.
+fn audit_rows(store: &ConsentStore) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(store.audit_path())
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+/// Whether a row records `operation` on `resource` from `source` with
+/// `outcome`.
+fn audited(
+    rows: &[serde_json::Value],
+    operation: &str,
+    resource: &str,
+    source: &str,
+    outcome: &str,
+) -> bool {
+    rows.iter().any(|row| {
+        row["operation"] == operation
+            && row["resource"] == resource
+            && row["source"] == source
+            && row["outcome"] == outcome
+    })
+}
+
+fn required_denied(result: Result<Started, ShellError>) -> bool {
+    matches!(
+        result,
+        Err(ShellError::Runtime(varta_runtime::RuntimeError::Permission(
+            PermissionError::RequiredDenied { ref id, .. }
+        ))) if id == REQUIRED_GRANT
+    )
+}
+
+#[test]
+fn first_run_asks_each_required_grant_once_before_any_guest_code() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    // Only the required grant was asked, with the broker's description:
+    // the identity, the exact requested scope and the purpose as a quote.
+    let shown = scripted.shown();
+    assert_eq!(scripted.asked(), [(REQUIRED_GRANT.to_owned(), true)]);
+    assert_eq!(shown[0].artifact, store.identity());
+    assert_eq!(shown[0].scope, [DATABASE_PATH]);
+    assert_eq!(shown[0].purpose.as_deref(), Some(REQUIRED_PURPOSE));
+    // The answer is stored before main's turns finish.
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[(REQUIRED_GRANT, StoredDecision::Allow)])
+    );
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    // Main's request is not a user gesture: no prompt, the optional grant
+    // stays in prompt state and its operation is denied recoverably.
+    assert_eq!(
+        lines,
+        ["start prompt", KV_DENIED, "start kv NotAllowedError", READY]
+    );
+    assert_eq!(scripted.shown().len(), 1);
+    drop(started);
+    // A later start of the same artifact is not asked again.
+    let again = Scripted::default();
+    let mut started = start_consent(&temp, &artifact, &again).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    assert!(again.shown().is_empty());
+    assert_eq!(lines[0], "start prompt");
+    // The first-run answer is audited with its source.
+    let rows = audit_rows(&store);
+    assert!(
+        audited(&rows, REQUIRED_GRANT, "", "prompt", "granted"),
+        "{rows:?}"
+    );
+    assert!(
+        audited(&rows, REQUIRED_GRANT, "", "stored", "granted"),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn a_refused_required_grant_stops_the_start_and_is_stored_unless_dismissed() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    // Deny: the start fails before any guest code and the denial is stored
+    // and audited, so later starts fail without asking.
+    let scripted = Scripted::new(&[PromptAnswer::Deny]);
+    assert!(required_denied(start_consent(&temp, &artifact, &scripted)));
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[(REQUIRED_GRANT, StoredDecision::Deny)])
+    );
+    assert!(audited(
+        &audit_rows(&store),
+        REQUIRED_GRANT,
+        "",
+        "prompt",
+        "denied"
+    ));
+    let again = Scripted::new(&[PromptAnswer::Allow]);
+    assert!(required_denied(start_consent(&temp, &artifact, &again)));
+    assert!(again.shown().is_empty());
+    // A headless start (no prompt) honours the stored denial too.
+    assert!(matches!(
+        prepare(&temp, &artifact, None)
+            .unwrap()
+            .start(layout(), effects()),
+        Err(ShellError::Runtime(
+            varta_runtime::RuntimeError::Permission(_)
+        ))
+    ));
+    // Dismiss refuses this start only: nothing is stored, the next start
+    // asks again.
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Dismiss]);
+    assert!(required_denied(start_consent(&temp, &artifact, &scripted)));
+    assert!(store.load().unwrap().is_empty());
+    let again = Scripted::new(&[PromptAnswer::Allow]);
+    assert!(start_consent(&temp, &artifact, &again).is_ok());
+    assert_eq!(again.asked(), [(REQUIRED_GRANT.to_owned(), true)]);
+}
+
+#[test]
+fn a_request_that_cannot_be_shown_in_full_is_denied_without_a_prompt_and_audited() {
+    use varta_common::{MAX_GRANT_PATTERNS, MAX_PATTERN_BYTES};
+    // The required grant requests as many patterns of the longest length as
+    // one grant holds: more lines than any prompt shows.
+    const COMPONENT: usize = 100;
+    let patterns: Vec<String> = (0..MAX_GRANT_PATTERNS)
+        .map(|index| {
+            let mut pattern = format!("/data/{index:02}");
+            while pattern.len() + 1 + COMPONENT <= MAX_PATTERN_BYTES {
+                pattern.push('/');
+                pattern.push_str(&"n".repeat(COMPONENT));
+            }
+            pattern
+        })
+        .collect();
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |manifest| {
+        for grant in manifest["capabilities"].as_array_mut().unwrap() {
+            if grant["id"] == REQUIRED_GRANT {
+                grant["patterns"] = serde_json::json!(patterns);
+            }
+        }
+    });
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow]);
+    assert!(required_denied(start_consent(&temp, &artifact, &scripted)));
+    // Never shown, so the scripted "user" never answered it; the host was
+    // told why, in words that say no user decided.
+    assert!(scripted.shown().is_empty());
+    let refused = scripted.refused();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].starts_with(&format!(
+            "denied the {REQUIRED_GRANT} permission request without asking"
+        )) && refused[0].contains("no user decided"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[(REQUIRED_GRANT, StoredDecision::Deny)])
+    );
+    let rows = audit_rows(&store);
+    assert!(
+        rows.iter().any(|row| row["operation"] == REQUIRED_GRANT
+            && row["refused"] == UNPRESENTABLE_PROMPT
+            && row["outcome"] == "denied"
+            && row["artifact"] == store.identity()
+            && row["resource_lines"]
+                .as_u64()
+                .is_some_and(|lines| lines > MAX_RESOURCE_LINES as u64)
+            && row["max_resource_lines"] == MAX_RESOURCE_LINES),
+        "{rows:?}"
+    );
+    assert!(audited(&rows, REQUIRED_GRANT, "", "prompt", "denied"));
+}
+
+/// The consent probe's optional any-HTTPS link grant.
+const LINK_GRANT: &str = varta_common::view::OPEN_URL_CAPABILITY;
+
+#[test]
+fn a_link_that_cannot_be_shown_in_full_is_denied_reported_audited_and_never_stored() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    // The link grant was allowed earlier; as the any-HTTPS form, each
+    // activation still prompts with the full URL.
+    store
+        .save(&decisions(&[(LINK_GRANT, StoredDecision::Allow)]))
+        .unwrap();
+    let scripted = Scripted::new(&[PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    // The "user" would allow the link if it were shown; it is not.
+    scripted.answer(&[PromptAnswer::Allow]);
+    click_until(&mut started, &mut lines, "long", &open_url(NOT_ALLOWED));
+    assert_eq!(scripted.asked(), [(REQUIRED_GRANT.to_owned(), true)]);
+    let refused = scripted.refused();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].starts_with(&format!(
+            "denied the {LINK_GRANT} permission request without asking"
+        )),
+        "{refused:?}"
+    );
+    // No Deny is stored for a link: the earlier decision stays.
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (LINK_GRANT, StoredDecision::Allow),
+            (REQUIRED_GRANT, StoredDecision::Allow),
+        ])
+    );
+    let rows = audit_rows(&store);
+    assert!(
+        rows.iter().any(|row| row["operation"] == LINK_GRANT
+            && row["refused"] == UNPRESENTABLE_PROMPT
+            && row["outcome"] == "denied"
+            && row["resource_lines"]
+                .as_u64()
+                .is_some_and(|lines| lines > MAX_RESOURCE_LINES as u64)),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row["operation"] == LINK_GRANT
+            && row["source"] == "prompt"
+            && row["outcome"] == "denied"
+            && row["resource"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("https://docs.test/"))),
+        "{rows:?}"
+    );
+}
+
+/// A decision provider that answers like [`Scripted`] and, while asking
+/// the prompt after an Allow, stores a revocation of the allowed grant from
+/// outside the instance (`varta-shell ARTIFACT --revoke` while the prompt
+/// is open).
+struct RevokingWhileAsked {
+    scripted: Scripted,
+    revoke: Box<dyn FnMut(&str) + Send>,
+    allowed: Option<String>,
+}
+impl varta_runtime::PermissionPrompter for RevokingWhileAsked {
+    fn prompt(&mut self, prompt: &PermissionPrompt) -> PromptAnswer {
+        if let Some(id) = self.allowed.take() {
+            (self.revoke)(&id);
+        }
+        let answer = self.scripted.prompt(prompt);
+        if answer == PromptAnswer::Allow {
+            self.allowed = Some(prompt.capability.clone());
+        }
+        answer
+    }
+}
+
+#[test]
+fn a_refused_start_never_stores_an_answer_over_a_revocation_made_while_asking() {
+    let temp = Temp::new();
+    // Both KV grants required: the first is allowed, the second denied,
+    // and the first is revoked from outside while the second is asked.
+    let artifact = package_consent(&temp, |manifest| {
+        for grant in manifest["capabilities"].as_array_mut().unwrap() {
+            if grant["id"] == OPTIONAL_GRANT {
+                grant["required"] = true.into();
+            }
+        }
+    });
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow, PromptAnswer::Deny]);
+    let (revoked, storage) = (artifact.clone(), temp.storage());
+    let prompter = RevokingWhileAsked {
+        scripted: scripted.clone(),
+        revoke: Box::new(move |id| {
+            varta_desktop::shell::revoke(&revoked, &storage, id).unwrap();
+        }),
+        allowed: None,
+    };
+    let started = prepare(&temp, &artifact, None).unwrap().start_with(
+        layout(),
+        effects(),
+        Some(scripted.host(Box::new(prompter))),
+    );
+    assert!(matches!(
+        started,
+        Err(ShellError::Runtime(
+            varta_runtime::RuntimeError::Permission(PermissionError::RequiredDenied { .. })
+        ))
+    ));
+    let asked = scripted.asked();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    let (allowed, denied) = (asked[0].0.as_str(), asked[1].0.as_str());
+    // The revocation wins over the earlier Allow; the Deny is stored.
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (allowed, StoredDecision::Deny),
+            (denied, StoredDecision::Deny)
+        ])
+    );
+    // The user's answers are still audited as given.
+    let rows = audit_rows(&store);
+    assert!(audited(&rows, allowed, "", "prompt", "granted"), "{rows:?}");
+    assert!(audited(&rows, denied, "", "prompt", "denied"), "{rows:?}");
+}
+
+#[test]
+fn ending_a_session_stores_and_audits_what_turns_decided_since_the_last_sync() {
+    const TURN_FAILED: &str = "turn failed";
+    const SYNC_FAILED: &str = "sync failed";
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow, PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    // A gesture's answer in turns that run without a sync, as when the
+    // window closes or a turn fails right after it.
+    click(&mut started.application, "ask");
+    settle(&mut started.application, &mut lines, "ask kv ok");
+    assert_eq!(store.load().unwrap().get(OPTIONAL_GRANT), None);
+    let consent = started.consent.as_mut().unwrap();
+    // The session failed: the last sync still runs and the failure, not
+    // the sync's outcome, is what the session reports.
+    assert_eq!(
+        consent.end(&mut started.application, Err(TURN_FAILED), |_| SYNC_FAILED),
+        Err(TURN_FAILED)
+    );
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (OPTIONAL_GRANT, StoredDecision::Allow),
+            (REQUIRED_GRANT, StoredDecision::Allow),
+        ])
+    );
+    assert!(audited(
+        &audit_rows(&store),
+        OPTIONAL_GRANT,
+        "",
+        "prompt",
+        "granted"
+    ));
+    // A session that ended normally reports the sync's own outcome.
+    assert_eq!(
+        consent.end(&mut started.application, Ok(()), |_| SYNC_FAILED),
+        Ok(())
+    );
+}
+
+#[test]
+fn optional_grants_are_asked_only_in_a_gesture_and_the_answer_persists() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    // A gesture that only uses the grant does not prompt.
+    click_until(&mut started, &mut lines, "use", "use kv NotAllowedError");
+    assert_eq!(scripted.shown().len(), 1);
+    // A request in a click prompts once, between turns.
+    scripted.answer(&[PromptAnswer::Allow]);
+    click_until(&mut started, &mut lines, "ask", "ask kv ok");
+    let shown = scripted.shown();
+    assert_eq!(shown.len(), 2);
+    assert_eq!(shown[1].capability, OPTIONAL_GRANT);
+    assert!(!shown[1].required);
+    assert_eq!(shown[1].scope, [DATABASE_PATH]);
+    assert_eq!(shown[1].purpose.as_deref(), Some(OPTIONAL_PURPOSE));
+    assert!(lines.iter().any(|line| line == "ask granted"), "{lines:?}");
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (OPTIONAL_GRANT, StoredDecision::Allow),
+            (REQUIRED_GRANT, StoredDecision::Allow),
+        ])
+    );
+    let rows = audit_rows(&store);
+    assert!(
+        audited(&rows, OPTIONAL_GRANT, "", "prompt", "granted"),
+        "{rows:?}"
+    );
+    assert!(audited(
+        &rows,
+        OPTIONAL_GRANT,
+        DATABASE_PATH,
+        "policy",
+        "denied"
+    ));
+    assert!(audited(
+        &rows,
+        OPTIONAL_GRANT,
+        DATABASE_PATH,
+        "stored",
+        "granted"
+    ));
+    drop(started);
+    // The stored allow applies at the next start, prompted or headless.
+    let again = Scripted::default();
+    let mut started = start_consent(&temp, &artifact, &again).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    assert_eq!(lines, ["start granted", "start kv ok", READY]);
+    assert!(again.shown().is_empty());
+    let mut app = prepare(&temp, &artifact, None)
+        .unwrap()
+        .start(layout(), effects())
+        .unwrap();
+    let mut lines = Vec::new();
+    settle(&mut app, &mut lines, READY);
+    assert_eq!(lines, ["start granted", "start kv ok", READY]);
+}
+
+#[test]
+fn prompts_are_rate_limited_and_repeated_dismissals_become_a_stored_denial() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    // Two requests in one gesture open one prompt
+    // (`permission::MAX_OPEN_PROMPTS`): the second resolves at once to
+    // the current state.
+    assert_eq!(varta_common::permission::MAX_OPEN_PROMPTS, 1);
+    scripted.answer(&[PromptAnswer::Dismiss]);
+    click_until(&mut started, &mut lines, "twice", "first prompt");
+    assert!(
+        lines.iter().any(|line| line == "second prompt"),
+        "{lines:?}"
+    );
+    assert_eq!(scripted.shown().len(), 2);
+    // `permission::MAX_DISMISSALS` dismissals become a stored denial; then
+    // a gesture no longer prompts.
+    let dismissals = varta_common::permission::MAX_DISMISSALS as usize;
+    for remaining in (1..dismissals).rev() {
+        scripted.answer(&[PromptAnswer::Dismiss]);
+        let expected = if remaining == 1 {
+            "ask denied"
+        } else {
+            "ask prompt"
+        };
+        click_until(&mut started, &mut lines, "ask", expected);
+    }
+    assert_eq!(scripted.shown().len(), 1 + dismissals);
+    click_until(&mut started, &mut lines, "ask", "ask kv NotAllowedError");
+    assert_eq!(scripted.shown().len(), 1 + dismissals);
+    assert_eq!(store.load().unwrap()[OPTIONAL_GRANT], StoredDecision::Deny);
+    drop(started);
+    // The stored denial applies at the next start without a prompt.
+    let again = Scripted::new(&[PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &again).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    click_until(&mut started, &mut lines, "ask", "ask denied");
+    assert!(again.shown().is_empty());
+}
+
+#[test]
+fn revocation_applies_to_new_operations_and_is_stored() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow, PromptAnswer::Allow]);
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+    click_until(&mut started, &mut lines, "ask", "ask kv ok");
+    click_until(&mut started, &mut lines, "use", "use kv ok");
+    // Another process (`varta-shell ARTIFACT --revoke kv.read`) stores a
+    // denial; the running instance applies it at its next sync.
+    let identity =
+        varta_desktop::shell::revoke(&artifact, &temp.storage(), OPTIONAL_GRANT).unwrap();
+    assert_eq!(identity, store.identity());
+    std::thread::sleep(STORE_POLL_INTERVAL);
+    click_until(&mut started, &mut lines, "use", "use kv NotAllowedError");
+    let rows = audit_rows(&store);
+    assert!(
+        audited(&rows, OPTIONAL_GRANT, "", "stored", "denied"),
+        "{rows:?}"
+    );
+    assert!(audited(
+        &rows,
+        OPTIONAL_GRANT,
+        DATABASE_PATH,
+        "stored",
+        "denied"
+    ));
+    // A revocation inside the instance is stored for later starts.
+    assert!(started.application.revoke(REQUIRED_GRANT));
+    started
+        .consent
+        .as_mut()
+        .unwrap()
+        .sync(&mut started.application)
+        .unwrap();
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[
+            (OPTIONAL_GRANT, StoredDecision::Deny),
+            (REQUIRED_GRANT, StoredDecision::Deny),
+        ])
+    );
+    drop(started);
+    assert!(required_denied(start_consent(
+        &temp,
+        &artifact,
+        &Scripted::default()
+    )));
+    // Only registered capabilities can be revoked.
+    assert!(matches!(
+        varta_desktop::shell::revoke(&artifact, &temp.storage(), "kv.everything"),
+        Err(ShellError::UnknownCapability(_))
+    ));
+}
+
+#[test]
+fn audit_rows_carry_identity_run_and_ordered_sequences() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let store = store_of(&temp, &artifact);
+    for _ in 0..2 {
+        let scripted = Scripted::new(&[PromptAnswer::Allow]);
+        let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+        let mut lines = Vec::new();
+        settle_synced(&mut started, &mut lines, 0, READY);
+    }
+    let rows = audit_rows(&store);
+    let mut runs: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+    for row in &rows {
+        assert_eq!(row["artifact"], store.identity(), "{row}");
+        runs.entry(row["run"].as_u64().unwrap())
+            .or_default()
+            .push(row["sequence"].as_u64().unwrap());
+        assert!(row["at_ms"].is_u64());
+    }
+    // Two sessions (their run stamps may coincide within a millisecond),
+    // each with strictly increasing sequences from 1.
+    let sequences: Vec<u64> = runs.values().flatten().copied().collect();
+    assert_eq!(
+        sequences.iter().filter(|sequence| **sequence == 1).count(),
+        2
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row["source"].is_string() && row["outcome"].is_string())
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for name in [DECISIONS_FILE, AUDIT_FILE] {
+            let path = storage_of(&temp, &artifact).join(name);
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "{name} must be private: {mode:o}");
+        }
+    }
+}
+
+#[test]
+fn waiting_for_first_run_approval_spends_no_turn_deadline() {
+    // A test-only per-turn deadline far shorter than the user's answer.
+    const DEADLINE_MS: u64 = 200;
+    const ANSWER_DELAY: Duration = Duration::from_millis(3 * DEADLINE_MS);
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |manifest| {
+        manifest["budgets"] = serde_json::json!({"deadlinePerTurnMs": DEADLINE_MS});
+    });
+    let scripted = Scripted {
+        delay: ANSWER_DELAY,
+        ..Scripted::new(&[PromptAnswer::Allow])
+    };
+    let mut started = start_consent(&temp, &artifact, &scripted).unwrap();
+    assert!(
+        started.application.failure().is_none(),
+        "{:?}",
+        started.application.failure()
+    );
+    let mut lines = Vec::new();
+    settle_synced(&mut started, &mut lines, 0, READY);
+}
+
+#[test]
+fn malformed_or_foreign_decision_files_are_typed_errors_before_start() {
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |_| {});
+    let directory = storage_of(&temp, &artifact);
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = directory.join(DECISIONS_FILE);
+    std::fs::write(&file, "{bad").unwrap();
+    assert!(matches!(
+        prepare(&temp, &artifact, None),
+        Err(ShellError::Decisions { .. })
+    ));
+    // A file holding another application's decisions is refused, never
+    // read as this one's.
+    let other = "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    std::fs::write(
+        &file,
+        format!(r#"{{"applications":[{{"artifact":"{other}","decisions":[{{"id":"kv.read","decision":"allow"}}]}}]}}"#),
+    )
+    .unwrap();
+    assert!(matches!(
+        prepare(&temp, &artifact, None),
+        Err(ShellError::Decisions { .. })
+    ));
+    std::fs::remove_file(&file).unwrap();
+    assert!(prepare(&temp, &artifact, None).is_ok());
 }

@@ -3,6 +3,7 @@ use super::ime::translate_ime;
 use crate::input_queue::PendingKey;
 use crate::pixels::{WHITE_RGB, update_rgb};
 use std::sync::Arc;
+use std::time::Instant;
 use winit::event::Ime;
 
 fn headless_preview() -> (super::Host, std::sync::mpsc::Receiver<super::WorkerMessage>) {
@@ -48,6 +49,7 @@ fn headless_preview() -> (super::Host, std::sync::mpsc::Receiver<super::WorkerMe
             #[cfg(feature = "gpu")]
             gpu_failure: None,
             console: super::Console::SILENT,
+            prompt: None,
         },
         receiver,
     )
@@ -384,4 +386,424 @@ fn a_required_gpu_that_fails_to_initialize_is_an_error_and_auto_falls_back() {
     let error = host.gpu_unavailable(REASON.into()).unwrap_err();
     assert!(error.contains(REASON), "{error}");
     assert_eq!(host.gpu_failure.as_deref(), Some(REASON));
+}
+
+/// A broker that grants nothing, for a layout-only guest view.
+struct NoGrants;
+impl varta_view::Broker for NoGrants {
+    fn link_requested(&self, _: &str) -> bool {
+        false
+    }
+    fn open_url(&mut self, _: &str) -> varta_view::Access {
+        varta_view::Access::Denied
+    }
+    fn clipboard_write(&mut self) -> varta_view::Access {
+        varta_view::Access::Denied
+    }
+}
+
+/// A presented guest frame whose topmost fixed element covers the whole
+/// `size`x`size` viewport, as a guest imitating or covering a prompt would.
+fn present_covering_frame(host: &mut super::Host, size: u32) -> u32 {
+    use varta_common::view::{CssProperty as P, Tag};
+    const COVER: u32 = 2;
+    let mut batch = varta_view::BatchWriter::new();
+    batch
+        .create_element(COVER, Tag::Div)
+        .insert(1, COVER, 0)
+        .set_style(COVER, P::Position, "fixed")
+        .set_style(COVER, P::ZIndex, "2147483647")
+        .set_style(COVER, P::Top, "0px")
+        .set_style(COVER, P::Left, "0px")
+        .set_style(COVER, P::Width, "100%")
+        .set_style(COVER, P::Height, "100%")
+        .set_style(COVER, P::BackgroundColor, "#f00");
+    let mut view = varta_view::View::default();
+    view.commit(&batch.finish(), false, &mut NoGrants).unwrap();
+    let image = view.rasterize_boxes(size, size).unwrap();
+    host.frame = Some(super::PresentedFrame {
+        clipboard_pending: false,
+        accessibility: None,
+        timing: None,
+        scene: None,
+        rgb: vec![WHITE_RGB; (size * size) as usize],
+        image: Arc::new(image.into_metadata()),
+        revision: 1,
+        dimensions: u64::from(size) << 32 | u64::from(size),
+        sequence: 1,
+        commits: 1,
+        dark: false,
+        title: String::new(),
+        scale: 1.0f64.to_bits(),
+    });
+    host.frame_presented = true;
+    COVER
+}
+
+fn permission_prompt(required: bool) -> varta_common::permission::PermissionPrompt {
+    varta_common::permission::PermissionPrompt {
+        artifact: "sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff".into(),
+        capability: "net.request".into(),
+        scope: vec!["https://api.test/**".into()],
+        purpose: Some("[ Allow ]".into()),
+        required,
+    }
+}
+
+/// A layer that accepts input at once (shown and presented one input
+/// delay ago).
+fn ready_layer(required: bool) -> crate::shell::consent::PromptLayer {
+    let now = Instant::now();
+    let shown = now
+        .checked_sub(crate::shell::consent::PROMPT_INPUT_DELAY)
+        .unwrap_or(now);
+    let mut layer =
+        crate::shell::consent::PromptLayer::new(&permission_prompt(required), shown).unwrap();
+    let (width, height) = layer.logical_size();
+    assert!(layer.presented(width, height, shown));
+    layer
+}
+
+fn mouse(state: winit::event::ElementState) -> winit::event::WindowEvent {
+    winit::event::WindowEvent::MouseInput {
+        device_id: winit::event::DeviceId::dummy(),
+        state,
+        button: winit::event::MouseButton::Left,
+    }
+}
+fn cursor(x: f32, y: f32) -> winit::event::WindowEvent {
+    winit::event::WindowEvent::CursorMoved {
+        device_id: winit::event::DeviceId::dummy(),
+        position: winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)),
+    }
+}
+
+/// A physical point inside the button answering `answer`, at factor 1.
+fn button_point(
+    layer: &crate::shell::consent::PromptLayer,
+    answer: varta_common::permission::PromptAnswer,
+) -> (f32, f32) {
+    let (width, height) = layer.logical_size();
+    (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x as f32, y as f32)))
+        .find(|(x, y)| layer.button_at(*x, *y, width, height) == Some(answer))
+        .map(|(x, y)| (x + 4.0, y + 4.0))
+        .unwrap()
+}
+
+#[test]
+fn guest_content_can_neither_cover_nor_hit_an_open_prompt() {
+    use varta_common::permission::PromptAnswer;
+    use winit::event::{ElementState, Ime, MouseScrollDelta, TouchPhase, WindowEvent};
+    let (mut host, receiver) = headless_preview();
+    let layer = ready_layer(false);
+    let (width, height) = layer.logical_size();
+    let cover = present_covering_frame(&mut host, width.max(height));
+    // Without a prompt, the guest's topmost element takes every point,
+    // including where the prompt's Allow button is drawn.
+    let (allow_x, allow_y) = button_point(&layer, PromptAnswer::Allow);
+    host.cursor = Some((allow_x, allow_y));
+    assert_eq!(host.hit().map(|(node, ..)| node), Some(cover));
+    host.pressed = Some(super::Pressed {
+        node: cover,
+        revision: 1,
+        dimensions: host.frame.as_ref().unwrap().dimensions,
+        dark: false,
+        scale: 1.0f64.to_bits(),
+        text_anchor: None,
+        select_hit: None,
+    });
+    let pixels = layer.render(width, height);
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    let open = host.begin_prompt(layer, answer).unwrap();
+    host.prompt = Some(open);
+    // A press begun in the application's window never completes, and the
+    // guest's pointer leaves.
+    assert!(host.pressed.is_none() && host.cursor.is_none());
+    assert_eq!(host.pointer.lock().unwrap().position, None);
+    // User input of the application's window no longer reaches the guest;
+    // window state still does.
+    for event in [
+        mouse(ElementState::Pressed),
+        mouse(ElementState::Released),
+        cursor(allow_x, allow_y),
+        WindowEvent::MouseWheel {
+            device_id: winit::event::DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(0.0, 1.0),
+            phase: TouchPhase::Moved,
+        },
+        WindowEvent::Ime(Ime::Commit("x".into())),
+    ] {
+        assert!(!host.admits(&event), "{event:?}");
+    }
+    for event in [
+        WindowEvent::RedrawRequested,
+        WindowEvent::CloseRequested,
+        WindowEvent::Focused(true),
+        WindowEvent::Resized(winit::dpi::PhysicalSize::new(width, height)),
+    ] {
+        assert!(host.admits(&event), "{event:?}");
+    }
+    // The prompt's own pixels come only from the broker's prompt: the
+    // guest's covering frame is not an input of the layer.
+    assert_eq!(
+        host.prompt.as_ref().unwrap().layer.render(width, height),
+        pixels
+    );
+    // A click in the prompt window answers the prompt, never the guest.
+    host.prompt_event(cursor(allow_x, allow_y)).unwrap();
+    host.prompt_event(mouse(ElementState::Pressed)).unwrap();
+    host.prompt_event(mouse(ElementState::Released)).unwrap();
+    assert_eq!(answers.try_recv(), Ok(PromptAnswer::Allow));
+    assert!(host.prompt.is_none());
+    assert!(receiver.try_recv().is_err(), "nothing reached the worker");
+    assert!(host.admits(&mouse(ElementState::Pressed)));
+}
+
+#[test]
+fn one_prompt_at_a_time_and_closing_it_dismisses() {
+    use varta_common::permission::{MAX_OPEN_PROMPTS, PromptAnswer};
+    use winit::event::{ElementState, WindowEvent};
+    assert_eq!(MAX_OPEN_PROMPTS, 1);
+    let (mut host, _receiver) = headless_preview();
+    let (first, first_answers) = std::sync::mpsc::sync_channel(1);
+    host.prompt = host.begin_prompt(ready_layer(true), first);
+    assert!(host.prompt.is_some());
+    // A second request while one is open is dismissed at once.
+    let (second, second_answers) = std::sync::mpsc::sync_channel(1);
+    assert!(host.begin_prompt(ready_layer(false), second).is_none());
+    assert_eq!(second_answers.try_recv(), Ok(PromptAnswer::Dismiss));
+    assert!(first_answers.try_recv().is_err());
+    // The prompt window's close button dismisses.
+    host.prompt_event(WindowEvent::CloseRequested).unwrap();
+    assert_eq!(first_answers.try_recv(), Ok(PromptAnswer::Dismiss));
+    assert!(host.prompt.is_none());
+    // A click within the input delay after the prompt appears never
+    // answers it.
+    let (third, third_answers) = std::sync::mpsc::sync_channel(1);
+    let fresh =
+        crate::shell::consent::PromptLayer::new(&permission_prompt(false), Instant::now()).unwrap();
+    let (x, y) = button_point(&fresh, PromptAnswer::Allow);
+    host.prompt = host.begin_prompt(fresh, third);
+    host.prompt_event(cursor(x, y)).unwrap();
+    host.prompt_event(mouse(ElementState::Pressed)).unwrap();
+    host.prompt_event(mouse(ElementState::Released)).unwrap();
+    assert!(third_answers.try_recv().is_err());
+    assert!(host.prompt.is_some());
+}
+
+#[test]
+fn prompt_keys_move_focus_activate_and_cancel() {
+    use crate::shell::consent::PromptKey;
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let none = ModifiersState::empty();
+    for (key, modifiers, expected) in [
+        (Key::Named(NamedKey::Tab), none, Some(PromptKey::Next)),
+        (
+            Key::Named(NamedKey::Tab),
+            ModifiersState::SHIFT,
+            Some(PromptKey::Previous),
+        ),
+        (
+            Key::Named(NamedKey::ArrowRight),
+            none,
+            Some(PromptKey::Next),
+        ),
+        (
+            Key::Named(NamedKey::ArrowLeft),
+            none,
+            Some(PromptKey::Previous),
+        ),
+        (Key::Named(NamedKey::Enter), none, Some(PromptKey::Activate)),
+        (Key::Character(" ".into()), none, Some(PromptKey::Activate)),
+        (Key::Named(NamedKey::Escape), none, Some(PromptKey::Cancel)),
+        (
+            Key::Named(NamedKey::PageDown),
+            none,
+            Some(PromptKey::NextPage),
+        ),
+        (
+            Key::Named(NamedKey::PageUp),
+            none,
+            Some(PromptKey::PreviousPage),
+        ),
+        (Key::Character("a".into()), none, None),
+    ] {
+        assert_eq!(
+            super::prompt::prompt_key(&key, modifiers),
+            expected,
+            "{key:?}"
+        );
+    }
+}
+
+#[test]
+fn a_paged_prompt_answers_allow_only_after_every_page_was_shown() {
+    use crate::shell::consent::{PROMPT_INPUT_DELAY, PromptKey, PromptLayer};
+    use varta_common::permission::PromptAnswer;
+    use winit::event::ElementState;
+    let (mut host, _receiver) = headless_preview();
+    let now = Instant::now();
+    let shown = now.checked_sub(PROMPT_INPUT_DELAY * 2).unwrap_or(now);
+    let url = format!("https://\u{43f}.test/{}", "\u{441}/".repeat(200));
+    let request = varta_common::permission::PermissionPrompt {
+        capability: varta_common::view::OPEN_URL_CAPABILITY.into(),
+        scope: vec![url],
+        purpose: None,
+        ..permission_prompt(false)
+    };
+    let layer = PromptLayer::new(&request, shown).unwrap();
+    let (_, pages) = layer.page();
+    assert!(pages > 1);
+    let (x, y) = button_point(&layer, PromptAnswer::Allow);
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    host.prompt = host.begin_prompt(layer, answer);
+    // A click on Allow before every page was shown answers nothing and
+    // leaves the prompt open.
+    let click = |host: &mut super::Host| {
+        host.prompt_event(cursor(x, y)).unwrap();
+        host.prompt_event(mouse(ElementState::Pressed)).unwrap();
+        host.prompt_event(mouse(ElementState::Released)).unwrap();
+    };
+    click(&mut host);
+    assert!(answers.try_recv().is_err());
+    assert!(host.prompt.is_some());
+    // Every page selected but only the last one presented: still no.
+    let turned = now.checked_sub(PROMPT_INPUT_DELAY).unwrap_or(now);
+    let (width, height) = host.prompt.as_ref().unwrap().layer.logical_size();
+    for _ in 1..pages {
+        let layer = &mut host.prompt.as_mut().unwrap().layer;
+        assert_eq!(layer.key(PromptKey::NextPage, turned), None);
+    }
+    host.prompt_presented(width, height, turned);
+    click(&mut host);
+    assert!(answers.try_recv().is_err());
+    // Every page presented, the last one an input delay ago: Allow answers.
+    for _ in 0..pages {
+        let layer = &mut host.prompt.as_mut().unwrap().layer;
+        assert_eq!(layer.key(PromptKey::NextPage, turned), None);
+        host.prompt_presented(width, height, turned);
+    }
+    assert_eq!(
+        host.prompt.as_ref().unwrap().layer.page(),
+        (pages - 1, pages)
+    );
+    click(&mut host);
+    assert_eq!(answers.try_recv(), Ok(PromptAnswer::Allow));
+    assert!(host.prompt.is_none());
+}
+
+/// Host diagnostics of the tests that record them.
+static DIAGNOSTICS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+const RECORDING: super::Console = super::Console {
+    label: "varta-test",
+    output: |_| {},
+    diagnostic: |line| DIAGNOSTICS.lock().unwrap().push(line.to_owned()),
+};
+/// The recorded diagnostics that mention `text`.
+fn diagnostics(text: &str) -> Vec<String> {
+    DIAGNOSTICS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|line| line.contains(text))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_request_that_cannot_be_shown_in_full_is_denied_and_reported_by_the_window() {
+    use crate::shell::consent::MAX_RESOURCE_LINES;
+    use varta_common::permission::PromptAnswer;
+    let (mut host, _receiver) = headless_preview();
+    host.console = RECORDING;
+    // A link URL at the network URL limit needs more lines than a prompt
+    // shows.
+    let url = format!(
+        "https://a.test/{}",
+        "p".repeat(varta_common::net::MAX_URL_BYTES - "https://a.test/".len())
+    );
+    let capability = varta_common::view::OPEN_URL_CAPABILITY;
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    let request = super::prompt::PromptRequest {
+        prompt: varta_common::permission::PermissionPrompt {
+            capability: capability.into(),
+            scope: vec![url],
+            purpose: None,
+            ..permission_prompt(false)
+        },
+        answer,
+    };
+    assert!(host.admit_prompt(request, Instant::now()).is_none());
+    assert_eq!(answers.try_recv(), Ok(PromptAnswer::Deny));
+    assert!(host.prompt.is_none());
+    let reported = diagnostics(capability);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(
+        reported[0]
+            .starts_with("varta-test: denied the ui.open_url permission request without asking")
+    );
+    assert!(reported[0].contains(&format!("at most {MAX_RESOURCE_LINES}")));
+    // A request that fits opens the prompt state.
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    let request = super::prompt::PromptRequest {
+        prompt: permission_prompt(false),
+        answer,
+    };
+    assert!(host.admit_prompt(request, Instant::now()).is_some());
+    assert!(answers.try_recv().is_err());
+}
+
+#[test]
+fn a_clipped_prompt_frame_never_counts_as_shown_and_is_reported_once() {
+    use crate::shell::consent::{PROMPT_INPUT_DELAY, PromptLayer};
+    use varta_common::permission::PromptAnswer;
+    let (mut host, _receiver) = headless_preview();
+    host.console = RECORDING;
+    let now = Instant::now();
+    let shown = now.checked_sub(PROMPT_INPUT_DELAY * 2).unwrap_or(now);
+    let request = varta_common::permission::PermissionPrompt {
+        capability: "kv.read".into(),
+        ..permission_prompt(false)
+    };
+    let layer = PromptLayer::new(&request, shown).unwrap();
+    let (width, height) = layer.logical_size();
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    host.prompt = host.begin_prompt(layer, answer);
+    let short = height - 1;
+    for _ in 0..2 {
+        host.prompt_presented(width, short, shown);
+    }
+    let reported = diagnostics(&format!("its window has {width}x{short}"));
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    let layer = &host.prompt.as_ref().unwrap().layer;
+    assert!(!layer.allow_ready(now));
+    // Keyboard Allow is out of reach; Escape still dismisses.
+    let layer = &mut host.prompt.as_mut().unwrap().layer;
+    for _ in 0..4 {
+        layer.key(crate::shell::consent::PromptKey::Next, now);
+        assert_ne!(layer.focused(), Some(PromptAnswer::Allow));
+    }
+    assert_eq!(
+        layer.key(crate::shell::consent::PromptKey::Cancel, now),
+        Some(PromptAnswer::Dismiss)
+    );
+    // Presented whole, the page counts.
+    host.prompt_presented(width, height, shown);
+    assert!(host.prompt.as_ref().unwrap().layer.allow_ready(now));
+    assert!(answers.try_recv().is_err());
+}
+
+#[test]
+fn the_guest_cannot_title_its_window_like_a_prompt() {
+    use super::prompt::{PROMPT_TITLE, guest_title};
+    assert_eq!(guest_title("Notes"), "Notes");
+    for spoof in [
+        PROMPT_TITLE.to_owned(),
+        PROMPT_TITLE.to_ascii_uppercase(),
+        format!("  {PROMPT_TITLE} "),
+        format!("Notes - {}", PROMPT_TITLE.to_ascii_lowercase()),
+    ] {
+        assert_eq!(guest_title(&spoof), "", "{spoof}");
+    }
 }

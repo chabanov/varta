@@ -8,13 +8,17 @@
 //! ceiling (the launcher's `--policy` file) and pins host-owned KV storage
 //! per artifact hash, creating its directories (`storage.rs` says exactly
 //! which and when).
+//! It also opens the artifact's host-owned [`consent::Consent`] state and
+//! reads its stored permission decisions.
 //! [`Launch::start`] starts the application instance; the runtime validates
-//! the code and its language profile before any guest effect. Granted guest
+//! the code and its language profile before any guest effect, and
+//! [`Launch::start_with`] adds the host's permission prompt. Granted guest
 //! clipboard and link effects go to a [`varta_view::PlatformEffects`] sink
 //! ([`NativeEffects`] in the window). No window is needed for any of this,
 //! so the core is testable headlessly; [`window::run`] presents the
 //! instance in a native window.
 pub mod args;
+pub mod consent;
 mod effects;
 mod fonts;
 mod launch;
@@ -23,11 +27,11 @@ pub mod window;
 
 pub use effects::NativeEffects;
 pub use fonts::FontSet;
-pub use launch::{Launch, MAX_FONT_BYTES, Package, read_font, read_module};
+pub use launch::{Launch, MAX_FONT_BYTES, Package, Started, read_font, read_module, revoke};
 pub use storage::{STORAGE_DIRECTORY_PREFIX, default_storage_base, storage_directory};
 
 use std::path::PathBuf;
-use varta_common::{VartaError, files::FileRootError};
+use varta_common::{VartaError, files::FileRootError, permission::PermissionError};
 use varta_runtime::RuntimeError;
 
 /// Why the shell could not prepare, start or present an application.
@@ -94,6 +98,17 @@ pub enum ShellError {
         #[source]
         source: std::io::Error,
     },
+    /// The host-owned permission decision file is unreadable, malformed,
+    /// oversized or belongs to another application identity.
+    #[error("permission decisions {path}: {source}")]
+    Decisions {
+        path: PathBuf,
+        #[source]
+        source: PermissionError,
+    },
+    /// `--revoke` named no registered capability.
+    #[error("unknown capability {0:?}")]
+    UnknownCapability(String),
     /// The application instance failed after it started.
     #[error("application failed: {0}")]
     Application(String),

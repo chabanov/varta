@@ -123,6 +123,9 @@ impl Execution {
         let started = Instant::now();
         // Required grants are decided before any guest code runs.
         let broker = crate::permission::Broker::new(setup.broker, &mut policy, started)?;
+        // A first-run prompt waits for the user before any guest code: the
+        // first turn's deadline starts once every required grant is decided.
+        let decided = Instant::now();
         let budgets = setup.budgets;
         let (deadline, lifetime, renew_deadline) = match setup.mode {
             Mode::Bounded => {
@@ -131,7 +134,7 @@ impl Execution {
             }
             Mode::Application { lifetime } => {
                 let lifetime = lifetime.map(|lifetime| started + lifetime);
-                let turn = started + budgets.deadline_per_turn;
+                let turn = decided + budgets.deadline_per_turn;
                 (lifetime.map_or(turn, |end| turn.min(end)), lifetime, true)
             }
         };
