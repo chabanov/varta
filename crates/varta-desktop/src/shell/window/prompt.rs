@@ -12,7 +12,9 @@
 //! press begun there never completes as a click. Closing the prompt
 //! window dismisses; closing the application's window ends the session
 //! and dismisses. At most `permission::MAX_OPEN_PROMPTS` prompt is open: a
-//! further request is dismissed at once.
+//! further request is dismissed at once. A request the layer cannot show
+//! in full is denied without a window (the consent seam refuses it before
+//! it gets here; this is the window's own check).
 use super::{GuiEvent, Host};
 use crate::shell::consent::{PromptKey, PromptLayer};
 use std::num::NonZeroU32;
@@ -28,7 +30,10 @@ use winit::{
     window::{Window, WindowLevel},
 };
 
-/// The title of every prompt window: host text the guest cannot set.
+/// The title of every prompt window. The guest cannot give its own window
+/// this title ([`guest_title`]); a lookalike made of other characters is
+/// still possible, so the title alone never identifies a prompt: the
+/// prompt is the shell's only always-on-top window.
 pub(super) const PROMPT_TITLE: &str = "Varta permission request";
 /// The key text of the space bar.
 const SPACE: &str = " ";
@@ -96,6 +101,21 @@ impl OpenPrompt {
     }
 }
 
+/// The title the application's window takes for a guest's `View.setTitle`
+/// value: the value itself, or empty (the host's default title) when it
+/// contains [`PROMPT_TITLE`] in any ASCII case, so the guest cannot title
+/// its window like a permission prompt.
+pub(super) fn guest_title(title: &str) -> &str {
+    if title
+        .to_ascii_lowercase()
+        .contains(&PROMPT_TITLE.to_ascii_lowercase())
+    {
+        ""
+    } else {
+        title
+    }
+}
+
 /// Whether `event` of the application's window is user input for the
 /// guest, which is dropped while a prompt is open.
 pub(super) fn guest_input(event: &WindowEvent) -> bool {
@@ -121,6 +141,8 @@ pub(super) fn prompt_key(key: &Key, modifiers: ModifiersState) -> Option<PromptK
         Key::Named(NamedKey::Enter | NamedKey::Space) => Some(PromptKey::Activate),
         Key::Character(text) if text == SPACE => Some(PromptKey::Activate),
         Key::Named(NamedKey::Escape) => Some(PromptKey::Cancel),
+        Key::Named(NamedKey::PageDown) => Some(PromptKey::NextPage),
+        Key::Named(NamedKey::PageUp) => Some(PromptKey::PreviousPage),
         _ => None,
     }
 }
@@ -132,9 +154,17 @@ impl Host {
     }
 
     /// Show `request` in a new prompt window, or dismiss it when one is
-    /// already open or the window cannot be created.
+    /// already open or the window cannot be created; deny it when it
+    /// cannot be shown in full.
     pub(super) fn open_prompt(&mut self, event_loop: &ActiveEventLoop, request: PromptRequest) {
-        let layer = PromptLayer::new(&request.prompt, Instant::now());
+        let layer = match PromptLayer::new(&request.prompt, Instant::now()) {
+            Ok(layer) => layer,
+            Err(error) => {
+                self.console.report(&error);
+                let _ = request.answer.send(PromptAnswer::Deny);
+                return;
+            }
+        };
         let Some(mut open) = self.begin_prompt(layer, request.answer) else {
             return;
         };
@@ -259,7 +289,8 @@ impl Host {
                 ..
             } if event.state == ElementState::Pressed => {
                 if let Some(key) = prompt_key(&event.logical_key, open.modifiers) {
-                    // A held key repeats focus moves but never answers.
+                    // A held key repeats focus moves but never answers or
+                    // turns a page.
                     if !event.repeat || matches!(key, PromptKey::Next | PromptKey::Previous) {
                         answer = open.layer.key(key, now);
                     }

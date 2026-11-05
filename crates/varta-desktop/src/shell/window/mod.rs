@@ -20,10 +20,10 @@ use crate::input_queue::{PendingKeys, WORKER_QUEUE_CAPACITY};
 use crate::{accessibility, timing, wake};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::{self, SyncSender},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use varta_view::{FrameMetadata, Input, SelectHit};
 #[cfg(feature = "gpu")]
 use winit::event_loop::EventLoopProxy;
@@ -36,6 +36,13 @@ use worker::WorkerState;
 
 /// The root font size of the view layout and renderer, in CSS pixels.
 const ROOT_FONT_SIZE: f32 = 16.0;
+/// How long the window waits, after its event loop ended, for the worker
+/// to finish its final consent sync. The worker runs no new turn once the
+/// loop ended, so this only waits for a turn already running; a turn that
+/// is still running after it is not waited for (the process exits).
+const WORKER_EXIT_WAIT: Duration = Duration::from_secs(1);
+/// The worker signals its exit once.
+const WORKER_EXIT_SIGNALS: usize = 1;
 
 /// Where the window writes guest output and host diagnostics. The binaries
 /// choose the process streams and the label; the library itself never
@@ -230,8 +237,14 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         gpu_active: gpu_active.clone(),
         accessibility_active,
         console: config.console,
+        stop: Arc::new(AtomicBool::new(false)),
     };
-    std::thread::spawn(move || worker::worker(launch, state, receiver, proxy));
+    let stop = state.stop.clone();
+    let (finished, worker_exit) = mpsc::sync_channel(WORKER_EXIT_SIGNALS);
+    std::thread::spawn(move || {
+        worker::worker(launch, state, receiver, proxy);
+        let _ = finished.send(());
+    });
     let mut host = Host {
         accessibility: Some(accessibility),
         accessibility_adapter: None,
@@ -273,14 +286,22 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         console: config.console,
         prompt: None,
     };
-    event_loop
-        .run_app(&mut host)
-        .map_err(|e| window_error(&e))?;
+    let ran = event_loop.run_app(&mut host);
+    // End the worker: no further turns, its input queue and any open
+    // prompt's answer channel closed (the prompt dismisses), then wait a
+    // bounded time for its final consent sync.
+    stop.store(true, Ordering::Release);
     #[cfg(feature = "gpu")]
-    if let Some(reason) = host.gpu_failure {
+    let gpu_failure = host.gpu_failure.take();
+    let error = host.error.take();
+    drop(host);
+    let _ = worker_exit.recv_timeout(WORKER_EXIT_WAIT);
+    ran.map_err(|e| window_error(&e))?;
+    #[cfg(feature = "gpu")]
+    if let Some(reason) = gpu_failure {
         return Err(ShellError::GpuUnavailable(reason));
     }
-    match host.error {
+    match error {
         Some(error) => Err(ShellError::Application(error)),
         None => Ok(()),
     }

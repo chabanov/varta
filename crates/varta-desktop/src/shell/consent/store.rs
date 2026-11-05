@@ -5,6 +5,11 @@
 //! its KV roots. Their names contain a `.`, which no file root name may
 //! contain, so no root can ever be or reach them: the guest can neither
 //! read nor write its decisions or its audit log.
+//!
+//! Every read-modify-write of the decision file holds an exclusive
+//! advisory lock on [`LOCK_FILE`] ([`ConsentStore::locked`]): a revocation
+//! from another process and an instance's own new decisions are applied
+//! one after the other, never interleaved, so neither overwrites the other.
 use crate::shell::{ShellError, storage};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -20,6 +25,12 @@ pub const AUDIT_FILE: &str = "permission-audit.jsonl";
 /// The previous audit log, kept once the current one reaches
 /// [`MAX_AUDIT_LOG_BYTES`].
 pub const PREVIOUS_AUDIT_FILE: &str = "permission-audit.jsonl.1";
+/// The lock file every writer of the decision file holds while it reads,
+/// changes and replaces it. It holds no data.
+pub const LOCK_FILE: &str = "permissions.lock";
+/// Every file the consent store may create in an artifact's storage
+/// directory (besides a short-lived temporary decision file).
+pub const CONSENT_FILES: [&str; 4] = [DECISIONS_FILE, AUDIT_FILE, PREVIOUS_AUDIT_FILE, LOCK_FILE];
 /// The size at which the audit log is rotated: at most this much (plus one
 /// batch of rows) is kept in each of the two files.
 pub const MAX_AUDIT_LOG_BYTES: u64 = 1024 * 1024;
@@ -173,6 +184,29 @@ impl ConsentStore {
         result
     }
 
+    /// Run `body` (a read, change and [`Self::save`] of the decision file)
+    /// while holding the exclusive lock on [`LOCK_FILE`], waiting for any
+    /// other holder (another process or instance of this identity). The
+    /// lock is released when `body` returns, also on failure, and by the
+    /// operating system when a holder exits.
+    pub fn locked<T>(&self, body: impl FnOnce() -> Result<T, ShellError>) -> Result<T, ShellError> {
+        storage::create_private(&self.directory)?;
+        let path = self.directory.join(LOCK_FILE);
+        let lock = private_options()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|source| ShellError::Storage {
+                path: path.clone(),
+                source,
+            })?;
+        lock.lock()
+            .map_err(|source| ShellError::Storage { path, source })?;
+        // Dropping the handle after `body` releases the lock.
+        body()
+    }
+
     /// Store a denial of `capability` for this identity. A running shell of
     /// the same artifact revokes it for new operations when it next reads
     /// the file; every later instance starts with it.
@@ -180,9 +214,11 @@ impl ConsentStore {
         if varta_common::capability_kind(capability).is_none() {
             return Err(ShellError::UnknownCapability(capability.to_owned()));
         }
-        let mut decisions = self.load()?;
-        decisions.insert(capability.to_owned(), StoredDecision::Deny);
-        self.save(&decisions)
+        self.locked(|| {
+            let mut decisions = self.load()?;
+            decisions.insert(capability.to_owned(), StoredDecision::Deny);
+            self.save(&decisions)
+        })
     }
 
     /// The decision file's current stamp, `None` when it does not exist.
@@ -253,9 +289,52 @@ mod tests {
 
     #[test]
     fn host_files_can_never_be_a_guest_file_root() {
-        for name in [DECISIONS_FILE, AUDIT_FILE, PREVIOUS_AUDIT_FILE] {
+        for name in CONSENT_FILES {
             assert!(!files::valid_root_name(name), "{name}");
         }
         assert!(!files::valid_root_name(TEMPORARY_PREFIX));
+    }
+
+    #[test]
+    fn the_lock_serializes_writers_of_the_decision_file() {
+        let base = std::env::temp_dir().join(format!(
+            "varta-consent-lock-{}-{}",
+            std::process::id(),
+            unique()
+        ));
+        let identity = format!("sha256:{}", "ab".repeat(32));
+        let store = ConsentStore::new(&base, &identity).unwrap();
+        let held = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let (entered, order) = std::sync::mpsc::channel();
+        // A writer that holds the lock across a slow read-change-write.
+        let writer = {
+            let store = store.clone();
+            let held = held.clone();
+            let entered = entered.clone();
+            std::thread::spawn(move || {
+                store
+                    .locked(|| {
+                        held.wait();
+                        let mut decisions = store.load()?;
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        decisions.insert("kv.read".into(), StoredDecision::Allow);
+                        store.save(&decisions)?;
+                        entered.send("instance").unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+            })
+        };
+        held.wait();
+        // A revocation started meanwhile waits for the lock, then sees the
+        // other writer's decision and keeps it.
+        store.revoke("kv.write").unwrap();
+        entered.send("revoke").unwrap();
+        writer.join().unwrap();
+        assert_eq!(order.try_iter().collect::<Vec<_>>(), ["instance", "revoke"]);
+        let decisions = store.load().unwrap();
+        assert_eq!(decisions.get("kv.read"), Some(&StoredDecision::Allow));
+        assert_eq!(decisions.get("kv.write"), Some(&StoredDecision::Deny));
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

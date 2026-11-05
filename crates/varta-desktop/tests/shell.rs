@@ -26,11 +26,10 @@ use varta_common::Manifest;
 use varta_common::permission::{PermissionError, PermissionPrompt, PromptAnswer, StoredDecision};
 use varta_desktop::shell::Started;
 use varta_desktop::shell::consent::{
-    AUDIT_FILE, ConsentStore, DECISIONS_FILE, PREVIOUS_AUDIT_FILE, STORE_POLL_INTERVAL,
+    AUDIT_FILE, CONSENT_FILES, ConsentStore, DECISIONS_FILE, MAX_RESOURCE_LINES,
+    STORE_POLL_INTERVAL, UNPRESENTABLE_PROMPT,
 };
-use varta_desktop::shell::{
-    FontSet, Launch, Package, STORAGE_DIRECTORY_PREFIX, ShellError, storage_directory,
-};
+use varta_desktop::shell::{FontSet, Launch, Package, ShellError, storage_directory};
 use varta_runtime::{Application, Step, ViewLayout};
 use varta_view::{PlatformEffects, PlatformRefusal};
 
@@ -278,17 +277,35 @@ fn storage_of(temp: &Temp, artifact: &Path) -> PathBuf {
     storage_directory(&temp.storage(), &varta_runtime::artifact_identity(&wasm)).unwrap()
 }
 
-/// The entries of the artifact's storage directory other than the host's
-/// own consent files (its decision file and audit log, which every start
-/// may write): the KV roots the shell created.
-fn kv_roots_of(temp: &Temp, artifact: &Path) -> Vec<String> {
-    std::fs::read_dir(storage_of(temp, artifact))
+/// The names in `directory`; none when it does not exist.
+fn entries(directory: &Path) -> Vec<String> {
+    std::fs::read_dir(directory)
         .into_iter()
         .flatten()
         .flatten()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| ![DECISIONS_FILE, AUDIT_FILE, PREVIOUS_AUDIT_FILE].contains(&name.as_str()))
         .collect()
+}
+
+/// Assert that host storage holds nothing but the artifact's own consent
+/// files (every packaged start writes its audit log): no KV root or file,
+/// no other artifact's directory and nothing else in the storage base.
+fn assert_only_consent_files(temp: &Temp, artifact: &Path) {
+    let directory = storage_of(temp, artifact);
+    let own = directory
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let base = entries(&temp.storage());
+    assert!(base.iter().all(|name| *name == own), "{base:?}");
+    let files = entries(&directory);
+    assert!(
+        files
+            .iter()
+            .all(|name| CONSENT_FILES.contains(&name.as_str())),
+        "{files:?}"
+    );
 }
 
 fn database_of(temp: &Temp, artifact: &Path) -> PathBuf {
@@ -391,11 +408,11 @@ fn net_request_to_an_ungranted_url_is_denied_before_any_socket() {
     );
     assert_eq!(server.accepted(), 0);
     // The package requests no KV: no root is created for it.
-    assert!(kv_roots_of(&temp, &artifact).is_empty());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
-fn kv_without_a_grant_is_denied_before_any_file_exists() {
+fn kv_without_a_grant_is_denied_before_any_kv_file_exists() {
     let temp = Temp::new();
     // `fsRoots` still declares `data`, but nothing requests `kv.*`.
     let artifact = package(&temp, serde_json::json!([]));
@@ -412,7 +429,7 @@ fn kv_without_a_grant_is_denied_before_any_file_exists() {
             DONE
         ]
     );
-    assert!(kv_roots_of(&temp, &artifact).is_empty());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -479,23 +496,7 @@ fn a_ceiling_mapping_of_a_kv_root_wins_over_host_owned_storage() {
     // created no root of its own (only its consent files, if any, under the
     // artifact's directory).
     assert!(data.join(DATABASE).is_file());
-    assert!(kv_roots_of(&temp, &artifact).is_empty());
-    let artifact_directories: Vec<_> = std::fs::read_dir(temp.storage())
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with(STORAGE_DIRECTORY_PREFIX))
-        })
-        .collect();
-    assert!(
-        artifact_directories
-            .iter()
-            .all(|directory| *directory == storage_of(&temp, &artifact)),
-        "{artifact_directories:?}"
-    );
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -526,7 +527,7 @@ fn storage_is_created_only_for_roots_the_ceiling_can_open() {
             DONE
         ]
     );
-    assert!(kv_roots_of(&temp, &artifact).is_empty());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -551,7 +552,7 @@ fn an_empty_ceiling_denies_everything_and_never_falls_back() {
         ]
     );
     assert_eq!(server.accepted(), 0);
-    assert!(kv_roots_of(&temp, &artifact).is_empty());
+    assert_only_consent_files(&temp, &artifact);
 }
 
 #[test]
@@ -578,7 +579,7 @@ fn grants_match_the_exact_operation() {
             DONE
         ]
     );
-    assert!(kv_roots_of(&temp, &artifact).is_empty());
+    assert_only_consent_files(&temp, &artifact);
     // A ceiling never names an operation the registry does not know.
     let wildcard = policy(
         &temp,
@@ -1482,6 +1483,54 @@ fn a_refused_required_grant_stops_the_start_and_is_stored_unless_dismissed() {
     let again = Scripted::new(&[PromptAnswer::Allow]);
     assert!(start_consent(&temp, &artifact, &again).is_ok());
     assert_eq!(again.asked(), [(REQUIRED_GRANT.to_owned(), true)]);
+}
+
+#[test]
+fn a_request_that_cannot_be_shown_in_full_is_denied_without_a_prompt_and_audited() {
+    use varta_common::{MAX_GRANT_PATTERNS, MAX_PATTERN_BYTES};
+    // The required grant requests as many patterns of the longest length as
+    // one grant holds: more lines than any prompt shows.
+    const COMPONENT: usize = 100;
+    let patterns: Vec<String> = (0..MAX_GRANT_PATTERNS)
+        .map(|index| {
+            let mut pattern = format!("/data/{index:02}");
+            while pattern.len() + 1 + COMPONENT <= MAX_PATTERN_BYTES {
+                pattern.push('/');
+                pattern.push_str(&"n".repeat(COMPONENT));
+            }
+            pattern
+        })
+        .collect();
+    let temp = Temp::new();
+    let artifact = package_consent(&temp, |manifest| {
+        for grant in manifest["capabilities"].as_array_mut().unwrap() {
+            if grant["id"] == REQUIRED_GRANT {
+                grant["patterns"] = serde_json::json!(patterns);
+            }
+        }
+    });
+    let store = store_of(&temp, &artifact);
+    let scripted = Scripted::new(&[PromptAnswer::Allow]);
+    assert!(required_denied(start_consent(&temp, &artifact, &scripted)));
+    // Never shown, so the scripted "user" never answered it.
+    assert!(scripted.shown().is_empty());
+    assert_eq!(
+        store.load().unwrap(),
+        decisions(&[(REQUIRED_GRANT, StoredDecision::Deny)])
+    );
+    let rows = audit_rows(&store);
+    assert!(
+        rows.iter().any(|row| row["operation"] == REQUIRED_GRANT
+            && row["refused"] == UNPRESENTABLE_PROMPT
+            && row["outcome"] == "denied"
+            && row["artifact"] == store.identity()
+            && row["resource_lines"]
+                .as_u64()
+                .is_some_and(|lines| lines > MAX_RESOURCE_LINES as u64)
+            && row["max_resource_lines"] == MAX_RESOURCE_LINES),
+        "{rows:?}"
+    );
+    assert!(audited(&rows, REQUIRED_GRANT, "", "prompt", "denied"));
 }
 
 #[test]

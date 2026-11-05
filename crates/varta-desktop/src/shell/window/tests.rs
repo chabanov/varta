@@ -456,7 +456,7 @@ fn ready_layer(required: bool) -> crate::shell::consent::PromptLayer {
     let shown = now
         .checked_sub(crate::shell::consent::PROMPT_INPUT_DELAY)
         .unwrap_or(now);
-    crate::shell::consent::PromptLayer::new(&permission_prompt(required), shown)
+    crate::shell::consent::PromptLayer::new(&permission_prompt(required), shown).unwrap()
 }
 
 fn mouse(state: winit::event::ElementState) -> winit::event::WindowEvent {
@@ -576,7 +576,8 @@ fn one_prompt_at_a_time_and_closing_it_dismisses() {
     // A click within the input delay after the prompt appears never
     // answers it.
     let (third, third_answers) = std::sync::mpsc::sync_channel(1);
-    let fresh = crate::shell::consent::PromptLayer::new(&permission_prompt(false), Instant::now());
+    let fresh =
+        crate::shell::consent::PromptLayer::new(&permission_prompt(false), Instant::now()).unwrap();
     let (x, y) = button_point(&fresh, PromptAnswer::Allow);
     host.prompt = host.begin_prompt(fresh, third);
     host.prompt_event(cursor(x, y)).unwrap();
@@ -611,6 +612,16 @@ fn prompt_keys_move_focus_activate_and_cancel() {
         (Key::Named(NamedKey::Enter), none, Some(PromptKey::Activate)),
         (Key::Character(" ".into()), none, Some(PromptKey::Activate)),
         (Key::Named(NamedKey::Escape), none, Some(PromptKey::Cancel)),
+        (
+            Key::Named(NamedKey::PageDown),
+            none,
+            Some(PromptKey::NextPage),
+        ),
+        (
+            Key::Named(NamedKey::PageUp),
+            none,
+            Some(PromptKey::PreviousPage),
+        ),
         (Key::Character("a".into()), none, None),
     ] {
         assert_eq!(
@@ -618,5 +629,62 @@ fn prompt_keys_move_focus_activate_and_cancel() {
             expected,
             "{key:?}"
         );
+    }
+}
+
+#[test]
+fn a_paged_prompt_answers_allow_only_after_every_page_was_shown() {
+    use crate::shell::consent::{PROMPT_INPUT_DELAY, PromptKey, PromptLayer};
+    use varta_common::permission::PromptAnswer;
+    use winit::event::ElementState;
+    let (mut host, _receiver) = headless_preview();
+    let now = Instant::now();
+    let shown = now.checked_sub(PROMPT_INPUT_DELAY * 2).unwrap_or(now);
+    let url = format!("https://\u{43f}.test/{}", "\u{441}/".repeat(200));
+    let request = varta_common::permission::PermissionPrompt {
+        capability: varta_common::view::OPEN_URL_CAPABILITY.into(),
+        scope: vec![url],
+        purpose: None,
+        ..permission_prompt(false)
+    };
+    let layer = PromptLayer::new(&request, shown).unwrap();
+    let (_, pages) = layer.page();
+    assert!(pages > 1);
+    let (x, y) = button_point(&layer, PromptAnswer::Allow);
+    let (answer, answers) = std::sync::mpsc::sync_channel(1);
+    host.prompt = host.begin_prompt(layer, answer);
+    // A click on Allow before every page was shown answers nothing and
+    // leaves the prompt open.
+    let click = |host: &mut super::Host| {
+        host.prompt_event(cursor(x, y)).unwrap();
+        host.prompt_event(mouse(ElementState::Pressed)).unwrap();
+        host.prompt_event(mouse(ElementState::Released)).unwrap();
+    };
+    click(&mut host);
+    assert!(answers.try_recv().is_err());
+    assert!(host.prompt.is_some());
+    // Every page shown, the last one an input delay ago: Allow answers.
+    let turned = now.checked_sub(PROMPT_INPUT_DELAY).unwrap_or(now);
+    let layer = &mut host.prompt.as_mut().unwrap().layer;
+    for _ in 1..pages {
+        assert_eq!(layer.key(PromptKey::NextPage, turned), None);
+    }
+    assert_eq!(layer.page(), (pages - 1, pages));
+    click(&mut host);
+    assert_eq!(answers.try_recv(), Ok(PromptAnswer::Allow));
+    assert!(host.prompt.is_none());
+}
+
+#[test]
+fn the_guest_cannot_title_its_window_like_a_prompt() {
+    use super::prompt::{PROMPT_TITLE, guest_title};
+    assert_eq!(guest_title("Notes"), "Notes");
+    for spoof in [
+        PROMPT_TITLE.to_owned(),
+        PROMPT_TITLE.to_ascii_uppercase(),
+        format!("  {PROMPT_TITLE} "),
+        format!("Notes - {}", PROMPT_TITLE.to_ascii_lowercase()),
+    ] {
+        assert_eq!(guest_title(&spoof), "", "{spoof}");
     }
 }

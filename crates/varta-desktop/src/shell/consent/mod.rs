@@ -16,6 +16,10 @@
 //!   the decision is changed.
 //! - **Prompts** in a layer the guest cannot draw over or reach
 //!   ([`PromptLayer`]), which the window presents in its own host window.
+//!   Every requested pattern is shown in full (paged); a request that
+//!   cannot be shown in full within [`MAX_RESOURCE_LINES`] is never shown:
+//!   the seam answers it Deny without asking and audits an
+//!   [`UNPRESENTABLE_PROMPT`] row.
 //! - **Revocation** of a stored grant from outside the instance
 //!   ([`ConsentStore::revoke`]): a running instance applies it to new
 //!   operations when [`Consent::sync`] next rereads the file, which it does
@@ -24,6 +28,11 @@
 //! - **Audit log:** every broker decision of the instance, appended to the
 //!   store's bounded log.
 //!
+//! Every read-modify-write of the decision file (an instance's sync, a
+//! refused start's answers, `--revoke`) holds the store's advisory lock
+//! ([`LOCK_FILE`]), so an outside denial is never overwritten by a
+//! concurrent answer: the instance sees it under the lock and revokes.
+//!
 //! Prompts are rate-limited by the broker exactly as in the browser host:
 //! `permission::MAX_OPEN_PROMPTS` open prompt and
 //! `permission::MAX_DISMISSALS` dismissals before a stored denial.
@@ -31,9 +40,13 @@ mod glyphs;
 mod layer;
 mod store;
 
-pub use layer::{MAX_QUOTE_LINES, MAX_RESOURCE_LINES, PROMPT_INPUT_DELAY, PromptKey, PromptLayer};
+pub use layer::{
+    MAX_QUOTE_LINES, MAX_RESOURCE_LINES, MAX_RESOURCE_PAGES, PROMPT_INPUT_DELAY, PromptKey,
+    PromptLayer, PromptTooLong, RESOURCE_PAGE_LINES,
+};
 pub use store::{
-    AUDIT_FILE, ConsentStore, DECISIONS_FILE, MAX_AUDIT_LOG_BYTES, PREVIOUS_AUDIT_FILE,
+    AUDIT_FILE, CONSENT_FILES, ConsentStore, DECISIONS_FILE, LOCK_FILE, MAX_AUDIT_LOG_BYTES,
+    PREVIOUS_AUDIT_FILE,
 };
 
 use super::ShellError;
@@ -50,8 +63,18 @@ use varta_runtime::{Application, PermissionPrompter, RuntimeError};
 /// outside it (another `varta-shell --revoke`).
 pub const STORE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// The `refused` value of the audit row of a request that was never shown
+/// because it cannot be shown in full ([`PromptTooLong`]).
+pub const UNPRESENTABLE_PROMPT: &str = "prompt-too-long";
+
 /// One answered first-run prompt.
 type Answered = (String, PromptAnswer);
+
+/// A request the seam refused to show, waiting for its audit row.
+struct Unpresentable {
+    error: PromptTooLong,
+    at: Instant,
+}
 
 /// The consent state of one packaged application instance.
 pub struct Consent {
@@ -70,25 +93,45 @@ pub struct Consent {
     started: Instant,
     /// Required prompts answered before the instance existed.
     first_run: Arc<Mutex<Vec<Answered>>>,
+    /// Requests refused without a prompt, not yet audited.
+    unpresentable: Arc<Mutex<Vec<Unpresentable>>>,
 }
 
 /// The prompt seam the runtime receives: the host's prompter, recording
-/// first-run answers so a refused start can still store them.
+/// first-run answers so a refused start can still store them. A request
+/// that cannot be shown in full never reaches the host's prompter: it is
+/// answered [`PromptAnswer::Deny`] (stored like any Deny of a grant, since
+/// the package's request never changes; never stored for a `ui.open_url`
+/// link) and recorded for the audit log.
 struct Recording {
     inner: Box<dyn PermissionPrompter>,
     first_run: Arc<Mutex<Vec<Answered>>>,
+    unpresentable: Arc<Mutex<Vec<Unpresentable>>>,
 }
 impl PermissionPrompter for Recording {
     fn prompt(&mut self, prompt: &PermissionPrompt) -> PromptAnswer {
-        let answer = self.inner.prompt(prompt);
+        let answer = match PromptLayer::check(prompt) {
+            Ok(_) => self.inner.prompt(prompt),
+            Err(error) => {
+                locked(&self.unpresentable).push(Unpresentable {
+                    error,
+                    at: Instant::now(),
+                });
+                PromptAnswer::Deny
+            }
+        };
         if prompt.required {
-            self.first_run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push((prompt.capability.clone(), answer));
+            locked(&self.first_run).push((prompt.capability.clone(), answer));
         }
         answer
     }
+}
+
+/// The contents of a mutex, also after a holder panicked.
+fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Consent {
@@ -109,6 +152,7 @@ impl Consent {
                 }),
             started: Instant::now(),
             first_run: Arc::default(),
+            unpresentable: Arc::default(),
         })
     }
 
@@ -133,29 +177,24 @@ impl Consent {
         Box::new(Recording {
             inner,
             first_run: self.first_run.clone(),
+            unpresentable: self.unpresentable.clone(),
         })
     }
 
     /// A start the runtime refused: store the Allow and Deny answers of
-    /// its first-run prompts (a dismissal stores nothing) and audit them.
+    /// its first-run prompts (a dismissal stores nothing) and audit them,
+    /// after the requests refused without a prompt.
     pub(super) fn refused(&mut self, error: &RuntimeError) -> Result<(), ShellError> {
-        if !matches!(
+        let mut rows = self.unpresentable_rows();
+        let answered = if matches!(
             error,
             RuntimeError::Permission(PermissionError::RequiredDenied { .. })
         ) {
-            return Ok(());
-        }
-        let answered = std::mem::take(
-            &mut *self
-                .first_run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        if answered.is_empty() {
-            return Ok(());
-        }
-        let mut decisions = self.store.load()?;
-        let mut rows = Vec::with_capacity(answered.len());
+            std::mem::take(&mut *locked(&self.first_run))
+        } else {
+            Vec::new()
+        };
+        let mut stored = Vec::with_capacity(answered.len());
         for (sequence, (id, answer)) in (1u64..).zip(&answered) {
             let (decision, outcome) = match answer {
                 PromptAnswer::Allow => (Some(StoredDecision::Allow), PermissionState::Granted),
@@ -163,7 +202,7 @@ impl Consent {
                 PromptAnswer::Dismiss => (None, PermissionState::Denied),
             };
             if let Some(decision) = decision {
-                decisions.insert(id.clone(), decision);
+                stored.push((id.clone(), decision));
             }
             rows.push(self.row(&AuditEntry {
                 sequence,
@@ -174,8 +213,37 @@ impl Consent {
                 outcome,
             }));
         }
-        self.store.save(&decisions)?;
+        if !stored.is_empty() {
+            self.store.locked(|| {
+                let mut decisions = self.store.load()?;
+                decisions.extend(stored);
+                self.store.save(&decisions)
+            })?;
+        }
         self.store.append_audit(&rows)
+    }
+
+    /// The audit rows of the requests refused without a prompt since the
+    /// last call.
+    fn unpresentable_rows(&self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut *locked(&self.unpresentable))
+            .into_iter()
+            .map(|refused| {
+                serde_json::json!({
+                    "artifact": self.store.identity(),
+                    "run": self.run,
+                    "at_ms": u64::try_from(
+                        refused.at.saturating_duration_since(self.started).as_millis()
+                    )
+                    .unwrap_or(u64::MAX),
+                    "operation": refused.error.capability,
+                    "outcome": PermissionState::Denied,
+                    "refused": UNPRESENTABLE_PROMPT,
+                    "resource_lines": refused.error.lines,
+                    "max_resource_lines": MAX_RESOURCE_LINES,
+                })
+            })
+            .collect()
     }
 
     fn elapsed_ms(&self) -> u64 {
@@ -225,7 +293,15 @@ impl Consent {
         self.audit(app)
     }
 
+    /// [`Self::reconcile_locked`] under the store's lock, so no other
+    /// writer (`--revoke`, another instance) changes the file between the
+    /// read and the write.
     fn reconcile(&mut self, app: &mut Application) -> Result<(), ShellError> {
+        let store = self.store.clone();
+        store.locked(|| self.reconcile_locked(app))
+    }
+
+    fn reconcile_locked(&mut self, app: &mut Application) -> Result<(), ShellError> {
         let current = self.store.load()?;
         let external: BTreeSet<String> = current
             .keys()
@@ -261,15 +337,16 @@ impl Consent {
     }
 
     fn audit(&mut self, app: &Application) -> Result<(), ShellError> {
+        let mut rows = self.unpresentable_rows();
         let (entries, _) = app.audit();
         let fresh: Vec<&AuditEntry> = entries
             .iter()
             .filter(|entry| entry.sequence > self.audited)
             .collect();
         let Some(last) = fresh.last().map(|entry| entry.sequence) else {
-            return Ok(());
+            return self.store.append_audit(&rows);
         };
-        let mut rows = Vec::with_capacity(fresh.len() + 1);
+        rows.reserve(fresh.len() + 1);
         // Entries the bounded broker log dropped before this sync saw them.
         let dropped = fresh[0].sequence - self.audited - 1;
         if dropped > 0 {
