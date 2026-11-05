@@ -48,7 +48,9 @@ pub use accessibility::{
     AccessibilitySelection, AccessibilityState, AccessibilityText, AccessibilityTextRevision,
     AccessibilityTextRun, AccessibilityTree, AccessibilityWork,
 };
-pub use drawing::{DisplayList, DrawClip, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame};
+pub use drawing::{
+    ColorCell, DisplayList, DrawClip, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame,
+};
 pub use events::{
     ClipboardAction, ClipboardData, ClipboardError, ClipboardKey, ClipboardTarget, ClipboardTask,
     ClipboardToken, HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep,

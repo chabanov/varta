@@ -4245,7 +4245,10 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   their complete color sample area. Average
   seam colors before source-over and apply contour alpha once. Enclose fractional
   far edges explicitly; origin-floor/size-ceil is not a containing pixel bound.
-  Direct GPU color fields remain separate acceptance work.
+  Vector consumers receive the field as contour-clipped, disjoint whole-pixel
+  cells colored by the same partition code; never approximate it with
+  separately antialiased side pieces or a layer. Mark lowered pixels from fill
+  plus edge-outline coverage, because band-local AA is not offset-invariant.
 - Static box opacity isolates the whole painted subtree, including its outline;
   never scale overlapping child draw alpha independently. Keep zero-opacity input
   geometry and top-layer popup scope. Nonunit opacity creates a zero-level context:

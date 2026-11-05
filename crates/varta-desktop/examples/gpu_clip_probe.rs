@@ -165,13 +165,14 @@ impl Case {
     fn software(self) -> bool {
         matches!(
             self,
-            Self::Opacity
-                | Self::InlineOutlineOpacity
-                | Self::InlineOpacity
-                | Self::NestedOpacity
-                | Self::MixedBorder
-                | Self::MixedCorner
-                | Self::MixedCollision
+            Self::Opacity | Self::InlineOutlineOpacity | Self::InlineOpacity | Self::NestedOpacity
+        )
+    }
+    /// Distinct border-side colors, drawn directly as GPU color fields.
+    fn color_field(self) -> bool {
+        matches!(
+            self,
+            Self::MixedBorder | Self::MixedCorner | Self::MixedCollision
         )
     }
     fn font(self) -> Result<Option<TextMeasurer>, Box<dyn std::error::Error>> {
@@ -781,6 +782,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &metadata, &*reference,
                     "GPU preparation changed input geometry"
                 );
+                let field_cells = list
+                    .commands()
+                    .iter()
+                    .filter_map(|draw| match &draw.primitive {
+                        varta_view::DrawPrimitive::ColorField { cells, .. } => Some(cells.len()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if case.color_field() != !field_cells.is_empty() {
+                    return Err("color-field fixture and GPU command disagree".into());
+                }
+                let field_cells = field_cells.iter().sum::<usize>();
                 assert_eq!(view.snapshot(), snapshot, "rendering changed the view");
                 scene.reset_and_resize(size.width, size.height);
                 gpu_scene::populate(&mut scene, &list, false);
@@ -864,7 +877,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .filter(|draw| draw.clips.is_some())
                     .count();
                 println!(
-                    "{{\"case\":\"{label}\",\"scale\":{scale},\"changed\":{changed},\"cpu_prepare_ms\":{cpu_ms:.3},\"dirty_pixels\":{dirty_pixels},\"clipped_draws\":{clips},\"raster_glyphs\":{raster_glyphs},\"mode\":\"vector\",\"gpu_rendered\":true,\"mean_rgb_delta\":{mean:.4},\"max_rgb_delta\":{maximum}}}"
+                    "{{\"case\":\"{label}\",\"scale\":{scale},\"changed\":{changed},\"cpu_prepare_ms\":{cpu_ms:.3},\"dirty_pixels\":{dirty_pixels},\"clipped_draws\":{clips},\"raster_glyphs\":{raster_glyphs},\"color_field_cells\":{field_cells},\"prepare_ms\":{prepare_ms:.3},\"mode\":\"vector\",\"gpu_rendered\":true,\"mean_rgb_delta\":{mean:.4},\"max_rgb_delta\":{maximum}}}"
                 );
                 std::fs::write(
                     format!("{}-{label}-{scale}-{changed}.rgba", args[0]),

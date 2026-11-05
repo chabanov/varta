@@ -12321,7 +12321,8 @@ visible descendant overflow unless their overflow style clips it. Native field,
 assistive character and IME visibility now use these same closed physical shapes,
 separately from full logical advances. Inline backgrounds now have sliced rounded
 contours as above; inline borders/outlines and direct GPU
-group/color-field composition remain open. The Debug Metal fixture
+group composition remain open (direct GPU color fields are described with the
+side-color painter below). The Debug Metal fixture
 probe covers boxes and native controls against shared input geometry and the
 existing RGB mean-error threshold; it does not establish application/window/
 VoiceOver or other-target acceptance. Raw view styles/custom values and snapshots
@@ -12457,13 +12458,37 @@ a fixed rotated16-sample pattern near color seams. This is a fixed native AA pol
 not exact analytic color integration or a particular browser's raster. Samples are
 averaged in premultiplied space and normalized over the ring; curve coverage
 still comes from the shared raster path, not sampled replacement geometry. Global
-physical coordinates preserve tile phase. The private color-field command uses
-one reusable extra128×128 RGBA tile, independent of depth, and the existing global
-coverage/clip masks. It shares retained damage, source-derived overflow/prefix
-handling and explicit CPU fallback with groups. Cache, source, image and GPU limits
-stay unchanged; public drawing commands and guest ABI acquire no new operation.
+physical coordinates preserve tile phase. The software painter's private
+color-field command uses one reusable extra128×128 RGBA tile, independent of
+depth, and the existing global coverage/clip masks; software rendering shares
+retained damage and source-derived overflow/prefix handling with groups.
 Fractional pixel bounds enclose each edge independently: flooring the origin and
 ceiling only the width/height can omit the last partial row/column.
+
+Vector preparation (`Renderer::prepare`) lowers each field instead of returning
+CPU fallback: `DrawPrimitive::ColorField` carries the closed even-odd contour,
+transformed like a path, and disjoint `ColorCell` rectangles with integral
+physical-pixel edges and unpremultiplied sRGB colors. Every pixel inside the
+contour or crossed by one of its edges takes exactly the software painter's color
+(the same partition, block proofs and sampling); other pixels are unconstrained,
+so a run of one color may bridge the hole. Lowering scans bands of eight rows
+with one band-sized coverage mask, marking the filled contour plus a stroked
+outline two physical pixels wide, because band-local antialiasing is not
+invariant under the band offset and can read zero on a thin taper that the global
+mask covers. Equal runs merge, and rows repeating a run extend its rectangle.
+Cells start at nonnegative coordinates and stop at the validated 4096-pixel
+viewport edge. Contour segments and cells are charged to the unchanged 16MiB
+scene budget before allocation; a field exceeding the remaining budget makes the
+whole frame take the existing explicit software fallback. An equal border at the
+same physical placement reuses its lowered field from the existing 8MiB
+neutral-path cache. The GPU consumer pushes the contour as an even-odd clip and
+fills each cell inside it: contour coverage applies once and cells never overlap,
+so no color seam is composited twice and no layer or intermediate texture is
+needed. The software `DisplayList::rasterize` consumer fills the contour once per
+cell clip and matches the CPU painter within one channel unit in the border-color
+tests. This adds one host-side `varta-view` drawing primitive; the guest ABI and
+view protocol acquire no operation. Isolated opacity groups still use explicit
+CPU fallback.
 
 `overflow-wrap: normal` and `anywhere` inherit and participate in line breaking
 and flex/grid minimum-content sizing; `nowrap` still suppresses soft breaks.
@@ -13751,13 +13776,18 @@ Cache reusable geometry, glyphs and images; avoid per-frame GPU-to-CPU readback.
 The optional desktop `gpu` feature pins wgpu 30.0.0, vello_gpu 0.3.0 and
 pollster 0.4.0. It uses host-owned vector commands and shared frame/input metadata;
 no guest import, capability or language ABI changes. The software reference can
-replay the same neutral commands exactly. Native presentation has no per-frame
+replay the same neutral commands exactly (lowered border color fields within one
+channel unit of the CPU painter). Native presentation has no per-frame
 readback. Recording overflow or device/surface failure switches to CPU without
 restarting Wasm; stale vector frames are acknowledged before CPU regeneration.
 One GPU submission can remain outstanding; nonblocking completion polling ends
 in a two-second recovery timeout. macOS output explicitly tags Display P3 and
-converts sRGB paint primaries. Neutral paths have an 8 MiB estimated cache and
-retain full scene admission charges on hits. Existing 4096-per-axis limits and
+converts sRGB paint primaries per draw and per color-field cell. Distinct
+border-side colors draw directly as contour-clipped whole-pixel cells, with no
+layer or intermediate texture (the layer texture allowance stays zero);
+isolated opacity groups still switch the frame to CPU. Neutral paths and lowered
+color fields share an 8 MiB estimated cache and retain full scene admission
+charges on hits. Existing 4096-per-axis limits and
 64 MiB individual GPU buffer limits do not establish total GPU-memory accounting.
 The default build/backend remains CPU pending broader acceptance.
 The [Vello renderer families](https://github.com/linebender/vello#choose-a-renderer)

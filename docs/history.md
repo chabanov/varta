@@ -7,6 +7,32 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-05 — Direct GPU color fields (wave 3, `w3-gpu-color-fields`, scoped)
+
+Borders with distinct side colors used a private software command, so every
+vector frame containing one fell back to CPU and disabled GPU presentation.
+`Renderer::prepare` now keeps such frames on the vector path: each field lowers
+to its even-odd contour and disjoint whole-pixel cells colored by the unchanged
+CPU partition, charged to the existing scene budget and reused from the
+neutral-path cache when the border and its placement are unchanged. The GPU
+clips to the contour once and fills the cells without layers.
+
+The first lowering marked pixels from band-local contour coverage. A unit test
+comparing it with the software painter's global mask found a covered pixel
+without a cell on a zero-width taper at 2×: tiny-skia's antialiasing differs
+under the band's integer offset. A one-pixel dilation of band coverage still
+missed a taper tail, so lowering now marks the fill plus a stroked edge outline.
+The integration tests at first expected byte-identical software replay; one or
+two channel values differed by one on 50% radii, so they assert a one-unit
+tolerance.
+
+Scoped evidence: `gpu_clip_probe` in Debug and Release, 34 scenes each, 120 actual
+GPU and 16 explicit CPU-fallback observations (previously 108 and 28), maximum
+mean RGB delta 0.1472 overall and 0.0780 for the mixed-border scenes;
+`verify.py local varta-view`, `cargo test -p varta-desktop --features gpu` and
+strict all-target Clippy for View and Desktop with GPU. Outputs are under
+`target/w3-gpu-color-fields/`. The full gate is the wave lead's.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only

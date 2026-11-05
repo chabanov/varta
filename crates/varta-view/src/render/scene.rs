@@ -342,10 +342,17 @@ impl Scene {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, PaintError> {
-        // Group/color-field commands cannot enter the current vector contract. Preserve
+        // Group commands cannot enter the current vector contract. Preserve
         // their software scene so repeated prepare() calls still reuse pixels
         // and local changes replay only their damage, like ordinary CPU frames.
-        if self.record_only && !groups::present(&commands) {
+        // Color fields lower to vector cells (`DrawPrimitive::ColorField`).
+        let grouped = commands.iter().any(|draw| {
+            matches!(
+                draw.primitive,
+                Primitive::BeginGroup { .. } | Primitive::EndGroup
+            )
+        });
+        if self.record_only && !grouped {
             self.record(commands);
             Ok(Vec::new())
         } else {
