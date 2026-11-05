@@ -2899,13 +2899,19 @@ Review fixes (2026-11-05, lead and owner decisions):
   inside a host-created directory; the Chrome/WebKit acceptance and a Node
   test cover it.
 - **Value depth: one shared limit** (lead). `varta_kv_codec::MAX_VALUE_DEPTH`
-  (the legacy checked-JSON depth, 64) bounds the stage walk, the V8 encoder
+  (the legacy checked-JSON depth) bounds the stage walk, the V8 encoder
   and decoder and the classifier identically on both hosts with a named
   recoverable `TypeError`; the construction was already iterative. Measured
   before the limit: Chrome trapped the guest with "Maximum call stack size
   exceeded" from about 750 levels, WebKit from about 170, and a native debug
   build aborted its process with a host stack overflow at 1500. Native,
-  Chrome and WebKit now agree at 63, 64, 65 and 2000 levels.
+  Chrome and WebKit now agree just below, at and one above the limit and at
+  2000 levels. A part shared within a value counts at its deepest reach
+  (second re-check): the stage walk, the V8 writer and the V8 reader keep
+  each aggregate's height and check it again at every later reach, so a
+  value stores, in either property order, exactly when its expansion (what
+  a `get` classifies) is within the limit; native, the wasm32 codec and
+  Chrome agree on the shared-chain cases.
 - **Writability as native**: a database opens writable when the request and
   the ceiling cover `kv.write`, whatever the broker's state; an uncertain
   container refuses reads too.

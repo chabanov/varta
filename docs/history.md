@@ -43,7 +43,7 @@ Playwright Firefox did not launch here. The full gate is the wave lead's.
 
 ### Review fixes (2026-11-05)
 
-A shared KV value depth limit (`varta_kv_codec::MAX_VALUE_DEPTH`, 64) now
+A shared KV value depth limit (`varta_kv_codec::MAX_VALUE_DEPTH`) now
 bounds the stage walk, the V8 encoder and decoder and the classifier on both
 hosts with one recoverable `TypeError`; before it Chrome trapped from about
 750 levels, WebKit from about 170, and a native debug `varta dev` aborted at
@@ -59,6 +59,19 @@ fingerprint. Scoped evidence: `verify.py local varta-runtime --filter kv`
 (51), 204 Node tests, a clean-room codec build byte-identical to the
 checked-in module, and `scripts/test-browser-kv.mjs` in Chrome 156 (11
 cases) and Playwright WebKit 26.5 (10, no quota override).
+
+### Second re-check fixes (2026-11-05)
+
+A part shared within a KV value now counts at its deepest reach: the stage
+walk, the V8 writer and the V8 reader keep each aggregate's height and check
+it again at every later reach. Before, `{ a: x, b: y }` with `y` wrapping the
+same `x` deeper than the limit stored ("set ok") and never read back, while
+`{ a: y, b: x }` was refused. Native, the wasm32 codec (a new
+wasm-vs-native stage test over a guest with a shared cell) and Chrome agree
+on the shared-chain cases in both orders and on a cycle (new `dag` case).
+The KV acceptance's server closes idle browser connections, so
+`test-browser-matrix.mjs --kv` finishes in Chrome; CI checks
+`varta-kv-codec` without `std` and the codec fingerprint.
 
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
