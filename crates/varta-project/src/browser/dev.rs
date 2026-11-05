@@ -16,6 +16,11 @@ use std::{
     time::Duration,
 };
 
+/// Stack of a rebuild thread: the 8 MiB main-thread stack the first build
+/// runs on (macOS and Linux defaults). The compiler is bounded for that
+/// stack; Tokio's 2 MiB blocking-pool default overflowed rebuilding the
+/// UARP console.
+const REBUILD_STACK_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 16;
 const MAX_HEADERS: usize = 32;
 const HEADER_BUFFER_BYTES: usize = 8192;
@@ -121,6 +126,9 @@ impl BrowserDevServer {
     pub fn run(self) -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
+            // Rebuilds compile on the blocking pool; give its threads the
+            // stack the first build gets on the main thread.
+            .thread_stack_size(REBUILD_STACK_BYTES)
             .build()?;
         let result = runtime.block_on(self.serve_until(tokio::signal::ctrl_c()));
         runtime.shutdown_background();
