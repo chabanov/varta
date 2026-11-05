@@ -36,6 +36,13 @@ pub(crate) fn lower(
             &mut types,
         )?;
     }
+    // `new Error(message, options)` (v38 `sdk_paths`) builds an instance of
+    // the family's Error root, so that root exists before any catch union.
+    for unit in graph.order.iter().map(|path| &graph.units[path]) {
+        for family in errors::options_constructors(&unit.ast, profile) {
+            classes::error_family_root(family, &unit.source, unit.ast.span(), &mut types)?;
+        }
+    }
     let mut type_exports: BTreeMap<PathBuf, named::Exports> = BTreeMap::new();
     for (module, path) in graph.order.iter().enumerate() {
         let unit = &graph.units[path];

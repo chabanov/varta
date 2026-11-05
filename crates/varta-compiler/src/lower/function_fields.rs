@@ -158,6 +158,14 @@ impl Lower<'_> {
                     let value = self.types.dictionaries[id as usize].value;
                     return matches!(value, Type::Function(_)).then_some(value);
                 }
+                // V38 (`structural_subtyping`): an element read `xs[i]` is
+                // the element type, so `xs[i].m<T>()` reaches a function
+                // field like a member path of a binding does.
+                if let (Type::Array(id), ast::MemberProp::Computed(_)) = (base, &member.prop)
+                    && self.types.profile.structural_subtyping()
+                {
+                    return Some(self.types.arrays[id as usize]);
+                }
                 let name = member_name(&member.prop)?;
                 self.field_type(base, &name)
             }

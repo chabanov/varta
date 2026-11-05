@@ -1,7 +1,7 @@
 // Engine prelude of checked-f64-utf16-v38 (`web_bytes`): `ArrayBuffer`,
-// `Blob` and `FormData` in typed guest code with no host import. The
-// compiler loads it when a module names one of its exports; see
-// docs/architecture.md (Web bytes).
+// `Blob`, `File` (`sdk_paths`) and `FormData` in typed guest code with no
+// host import. The compiler loads it when a module names one of its exports;
+// see docs/architecture.md (Web bytes).
 //
 // A `Blob` holds its bytes as an immutable byte string: one UTF-16 code unit
 // (0..=0xFF) per byte, the form network chunks and byte request bodies take
@@ -227,11 +227,38 @@ export class Blob {
   encode(text: string): string {
     return utf8Bytes(text);
   }
+
+  // Engine-internal: the file name of a `FormData` entry appended without
+  // one (WHATWG "create an entry": a `File` keeps its own name).
+  entryName(): string {
+    return DEFAULT_FILENAME;
+  }
 }
 
 function blobOf(bytes: string, type: string): Blob {
   HANDOFF.bytes = bytes;
   return new Blob(undefined, { type: type });
+}
+
+export interface FilePropertyBag {
+  type?: string;
+}
+
+// A `File` (v38 `sdk_paths`): a `Blob` with a name. `lastModified` is not
+// declared: its WHATWG default is the current wall-clock time, which needs
+// a clock capability, so reading it is a compile error rather than a guess.
+export class File extends Blob {
+  readonly name: string;
+
+  constructor(fileBits: BlobPart[], fileName: string, options?: FilePropertyBag) {
+    super(fileBits, options);
+    this.name = scalarString(fileName);
+  }
+
+  // Engine-internal: a `File` entry is named after the file.
+  entryName(): string {
+    return this.name;
+  }
 }
 
 export type FormDataEntryValue = string | Blob;
@@ -258,7 +285,7 @@ function entry(name: string, value: FormDataEntryValue, filename: string | undef
   return new FormEntry(
     scalarString(name),
     value,
-    filename === undefined ? DEFAULT_FILENAME : scalarString(filename),
+    filename === undefined ? value.entryName() : scalarString(filename),
   );
 }
 

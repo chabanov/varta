@@ -3843,6 +3843,41 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
   `typeof` of engine globals through `dev` and `build --single`. V37 cases
   that read text chunks are listed in `V38_DEVIATIONS`.
 
+### SDK paths (`sdk_paths`)
+
+Contract: [architecture.md](architecture.md#sdk-paths-sdk_paths).
+
+- Gate every admission on `sdk_paths()`; v37 keeps its diagnostics for each
+  form (`sdk_path_forms_stay_refused_by_v37`).
+- `new Error(message, options)` builds the family's Error root through
+  `error_root_new`, which shares `error_initialize` with `super(...)` of an
+  Error subclass. Create roots only in `link` from
+  `errors::options_constructors`, before any body is lowered; never create a
+  root lazily during lowering (catch unions and `unknown` analyses would
+  already have seen the program without it).
+- `error.cause` of a native error is `undefined` because no native error is
+  ever built with a cause. If a later change lets a native error own one,
+  `error_cause_read` must read it instead of folding.
+- `instanceof Map`/`Set`/`Uint8Array` (`sdk_paths::collection_instance_of`)
+  is a tag test only where the selected member is the only member with its
+  tag; keep refusing `unknown`/`object` operands while those collections
+  have no cell of their own, and never test a collection by element kind or
+  record shape.
+- Spreads of record shapes are noted (`Views::note_spread`) and checked by
+  `subtyping::spread_views` before `resolve` rewrites views. Admit only
+  sources with exactly the view's field names in its order; any other source
+  fails naming both types.
+- `File` lives in the blob prelude; `entryName` is engine-internal
+  (`INTERNAL_MEMBERS`). Do not declare `lastModified` without a clock
+  grant. `for...of` over `FormData` calls the prelude's `entries` like
+  `Headers`.
+- Still refused, by owner decision or until a value-layout change: a
+  `Uint8Array` held by `unknown`, the record view of a class instance held by
+  `unknown`, `A[] | B[]` of records, `Blob.stream()`, `formData()`.
+- Tests: `varta-runtime` `sdk_path_tests` (the `sdk_path_cases/*.expected`
+  files are Node 24.20.0 output, including the multipart and query wire
+  bytes; refusals and v37 denials).
+
 ### V38 linked intrinsics
 
 Contract: [architecture](architecture.md#linked-intrinsics-linked_intrinsics),

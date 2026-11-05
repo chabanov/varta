@@ -3181,3 +3181,34 @@ initialize; `auto` keeps the CPU fallback. KV directories are gated per root
 by the ceiling's `kv.read` patterns, a ceiling mapping of a KV root is tested
 to win, and the contract states that the directories precede the runtime's
 code validation (which runs once, at start).
+
+### V38 SDK paths (`sdk_paths`) — wave 2, scoped 2026-11-04
+
+`sdk_paths()` (v38) closes the subset gaps that uarp-sdk 0.13.2 reaches on its
+multipart, query and error paths, or refuses them by name
+([contract](architecture.md#sdk-paths-sdk_paths)). Admitted: `error.cause`
+reads of native errors and Error-instance unions (pilot finding F3),
+`new Error(message, options)` and the native families as instances of the
+family's Error root (created in `link` before any body is lowered),
+`xs[i].m<T>()` on element receivers (pilot finding F1), `instanceof Map`/
+`Set`/`Uint8Array` of closed unions, the blob prelude's `File`, and
+`for...of` over `FormData`. Record and dictionary spreads of a view whose
+sources have other fields or another field order now fail in `resolve`
+(they copied the view's fields in the view's order); the SDK's same-shape
+`{ ...spec, headers, query }` stays admitted. Still refused: a `Uint8Array`
+held by `unknown` (owner decision), the record view of a class instance held
+by `unknown` (so the SDK's `appendPart` throws `TypeError` for `Uint8Array`,
+`ArrayBuffer` and `{ data: Uint8Array }` parts), `A[] | B[]` of records,
+`Blob.stream()` and `formData()`. No ABI, value layout, capability or budget
+changed.
+
+Scoped verification only: `verify.py local varta-compiler` (164 unit tests),
+`verify.py local varta-runtime --filter sdk_path` (11 tests; multipart and
+query wire bytes equal the checked-in Node 24.20.0 output), `cargo test -p
+varta-common`, `cargo test -p varta-runtime --lib` (2041 passed; the one
+failure, `a_network_wait_times_out_without_running_later_inputs`, is a
+wall-clock bound under parallel builds and passes alone), strict Clippy of
+the three crates, formatting, and the conformance baseline (`cargo run -p
+varta-conformance --locked -- --json`, baseline matches). `varta check` of
+every `examples/uarp-console` configuration passes with the pinned SDK. The
+full gate is left to the wave integration.

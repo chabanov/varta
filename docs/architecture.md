@@ -11203,6 +11203,66 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   serialization run per byte in guest code; network `text()` keeps the host
   decoder. Production budgets are unchanged.
 
+#### SDK paths (`sdk_paths`)
+
+Wave-2 additions to v38 for the multipart, query and error paths of the pinned
+uarp-sdk 0.13.2, under the selector `LanguageProfile::sdk_paths()`. No host
+import, value layout or ABI changes; v1–v37 keep rejecting every form below.
+
+- **Error causes.** `error.cause` reads a native error, an Error subclass
+  instance or a union of both after `instanceof Error`: the instance's
+  `cause` slot, and `undefined` for a native error. `new Error(message,
+  options)` (and `new TypeError(…)` and the other native families) builds
+  an instance of the family's synthetic Error root, the class an Error
+  subclass extends, with `message`, the family's `name` and `options.cause`
+  installed exactly as `super(message, options)` does. Its static type is
+  that root class, so it passes `instanceof` of its family and of `Error`,
+  is reported like a subclass instance when uncaught and serializes as `{}`,
+  as in JavaScript; like a subclass instance it is not assignable to a
+  parameter annotated `Error` (the native error union). Native error values
+  never own a `cause`, so the `undefined` read is exact. Before any body is
+  lowered, `link` creates the root of every family that some module
+  constructs with two arguments, so catch unions and `unknown` analyses see
+  the class from the start.
+- **Generic method calls on element receivers.** `xs[i].m<T>()` reaches a
+  function field of the element type like `x.m<T>()` of a binding does: the
+  element is read once (an absent element fails with `TypeError` when the
+  field is read) and the erased generic call checks its result.
+- **`instanceof Map`, `Set` and `Uint8Array`.** Of a closed union, the test
+  is a member tag test and narrows the union both ways; of any other closed
+  type it is a constant (the operand is still evaluated). These collections
+  have no value tag of their own (a map or set shares the record tag, a
+  `Uint8Array` the array tag), so the test is refused for an `unknown` or
+  `object` operand, which never holds one, and for a union whose other
+  members share the selected member's tag. Unions of two collections or of
+  a collection and a record or class instance stay refused when the union
+  is formed.
+- **`File` and `FormData` iteration.** The blob prelude's `File` is a `Blob`
+  with a `name` (a USVString); a `FormData` entry appended from a `File`
+  without a file name takes the file's name. `lastModified` is not declared:
+  its default is the wall-clock time, which needs a clock grant, so reading
+  it is a compile error. `for (const [name, value] of form)` iterates the
+  snapshot `FormData.prototype.entries()` returns.
+- **Spreads through views.** A record spread (into a record or a dictionary
+  context) whose source type is a view of a wider object type, one with
+  other field names or another field order, fails when `resolve` sees the
+  view: the spread would copy the view's declared fields in the view's
+  order, where JavaScript copies every own property in the object's own key
+  order. A view whose sources declare exactly its fields in its order (the
+  SDK's `{ ...spec, headers, query }` passed back as a `RequestSpec`) is
+  admitted, as are dictionary spreads (`{ ...spec.query, ...options.query }`
+  merges and serializes byte for byte as Node does).
+- **Not admitted.** A `Uint8Array`, or a union that may hold one, held by
+  `unknown`, and the record view of a class instance held by `unknown`
+  (`value as Record<string, unknown>`), keep their named diagnostics and
+  `TypeError`s. On the SDK's `appendPart(form, key, value: unknown)` this
+  means a `Blob` or `File` part and primitive or JSON fields reach the wire
+  as in Node, while a `Uint8Array`, `ArrayBuffer` or `{ data: Uint8Array }`
+  part throws `TypeError` when the multipart record is read. `A[] | B[]` of
+  records, `Blob.stream()`, `Response`/`Request` `formData()` and the
+  `FormData` `keys()`/`values()`/`entries()` iterator objects (they return
+  array snapshots) stay as they were.
+
 #### Virtual file roots (`file_roots`)
 
 Under v38 a guest never sees or names a host path. Every `fs.read`/`fs.print`

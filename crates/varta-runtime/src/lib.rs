@@ -199,6 +199,8 @@ mod reduce_right_tests;
 mod resolution_review_tests;
 mod scheduler;
 #[cfg(test)]
+mod sdk_path_tests;
+#[cfg(test)]
 mod timer_tests;
 #[cfg(test)]
 mod truth_guard_tests;

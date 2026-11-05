@@ -57,8 +57,26 @@ pub(crate) struct Views {
     /// `Reinterpret` of the value that `resolve` replaces by a call of the
     /// pair's synthesized wrapper (`Rewriter::adapter`).
     adapters: RefCell<BTreeSet<(u32, u32)>>,
+    /// V38 (`sdk_paths`): the closed record shapes spread into a record or
+    /// dictionary literal, with the spread's source and span. `resolve`
+    /// refuses a shape that is a view of an object type with other fields or
+    /// another field order (`spread_views`): JavaScript copies every own
+    /// property of the object in its own key order.
+    spreads: RefCell<Vec<(u32, crate::source::Source, swc_common::Span)>>,
 }
 impl Views {
+    /// Note a closed record shape spread into a record or dictionary literal
+    /// (v38 `sdk_paths`), checked against the view sources in `resolve`.
+    pub(crate) fn note_spread(
+        &self,
+        shape: u32,
+        source: &crate::source::Source,
+        span: swc_common::Span,
+    ) {
+        self.spreads
+            .borrow_mut()
+            .push((shape, source.clone(), span));
+    }
     /// Note the closed record shapes a value of `ty` entering an `unknown`
     /// cell may hold (v38 JSON-object reads of records).
     pub(crate) fn note_boxed(&self, ty: Type, types: &ir::ValueTypes) {
@@ -780,6 +798,60 @@ enum Access {
     Call(Type),
 }
 
+/// Refuse a record spread whose source shape may hold a wider object
+/// through a view (v38 `sdk_paths`): the spread copies the view's declared
+/// fields in the view's order, where JavaScript copies every own property in
+/// the object's own key order. A source object type with exactly the view's
+/// field names, in the same order, copies the same keys and is admitted
+/// (optional fields keep the documented member order either way).
+fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result<()> {
+    if !types.profile.sdk_paths() {
+        return Ok(());
+    }
+    let names = |ty: Type| -> Option<Vec<&str>> {
+        let shape = match ty {
+            Type::Record(id) => id,
+            Type::Class(id) => types.classes.shape(id),
+            _ => return None,
+        };
+        Some(
+            types.records[shape as usize]
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect(),
+        )
+    };
+    for (shape, source, span) in types.subtyping.spreads.borrow().iter() {
+        let declared = names(Type::Record(*shape)).unwrap_or_default();
+        let mut visited = BTreeSet::from([Type::Record(*shape)]);
+        let mut stack = vec![*shape];
+        while let Some(target) = stack.pop() {
+            for (wider, _) in edges.iter().filter(|(_, t)| *t == target) {
+                if !visited.insert(*wider) {
+                    continue;
+                }
+                if let Type::Record(id) = wider {
+                    stack.push(*id);
+                }
+                if names(*wider).as_deref() == Some(declared.as_slice()) {
+                    continue;
+                }
+                return Err(source.locate(
+                    unsupported(&format!(
+                        "object spread of a {} that may hold a wider {} (a view); JavaScript \
+                         copies every own property in the object's own key order, which the \
+                         view's declared fields do not give, so copy the fields by name",
+                        describe(Type::Record(*shape), types),
+                        describe(*wider, types)
+                    )),
+                    *span,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 /// Close the admitted edges and route every member access of a view shape
 /// through its accessors (see the module documentation).
 pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
@@ -787,6 +859,7 @@ pub(super) fn resolve(program: &mut ir::Program) -> Result<()> {
         return Ok(());
     }
     let edges = program.types.subtyping.edges.borrow().clone();
+    spread_views(&edges, &program.types)?;
     if edges.is_empty()
         && program.types.subtyping.graph.is_none()
         && program.types.subtyping.adapters.borrow().is_empty()

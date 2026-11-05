@@ -434,6 +434,7 @@ mod reduce_inference;
 mod references;
 mod regexp;
 mod results;
+mod sdk_paths;
 mod shared_unions;
 mod signature;
 mod spread;

@@ -756,6 +756,16 @@ impl LanguageProfile {
     pub fn web_bytes(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave-2 SDK-path stream: `cause` reads of native errors
+    /// and Error-instance unions, `new Error(message, options)` as an
+    /// instance of the family's Error root, `instanceof Map`/`Set`/
+    /// `Uint8Array` of closed unions, `"k" in` an `unknown` value read as a
+    /// record that holds a class instance, `for...of` over `FormData`,
+    /// `File`, `Blob.stream()` and `formData()` of bodies.
+    #[must_use]
+    pub fn sdk_paths(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, virtual-roots stream: `fs.*` paths and grants are virtual
     /// paths `/<root>/...` under named roots that the host maps to pinned
     /// directories ([`crate::files`]); an absolute host path is denied.
@@ -3204,6 +3214,7 @@ mod tests {
                 profile.dictionary_hashing(),
                 profile.strict_members(),
                 profile.web_bytes(),
+                profile.sdk_paths(),
                 profile.file_roots(),
                 profile.json_decoders(),
             ] {

@@ -623,7 +623,7 @@ mod parameter_properties;
 mod private_names;
 pub(super) use dispatch::{bodies, dispatch_bodies, dispatchers, late_dispatch_bodies};
 pub(super) use error_classes::{
-    MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_json_form,
+    CAUSE, MESSAGE, NAME, join_error_classes, new_target_name, reaches_instance, reaches_json_form,
     reaches_prelude, root as error_family_root,
 };
 pub(super) use generic_classes::{UNALLOCATED, instantiate_class, member_body, next_member};
