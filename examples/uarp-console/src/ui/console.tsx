@@ -92,9 +92,9 @@ function connected(state: StartState): boolean {
   return state.kind === "ready" || state.kind === "following";
 }
 
-/** States in which the banner offers the settings: no key, no agent, or the API refused or failed. */
+/** States in which the banner offers the settings: no key, no agent, a stored base URL without https, or the API refused or failed. */
 function needsSettings(state: StartState): boolean {
-  return state.kind === "no_key" || state.kind === "no_agent" || state.kind === "unavailable";
+  return state.kind === "no_key" || state.kind === "no_agent" || state.kind === "url_invalid" || state.kind === "unavailable";
 }
 
 // ------------------------------------------------------------- the timeline

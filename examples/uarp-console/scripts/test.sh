@@ -24,9 +24,12 @@
 #    equal <name>.expected.json.
 # 5. The API key never leaves the settings store: the test key (API_KEY in
 #    src/tests/sdk/contract.ts) must not appear in the output (logs included) of
-#    app-settings, in the product's dist/app.wasm or dist/app.manifest.json, and
-#    the key a view script types into #api-key must not appear in that view's
-#    output (snapshot and logs).
+#    app-settings, and the key a view script types into #api-key must not appear
+#    in that view's output (snapshot and logs). No API key is built into the
+#    product: no string of the key form (`uarp_<prefix>_<secret>`, the test key
+#    included) may appear in dist/app.wasm or dist/app.manifest.json. The
+#    module stores string literals as UTF-16 code units, so the search drops
+#    NUL bytes first; a plain search of the module would never find one.
 set -eu
 # A relative VARTA_BIN names a path from the caller's directory.
 varta="${VARTA_BIN:-varta}"
@@ -47,6 +50,12 @@ groups="${*:-$unit_groups $app_groups}"
 test_key=$(sed -n 's/^export const API_KEY = "\([^"]*\)";$/\1/p' src/tests/sdk/contract.ts)
 if [ -z "$test_key" ]; then
   echo "FAIL config: no API_KEY in src/tests/sdk/contract.ts" >&2
+  exit 1
+fi
+# The API key form (uarp-sdk: `uarp_<prefix>_<secret>`) searched for in the product build (step 5).
+key_form='uarp_[A-Za-z0-9]+_[A-Za-z0-9_-]+'
+if ! printf '%s\n' "$test_key" | grep -qE "^$key_form\$"; then
+  echo "FAIL config: the test key does not have the API key form" >&2
   exit 1
 fi
 
@@ -155,8 +164,8 @@ for group in $groups; do
   fi
   if [ "$group" = app-manifest ]; then
     for built in dist/app.wasm dist/app.manifest.json; do
-      if grep -qF "$test_key" "$built"; then
-        printf '[%s] FAIL the test key appears in %s\n' "$group" "$built"
+      if tr -d '\000' < "$built" | LC_ALL=C grep -aqE "$key_form"; then
+        printf '[%s] FAIL a string of the API key form appears in %s\n' "$group" "$built"
         status=1
       fi
     done

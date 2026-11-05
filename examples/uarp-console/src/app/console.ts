@@ -8,7 +8,11 @@
 // the SDK did not retry.
 //
 // The settings screen saves through `saveSettings`. The key goes to the
-// settings store and to the client constructed for it, nowhere else. A start
+// settings store and to the client constructed for it, nowhere else. The key is
+// a bearer credential, so a base URL the person enters must use https: a
+// plaintext one is refused when saved and, when the store holds one anyway, at
+// start before any client is constructed. The default base URL is the
+// product's configuration (config.ts), not the person's input. A start
 // that did not get as far as the session list can run again with the new
 // settings; after that, new settings apply at the next start of the console,
 // because the timeline, its view and the request layer already belong to the
@@ -28,6 +32,7 @@ import {
   NO_AGENT,
   NO_KEY,
   OLDER_FAILED,
+  STORED_URL_INVALID,
   SAVE_FAILED,
   SAVED,
   SAVED_NEXT_START,
@@ -60,6 +65,8 @@ export type StartState =
   | { kind: "starting" }
   | { kind: "no_key" }
   | { kind: "no_agent" }
+  /** The stored base URL does not use https; nothing was requested. */
+  | { kind: "url_invalid" }
   /** A start request failed: denied, unreachable or answered with an error. */
   | { kind: "unavailable"; reason: string }
   /** No live session: the next message creates one. */
@@ -84,18 +91,26 @@ export type SaveOutcome =
   /** Saved; they apply at the next start. */
   | { kind: "saved" };
 
-/** The schemes a base URL may use; the manifest's `net.request` grant still decides which origin is reachable. */
-const URL_SCHEMES: string[] = ["https:", "http:"];
+/**
+ * The one scheme a base URL may use: the key goes out as a bearer credential,
+ * so it is never offered to a plaintext origin. The manifest's `net.request`
+ * grant still decides which origin is reachable.
+ */
+const URL_SCHEME = "https:";
 
-/** Whether settings can be saved: a key, and a base URL that parses with an HTTP scheme. */
+/** Whether a base URL parses and uses https. */
+export function secureBaseURL(baseURL: string): boolean {
+  try {
+    return new URL(baseURL.trim()).protocol === URL_SCHEME;
+  } catch (error) {
+    return false;
+  }
+}
+
+/** Whether settings can be saved: a key, and a base URL that parses and uses https. */
 export function checkSettings(baseURL: string, apiKey: string): SaveOutcome | null {
   if (apiKey.trim() === "") return { kind: "key_missing" };
-  try {
-    const url = new URL(baseURL.trim());
-    if (!URL_SCHEMES.includes(url.protocol)) return { kind: "url_invalid" };
-  } catch (error) {
-    return { kind: "url_invalid" };
-  }
+  if (!secureBaseURL(baseURL)) return { kind: "url_invalid" };
   return null;
 }
 
@@ -108,6 +123,8 @@ export function startText(state: StartState): string {
       return NO_KEY;
     case "no_agent":
       return NO_AGENT;
+    case "url_invalid":
+      return STORED_URL_INVALID;
     case "unavailable":
       return UNAVAILABLE + state.reason;
     case "ready":
@@ -137,7 +154,7 @@ export function endText(end: FollowEnd): string {
 
 /** Whether a state lets the console start again: nothing of a session exists yet. */
 function restartable(state: StartState): boolean {
-  return state.kind === "no_key" || state.kind === "no_agent" || state.kind === "unavailable";
+  return state.kind === "no_key" || state.kind === "no_agent" || state.kind === "url_invalid" || state.kind === "unavailable";
 }
 
 /** What the start reached before the console wires itself to the API. */
@@ -187,15 +204,17 @@ export class ConsoleApp {
   async open(): Promise<Opened> {
     const none = (state: StartState): Opened => ({ state: state, api: null, stitcher: null, agentId: "" });
     let apiKey: string | null = null;
+    let stored: string | null = null;
     try {
       const settings = await this.options.settings.read();
       apiKey = settings.apiKey;
-      const stored = settings.baseURL;
+      stored = settings.baseURL;
       if (stored !== null) this.baseURL.set(stored);
     } catch (error) {
       return none({ kind: "unavailable", reason: describeFailure(error) });
     }
     if (apiKey === null) return none({ kind: "no_key" });
+    if (stored !== null && !secureBaseURL(stored)) return none({ kind: "url_invalid" });
     const api = this.options.connect(this.baseURL.get(), apiKey);
     try {
       const tenant = await api.tenants.getCurrentTenant();

@@ -73,6 +73,15 @@ repository.
 
 ## Status
 
+Checkpoint 2026-11-05, wave 3 review fixes (debug `varta` built from this
+branch, whose crates equal `49186cf`): `scripts/test.sh` passes **249 tests in 36
+groups and ten headless view checks**. New: the base URL must use https (saved and
+stored; `app-settings` +3), the live session is the newest one only when active,
+so segments stay in creation order (`chat-stitch` +3), a message after
+`session_closed` creates a new session (`chat-requests` +4), and the product build
+is searched for any string of the API key form. The view snapshots changed only
+by the base URL help text ("Лише https://.").
+
 Checkpoint 2026-11-05, wave 3 (debug `varta` of `49186cf` with this example's
 working tree): `scripts/test.sh` passes **239 tests in 36 groups and ten headless
 view checks**. New since the checkpoint below: `chat-stitch`, `ui-notices`,
@@ -80,9 +89,12 @@ view checks**. New since the checkpoint below: `chat-stitch`, `ui-notices`,
 `app-*` flows starting from the session list, and the eight console screens
 `settings`, `settings-saved`, `empty`, `history`, `context`, `loading`, `error` and
 `confirm` ([product entry](#product-entry-and-the-console-end-to-end)). The run
-also found the test key in no output of `app-settings`, in neither
-`dist/app.wasm` nor `dist/app.manifest.json`, and the key the `settings-saved`
-script types in neither its snapshot nor its log. The product manifest's grants
+also found the test key in no output of `app-settings`, and the key the
+`settings-saved` script types in neither its snapshot nor its log. (The run's check
+of `dist/app.wasm` and `dist/app.manifest.json` for the test key could not fire:
+the module stores string literals as UTF-16 code units. After the review it looks
+for any string of the API key form with NUL bytes dropped, and a key-shaped
+literal planted in the product makes it fail.) The product manifest's grants
 are unchanged. `scripts/sdk-loopback.sh` still passes its six groups (43 cases) against the extended mock.
 
 Checkpoint 2026-11-05 (debug `varta` of `4fce278` with this example's working
@@ -135,8 +147,8 @@ performance limits or production capacity.
 | SDK source admission | `scripts/check-sdk.sh` checks 65/65 pinned 0.13.2 files unmodified under v38, plus the bodies of all six generic functions and methods through an instantiation probe (2026-11-04, debug build of `978b793`) | SDK-own tests (M7); generic bodies only for the probed type arguments |
 | Real requests to UARP | The real `UarpClient` runs natively under Varta against the loopback mock: unary JSON, problem documents and bare error bodies, retry after a 503 with `Retry-After` (and none with `x-should-retry: false`), `AbortSignal`, timeout, and `sessions.streamSessionEvents` to `[DONE]`; 43 cases in 6 groups pass (2026-11-04) | Live-service validation, streams with gaps between frames or of real size (finding F4), cross-target acceptance; findings below |
 | Product entry | `src/app/` with `varta.json`: settings from KV, the real client, the Head Agent's stitched sessions, the request layer and the followed session stream with the stream.ts reconnect rules; send, approve, answer, drop, reconnect (also after a 503) and the ends after `session_closed`, a final `error`, `[DONE]` alone and a 401 pass end to end against the recorded scenarios (2026-11-04); giving up after connections without progress, a frame strict parsing refuses and a refused stream open (403, capability denial) with the real reason in the note pass end to end (2026-11-05) | Live-service validation, the view under scripted input with the live stream, cross-target acceptance |
-| Session stitching | The live session from the newest page of the Head Agent's sessions, loaded from its transcript and followed without duplicates; older sessions loaded on scroll (or the button) one per request across pages, each prepended with its date line, a closed one as a note; the first message without a live session creates one; end to end against the mock (`app-stitch`), as a model (`chat-stitch`, `chat-store`, `chat-requests`) and headlessly (`history` view) (wave 3) | A recorded `GET /sessions` page (the pages are composed from recorded bodies); live-service validation; a window of about 30 entries (design) is not implemented, every loaded segment stays rendered |
-| Settings and the other screens | Settings dialog (base URL, API key) saving through KV only, with validation and "forget the key" behind the confirm dialog; the empty chat with suggestions; the context panel of runs and delegated agents mentioned in the conversation, with the context meter; loading and error banners; toasts. End to end for the settings (`app-settings`), as state (`ui-notices`) and in eight headless view checks (`settings`, `settings-saved`, `empty`, `history`, `context`, `loading`, `error`, `confirm`) (wave 3) | New settings apply at the next start once a session was reached (no in-place restart); the panel shows only what the timeline holds (no agent or run requests); copy buttons (`clipboard.write` is not granted); native rendering of these screens |
+| Session stitching | The newest session of the Head Agent, when active, as the live session, loaded from its transcript and followed without duplicates; older sessions loaded on scroll (or the button) one per request across pages, each prepended with its date line, a closed one as a note, all in creation order; the first message without a live session (also after `session_closed`) creates one; end to end against the mock (`app-stitch`), as a model (`chat-stitch`, `chat-store`, `chat-requests`) and headlessly (`history` view) (wave 3) | A recorded `GET /sessions` page (the pages are composed from recorded bodies); live-service validation; a window of about 30 entries (design) is not implemented, every loaded segment stays rendered |
+| Settings and the other screens | Settings dialog (base URL, API key) saving through KV only, with validation (a key, and an https base URL: the key is never offered to a plaintext origin; a stored base URL without https stops the start) and "forget the key" behind the confirm dialog; the empty chat with suggestions; the context panel of runs and delegated agents mentioned in the conversation, with the context meter; loading and error banners; toasts. End to end for the settings (`app-settings`), as state (`ui-notices`) and in eight headless view checks (`settings`, `settings-saved`, `empty`, `history`, `context`, `loading`, `error`, `confirm`) (wave 3) | New settings apply at the next start once a session was reached (no in-place restart); the panel shows only what the timeline holds (no agent or run requests); copy buttons (`clipboard.write` is not granted); native rendering of these screens |
 
 ## Running the checks
 
@@ -251,11 +263,15 @@ defaults to `API_BASE_URL`), constructs `UarpClient` with them, reads the tenant
 (`src/chat/stitch.ts`, design/chat-timeline.md "Session stitching"):
 
 - `sessions.list({ agent_id, limit: 20 })` gives the newest page, newest first. Its
-  first session whose `status` is `active` is live: the console reads its
-  transcript (`sessions.getSessionMessages`), which alone holds the person's
+  first (newest) session is live when its `status` is `active`: the console reads
+  its transcript (`sessions.getSessionMessages`), which alone holds the person's
   messages, and then follows it; the stream's replay of a run the transcript holds
   is dropped (`fromHistory`), so nothing shows twice. Every other session of the
   page, and of each further page behind the list's `cursor`, waits as history.
+  Segments stay in creation order with the live one last, so when the newest
+  session is closed or expired none is live, even if an older one is still active:
+  that older session loads as history above the newer one, and the next message
+  creates a new session below them (`chat-stitch`).
 - Scrolling the timeline to its top (a `scroll` event at most 48 px from the top)
   or the "Показати раніші розмови" button loads the next older session as a history
   segment from its transcript, prepended before the segments shown; one session per
@@ -267,7 +283,9 @@ defaults to `API_BASE_URL`), constructs `UarpClient` with them, reads the tenant
   takes its id and day, the message is sent and then the session is followed.
   Messages sent meanwhile wait behind the creation; a failed creation marks them as
   not sent with the API's code and closes the segment, and the next message starts
-  again. After `session_closed` the next message creates a new session the same way.
+  again. After `session_closed` the next message creates a new session the same way
+  (`chat-requests`, through the dispatcher and the request layer; no end-to-end
+  group sends after `session_closed`).
 - Each segment starts with a quiet date line, the UTC day of its session's
   `created_at` ("3 січня 2026"; relative days such as "Сьогодні" in the mockup are
   not shown, since they would need the clock in the view).
@@ -332,12 +350,12 @@ each older session renamed after it (every recording names its run `run-1`).
 
 | Group | What runs |
 | --- | --- |
-| `app-manifest` | The built `dist/app.manifest.json` requests exactly the grants above, with the `data` root only; `scripts/test.sh` also checks that neither it nor `dist/app.wasm` contains the test key |
+| `app-manifest` | The built `dist/app.manifest.json` requests exactly the grants above, with the `data` root only; `scripts/test.sh` also checks that neither it nor `dist/app.wasm` contains a string of the API key form (`uarp_<prefix>_<secret>`, the test key included), searching the module with its NUL bytes dropped because string literals are stored as UTF-16 code units |
 | `app-start` | No stored key: no request. An ungranted database: `NotAllowedError` from `kv.read` before any effect. An ungranted origin (the product's own `fetch`): the SDK's `APIConnectionError` caused by the engine's `NotAllowedError` for `net.request`, which the reason shows, nothing followed. A tenant without a Head Agent: the tenant is read and no session is created. A key entry that does not decode as a string: the start reports the read's `TypeError`, and more such starts than the engine keeps databases open all report it, so the database is closed on that path too |
 | `app-e2e` | `approval_approve` and `ask_user`: no session listed, so the first message creates one (`POST /sessions`, then the message, then the stream), the stream to the wait, the drop, approve or answer, the reconnect with the model's `Last-Event-ID`, the run to its end; the timeline equals the reviewed expectation of that recording (scenarios.test.ts) plus the person's message, and the requests come in the expected order. `session_end`: a drop mid-run, a reconnect the mock answers with a 503, the SDK's reconnect from the same event, then `session_closed` and `[DONE]` end following with `over`. A final `error` frame (`SESSION_NOT_FOUND`), `[DONE]` alone and a 401 end following without a reconnect. Connections that deliver only `connected`, and connections that deliver only a keep-alive comment, end with `gave_up` after `maxReconnects`. A run event missing a required field ends with `invalid` and the strict parser's `TypeError`. A stream open answered 403, or sent to an ungranted origin, ends with `refused` and the `PermissionDeniedError` or `NotAllowedError` after two requests; one answered 503 every time ends with `gave_up` and the `ServiceUnavailableError`. Each end checks the streams opened, the stream requests and the note with the real reason |
 | `app-e2e-long` | One connection whose head the mock delays 200 ms (within the 250 ms window) and whose 100 content chunks (about 24 KB, several reads) are applied one per turn: the stream lasts longer than one per-turn deadline although no single wait does, every chunk is applied and `session_closed` + `[DONE]` end it |
 | `app-stitch` | `stitch`: the newest page lists an active, an expired and a closed session, with a second page behind its cursor; the active one is followed, its timeline starts from its recorded transcript, and the stream's replay of the same run adds nothing (the reconnect resumes from the start, `- -`). Three loads, as three scrolls, prepend the expired session's transcript, the closed session's note (its transcript is recorded as 404) and, from the second page, the oldest session's transcript, each with its date; a fourth makes no request. `stitch-new`: an expired and a closed session only, so the console is ready; the first message creates the session, is sent, and the stream of the recorded plain scenario gives the reviewed timeline plus the message; a load then puts the expired session before it. Both check every request in order |
-| `app-settings` | The product's settings store (`KvSettings`) on a test database, with the product's default base URL, which no test grant names: no key, no request; an empty key and a base URL without an HTTP scheme are refused and nothing is stored; a valid save writes the key and base URL to the database and starts the console with them (the mock accepts only the test key); the key is in no state the screen shows (start state, base URL, tenant name, toasts, timeline); a later save applies at the next start; forgetting deletes the key and keeps the base URL; a base URL no grant names is saved but denied by the engine (`NotAllowedError` for `net.request`). `scripts/test.sh` checks that the group's output, logs included, does not contain the test key |
+| `app-settings` | The product's settings store (`KvSettings`) on a test database, with the product's default base URL, which no test grant names: no key, no request; an empty key, a base URL without an HTTP scheme and a plaintext `http:` base URL (the mock's own origin) are refused and nothing is stored; a valid save of an https base URL writes the key and base URL to the database and starts the console with them (the test's fetch sends those requests on to the plain-http mock; the mock accepts only the test key); the key is in no state the screen shows (start state, base URL, tenant name, toasts, timeline); a later save applies at the next start; forgetting deletes the key and keeps the base URL; an https base URL no grant names is saved but denied by the engine (`NotAllowedError` for `net.request`); an `http:` base URL already in the database stops the start as `url_invalid` before any request, although the engine would allow the mock, and an https save then starts the console. `scripts/test.sh` checks that the group's output, logs included, does not contain the test key |
 
 `app-reconnects` is a measurement, not part of the default run (below).
 

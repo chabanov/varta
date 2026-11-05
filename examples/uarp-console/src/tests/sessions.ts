@@ -19,6 +19,8 @@ import sessionEndMessages from "../../fixtures/events-v1/session_end.messages.js
 export const STITCH_SCENARIO = "stitch";
 /** The scenario whose list has no live session: the first message creates one. */
 export const STITCH_NEW_SCENARIO = "stitch-new";
+/** The scenario whose newest session is closed while an older one is still active. */
+export const STITCH_SUPERSEDED_SCENARIO = "stitch-superseded";
 /** The cursor of the stitch list's second page. */
 export const SECOND_PAGE_CURSOR = "page-2";
 /** The page size the console asks for (chat/stitch.ts SESSION_PAGE_SIZE). */
@@ -53,6 +55,15 @@ const ROWS: SessionRow[] = [
   { id: CLOSED_SESSION, status: "closed", createdAt: "2026-01-02T09:00:00.000Z", transcript: sessionEndMessages },
   { id: OLDEST_SESSION, status: "expired", createdAt: "2026-01-01T09:00:00.000Z", transcript: rejectMessages },
 ];
+/**
+ * STITCH_SUPERSEDED_SCENARIO's only page, newest first: the closed session,
+ * created after the still active one. Transcripts are those of the same ids
+ * in ROWS.
+ */
+const SUPERSEDED_ROWS: SessionRow[] = [
+  { id: CLOSED_SESSION, status: "closed", createdAt: "2026-01-04T09:00:00.000Z", transcript: sessionEndMessages },
+  { id: LIVE_SESSION, status: "active", createdAt: "2026-01-03T09:00:00.000Z", transcript: plainMessages },
+];
 /** Rows of the stitch list's first page; the rest are its second page. */
 const FIRST_PAGE_ROWS = 3;
 /** The recorded run id, as every transcript names it in `run_id` and `message_id`. */
@@ -85,6 +96,7 @@ export function sessionPage(scenario: string, cursor: string): string | null {
   }
   // No live session: an expired and a closed one only.
   if (scenario === STITCH_NEW_SCENARIO && cursor === "") return page(ROWS.slice(1, FIRST_PAGE_ROWS), null);
+  if (scenario === STITCH_SUPERSEDED_SCENARIO && cursor === "") return page(SUPERSEDED_ROWS, null);
   return null;
 }
 

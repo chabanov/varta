@@ -6,7 +6,10 @@
 // once and whole, so holding is what puts the person's actions between two
 // connections in a fixed order, as a live server would interleave them. With a
 // `streamOrigin` it sends the stream connections there instead, so a test can
-// point only the stream at an origin no grant names.
+// point only the stream at an origin no grant names. With an `origin` it sends
+// every request there instead of the client's: the settings tests save an
+// https base URL, as the console requires, and still reach the plain-http
+// loopback mock.
 import { ATTEMPT_HEADER } from "./sdk/contract.js";
 
 const EVENT_STREAM_TYPE = "text/event-stream";
@@ -19,6 +22,8 @@ export class GatedFetch {
   hold: boolean;
   /** The origin stream connections are sent to instead of the client's; null keeps it. */
   streamOrigin: string | null;
+  /** The origin every request is sent to instead of the client's; null keeps it. */
+  origin: string | null = null;
   /** Every request in order: method and path (stream connections included). */
   requests: string[] = [];
   /** `Last-Event-ID` of each stream connection, `-` when it had none. */
@@ -39,8 +44,10 @@ export class GatedFetch {
     const headers = new Headers(init.headers);
     const url = new URL(given);
     this.requests.push(String(init.method) + " " + url.pathname);
-    if (headers.get("accept") !== EVENT_STREAM_TYPE) return this.send(given, init, headers);
-    const input = this.streamOrigin === null ? given : this.streamOrigin + url.pathname + url.search;
+    const origin = this.origin;
+    const target = origin === null ? given : origin + url.pathname + url.search;
+    if (headers.get("accept") !== EVENT_STREAM_TYPE) return this.send(target, init, headers);
+    const input = this.streamOrigin === null ? target : this.streamOrigin + url.pathname + url.search;
     const resume = headers.get("last-event-id");
     this.resumes.push(resume === null ? NO_RESUME : resume);
     headers.set(ATTEMPT_HEADER, String(this.resumes.length));

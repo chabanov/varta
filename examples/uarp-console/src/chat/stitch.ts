@@ -1,11 +1,18 @@
 // Session stitching (design/chat-timeline.md, "Session stitching"): the Head
-// Agent's sessions are one conversation. At start the newest page of its
-// sessions (`sessions.list`, newest first) gives the live session, the newest
-// one that is neither closed nor expired; every other session of the page,
-// and of each older page behind its cursor, loads as a history segment from
-// its transcript when the person scrolls up, one session per request, newest
-// first, each prepended before the segments already shown. A closed session's
-// transcript is gone (404): its segment shows a note instead of entries.
+// Agent's sessions are one conversation, shown in the order the sessions were
+// created, oldest at the top. At start the newest page of its sessions
+// (`sessions.list`, newest first by `created_at`) gives the live session: the
+// newest session, when it is neither closed nor expired. When the newest one
+// is closed or expired there is no live session, even if an older one is
+// still active: that older session belongs above the newer one, and a live
+// segment is always the last one (the next message goes there), so it loads as
+// history like every other session and the next message creates a new
+// session at the bottom. Every session but the live one, of this page and of
+// each older page behind its cursor, loads as a history segment from its
+// transcript when the person scrolls up, one session per request, newest
+// first, each prepended before the segments already shown; so every history
+// segment is older than every segment below it. A closed session's transcript
+// is gone (404): its segment shows a note instead of entries.
 import { NotFoundError, type GetSessionMessagesResponse, type ListSessionsParams, type ListSessionsResponse, type ListSessionsResponseItem } from "uarp-sdk";
 import { signal, untracked, type Signal } from "../l1/reactive.js";
 import { loadTranscript } from "./history.js";
@@ -51,14 +58,17 @@ export class Stitcher {
     this.history = signal<HistoryState>(store.rt, "none");
   }
 
-  /** Reads the newest page; returns the live session, if any. Rejects with the request's error. */
+  /**
+   * Reads the newest page; returns the live session: its first (newest)
+   * session when that one is active, otherwise none. Rejects with the
+   * request's error.
+   */
   async begin(): Promise<ListSessionsResponseItem | null> {
     const page = await this.api.list({ agent_id: this.agentId, limit: SESSION_PAGE_SIZE });
-    let live: ListSessionsResponseItem | null = null;
-    for (const item of page.items) {
-      if (live === null && item.status === ACTIVE) live = item;
-      else this.queue.push(item);
-    }
+    const newest = page.items[0];
+    const live = newest !== undefined && newest.status === ACTIVE ? newest : null;
+    const items = page.items;
+    for (let i = live === null ? 0 : 1; i < items.length; i++) this.queue.push(items[i]!);
     this.take(page);
     this.history.set(this.remaining() ? "more" : "none");
     return live;

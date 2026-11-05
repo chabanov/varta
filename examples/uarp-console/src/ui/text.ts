@@ -78,7 +78,7 @@ export const MONTHS: string[] = ["січня", "лютого", "березня",
 // The settings dialog.
 export const SETTINGS_TITLE = "Підключення до UARP";
 export const BASE_URL_LABEL = "Адреса API";
-export const BASE_URL_HELP = "Зазвичай змінювати не потрібно.";
+export const BASE_URL_HELP = "Лише https://. Зазвичай змінювати не потрібно.";
 export const API_KEY_LABEL = "Ключ API";
 export const API_KEY_PLACEHOLDER = "uarp_…";
 export const API_KEY_HELP = "Ключ зберігається лише на цьому пристрої. Створити його можна в налаштуваннях простору на snaga.ai.";
@@ -86,7 +86,9 @@ export const SAVE = "Зберегти й підключитись";
 export const CANCEL = "Скасувати";
 export const FORGET_KEY = "Забути ключ";
 export const KEY_MISSING = "Введіть ключ API.";
-export const URL_INVALID = "Адреса API має починатися з https:// або http://.";
+export const URL_INVALID = "Адреса API має починатися з https://: ключ не надсилається без шифрування.";
+/** The start banner when the stored base URL does not use https. */
+export const STORED_URL_INVALID = "Збережена адреса API не починається з https://, тому ключ не надіслано. Змініть адресу в налаштуваннях.";
 export const SAVED = "Налаштування збережено.";
 export const SAVED_NEXT_START = "Налаштування збережено; вони діятимуть після перезапуску консолі.";
 export const SAVE_FAILED = "Не вдалося зберегти налаштування: ";

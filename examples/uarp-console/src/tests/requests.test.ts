@@ -20,11 +20,18 @@ import { onAwaitingApproval, onAwaitingInput, type Segment } from "../chat/timel
 import { ChatStore } from "../chat/store.js";
 import { Requests, type ChatApi, type SessionsApi, type RunsApi, type SessionStarter } from "../chat/requests.js";
 import { show, showSegment } from "../chat/show.js";
-import { APPROVE_AWAITING, ASK_AWAITING } from "./frames.js";
+import { applyFrame } from "../chat/dispatch.js";
+import { APPROVE_AWAITING, ASK_AWAITING, END_SESSION_CLOSED } from "./frames.js";
 import { SEND_ACCEPTED, APPROVED, REJECTED, RESPONDED, SESSION_CREATED, SESSION_NOT_FOUND, SESSION_NOT_FOUND_STATUS } from "./responses.js";
 import { equal, type Report } from "./check.js";
 
 const RUN_ID = "run-1";
+/** The session the recordings create and close (SESSION_CREATED, END_SESSION_CLOSED), and its day. */
+const RECORDED_SESSION = "session-1";
+const RECORDED_DAY = "2026-01-01";
+/** The session created after it: the API's session ids are unique. */
+const NEXT_SESSION = "session-2";
+const SESSION_CLOSED_EVENT = "session_closed";
 
 function notFound(): NotFoundError {
   return new NotFoundError(SESSION_NOT_FOUND_STATUS, JSON.parse(SESSION_NOT_FOUND) as ProblemDocument, new Headers());
@@ -108,6 +115,8 @@ export async function requestTests(r: Report): Promise<void> {
 class RecordedStarter implements SessionStarter {
   calls: string[];
   failing: boolean = false;
+  /** The id the created session gets instead of the recorded one; null keeps it. */
+  sessionId: string | null = null;
   /** Sessions handed over to be followed, in order. */
   followed: string[] = [];
 
@@ -118,7 +127,10 @@ class RecordedStarter implements SessionStarter {
   async create(): Promise<Session> {
     this.calls.push("create");
     if (this.failing) throw notFound();
-    return JSON.parse(SESSION_CREATED) as Session;
+    const created = JSON.parse(SESSION_CREATED) as Session;
+    const id = this.sessionId;
+    if (id !== null) created.session_id = id;
+    return created;
   }
 
   started(s: Segment): void {
@@ -156,4 +168,20 @@ async function startTests(r: Report): Promise<void> {
   unstarted.say("Немає кому");
   await nothing.drain();
   equal(r, "requests: without a starter the message fails", show(unstarted.timeline), '(timeline (segment closed (ask failed "Немає кому") (note "no session can be created")))');
+
+  // `session_closed` (the recorded frame, through the dispatcher) closes the
+  // live session; the next message creates a new session the same way.
+  const closing = new ChatStore(new Runtime());
+  const closingApi = new RecordedApi();
+  const reopened = new RecordedStarter(closingApi.calls);
+  reopened.sessionId = NEXT_SESSION;
+  const closingRequests = new Requests(closing, closingApi, reopened);
+  const ended = closing.openAt(RECORDED_SESSION, RECORDED_DAY);
+  const outcome = applyFrame(closing, ended, SESSION_CLOSED_EVENT, END_SESSION_CLOSED);
+  closing.say("Знову");
+  await closingRequests.drain();
+  equal(r, "requests: session_closed closes the live segment", outcome.kind + " " + ended.state, "closed closed");
+  equal(r, "requests: after session_closed the next message creates a new session", closingApi.calls.join("; "), 'create; sendSessionMessage session-2 "Знову"');
+  equal(r, "requests: the new session follows the closed one", show(closing.timeline), '(timeline (segment closed 2026-01-01) (segment live 2026-01-01 (ask sent "Знову")))');
+  equal(r, "requests: the new session is followed", reopened.followed.join(" "), NEXT_SESSION);
 }

@@ -108,6 +108,8 @@ const MEASURED_RECONNECTS = 1000;
 const MEASURE_FOLLOW: FollowOptions = { retryMs: 1, maxRetryMs: 4, maxReconnects: MEASURED_RECONNECTS };
 /** A base URL the product's `net.request` grant does not name; settings accept it, the engine denies it. */
 const OTHER_BASE_URL = "https://example.invalid";
+/** The https origin of the saved settings; the gate sends its requests to the loopback mock, so it is never resolved. */
+const SAVED_ORIGIN = "https://settings.invalid";
 
 // -------------------------------------------------------------- the manifest
 
@@ -625,26 +627,33 @@ async function clear(database: string): Promise<void> {
 /**
  * The settings screen's save: the key goes to the settings store (the KV
  * database) and to the client, nowhere the screen or a log could show it; a
- * console without a key starts with the saved settings; later saves apply at
- * the next start; forgetting removes the key; a base URL no grant names is
- * denied by the engine, not by the settings.
+ * base URL that does not use https is refused when saved and, when stored
+ * anyway, at start before any request; a console without a key starts with the
+ * saved settings; later saves apply at the next start; forgetting removes the
+ * key; an https base URL no grant names is denied by the engine, not by the
+ * settings.
  */
 export async function appSettingsTests(r: Report, base: string): Promise<void> {
   await clear(TEST_DATABASE);
-  const url = base + E2E_PREFIX + STITCH_NEW_SCENARIO;
+  const prefix = E2E_PREFIX + STITCH_NEW_SCENARIO;
+  // Saved base URLs use https, as the console requires; the gate sends their
+  // requests on to the plain-http loopback mock.
+  const url = SAVED_ORIGIN + prefix;
+  const plain = base + prefix;
   const gate = new GatedFetch(false, null);
+  gate.origin = base;
   // The product's default base URL: no test grant names it, so the start can
   // reach the mock only through the saved one.
   const app = consoleFor(API_BASE_URL, TEST_DATABASE, gate, E2E_FOLLOW);
   equal(r, "settings: nothing stored, no key", startName(await app.start()), "no_key");
   equal(r, "settings: an empty key is not saved", saveName(await app.saveSettings(url, " ")), "key_missing");
   equal(r, "settings: a base URL without an HTTP scheme is not saved", saveName(await app.saveSettings("ftp://127.0.0.1/", API_KEY)), "url_invalid");
+  equal(r, "settings: a plaintext http base URL is not saved", saveName(await app.saveSettings(plain, API_KEY)), "url_invalid");
   equal(r, "settings: nothing stored after refusals", await stored(TEST_DATABASE), "no key, no base URL");
   equal(r, "settings: no request before a key", String(gate.requests.length), "0");
 
   equal(r, "settings: saved, the console starts with them", saveName(await app.saveSettings(url, API_KEY)), "restarted ready");
   equal(r, "settings: the key and base URL are in the database", await stored(TEST_DATABASE), "key, " + url);
-  const prefix = E2E_PREFIX + STITCH_NEW_SCENARIO;
   equal(r, "settings: the saved base URL and key reach the API", gate.requests.join("; "), "GET " + prefix + TENANT_PATH + "; GET " + prefix + SESSIONS_PATH);
   equal(r, "settings: the key is in no state the screen shows", visible(app).includes(API_KEY) ? "shown: " + visible(app) : "hidden", "hidden");
 
@@ -657,13 +666,24 @@ export async function appSettingsTests(r: Report, base: string): Promise<void> {
   const nextState = await next.start();
   equal(r, "settings: the next start has no key but the base URL", startName(nextState) + " " + untracked<string>(next.store.rt, next.baseURL.get), "no_key " + url);
 
-  // Settings accept any HTTP base URL; the engine allows only the granted one.
+  // Settings accept any https base URL; the engine allows only the granted one.
   equal(
     r,
     "settings: a base URL no grant names is denied by net.request",
     saveName(await next.saveSettings(OTHER_BASE_URL, API_KEY)),
     "restarted unavailable APIConnectionError: Connection error (" + netDenial("GET", OTHER_BASE_URL + TENANT_PATH) + ")",
   );
+
+  // A plaintext base URL already in the store (written past the screen): the
+  // start stops before it constructs a client, although the engine would
+  // allow the mock's origin.
+  await new KvSettings(TEST_DATABASE).write(plain, API_KEY);
+  const plainGate = new GatedFetch(false, null);
+  const insecure = consoleFor(API_BASE_URL, TEST_DATABASE, plainGate, E2E_FOLLOW);
+  const insecureState = await insecure.start();
+  equal(r, "settings: a stored http base URL stops the start before any request", startName(insecureState) + ", " + String(plainGate.requests.length) + " requests", "url_invalid, 0 requests");
+  plainGate.origin = base;
+  equal(r, "settings: after that stop, an https save starts the console", saveName(await insecure.saveSettings(url, API_KEY)), "restarted ready");
   await seed();
 }
 

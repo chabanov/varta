@@ -5040,18 +5040,19 @@ console README.
 
 **Status: session stitching and the remaining screens (wave 3,
 `w3-console-stitching-screens`, 2026-11-05).** The console starts from the Head
-Agent's newest page of sessions: the newest active session is loaded from its
-transcript and followed without duplicates, older sessions load as dated history
-segments on scroll (one per request, across pages by the list's cursor), and a
-message sent with no live session creates one (`sessions.create`) before it is
-sent. The settings screen (base URL, API key) writes through the KV database only,
-with a confirm dialog before forgetting the key; the empty chat, the context panel
+Agent's newest page of sessions: the newest session, when active, is loaded from
+its transcript and followed without duplicates, older sessions load as dated
+history segments on scroll (one per request, across pages by the list's cursor) in
+creation order, and a message sent with no live session (also after
+`session_closed`) creates one (`sessions.create`) before it is sent. The settings
+screen (an https base URL, API key) writes through the KV database only, with a
+confirm dialog before forgetting the key; the empty chat, the context panel
 of the runs and agents the conversation mentions, the loading and error banners and
 the toasts use the shared stylesheet. The manifest's grants are unchanged.
 `scripts/test.sh` replays recorded tenant and transcript responses and a session
 list composed from recorded bodies (no list page was recorded) through the loopback
-mock, checks that the test key appears in no settings-group output, in neither the
-product's Wasm nor its manifest, and compares eight new headless screen snapshots;
+mock, checks that the test key appears in no settings-group output and that no
+string of the API key form appears in the product's Wasm or manifest, and compares eight new headless screen snapshots;
 the run, the measurement of the follower over 1000 reconnects and the new pilot
 findings F8–F9 are in the console README. Live-service validation and cross-target
 acceptance remain open.

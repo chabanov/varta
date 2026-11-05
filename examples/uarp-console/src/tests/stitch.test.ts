@@ -1,6 +1,7 @@
 // Session stitching tests on the recorded transcripts and the composed session
 // list (sessions.ts), through an in-process HistoryApi: the live session comes
-// from the newest page, older sessions load one per request, newest first,
+// from the newest page (its newest session, only when active, so the timeline
+// stays in creation order), older sessions load one per request, newest first,
 // each prepended with its date, the closed one as a note, the second page only
 // once the first is used up; a failed load is reported and can be retried.
 import { NotFoundError, ServiceUnavailableError, type GetSessionMessagesResponse, type ListSessionsParams, type ListSessionsResponse, type ProblemDocument } from "uarp-sdk";
@@ -8,7 +9,8 @@ import { Runtime, untracked } from "../l1/reactive.js";
 import { ChatStore } from "../chat/store.js";
 import { Stitcher, type HistoryApi, type HistoryState } from "../chat/stitch.js";
 import { show } from "../chat/show.js";
-import { sessionPage, transcriptOf, STITCH_NEW_SCENARIO, STITCH_SCENARIO } from "./sessions.js";
+import type { Segment } from "../chat/timeline.js";
+import { sessionPage, transcriptOf, STITCH_NEW_SCENARIO, STITCH_SCENARIO, STITCH_SUPERSEDED_SCENARIO } from "./sessions.js";
 import { UNAVAILABLE_PROBLEM } from "./sdk/contract.js";
 import { equal, type Report } from "./check.js";
 
@@ -100,4 +102,25 @@ export async function stitchTests(r: Report): Promise<void> {
   const none = new Stitcher(fresh, new RecordedHistory(STITCH_NEW_SCENARIO), AGENT_ID, GONE, (reason: string): void => {});
   const noLive = await none.begin();
   equal(r, "stitch: closed and expired sessions only, no live one", (noLive === null ? "none" : noLive.session_id) + " " + state(fresh, none), "none more");
+
+  // The newest session is closed and an older one still active: no session is
+  // live, both load as history oldest at the top, and the next message opens
+  // its session below them, so the timeline stays in creation order.
+  const superseded = new ChatStore(new Runtime());
+  const supersededApi = new RecordedHistory(STITCH_SUPERSEDED_SCENARIO);
+  const second = new Stitcher(superseded, supersededApi, AGENT_ID, GONE, (reason: string): void => {
+    failures.push(reason);
+  });
+  const behind = await second.begin();
+  equal(r, "stitch: an active session older than a closed one is not live", (behind === null ? "none" : behind.session_id) + " " + String(second.queue.length), "none 2");
+  await second.older();
+  await second.older();
+  superseded.say("Нова розмова");
+  equal(r, "stitch: segments in creation order around the new live one", order(superseded), "history 2026-01-03, history 2026-01-04, live");
+  equal(r, "stitch: the older active session loads as history", supersededApi.calls.join("; "), "list agent-head 20; messages session-3; messages session-1");
+}
+
+/** Each segment's state and day, top to bottom. */
+function order(store: ChatStore): string {
+  return store.timeline.segments.map((s: Segment): string => (s.date === "" ? s.state : s.state + " " + s.date)).join(", ");
 }

@@ -134,9 +134,17 @@ from its start, harmless.
 
 ## Session stitching
 
-- On start: the newest page of the Head Agent's sessions; the newest one that is
-  not closed or expired becomes the live segment, the rest load as `history` on
-  scroll up (`olderCursor`).
+- On start: the newest page of the Head Agent's sessions (newest first by
+  `created_at`); the newest session becomes the live segment when it is not
+  closed or expired, and every other session loads as `history` on scroll up
+  (`olderCursor`), each above the segments already shown.
+- Segments stay in creation order, oldest at the top, and the live segment is
+  always the last one, where the next message goes. So when the newest session
+  is closed or expired, no session is live, even if an older one is still
+  active: that older session belongs above the newer one and loads as history
+  (its runs take no action here), and the next message creates a new session
+  at the bottom. (Earlier text made the newest active session live; a closed
+  session newer than it was then shown above it, out of order.)
 - A history segment comes from the transcript (recorded for all nine
   scenarios): `user` → `Ask` with the run id; `assistant` → completed `Turn`
   with its `thinking`, `answer` and `tool_calls` (input and output are JSON
@@ -147,7 +155,7 @@ from its start, harmless.
   dropped, so the live session is loaded from its transcript (which alone has
   the person's messages) and then followed live without duplicates.
 - Sending with no live session creates one first (`sessions.create` with the
-  Head Agent), then sends.
+  Head Agent), then sends; after `session_closed` the next message does the same.
 - A segment boundary shows as a quiet date line, not as a separate chat.
 
 ## Rendering budget
