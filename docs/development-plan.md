@@ -480,16 +480,21 @@ paint-time reshaping refusal names its flow node.
 
 Evidence, macOS arm64, headless Chrome 156. `native_controls_probe` with the new
 original `controls.ttf` fixture passes `scripts/test-native-controls.mjs` at
-each of 1×, 1.25× and 2× with **110460 checks** (boxes within 0.02px, hit
-targets, whole-viewport RGB means and number stepping) under the unchanged 2/255
-bound; the largest means are 0.98, 1.09 and 1.07/255 in the author-styled select
-case (select painter differences, below) and otherwise 0.29, 0.81 and 0.21/255.
-Its 25 rendering cases are themed, disabled, seven default focus rings, five
+each of 1×, 1.25× and 2× with **141801 checks** after the second review fixes
+(boxes within 0.02px, hit targets, whole-viewport RGB means, number stepping
+values and events, and number validity) under the unchanged 2/255 bound; the
+largest means are 0.98, 1.08 and 1.07/255 in the author-styled select case
+(select painter differences, below) and otherwise 0.29, 0.68 and 0.20/255.
+Its 32 rendering cases are themed, disabled, seven default focus rings, five
 author outline longhands (color, offset with a width, checkbox, author radius,
 shorthand without `solid`), author-styled, control font, block placement, flex
 buttons, placeholders, author-styled selects, rich button labels, checkables
-stretched in a flex row and a grid, and focused stretched checkables; 32
-stepping cases replay Up/Down (and Alt+Down) on guest-set values in real Chrome.
+stretched in a flex row and a grid, focused stretched checkables, padded
+checkables (flex-start, stretch, grid) and four white-ring cases on a gray row;
+43 stepping cases replay Up/Down with Shift, Ctrl, Meta and Alt on guest-set
+values in real Chrome and compare the value and the `input`/`change` events,
+and the validity of those and 29 more values is compared with Chrome's
+sanitization.
 `verify.py local varta-view` passes; `test-native-fields.mjs` passes 28 checks;
 the structure and white-space oracles pass at the three scales; the inline
 oracle still stops only at `paint-overlap-hits` with the recorded means (5.39,
@@ -518,6 +523,21 @@ the stylesheet checker, the compiler and the browser DOM boundary (an indexed
 `ViewProtocolError`), and the three keyword lists share
 `css::CSS_WIDE_KEYWORDS`.
 
+Second review fixes (same branch). A themed checkable drops author padding and
+borders as Blink's theme does, so its 13px square stays the border box (with
+`padding: 6px`: 13×13 at `flex-start` and 13×40 stretched, as Chrome; it was
+25×25). The auto focus ring now has Chrome's white outer ring, one pixel
+outside the colored ring, visible on non-white backgrounds and through a
+transparent `outline-color`. Number stepping now admits integers below 10¹⁸
+(Chrome steps `1000000000000000` to `1000000000000001` exactly), treats a value
+that rounds beyond `f64::MAX` as invalid, and counts each remaining refusal as
+`stepsRefused` in the snapshot instead of dropping it silently. The oracle adds
+padded checkables (flex-start, stretch, grid) and white-ring cases on a gray
+row, checks the `input`/`change` order and Shift/Ctrl/Meta/Alt presses, and
+compares native validity with Chrome's sanitization of every stepping and
+grammar value; unit tests cover the owning span's line height in rich flows
+and the control line spacing of rich labels.
+
 Open: `select` keeps its explicit-style requirement (its arrow and popup belong
 to another package); the select case shows Chrome's chevron arrow, wider text
 inset and faded disabled select against the native triangle and full author
@@ -525,9 +545,10 @@ colors (mean about 1/255). Chrome's hover/active theme colors, the number spin
 button, author-styled checkable themes (native paints the author box), unsized
 text fields whose primary font has no `x`, and inline-block controls in a line
 box are not implemented. Number stepping has no `step`/`min`/`max` (not L0
-attributes; an open L0 item), refuses values Chrome steps with 18-digit
-precision loss, reads locale forms typed in Chrome (`5.`, `+5`, `1,000`) as
-invalid, and makes each step an Undo entry where Chrome 156 does not; the
+attributes; an open L0 item), refuses (and counts) values Chrome steps with
+18-digit precision loss or prints in exponent form, and non-integral values
+from 10¹⁵ that Chrome may still step exactly, reads locale forms typed in
+Chrome (`5.`, `+5`, `1,000`) as invalid, and makes each step an Undo entry where Chrome 156 does not; the
 browser host keeps Chrome's stepping. The auto focus ring's corner radius for
 author-styled controls without a radius follows the author radius rather than
 Chrome's default ring radius. Theme constants and the text-field width
