@@ -311,6 +311,42 @@ fn every_axis_is_set_by_index_and_duplicate_axis_names_are_declined() {
     );
 }
 
+#[test]
+fn variation_keys_follow_the_fvar_tag_not_the_record_order() {
+    let face = sfnt::Face::parse(VARIABLE_AXES, 0).unwrap();
+    let axes = sfnt::axes(&face).unwrap();
+    let data = Arc::new(VARIABLE_AXES.to_vec());
+    assert_eq!(
+        Graphics::new(&data, &axes).unwrap().keys,
+        ["Weight", "Width"]
+    );
+    // Axes listed in another order than the platform records keep their own
+    // keys: each is found by its tag, not by its position.
+    let reversed = axes.iter().rev().cloned().collect::<Vec<_>>();
+    assert_eq!(
+        Graphics::new(&data, &reversed).unwrap().keys,
+        ["Width", "Weight"]
+    );
+    // A tag CoreText does not list, or a range that is not the platform's,
+    // has no exact key.
+    let mut untagged = axes.clone();
+    untagged[0].tag = *b"XXXX";
+    assert_eq!(
+        Graphics::new(&data, &untagged).err(),
+        Some(Decline::Variation)
+    );
+    let mut ranged = axes.clone();
+    ranged[1].max += 1.0;
+    assert_eq!(
+        Graphics::new(&data, &ranged).err(),
+        Some(Decline::Variation)
+    );
+    assert_eq!(
+        Graphics::new(&data, &axes[..1]).err(),
+        Some(Decline::Variation)
+    );
+}
+
 /// Replace one table tag in the directory of a single face.
 fn retag(data: &[u8], from: [u8; 4], to: [u8; 4]) -> Vec<u8> {
     let mut bytes = data.to_vec();

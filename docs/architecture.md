@@ -12736,11 +12736,13 @@ axis set to the user value whose default normalization followed by the `avar`
 (version 1) map yields the shaper's normalized coordinate. No font is looked up
 by name. CoreGraphics keys variation values by axis names of its own choosing
 (its Mac name record wins over the Windows one) and silently ignores an unknown
-key, so the adapter takes each key from CoreGraphics's own axis records by
-`fvar` index, after their count and every minimum/default/maximum match `fvar`;
-two axes with one name, mismatched records, or an instance whose read-back
-values differ from the requested ones are declined (`declined_variation`), never
-drawn at the default instance. Faces with bitmap or color glyph tables (`COLR`,
+key, so the adapter takes each `fvar` axis's key by its tag: CoreText's axis
+records carry the tag and name, and that name must name exactly one
+CoreGraphics axis record, whose minimum/default/maximum (and CoreText's) must
+match `fvar`, with equal record counts. An absent tag or name, two axes with one
+name, mismatched records, or an instance whose read-back values differ from the
+requested ones are declined (`declined_variation`), never drawn at the default
+instance. Faces with bitmap or color glyph tables (`COLR`,
 `CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText would size it from the
 point size while the shaper keeps its default) or `avar` version 2 are
 declined, and their glyphs keep portable outlines. A face is charged its
@@ -12753,7 +12755,7 @@ are counted by reason (`CoreTextRasterizer::statistics`).
 The safe pinned `core-text=21.0.0` wrapper reuses the locked CoreGraphics0.24 and
 CoreFoundation0.10 stack; only the desktop host depends on it, and it names that
 stack's CoreFoundation types through the same locked `core-foundation=0.10.1`
-to read CoreGraphics's axis records. This implements
+to read CoreGraphics's and CoreText's axis records. This implements
 the platform raster distinction visible in
 [Skia's CoreText scaler](https://raw.githubusercontent.com/google/skia/main/src/ports/SkScalerContext_mac_ct.cpp).
 The same optional interface can serve other platform adapters; they are not

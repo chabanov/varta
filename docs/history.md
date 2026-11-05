@@ -61,6 +61,14 @@ and duplicate names decline. The face generator no longer stamps the current
 time into the collection's `head`, and adds `variable-names.ttf` and
 `variable-axes.ttf`.
 
+Second fix round. The clip-aware search had been patched only into the macOS
+adapter, so AT-SPI (Linux, Pi 5) and UIA (Windows) still returned scrolled-out
+boxes over visible content. It now lives once in a vendored
+`accesskit_consumer` 0.39.2 (`node_at_point`), which every adapter calls; the
+macOS adapter's private copy is removed. Variation keys are now found by
+`fvar` tag through CoreText's axis records instead of CoreGraphics record
+order.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only

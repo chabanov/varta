@@ -482,9 +482,9 @@ Branch `wave3/w3-native-macos-adapters` (on `49186cf`).
   probing process is not trusted for the accessibility API here).
 - **CoreText face variants.** Collection members and variation instances are
   instantiated from the artifact bytes; color/bitmap tables, `opsz` and `avar`
-  v2 keep declining with explicit counters. Variation keys come from
-  CoreGraphics's own axis records by `fvar` index and every instance is read
-  back; duplicate axis names or a mismatch decline (`declined_variation`). The
+  v2 keep declining with explicit counters. Variation keys are found by `fvar`
+  tag through CoreText's axis records and CoreGraphics's record of that name,
+  and every instance is read back; duplicate axis names or a mismatch decline (`declined_variation`). The
   native text probe's faces mode reports zero outline glyphs for the variable,
   differing-axis-name and collection fixtures and the Chrome oracle stays under
   2/255 at 1×/1.25×/2× (maximum mean 0.446).
@@ -497,7 +497,10 @@ wave lead's. After review (fix round): hit tests over visible content no
 longer return scrolled-out or clipped-away nodes, and a face whose Mac and
 Windows axis names differ draws its requested instance; `local varta-desktop`
 (104 library, 7 binary, 18 shell) and `local varta-view` (151 library, 349
-integration) pass again.
+integration) pass again. Second fix round: the clip-aware hit test moved into a
+vendored `accesskit_consumer` so the AT-SPI and UIA adapters get it too
+([patch record](../vendor/accesskit_consumer/VARTA-PATCH.md)), and variation
+keys are matched by `fvar` tag.
 
 ### Wave 2 integration — 2026-11-05
 

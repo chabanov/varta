@@ -209,7 +209,8 @@ fn checksum(bytes: &[u8]) -> u32 {
 
 /// One `fvar` axis in user coordinates, with its `avar` segment map. Its
 /// name is not read here: CoreGraphics keys variations by its own choice of
-/// name record, so the rasterizer takes the key from CoreGraphics by index.
+/// name record, so the rasterizer takes the key from the platform's axis
+/// records by this tag.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Axis {
     pub tag: [u8; 4],

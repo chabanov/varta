@@ -424,8 +424,9 @@ CoreGraphics copy of the face with every `fvar` axis set to the user value whose
 normalization (default normalization, then the inverse of the `avar` v1 map)
 gives the shaper's normalized coordinate. CoreGraphics keys those values by its
 own axis names (the Mac name record wins) and ignores unknown keys, so each key
-comes from CoreGraphics's axis records by `fvar` index (count and ranges must
-match), and every instance is read back; duplicate axis names or a different
+is found by the axis's `fvar` tag (CoreText's axis records carry tag and name,
+and the name must name exactly one CoreGraphics record of the same range), and
+every instance is read back; duplicate axis names or a different
 read-back decline to outlines (`declined_variation`). Faces with bitmap or color
 glyph tables (`COLR`, `CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText
 sizes it from the point size) or `avar` v2 keep declining, so their glyphs keep
