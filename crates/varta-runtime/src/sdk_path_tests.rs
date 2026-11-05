@@ -515,6 +515,23 @@ fn sdk_path_json_decode_targets_reaching_bytes_are_refused() {
             "const b = JSON.parse('{\"items\":[]}') as B; console.log(String(b.items.length));",
             "JSON.parse(text) as B",
         ),
+        // A mixed record reaches bytes through a declared field, not its
+        // index value (Node: `44`).
+        (
+            "interface M { [k: string]: unknown; data: Uint8Array }",
+            "const m = JSON.parse('{\"data\":[300,1.5]}') as M; console.log(String(new Uint8Array(m.data)[0]));",
+            "JSON.parse(text) as M",
+        ),
+        (
+            "interface M { [k: string]: unknown; data: Uint8Array }",
+            "const m = varta.json.parse<M>('{\"data\":[1]}'); console.log(String(m.data.length));",
+            "varta.json.parse M",
+        ),
+        (
+            "interface M { [k: string]: unknown; inner?: { data: Uint8Array } }",
+            "const m = JSON.parse('{}') as M; console.log(String(m.inner === undefined));",
+            "JSON.parse(text) as M",
+        ),
     ] {
         refused(V38, &program(types, body), decode);
         refused(V38, &program(types, body), &format!("{target} {reaching}"));
@@ -587,6 +604,12 @@ fn sdk_path_identity_of_values_that_may_hold_bytes_is_refused() {
         ("return x === y;", "==="),
         ("return x !== y;", "!=="),
         ("return Object.is(x, y);", "Object.is"),
+        // Call operands get the named refusal, not the generic
+        // language-value one.
+        (
+            "const id = (v: unknown): unknown => v; return Object.is(id(x), id(y));",
+            "Object.is",
+        ),
         ("return [x].includes(y);", "array.includes"),
         ("return [x].indexOf(y) >= 0;", "array.indexOf"),
         ("return [x].lastIndexOf(y) >= 0;", "array.lastIndexOf"),
@@ -603,6 +626,13 @@ fn sdk_path_identity_of_values_that_may_hold_bytes_is_refused() {
     ] {
         refused(V38, &views(body), &format!("{operation} {refusal}"));
     }
+    // The check is type-based, so even one reference compared with itself
+    // through `unknown` is refused; the hint names what is admitted.
+    refused(
+        V38,
+        &views("return x === x;"),
+        "compare with a value that cannot hold a Uint8Array, such as a primitive or a record, or compare contents",
+    );
     // One operand that cannot hold a Uint8Array compares by tag and identity.
     assert_eq!(
         logs(&views(

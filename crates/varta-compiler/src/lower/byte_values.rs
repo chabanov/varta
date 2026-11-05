@@ -123,7 +123,7 @@ fn local(span: Span, slot: u32, ty: Type) -> Expr {
 
 /// Why an identity comparison of two values that may hold a `Uint8Array` is
 /// refused under v38 (`byte_values`).
-const VIEW_IDENTITY: &str = "of two values that may both hold a Uint8Array (views of one ArrayBuffer share their byte storage, so their identity is not observable; compare one reference with itself or compare contents)";
+const VIEW_IDENTITY: &str = "of two values that may both hold a Uint8Array (views of one ArrayBuffer share their byte storage, so their identity is not observable; compare with a value that cannot hold a Uint8Array, such as a primitive or a record, or compare contents)";
 
 /// Whether a value of `ty` may be a `Uint8Array` under v38 (`byte_values`):
 /// a `Uint8Array`, `unknown`, `object` or a union with such a member, in a
