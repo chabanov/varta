@@ -3494,3 +3494,32 @@ longer lose updates; the worker syncs consent on every exit and the window
 waits up to `WORKER_EXIT_WAIT` for it; a guest title containing the prompt
 title is not applied. `PROMPT_INPUT_DELAY` = 500 ms was confirmed by the
 owner. The manual gesture-prompt acceptance remains unmet.
+
+Second review fixes. A refused start merged its first-run answers into the
+decision file without comparing with what it read at open, so a first-run
+Allow could overwrite a `--revoke` Deny stored while the next prompt was
+open; it now skips every entry changed from outside (shell test with two
+required grants, the first revoked while the second is asked; reverting the
+check makes it fail). A request too long for the native prompt was denied
+with only an audit row and the broker's "refused at first run" message; the
+seam now reports it through `HostPrompt::unpresentable`, which the window
+prints as a host diagnostic on stderr, and the native-only denial (the
+browser shows such a request) is documented as a cross-host difference;
+no build-time warning exists. Prompt text is wrapped between whole units,
+so a `\u{...}` escape is never split across lines or pages, and a backslash
+is shown doubled. A page counts as shown only once the window has presented
+it whole (`PromptLayer::presented`), so a burst of Page Down presses no
+longer marks unpresented pages, and a surface smaller than the prompt never
+counts and is reported once. New tests: the `ui.open_url` refusal through
+the shell (the consent probe gained an optional any-HTTPS link longer than a
+prompt shows: denied without a prompt, reported, audited, no Deny stored),
+the window's own refusal branch, a clipped prompt surface, presentation
+counting, unit wrapping and the escaped backslash, the one-pattern bound for
+any characters, and `Consent::end`, the final sync the worker runs on every
+exit. The first-turn deadline starting after first-run approval was accepted
+by the lead. Scoped verification: `verify.py local varta-desktop` (lib 109,
+binaries 8, shell 30 passed), `verify.py local varta-runtime --filter
+permission` (9 passed), the boundary tests (2 passed), the documentation
+tests, formatting and strict Clippy (desktop, also with `gpu`). The worker's
+stop flag and `WORKER_EXIT_WAIT` still have no test (no headless event
+loop), and no full gate was run.

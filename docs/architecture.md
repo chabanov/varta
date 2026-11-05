@@ -15399,10 +15399,12 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   (no consent state: it is never prompted), `Launch::start(ViewLayout,
   Arc<dyn PlatformEffects>)` starts it with the host's platform-effects sink
   and no prompt, and `Launch::start_with(ViewLayout, Arc<dyn PlatformEffects>,
-  Option<Box<dyn PermissionPrompter>>) -> Result<Started, ShellError>` adds
-  the host's prompt seam and returns the instance with its
-  `shell::consent::Consent`, which the embedder calls `sync` on between
-  turns. `shell::revoke(artifact, storage, capability)` stores a denial;
+  Option<shell::consent::HostPrompt>) -> Result<Started, ShellError>` adds
+  the host's prompt seam (`HostPrompt { prompter: Box<dyn
+  PermissionPrompter>, unpresentable: Box<dyn FnMut(&PromptTooLong) + Send> }`)
+  and returns the instance with its `shell::consent::Consent`, which the
+  embedder calls `sync` on between turns and `end` on once when the session
+  ends. `shell::revoke(artifact, storage, capability)` stores a denial;
   `shell::consent::ConsentStore` reads and writes one identity's decision
   file. Failures are the typed `ShellError` (`Decisions` for an invalid
   decision file, `UnknownCapability` for a revocation of an unregistered id).
@@ -15429,7 +15431,9 @@ decides; the shell stores, asks and audits.
   read-modify-write (an instance's sync, a refused start's answers,
   `--revoke`) holds an exclusive advisory lock on `consent::LOCK_FILE` in the
   same directory (`ConsentStore::locked`), so writers of one identity never
-  interleave. `consent::CONSENT_FILES` lists every file the store creates;
+  interleave, and an instance writes none of its decisions over an entry
+  that changed from outside since it last read the file (a refused start
+  compares with the file it read when it was prepared). `consent::CONSENT_FILES` lists every file the store creates;
   each name contains a `.`, so none can be a guest file root.
 - **First-run approval.** `Launch::start_with` with a prompter asks for each
   required grant within the request and the ceiling that has no stored
@@ -15455,25 +15459,43 @@ decides; the shell stores, asks and audits.
   broker's own description), then the package `purpose` as a quote marked by
   a bar, all drawn with the layer's own 5x9 bitmap font, never with artifact
   fonts; every character outside printable ASCII is shown as its `\u{...}`
-  escape. A pattern is never cut or left out: patterns are hard-wrapped, the
-  first line of each is marked by a host square in the margin, and the
-  resource lines are paged, `consent::RESOURCE_PAGE_LINES` per page, with a
-  host page line ("Page N of M") and a "Next page" button (also Page Down and
-  Page Up). Allow is drawn disabled, cannot take focus and ignores presses and
-  keys until every page has been shown, and it answers only
-  `consent::PROMPT_INPUT_DELAY` after the last unseen page appeared; going
-  back from the first page to the last does not count the pages between.
-  Deny and Dismiss work on any page. A request whose resources need more than
-  `consent::MAX_RESOURCE_LINES` lines (`consent::MAX_RESOURCE_PAGES` pages)
-  is never shown (`consent::PromptTooLong`): the consent seam answers it Deny
-  without asking (stored like any Deny of a required or optional grant, whose
-  package request never changes; never stored for a `ui.open_url` link) and
-  appends an audit row with `refused` = `consent::UNPRESENTABLE_PROMPT`,
-  `operation`, `outcome` `denied`, `resource_lines` and
-  `max_resource_lines`; the window repeats the check and denies too. One
-  pattern of `MAX_PATTERN_BYTES` always fits, whatever its characters; as
-  many longest patterns as one grant holds, or a link URL near
-  `net::MAX_URL_BYTES`, do not. Only the advisory purpose quote is bounded:
+  escape and a backslash is shown doubled (`\\`), so text that spells
+  `\u{430}` never passes for an escaped character. A pattern is never cut
+  or left out: patterns are wrapped between whole characters, escapes and
+  doubled backslashes (never inside an escape), the first line of each is
+  marked by a host square in the margin, and the resource lines are paged,
+  `consent::RESOURCE_PAGE_LINES` per page, with a host page line ("Page N of
+  M") and a "Next page" button (also Page Down and Page Up). A page counts as
+  shown only once the window has presented its frame on a surface that holds
+  the whole prompt (`PromptLayer::presented`); selecting it with page keys
+  is not enough, so pages skipped in one burst of key presses stay unseen.
+  A surface smaller than the prompt (a display shorter than the prompt) is
+  reported once as a host diagnostic and its pages never count. Allow is
+  drawn disabled, cannot take focus and ignores presses and keys until every
+  page has been presented, and it answers only `consent::PROMPT_INPUT_DELAY`
+  after the last unseen page was; going back from the first page to the
+  last does not count the pages between. Deny and Dismiss work on any page.
+  A request whose resources need more than `consent::MAX_RESOURCE_LINES`
+  lines (`consent::MAX_RESOURCE_PAGES` pages) is never shown
+  (`consent::PromptTooLong`): the consent seam answers it Deny without
+  asking (stored like any Deny of a required or optional grant, whose
+  package request never changes; never stored for a `ui.open_url` link),
+  reports it to `HostPrompt::unpresentable`, which `varta-shell` prints on
+  stderr (`varta-shell: denied the ... permission request without asking:
+  ... no prompt was shown and no user decided`), and appends an audit row
+  with `refused` = `consent::UNPRESENTABLE_PROMPT`, `operation`, `outcome`
+  `denied`, `resource_lines` and `max_resource_lines`; the window repeats
+  the check, denies and reports too. The broker's own row for that answer
+  still has `source` `prompt`; a refused start then also reports the
+  broker's `RequiredDenied`, and later starts report the stored decision.
+  One pattern of `MAX_PATTERN_BYTES` always fits, whatever its characters;
+  as many longest patterns as one grant holds, or a link URL whose shown
+  text needs more lines than that (an ASCII URL near `net::MAX_URL_BYTES`),
+  do not. **Cross-host difference:** the browser
+  host's prompt lists every pattern however long and lets Allow answer at
+  once, so such a request is shown and can be allowed in the browser but is
+  denied without a prompt natively. No build or validation step warns about
+  a request the native prompt cannot show. Only the advisory purpose quote is bounded:
   at most `consent::MAX_QUOTE_LINES` lines, a longer quote is cut with a
   visible `...`. The answer buttons keep their place below the text on every
   page. Deny has the initial focus; Tab and the arrow keys move it among the
@@ -15531,9 +15553,9 @@ decides; the shell stores, asks and audits.
   next rows. The guest can neither read nor write it. Every start of a
   packaged application writes its start decisions, so the per-artifact
   directory exists after any start. A failed write ends the session with an
-  error (fail closed). The worker syncs once more on every exit (a closed
-  window, a failed turn, a host error; after a failure the failure is
-  reported, not a sync error). Once the event loop ends, the worker runs no
+  error (fail closed). The worker syncs once more on every exit through
+  `Consent::end` (a closed window, a failed turn, a host error; after a
+  failure the failure is reported, not a sync error). Once the event loop ends, the worker runs no
   new turn, any open prompt is dismissed, and the window waits up to
   `WORKER_EXIT_WAIT` (1 s) for that final sync; a turn still running after
   it is not waited for, and its entries are then lost.

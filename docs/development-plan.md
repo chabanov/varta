@@ -4716,6 +4716,14 @@ was shown; a request that does not fit `consent::MAX_RESOURCE_LINES` is
 denied without a prompt and audited; decision-file writers hold a lock; the
 worker syncs consent on every exit; a guest cannot title its window like the
 prompt. `PROMPT_INPUT_DELAY` = 500 ms is an owner decision (2026-11-05).
+Second review fixes: a refused start no longer stores a first-run answer
+over a revocation made while it asked; a request too long for the native
+prompt is reported on stderr, and its native denial (the browser shows it)
+is documented as a cross-host difference, still without a build-time
+warning; escapes are never split across lines and a backslash is shown
+doubled; a page counts as shown only once presented whole. The application
+first-turn deadline starting after first-run approval was accepted by the
+lead (waiting for a human spends no guest time).
 Still open (owner decisions): "allow for this session", a cool-down and its
 value, the presentation of a refused required permission beyond the stderr
 message and the identity key before C3; also an accessible and dark-mode
