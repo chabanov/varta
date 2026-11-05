@@ -795,8 +795,13 @@ the drawn bytes natively too. The matrix's `--effects` option runs the same
 cases in Firefox, WebKit and Chrome (`-` skips the generated fixtures); an
 engine that cannot launch is reported as failed, never as a pass.
 
-The official registry has a Rust regeneration drift test; it does not yet include
-all memory/view tables. Regenerate it explicitly after a registry change:
+The official registry has a Rust regeneration drift test
+(`checked_in_browser_module_matches_registries`). Besides profiles and operations it
+generates the value-layout, scheduler, network, view, permission and effect facts the
+official host reads (`varta_common::browser`'s `layout`, `network`, `view`,
+`permissions` and `effects` modules); it is not a copy of every generated table of
+the embedding contract (the root-stack bounds, for example, are absent).
+Regenerate it explicitly after a registry change:
 
 ```bash
 cargo run -p varta-common --example generate_browser_registry --locked -- crates/varta-common/browser/registry.mjs

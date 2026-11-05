@@ -14215,8 +14215,10 @@ equivalent of native Store growth limits without changing portable bytes. Shared
 64-bit and custom-page memories and shared/64-bit tables remain unsupported.
 `instrument` uses the production memory cap; `instrument_with_memory_limit` accepts
 the already resolved trusted cap. Unsupported input never falls back to an
-unmetered image. The initial console bundle supplies integrity binding to this prepared pair;
-general artifact loading and permission/effect enforcement remain open.
+unmetered image. The bundle supplies integrity binding to this prepared pair.
+The browser host loads only such prepared bundles, never arbitrary unprepared
+artifacts; its permission enforcement and the effects it implements are described
+below, and a module importing any other effect gets no bundle.
 
 `BrowserArtifact::bundle` builds a checked console/view bundle:
 `app.wasm`, `app.private.wasm`, `app.manifest.json`, `varta-worker.js`,
@@ -14273,7 +14275,8 @@ native headless operation. The v38 broker and interactive prompt path are descri
 below; legacy modes retain their policy behavior.
 V2 denial arms nothing, schedules frame cleanup and reports the recoverable
 permission error; legacy denial remains fatal. Timer bookkeeping pays fuel but
-never ordinary host-call counts. External host-event turns remain open.
+never ordinary host-call counts. External host-event turns (`app.deliver`) are
+described below.
 
 The v38 network adapter consumes only descriptor version 2, with generated ABI,
 completion, buffer and limit facts. Starts pay the ordinary host-call budget;

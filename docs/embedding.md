@@ -4,10 +4,17 @@ This document is the normative contract for **third-party hosts**: programs othe
 than `varta-runtime` that validate and execute Varta-compiled portable Wasm, for
 example a JavaScript host in Node or a browser, or a host on another Wasm engine.
 It states what exists at this revision of the repository, per host ABI version.
-Planned platform work (a generated browser host, view output) is an accepted
-design in the
-[development plan](development-plan.md#platform-targets-and-application-model),
-not implemented and not part of this contract. The v38 event turns, long-lived
+The official generated browser host (the Worker host and view applier that
+`varta build --target browser` and `varta dev --target browser` produce, see
+[architecture](architecture.md#browser-fuel-transform-foundation-in-development))
+and v38 view output (`view_commit` and the
+[view protocol](#view-protocol-draft-v0-unstable)) exist. This contract
+specifies that browser host only where a section names it, such as the
+[browser effect mapping](#browser-effect-mapping-official-host) and the
+[budget guarantees](#budget-guarantees); its remaining platform work follows
+the accepted design in the
+[development plan](development-plan.md#platform-targets-and-application-model).
+The v38 event turns, long-lived
 application instances, host event sources and permission broker v1 exist in
 the reference host ([architecture](architecture.md#turn-budgets-and-application-instances-turn_budgets));
 their per-turn budgets are normative below, the instance and event interfaces
@@ -2348,7 +2355,7 @@ everything else in this section stays draft.
 | Bubbling, `preventDefault`/`stopPropagation`, key filters, edit counters and stale `set_value`/`set_checked`, gestures | Implemented by the headless renderer (`varta-view`) and its scripted platform inputs |
 | `copy_text` / `clipboard.write`, external links / `ui.open_url` (with `https://*`), `command_result` statuses | Implemented: registered capabilities with exact grants; permission broker v1 decides from request ∩ ceiling and the grant's state, audits every outcome and prompts with the full URL for `https://*` matches through the prompt seam (never stored; scripted headless sessions answer from the script, other hosts deny); every outcome is a `command_result` record |
 | At most one commit per turn | Implemented: a second `view_commit` in one turn ends the instance |
-| Layout rectangles, fonts, `field-sizing` heights | Draft: the headless renderer serializes the tree, cascaded styles and the accessibility tree only (no Taffy/Parley dependency yet) |
+| Layout rectangles, fonts, `field-sizing` heights | Draft: ordinary headless snapshots serialize the tree, cascaded styles and the accessibility tree only, without rectangles. `varta-view` has separate experimental geometry APIs (pinned Taffy box layout and Parley text shaping with explicitly supplied fonts) used by native rendering; none of that geometry is part of this contract |
 | Browser applier, native renderer, hydration, measurement queries | Draft |
 | Long-lived instance and per-turn budgets | Implemented: an application instance hosts the view; every record is one turn with fresh per-turn budgets; a bounded execution renders without event delivery |
 
@@ -3494,7 +3501,7 @@ A host that runs Varta modules MUST:
 | Budget | Reference host (Wasmtime) | JavaScript host today |
 | --- | --- | --- |
 | Memory | Store limiter | Module-declared maximum, checked before instantiation (validation step 4) |
-| Fuel (instructions) | Engine fuel metering, identical on every platform ([fuel determinism](architecture.md#fuel-determinism)): instantiation is not charged to the guest in any profile (a pre-exception module with a Wasm start function pays its whole instantiation, its data-segment copy at one fuel per byte, so no copy-on-write memory images); a Wasmtime host MUST NOT enable a setting that makes fuel depend on the platform | **Not enforceable**: JavaScript engines expose no instruction metering; a host MUST state that fuel is not enforced. The accepted design adds a deterministic metering transform at browser packaging ([decision 5](development-plan.md#accepted-decisions-2026-10-29)), not implemented yet |
+| Fuel (instructions) | Engine fuel metering, identical on every platform ([fuel determinism](architecture.md#fuel-determinism)): instantiation is not charged to the guest in any profile (a pre-exception module with a Wasm start function pays its whole instantiation, its data-segment copy at one fuel per byte, so no copy-on-write memory images); a Wasmtime host MUST NOT enable a setting that makes fuel depend on the platform | **Not enforceable**: JavaScript engines expose no instruction metering; a host without its own metering MUST state that fuel is not enforced. The official browser host enforces fuel on a private image that the deterministic metering transform (`varta_compiler::browser_meter`, [decision 5](development-plan.md#accepted-decisions-2026-10-29)) derives at packaging; input the transform does not model, including a Wasm start function, gets no bundle ([browser fuel transform](architecture.md#browser-fuel-transform-foundation-in-development)). Fuel equality with the reference host is checked by the meter probe fixture (`browser_meter_probe`) and the browser effect acceptance (`scripts/test-browser-effects.mjs`), not by a full cross-host corpus |
 | Deadline | Epoch interruption inside guest code | Checked at host calls only; a guest loop without host calls runs until the embedder terminates it (in a browser: `Worker.terminate()`) |
 | Host calls, output | Counted per call | Counted per call (enforceable) |
 | Per-turn renewal (v38) | Fuel, host calls and microtasks renewed per turn; deadline per turn in application instances | Renewable at turn boundaries the host itself drives; fuel only with the metering transform |
