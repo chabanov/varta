@@ -31,21 +31,28 @@
 //   the engine's own stack;
 // - dag: values with a part shared at two depths count it at its deepest
 //   reach in either property order (whatever stores reads back), and a
-//   cycle fails by name, equal to native.
+//   cycle fails by name, equal to native;
+// - diamond: a part shared at every level (`x = { a: x, b: x }`) counts
+//   toward the value's extent at every reach: just within the bound it
+//   stores and reads back whole, just past it `set` fails by name; diamonds
+//   planted in storage as Deno writes them (in OPFS here, in Deno's SQLite
+//   file natively) read back within the bound and fail by name past it and
+//   far past it, equal to native, with the Chrome process tree's resident
+//   memory growing by at most RSS_GROWTH_BYTES.
 //
 //   node scripts/test-browser-kv.mjs <varta-executable> [--playwright <module> <firefox|webkit>]
 //
 // Real local Chrome by default (VARTA_CHROME_BIN overrides the path).
-import {mkdtemp, mkdir, writeFile, rm, readFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, rm, readFile, copyFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join, resolve, sep} from 'node:path';
+import {dirname, join, resolve, sep} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import assert from 'node:assert/strict';
 import {registry} from '../crates/varta-common/browser/registry.mjs';
-import {CONTAINER} from '../crates/varta-project/src/browser/kv-store.mjs';
+import {CONTAINER, KvContainer} from '../crates/varta-project/src/browser/kv-store.mjs';
 
 const PROFILE = 'checked-f64-utf16-v38';
 const HOST_ABI = registry.profiles.find((profile) => profile.name === PROFILE).hostAbi;
@@ -208,6 +215,119 @@ const dagLogs = () => [...DAG_CASES.flatMap(([wraps, inner]) => [true, false].fl
   const [x, y] = [inner, wraps + inner];
   return [`set ${label}`, `get ${label} ${xFirst ? x : y} ${xFirst ? y : x}`];
 })), `cycle ${K.errors.typeError}: a cyclic value cannot be stored in a KV value`].map((line) => LOG_PREFIX + line);
+// Diamonds of `D`: each level `{ a: x, b: x }` of the one below, `{}` at
+// the bottom; a read builds every reach and both absent fields of the
+// bottom `{}`. The largest within the value bound, the next, and a far one
+// (millions of values from about two hundred stored bytes) that once ran a
+// native decode past the turn deadline at about 1 GB. The native
+// shared_parts_keep_the_value_bound_on_set_and_get program, each set and
+// get in its own timer turn.
+const diamondDecoded = (levels) => 2 ** (levels + 2) - 1;
+const DIAMOND_FITS = Math.floor(Math.log2(K.valueExtent.maxValues + 1)) - 2, FAR_DIAMOND = 22;
+const DIAMOND_LEVELS = [DIAMOND_FITS, DIAMOND_FITS + 1], PLANTED_LEVELS = [DIAMOND_FITS, DIAMOND_FITS + 1, FAR_DIAMOND];
+// How much the Chrome process tree's resident memory may grow over the
+// diamond run: generous for a page, its Worker and their wasm memories,
+// a small fraction of what building the far diamond took.
+const RSS_GROWTH_BYTES = 256 * 1024 * 1024;
+// `ps` reports resident memory in kibibytes.
+const PS_RSS_UNIT_BYTES = 1024;
+// Deno 2.9.x's V8 serializer header (version tag, serializer version 16),
+// and the FoundationDB tuple codes of Deno's key encoding: a string part
+// and its terminator.
+const V8_HEADER = [0xFF, 0x10], TUPLE_STRING = 0x02, TUPLE_END = 0x00;
+// The largest object id a one-byte varint carries.
+const ONE_BYTE_VARINT = 0x80;
+const DIAMOND = `interface D { a?: D; b?: D }
+function diamond(levels: number): D {
+  let x: D = {};
+  for (let i = 0; i < levels; i++) { x = { a: x, b: x }; }
+  return x;
+}
+function size(d: D | undefined): number { return d === undefined ? 1 : 1 + size(d.a) + size(d.b); }
+function turn(): Promise<void> { return new Promise<void>((done) => { setTimeout(() => done(), 0); }); }
+` + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
+    for (const levels of [${DIAMOND_LEVELS.join(', ')}]) {
+      const label = String(levels);
+      await turn();
+      try { await kv.set(['diamond', label], diamond(levels)); console.log('set ' + label); }
+      catch (e) { if (e instanceof Error) { console.log(label + ' ' + e.name + ': ' + e.message); } }
+      await turn();
+      const got = await kv.get<D>(['diamond', label]);
+      console.log('get ' + label + ' ' + (got.value === null ? 'absent' : String(size(got.value))));
+    }
+    for (const levels of [${PLANTED_LEVELS.join(', ')}]) {
+      const label = String(levels);
+      await turn();
+      try {
+        const got = await kv.get<D>(['planted', label]);
+        console.log('planted ' + label + ' ' + (got.value === null ? 'absent' : String(size(got.value))));
+      } catch (e) { if (e instanceof Error) { console.log('planted ' + label + ' ' + e.name + ': ' + e.message); } }
+    }
+    kv.close();`);
+/** What DIAMOND logs: within the bound a diamond stores and reads back
+ * whole; past it `set` and a read of a planted one fail by name. */
+const diamondLogs = () => {
+  const fits = (levels) => diamondDecoded(levels) <= K.valueExtent.maxValues;
+  const refused = `${K.errors.typeError}: ${K.valueExtent.tooExpanded}`;
+  return [
+    ...DIAMOND_LEVELS.flatMap((levels) => fits(levels) ? [`set ${levels}`, `get ${levels} ${diamondDecoded(levels)}`] : [`${levels} ${refused}`, `get ${levels} absent`]),
+    ...PLANTED_LEVELS.map((levels) => fits(levels) ? `planted ${levels} ${diamondDecoded(levels)}`
+      : `planted ${levels} ${K.errors.typeError}: KV value does not match the checked type: ${K.valueExtent.tooExpanded}`),
+  ].map((line) => LOG_PREFIX + line);
+};
+/** The V8 bytes of a `D` diamond of `levels` as Deno writes it: level `k`
+ * (object id `levels - k`) back-references level `k - 1` in `b`. */
+function diamondBytes(levels) {
+  const bytes = [...V8_HEADER];
+  const body = (level) => {
+    bytes.push('o'.charCodeAt(0));
+    if (level === 0) { bytes.push('{'.charCodeAt(0), 0); return; }
+    bytes.push('"'.charCodeAt(0), 1, 'a'.charCodeAt(0));
+    body(level - 1);
+    const id = levels - level + 1;
+    assert(id < ONE_BYTE_VARINT, 'a one-byte varint');
+    bytes.push('"'.charCodeAt(0), 1, 'b'.charCodeAt(0), '^'.charCodeAt(0), id, '{'.charCodeAt(0), 2);
+  };
+  body(levels);
+  return Uint8Array.from(bytes);
+}
+/** Deno's key bytes of an array of strings (the tuple string part). */
+const keyBytes = (parts) => Uint8Array.from(parts.flatMap((part) => [TUPLE_STRING, ...new TextEncoder().encode(part), TUPLE_END]));
+const plantedEntries = () => PLANTED_LEVELS.map((levels) => ({key: keyBytes(['planted', String(levels)]), value: diamondBytes(levels)}));
+/** A KV container holding `PATH` with the planted diamonds, as bytes. */
+function plantedContainer() {
+  const handle = {
+    data: new Uint8Array(0),
+    getSize() { return this.data.length; },
+    read(buffer, {at}) { const n = Math.max(0, Math.min(buffer.length, this.data.length - at)); buffer.set(this.data.subarray(at, at + n)); return n; },
+    write(buffer, {at}) {
+      if (at + buffer.length > this.data.length) { const next = new Uint8Array(at + buffer.length); next.set(this.data); this.data = next; }
+      this.data.set(buffer, at); return buffer.length;
+    },
+    truncate(size) { this.data = this.data.slice(0, size); },
+    flush() {}, close() {},
+  };
+  const store = new KvContainer(handle);
+  assert.equal(store.create(PATH), undefined);
+  const committed = store.commit(PATH, [], plantedEntries().map(({key, value}) => ({kind: K.mutations.set, key, encoding: K.encodings.v8, value})));
+  assert(committed.versionstamp, JSON.stringify(committed));
+  return handle.data;
+}
+/** Deno's SQLite file at `PATH` of `directory` with the planted diamonds:
+ * the Deno 2.9.4 fixture (its schema and migration state as Deno wrote
+ * them) with its rows replaced, each at the file's data version. */
+async function plantNative(directory) {
+  const {DatabaseSync} = await import('node:sqlite');
+  const file = join(directory, ROOT, 'app.kv');
+  await copyFile(join(dirname(fileURLToPath(import.meta.url)), '../crates/varta-runtime/src/kv_cases/deno-2.9.4/fixture.kv'), file);
+  const database = new DatabaseSync(file);
+  try {
+    const {version} = database.prepare('SELECT version FROM data_version WHERE k = 0').get();
+    database.exec('DELETE FROM kv');
+    const insert = database.prepare('INSERT INTO kv (k, v, v_encoding, version) VALUES (?, ?, ?, ?)');
+    for (const {key, value} of plantedEntries()) insert.run(key, value, K.encodings.v8, version);
+  } finally { database.close(); }
+}
 const COUNTER = GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
     const count = (await kv.get<KvU64>(['count'])).value;
     const twin = (await kv.get<KvU64>(['twin'])).value;
@@ -327,6 +447,7 @@ export async function runKv(varta, driver) {
     await add('nested', NESTED, {kv: {read: [`/${ROOT}/**`], write: [`/${ROOT}/**`]}});
     await add('deep', DEEP, GRANTS);
     await add('dag', DAG, GRANTS);
+    await add('diamond', DIAMOND, {...GRANTS, time: {timer: true}});
     const {server, origin} = await serveBundles(bundles);
     const page = async (name) => driver.page(`${origin}/${name}/blank.html`);
     const same = (label, browser, native) => {
@@ -484,6 +605,31 @@ export async function runKv(varta, driver) {
         await tab.close();
         pass('dag');
       }
+      // Diamonds: equal to native on set and on read of planted values,
+      // within the value bound and past it, the browser's memory bounded.
+      {
+        const directory = directories.get('diamond');
+        await plantNative(directory);
+        const native = nativeRun(varta, directory);
+        assert.deepEqual(native.logs, diamondLogs());
+        const tab = await page('diamond');
+        await tab.evaluate(corruptExpression(await artifactDirectory(bundles.get('diamond')), Array.from(plantedContainer())));
+        const before = driver.rss ? await driver.rss() : undefined;
+        let peak = before, done = false;
+        const running = tab.evaluate(runExpression('diamond')).finally(() => { done = true; });
+        while (before !== undefined && !done) {
+          peak = Math.max(peak, await driver.rss());
+          await new Promise((resolve) => setTimeout(resolve, STARTUP_POLL_MS));
+        }
+        same('diamond', await running, native);
+        await tab.close();
+        if (before === undefined) console.log('SKIP diamond memory: this driver cannot measure resident memory');
+        else {
+          assert(peak - before <= RSS_GROWTH_BYTES, `diamond: Chrome grew by ${peak - before} bytes`);
+          console.log(`diamond: Chrome's resident memory grew by at most ${peak - before} bytes`);
+        }
+        pass('diamond');
+      }
     } finally {
       // A browser may keep an idle keep-alive connection to the server
       // (Playwright's Chrome does): close it, or close() never completes.
@@ -548,6 +694,19 @@ async function chromeDriver() {
           await call('Storage.overrideQuotaForOrigin', {origin, ...(bytes === undefined ? {} : {quotaSize: bytes})}, sessionId);
         },
       };
+    },
+    /** The resident memory of the Chrome process and its descendants
+     * (renderers, Workers' processes), in bytes. */
+    async rss() {
+      const listing = spawnSync('ps', ['-A', '-o', 'pid=,ppid=,rss='], {encoding: 'utf8'});
+      if (listing.error) throw listing.error;
+      const processes = listing.stdout.trim().split('\n').map((line) => line.trim().split(/\s+/).map(Number));
+      const tree = new Set([child.pid]);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const [pid, parent] of processes) if (tree.has(parent) && !tree.has(pid)) { tree.add(pid); grew = true; }
+      }
+      return processes.filter(([pid]) => tree.has(pid)).reduce((sum, [, , rss]) => sum + rss * PS_RSS_UNIT_BYTES, 0);
     },
     async close() {
       socket.close();
