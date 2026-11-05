@@ -53,8 +53,9 @@ pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 /// [`MAX_CHUNK_BYTES`] (about 13 million fuel) would exhaust
 /// `budget::TURN_FUEL` and terminate the instance. The cap keeps the byte
 /// path within one [`READ_FUEL_SHARE`]-th of the turn fuel, leaving the
-/// rest to the application (a guest `TextDecoder` over each read, about
-/// 620 fuel per byte together with the byte path, still fits).
+/// rest to the application: a guest `TextDecoder` over each read (about
+/// 620 fuel per byte together with the byte path) measured about two thirds
+/// of a turn; further per-byte application work is not guaranteed to fit.
 pub const MAX_READ_DELIVERY_BYTES: usize = 8 * 1024;
 /// Measured v38 guest fuel per byte a `ReadableStreamDefaultReader.read()`
 /// delivers as a `Uint8Array` (`net_body_read_bytes`, the `/events` burst

@@ -103,6 +103,14 @@ unchanged. The GUI publishes the tree only after presenting its matching CPU or
 GPU frame, with visible element-fragment unions in physical pixels. Offscreen,
 text-only and select-popup option geometry is not complete.
 
+Native structure elements keep their headless roles: `h1`–`h3` publish heading
+levels 1–3, `ul`/`ol` publish lists and rendered `li` items publish list items.
+An item's frame bounds unite its element fragments with its outside marker box
+(a disc, circle or square symbol, or the `N. ` text), so the marker belongs to the
+item for assistive hit testing; markers have no node of their own. Text
+truncated by `text-overflow: ellipsis` keeps its full accessible name,
+untruncated frame geometry and pointer targets, as in Chrome.
+
 Supported actions are Focus, Click, SetValue with a string and
 ReplaceSelectedText and SetTextSelection. Callbacks enqueue at most eight requests, with at most
 1 MiB of retained text and the existing per-field UTF-16 limits; one coalesced

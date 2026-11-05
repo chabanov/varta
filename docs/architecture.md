@@ -11035,20 +11035,11 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   bound:** `net::MAX_RESPONSE_BODY_BYTES` bounds the bytes the host receives
   while serving one read (`net::BodyBound::Read`), not the body; there is no
   total byte bound. A body is bounded in time by the window and the
-  instance lifetime, in host memory by one received transport chunk plus a
-  held-back split sequence (the transfer receives only while the guest has a
+  instance lifetime, in host memory by the per-read cap plus one received
+  transport chunk beyond it and a held-back split sequence (the transfer receives only while the guest has a
   read armed), and what the guest keeps by its memory budget (the v37
   rationale, one string value of `abi::MAX_STRING_BYTES`, does not hold under
-  the v38 data limits). (5) **Per-read delivery cap** (owner decision, over
-  documenting the fatal outcome): one read delivers at most
-  `net::MAX_READ_DELIVERY_BYTES`, held-back bytes included, and larger
-  received data is split across successive reads. Each read is one event
-  turn, and the guest byte path costs about `net::READ_BYTE_FUEL` fuel per
-  delivered byte (measured), so a read of `net::MAX_CHUNK_BYTES` would
-  exhaust `budget::TURN_FUEL` and terminate a well-behaved instance during a
-  burst; the cap keeps that path within one `net::READ_FUEL_SHARE`-th of the
-  turn fuel (a compile-time assertion in `varta_common::net`), and a guest
-  `TextDecoder` over every read still fits. No production budget changed. (3) **Host-owned request headers**
+  the v38 data limits). (3) **Host-owned request headers**
   (`net::HOST_REQUEST_HEADERS`: `accept-encoding`, `user-agent`): a guest
   value is checked like any header, then ignored and never sent, because a
   browser always sends its own; the native reference host sends no
@@ -11056,7 +11047,18 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   so it sends `accept-encoding: identity` (`net::NATIVE_ACCEPT_ENCODING`) and
   fails a response that names another coding before its head
   (`RequestFailure::Encoding`); a browser host admits a body Fetch decoded and
-  shows neither `content-encoding` nor `content-length` for it. Other headers
+  shows neither `content-encoding` nor `content-length` for it. (5) **Per-read delivery cap** (owner decision, over
+  documenting the fatal outcome): one read delivers at most
+  `net::MAX_READ_DELIVERY_BYTES`, held-back bytes included, and larger
+  received data is split across successive reads. Each read is one event
+  turn, and the guest byte path costs about `net::READ_BYTE_FUEL` fuel per
+  delivered byte (measured), so a read of `net::MAX_CHUNK_BYTES` would
+  exhaust `budget::TURN_FUEL` and terminate a well-behaved instance during a
+  burst; the cap keeps that path within one `net::READ_FUEL_SHARE`-th of the
+  turn fuel (a compile-time assertion in `varta_common::net`); a guest
+  `TextDecoder` over every read measured about two thirds of a turn. Further per-byte application work
+  (line splitting, `JSON.parse` per event) is not guaranteed to fit and is the
+  application's budget. No production budget changed. Other headers
   a browser controls (cookie, origin, referer, `sec-*`, `proxy-*`, …) are not
   host-owned: the native host sends them, a browser host refuses them (owner
   decision: accepted as documented, like the native fail-closed rule for

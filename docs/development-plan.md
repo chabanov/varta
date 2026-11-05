@@ -29,10 +29,10 @@ ECMAScript, Node or npm compatibility.
 | --- | --- |
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
-| Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
+| Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last committed full gate | Horizontal inline edges and solid inline borders on `219db06` (2026-11-04, macOS arm64): **3495 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-175437-p30mj15f/report.json`; source SHA-256 `ec01855a55530d285d047ade86c1154265f86853c97c4b037ae74c93d352d465`. Conformance 123 passed/4 known unsupported of 127, baseline matched. Strict affected GPU Clippy passes; Debug/Release each cover 108 actual GPU + 28 explicit CPU-fallback observations across 34 scenes. Only result/status documentation annotations follow the gate. Real-font/window/system-input/VoiceOver, other-platform, broader core/pilot and release acceptance remain open. [Procedure](verification.md#full-gate) |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
-| Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
+| Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
 | Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. The console view still stops at the button/textarea control-box rules (nodes 16/12); its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
@@ -456,6 +456,39 @@ result/status documentation annotations follow it. Distinct border
 side colors and other border styles, device-pixel border-width snapping (open for
 all boxes), bidi edge reordering, horizontal percentages and
 real-font/window/platform acceptance remain open.
+
+### Wave 1 integration — 2026-11-04
+
+Six parallel packages, each reviewed independently and corrected after review,
+merged into `main`: `w1-package-specifiers`, `w1-sdk-network-contract`,
+`w1-browser-pilot-effects`, `w1-native-shell-core`,
+`w1-native-structure-text` and `w1-pilot-sdk-probe`. Their own subsections
+record scope and scoped results. Owner decisions taken at review: the v38 read
+delivery cap (instead of documenting a fatal turn-fuel exhaustion), the native
+fail-closed content-coding rule and differing browser-controlled headers as
+documented, Chrome's ellipsis hit targets (hidden truncated text still hits its
+element), and a test-time `varta build` of the shell probe instead of a
+checked-in Wasm fixture.
+
+Open after integration:
+
+- Pilot findings F1–F3 (`examples/uarp-console/README.md`): an explicit generic
+  call on an element-access receiver, an aborted fetch's connection held until
+  the client's next wake, and `cause` through `instanceof Error` /
+  `new Error(msg, { cause })`.
+- Native text: Chrome 156 on macOS rounds an exact half-pixel font ascent or
+  descent down, Varta rounds it up (the `headings` structure case keeps
+  rgbMaxDelta 255 with a passing mean); needs an owner decision because it
+  changes every text path. Chrome's minimum logical font size (non-absolute
+  sizes below 9px compute to 9px) is neither modelled nor refused.
+- The portable `native_inline_probe` fails `paint-overlap-hits` against Chrome
+  (portable rasterizer smoothing; the host CoreText probe passes); pre-existing.
+- `varta-shell` creates per-artifact KV directories before the runtime validates
+  code and profile (documented; moving it needs a runtime API change).
+- The prototype web host records the v38 network rules as deviations; its
+  differential v38 `net.request` large-body case fails for that reason.
+- Not run: real-window shell sessions, Linux/Windows, CI with the new Node
+  step, WebKit/Firefox after the fix round.
 
 ### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
 

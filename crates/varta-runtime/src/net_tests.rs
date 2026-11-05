@@ -953,6 +953,10 @@ fn v38_bursts_split_reads_within_the_turn_fuel() {
         .map(|turn| turn.fuel)
         .collect();
     assert!(network.len() as u64 > 2 * total as u64 / MAX_READ_DELIVERY_BYTES as u64);
+    // A re-measure signal, not a network invariant: the burst's read turns
+    // use about 1.6-1.7M of this 2M share, so guest codegen or prelude growth
+    // of about 15% on the byte path fails here first; re-measure
+    // `READ_BYTE_FUEL` and the cap before changing anything else.
     let share = TURN_FUEL / READ_FUEL_SHARE;
     assert!(network.iter().all(|fuel| *fuel <= share), "{network:?}");
 }

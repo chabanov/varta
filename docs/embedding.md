@@ -959,8 +959,9 @@ sends something within every window. The body bound of the
 serving one read (`net::BodyBound::Read`), not the whole body, so such a
 stream may deliver any total. Each read delivers at most the per-read bytes
 of the limits (`net::MAX_READ_DELIVERY_BYTES`, the [per-read
-cap](#per-read-delivery-cap-v38)); host memory stays bounded by one received
-transport chunk plus the bytes held back for a split sequence (the transfer
+cap](#per-read-delivery-cap-v38)); host memory stays bounded by the per-read
+cap plus one received transport chunk beyond it and the bytes held back for a
+split sequence (the transfer
 receives only while the guest has a read armed); what the guest keeps is
 bounded by its own memory budget.
 
