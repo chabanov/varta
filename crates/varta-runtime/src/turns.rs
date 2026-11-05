@@ -38,15 +38,16 @@ pub enum TurnKind {
 impl TurnKind {
     #[must_use]
     pub fn name(self) -> &'static str {
+        use varta_common::budget::turn_kind as name;
         match self {
-            Self::Main => "main",
-            Self::Timer => "timer",
-            Self::Network => "network",
-            Self::HostEvent => "event",
-            Self::Permission => "permission",
-            Self::View => "view",
-            Self::Execution => "execution",
-            Self::Maintenance => "maintenance",
+            Self::Main => name::MAIN,
+            Self::Timer => name::TIMER,
+            Self::Network => name::NETWORK,
+            Self::HostEvent => name::HOST_EVENT,
+            Self::Permission => name::PERMISSION,
+            Self::View => name::VIEW,
+            Self::Execution => name::EXECUTION,
+            Self::Maintenance => name::MAINTENANCE,
         }
     }
 }

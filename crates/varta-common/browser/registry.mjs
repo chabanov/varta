@@ -51,6 +51,28 @@ export const registry = freeze({
       "invalid": "<invalid host input>",
       "tooLarge": "<result too large>"
     },
+    "fatal": {
+      "fuelExhausted": "turn {turn} ({kind}) exhausted its fuel budget ({limit} instructions per turn); the instance was terminated",
+      "kindPlaceholder": "{kind}",
+      "kinds": {
+        "event": "event",
+        "main": "main",
+        "network": "network",
+        "timer": "timer",
+        "view": "view"
+      },
+      "limitPlaceholder": "{limit}",
+      "requestExport": "resource_request",
+      "requestPlaceholder": "{requested}",
+      "resourceExport": "resource_failure",
+      "resources": {
+        "1": "resource limit: memory budget exhausted (requested {requested})",
+        "2": "resource limit: value exceeds the Wasm size limit (requested {requested})",
+        "3": "resource limit: root stack exhausted (requested {requested})",
+        "4": "resource limit: live continuation frames exhausted (requested {requested})"
+      },
+      "turnPlaceholder": "{turn}"
+    },
     "random": {
       "operation": "number_random",
       "sampleBits": 53,

@@ -15,6 +15,26 @@ self.onmessage = async ({ data }) => {
   const prompting=application&&descriptor.turnBudgets&&data.prompting===true,prompts=new Map();
   const logs = [];
   let tank, scheduler, network, replay, view, events, calls = 0, totalCalls = 0, outputBytes = 0, instance, closedFuel = 0, turns = 1, kvStorage;
+  // What the current turn runs, for the native text of an exhausted turn.
+  const F = registry.effects.fatal, K = F.kinds;
+  let turnKind = K.main;
+  // A trap after which the native runtime reports a typed failure: a v38
+  // resource failure the guest stored before its `unreachable`, or a turn
+  // whose fuel ran out (the metered image traps once its counter reaches
+  // zero; a host charge throws `FuelExhausted`). Anything else is reported
+  // as it is.
+  const fatal = (error) => {
+    const RuntimeError = WebAssembly.RuntimeError;
+    const trapped = typeof RuntimeError === "function" && error instanceof RuntimeError;
+    const code = trapped ? instance?.exports[F.resourceExport]?.value : undefined;
+    if (code && Object.hasOwn(F.resources, String(code))) {
+      const requested = instance.exports[F.requestExport]?.value >>> 0;
+      return new Error(F.resources[String(code)].replace(F.requestPlaceholder, String(requested)));
+    }
+    const exhausted = error?.name === "FuelExhausted" || (trapped && tank !== undefined && tank.global.value >= 0n);
+    if (!descriptor.turnBudgets || !exhausted) return error;
+    return new Error(F.fuelExhausted.replace(F.turnPlaceholder, String(turns)).replace(F.kindPlaceholder, turnKind).replace(F.limitPlaceholder, String(descriptor.budgets.fuelPerTurn)));
+  };
   const maintenance = [];
   let maintenanceFuel = 0, maintenancePeriods = 0;
   try {
@@ -305,7 +325,8 @@ self.onmessage = async ({ data }) => {
     let turnOpen = true, activeEvent;
     const usage = () => ({fuelRemaining:tank.remaining,hostCalls:totalCalls,outputBytes,microtasks:scheduler.totalJobs,fuelUsed:closedFuel+descriptor.budgets.fuelPerTurn-tank.remaining,turns});
     let maintained = false;
-    const renew = () => {
+    const renew = (kind) => {
+      turnKind = kind;
       if (descriptor.turnBudgets) {
         closedFuel += descriptor.budgets.fuelPerTurn - tank.remaining;
         tank.beginTurn(descriptor.budgets.fuelPerTurn); calls = 0; scheduler.renew(); turns++;
@@ -373,32 +394,32 @@ self.onmessage = async ({ data }) => {
       if (application) {
         if(!holding&&!busy&&due===undefined&&events.arrival()===undefined)break;
         const eventAt=view.arrival()??Infinity,networkAt=network.arrival()??Infinity,hostAt=events.arrival()??Infinity,timerAt=due===undefined?Infinity:performance.timeOrigin+loopStarted+due;
-        if(due!==undefined&&due<=elapsed()&&timerAt<=eventAt&&timerAt<=networkAt&&timerAt<=hostAt){timers.fire();renew();continue;}
+        if(due!==undefined&&due<=elapsed()&&timerAt<=eventAt&&timerAt<=networkAt&&timerAt<=hostAt){timers.fire();renew(K.timer);continue;}
         if(eventAt!==Infinity&&eventAt<=networkAt&&eventAt<=hostAt){
-          const task=view.take();renew();gesture=task.gesture;activeEvent=task.id;timers.observe(elapsed());
+          const task=view.take();renew(K.view);gesture=task.gesture;activeEvent=task.id;timers.observe(elapsed());
           const memory=instance.exports[descriptor.memoryExport],R=registry.network.result,wanted=R.base+task.bytes.length;
           if(wanted>memory.buffer.byteLength)memory.grow(Math.ceil((wanted-memory.buffer.byteLength)/R.pageBytes));
           new Uint8Array(memory.buffer,R.base,task.bytes.length).set(task.bytes);
           instance.exports[registry.view.wire.eventExport](task.bytes.length);checkException();continue;
         }
-        if(networkAt!==Infinity&&networkAt<=hostAt&&network.deliver()){timers.observe(elapsed());renew();continue;}
-        if(hostAt!==Infinity&&events.deliver()){const trusted=events.gesture;timers.observe(elapsed());renew();gesture=trusted;continue;}
+        if(networkAt!==Infinity&&networkAt<=hostAt&&network.deliver()){timers.observe(elapsed());renew(K.network);continue;}
+        if(hostAt!==Infinity&&events.deliver()){const trusted=events.gesture;timers.observe(elapsed());renew(K.event);gesture=trusted;continue;}
         if(!maintained){maintain();continue;}
         await view.wait(due===undefined?Infinity:due-elapsed());continue;
       }
       if (due === undefined && !busy) break;
       if (busy) {
-        if (due !== undefined && due < limit && due <= elapsed()) { timers.fire(); renew(); continue; }
+        if (due !== undefined && due < limit && due <= elapsed()) { timers.fire(); renew(K.timer); continue; }
         await network.wait(Math.max(0, Math.min(due ?? limit, limit) - elapsed()));
-        if (network.deliver()) { timers.observe(elapsed()); renew(); continue; }
-        if (due !== undefined && due < limit && due <= elapsed()) { timers.fire(); renew(); continue; }
+        if (network.deliver()) { timers.observe(elapsed()); renew(K.network); continue; }
+        if (due !== undefined && due < limit && due <= elapsed()) { timers.fire(); renew(K.timer); continue; }
         if (elapsed() < limit) continue;
       }
       if (due !== undefined && due >= limit) throw new Error(registry.scheduler.timer.deadlineTemplate.replace("{due}", String(Math.ceil(due))).replace("{seconds}", String(Math.ceil(limit / 1000))));
       if (busy) throw new Error("browser execution deadline exceeded");
       const wait = due - elapsed();
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-      timers.fire(); renew();
+      timers.fire(); renew(K.timer);
     }
     view.close();
     network.close();
@@ -416,6 +437,7 @@ self.onmessage = async ({ data }) => {
     // unless a replay ends with logged events undelivered, as natively.
     let exited = error instanceof GuestExit;
     if (exited) try { replay?.finish(); } catch (unconsumed) { exited = false; error = unconsumed; }
+    else error = fatal(error);
     self.postMessage({ type: "result", status: exited ? "ok" : "failed", logs, ...(exited ? { exitCode: error.code } : { error: String(error?.message ?? error) }), fuelRemaining: tank?.remaining ?? 0, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns, maintenance, maintenanceFuel, maintenancePeriods });
   }
 };

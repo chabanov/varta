@@ -430,6 +430,70 @@ fn other_unimplemented_effects_are_refused_before_a_bundle_exists() {
     assert!(!error.contains("date_now"), "{error}");
 }
 
+/// The browser's fatal turn and resource texts are the native runtime's
+/// typed errors, with the turn, the kind, the limit and the request
+/// substituted.
+#[test]
+fn fatal_failure_texts_equal_the_native_runtime_errors() {
+    use varta_common::limits::{Resource, ResourceExhausted};
+    use varta_runtime::{BudgetExhausted, TurnKind};
+    let fatal = &varta_common::browser::registry()["effects"]["fatal"];
+    let text = |key: &str| fatal[key].as_str().unwrap().to_owned();
+    let (turn, limit) = (7_u64, BudgetKind::Fuel.production());
+    for kind in [
+        TurnKind::Main,
+        TurnKind::Timer,
+        TurnKind::Network,
+        TurnKind::HostEvent,
+        TurnKind::View,
+    ] {
+        let native = BudgetExhausted {
+            turn,
+            kind,
+            budget: BudgetKind::Fuel,
+            limit,
+        }
+        .to_string();
+        let name = fatal["kinds"]
+            .as_object()
+            .unwrap()
+            .values()
+            .find(|name| name.as_str() == Some(kind.name()))
+            .unwrap_or_else(|| panic!("{} has no registry kind", kind.name()));
+        let browser = text("fuelExhausted")
+            .replace(&text("turnPlaceholder"), &turn.to_string())
+            .replace(&text("kindPlaceholder"), name.as_str().unwrap())
+            .replace(&text("limitPlaceholder"), &limit.to_string());
+        assert_eq!(browser, native);
+    }
+    let requested = 64_u32;
+    for resource in [
+        Resource::Memory,
+        Resource::ValueSize,
+        Resource::RootStack,
+        Resource::LiveFrames,
+    ] {
+        let native = ResourceExhausted {
+            resource,
+            requested,
+        }
+        .to_string();
+        let browser = fatal["resources"][(resource as i32).to_string()]
+            .as_str()
+            .unwrap()
+            .replace(&text("requestPlaceholder"), &requested.to_string());
+        assert_eq!(browser, native);
+    }
+    assert_eq!(
+        fatal["resourceExport"],
+        varta_common::limits::RESOURCE_FAILURE
+    );
+    assert_eq!(
+        fatal["requestExport"],
+        varta_common::limits::RESOURCE_REQUEST
+    );
+}
+
 /// The browser's maintenance diagnostics are the native runtime's typed
 /// budget errors, with the turn and the limit substituted.
 #[test]

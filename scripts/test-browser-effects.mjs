@@ -79,6 +79,33 @@ const UUID = `export function main(): void {
 
 // Every timer turn builds rows of strings and arrays and keeps only the last
 // batch, so each turn allocates well past collector::IDLE_MIN_BYTES.
+// Fatal ends the Worker reports with the native runtime's texts: a turn
+// whose metered guest code runs out of fuel (in the main turn and in a timer
+// turn) and a v38 resource failure the guest reports before its trap (a
+// doubling string exhausts the memory budget before one value's limit).
+const FUEL_MAIN = `export function main(): void {
+  console.log("before");
+  let i = 0;
+  while (i >= 0) { i = i + 1; }
+  console.log(String(i));
+}
+`;
+const FUEL_TIMER = `export function main(): void {
+  console.log("before");
+  setTimeout(() => {
+    let i = 0;
+    while (i >= 0) { i = i + 1; }
+    console.log(String(i));
+  }, 0);
+}
+`;
+const MEMORY_BUDGET = `export function main(): void {
+  console.log("before");
+  let s = "x";
+  while (s.length > 0) { s = s + s; }
+  console.log(String(s.length));
+}
+`;
 const SESSION = `class Row { constructor(public label: string, public cells: string[]) {} }
 let kept: Row[] = [];
 let count = 0;
@@ -162,6 +189,10 @@ export const CASES = [
     diagnostics: [registry.effects.failures.invalid]},
   {name: 'v20-entropy-exit', profile: ENTROPY_PROFILE, source: ENTROPY_V20, capabilities: {process: {exit: true}}, exit: EXIT_CODE,
     diagnostics: [registry.effects.failures.invalid]},
+  // Fatal ends: the same logs, then the native failure text.
+  {name: 'fuel-main', source: FUEL_MAIN, capabilities: {}, fails: /^turn 1 \(main\) exhausted its fuel budget/},
+  {name: 'fuel-timer', source: FUEL_TIMER, capabilities: {time: {timer: true}}, fails: /^turn 2 \(timer\) exhausted its fuel budget/},
+  {name: 'memory-budget', source: MEMORY_BUDGET, capabilities: {}, fails: /^resource limit: memory budget exhausted/},
 ];
 
 async function project(root, item) {
@@ -188,6 +219,11 @@ function nativeRun(varta, directory, item) {
     .map(([, afterTurn, fuel, steps, cycle, memoryBytes]) => ({afterTurn: number(afterTurn), fuel: number(fuel), steps: number(steps), completed: cycle === 'completed', memoryBytes: number(memoryBytes)}));
   const total = /varta budget: total: (\d+) turns, fuel (\d+), peak memory \d+\/\d+ bytes, output (\d+)\/\d+ bytes/.exec(run.stderr);
   const maintenanceTotal = /varta budget: maintenance total: (\d+) idle periods, fuel (\d+)/.exec(run.stderr);
+  const failure = /^varta failed: (.*)$/m.exec(run.stderr)?.[1];
+  if (item.fails) {
+    assert.match(failure ?? '', item.fails, run.stderr);
+    return {exitCode: run.status, logs: run.stdout.split(/\r?\n/).filter((line) => line.startsWith('varta log: ')), failure};
+  }
   assert(total, run.stderr);
   if (/later turns not listed/.test(run.stderr)) throw new Error('native report truncated');
   return {
@@ -230,6 +266,12 @@ function expression(item) {
 
 function compare(item, native, browser) {
   const label = (what) => `${item.name}: ${what}`;
+  if (item.fails) {
+    assert.equal(browser.status, 'failed', label(JSON.stringify(browser)));
+    assert.equal(browser.error, native.failure, label('failure text'));
+    assert.deepEqual(browser.logs, native.logs, label('logs'));
+    return;
+  }
   assert.equal(browser.status, 'ok', label(browser.error));
   assert.equal(browser.exitCode, native.exitCode, label('exit code'));
   assert.equal(browser.exitCode, item.exit, label('expected exit code'));

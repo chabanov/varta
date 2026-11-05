@@ -1981,6 +1981,12 @@ before an `unreachable` trap. A host SHOULD report such a trap, and only an
 `unreachable` trap, as the named resource failure (the reference host returns
 `RuntimeError::Resource`: `resource limit: <resource> (requested <n>)`); the
 globals carry no authority and the failure is never delivered to the guest.
+The official browser host does so, and reports a v38 turn whose fuel ran out
+(its metered image traps once the counter reaches zero, or a host charge
+fails) with the reference host's `turn <n> (<kind>) exhausted its fuel
+budget (<limit> instructions per turn); the instance was terminated`; the
+texts are generated registry data (`registry.effects.fatal`) compared with
+the reference host's typed errors.
 `json_stringify_owned` (v38) is linked; the reference host's import (kept
 for its comparison tests, admitted by no profile) calls back the module's
 validated host-free `varta.value_abi.allocate`/`retain` exports to place its

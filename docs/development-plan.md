@@ -669,10 +669,10 @@ database paths.
 
 Open after integration:
 
-- KV reads: the browser reports a fatal fuel or memory exhaustion only as
-  `unreachable` or `fuel exhausted`, not with the native reason. (Host work
-  of a read for absent optional fields is bounded by the turn's fuel and
-  pinned by a codec test; closed after integration.)
+- (Closed after integration: the host work of a KV read for absent optional
+  fields is bounded by the turn's fuel and pinned by a codec test; the
+  browser host reports exhausted turn fuel and v38 resource failures with
+  the native texts, compared in the KV and effect acceptances.)
 - Native consent: a request whose patterns do not fit the prompt is denied
   without a prompt natively but shown in the browser; 'allow for this
   session', a refusal cool-down and refused-required presentation remain

@@ -336,8 +336,6 @@ const unsharedLogs = () => [...UNSHARED_NUMBERS.map((n) => `numbers ${n} ${n * (
 // in one turn, which ends with the fatal fuel exhaustion while the codec
 // classifies them (it pays as it goes), equal to native.
 const DECODE_FUEL_VALUES = 3, DECODE_FUEL_NUMBERS = 3000;
-// The browser host's fatal fuel failure (`FuelExhausted`, fuel.mjs).
-const FUEL_EXHAUSTED = /^fuel exhausted$/;
 const DECODE_FUEL = `function turn(): Promise<void> { return new Promise<void>((done) => { setTimeout(() => done(), 0); }); }
 ` + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
     const keys: KvKey[] = [];
@@ -560,11 +558,12 @@ export async function runKv(varta, driver) {
       assert.deepEqual(browser.logs, native.logs, `${label}: logs`);
       assert.deepEqual(browser.usage, native.usage, `${label}: usage`);
     };
-    // A fatal end alike: the browser's run fails (the instance ended, its
-    // error text the browser host's own) after the same logs and usage.
+    // A fatal end alike: the browser's run fails with the native failure
+    // text (the Worker reports exhausted turns and resource failures with
+    // the native runtime's texts) after the same logs and usage.
     const failsAlike = (label, browser, native) => {
       assert.equal(browser.status, 'failed', `${label}: ${JSON.stringify(browser)}`);
-      console.log(`${label}: native "${native.failure}", browser "${browser.error}"`);
+      assert.equal(browser.error, native.failure, `${label}: failure text`);
       assert.deepEqual(browser.logs, native.logs, `${label}: logs`);
       assert.deepEqual(browser.usage, native.usage, `${label}: usage`);
     };
@@ -724,11 +723,11 @@ export async function runKv(varta, driver) {
       // whole, and the worst accepted value (the diamond at the bound)
       // decodes whole and builds past the guest's memory, fatally alike.
       // Under production fuel the same read ends while it is classified.
-      for (const [name, label, logs, fails, browserFails] of [
+      for (const [name, label, logs, fails] of [
         ['diamond', 'diamond', diamondLogs()],
         ['diamond-built', 'diamond built', diamondBuiltLogs()],
         ['diamond-bound', 'worst accepted value', [], /memory budget exhausted/],
-        ['diamond-fuel', 'fuel exhaustion while classifying a diamond', [], /exhausted its fuel budget/, FUEL_EXHAUSTED],
+        ['diamond-fuel', 'fuel exhaustion while classifying a diamond', [], /exhausted its fuel budget/],
       ]) {
         const directory = directories.get(name);
         await plantNative(directory);
@@ -749,7 +748,6 @@ export async function runKv(varta, driver) {
         const browser = await running;
         if (fails) failsAlike(label, browser, native);
         else same(label, browser, native);
-        if (browserFails) assert.match(browser.error, browserFails, `${label}: browser failure`);
         await tab.close();
         if (before === undefined) console.log(`SKIP ${name} memory: this driver cannot measure resident memory`);
         else {
@@ -775,7 +773,6 @@ export async function runKv(varta, driver) {
         const tab = await page('decode-fuel');
         const browser = await tab.evaluate(runExpression('decode-fuel'));
         failsAlike('getMany past its fuel', browser, native);
-        assert.match(browser.error, FUEL_EXHAUSTED, 'getMany past its fuel: browser failure');
         await tab.close();
         pass('decode-fuel');
       }

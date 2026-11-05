@@ -58,6 +58,27 @@ pub const MILLISECONDS_PER_SECOND: u64 = 1000;
 /// counted only in the report's totals.
 pub const MAX_REPORTED_TURNS: usize = 256;
 
+/// The names a budget diagnostic gives a turn by what it ran: the runtime's
+/// `TurnKind` and the browser host's registry both use these.
+pub mod turn_kind {
+    /// Instantiation, `_start` and its microtasks.
+    pub const MAIN: &str = "main";
+    /// A fired timer.
+    pub const TIMER: &str = "timer";
+    /// A network completion.
+    pub const NETWORK: &str = "network";
+    /// A host event delivered by the embedder.
+    pub const HOST_EVENT: &str = "event";
+    /// The answer of a permission prompt.
+    pub const PERMISSION: &str = "permission";
+    /// A view event record.
+    pub const VIEW: &str = "view";
+    /// A whole bounded execution whose budgets do not renew.
+    pub const EXECUTION: &str = "execution";
+    /// Collection work between two turns.
+    pub const MAINTENANCE: &str = "maintenance";
+}
+
 /// The wire form of requested (manifest) or allowed (host ceiling) budgets.
 /// Every member is optional; a present value must be in `1..=` its engine
 /// maximum.
