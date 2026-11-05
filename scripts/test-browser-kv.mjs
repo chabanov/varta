@@ -20,14 +20,15 @@
 //
 //   node scripts/test-browser-kv.mjs <varta-executable>
 //
-// Real local Chrome (VARTA_CHROME_BIN overrides the path).
+// Real local Chrome (VARTA_CHROME_BIN overrides the path). Other engines run
+// the same cases through scripts/test-browser-matrix.mjs --kv.
 import {mkdtemp, mkdir, writeFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
 import assert from 'node:assert/strict';
 import {registry} from '../crates/varta-common/browser/registry.mjs';
-import {withBrowserPage} from './browser-probe.mjs';
 
 const PROFILE = 'checked-f64-utf16-v38';
 const HOST_ABI = registry.profiles.find((profile) => profile.name === PROFILE).hostAbi;
@@ -112,49 +113,58 @@ async function stop(child) {
   }
 }
 
-async function browserRun(url, item) {
+// One browser execution; the expression is self-contained so that both the
+// CDP and the Playwright drivers evaluate it unchanged.
+function expression(item) {
   const options = JSON.stringify(item.ceiling ? {permissionCeiling: item.ceiling} : {});
-  const expression = `(async()=>{const {run}=await import(document.querySelector('script[data-varta-dev]').src);const r=await run(${options});return {status:r.status,error:r.error,logs:r.logs,usage:{turns:r.turns,fuelUsed:r.fuelUsed,outputBytes:r.outputBytes,hostCalls:r.hostCalls,microtasks:r.microtasks},audit:r.permissions.audit.map(a=>[a.operation,a.resource,a.outcome])};})()`;
-  return withBrowserPage(url, async (call) => {
-    const response = await call('Runtime.evaluate', {expression, awaitPromise: true, returnByValue: true});
-    if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
-    return response.result.value;
-  });
+  return `(async()=>{const {run}=await import(document.querySelector('script[data-varta-dev]').src);const r=await run(${options});return {status:r.status,error:r.error,logs:r.logs,usage:{turns:r.turns,fuelUsed:r.fuelUsed,outputBytes:r.outputBytes,hostCalls:r.hostCalls,microtasks:r.microtasks},audit:r.permissions.audit.map(a=>[a.operation,a.resource,a.outcome])};})()`;
 }
 
 const denial = (path) => K.denialText.replace(K.pathPlaceholder, () => path);
 const deniedLogs = PATHS.flatMap((path) => [`${LOG_PREFIX}${denial(path)}`, `${LOG_PREFIX}${path} ${K.notAllowed}: ${denial(path)}`]);
 const deniedAudit = PATHS.map((path) => [K.capabilities.read, path, 'denied']);
 
-if (process.argv.length !== 3) throw new Error('Usage: node scripts/test-browser-kv.mjs <varta-executable>');
-const varta = resolve(process.argv[2]);
-const root = await mkdtemp(join(tmpdir(), 'varta-browser-kv-'));
-const results = new Map();
-try {
-  for (const item of CASES) {
-    const directory = await project(root, item);
-    const native = nativeRun(varta, directory, item);
-    const {url, child} = await serve(varta, directory);
-    let browser;
-    try { browser = await browserRun(url, item); } finally { await stop(child); }
-    results.set(item.name, {native, browser});
-    const label = (what) => `${item.name}: ${what}`;
-    assert.equal(browser.status, 'ok', label(browser.error));
-    assert.deepEqual(browser.logs, deniedLogs, label('browser logs'));
-    // Only operation records: grant states are recorded before them.
-    assert.deepEqual(browser.audit.filter(([, resource]) => resource !== ''), deniedAudit, label('browser audit'));
-    if (item.nativeOpens) {
-      assert.deepEqual(native.logs, PATHS.map((path) => `${LOG_PREFIX}${path} true secret`), label('native opens the granted database'));
-      assert.deepEqual(browser.audit.filter(([, resource]) => resource === '').map(([id, , outcome]) => [id, outcome]),
-        [[K.capabilities.read, 'granted'], [K.capabilities.write, 'granted']], label('granted initial states'));
-    } else {
-      assert.deepEqual(browser.logs, native.logs, label('logs equal native'));
-      assert.deepEqual(browser.usage, native.usage, label('usage equals native'));
+/** Run every case; `open(url, evaluate => …)` drives one browser page. */
+export async function runKv(varta, open) {
+  const root = await mkdtemp(join(tmpdir(), 'varta-browser-kv-'));
+  const results = new Map();
+  try {
+    for (const item of CASES) {
+      const directory = await project(root, item);
+      const native = nativeRun(varta, directory, item);
+      const {url, child} = await serve(varta, directory);
+      let browser;
+      try { browser = await open(url, (evaluate) => evaluate(expression(item))); } finally { await stop(child); }
+      results.set(item.name, {native, browser});
+      const label = (what) => `${item.name}: ${what}`;
+      assert.equal(browser.status, 'ok', label(browser.error));
+      assert.deepEqual(browser.logs, deniedLogs, label('browser logs'));
+      // Only operation records: grant states are recorded before them.
+      assert.deepEqual(browser.audit.filter(([, resource]) => resource !== ''), deniedAudit, label('browser audit'));
+      if (item.nativeOpens) {
+        assert.deepEqual(native.logs, PATHS.map((path) => `${LOG_PREFIX}${path} true secret`), label('native opens the granted database'));
+        assert.deepEqual(browser.audit.filter(([, resource]) => resource === '').map(([id, , outcome]) => [id, outcome]),
+          [[K.capabilities.read, 'granted'], [K.capabilities.write, 'granted']], label('granted initial states'));
+      } else {
+        assert.deepEqual(browser.logs, native.logs, label('logs equal native'));
+        assert.deepEqual(browser.usage, native.usage, label('usage equals native'));
+      }
     }
-  }
-  // Granted, the browser run is the run of a host without a grant.
-  const granted = results.get('granted').browser, noGrant = results.get('no-grant').native;
-  assert.deepEqual(granted.logs, noGrant.logs, 'granted browser logs equal the native run without a grant');
-  assert.deepEqual(granted.usage, noGrant.usage, 'granted browser usage equals the native run without a grant');
-} finally { await rm(root, {recursive: true, force: true}); }
-console.log(`Chrome KV acceptance passed (${CASES.map(({name}) => name).join(', ')}): every open is denied as a host without KV storage must deny it, with native logs, exact fuel, host calls, microtasks, output bytes and turns, and audited kv.read denials`);
+    // Granted, the browser run is the run of a host without a grant.
+    const granted = results.get('granted').browser, noGrant = results.get('no-grant').native;
+    assert.deepEqual(granted.logs, noGrant.logs, 'granted browser logs equal the native run without a grant');
+    assert.deepEqual(granted.usage, noGrant.usage, 'granted browser usage equals the native run without a grant');
+  } finally { await rm(root, {recursive: true, force: true}); }
+  return CASES.map(({name}) => name);
+}
+
+if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href) {
+  if (process.argv.length !== 3) throw new Error('Usage: node scripts/test-browser-kv.mjs <varta-executable>');
+  const {withBrowserPage} = await import('./browser-probe.mjs');
+  const passed = await runKv(resolve(process.argv[2]), (url, action) => withBrowserPage(url, (call) => action(async (text) => {
+    const response = await call('Runtime.evaluate', {expression: text, awaitPromise: true, returnByValue: true});
+    if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
+    return response.result.value;
+  })));
+  console.log(`Chrome KV acceptance passed (${passed.join(', ')}): every open is denied as a host without KV storage must deny it, with native logs, exact fuel, host calls, microtasks, output bytes and turns, and audited kv.read denials`);
+}

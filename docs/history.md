@@ -3181,3 +3181,40 @@ initialize; `auto` keeps the CPU fallback. KV directories are gated per root
 by the ceiling's `kv.read` patterns, a ceiling mapping of a KV root is tested
 to win, and the contract states that the directories precede the runtime's
 code validation (which runs once, at start).
+
+### Browser KV imports (wave 2) — 2026-11-04
+
+The official browser host admits the nine v38 `kv_*` imports and implements
+the embedding contract's host without KV storage
+([mapping](embedding.md#browser-effect-mapping-official-host)): every
+`kv_open` reads its path with the native checks, the broker audits a denied
+`kv.read` operation, the denial is logged and the open rejects with
+`NotAllowedError`, whatever the grants and the ceiling. Nothing is stored in
+the browser. The Worker module is `kv-store.mjs`; the browser registry gains a
+`kv` section (operation names, capabilities, the failure code, descriptor
+separator and limit, error name and denial template) and the per-operation `kvBookkeeping`
+flag for `kv_entry`, `kv_text` and `kv_close`, which the native runtime does not
+charge to the host-call budget. The planned IndexedDB backend was not built:
+the KV imports are synchronous host calls and a commit is reported only once
+durable, which needs an owner decision on a synchronous bridge
+(cross-origin-isolated `SharedArrayBuffer` and `Atomics.wait`, or JSPI) and a
+browser form of the value staging, V8 codec and checked decoding
+([open items](development-plan.md#batch-v38-in-development)). The docs state
+that `environmentInputs` are a per-run snapshot, not a credential store.
+
+Scoped verification: `cargo test -p varta-project --lib browser::` (45),
+`cargo test -p varta-common --lib browser::` (7), the documentation drift
+tests (`--test documentation`, `--test embedding_documentation`), registry
+regeneration without a diff, `node --test
+crates/varta-common/browser/fuel.test.mjs
+crates/varta-project/src/browser/*.test.mjs` (188), strict Clippy of
+`varta-common` and `varta-project` and formatting. `node
+scripts/test-browser-kv.mjs target/debug/varta` passes in local Chrome: a
+program without a grant and one granted under an empty host ceiling run with
+native logs and exact fuel, host calls, microtasks, output bytes and turns,
+and a granted, mapped program, which opens and commits natively, runs in the
+browser exactly as the native program without a grant. The new `--kv` option
+of `scripts/test-browser-matrix.mjs` ran the same cases (and `--effects`) in
+Firefox 153, WebKit 26.5 and Chrome 156 through Playwright 1.62.1, the
+version installed locally; Playwright 1.64.1 was not available. No full gate
+was run for this package.

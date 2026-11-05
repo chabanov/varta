@@ -2567,8 +2567,17 @@ synchronous wait within the turn; `Date`, `Map`, `Set`, BigInt and nested
 `Uint8Array` values (not in production; the codec reads and writes them, the
 guest mappings are missing); key parts other than strings and numbers;
 keeping a stored record's property order and aliasing on read; reading a
-property holding `undefined` as present for optional fields; a browser
-backend; Deno in CI to read Varta-written files automatically. The
+property holding `undefined` as present for optional fields; browser KV
+storage (wave 2 admits the imports in the official browser host as a host
+without KV storage that denies every open, [mapping](embedding.md#browser-effect-mapping-official-host);
+an IndexedDB backend needs an owner decision on a synchronous bridge, since
+a commit is reported only once durable inside a synchronous host call:
+`SharedArrayBuffer` and `Atomics.wait` against a page-side IndexedDB, which
+requires a cross-origin-isolated page (COOP/COEP headers from the deployment
+and from `varta dev`), or JSPI, which makes every guest entry asynchronous;
+it also needs the value staging, V8 codec, key codec and checked decoding
+into guest memory in the browser, ported from `varta-runtime` or shared as
+compiled code); Deno in CI to read Varta-written files automatically. The
 `if (res.ok)` narrowing and the other API-shape deviations are wave-3
 language items. The fixtures are synthetic: Deno
 2.9.4 (x86_64-linux, the owner's API developer) and Deno 2.9.7

@@ -11531,6 +11531,21 @@ into the static type the program names. V37 and earlier profiles reject
   path or with `:memory:` are not available (a program naming them fails to
   compile); `sum` takes no `min`/`max`/`clamp`; operations settle in the turn
   that started them.
+- **Browser host.** The official browser host admits the nine `kv_*` imports
+  of a v38 module but offers no KV storage: the operations are synchronous
+  host calls and a commit is reported only once durable, which IndexedDB, the
+  browser's asynchronous store, cannot provide inside a running guest call.
+  It implements the embedding contract's host without KV storage
+  ([mapping](embedding.md#browser-effect-mapping-official-host)): every
+  `kv_open` reads its path as the native host does, the broker audits a denied
+  `kv.read` operation, the denial is logged and the open rejects with
+  `NotAllowedError: <capability denied: kv.read> (<path>)`, whatever the grants
+  and the host ceiling. No database is ever open, so the other id, stage and
+  entry imports are fatal; the engine prelude reaches none of them. A browser
+  run equals the native run of the same program without a grant, including
+  exact fair fuel and host calls (`scripts/test-browser-kv.mjs`). Browser KV
+  storage is an open item of the
+  [development plan](development-plan.md#batch-v38-in-development).
 - **Tests** never use production data: the Deno 2.9.4 fixture
   (`kv_cases/deno-2.9.4`, written in a throwaway container by its generator,
   with every row in hex) and the Deno 2.9.7 serializer probe
