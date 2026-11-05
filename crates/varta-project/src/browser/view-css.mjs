@@ -393,7 +393,38 @@ export function checkStyleDeclaration(view, property, value, checkValue = create
   admitValue(view,property,value,checkValue);
 }
 
-/** Rewrites `:root` selectors to the renderer's root-container selector. */
+const QUOTE='"',BLOCK_OPEN='{',BLOCK_CLOSE='}';
+const ROOT_SELECTOR=/:root(?![A-Za-z0-9_-])/g;
+
+/**
+ * Rewrites `:root` selectors to the renderer's root-container selector.
+ *
+ * One left-to-right pass: a closed `"..."` string is copied as is, and in every
+ * maximal run of code units other than `{`, `}` and `"` that is directly followed
+ * by `{` (a selector header) `:root` is replaced; all other text is copied
+ * unchanged. Each code unit is visited a constant number of times, so the cost is
+ * linear in the stylesheet length, which `checkStylesheet` already bounds and
+ * charges to the stylesheet work budget; the pass needs no separate charge. (The
+ * backtracking regex it replaces was quadratic in the longest run without braces
+ * or quotes.)
+ */
 export function rewriteRootSelector(text, selector) {
-  return text.replace(/"[^"]*"|[^{}"]+(?=\{)/g, header => header.startsWith('"') ? header : header.replace(/:root(?![A-Za-z0-9_-])/g, selector));
+  const out=[];
+  let at=0;
+  while(at<text.length){
+    const ch=text[at];
+    if(ch===QUOTE){
+      const close=text.indexOf(QUOTE,at+1);
+      // An unclosed quote is ordinary text: scanning resumes right after it.
+      const end=close<0?at+1:close+1;
+      out.push(text.slice(at,end));at=end;continue;
+    }
+    if(ch===BLOCK_OPEN||ch===BLOCK_CLOSE){out.push(ch);at+=1;continue;}
+    let end=at+1;
+    while(end<text.length&&text[end]!==QUOTE&&text[end]!==BLOCK_OPEN&&text[end]!==BLOCK_CLOSE)end+=1;
+    const run=text.slice(at,end);
+    out.push(text[end]===BLOCK_OPEN?run.replace(ROOT_SELECTOR,selector):run);
+    at=end;
+  }
+  return out.join('');
 }

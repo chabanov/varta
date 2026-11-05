@@ -3705,3 +3705,67 @@ permission` (9 passed), the boundary tests (2 passed), the documentation
 tests, formatting and strict Clippy (desktop, also with `gpu`). The worker's
 stop flag and `WORKER_EXIT_WAIT` still have no test (no headless event
 loop), and no full gate was run.
+
+### Browser oracle gate (wave 3) — 2026-11-05
+
+`python3 scripts/verify.py browser` and the CI `browser` and `gpu` jobs were
+added ([gate](verification.md#browser-oracle-gate)). The first local pass, on
+an uncommitted tree over `49186cf`, ran 32 commands with Playwright 1.62.1,
+Chrome 156.0.8078.80, Firefox 153.0 and WebKit 26.5 and waived the Firefox
+selection of `test-browser-variables.mjs` as a known gap. A review on committed
+`ce412d4` passed the same scope and the waived selection passed 6 of 6
+standalone runs, so the waiver was removed.
+
+Review fixes. The scope runs only `view-model.test.mjs`, without and then with
+the oracle, and fails unless the oracle run passes more tests (7 and 11 locally);
+renaming the oracle variable in that suite failed the scope at that step, and an
+injected failing assertion failed it one step earlier. The report's
+`devtoolsChrome` replaces `chrome`. With the waiver removed, whole gate runs
+on `56bd6bd` and `f407d64` failed at the Firefox variables selection (`too much
+recursion` in `rewriteRootSelector`) after the 31 earlier commands passed; that
+command and its standalone form failed 45 of 51 runs, after 19 earlier
+standalone passes, and is recorded as an open intermittent defect. A third gate
+run on `b583e01` passed all 34 commands (no skips, no known gaps): the Node
+oracle suite 7 then 11 tests, execution matrix 75/0, integrity 15/0, dev matrix
+9/0, the variables driver in Chrome, Firefox and WebKit and the variable bundle
+in all three, with Playwright 1.62.1, Chrome 156.0.8078.80, Firefox 153.0 and
+WebKit 26.5. Chrome and WebKit selections and the compiled variable bundle
+passed 3 of 3 standalone runs each.
+
+Cause and fix. The recursion came from the outer regex of
+`rewriteRootSelector`, `"[^"]*"|[^{}"]+(?=\{)`, which backtracks quadratically
+over a run without braces or quotes. The oracle's `oversized-custom` case has a
+32,777-code-unit run of that kind; Firefox 153 finished it in about 1.65 s at a
+load average near 5 and threw `too much recursion` after about 7 s under CPU
+contention, so the outcome depended on CPU time (a gate run's starting load
+average says nothing about the load at its Firefox step). Chrome took 2.7 s for
+that run, and an accepted 102,897-byte stylesheet took 24.8 s under Node, so a
+guest could stall the apply path. `rewriteRootSelector` is now a single linear
+scan with the same output: `view-stylesheet.test.mjs` compares it with the
+regex on every sequence of up to six pieces and checks the `oversized-custom`
+input and three 262,144-byte worst cases, including an accepted stylesheet (the
+regex needed 4.0 s for a 32,769-code-unit run and 23.3 s for 65,536 under Node).
+A first version timed those cases against a 2 s bound, which a review found too
+close to the regex's 2.5 s for `oversized-custom` and slow to fail at the byte
+limit; the test now runs the rewrite on a metered view of the input that counts
+the code units read, allows at most six per input unit plus one, and throws at
+the first uncounted access (such as a regex `replace`) or read past that bound.
+With the regex restored, the three checks failed in under 50 ms each and the
+whole file in 0.7 s; a deliberately quadratic scan is also stopped. A review
+gate run also failed once at `test-browser-navigation.mjs` with `ENOTEMPTY`
+while removing the Chrome profile; `scripts/browser-probe.mjs` now waits for the
+killed Chrome and retries the removal. That is a mitigation, not a verified fix:
+the race was never reproduced. With both changes on `9fb24a9`, three whole gate runs at
+starting load averages of about 94, 63 and 15 passed all 34 commands (no skips,
+no known gaps; oracle suite 7 then 11 tests, execution matrix 75/0, integrity
+15/0, dev matrix 9/0, the variables driver with 23 fixtures, 253 computed-style
+and 34 live observations in Chrome, Firefox and WebKit, and the variable bundle
+in all three), and the Firefox variables selection passed 5 of 5 standalone
+runs, two of them beside 30 spinning threads. An earlier run on `cdcd08b` was
+void: a documentation edit changed the source during it, and at a load average
+above 100 one WebKit execution-matrix case hit the browser execution deadline.
+The probe's exit wait now clears its timer and listener and returns at once for
+a Chrome that has already exited, so a prompt exit no longer keeps a driver's
+event loop open for the rest of the grace period. A whole gate run on `e88e011`
+(starting load average about 5) passed all 34 commands with the same counts.
+No CI run has been observed.
