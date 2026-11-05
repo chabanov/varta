@@ -689,7 +689,7 @@ impl View {
 
     /// Plan nearest-edge vertical scrolling using the current experimental geometry.
     /// Changes are ordered from inner to outer scrollports and are not applied.
-    /// Absolutely or fixed-positioned paths are rejected until supported.
+    /// Positioned targets scroll only the scrollports of their containing-block chain.
     pub fn scroll_into_view_plan(
         &self,
         target: u32,

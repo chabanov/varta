@@ -187,17 +187,31 @@ fn refused_frame_does_not_publish_or_poison_the_retained_scene() {
     let mut v = view();
     let mut renderer = Renderer::new(Some(font()), 20.0).unwrap();
     equivalent(&v, &mut renderer, 140, 110, 1.0);
+    // A fixed box escaping the clip of its opacity group is refused.
     let mut b = B::new();
-    b.set_style(2, P::Position, "relative");
+    b.create_element(6, Tag::Div)
+        .insert(1, 6, 0)
+        .set_style(6, P::Width, "20px")
+        .set_style(6, P::Height, "20px")
+        .set_style(6, P::Overflow, "hidden")
+        .create_element(7, Tag::Div)
+        .insert(6, 7, 0)
+        .set_style(7, P::Opacity, "0.5")
+        .create_element(8, Tag::Div)
+        .insert(7, 8, 0)
+        .set_style(8, P::Position, "fixed")
+        .set_style(8, P::Width, "30px")
+        .set_style(8, P::Height, "30px")
+        .set_style(8, P::BackgroundColor, "#f00");
     v.commit(&b.finish(), false, &mut Denied).unwrap();
     let snapshot = v.snapshot();
     assert!(matches!(
         renderer.render(&v, 140, 110, 1.0),
-        Err(varta_view::PaintError::Unsupported(2))
+        Err(varta_view::PaintError::Unsupported(8))
     ));
     assert_eq!(v.snapshot(), snapshot);
     let mut b = B::new();
-    b.remove_style(2, P::Position).set_text(3, "AAA ");
+    b.remove(6).set_text(3, "AAA ");
     v.commit(&b.finish(), false, &mut Denied).unwrap();
     equivalent(&v, &mut renderer, 140, 110, 1.0);
 }

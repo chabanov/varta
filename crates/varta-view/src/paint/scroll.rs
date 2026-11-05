@@ -6,6 +6,8 @@ use crate::{AccessibilityTextRevision, NodeIdentity};
 pub(super) struct Source {
     identity: NodeIdentity,
     parent: Option<u32>,
+    /// The next box whose scroll offset moves this one.
+    scroller: Option<u32>,
     top: f64,
     text: Option<AccessibilityTextRevision>,
     horizontal: Option<f32>,
@@ -19,6 +21,7 @@ pub(crate) struct Horizontal {
 pub(super) fn sources(
     tree: &Tree,
     geometry: &BTreeMap<u32, layout::BoxGeometry>,
+    order: &order::Order,
 ) -> BTreeMap<u32, Source> {
     geometry
         .keys()
@@ -33,6 +36,9 @@ pub(super) fn sources(
                         token: node.identity.clone(),
                     },
                     parent: node.parent,
+                    scroller: order
+                        .placement(id)
+                        .map_or(node.parent, |placement| placement.scope),
                     top: element.map_or(0.0, |e| e.scroll_top),
                     horizontal: element.and_then(|e| e.editor.horizontal_scroll),
                     text: element
@@ -46,6 +52,7 @@ pub(super) fn sources(
 impl FrameMetadata {
     /// Whether this source node has an ancestor with a programmatic vertical
     /// scroll range in this frame. The target itself need not be onscreen.
+    /// Absolute boxes follow their containing block; fixed boxes have none.
     #[must_use]
     pub fn scroll_into_view_supported(&self, node: u32) -> bool {
         if !self.scroll_layout.contains_key(&node) {
@@ -54,7 +61,7 @@ impl FrameMetadata {
         let mut current = self
             .scroll_sources
             .get(&node)
-            .and_then(|source| source.parent);
+            .and_then(|source| source.scroller);
         while let Some(id) = current {
             if self
                 .scroll_layout
@@ -67,7 +74,7 @@ impl FrameMetadata {
             current = self
                 .scroll_sources
                 .get(&id)
-                .and_then(|source| source.parent);
+                .and_then(|source| source.scroller);
         }
         false
     }

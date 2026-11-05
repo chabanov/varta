@@ -2138,6 +2138,119 @@ pub(crate) fn rasterize_retained(
     }
 }
 
+/// Curved clip scopes of every painted element. They are built in tree order
+/// before painting, because a stacking layer can paint before the in-flow
+/// ancestors that clip it.
+#[derive(Default)]
+struct Scopes {
+    /// The scope of an element's own background, border and hit region.
+    own: BTreeMap<u32, std::sync::Arc<Clip>>,
+    /// Adds the element's curved overflow clip, for its descendants.
+    children: BTreeMap<u32, std::sync::Arc<Clip>>,
+    /// Adds a native control's curved content clip, for its own content.
+    content: BTreeMap<u32, std::sync::Arc<Clip>>,
+}
+fn clip_scopes(
+    tree: &Tree,
+    env: &Environment,
+    geometry: &BTreeMap<u32, layout::BoxGeometry>,
+    units: Units,
+    order: &order::Order,
+    surface: &mut Surface,
+) -> Result<Scopes, PaintError> {
+    let mut scopes = Scopes::default();
+    for (id, placement) in order.elements() {
+        let Some(element) = tree.element(id) else {
+            continue;
+        };
+        surface.active_clip = placement
+            .scope
+            .and_then(|scope| scopes.children.get(&scope).cloned());
+        if let Some(clip) = &surface.active_clip {
+            scopes.own.insert(id, clip.clone());
+        }
+        let properties = tree.computed_read(id, env);
+        let bounds = geometry[&id];
+        let radii = properties
+            .get(&CssProperty::BorderRadius)
+            .map(|value| {
+                Corners::resolve(value, bounds.rect, units).ok_or(PaintError::Unsupported(id))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let paint_rect = if id == ROOT_NODE {
+            bounds.rect
+        } else {
+            snap::rect(bounds.rect)
+        };
+        let paint_radii = properties
+            .get(&CssProperty::BorderRadius)
+            .map(|raw| {
+                Corners::resolve_paint(raw, bounds.rect, paint_rect, units)
+                    .ok_or(PaintError::Unsupported(id))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        if !radii.is_square()
+            && properties
+                .get(&CssProperty::Overflow)
+                .is_some_and(|value| value != "visible")
+        {
+            let widths = layout::border_widths(tree, env, id)?;
+            let (padding, inner) = radii.inset(bounds.rect, widths);
+            let (paint_padding, paint_inner) = paint_radii.inset(paint_rect, widths);
+            if !inner.is_square()
+                || !paint_inner.is_square()
+                || padding.width == 0.0
+                || padding.height == 0.0
+                || paint_padding.width == 0.0
+                || paint_padding.height == 0.0
+            {
+                surface.push_clip(padding, inner, paint_padding, paint_inner)?;
+            }
+        }
+        if let Some(clip) = &surface.active_clip {
+            scopes.children.insert(id, clip.clone());
+        }
+        if matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select) && !radii.is_square() {
+            let content = bounds.content;
+            let insets = [
+                content.y - bounds.rect.y,
+                bounds.rect.x + bounds.rect.width - content.x - content.width,
+                bounds.rect.y + bounds.rect.height - content.y - content.height,
+                content.x - bounds.rect.x,
+            ]
+            .map(|inset| inset.max(0.0));
+            let (content, inner) = radii.inset(bounds.rect, insets);
+            let (paint_content, paint_inner) = paint_radii.inset(paint_rect, insets);
+            if !inner.is_square()
+                || !paint_inner.is_square()
+                || content.width == 0.0
+                || content.height == 0.0
+                || paint_content.width == 0.0
+                || paint_content.height == 0.0
+            {
+                surface.push_clip(content, inner, paint_content, paint_inner)?;
+            }
+        }
+        if let Some(clip) = &surface.active_clip {
+            scopes.content.insert(id, clip.clone());
+        }
+    }
+    surface.active_clip = None;
+    Ok(scopes)
+}
+
+/// Rectangle containment up to f32 rounding of repeated clip intersections.
+fn contains(outer: BoxRect, inner: BoxRect) -> bool {
+    // CSS pixels; far below one device pixel at the admitted 8x scale.
+    const TOLERANCE: f32 = 1.0 / 1024.0;
+    inner.x >= outer.x - TOLERANCE
+        && inner.y >= outer.y - TOLERANCE
+        && inner.x + inner.width <= outer.x + outer.width + TOLERANCE
+        && inner.y + inner.height <= outer.y + outer.height + TOLERANCE
+}
+
 fn rasterize_inner_scoped(
     tree: &Tree,
     env: &Environment,
@@ -2206,15 +2319,16 @@ fn rasterize_inner_scoped(
         isolation_required: false,
         capture: None,
     };
-    let mut pending = order::Order::new(tree);
+    let mut pending = order::Order::new(tree, &env, &geometry, |id| flows.contains_key(&id))?;
+    let scopes = clip_scopes(tree, &env, &geometry, units, &pending, &mut pixmap)?;
+    // Rectangular clips of the open opacity groups, innermost last.
+    let mut group_clips = Vec::<(u32, BoxRect)>::new();
     let mut text_work = 0usize;
     let mut inline_programs = inline_groups::Programs::default();
     let mut hit_regions = Vec::new();
     let mut rounded_regions = BTreeMap::new();
     let mut hit_clips = BTreeMap::new();
     let mut inherited_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
-    let mut children_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
-    let mut content_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
     let mut ancestors = BTreeMap::new();
     let mut scrolls = BTreeMap::new();
     let mut text_hits = BTreeMap::new();
@@ -2244,15 +2358,21 @@ fn rasterize_inner_scoped(
             )?;
             continue;
         }
+        // A layer paints from its owning context's layer phase instead.
+        if phase == order::Phase::Enter && pending.layered(id) {
+            continue;
+        }
         let outline_phase = phase == order::Phase::Outline;
         pixmap.active_clip = if outline_phase {
             inherited_clips.get(&id).cloned()
-        } else if phase == order::Phase::Content && tree.element(id).is_some() {
-            content_clips.get(&id).cloned()
-        } else {
+        } else if tree.element(id).is_none() {
             tree.nodes[&id]
                 .parent
-                .and_then(|parent| children_clips.get(&parent).cloned())
+                .and_then(|parent| scopes.children.get(&parent).cloned())
+        } else if phase == order::Phase::Content {
+            scopes.content.get(&id).cloned()
+        } else {
+            scopes.own.get(&id).cloned()
         };
         if phase != order::Phase::Content
             && !outline_phase
@@ -2294,6 +2414,9 @@ fn rasterize_inner_scoped(
                 )?;
             }
             pixmap.end_group(id)?;
+            if group_clips.last().is_some_and(|(group, _)| *group == id) {
+                group_clips.pop();
+            }
             continue;
         }
         let node = &tree.nodes[&id];
@@ -2394,7 +2517,7 @@ fn rasterize_inner_scoped(
                 }
                 text_hits.insert(id, hit);
             }
-            pixmap.active_clip = children_clips.get(&id).cloned();
+            pixmap.active_clip = scopes.children.get(&id).cloned();
             if let Some(frame) = flows.get(&id) {
                 let shape = shapes
                     .get(&id)
@@ -2461,10 +2584,6 @@ fn rasterize_inner_scoped(
             })
             .transpose()?
             .unwrap_or(1.0);
-        if opacity != 1.0 && phase == order::Phase::Enter {
-            pending.defer(id);
-            continue;
-        }
         if phase == order::Phase::Enter
             && (matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
                 || node.parent.is_some_and(|parent| {
@@ -2475,7 +2594,9 @@ fn rasterize_inner_scoped(
             pending.atomic(id);
             continue;
         }
-        ancestors.insert(id, node.parent);
+        // Wheel scrolling chains through the boxes whose offsets move this one.
+        let placement = pending.placement(id).ok_or(PaintError::Unsupported(id))?;
+        ancestors.insert(id, placement.scope);
         cursors.insert(id, pointer_cursor(tree, &env, id));
         if let Some(scroll) = geometry[&id].scroll {
             scrolls.insert(id, scroll);
@@ -2528,19 +2649,23 @@ fn rasterize_inner_scoped(
             .transpose()?
             .unwrap_or_default();
         let widths = layout::border_widths(tree, &env, id)?;
-        if !input_ready
-            || !button_ready
-            || properties
-                .get(&CssProperty::Position)
-                .is_some_and(|v| v != "static")
-            || properties
-                .get(&CssProperty::ZIndex)
-                .is_some_and(|v| v != "auto")
+        if !input_ready || !button_ready {
+            return Err(PaintError::Unsupported(id));
+        }
+        // An opacity group composites under its own rectangular clip. An
+        // absolute or fixed descendant that escapes that clip in CSS would
+        // need a separate composite scope; curved scopes fail in
+        // `relative_clip` likewise.
+        if placement.out_of_flow
+            && group_clips
+                .last()
+                .is_some_and(|(_, group)| !contains(*group, geometry[&id].clip))
         {
             return Err(PaintError::Unsupported(id));
         }
         if opacity != 1.0 {
             pixmap.begin_group(id, opacity, geometry[&id].clip)?;
+            group_clips.push((id, geometry[&id].clip));
         }
         if id != ROOT_NODE
             && let Some(rect) = clipped(geometry[&id].rect, geometry[&id].clip)
@@ -2603,53 +2728,6 @@ fn rasterize_inner_scoped(
                 colors,
             )?;
         }
-        if !radii.is_square()
-            && properties
-                .get(&CssProperty::Overflow)
-                .is_some_and(|value| value != "visible")
-        {
-            let (padding, inner) = radii.inset(geometry[&id].rect, widths);
-            let (paint_padding, paint_inner) = paint_radii.inset(paint_rect, widths);
-            if !inner.is_square()
-                || !paint_inner.is_square()
-                || padding.width == 0.0
-                || padding.height == 0.0
-                || paint_padding.width == 0.0
-                || paint_padding.height == 0.0
-            {
-                pixmap.push_clip(padding, inner, paint_padding, paint_inner)?;
-            }
-        }
-        if let Some(clip) = &pixmap.active_clip {
-            children_clips.insert(id, clip.clone());
-        }
-        let content_scope = pixmap.active_clip.clone();
-        if matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select) && !radii.is_square() {
-            let bounds = geometry[&id];
-            let content = bounds.content;
-            let insets = [
-                content.y - bounds.rect.y,
-                bounds.rect.x + bounds.rect.width - content.x - content.width,
-                bounds.rect.y + bounds.rect.height - content.y - content.height,
-                content.x - bounds.rect.x,
-            ]
-            .map(|inset| inset.max(0.0));
-            let (content, inner) = radii.inset(bounds.rect, insets);
-            let (paint_content, paint_inner) = paint_radii.inset(paint_rect, insets);
-            if !inner.is_square()
-                || !paint_inner.is_square()
-                || content.width == 0.0
-                || content.height == 0.0
-                || paint_content.width == 0.0
-                || paint_content.height == 0.0
-            {
-                pixmap.push_clip(content, inner, paint_content, paint_inner)?;
-            }
-        }
-        if let Some(clip) = &pixmap.active_clip {
-            content_clips.insert(id, clip.clone());
-        }
-        pixmap.active_clip = content_scope;
         if matches!(phase, order::Phase::Context | order::Phase::Atomic) {
             pending.finish_after_children(id, phase);
         } else {
@@ -2737,7 +2815,7 @@ fn rasterize_inner_scoped(
             text_hits,
             select_menu,
             cursors,
-            scroll_sources: scroll::sources(tree, &geometry),
+            scroll_sources: scroll::sources(tree, &geometry, &pending),
             scroll_layout: geometry,
         },
     })
@@ -2751,6 +2829,8 @@ pub(crate) fn decoration_edge(kind: parley::InlineBoxKind) -> bool {
     )
 }
 
+#[cfg(test)]
+mod positioned_tests;
 #[cfg(test)]
 mod retained_tests {
     use super::*;

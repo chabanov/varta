@@ -53,6 +53,19 @@ all within ±1 px (largest observed difference 0.0275 px). It rebuilds the
 snapshot tree in Chrome rather than replaying the patch stream through the
 official applier. The full gate is the wave lead's.
 
+## 2026-11-04 — Native positioned painting and z-index (wave-2 branch)
+
+The wave-2 package `w2-native-positioned-zindex` removed the native paint
+refusal of positioned boxes and z-index. A pre-pass assigns each layer to its
+stacking context and builds clip scopes in tree order; contexts paint negative
+layers, in-flow blocks, content, then zero and positive layers, with hit order
+following paint order. Clips, wheel chaining and scroll-into-view follow the
+containing block chain, so fixed boxes stay with the viewport and absolute boxes
+ignore scrollers outside their containing block. Out-of-flow boxes escaping an
+opacity group's clip are refused. The same branch models Chrome's minimum
+logical font size for non-absolute sizes. Evidence and open items are in the
+[development plan](development-plan.md#native-positioned-painting-and-z-index--wave-2-package-w2-native-positioned-zindex-scoped-2026-11-04).
+
 ## 2026-11-04 — Browser pilot effects and idle collection (wave 1, scoped)
 
 The official browser host admitted `date_now`, `number_random`, `env_snapshot`
