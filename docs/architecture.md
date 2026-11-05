@@ -12763,9 +12763,11 @@ sides use the CSS border cascade, including inherited `currentcolor` and
 shorthand resets. `rasterize_with_text` also paints the supported shaped text
 using the host's explicit fonts and bounded unhinted glyph outlines; it shares
 the text layout restrictions and rejects synthetic font styling and decoration.
-The box-only variant rejects text. A button, text/search/password input or textarea is paintable
-with explicit box, font, foreground and background styles, an admitted radius and
-an explicit outline style; buttons also require explicit flex alignment. Text inputs paint
+The box-only variant rejects text. Buttons, text/search/password/number inputs and
+textareas are paintable with the user-agent defaults of
+[native control defaults](#native-control-defaults), themed or author-styled;
+a select still needs explicit box, font, foreground and background styles, an
+admitted radius and an explicit outline style. Text inputs paint
 their value, keyboard selection and a non-blinking caret; missing glyphs use the supplied font's
 `.notdef` outline. Each nonempty field reuses one shaped layout for glyph painting,
 caret/selection geometry and source-position hit testing, rather than retaining a
@@ -12845,8 +12847,10 @@ Explicitly styled checkbox/radio inputs use the same rectangular box subset and
 paint a scalable check mark or circular checked dot in `currentcolor`, clipped
 to the content box and ancestor scrollports. They require explicit foreground,
 background, outline and geometry, with zero border radius, and need no font.
-Unchecked controls paint their specified box without a mark. Platform-native
-control themes and indeterminate checkbox state are not supplied.
+Unchecked controls paint their specified box without a mark. Checkbox/radio
+inputs without author box styles paint Chrome's theme instead
+([native control defaults](#native-control-defaults)); indeterminate checkbox
+state is not supplied.
 Radio groups follow the [shared ownership rules](embedding.md#view-protocol-draft-v0-unstable)
 in both native and browser models. Unmodified arrow keys move and activate within
 the visible, enabled group in document order, wrapping at either end; Left/Up
@@ -12885,13 +12889,14 @@ their subscriptions and precede refs; the final assignment reuses the cached val
 Solid rectangular outlines support explicit pixel widths, colors and offsets,
 including focus-visible styles and shorthand/longhand cascade. They paint after
 the element's contents, clip to ancestor bounds, do not affect layout and do not
-extend hit regions. Platform-default focus styling and rounded outlines remain open.
-Empty text inputs display a plain fixed-gray placeholder without changing the
-field value or selection; IME preedit hides it. Placeholder pseudo-element
-styling and browser-specific colors remain open.
-Disabled buttons and text inputs paint their explicit styles but do not activate
-or accept edits. Setting `disabled` or `readonly` clears transient IME preedit;
-native platform-default disabled styling is not supplied.
+extend hit regions. Rounded outlines remain open; the platform-default focus ring
+of controls is part of [native control defaults](#native-control-defaults).
+Empty text inputs display Chrome's light-scheme placeholder gray without changing
+the field value or selection; IME preedit hides it. Placeholder pseudo-element
+styling remains open.
+Disabled buttons and text inputs do not activate or accept edits; their default
+disabled colors are part of [native control defaults](#native-control-defaults).
+Setting `disabled` or `readonly` clears transient IME preedit.
 For a focused input that subsequently becomes disabled, Varta can still deliver
 keydown but Enter does not submit its form. In a focused test Chrome did not
 submit, whereas WebKit submitted; complete cross-browser parity remains open.
@@ -13555,6 +13560,149 @@ events and pending `copy_text` requests; `view::css::MAX_VALUE_TOKENS` bounds
 one CSS value; a headless script is at most `Script::MAX_BYTES` bytes and
 `Script::MAX_INPUTS` steps (inputs and waits), and one step settles within
 `Script::MAX_STEP_TURNS` turns.
+
+#### Native control defaults
+
+Native rendering gives form controls Chrome's user-agent defaults under the
+official browser host's normalization (`box-sizing: border-box; margin: 0`
+and, with packaged faces, an inherited family), instead of refusing controls
+without explicit styles. The defaults are part of the versioned native
+user-agent table (`style::NATIVE_UA_DEFAULTS` and
+`style::NATIVE_CONTROL_DEFAULTS`, published as `varta_view::NATIVE_UA_VERSION`;
+the control rows started a new version). The reference is headless Chrome 156
+on macOS in the light scheme (the host never sets `color-scheme`).
+
+*Placement.* An absent `display` is Chrome's `inline-block`, an atomic inline
+in a line box, which native layout does not model: such a control is refused
+unless it is a flex or grid item (blockified). With `display: block` (or as a
+block-level item) an automatic width fits the content
+(`LayoutBox::AutoWidthShouldFitContent`). A `button` that is not a flex or grid
+container centers its content vertically, with `text-align: center` lines; a
+flex or grid button is an ordinary container with the initial alignment, as in
+Chrome.
+
+*Control font.* Each control row resets what the author does not set to
+Chrome's `font: -webkit-small-control`: a 13.333px (10pt) absolute size,
+`normal` weight and style and `line-height: normal`; the family stays
+inherited. `line-height: normal` of control text (field values, placeholders
+and button labels, including every text node and inline element of a rich
+label) is the primary font's ascent, descent and line gap of that text's own
+font each rounded to whole pixels, as Chrome's line spacing; other text keeps
+the shaper's `normal`. A rich flow measures each text run with the line height
+of the span that owns it (the shaper's run metrics would take the following
+span's). Label and field glyphs put their first baseline on a whole device
+pixel.
+
+*Themed and author-styled controls.* A control without an author
+`background-color`, border or `border-radius` declaration keeps Chrome's
+native theme (`LayoutTheme::IsControlStyled`). Otherwise it needs the
+`border` shorthand: any other partial author box style would need Chrome's
+inset/outset user-agent borders and is refused. An author-styled control
+takes the user-agent padding, font, `buttonface`/`field` background and
+`buttontext`/`fieldtext` color where the author sets none. Checkbox and radio
+inputs with author box styles keep the explicit-style path above (Chrome would
+keep its theme), and a select keeps its explicit-style requirement.
+
+| Kind | Padding (px) | Border (px) | Unsized content box |
+| --- | --- | --- | --- |
+| `button` | 1 6 | 2 | its children |
+| `input` text, search, password, number | 1 2 | 2 | ⌈(20 − 1)·round(a) + max(a, ascent)⌉ wide, one line high |
+| `textarea` | 2 | 1 | 20·round(a) + 16 wide, `rows` (default 2) lines high |
+| `input` checkbox, radio | 0 | 0 | a 13px square, intrinsic |
+
+`a` is the advance of the primary font's `x` (Chrome on macOS); a field whose
+primary font has no `x` is refused, since Chrome would use a platform x-height.
+The 16px textarea term is Chrome's scrollbar gutter; an author-styled textarea
+needs an explicit width. The text-field size needs the host text measurer, so
+the geometry-only path refuses an unsized field. A checkable square is an
+intrinsic size, not a specified one: stretch alignment grows an automatic axis
+(beside a 4-row textarea in a flex row with the default `align-items` a
+checkbox is 13×62, and in a 150×34 stretch grid area 150×34, as in Chrome),
+and the theme paints the largest centered square. The square is also the
+automatic minimum, while a textarea flex item can shrink to its padding and
+borders. A themed checkable drops author padding (Blink's
+`AdjustCheckboxStyle`/`AdjustRadioStyle` reset padding and borders), so its
+square stays the border box: with `padding: 6px` it is 13×13 at `flex-start`,
+13×40 stretched in a 40px row and fills a stretch grid area, as in Chrome; any
+author border makes the checkable author-styled instead. Themed controls paint a fill and a one-pixel frame with a 2px radius
+(the fill inset by half the frame): buttons `#efefef`, fields and unchecked
+checkables `#ffffff`, frames `#767676`. Field themes snap to device pixels with
+a whole-pixel frame; a button frame scales with the device. A checked checkbox
+fills with `#0075ff` and strokes a white check mark (`NativeThemeBase`
+proportions); a radio has an accent frame and a dot inset by 20%, and its
+`border-radius: 50%` shapes its pointer target. Disabled controls use
+translucent frames (`rgba(118, 118, 118, 0.3)`) and the single layers
+equivalent to Chrome's disabled fills, measured over black and white; disabled
+text is `rgba(16, 16, 16, 0.3)` in buttons and `rgb(84, 84, 84)` in fields. A
+control's user-agent color stops `color` inheritance at the control.
+Placeholders are `#757575`. Hover and active theme colors are not applied.
+
+*Focus ring.* A focused control whose `outline-style` stays the user agent's
+`auto` (no author `outline` shorthand and no `outline-style`) draws Chrome's
+`:focus-visible { outline: auto }` ring: two pixels centered on the border box
+outset by the `outline-offset`, less one pixel when every border is at least
+one pixel wide. An author `outline-color` replaces the ring color `#005fcc`
+(`currentcolor` is the control's color) and an author `outline-offset`
+replaces the user-agent offset (2px for checkboxes and radios, otherwise 0);
+an author `outline-width` does not change the ring, which stays two pixels as
+in Chrome. A themed control keeps its theme part radius at the ring's center
+(a radio's is half its longer side, limited to the ring, so a stretched radio's
+ring is a stadium); an author radius is outset by half the ring. Native
+`:focus-visible` matches any focus, so the ring follows the same rule. An
+author `outline` shorthand or `outline-style` ends `auto`: `solid` draws the
+author outline, while `none`, or a shorthand without `solid`, draws nothing.
+Under the colored ring Chrome's light scheme paints a white ring of the same
+width one pixel further out, with radii grown by that pixel (Blink's
+`PaintFocusRing` outer ring): it shows as a white pixel outside the colored
+ring on a non-white background, and through a translucent or transparent
+author `outline-color`. Dark-scheme rings are not modelled (the official host
+sets no `color-scheme`).
+The ring paints after the contents and does not change layout or hit regions.
+
+*Number fields.* `input type=number` edits its value with the shared field
+editor and Undo, and its value stays the string L0 decides; there is no
+sanitization and no spin button (Chrome shows one on hover or focus). Up and
+Down step the value as Chrome does (owner decision of 2026-11-05). L0 admits
+no `step`, `min` or `max` on inputs, so the step is Chrome's default 1 with
+step base 0 and no bounds; the attributes are an open L0 item. The value is
+read with Chrome's number sanitization (an optional `-`, digits with an
+optional fraction or a fraction alone, an optional exponent, no trailing `.`;
+a value that rounds beyond `f64::MAX` is invalid), and an invalid or empty
+value counts as 0; `varta_view::number_value_is_valid` exposes this grammar.
+A value within 2⁻²⁴ of an integer (Blink's acceptable step error) becomes that
+integer ± 1; any other value rounds to the next integer above (Up) or below
+(Down). The result is written as a plain integer string (`0`, never `-0`)
+with the caret at its end, as one Undo entry, and fires `input` and then
+`change`. Up steps with any modifier, Down unless Alt is held; a disabled or
+read-only field does not step, and `Input::TextNavigate` refuses Up/Down on a
+number field. Chrome computes the step in Blink's 18-digit decimal, which
+truncates long values and prints large results in exponent form; native
+stepping is exact and admits only values whose first 18 typed digits hold all
+their nonzero digits: integers below 10¹⁸ in magnitude, other values below
+10¹⁵ with at most 18 fraction digits, and results below 10¹⁸ (Chrome prints
+10¹⁸ as `1e+18`). Any other valid value is refused
+(`number_step::StepRefusal::OutsideExactRange`): the key changes nothing, and
+the view's platform effects count the refusal as `stepsRefused` (present in the
+snapshot only after a refusal, saturating), so the host can see it.
+Two differences from Chrome remain: Chrome converts typed text through the
+platform locale before sanitizing it (so typed `5.`, `+5` or `1,000` step from
+5 or 1000 there), whereas L0 keeps the typed string and native reads it as
+invalid; and Chrome 156's Undo does not revert a step, whereas the owner's
+decision makes each step an Undo entry. The browser host keeps Chrome's own
+stepping.
+
+*Font families.* A `font-family` value naming a CSS-wide keyword (`inherit`,
+`initial`, `unset`, `revert`, `revert-layer`; the shared
+`css::CSS_WIDE_KEYWORDS`) unquoted is outside the L0 grammar note and refused
+by the shared validator. The refusal names the keyword: native `set_style`
+fails with `Violation::FontFamilyKeyword`, the stylesheet checker with
+`stylesheet::Violation::FontFamilyKeyword` and the TSX compiler with a
+diagnostic naming it (`css::font_family_css_wide_keyword`). The browser host's
+font namespace (`view-fonts.mjs`) refuses it while preparing a batch, before
+the batch commits, instead of letting Chrome roll back to its own font; the
+DOM boundary reports it as an indexed `ViewProtocolError` (`font-family
+keyword` for `set_style`, `stylesheet value` for a stylesheet). Custom
+property values keep such keywords. A quoted name is an ordinary family.
 
 #### Native positioned painting and stacking
 

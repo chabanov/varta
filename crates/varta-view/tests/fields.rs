@@ -127,11 +127,14 @@ fn password_paints_only_masks_and_search_uses_plain_text() {
             .pixels,
         plaintext.pixels
     );
-    // Numeric sanitization/spinners have not been implemented by this renderer.
-    assert!(
-        field("number", "1")
+    // A number field edits and paints its string value as text; there is no
+    // numeric sanitization or spin button.
+    assert_eq!(
+        field("number", "AAAA")
             .rasterize_with_text(100, 50, &mut font, 20.0)
-            .is_err()
+            .unwrap()
+            .pixels,
+        plaintext.pixels
     );
     assert!(
         field("password", "A\nB")

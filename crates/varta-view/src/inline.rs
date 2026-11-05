@@ -5,7 +5,7 @@ use crate::style::Environment;
 use crate::text::{TextSpan, WhiteSpaceMode, edges::TextEdge};
 use crate::tree::{Content, Tree};
 use crate::{TextMeasureError, TextMeasurer, TextMetrics};
-use parley::{InlineBoxKind, Layout, LineItem};
+use parley::{InlineBoxKind, Layout, LineHeight, LineItem};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -46,13 +46,35 @@ struct Vertical {
 }
 impl Vertical {
     fn run(run: &parley::Run<'_, u32>) -> Self {
+        Self::with_line_height(run, run.metrics().line_height)
+    }
+    fn with_line_height(run: &parley::Run<'_, u32>, line_height: f32) -> Self {
         let m = run.metrics();
-        let above = m.ascent.round()
-            + ((m.line_height - m.ascent.round() - m.descent.round()) * 0.5).floor();
+        let above =
+            m.ascent.round() + ((line_height - m.ascent.round() - m.descent.round()) * 0.5).floor();
         Self {
             above,
-            below: m.line_height - above,
+            below: line_height - above,
         }
+    }
+    /// A run's vertical extent with the line height of the span that owns
+    /// its first cluster. Parley's run metrics take the line height of the
+    /// style that ends the run (its item keeps the next style's index when a
+    /// font-size change breaks it), which differs once adjacent spans carry
+    /// different explicit line heights (control labels).
+    fn owned(run: &parley::Run<'_, u32>, line_heights: &BTreeMap<u32, LineHeight>) -> Self {
+        let owner = run
+            .clusters()
+            .next()
+            .and_then(|cluster| line_heights.get(&cluster.first_style().brush));
+        let m = run.metrics();
+        let line_height = match owner {
+            Some(LineHeight::Absolute(value)) => *value,
+            Some(LineHeight::FontSizeRelative(value)) => value * run.font_size(),
+            Some(LineHeight::MetricsRelative(value)) => (m.ascent + m.descent + m.leading) * value,
+            None => m.line_height,
+        };
+        Self::with_line_height(run, line_height)
     }
 }
 
@@ -63,6 +85,8 @@ pub(crate) struct ContentFlow {
     pub needs_paint_order: bool,
     hidden: BTreeSet<u32>,
     strut: Vertical,
+    /// Each text span owner's line height, for [`Vertical::owned`].
+    line_heights: BTreeMap<u32, LineHeight>,
     font_boxes: BTreeMap<u32, FontBox>,
     empty: BTreeMap<usize, Vec<u32>>,
     /// Nonzero horizontal decoration edges in source order, and the physical
@@ -379,6 +403,8 @@ pub(crate) fn collect(
         return Ok(None);
     }
     let (options, families) = layout::text_style(tree, env, root, size, measurer)?;
+    // Control labels use Chrome's whole-pixel line spacing in rich flows too.
+    let options = layout::controls::control_line_height(tree, root, measurer, &families, options)?;
     let mut text = String::new();
     let mut spans = Vec::<TextSpan>::new();
     let mut paths = BTreeMap::new();
@@ -476,6 +502,8 @@ pub(crate) fn collect(
                 });
                 anchors.insert(id, text.len() + usize::from(whitespace.is_some()));
                 let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
+                let style =
+                    layout::controls::control_line_height(tree, id, measurer, &names, style)?;
                 let (_, sample) = measurer
                     .shape_styled(" ", None, &names, style)
                     .map_err(LayoutError::text(id))?;
@@ -532,6 +560,7 @@ pub(crate) fn collect(
         // Each text node keeps its own white-space mode: collapsing and
         // preserving modes mix in one flow, as CSS Text 3 defines.
         let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
+        let style = layout::controls::control_line_height(tree, id, measurer, &names, style)?;
         let index = spans.len();
         spans.push(TextSpan {
             owner: id,
@@ -620,7 +649,12 @@ pub(crate) fn collect(
             empty.entry(position.min(text.len())).or_default().push(id);
         }
     }
+    let line_heights = spans
+        .iter()
+        .map(|span| (span.owner, span.options.line_height.unwrap_or_default()))
+        .collect();
     let rich = Arc::new(ContentFlow {
+        line_heights,
         spans,
         paths,
         nodes,
@@ -779,7 +813,7 @@ impl ContentFlow {
             let mut vertical = self.strut;
             for run in line.runs() {
                 measurer.charge_inline_work(1)?;
-                let m = Vertical::run(&run);
+                let m = Vertical::owned(&run, &self.line_heights);
                 vertical.above = vertical.above.max(m.above);
                 vertical.below = vertical.below.max(m.below);
                 for cluster in run.clusters() {
@@ -1207,4 +1241,112 @@ pub(crate) fn frames(
         result.insert(id, frame);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Access, BatchWriter, Broker, TextFont, TextMeasurer, View};
+    use varta_common::view::{CssProperty as P, Tag};
+
+    struct Deny;
+    impl Broker for Deny {
+        fn link_requested(&self, _: &str) -> bool {
+            false
+        }
+        fn open_url(&mut self, _: &str) -> Access {
+            Access::Denied
+        }
+        fn clipboard_write(&mut self) -> Access {
+            Access::Denied
+        }
+    }
+
+    const FAMILY: &str = "\"Varta Controls Fixture\"";
+
+    fn boxes(
+        fill: impl FnOnce(&mut BatchWriter),
+    ) -> std::collections::BTreeMap<u32, crate::BoxRect> {
+        let mut b = BatchWriter::new();
+        b.create_element(2, Tag::Div)
+            .insert(1, 2, 0)
+            .set_style(2, P::FontFamily, FAMILY);
+        fill(&mut b);
+        let mut view = View::default();
+        view.commit(&b.finish(), false, &mut Deny).unwrap();
+        let mut font = TextMeasurer::new_with_fonts(vec![TextFont {
+            data: include_bytes!("../tests/fixtures/controls.ttf").to_vec(),
+            family: "Varta Controls Fixture".into(),
+            aliases: Vec::new(),
+        }])
+        .unwrap();
+        view.layout_boxes_with_text(400.0, 200.0, &mut font, 16.0)
+            .unwrap()
+    }
+
+    /// A run takes the line height of the span owning it, not of the span
+    /// whose font-size change ends it (parley reports the latter). Chrome
+    /// 156 line heights and span offsets for `A<span>B</span>C` with the
+    /// root's and the span's font-size/line-height; parley's own run line
+    /// heights give 44, 44, 53, 66, 66, 39 and 39.
+    #[test]
+    fn runs_take_their_owning_span_line_height() {
+        for ((root_size, root_line), (span_size, span_line), height, offset) in [
+            (("20px", "20px"), ("8px", "40px"), 40.0, 16.0),
+            (("8px", "40px"), ("20px", "20px"), 40.0, 6.0),
+            (("20px", "10px"), ("30px", "50px"), 50.0, 10.0),
+            (("30px", "10px"), ("10px", "60px"), 60.0, 25.0),
+            (("10px", "60px"), ("30px", "10px"), 60.0, 9.0),
+            (("40px", "4px"), ("10px", "30px"), 30.0, 10.0),
+            (("10px", "30px"), ("40px", "4px"), 30.0, -14.0),
+        ] {
+            let boxes = boxes(|b| {
+                b.set_style(2, P::FontSize, root_size)
+                    .set_style(2, P::LineHeight, root_line)
+                    .create_text(3, "A")
+                    .insert(2, 3, 0)
+                    .create_element(4, Tag::Span)
+                    .set_style(4, P::FontSize, span_size)
+                    .set_style(4, P::LineHeight, span_line)
+                    .insert(2, 4, 0)
+                    .create_text(5, "B")
+                    .insert(4, 5, 0)
+                    .create_text(6, "C")
+                    .insert(2, 6, 0);
+            });
+            assert_eq!(
+                (boxes[&2].height, boxes[&4].y - boxes[&2].y),
+                (height, offset),
+                "{root_size}/{root_line} {span_size}/{span_line}"
+            );
+        }
+    }
+
+    /// A rich button label keeps the control's whole-pixel line spacing in
+    /// its text and inline elements: Chrome 156 gives 20px for `A <span>B`
+    /// and 23px with a 17px span.
+    #[test]
+    fn rich_control_labels_keep_whole_pixel_line_spacing() {
+        let boxes = boxes(|b| {
+            for (button, span, size, text) in [
+                (3, 5, None, ["A ", "B"]),
+                (8, 10, Some("17px"), ["x ", "AB"]),
+            ] {
+                b.create_element(button, Tag::Button)
+                    .set_style(button, P::Display, "block")
+                    .set_style(button, P::Width, "60px")
+                    .insert(2, button, 0)
+                    .create_text(button + 1, text[0])
+                    .insert(button, button + 1, 0)
+                    .create_element(span, Tag::Span)
+                    .insert(button, span, 0)
+                    .create_text(span + 1, text[1])
+                    .insert(span, span + 1, 0);
+                if let Some(size) = size {
+                    b.set_style(span, P::FontSize, size);
+                }
+            }
+        });
+        assert_eq!(boxes[&3].height, 20.0);
+        assert_eq!(boxes[&8].height, 23.0);
+    }
 }

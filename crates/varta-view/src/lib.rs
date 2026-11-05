@@ -73,6 +73,14 @@ pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment, NATIVE_UA_VERSION};
 pub use text::{TextFont, TextMeasureError, TextMeasurer, TextMetrics};
 pub use wire::{BatchWriter, EventRecord};
 
+/// Whether a number field's value is valid under Chrome's number
+/// sanitization, the grammar native Up/Down stepping reads (an invalid or
+/// empty value steps from 0).
+#[must_use]
+pub fn number_value_is_valid(value: &str) -> bool {
+    events::number_step::is_valid(value)
+}
+
 use std::collections::VecDeque;
 use varta_common::view::{
     CommandStatus, DRAFT_MAX_PENDING_EVENTS, EventKind, ROOT_NODE, ResultOperation,
@@ -155,6 +163,8 @@ pub enum Violation {
     InvalidClass,
     #[error("invalid style value")]
     InvalidStyleValue,
+    #[error("`font-family` names the CSS-wide keyword `{0}`, which L0 does not admit")]
+    FontFamilyKeyword(&'static str),
     #[error("CSS property not allowed on this element")]
     PropertyNotAllowed,
     #[error("the root cannot be inserted or removed")]

@@ -17,6 +17,7 @@ mod scroll;
 mod select;
 mod snap;
 mod text_geometry;
+mod theme;
 mod underline;
 use crate::TextMeasurer;
 use crate::layout::{self, BoxRect, LayoutError, ScrollMetrics, TextShape};
@@ -804,12 +805,21 @@ fn clipped(a: BoxRect, b: BoxRect) -> Option<Rect> {
     )
 }
 
+/// The used `color` of `id`: the nearest author color, or a form control's
+/// user-agent color (`buttontext`/`fieldtext`, or its disabled color),
+/// which stops inheritance from outside the control.
 fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
     for ancestor in tree.path(id) {
         if let Some(value) = tree.computed_read(ancestor, env).get(&CssProperty::Color)
             && value != "currentcolor"
         {
             return color(value);
+        }
+        if ancestor != ROOT_NODE
+            && let Some(element) = tree.element(ancestor)
+            && let Some(kind) = style::ControlKind::of(element)
+        {
+            return Some(theme::text_color(kind, element.disabled()));
         }
     }
     Some(Color::BLACK)
@@ -912,12 +922,12 @@ fn outline_used_length(value: f32) -> f32 {
     }
 }
 
-fn outline(
-    tree: &Tree,
-    env: &Environment,
-    id: u32,
-) -> Result<Option<(f32, f32, Color)>, PaintError> {
-    let units = Units::new(env).ok_or(layout::LayoutError::RootFont)?;
+/// The cascaded outline longhands of `id`: each component with the property
+/// that declared it (a longhand or the `outline` shorthand) and its value,
+/// `None` when a variable leaves it invalid at computed-value time.
+type OutlineValues = BTreeMap<CssProperty, (CssProperty, Option<String>)>;
+
+fn outline_values(tree: &Tree, env: &Environment, id: u32) -> Result<OutlineValues, PaintError> {
     let variables = style::Variables::new(tree, id, env);
     let mut values = BTreeMap::new();
     for (name, raw) in tree.cascade_refs(id, env) {
@@ -937,6 +947,60 @@ fn outline(
     {
         values.insert(*component, (*property, variables.property(*property, raw)));
     }
+    Ok(values)
+}
+
+/// A cascaded `outline-offset` as a used length (`None` when undeclared; a
+/// value invalid at computed-value time is the initial `0`).
+fn outline_offset(
+    values: &OutlineValues,
+    units: Units,
+    id: u32,
+) -> Result<Option<f32>, PaintError> {
+    match values.get(&CssProperty::OutlineOffset) {
+        None => Ok(None),
+        Some((_, None)) => Ok(Some(0.0)),
+        Some((_, Some(raw))) if raw == "0" => Ok(Some(0.0)),
+        Some((_, Some(raw))) => units
+            .pixels(raw, true)
+            .map(|offset| Some(outline_used_length(offset)))
+            .ok_or(PaintError::Unsupported(id)),
+    }
+}
+
+/// A cascaded outline color (`currentcolor` when undeclared or invalid at
+/// computed-value time).
+fn outline_color(
+    tree: &Tree,
+    env: &Environment,
+    values: &OutlineValues,
+    id: u32,
+) -> Result<Color, PaintError> {
+    let raw_color = values
+        .get(&CssProperty::OutlineColor)
+        .and_then(|(property, raw)| raw.as_deref().map(|raw| (*property, raw)))
+        .map_or("currentcolor", |(property, raw)| {
+            if property == CssProperty::Outline {
+                shorthand_color(raw)
+            } else {
+                raw
+            }
+        });
+    if raw_color == "currentcolor" {
+        current_color(tree, env, id)
+    } else {
+        color(raw_color)
+    }
+    .ok_or(PaintError::Unsupported(id))
+}
+
+fn outline(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+) -> Result<Option<(f32, f32, Color)>, PaintError> {
+    let units = Units::new(env).ok_or(layout::LayoutError::RootFont)?;
+    let values = outline_values(tree, env, id)?;
     let get = |component| {
         values
             .get(&component)
@@ -980,24 +1044,63 @@ fn outline(
     if !solid || width == 0.0 {
         return Ok(None);
     }
-    let raw_color = get(CssProperty::OutlineColor).map_or("currentcolor", |(property, raw)| {
-        if property == CssProperty::Outline {
-            shorthand_color(raw)
-        } else {
-            raw
-        }
-    });
-    let color = if raw_color == "currentcolor" {
-        current_color(tree, env, id)
-    } else {
-        color(raw_color)
+    let color = outline_color(tree, env, &values, id)?;
+    let offset = outline_offset(&values, units, id)?.unwrap_or(0.0);
+    Ok(Some((width, offset, color)))
+}
+
+/// Chrome's default focus ring ([`theme::focus_ring`]) when `id` is a focused
+/// form control whose `outline-style` stays the user agent's `auto`: no author
+/// `outline` shorthand or `outline-style` applies. An author `outline-color`
+/// or `outline-offset` replaces the ring's color or offset, as in Chrome; an
+/// author `outline-width` does not change the auto ring's width. Native
+/// `:focus-visible` matches any focus, so the ring follows the same rule.
+fn default_focus_ring(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+    bounds: BoxRect,
+    units: Units,
+) -> Result<Option<(BoxRect, Corners, f32, Color)>, PaintError> {
+    if tree.focus != Some(id) || id == ROOT_NODE {
+        return Ok(None);
     }
-    .ok_or(PaintError::Unsupported(id))?;
-    let offset = match get(CssProperty::OutlineOffset) {
-        Some((_, "0")) | None => 0.0,
-        Some((_, raw)) => units.pixels(raw, true).ok_or(PaintError::Unsupported(id))?,
+    let Some(element) = tree.element(id) else {
+        return Ok(None);
     };
-    Ok(Some((width, outline_used_length(offset), color)))
+    let Some(kind) = style::ControlKind::of(element) else {
+        return Ok(None);
+    };
+    let values = outline_values(tree, env, id)?;
+    // A declared style (solid or none, from either form) ends `auto`.
+    if values.contains_key(&CssProperty::OutlineStyle) {
+        return Ok(None);
+    }
+    let author = theme::AuthorRing {
+        color: values
+            .contains_key(&CssProperty::OutlineColor)
+            .then(|| outline_color(tree, env, &values, id))
+            .transpose()?,
+        offset: outline_offset(&values, units, id)?,
+    };
+    let properties = tree.computed_read(id, env);
+    let paint_bounds = snap::rect(bounds);
+    let radii = properties
+        .get(&CssProperty::BorderRadius)
+        .map(|raw| {
+            Corners::resolve_paint(raw, bounds, paint_bounds, units)
+                .ok_or(PaintError::Unsupported(id))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Some(theme::focus_ring(
+        kind,
+        style::themed(&properties),
+        paint_bounds,
+        layout::border_widths(tree, env, id)?,
+        radii,
+        author,
+    )))
 }
 
 fn paint_border(
@@ -1145,6 +1248,7 @@ impl OutlinePen for GlyphPen {
     }
 }
 
+/// Paint a select label or other text whose own node owns its flow.
 fn paint_text(
     pixmap: &mut Surface,
     measurer: &mut TextMeasurer,
@@ -1154,6 +1258,29 @@ fn paint_text(
     id: u32,
     work: &mut usize,
 ) -> Result<Layout<u32>, PaintError> {
+    paint_flow_text(
+        pixmap,
+        measurer,
+        shape,
+        bounds,
+        style,
+        (id, id, false),
+        work,
+    )
+}
+
+/// Paint plain text node `id`; a reshaping refusal names its flow's node,
+/// the parent element `flow`, as layout does. A form control's label puts
+/// its first baseline on a device pixel ([`device_baseline`]).
+fn paint_flow_text(
+    pixmap: &mut Surface,
+    measurer: &mut TextMeasurer,
+    shape: &TextShape,
+    bounds: layout::BoxGeometry,
+    style: underline::Style,
+    (id, flow, control): (u32, u32, bool),
+    work: &mut usize,
+) -> Result<Layout<u32>, PaintError> {
     let (_, layout) = measurer
         .shape_styled(
             &shape.text,
@@ -1161,16 +1288,38 @@ fn paint_text(
             &shape.families,
             shape.options,
         )
-        .map_err(|error| PaintError::Layout(LayoutError::Text(error.to_string())))?;
+        .map_err(|error| PaintError::Layout(LayoutError::text(flow)(error)))?;
+    let mut bounds = paragraph_paint_bounds(bounds);
+    if control {
+        bounds.rect.y += device_baseline(&layout, bounds.rect.y, pixmap.scale, true);
+    }
     paint_shaped(
         pixmap,
         &layout,
-        paragraph_paint_bounds(bounds),
+        bounds,
         (&style, &shape.text, shape.options.white_space),
         id,
         work,
     )?;
     Ok(layout)
+}
+
+/// The vertical shift that puts `layout`'s first baseline, painted from
+/// `origin`, on a whole device pixel (half up). Chrome places control text
+/// this way at every device scale; other text keeps its paragraph origin.
+fn device_baseline(layout: &Layout<u32>, origin: f32, scale: f32, paragraph: bool) -> f32 {
+    let Some(line) = layout.lines().next() else {
+        return 0.0;
+    };
+    let metrics = line.metrics();
+    let baseline = origin
+        + metrics.baseline
+        + if paragraph {
+            paragraph_baseline_offset(metrics)
+        } else {
+            0.0
+        };
+    (baseline * scale + 0.5).floor() / scale - baseline
 }
 
 // The horizontal position and all logical text geometry remain fractional.
@@ -1736,7 +1885,9 @@ fn paint_input(
             .as_ref()
             .map_or_else(|| offset.min(source_len), |map| map.source(offset))
     };
-    let (mut options, families) = layout::text_style(tree, env, id, font_size, measurer)?;
+    let (options, families) = layout::text_style(tree, env, id, font_size, measurer)?;
+    let mut options =
+        layout::controls::control_line_height(tree, id, measurer, &families, options)?;
     let multiline = element.tag == Tag::Textarea;
     options.source = TextSource::Field;
     options.white_space = if multiline {
@@ -1884,7 +2035,7 @@ fn paint_input(
         let glyph_bounds = layout::BoxGeometry {
             rect: BoxRect {
                 x,
-                y,
+                y: y + device_baseline(&shaped, y, pixmap.scale, false),
                 width: if multiline {
                     content.width.max(0.01)
                 } else {
@@ -1927,7 +2078,7 @@ fn paint_input(
         let glyph_bounds = layout::BoxGeometry {
             rect: BoxRect {
                 x: content.x,
-                y,
+                y: y + device_baseline(&placeholder_layout, y, pixmap.scale, false),
                 width: content.width.max(0.01),
                 height: metrics.height,
             },
@@ -1936,8 +2087,7 @@ fn paint_input(
             scroll: None,
             programmatic_scroll: None,
         };
-        let style =
-            underline::Style::resolve(tree, env, id, true, Color::from_rgba8(117, 117, 117, 255))?;
+        let style = underline::Style::resolve(tree, env, id, true, theme::PLACEHOLDER.color())?;
         paint_shaped(
             pixmap,
             &placeholder_layout,
@@ -2386,7 +2536,26 @@ fn rasterize_inner_scoped(
             inherited_clips.insert(id, clip.clone());
         }
         if outline_phase {
-            if let Some((width, offset, color)) = outline(tree, &env, id)? {
+            if let Some((rect, radii, width, color)) =
+                default_focus_ring(tree, &env, id, geometry[&id].rect, units)?
+            {
+                let bounds = geometry[&id];
+                let (halo, halo_radii, halo_width, halo_color) =
+                    theme::focus_ring_halo(rect, radii);
+                for (rect, radii, width, color) in [
+                    (halo, halo_radii, halo_width, halo_color),
+                    (rect, radii, width, color),
+                ] {
+                    paint_border(
+                        &mut pixmap,
+                        rect,
+                        bounds.clip,
+                        [width; 4],
+                        radii,
+                        [color; 4],
+                    )?;
+                }
+            } else if let Some((width, offset, color)) = outline(tree, &env, id)? {
                 let bounds = geometry[&id];
                 // CSS UI4 keeps an outline visible even when a very negative
                 // offset would otherwise collapse it; clamp the axes separately.
@@ -2434,13 +2603,20 @@ fn rasterize_inner_scoped(
             let (measurer, _) = text_input.as_mut().ok_or(PaintError::Unsupported(id))?;
             let parent = node.parent.ok_or(PaintError::Unsupported(id))?;
             let color = current_color(tree, &env, parent).ok_or(PaintError::Unsupported(id))?;
-            let layout = paint_text(
+            let layout = paint_flow_text(
                 &mut pixmap,
                 measurer,
                 shape,
                 geometry[&id],
                 underline::Style::resolve(tree, &env, parent, false, color)?,
-                id,
+                (
+                    id,
+                    parent,
+                    parent != ROOT_NODE
+                        && tree
+                            .element(parent)
+                            .is_some_and(|element| style::ControlKind::of(element).is_some()),
+                ),
                 &mut text_work,
             )?;
             // The anonymous text box can fill the available block width. Only
@@ -2497,7 +2673,7 @@ fn rasterize_inner_scoped(
                     menu_control = Some((id, geometry[&id]));
                 }
             } else if element.checkable() {
-                if element.checked {
+                if element.checked && !style::themed(&tree.computed_read(id, &env)) {
                     let color = current_color(tree, &env, id).ok_or(PaintError::Unsupported(id))?;
                     paint_checkable(
                         &mut pixmap,
@@ -2607,7 +2783,13 @@ fn rasterize_inner_scoped(
         if let Some(scroll) = geometry[&id].scroll {
             scrolls.insert(id, scroll);
         }
+        let control = (id != ROOT_NODE)
+            .then(|| style::ControlKind::of(element))
+            .flatten();
+        let themed = control.is_some() && style::themed(&properties);
         let button_ready = element.tag != Tag::Button
+            || themed
+            || properties.contains_key(&CssProperty::Border)
             || (properties
                 .get(&CssProperty::Display)
                 .is_some_and(|value| value == "flex")
@@ -2617,6 +2799,10 @@ fn rasterize_inner_scoped(
                     || properties.contains_key(&CssProperty::OutlineStyle))
                 && properties.contains_key(&CssProperty::BorderRadius));
         let input_ready = !matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
+            || (themed && element.tag != Tag::Select)
+            // An author-styled text field takes user-agent defaults for the
+            // rest (layout already required its `border` shorthand).
+            || (element.text_field() && properties.contains_key(&CssProperty::Border))
             || ([CssProperty::BackgroundColor, CssProperty::Color]
                 .iter()
                 .all(|property| properties.contains_key(property))
@@ -2640,7 +2826,12 @@ fn rasterize_inner_scoped(
                     .ok_or(PaintError::Unsupported(id))
             })
             .transpose()?
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                control
+                    .filter(|_| themed)
+                    .map(|kind| theme::user_agent_radii(kind, geometry[&id].rect))
+                    .unwrap_or_default()
+            });
         let paint_rect = if id == ROOT_NODE {
             geometry[&id].rect
         } else {
@@ -2698,13 +2889,30 @@ fn rasterize_inner_scoped(
                 },
             ));
         }
-        if let Some(value) = properties.get(&CssProperty::BackgroundColor) {
-            let color = if value == "currentcolor" {
-                current_color(tree, &env, id)
-            } else {
-                color(value)
-            }
-            .ok_or(PaintError::Unsupported(id))?;
+        if let Some(kind) = control.filter(|_| themed) {
+            theme::paint(
+                &mut pixmap,
+                (id, kind),
+                paint_rect,
+                geometry[&id].clip,
+                theme::State {
+                    checked: element.checked,
+                    disabled: element.disabled(),
+                },
+            )?;
+        } else if let Some(color) = properties
+            .get(&CssProperty::BackgroundColor)
+            .map(|value| {
+                if value == "currentcolor" {
+                    current_color(tree, &env, id)
+                } else {
+                    color(value)
+                }
+                .ok_or(PaintError::Unsupported(id))
+            })
+            .transpose()?
+            .or_else(|| control.and_then(theme::background))
+        {
             let bounds = geometry[&id];
             if let Some(rect) = clipped(paint_rect, pixmap.local_clip(bounds.clip)) {
                 let mut paint = Paint::default();
@@ -2723,7 +2931,7 @@ fn rasterize_inner_scoped(
                 }
             }
         }
-        if let Some(colors) = border_colors(tree, &env, id, widths)? {
+        if !themed && let Some(colors) = border_colors(tree, &env, id, widths)? {
             let bounds = geometry[&id];
             paint_border(
                 &mut pixmap,
@@ -2837,6 +3045,88 @@ pub(crate) fn decoration_edge(kind: parley::InlineBoxKind) -> bool {
 
 #[cfg(test)]
 mod positioned_tests;
+#[cfg(test)]
+mod flow_text_tests {
+    use super::*;
+    /// A paint-time reshaping refusal names the text's flow node, as layout
+    /// does. Preserved tabs in right-to-left text are outside the native
+    /// white-space model; layout refuses them first, so this shape is built
+    /// directly.
+    #[test]
+    fn paint_time_reshaping_refusal_names_the_flow_node() {
+        const TEXT: u32 = 4;
+        const FLOW: u32 = 3;
+        let mut measurer = TextMeasurer::new(
+            include_bytes!("../tests/fixtures/unicode.ttf").to_vec(),
+            "Varta Unicode Fixture",
+        )
+        .unwrap();
+        let families = measurer.resolve_families(None).unwrap();
+        let options = crate::text::TextOptions {
+            size: 16.0,
+            line_height: None,
+            weight: style::NORMAL_FONT_WEIGHT,
+            italic: false,
+            white_space: WhiteSpaceMode::Pre,
+            break_anywhere: false,
+            source: TextSource::General,
+            align: crate::text::TextAlign::Start,
+        };
+        let text = "\u{05d0}\t\u{05d1}".to_owned();
+        let shape = TextShape {
+            text,
+            metrics: crate::TextMetrics {
+                width: 0.0,
+                min_width: 0.0,
+                height: 0.0,
+                lines: 1,
+            },
+            options,
+            families,
+            rich: None,
+        };
+        let rect = BoxRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let mut surface = Surface {
+            glyphs: None,
+            pixels: Pixmap::new(12, 12),
+            width: 12,
+            height: 12,
+            scale: 1.0,
+            commands: None,
+            active_clip: None,
+            clip_masks: None,
+            failure: None,
+            groups: Vec::new(),
+            relative_clips: BTreeMap::new(),
+            isolation_required: false,
+            capture: None,
+        };
+        let result = paint_flow_text(
+            &mut surface,
+            &mut measurer,
+            &shape,
+            layout::BoxGeometry {
+                rect,
+                clip: rect,
+                content: rect,
+                scroll: None,
+                programmatic_scroll: None,
+            },
+            underline::Style::plain(Color::BLACK),
+            (TEXT, FLOW, false),
+            &mut 0,
+        );
+        assert!(matches!(
+            result,
+            Err(PaintError::Layout(LayoutError::Unsupported(FLOW)))
+        ));
+    }
+}
 #[cfg(test)]
 mod retained_tests {
     use super::*;

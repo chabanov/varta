@@ -10,6 +10,8 @@ use taffy::prelude::*;
 use taffy::style::{GridPlacement, GridTemplateTracks, Overflow, RepetitionCount};
 use varta_common::view::{CssProperty, ROOT_NODE, Tag};
 
+pub(crate) mod controls;
+
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 128;
 pub(crate) const MAX_LAYOUT_NODES: usize = 4096;
 
@@ -456,6 +458,14 @@ pub(crate) fn border_widths(
             widths[i] = 0.0;
         }
     }
+    // A themed control keeps its user-agent border width, which Chrome's
+    // native theme fills (`style::NATIVE_CONTROL_DEFAULTS`).
+    if id != ROOT_NODE
+        && let Some(kind) = style::ControlKind::of(element)
+        && style::themed(&tree.computed_read(id, env))
+    {
+        widths = [style::control_defaults(kind).border; 4];
+    }
     tree.render_reads.remember_borders(id, env, widths);
     Ok(widths)
 }
@@ -684,6 +694,20 @@ fn alignment(value: &str) -> Option<AlignItems> {
     })
 }
 
+/// A Taffy leaf's measurement: shaped text or a control's intrinsic box.
+#[derive(Clone)]
+enum Measure {
+    Text(TextShape),
+    Control(controls::ControlSize),
+}
+
+/// Measurements prepared before a layout pass, by node.
+#[derive(Clone, Copy)]
+struct Measured<'a> {
+    text: &'a BTreeMap<u32, TextShape>,
+    controls: &'a BTreeMap<u32, controls::ControlSize>,
+}
+
 #[derive(Clone)]
 pub(crate) struct TextShape {
     pub text: String,
@@ -844,6 +868,20 @@ pub(crate) fn resolve_text(
             .element(ancestor)
             .and_then(|element| style::ua_defaults(element.tag))
         {
+            if ua.control_font {
+                if !properties.contains_key(&CssProperty::FontSize) {
+                    size.absolute(style::UA_CONTROL_FONT_SIZE_PX);
+                }
+                if !properties.contains_key(&CssProperty::FontWeight) {
+                    weight = style::NORMAL_FONT_WEIGHT;
+                }
+                if !properties.contains_key(&CssProperty::FontStyle) {
+                    italic = false;
+                }
+                if !properties.contains_key(&CssProperty::LineHeight) {
+                    line_height = None;
+                }
+            }
             if !properties.contains_key(&CssProperty::FontWeight) {
                 weight = match ua.weight {
                     UaWeight::Inherit => weight,
@@ -984,9 +1022,9 @@ pub(crate) fn resolve_text(
 fn build(
     tree: &Tree,
     env: &Environment,
-    engine: &mut TaffyTree<TextShape>,
+    engine: &mut TaffyTree<Measure>,
     ids: &mut BTreeMap<u32, NodeId>,
-    text_metrics: &BTreeMap<u32, TextShape>,
+    text_metrics: Measured<'_>,
     location: (u32, usize),
     sizes: ((f32, f32), Option<style::FontBase>),
 ) -> Result<NodeId, LayoutError> {
@@ -1028,14 +1066,15 @@ fn build(
 fn build_one(
     tree: &Tree,
     env: &Environment,
-    engine: &mut TaffyTree<TextShape>,
+    engine: &mut TaffyTree<Measure>,
     ids: &mut BTreeMap<u32, NodeId>,
-    text_metrics: &BTreeMap<u32, TextShape>,
+    measured: Measured<'_>,
     location: (u32, usize),
     sizes: ((f32, f32), Option<style::FontBase>),
 ) -> Result<(NodeId, bool), LayoutError> {
     let (id, depth) = location;
     let (viewport, base_size) = sizes;
+    let text_metrics = measured.text;
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     if depth > MAX_LAYOUT_DEPTH || ids.len() >= MAX_LAYOUT_NODES {
         return Err(LayoutError::Limit);
@@ -1047,7 +1086,7 @@ fn build_one(
             .cloned()
             .ok_or(LayoutError::Unsupported(id))?;
         let node_id = engine
-            .new_leaf_with_context(Style::default(), metrics)
+            .new_leaf_with_context(Style::default(), Measure::Text(metrics))
             .map_err(|e| LayoutError::Engine(e.to_string()))?;
         ids.insert(id, node_id);
         return Ok((node_id, false));
@@ -1100,6 +1139,9 @@ fn build_one(
         box_sizing: BoxSizing::ContentBox,
         ..Default::default()
     };
+    let control = (id != ROOT_NODE)
+        .then(|| style::ControlKind::of(element))
+        .flatten();
     if id == ROOT_NODE {
         if tree.computed_read(id, env).keys().any(|property| {
             !matches!(
@@ -1121,79 +1163,8 @@ fn build_one(
             height: length(viewport.1),
         };
     } else {
-        if matches!(
-            element.tag,
-            Tag::Button | Tag::Input | Tag::Textarea | Tag::Select
-        ) {
-            let properties = layout_properties(tree, env, id)?;
-            let computed = tree.computed_read(id, env);
-            let content_sizing = element.tag == Tag::Textarea
-                && computed
-                    .get(&CssProperty::FieldSizing)
-                    .is_some_and(|value| value == "content");
-            // UA control styles and intrinsic sizes vary across platforms. Only
-            // accept controls whose box metrics are explicitly defined.
-            if [
-                CssProperty::Display,
-                CssProperty::Width,
-                CssProperty::Height,
-                CssProperty::MinWidth,
-                CssProperty::MinHeight,
-                CssProperty::PaddingTop,
-                CssProperty::PaddingRight,
-                CssProperty::PaddingBottom,
-                CssProperty::PaddingLeft,
-            ]
-            .iter()
-            .any(|property| {
-                !properties.contains_key(property)
-                    && !(*property == CssProperty::Height && content_sizing)
-            }) || !computed.contains_key(&CssProperty::Border)
-                || matches!(
-                    properties.get(&CssProperty::Width).map(String::as_str),
-                    Some("auto")
-                )
-                || matches!(
-                    properties.get(&CssProperty::Height).map(String::as_str),
-                    Some("auto")
-                ) && !content_sizing
-                || matches!(
-                    properties.get(&CssProperty::MinWidth).map(String::as_str),
-                    Some("auto")
-                )
-                || matches!(
-                    properties.get(&CssProperty::MinHeight).map(String::as_str),
-                    Some("auto")
-                )
-                || (element.tag == Tag::Input
-                    && (!matches!(
-                        element.input_type(),
-                        "text" | "search" | "password" | "checkbox" | "radio"
-                    ) || !node.children.is_empty()))
-                || (element.tag == Tag::Textarea && !node.children.is_empty())
-            {
-                return Err(LayoutError::Unsupported(id));
-            }
-            if element.tag == Tag::Button
-                && !node.children.is_empty()
-                && (properties
-                    .get(&CssProperty::Display)
-                    .is_none_or(|value| value != "flex")
-                    || [
-                        CssProperty::FontFamily,
-                        CssProperty::FontSize,
-                        CssProperty::FontWeight,
-                        CssProperty::FontStyle,
-                        CssProperty::LineHeight,
-                        CssProperty::JustifyContent,
-                        CssProperty::AlignItems,
-                    ]
-                    .iter()
-                    .any(|property| !computed.contains_key(property)))
-            {
-                return Err(LayoutError::Unsupported(id));
-            }
-            style.box_sizing = BoxSizing::BorderBox;
+        if let Some(kind) = control {
+            controls::control_box(tree, env, (id, kind), &mut style)?;
         }
         if let Some(ua) = style::ua_defaults(element.tag).filter(|ua| ua.block) {
             ua_box(tree, env, (id, ua), base_size, &mut style)?;
@@ -1449,6 +1420,9 @@ fn build_one(
             }
         }
     }
+    if let Some(kind) = control {
+        controls::control_finish(tree, env, (id, kind), &mut style)?;
+    }
     if style.display == Display::Grid && node.children.len() > 128 {
         return Err(LayoutError::Limit);
     }
@@ -1464,7 +1438,19 @@ fn build_one(
                 .is_some_and(|value| value == "content"))
     {
         let shape = text_metrics.get(&id).ok_or(LayoutError::Unsupported(id))?;
-        engine.new_leaf_with_context(style, shape.clone())
+        engine.new_leaf_with_context(style, Measure::Text(shape.clone()))
+    } else if let Some(size) = (id != ROOT_NODE)
+        .then(|| controls::square(tree, id))
+        .flatten()
+    {
+        engine.new_leaf_with_context(style, Measure::Control(size))
+    } else if controls::needs_intrinsic(tree, env, id) {
+        // Without a text measurer there is no font for an intrinsic size.
+        let size = measured
+            .controls
+            .get(&id)
+            .ok_or(LayoutError::Unsupported(id))?;
+        engine.new_leaf_with_context(style, Measure::Control(*size))
     } else {
         engine.new_leaf(style)
     }
@@ -1491,7 +1477,18 @@ pub(crate) fn geometry(
     width: f32,
     height: f32,
 ) -> Result<BTreeMap<u32, BoxGeometry>, LayoutError> {
-    boxes_inner(tree, env, width, height, &BTreeMap::new(), None, None)
+    boxes_inner(
+        tree,
+        env,
+        width,
+        height,
+        Measured {
+            text: &BTreeMap::new(),
+            controls: &BTreeMap::new(),
+        },
+        None,
+        None,
+    )
 }
 
 pub(crate) fn boxes_with_text(
@@ -1559,6 +1556,7 @@ fn geometry_and_text_inner(
     };
     let mut pending = vec![(ROOT_NODE, 0usize)];
     let mut metrics = BTreeMap::new();
+    let mut control_sizes = BTreeMap::new();
     let mut inventory = crate::inline::Inventory::default();
     while let Some((id, depth)) = pending.pop() {
         inventory.node(depth)?;
@@ -1576,6 +1574,12 @@ fn geometry_and_text_inner(
             && element.tag == Tag::Select
         {
             continue;
+        }
+        if controls::needs_intrinsic(tree, &layout_env, id) {
+            control_sizes.insert(
+                id,
+                controls::intrinsic(tree, &layout_env, id, (measurer, font_size))?,
+            );
         }
         if let Some(shape) = crate::inline::collect(
             tree,
@@ -1622,7 +1626,9 @@ fn geometry_and_text_inner(
             {
                 return Err(LayoutError::Unsupported(id));
             }
-            let (mut options, families) = text_style(tree, &layout_env, id, font_size, measurer)?;
+            let (options, families) = text_style(tree, &layout_env, id, font_size, measurer)?;
+            let mut options =
+                controls::control_line_height(tree, id, measurer, &families, options)?;
             options.white_space = WhiteSpaceMode::PreWrap;
             options.break_anywhere = true;
             options.source = TextSource::Field;
@@ -1678,6 +1684,8 @@ fn geometry_and_text_inner(
             }
             inventory.text(text.len())?;
             let (options, families) = text_style(tree, &layout_env, parent, font_size, measurer)?;
+            let options =
+                controls::control_line_height(tree, parent, measurer, &families, options)?;
             let text = if options.white_space.preserves() {
                 // Every white-space refusal of a plain text flow names its
                 // flow's node, the parent element, as the shaping and
@@ -1716,7 +1724,10 @@ fn geometry_and_text_inner(
         env,
         width,
         height,
-        &metrics,
+        Measured {
+            text: &metrics,
+            controls: &control_sizes,
+        },
         Some(measurer),
         Some(font_size),
     )?;
@@ -1738,7 +1749,7 @@ fn boxes_inner(
     env: &Environment,
     width: f32,
     height: f32,
-    text_metrics: &BTreeMap<u32, TextShape>,
+    measured: Measured<'_>,
     mut text_input: Option<&mut TextMeasurer>,
     base_size: Option<f32>,
 ) -> Result<BTreeMap<u32, BoxGeometry>, LayoutError> {
@@ -1751,6 +1762,7 @@ fn boxes_inner(
     {
         return Err(LayoutError::Viewport);
     }
+    let text_metrics = measured.text;
     let mut engine = TaffyTree::new();
     engine.disable_rounding();
     let mut ids = BTreeMap::new();
@@ -1769,7 +1781,7 @@ fn boxes_inner(
         &layout_env,
         &mut engine,
         &mut ids,
-        text_metrics,
+        measured,
         (ROOT_NODE, 0),
         ((width, height), base),
     )?;
@@ -1812,11 +1824,15 @@ fn boxes_inner(
                     style,
                     |_, _| 0.0,
                     |known, available| {
-                        let Some(shape) = context.as_deref() else {
-                            return Size {
-                                width: known.width.unwrap_or(0.0),
-                                height: known.height.unwrap_or(0.0),
-                            };
+                        let shape = match context.as_deref() {
+                            Some(Measure::Text(shape)) => shape,
+                            Some(Measure::Control(size)) => return size.measure(known, available),
+                            None => {
+                                return Size {
+                                    width: known.width.unwrap_or(0.0),
+                                    height: known.height.unwrap_or(0.0),
+                                };
+                            }
                         };
                         // Taffy's measurement callback cannot return an error.
                         // Once one is recorded, finish its traversal with cheap

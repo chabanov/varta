@@ -157,6 +157,10 @@ fn template_errors_name_the_construct_and_its_rule() {
             "invalid value `red` for CSS property `color`",
         ),
         (
+            "<div style=\"font-family: Brand, unset\">x</div>",
+            "names the CSS-wide keyword `unset`",
+        ),
+        (
             "<div style=\"colour: #fff\">x</div>",
             "unknown CSS property `colour`",
         ),

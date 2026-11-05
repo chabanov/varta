@@ -18,6 +18,9 @@ pub(crate) fn snapshot(tree: &Tree, environment: &Environment, platform: &Effect
     if platform.opened_dropped != 0 {
         out["openedDropped"] = json!(platform.opened_dropped);
     }
+    if platform.steps_refused != 0 {
+        out["stepsRefused"] = json!(platform.steps_refused);
+    }
     // Insert already-built values without serde recursively reserializing them.
     out["tree"] = node_tree(tree, environment);
     out["accessibility"] = crate::accessibility::project(tree, environment).snapshot();

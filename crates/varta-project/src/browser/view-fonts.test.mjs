@@ -6,7 +6,18 @@ test('family names are case-insensitive and isolated, including unknown ambient 
   assert.equal(a.family('Brand'),a.family('bRaNd'));assert.notEqual(a.family('Brand'),b.family('Brand'));
   assert.equal(a.value('Brand, "Two Words", sans-serif'),`${a.family('Brand')} , "${a.family('Two Words')}" , sans-serif`);
   assert(!a.value('Arial, serif').includes('Arial'));assert(!a.value('"serif"').includes('serif'));
-  assert.equal(a.value('inherit'),'inherit');assert.throws(()=>createFontNamespace('bad prefix'));
+  assert.throws(()=>createFontNamespace('bad prefix'));
+});
+test('CSS-wide font-family keywords are refused as in L0 validation; quoted names and variables keep them',async()=>{
+  const {CssError}=await import('./view-css.mjs');
+  const a=createFontNamespace('wide',['Brand']);
+  for(const text of ['inherit','INITIAL','Brand, unset','revert','revert-layer'])assert.throws(()=>a.value(text),CssError,text);
+  assert.equal(a.value('"inherit"'),JSON.stringify(a.family('inherit')));
+  const values=new Map([['--font','inherit'],['font-family','var(--font, Brand)']]);
+  const style={*[Symbol.iterator](){yield* values.keys();},getPropertyValue:(key)=>values.get(key),setProperty:(key,value)=>values.set(key,value)};
+  a.sheet([{style}]);
+  assert.equal(values.get(a.variable('--font')),'inherit');
+  assert.throws(()=>a.sheet([{style:{*[Symbol.iterator](){yield 'font-family';},getPropertyValue:()=>'initial',setProperty(){}}}]),CssError);
 });
 test('font variables have parallel names and keep other declaration values unchanged',()=>{
   const n=createFontNamespace('scope',['red']);

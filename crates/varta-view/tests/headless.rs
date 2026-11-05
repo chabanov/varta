@@ -2825,16 +2825,24 @@ fn explicitly_styled_button_and_text_input_layout() {
         (boxes[&5].x, boxes[&5].width, boxes[&5].height),
         (90.0, 100.0, 30.0)
     );
-    let mut missing = BatchWriter::new();
-    missing.remove_style(5, CssProperty::MinWidth);
-    commit(&mut view, &missing).unwrap();
-    assert!(matches!(
-        view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),
-        Err(varta_view::LayoutError::Unsupported(5))
-    ));
+    // Absent box properties take user-agent defaults (`min-width: auto`),
+    // and `number` lays out as a text field.
+    let mut defaults = BatchWriter::new();
+    defaults.remove_style(5, CssProperty::MinWidth);
+    defaults.set_attribute(5, Attribute::Type, "number");
+    commit(&mut view, &defaults).unwrap();
+    let boxes = view
+        .layout_boxes_with_text(200.0, 100.0, &mut font, 20.0)
+        .unwrap();
+    assert_eq!(
+        (boxes[&5].x, boxes[&5].width, boxes[&5].height),
+        (90.0, 100.0, 30.0)
+    );
+    // An author background without the `border` shorthand would need
+    // Chrome's inset user-agent border.
     let mut unsupported = BatchWriter::new();
-    unsupported.set_style(5, CssProperty::MinWidth, "0");
-    unsupported.set_attribute(5, Attribute::Type, "number");
+    unsupported.remove_style(5, CssProperty::Border);
+    unsupported.set_style(5, CssProperty::BackgroundColor, "#ffffff");
     commit(&mut view, &unsupported).unwrap();
     assert!(matches!(
         view.layout_boxes_with_text(200.0, 100.0, &mut font, 20.0),
@@ -3787,6 +3795,12 @@ fn semantic_rules_reject_the_whole_batch() {
                 b.set_style(2, CssProperty::Width, "10px; color: #fff");
             }),
             Violation::InvalidStyleValue,
+        ),
+        (
+            Box::new(|b| {
+                b.set_style(2, CssProperty::FontFamily, "serif, REVERT-layer");
+            }),
+            Violation::FontFamilyKeyword("revert-layer"),
         ),
         (
             Box::new(|b| {

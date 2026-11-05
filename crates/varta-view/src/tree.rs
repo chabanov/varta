@@ -1038,7 +1038,14 @@ impl Apply<'_, '_, '_> {
                     return Err(self.fail(Violation::PropertyNotAllowed));
                 }
                 if !varta_common::view::css::property_value(*property, operation.text()) {
-                    return Err(self.fail(Violation::InvalidStyleValue));
+                    let keyword = (*property == CssProperty::FontFamily)
+                        .then(|| {
+                            varta_common::view::css::font_family_css_wide_keyword(operation.text())
+                        })
+                        .flatten();
+                    return Err(self.fail(
+                        keyword.map_or(Violation::InvalidStyleValue, Violation::FontFamilyKeyword),
+                    ));
                 }
                 let element = self.element(node)?;
                 element.style.insert(*property, operation.text().into());

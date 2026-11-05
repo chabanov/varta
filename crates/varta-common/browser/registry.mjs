@@ -11166,7 +11166,7 @@ export const registry = freeze({
         "code": 53,
         "grammar": "[<string> | <ident> | sans-serif | serif | monospace | system-ui]#",
         "name": "font-family",
-        "note": "artifact fonts or generic families"
+        "note": "artifact fonts or generic families; no CSS-wide keywords"
       },
       {
         "code": 54,

@@ -2,6 +2,9 @@
 //! key filters, `preventDefault`/`stopPropagation`), default actions, and
 //! the clipboard and system browser of the headless renderer.
 mod clipboard;
+pub(crate) mod number_step;
+#[cfg(test)]
+mod number_tests;
 use crate::tree::{Element, Preedit, focus_records};
 use crate::{Access, Broker, EventRecord, InputError, View, ViewError};
 pub use clipboard::{
@@ -79,6 +82,9 @@ pub(crate) struct Effects {
     opened_bytes: usize,
     pub opened_dropped: u64,
     pub prompts: usize,
+    /// Number-field steps refused outside the exact stepping range
+    /// ([`number_step::StepRefusal`]); saturating.
+    pub steps_refused: u64,
 }
 
 impl Effects {
@@ -702,6 +708,11 @@ impl View {
                     return Err(InputError::Key(key.clone()));
                 }
                 let field = self.tree.element(node).ok_or(InputError::Selection)?;
+                // Up/Down step a number field (`Input::Key`); they do not
+                // navigate its text.
+                if number_field(field) && matches!(key.as_str(), "ArrowUp" | "ArrowDown") {
+                    return Err(InputError::Key(key.clone()));
+                }
                 if !field.text_field()
                     || *position > field.value.len()
                     || !field.value.is_char_boundary(*position)
@@ -1422,6 +1433,21 @@ impl View {
             Key::Enter | Key::Space if element.tag == Tag::Button => self.click(node, broker),
             Key::Enter if element.tag == Tag::A => self.click(node, broker),
             Key::Space if element.checkable() => self.click(node, broker),
+            // Chrome steps a number field with Up (any modifiers) and Down
+            // (unless Alt is held).
+            Key::ArrowUp | Key::ArrowDown
+                if number_field(&element)
+                    && !(key == Key::ArrowDown && modifiers.flags & EventFlag::Alt as u32 != 0) =>
+            {
+                self.step_number(
+                    node,
+                    if key == Key::ArrowUp {
+                        number_step::Direction::Up
+                    } else {
+                        number_step::Direction::Down
+                    },
+                )
+            }
             Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown
                 if element.checkable()
                     && element.input_type() == "radio"
@@ -1512,6 +1538,46 @@ impl View {
         result.map_err(Into::into)
     }
 
+    /// One Up/Down step of a number field ([`number_step`]): the stepped
+    /// string replaces the value as one Undo entry with the caret at its
+    /// end, then `input` and `change` fire, as Chrome dispatches them. A
+    /// disabled or read-only field does not step; a value outside the exact
+    /// stepping range ([`number_step::StepRefusal`]) does not step and is
+    /// counted in the platform effects (`stepsRefused`).
+    fn step_number(
+        &mut self,
+        node: u32,
+        direction: number_step::Direction,
+    ) -> Result<(), ViewError> {
+        let Some(element) = self.tree.element(node) else {
+            return Ok(());
+        };
+        if element.disabled() || element.readonly() {
+            return Ok(());
+        }
+        let stepped = match number_step::step(&element.value, direction) {
+            Ok(stepped) => stepped,
+            Err(number_step::StepRefusal::OutsideExactRange) => {
+                self.effects.steps_refused = self.effects.steps_refused.saturating_add(1);
+                return Ok(());
+            }
+        };
+        let before = element.seq;
+        self.edit(node, |value, anchor, focus, _| {
+            *value = stepped;
+            *anchor = value.len();
+            *focus = value.len();
+        })?;
+        if self
+            .tree
+            .element(node)
+            .is_some_and(|element| element.seq != before)
+        {
+            self.fire(node, EventKind::Change, true)?;
+        }
+        Ok(())
+    }
+
     /// Esc in an open modal dialog: `cancel`, then close unless prevented.
     fn escape(&mut self, node: u32) -> Result<(), ViewError> {
         let Some(dialog) = self.ancestor(node, Tag::Dialog).or_else(|| {
@@ -1599,6 +1665,11 @@ impl View {
 
 /// A `keydown` listener's filter against an occurrence; every other kind's
 /// filter is the any-key filter by construction.
+/// An `input type=number`, which Up/Down step.
+fn number_field(element: &Element) -> bool {
+    element.tag == Tag::Input && element.input_type() == "number"
+}
+
 fn matches_filter(listener: &crate::tree::Listener, occurrence: &EventRecord) -> bool {
     if listener.kind != EventKind::Keydown {
         return true;

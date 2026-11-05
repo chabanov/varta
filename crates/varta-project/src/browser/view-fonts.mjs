@@ -1,7 +1,10 @@
-import { tokenizeValue } from './view-css.mjs';
+import { tokenizeValue, CssError } from './view-css.mjs';
 
 const monospaceFamily = 'monospace';
 const generic = new Set(['serif', 'sans-serif', monospaceFamily, 'system-ui']);
+// CSS-wide keywords: the shared L0 validator refuses them in `font-family`
+// (the browser would roll back to its own font, which native hosts cannot
+// supply); custom property values keep them unchanged.
 const wide = new Set(['inherit', 'initial', 'unset', 'revert', 'revert-layer']);
 const faceStyles = new Set(['normal', 'italic']);
 // The CSS font-weight number range a FontFace descriptor admits.
@@ -22,26 +25,30 @@ export function createFontNamespace(prefix, families = [], { aliases = new Map()
     generics.set(key, names.get(target.toLowerCase()));
   }
   if (defaultFamily !== undefined && !names.has(defaultFamily.toLowerCase())) throw new TypeError('invalid default font family');
-  const family = (name, quoted = true) => {
+  const family = (name, quoted = true, strict = true) => {
     const key = name.toLowerCase();
     if (!quoted && generics.has(key)) return generics.get(key);
-    if (!quoted && (generic.has(key) || wide.has(key))) return name;
+    if (!quoted && wide.has(key)) {
+      if (strict) throw new CssError(`font-family: CSS-wide keyword ${name}`);
+      return name;
+    }
+    if (!quoted && generic.has(key)) return name;
     return names.get(key) ?? `varta_font_${prefix}_missing`;
   };
   // No per-turn cache: changing font/custom-property names forever must not
   // accumulate state outside the bounded live DOM and stylesheet inventory.
   const variable = (name) => `--varta-font-${prefix}-${Array.from(name,(unit)=>unit.charCodeAt(0).toString(16).padStart(4,'0')).join('')}`;
-  const tokens = (values) => values.map((token) => {
+  const tokens = (values, strict) => values.map((token) => {
     switch (token.kind) {
       case 'string': return JSON.stringify(family(token.value));
-      case 'ident': return family(token.value, false);
+      case 'ident': return family(token.value, false, strict);
       case 'function': {
         if (token.name.toLowerCase() === 'var') {
           const [name, ...fallback] = token.args;
           if (name?.kind !== 'ident' || !name.value.startsWith('--')) throw new TypeError('invalid font variable');
-          return `var(${variable(name.value)} ${tokens(fallback)})`;
+          return `var(${variable(name.value)} ${tokens(fallback, strict)})`;
         }
-        return `${token.name}(${tokens(token.args)})`;
+        return `${token.name}(${tokens(token.args, strict)})`;
       }
       case 'number': return token.raw;
       case 'dimension': return token.raw + token.unit;
@@ -52,14 +59,16 @@ export function createFontNamespace(prefix, families = [], { aliases = new Map()
       default: throw new TypeError('invalid font token');
     }
   }).join(' ');
-  const value = (text) => tokens(tokenizeValue(text));
+  /** A `font-family` value (and a variable's font value): CSS-wide keywords
+   * throw `CssError`. */
+  const value = (text) => tokens(tokenizeValue(text), true);
   const sheet = (rules) => {
     for (const rule of rules) {
       if (rule.style) {
         const declarations = [...rule.style].map((property) => [property, rule.style.getPropertyValue(property)]);
         for (const [property, text] of declarations) {
           if (property === 'font-family') rule.style.setProperty(property, value(text));
-          else if (property.startsWith('--')) rule.style.setProperty(variable(property), value(text));
+          else if (property.startsWith('--')) rule.style.setProperty(variable(property), tokens(tokenizeValue(text), false));
         }
       }
       if (rule.cssRules) sheet(rule.cssRules);

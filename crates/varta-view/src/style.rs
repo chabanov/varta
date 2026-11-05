@@ -157,10 +157,12 @@ impl<'a> Variables<'a> {
 /// Version of the native user-agent default table, [`NATIVE_UA_DEFAULTS`].
 /// Any change to a row's value or to the set of rows is a new version, so a
 /// recorded native observation names the defaults it was taken with.
-pub const NATIVE_UA_VERSION: u32 = 1;
+pub const NATIVE_UA_VERSION: u32 = 2;
 
 /// Font weight of `h1`–`h3` in the browser user-agent stylesheet (`bold`).
 pub(crate) const UA_BOLD_WEIGHT: f32 = 700.0;
+/// The `normal` font weight, which the control font resets to.
+pub(crate) const NORMAL_FONT_WEIGHT: f32 = 400.0;
 /// Inline-start padding of `ul`/`ol` (`padding-inline-start: 40px`).
 pub(crate) const UA_LIST_PADDING_PX: f32 = 40.0;
 /// Chrome's default fixed (monospace) font size over its default proportional
@@ -286,6 +288,11 @@ pub(crate) struct UaDefaults {
     /// `text-align` of form controls: `center` for `button`, `start` otherwise.
     /// These stop an ancestor's inherited alignment at the control.
     pub text_align: Option<crate::text::TextAlign>,
+    /// Chrome's `font: -webkit-small-control` on form controls: absent author
+    /// values reset the size to [`UA_CONTROL_FONT_SIZE_PX`] (an absolute
+    /// size), the weight and style to `normal` and `line-height` to `normal`.
+    /// The family stays inherited, as the official host makes it.
+    pub control_font: bool,
 }
 impl UaDefaults {
     const fn new(tag: varta_common::view::Tag) -> Self {
@@ -303,6 +310,7 @@ impl UaDefaults {
             padding_inline_start: 0.0,
             list: None,
             text_align: None,
+            control_font: false,
         }
     }
     const fn heading(tag: varta_common::view::Tag, scale: f32, margin: f32) -> Self {
@@ -327,6 +335,7 @@ impl UaDefaults {
     const fn control(tag: varta_common::view::Tag, align: crate::text::TextAlign) -> Self {
         Self {
             text_align: Some(align),
+            control_font: true,
             ..Self::new(tag)
         }
     }
@@ -337,7 +346,8 @@ impl UaDefaults {
 /// Chrome user-agent stylesheet (`h1 { font-size: 2em; margin-block: 0.67em;
 /// font-weight: bold }`, `ul { margin-block: 1em; padding-inline-start: 40px }`,
 /// `pre { font-family: monospace; white-space: pre; margin: 1em 0 }`, …).
-/// Control rows carry only `text-align`; their box defaults remain explicit.
+/// Control rows carry `text-align` and the control font; their box defaults
+/// are the [`NATIVE_CONTROL_DEFAULTS`] rows of the same version.
 pub(crate) const NATIVE_UA_DEFAULTS: &[UaDefaults] = {
     use crate::text::TextAlign;
     use varta_common::view::Tag;
@@ -387,6 +397,171 @@ pub(crate) const NATIVE_UA_DEFAULTS: &[UaDefaults] = {
 /// The user-agent row of `tag`, if the native table has one.
 pub(crate) fn ua_defaults(tag: varta_common::view::Tag) -> Option<&'static UaDefaults> {
     NATIVE_UA_DEFAULTS.iter().find(|row| row.tag == tag)
+}
+
+/// Chrome's `-webkit-small-control` font size: 10pt at 96 CSS pixels per
+/// inch (13.333px), independent of the host's medium size.
+pub(crate) const UA_CONTROL_FONT_SIZE_PX: f32 = 40.0 / 3.0;
+/// The HTML default `size` of a text field, in average characters. Varta
+/// has no `size` attribute, and `number` fields ignore it in Chrome.
+pub(crate) const UA_FIELD_COLUMNS: u32 = 20;
+/// The HTML default `cols` of a `textarea` (Varta has no `cols` attribute).
+pub(crate) const UA_TEXTAREA_COLUMNS: u32 = 20;
+/// The HTML default `rows` of a `textarea`; the `rows` attribute overrides it.
+pub(crate) const UA_TEXTAREA_ROWS: u32 = 2;
+/// The scrollbar gutter Chrome adds to an unsized themed `textarea`'s
+/// intrinsic width (observed in headless Chrome 156 on macOS for every font
+/// and size probed; it is not an overlay scrollbar's painted width).
+pub(crate) const UA_TEXTAREA_SCROLLBAR_GUTTER_PX: f32 = 16.0;
+/// The border box side of Chrome's checkbox and radio (13px at zoom 1).
+pub(crate) const UA_CHECKABLE_SIDE_PX: f32 = 13.0;
+
+/// Form controls whose user-agent box defaults differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ControlKind {
+    Button,
+    /// `input` of type text, search, password or number.
+    TextField,
+    Textarea,
+    Checkbox,
+    Radio,
+    Select,
+}
+impl ControlKind {
+    /// The kind of a form control element, if it is one.
+    pub(crate) fn of(element: &crate::tree::Element) -> Option<Self> {
+        use varta_common::view::Tag;
+        Some(match element.tag {
+            Tag::Button => Self::Button,
+            Tag::Textarea => Self::Textarea,
+            Tag::Select => Self::Select,
+            Tag::Input => match element.input_type() {
+                "checkbox" => Self::Checkbox,
+                "radio" => Self::Radio,
+                _ => Self::TextField,
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// How an unsized control computes its intrinsic content size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Intrinsic {
+    /// The size of its children (a button's label).
+    Content,
+    /// `columns` average characters wide and one line high (Chrome on macOS:
+    /// `⌈(columns − 1)·round(avg) + max(avg, ascent)⌉`, where `avg` is the
+    /// primary font's `x` advance).
+    Characters { columns: u32 },
+    /// `columns` rounded average characters plus
+    /// [`UA_TEXTAREA_SCROLLBAR_GUTTER_PX`] wide and `rows` lines high.
+    Lines { columns: u32, rows: u32 },
+    /// A square intrinsic content size (the theme square of a checkable),
+    /// which stretch alignment may grow; padding and borders are zero.
+    Square(f32),
+    /// Not modelled natively: an unsized control is refused.
+    Refused,
+}
+
+/// One control kind's user-agent box defaults, part of [`NATIVE_UA_VERSION`].
+/// They mirror Chrome's user-agent stylesheet under the official browser
+/// host's normalization (`box-sizing: border-box; margin: 0`). An author
+/// declaration of a property replaces its value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ControlDefaults {
+    pub kind: ControlKind,
+    /// Padding in CSS pixels, top/right/bottom/left.
+    pub padding: [f32; 4],
+    /// The computed border width on every side. Chrome's native theme draws
+    /// a one-pixel frame inside it; the rest is the control's fill.
+    pub border: f32,
+    pub intrinsic: Intrinsic,
+}
+
+/// Native control box defaults, version [`NATIVE_UA_VERSION`]: Chrome's
+/// `button { padding: 1px 6px; border: 2px outset }`, `input { padding: 1px
+/// 2px; border: 2px inset }`, `textarea { padding: 2px; border: 1px solid }`,
+/// `select { border: 1px solid }` and 13px checkable squares.
+pub(crate) const NATIVE_CONTROL_DEFAULTS: &[ControlDefaults] = &[
+    ControlDefaults {
+        kind: ControlKind::Button,
+        padding: [1.0, 6.0, 1.0, 6.0],
+        border: 2.0,
+        intrinsic: Intrinsic::Content,
+    },
+    ControlDefaults {
+        kind: ControlKind::TextField,
+        padding: [1.0, 2.0, 1.0, 2.0],
+        border: 2.0,
+        intrinsic: Intrinsic::Characters {
+            columns: UA_FIELD_COLUMNS,
+        },
+    },
+    ControlDefaults {
+        kind: ControlKind::Textarea,
+        padding: [2.0; 4],
+        border: 1.0,
+        intrinsic: Intrinsic::Lines {
+            columns: UA_TEXTAREA_COLUMNS,
+            rows: UA_TEXTAREA_ROWS,
+        },
+    },
+    ControlDefaults {
+        kind: ControlKind::Checkbox,
+        padding: [0.0; 4],
+        border: 0.0,
+        intrinsic: Intrinsic::Square(UA_CHECKABLE_SIDE_PX),
+    },
+    ControlDefaults {
+        kind: ControlKind::Radio,
+        padding: [0.0; 4],
+        border: 0.0,
+        intrinsic: Intrinsic::Square(UA_CHECKABLE_SIDE_PX),
+    },
+    // The select's popup and arrow belong to its own painter; an unsized or
+    // unthemed select keeps its explicit-style requirement.
+    ControlDefaults {
+        kind: ControlKind::Select,
+        padding: [0.0; 4],
+        border: 1.0,
+        intrinsic: Intrinsic::Refused,
+    },
+];
+
+/// The box defaults of `kind`.
+pub(crate) fn control_defaults(kind: ControlKind) -> &'static ControlDefaults {
+    NATIVE_CONTROL_DEFAULTS
+        .iter()
+        .find(|row| row.kind == kind)
+        // One row per kind is asserted by `control_rows_cover_every_kind_once`.
+        .unwrap_or(&NATIVE_CONTROL_DEFAULTS[0])
+}
+
+/// Author properties that make Chrome drop a control's native theme
+/// (`LayoutTheme::IsControlStyled`: an author background, border or radius).
+const THEME_BREAKING: &[varta_common::view::CssProperty] = {
+    use varta_common::view::CssProperty as P;
+    &[
+        P::BackgroundColor,
+        P::Border,
+        P::BorderTop,
+        P::BorderRight,
+        P::BorderBottom,
+        P::BorderLeft,
+        P::BorderWidth,
+        P::BorderStyle,
+        P::BorderColor,
+        P::BorderRadius,
+    ]
+};
+
+/// Whether a control with these cascaded author properties keeps Chrome's
+/// native theme (none of [`THEME_BREAKING`] is declared).
+pub(crate) fn themed(properties: &BTreeMap<varta_common::view::CssProperty, String>) -> bool {
+    !THEME_BREAKING
+        .iter()
+        .any(|property| properties.contains_key(property))
 }
 
 /// Incremental cross-sheet anchors avoid scanning unrelated (or empty) sheets.
@@ -495,7 +670,62 @@ mod ua_tests {
             Some(crate::text::TextAlign::Center)
         );
         assert!(ua_defaults(Tag::Div).is_none());
-        assert_eq!(NATIVE_UA_VERSION, 1);
+        assert_eq!(NATIVE_UA_VERSION, 2);
+    }
+
+    /// Chrome 156 computed control defaults under the official host's
+    /// `box-sizing: border-box; margin: 0` normalization.
+    #[test]
+    fn control_rows_cover_every_kind_once_with_browser_values() {
+        let kinds = [
+            ControlKind::Button,
+            ControlKind::TextField,
+            ControlKind::Textarea,
+            ControlKind::Checkbox,
+            ControlKind::Radio,
+            ControlKind::Select,
+        ];
+        assert_eq!(NATIVE_CONTROL_DEFAULTS.len(), kinds.len());
+        for kind in kinds {
+            assert_eq!(
+                NATIVE_CONTROL_DEFAULTS
+                    .iter()
+                    .filter(|row| row.kind == kind)
+                    .count(),
+                1
+            );
+            assert_eq!(control_defaults(kind).kind, kind);
+        }
+        let button = control_defaults(ControlKind::Button);
+        assert_eq!((button.padding, button.border), ([1.0, 6.0, 1.0, 6.0], 2.0));
+        let field = control_defaults(ControlKind::TextField);
+        assert_eq!((field.padding, field.border), ([1.0, 2.0, 1.0, 2.0], 2.0));
+        assert_eq!(field.intrinsic, Intrinsic::Characters { columns: 20 });
+        let area = control_defaults(ControlKind::Textarea);
+        assert_eq!((area.padding, area.border), ([2.0; 4], 1.0));
+        assert_eq!(
+            control_defaults(ControlKind::Radio).intrinsic,
+            Intrinsic::Square(13.0)
+        );
+        assert!((UA_CONTROL_FONT_SIZE_PX - 13.3333).abs() < 1e-3);
+        // Exactly the control rows carry the control font.
+        for row in NATIVE_UA_DEFAULTS {
+            assert_eq!(row.control_font, row.text_align.is_some());
+        }
+    }
+
+    #[test]
+    fn author_background_border_or_radius_drops_the_theme() {
+        use varta_common::view::CssProperty as P;
+        let mut properties = BTreeMap::new();
+        properties.insert(P::Color, "#f00".to_owned());
+        properties.insert(P::Padding, "4px".to_owned());
+        assert!(themed(&properties));
+        for property in [P::BackgroundColor, P::BorderLeft, P::BorderRadius] {
+            let mut styled = properties.clone();
+            styled.insert(property, "0".to_owned());
+            assert!(!themed(&styled), "{property:?}");
+        }
     }
 
     /// Chrome 156 computed sizes with a 16px proportional and 13px fixed default.

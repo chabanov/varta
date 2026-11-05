@@ -2788,7 +2788,10 @@ draft.
   counter without clearing existing entries. Permission/platform refusals never
   enter the successful-open history. Retention does not change action status or
   broker decisions. Clipboard diagnostics retain the last value under the existing
-  per-value limit; the prompt counter saturates. Browser permission audits keep
+  per-value limit; the prompt counter saturates. `stepsRefused`, present only
+after a refusal, counts number-field Up/Down presses native stepping refused
+outside its exact range (saturating); the browser host keeps Chrome's stepping
+and never reports it. Browser permission audits keep
   their separate retention contract; these native diagnostics do not impose a
   browser URL-action count limit.
 - **Parsed stylesheet work.** The limits table gives a work allowance and one
@@ -3227,7 +3230,7 @@ not imply complete CSS rendering or typography acceptance.
 | 50 | `outline-style` | `none \| solid` | — |
 | 51 | `outline-color` | `<color>` | — |
 | 52 | `outline-offset` | `<length>` | — |
-| 53 | `font-family` | `[<string> \| <ident> \| sans-serif \| serif \| monospace \| system-ui]#` | artifact fonts or generic families |
+| 53 | `font-family` | `[<string> \| <ident> \| sans-serif \| serif \| monospace \| system-ui]#` | artifact fonts or generic families; no CSS-wide keywords |
 | 54 | `font-size` | `<length-percentage>` | — |
 | 55 | `font-weight` | `normal \| bold \| 400 \| 500 \| 600 \| 700` | — |
 | 56 | `font-style` | `normal \| italic` | — |

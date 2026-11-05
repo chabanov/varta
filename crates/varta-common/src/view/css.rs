@@ -16,6 +16,26 @@ use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE};
 pub const MAX_VALUE_TOKENS: usize = 128;
 /// Hexadecimal digits a `<hex>` colour admits: `#rgb`, `#rrggbb`, `#rrggbbaa`.
 pub const HEX_COLOR_DIGITS: [usize; 3] = [3, 6, 8];
+/// CSS-wide keywords, shared by every keyword check of the subset. A family
+/// name is a custom identifier, which excludes them, and the subset does not
+/// admit them as `font-family` values: the browser would roll back to its own
+/// font, which no native host can supply.
+pub const CSS_WIDE_KEYWORDS: &[&str] = &["inherit", "initial", "unset", "revert", "revert-layer"];
+
+/// The CSS-wide keyword an unquoted `font-family` component of `value`
+/// names (ASCII case-insensitively), if any: the diagnostic for a value
+/// [`property_value`] refuses for that reason. Native `set_style`, the
+/// stylesheet checker and the compiler name it in their errors.
+#[must_use]
+pub fn font_family_css_wide_keyword(value: &str) -> Option<&'static str> {
+    lex_value(value)?.iter().find_map(|token| match token {
+        V::Word(word) => CSS_WIDE_KEYWORDS
+            .iter()
+            .copied()
+            .find(|keyword| word.eq_ignore_ascii_case(keyword)),
+        _ => None,
+    })
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum G {
@@ -527,6 +547,7 @@ pub fn property_value(property: CssProperty, value: &str) -> bool {
         CssProperty::Opacity => {
             words().all(|word| word.parse::<f64>().is_ok_and(|n| (0.0..=1.0).contains(&n)))
         }
+        CssProperty::FontFamily => font_family_css_wide_keyword(value).is_none(),
         _ => true,
     }
 }
@@ -562,6 +583,21 @@ mod tests {
         assert!(property_value(CssProperty::Opacity, "0.5"));
         assert!(!property_value(CssProperty::Color, "#fff;"));
         assert!(!property_value(CssProperty::Color, "URL(x)"));
+        for value in [
+            "inherit",
+            "INITIAL",
+            "\"A\", unset",
+            "revert",
+            "revert-layer, serif",
+        ] {
+            assert!(!property_value(CssProperty::FontFamily, value), "{value}");
+            assert!(font_family_css_wide_keyword(value).is_some(), "{value}");
+        }
+        // A quoted name is a family; a keyword inside a longer name is not one.
+        for value in ["\"inherit\"", "inheritance, serif", "monospace"] {
+            assert!(property_value(CssProperty::FontFamily, value), "{value}");
+            assert_eq!(font_family_css_wide_keyword(value), None, "{value}");
+        }
         assert!(custom_value("#0a0a0a"));
         assert!(!custom_value("a; b"));
         assert!(!custom_value(" "));

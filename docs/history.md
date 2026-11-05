@@ -46,6 +46,31 @@ were added for the over-budget refusal and for CPU retained damage after a mixed
 border mutation, which the vector-path rewrite had dropped. The viewport edge
 and the color proof block size each have one named owner.
 
+## 2026-11-05 — Native control defaults (wave 3, `w3-native-controls`, scoped)
+
+Native rendering stopped refusing controls without explicit styles. A new
+version of the native user-agent table adds Chrome's control font, per-kind
+padding and borders and intrinsic sizes; controls without author background,
+border or radius paint Chrome's native theme (fills, one-pixel frames, check
+marks, radio dots), disabled controls its translucent colors, and a focused
+control without an author outline Chrome's focus ring. `input type=number`
+edits its string value as text with Undo. Measuring Chrome showed that its
+macOS text-field width follows the font's `x` advance and ascent rather than
+the OS/2 average width, that field themes snap to device pixels with a
+whole-pixel frame while button frames scale, and that control text needs
+whole-pixel line spacing at the 13.333px control size. CSS-wide keywords in
+`font-family` are now refused by the shared validator and the browser font
+namespace, and a paint-time reshaping refusal names its flow node. After
+review, checkable squares became intrinsic sizes that stretch, an author
+`outline-color`/`outline-offset` without an outline style restyles Chrome's
+auto ring instead of removing it, rich control labels keep whole-pixel line
+spacing (a rich flow now measures each run with its own span's line height),
+CSS-wide `font-family` keywords are named in every diagnostic, and number
+fields step with ArrowUp/ArrowDown as Chrome does (owner decision; exact
+decimal arithmetic, each step an Undo entry). Evidence and open items are in
+the
+[development plan](development-plan.md#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05).
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only
