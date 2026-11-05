@@ -135,7 +135,7 @@
              self.enqueue_selected_rows_change_if_needed(node);
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -23,3 +23,7 @@
+@@ -23,3 +23,9 @@
  pub use subclass::SubclassingAdapter;
  
  pub use objc2_foundation::{NSArray, NSObject, NSPoint};
@@ -143,6 +143,8 @@
 +mod live;
 +
 +mod text_scroll;
++
++mod scroll;
 --- /dev/null
 +++ b/src/live.rs
 @@ -0,0 +1,403 @@
@@ -575,10 +577,49 @@
      }
  
      pub(crate) fn description(&self) -> Option<String> {
-@@ -1046,6 +1038,24 @@
-             });
-         }
- 
+@@ -592,7 +584,11 @@
+                 });
+             } else if let Some(number) = downcast_ref::<NSNumber>(value) {
+                 self.resolve_with_context(|node, tree, context| {
+-                    if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
++                    if crate::scroll::scrolled_area(node).is_some() {
++                        if let Some(request) = crate::scroll::position_request(node, tree.state(), number.doubleValue()) {
++                            context.do_action(request);
++                        }
++                    } else if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
+                         context.do_action(ActionRequest {
+                             action: Action::SetValue,
+                             target_tree,
+@@ -712,6 +708,10 @@
+         #[method(accessibilityPerformIncrement)]
+         fn increment(&self) -> bool {
+             self.resolve_with_context(|node, tree, context| {
++                if let Some(request) = crate::scroll::item_request(node, tree.state(), crate::scroll::Direction::Down) {
++                    context.do_action(request);
++                    return true;
++                }
+                 let supports_increment = node.supports_increment(&filter);
+                 if supports_increment {
+                     if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
+@@ -731,6 +731,10 @@
+         #[method(accessibilityPerformDecrement)]
+         fn decrement(&self) -> bool {
+             self.resolve_with_context(|node, tree, context| {
++                if let Some(request) = crate::scroll::item_request(node, tree.state(), crate::scroll::Direction::Up) {
++                    context.do_action(request);
++                    return true;
++                }
+                 let supports_decrement = node.supports_decrement(&filter);
+                 if supports_decrement {
+                     if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
+@@ -1042,6 +1046,24 @@
+                             });
+                         }
+                     }
++                }
++            });
++        }
++
 +        #[method(accessibilityVisibleCharacterRange)]
 +        fn visible_character_range(&self) -> NSRange {
 +            self.resolve(|node| crate::text_scroll::visible_range(node).map(NSRange::from))
@@ -593,25 +634,49 @@
 +                    node, tree.state(), range.location, range.length,
 +                ) {
 +                    context.do_action(request);
-+                }
-+            });
+                 }
+             });
+         }
+@@ -1204,6 +1226,15 @@
+         // of the legacy methods below only needs to cover actions not already
+         // handled by the newer methods.
+ 
++        #[method_id(accessibilityVerticalScrollBar)]
++        fn vertical_scroll_bar(&self) -> Option<Id<PlatformNode>> {
++            self.resolve_with_context(|node, _, context| {
++                crate::scroll::vertical_scroll_bar(node)
++                    .map(|bar| context.get_or_create_platform_node(bar.id()))
++            })
++            .flatten()
 +        }
 +
-         #[method(isAccessibilityRequired)]
-         fn is_required(&self) -> bool {
-             self.resolve(|node| node.is_required())
-@@ -1219,7 +1229,9 @@
+         #[method_id(accessibilityActionNames)]
+         fn action_names(&self) -> Id<NSArray<NSString>> {
+             let mut result = vec![];
+@@ -1211,6 +1242,7 @@
+                 if node.supports_action(Action::ScrollIntoView, &filter) {
+                     result.push(ns_string!(SCROLL_TO_VISIBLE_ACTION).copy());
+                 }
++                result.extend(crate::scroll::page_action_names(node).map(NSString::from_str));
+             });
+             NSArray::from_vec(result)
+         }
+@@ -1218,8 +1250,12 @@
+         #[method(accessibilityPerformAction:)]
          fn perform_action(&self, action: &NSString) {
              self.resolve_with_context(|node, tree, context| {
-                 if action == ns_string!(SCROLL_TO_VISIBLE_ACTION) {
+-                if action == ns_string!(SCROLL_TO_VISIBLE_ACTION) {
 -                    if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
++                if let Some(request) = crate::scroll::page_request(node, tree.state(), &action.to_string()) {
++                    context.do_action(request);
++                } else if action == ns_string!(SCROLL_TO_VISIBLE_ACTION) {
 +                    if let Some(request) = crate::text_scroll::selection_scroll_request(node, tree.state()) {
 +                        context.do_action(request);
 +                    } else if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
                          context.do_action(ActionRequest {
                              action: Action::ScrollIntoView,
                              target_tree,
-@@ -1234,6 +1246,10 @@
+@@ -1234,6 +1270,10 @@
          #[method(isAccessibilitySelectorAllowed:)]
          fn is_selector_allowed(&self, selector: Sel) -> bool {
              self.resolve(|node| {
@@ -622,16 +687,199 @@
                  if selector == sel!(setAccessibilityFocused:) {
                      return node.is_focusable(&filter);
                  }
-@@ -1246,7 +1262,8 @@
+@@ -1241,12 +1281,16 @@
+                     return node.is_clickable(&filter);
+                 }
+                 if selector == sel!(accessibilityPerformIncrement) {
+-                    return node.supports_increment(&filter);
++                    return node.supports_increment(&filter) || crate::scroll::routes_items(node);
+                 }
                  if selector == sel!(accessibilityPerformDecrement) {
-                     return node.supports_decrement(&filter);
+-                    return node.supports_decrement(&filter);
++                    return node.supports_decrement(&filter) || crate::scroll::routes_items(node);
                  }
 -                if selector == sel!(accessibilityNumberOfCharacters)
++                if selector == sel!(accessibilityVerticalScrollBar) {
++                    return crate::scroll::vertical_scroll_bar(node).is_some();
++                }
 +                if selector == sel!(accessibilityVisibleCharacterRange)
 +                    || selector == sel!(accessibilityNumberOfCharacters)
                      || selector == sel!(accessibilitySelectedText)
                      || selector == sel!(accessibilitySelectedTextRange)
                      || selector == sel!(accessibilityInsertionPointLineNumber)
+@@ -1263,6 +1307,9 @@
+                     return node.supports_text_ranges();
+                 }
+                 if selector == sel!(setAccessibilityValue:) {
++                    if crate::scroll::scrolled_area(node).is_some() {
++                        return crate::scroll::routes_position(node);
++                    }
+                     return (node.supports_text_ranges() && !node.is_read_only()) || node.supports_action(Action::SetValue, &filter);
+                 }
+                 if selector == sel!(isAccessibilitySelected) {
+--- /dev/null
++++ b/src/scroll.rs
+@@ -0,0 +1,160 @@
++// Varta addition, under the package's Apache-2.0 OR MIT licenses.
++//! Typed routes for AppKit's scroll-area and scroll-bar actions; no native calls.
++//!
++//! AppKit's own scroll area (`NSScrollView`, role `AXScrollArea`) advertises the
++//! legacy actions `AXScrollUpByPage`/`AXScrollDownByPage` (and left/right), and
++//! exposes its `AXVerticalScrollBar`, whose `AXValue` is a settable position
++//! in 0..=1. A scroll area here is any node supporting AccessKit's vertical
++//! scroll actions. Its vertical scroll bar is a vertical `ScrollBar` child the
++//! producer publishes with that 0..=1 position. The bar routes increment and
++//! decrement (one item, as AX documents a scroll bar's line actions) and its
++//! settable value to the area's existing typed actions.
++use accesskit::{Action, ActionData, ActionRequest, Orientation, Point, Role, ScrollUnit};
++use accesskit_consumer::{NodeRef, TreeState};
++
++/// AppKit's scroll-area page actions, as `NSScrollView` advertises them.
++pub(crate) const SCROLL_UP_BY_PAGE: &str = "AXScrollUpByPage";
++pub(crate) const SCROLL_DOWN_BY_PAGE: &str = "AXScrollDownByPage";
++/// The scroll-bar value range, as `NSScroller` reports it.
++const POSITION_MIN: f64 = 0.0;
++const POSITION_MAX: f64 = 1.0;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(crate) enum Direction {
++    Up,
++    Down,
++}
++impl Direction {
++    fn action(self) -> Action {
++        match self {
++            Self::Up => Action::ScrollUp,
++            Self::Down => Action::ScrollDown,
++        }
++    }
++}
++
++fn request(
++    node: &NodeRef,
++    tree: &TreeState,
++    action: Action,
++    data: ActionData,
++) -> Option<ActionRequest> {
++    if !node.data().supports_action(action) {
++        return None;
++    }
++    let (target_node, target_tree) = tree.locate_node(node.id())?;
++    Some(ActionRequest {
++        action,
++        target_tree,
++        target_node,
++        data: Some(data),
++    })
++}
++
++/// The page action names a node supports, in AppKit's order.
++pub(crate) fn page_action_names(node: &NodeRef) -> impl Iterator<Item = &'static str> {
++    [
++        (Direction::Up, SCROLL_UP_BY_PAGE),
++        (Direction::Down, SCROLL_DOWN_BY_PAGE),
++    ]
++    .into_iter()
++    .filter(|(direction, _)| node.data().supports_action(direction.action()))
++    .map(|(_, name)| name)
++}
++
++/// A page scroll for a named AppKit action, if this node supports it.
++pub(crate) fn page_request(node: &NodeRef, tree: &TreeState, name: &str) -> Option<ActionRequest> {
++    let direction = match name {
++        SCROLL_UP_BY_PAGE => Direction::Up,
++        SCROLL_DOWN_BY_PAGE => Direction::Down,
++        _ => return None,
++    };
++    request(
++        node,
++        tree,
++        direction.action(),
++        ActionData::ScrollUnit(ScrollUnit::Page),
++    )
++}
++
++fn is_vertical_bar(node: &NodeRef) -> bool {
++    node.role() == Role::ScrollBar && node.orientation() == Some(Orientation::Vertical)
++}
++
++/// The scroll area a vertical scroll bar controls: its parent, when that
++/// parent has a vertical scroll range.
++pub(crate) fn scrolled_area<'a>(bar: &NodeRef<'a>) -> Option<NodeRef<'a>> {
++    if !is_vertical_bar(bar) {
++        return None;
++    }
++    let area = bar.parent()?;
++    (area.scroll_y_max().is_some()
++        && [
++            Action::ScrollUp,
++            Action::ScrollDown,
++            Action::SetScrollOffset,
++        ]
++        .into_iter()
++        .any(|action| area.data().supports_action(action)))
++    .then_some(area)
++}
++
++/// An area's vertical scroll bar child.
++pub(crate) fn vertical_scroll_bar<'a>(area: &NodeRef<'a>) -> Option<NodeRef<'a>> {
++    area.children()
++        .find(|child| scrolled_area(child).is_some_and(|parent| parent.id() == area.id()))
++}
++
++/// One item up or down, for the bar's decrement and increment.
++pub(crate) fn item_request(
++    bar: &NodeRef,
++    tree: &TreeState,
++    direction: Direction,
++) -> Option<ActionRequest> {
++    let area = scrolled_area(bar)?;
++    request(
++        &area,
++        tree,
++        direction.action(),
++        ActionData::ScrollUnit(ScrollUnit::Item),
++    )
++}
++
++/// An absolute offset for a settable bar position, in the area's own scroll
++/// coordinates. Non-finite positions are refused; others are clamped.
++pub(crate) fn position_request(
++    bar: &NodeRef,
++    tree: &TreeState,
++    position: f64,
++) -> Option<ActionRequest> {
++    if !position.is_finite() {
++        return None;
++    }
++    let area = scrolled_area(bar)?;
++    let min = area.scroll_y_min().unwrap_or(0.0);
++    let max = area.scroll_y_max()?;
++    if !min.is_finite() || !max.is_finite() || max < min {
++        return None;
++    }
++    let fraction = position.clamp(POSITION_MIN, POSITION_MAX);
++    request(
++        &area,
++        tree,
++        Action::SetScrollOffset,
++        ActionData::SetScrollOffset(Point {
++            x: area.scroll_x().unwrap_or(0.0),
++            y: min + fraction * (max - min),
++        }),
++    )
++}
++
++/// Whether a bar routes increment/decrement or a settable position.
++pub(crate) fn routes_items(bar: &NodeRef) -> bool {
++    scrolled_area(bar).is_some_and(|area| {
++        area.data().supports_action(Action::ScrollUp)
++            || area.data().supports_action(Action::ScrollDown)
++    })
++}
++pub(crate) fn routes_position(bar: &NodeRef) -> bool {
++    scrolled_area(bar).is_some_and(|area| area.data().supports_action(Action::SetScrollOffset))
++}
 --- /dev/null
 +++ b/src/text_scroll.rs
 @@ -0,0 +1,95 @@

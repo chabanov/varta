@@ -255,3 +255,117 @@ fn offscreen_element_scroll_does_not_become_activation_and_newly_unsupported_act
             .is_none()
     );
 }
+
+/// The pinned macOS adapter's exact scroll-route module, applied to Varta's
+/// real publication through the AccessKit consumer.
+#[test]
+fn macos_page_item_and_position_routes_reach_the_typed_core_actions() {
+    use super::scroll_route_planner as routes;
+    let (bridge, mut view, metadata, version, pane, target) = setup();
+    let update = bridge.state.lock().unwrap().latest.clone().unwrap();
+    let node = |id| {
+        update
+            .nodes
+            .iter()
+            .find(|(n, _)| *n == id)
+            .unwrap()
+            .1
+            .clone()
+    };
+    let bar = *node(pane).children().last().unwrap();
+    let published = node(bar);
+    assert_eq!(published.role(), Role::ScrollBar);
+    assert_eq!(
+        published.orientation(),
+        Some(accesskit::Orientation::Vertical)
+    );
+    assert_eq!(
+        (
+            published.numeric_value(),
+            published.min_numeric_value(),
+            published.max_numeric_value()
+        ),
+        (Some(0.0), Some(0.0), Some(1.0))
+    );
+    assert!(published.bounds().is_none());
+    let tree = accesskit_consumer::Tree::new(update.clone(), true);
+    let state = tree.state();
+    let area = state.node_by_tree_local_id(pane, TreeId::ROOT).unwrap();
+    let scroll_bar = state.node_by_tree_local_id(bar, TreeId::ROOT).unwrap();
+    let section = state.node_by_tree_local_id(target, TreeId::ROOT).unwrap();
+    assert_eq!(
+        routes::page_action_names(&area).collect::<Vec<_>>(),
+        [routes::SCROLL_UP_BY_PAGE, routes::SCROLL_DOWN_BY_PAGE]
+    );
+    assert_eq!(routes::page_action_names(&section).count(), 0);
+    assert_eq!(
+        routes::vertical_scroll_bar(&area).unwrap().id(),
+        scroll_bar.id()
+    );
+    assert!(routes::vertical_scroll_bar(&section).is_none());
+    assert!(routes::routes_items(&scroll_bar) && routes::routes_position(&scroll_bar));
+    assert!(!routes::routes_items(&area) && !routes::routes_position(&section));
+    assert!(routes::page_request(&area, state, "AXScrollToVisible").is_none());
+    assert!(routes::item_request(&area, state, routes::Direction::Down).is_none());
+    for position in [f64::NAN, f64::INFINITY] {
+        assert!(routes::position_request(&scroll_bar, state, position).is_none());
+    }
+    let max = area.scroll_y_max().unwrap();
+    let requests = [
+        routes::page_request(&area, state, routes::SCROLL_DOWN_BY_PAGE).unwrap(),
+        routes::page_request(&area, state, routes::SCROLL_UP_BY_PAGE).unwrap(),
+        routes::item_request(&scroll_bar, state, routes::Direction::Down).unwrap(),
+        routes::item_request(&scroll_bar, state, routes::Direction::Up).unwrap(),
+        routes::position_request(&scroll_bar, state, 0.5).unwrap(),
+        // Out-of-range positions clamp to the scroll range.
+        routes::position_request(&scroll_bar, state, 2.0).unwrap(),
+    ];
+    assert!(requests.iter().all(|r| r.target_node == pane));
+    let expected = [
+        Scroll::Down(Unit::Page),
+        Scroll::Up(Unit::Page),
+        Scroll::Down(Unit::Item),
+        Scroll::Up(Unit::Item),
+    ];
+    let mut version = version;
+    let mut metadata = metadata;
+    for (index, request) in requests.into_iter().enumerate() {
+        bridge.enqueue(request);
+        let pending = bridge.take_current(version).unwrap();
+        match (index, &pending.action) {
+            (0..=3, AccessibilityAction::Scroll(action)) => assert_eq!(*action, expected[index]),
+            (4, AccessibilityAction::Scroll(Scroll::To(offset))) => {
+                assert_eq!(offset.value(), max / 2.0)
+            }
+            (5, AccessibilityAction::Scroll(Scroll::To(offset))) => {
+                assert_eq!(offset.value(), max)
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(
+            view.accessibility_input_from_frame(
+                &pending.identity,
+                &pending.action,
+                &metadata,
+                &mut Deny
+            )
+            .unwrap()
+        );
+        version.revision += 1;
+        metadata = view.rasterize_boxes(150, 100).unwrap().into_metadata();
+        bridge
+            .publish(
+                version.revision,
+                &view.accessibility_tree(),
+                &metadata,
+                version,
+                "scroll",
+            )
+            .unwrap();
+    }
+    // The bar keeps its native identity across republications and tracks the
+    // presented offset: fully scrolled after the last request.
+    let update = bridge.state.lock().unwrap().latest.clone().unwrap();
+    let (_, bar_node) = update.nodes.iter().find(|(n, _)| *n == bar).unwrap();
+    assert_eq!(bar_node.numeric_value(), Some(1.0));
+}

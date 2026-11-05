@@ -584,7 +584,11 @@ declare_class!(
                 });
             } else if let Some(number) = downcast_ref::<NSNumber>(value) {
                 self.resolve_with_context(|node, tree, context| {
-                    if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
+                    if crate::scroll::scrolled_area(node).is_some() {
+                        if let Some(request) = crate::scroll::position_request(node, tree.state(), number.doubleValue()) {
+                            context.do_action(request);
+                        }
+                    } else if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
                         context.do_action(ActionRequest {
                             action: Action::SetValue,
                             target_tree,
@@ -704,6 +708,10 @@ declare_class!(
         #[method(accessibilityPerformIncrement)]
         fn increment(&self) -> bool {
             self.resolve_with_context(|node, tree, context| {
+                if let Some(request) = crate::scroll::item_request(node, tree.state(), crate::scroll::Direction::Down) {
+                    context.do_action(request);
+                    return true;
+                }
                 let supports_increment = node.supports_increment(&filter);
                 if supports_increment {
                     if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
@@ -723,6 +731,10 @@ declare_class!(
         #[method(accessibilityPerformDecrement)]
         fn decrement(&self) -> bool {
             self.resolve_with_context(|node, tree, context| {
+                if let Some(request) = crate::scroll::item_request(node, tree.state(), crate::scroll::Direction::Up) {
+                    context.do_action(request);
+                    return true;
+                }
                 let supports_decrement = node.supports_decrement(&filter);
                 if supports_decrement {
                     if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
@@ -1214,6 +1226,15 @@ declare_class!(
         // of the legacy methods below only needs to cover actions not already
         // handled by the newer methods.
 
+        #[method_id(accessibilityVerticalScrollBar)]
+        fn vertical_scroll_bar(&self) -> Option<Id<PlatformNode>> {
+            self.resolve_with_context(|node, _, context| {
+                crate::scroll::vertical_scroll_bar(node)
+                    .map(|bar| context.get_or_create_platform_node(bar.id()))
+            })
+            .flatten()
+        }
+
         #[method_id(accessibilityActionNames)]
         fn action_names(&self) -> Id<NSArray<NSString>> {
             let mut result = vec![];
@@ -1221,6 +1242,7 @@ declare_class!(
                 if node.supports_action(Action::ScrollIntoView, &filter) {
                     result.push(ns_string!(SCROLL_TO_VISIBLE_ACTION).copy());
                 }
+                result.extend(crate::scroll::page_action_names(node).map(NSString::from_str));
             });
             NSArray::from_vec(result)
         }
@@ -1228,7 +1250,9 @@ declare_class!(
         #[method(accessibilityPerformAction:)]
         fn perform_action(&self, action: &NSString) {
             self.resolve_with_context(|node, tree, context| {
-                if action == ns_string!(SCROLL_TO_VISIBLE_ACTION) {
+                if let Some(request) = crate::scroll::page_request(node, tree.state(), &action.to_string()) {
+                    context.do_action(request);
+                } else if action == ns_string!(SCROLL_TO_VISIBLE_ACTION) {
                     if let Some(request) = crate::text_scroll::selection_scroll_request(node, tree.state()) {
                         context.do_action(request);
                     } else if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
@@ -1257,10 +1281,13 @@ declare_class!(
                     return node.is_clickable(&filter);
                 }
                 if selector == sel!(accessibilityPerformIncrement) {
-                    return node.supports_increment(&filter);
+                    return node.supports_increment(&filter) || crate::scroll::routes_items(node);
                 }
                 if selector == sel!(accessibilityPerformDecrement) {
-                    return node.supports_decrement(&filter);
+                    return node.supports_decrement(&filter) || crate::scroll::routes_items(node);
+                }
+                if selector == sel!(accessibilityVerticalScrollBar) {
+                    return crate::scroll::vertical_scroll_bar(node).is_some();
                 }
                 if selector == sel!(accessibilityVisibleCharacterRange)
                     || selector == sel!(accessibilityNumberOfCharacters)
@@ -1280,6 +1307,9 @@ declare_class!(
                     return node.supports_text_ranges();
                 }
                 if selector == sel!(setAccessibilityValue:) {
+                    if crate::scroll::scrolled_area(node).is_some() {
+                        return crate::scroll::routes_position(node);
+                    }
                     return (node.supports_text_ranges() && !node.is_read_only()) || node.supports_action(Action::SetValue, &filter);
                 }
                 if selector == sel!(isAccessibilitySelected) {

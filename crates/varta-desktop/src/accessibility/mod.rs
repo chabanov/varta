@@ -657,5 +657,8 @@ mod live_tests;
 #[cfg(test)]
 mod platform_scroll_tests;
 #[cfg(test)]
+#[path = "../../../../vendor/accesskit_macos/src/scroll.rs"]
+mod scroll_route_planner;
+#[cfg(test)]
 #[path = "../../../../vendor/accesskit_macos/src/text_scroll.rs"]
 mod text_scroll_planner;
