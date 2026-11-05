@@ -64,7 +64,7 @@ fn replay() -> Value {
         "format":r::LOG_FORMAT,"version":r::LOG_VERSION,"maxLogBytes":r::MAX_LOG_BYTES,
         "maxRequests":r::MAX_LOG_REQUESTS,"maxEvents":r::MAX_LOG_EVENTS,
         "maxFailureBytes":r::MAX_FAILURE_TEXT_BYTES,"minStatus":r::MIN_STATUS,"maxStatus":r::MAX_STATUS,
-        "unscriptedStep":r::UNSCRIPTED_STEP,
+        "unscriptedStep":r::UNSCRIPTED_STEP,"maxIndex":r::MAX_LOG_INDEX,
         "kinds":LoggedEvent::KINDS,"reads":[LoggedRead::Text.name(),LoggedRead::Bytes.name()],
         "errors":errors,
     })

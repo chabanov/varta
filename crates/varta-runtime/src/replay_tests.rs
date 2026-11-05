@@ -111,14 +111,19 @@ fn session(
     network: NetworkMode,
     script: &str,
 ) -> ViewReport {
+    let run = RunOptions {
+        requested: requested.to_vec(),
+        budgets,
+        ..RunOptions::default()
+    };
+    session_with(bytes, run, network, script)
+}
+/// One scripted session with explicit run options.
+fn session_with(bytes: &[u8], run: RunOptions, network: NetworkMode, script: &str) -> ViewReport {
     VartaRuntime::new().run_view(
         bytes,
         ApplicationOptions {
-            run: RunOptions {
-                requested: requested.to_vec(),
-                budgets,
-                ..RunOptions::default()
-            },
+            run,
             network,
             ..ApplicationOptions::default()
         },
@@ -569,5 +574,173 @@ fn recordings_stop_at_their_event_limit() {
     assert_eq!(
         crate::replay::Recorder::new().event(chunk("")),
         Err(ReplayError::Unrecordable { request })
+    );
+}
+
+#[test]
+fn a_later_request_aborted_in_its_start_turn_keeps_its_logged_place() {
+    // A and B start in one turn and B is aborted at once: B claims logged
+    // request 1 when it starts, so its abort is the log's first event while
+    // A's completions follow. The browser host replays this log
+    // (network-replay.test.mjs, scripts/test-browser-replay.mjs).
+    let server = Loopback::start();
+    let bytes = program(
+        &server.base,
+        "async function run(): Promise<void> {
+           const early = new AbortController();
+           const first = fetch(BASE + '/hello');
+           const second = fetch(BASE + '/json', { signal: early.signal });
+           early.abort();
+           let outcome = 'resolved';
+           try { await second; } catch (error) { outcome = error instanceof DOMException ? error.name : 'other'; }
+           const response = await first;
+           const text = await response.text();
+           show(`second ${outcome}, first ${response.status} ${text.trim()}`);
+         }",
+    );
+    let grants = [network(&[&server.base], &["content-type"])];
+    let (log, recorded) = record_and_replay(&bytes, &grants, BudgetRequest::default(), WAIT);
+    assert!(
+        recorded.report.output.lines[0].starts_with("varta log: second AbortError, first 200 "),
+        "{:?}",
+        recorded.report.output.lines
+    );
+    assert_eq!(
+        log.requests
+            .iter()
+            .map(|request| request.url.clone())
+            .collect::<Vec<_>>(),
+        [
+            format!("{}/hello", server.base),
+            format!("{}/json", server.base)
+        ]
+    );
+    assert!(matches!(
+        log.events[0],
+        LoggedEvent::Abort { request: 1, .. }
+    ));
+    assert!(matches!(
+        log.events[1],
+        LoggedEvent::Head { request: 0, .. }
+    ));
+    // Swapping the two logged requests diverges at A's start.
+    let mut swapped = (*log).clone();
+    swapped.requests.swap(0, 1);
+    let diverged = session(
+        &bytes,
+        &grants,
+        BudgetRequest::default(),
+        NetworkMode::Replay(Arc::new(swapped)),
+        WAIT,
+    );
+    assert!(matches!(
+        diverged.report.failure,
+        Some(RuntimeError::Replay(ReplayError::Request {
+            request: 0,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn net_get_and_net_fetch_modules_are_refused_before_recording_or_replay() {
+    // They reach the network outside the request transport: a recording
+    // would miss them and a replay would make them for real.
+    let server = Loopback::start();
+    let empty = Arc::new(NetworkLog::default());
+    for (call, operation) in [
+        ("get", varta_common::HostOperation::NetGet16),
+        ("fetch", varta_common::HostOperation::NetFetch16),
+    ] {
+        let bytes = program(
+            &server.base,
+            &format!(
+                "async function run(): Promise<void> {{ console.log(String(varta.net.{call}(BASE + '/hello'))); }}"
+            ),
+        );
+        let grants = [CapabilityGrant {
+            id: format!("net.{call}"),
+            value: CapabilityValue::UrlGlobs(vec![format!("{}/**", server.base)]),
+        }];
+        // Live, the import reaches the server.
+        let live = session(
+            &bytes,
+            &grants,
+            BudgetRequest::default(),
+            NetworkMode::Live,
+            WAIT,
+        );
+        assert!(live.report.failure.is_none(), "{:?}", live.report.failure);
+        assert_eq!(live.report.output.lines.len(), 1);
+        let accepted = server.accepted();
+        for mode in [NetworkMode::Record, NetworkMode::Replay(empty.clone())] {
+            let refused = session(&bytes, &grants, BudgetRequest::default(), mode, WAIT);
+            assert!(
+                matches!(
+                    &refused.report.failure,
+                    Some(RuntimeError::Replay(ReplayError::Unserved { import }))
+                        if import == operation.name()
+                ),
+                "{:?}",
+                refused.report.failure
+            );
+            // Before any effect: no output, no turn, no log, no socket.
+            assert!(refused.report.output.lines.is_empty());
+            assert!(refused.report.budget.is_none());
+            assert!(refused.report.network_log.is_none());
+            assert_eq!(server.accepted(), accepted);
+        }
+    }
+}
+
+#[test]
+fn a_request_the_broker_denies_at_start_claims_no_logged_request() {
+    use varta_common::permission::PermissionState;
+    // The first request is outside the grant: the broker denies it at its
+    // start, audits it and completes it at once, while recording and while
+    // replaying. It is never logged and claims nothing, so the granted
+    // request after it claims logged request 0.
+    const UNGRANTED: &str = "http://127.0.0.1:1/x";
+    let server = Loopback::start();
+    let bytes = program(
+        &server.base,
+        &format!(
+            "async function run(): Promise<void> {{
+               let first = 'fetched';
+               try {{ await fetch('{UNGRANTED}'); }}
+               catch (error) {{ first = error instanceof DOMException ? error.name : 'other'; }}
+               const response = await fetch(BASE + '/hello');
+               show(`${{first}}, then ${{response.status}}`);
+             }}"
+        ),
+    );
+    let grants = [network(&[&server.base], &["content-type"])];
+    let (log, recorded) = record_and_replay(&bytes, &grants, BudgetRequest::default(), WAIT);
+    assert_eq!(
+        recorded.report.output.lines.last().unwrap(),
+        "varta log: NotAllowedError, then 200"
+    );
+    assert_eq!(log.requests.len(), 1);
+    assert_eq!(log.requests[0].url, format!("{}/hello", server.base));
+    let replayed = session(
+        &bytes,
+        &grants,
+        BudgetRequest::default(),
+        NetworkMode::Replay(log),
+        WAIT,
+    );
+    assert!(
+        replayed.report.failure.is_none(),
+        "{:?}",
+        replayed.report.failure
+    );
+    let denied = format!("GET {UNGRANTED}");
+    assert!(
+        replayed.report.audit.iter().any(|entry| entry.operation
+            == varta_common::net::REQUEST_CAPABILITY
+            && entry.resource == denied
+            && entry.outcome == PermissionState::Denied),
+        "{:?}",
+        replayed.report.audit
     );
 }

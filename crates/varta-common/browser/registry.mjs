@@ -207,6 +207,7 @@ export const registry = freeze({
       ],
       "maxEvents": 65536,
       "maxFailureBytes": 8192,
+      "maxIndex": 4294967295,
       "maxLogBytes": 16777216,
       "maxRequests": 4096,
       "maxStatus": 999,

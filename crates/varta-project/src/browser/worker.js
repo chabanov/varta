@@ -213,7 +213,7 @@ self.onmessage = async ({ data }) => {
       replay = replayTransport(data.networkReplay);
     }
     network = createNetwork(scheduler, policy, emit, readDescriptor, writeResult, replay
-      ? Object.assign((plan) => replay.transport(plan), { abandon: (plan) => replay.abandon(plan) })
+      ? Object.assign((plan, claim) => replay.transport(plan, claim), { claim: (plan) => replay.claim(plan), abandon: (claim) => replay.abandon(claim) })
       : (plan) => browserTransport({...plan,timeoutMs:descriptor.budgets.deadlinePerTurnMs}));
     Object.assign(implementations, network.implementations);
     const uiPolicy = viewPolicy.createViewPolicy(manifest, permissions,broker.granted);
@@ -390,8 +390,10 @@ self.onmessage = async ({ data }) => {
     view?.close();
     network?.close();
     events?.close();
-    // An authorized exit is not a failure: the instance ends with its code.
-    const exited = error instanceof GuestExit;
+    // An authorized exit is not a failure: the instance ends with its code,
+    // unless a replay ends with logged events undelivered, as natively.
+    let exited = error instanceof GuestExit;
+    if (exited) try { replay?.finish(); } catch (unconsumed) { exited = false; error = unconsumed; }
     self.postMessage({ type: "result", status: exited ? "ok" : "failed", logs, ...(exited ? { exitCode: error.code } : { error: String(error?.message ?? error) }), fuelRemaining: tank?.remaining ?? 0, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns, maintenance, maintenanceFuel, maintenancePeriods });
   }
 };

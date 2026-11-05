@@ -122,12 +122,14 @@ function browserTransport(plan, fetcher = fetch) {
   return { head, pull, cancel };
 }
 // Recorded network replay (net::replay): an embedder-supplied log replaces
-// Fetch. snapshotNetworkLog validates the log's bounded JSON text exactly as
-// the native reader does; replayTransport serves it. createNetwork plans and
+// Fetch. snapshotNetworkLog validates the log's bounded JSON text with the
+// native reader's rules (strictLogJson refuses what serde refuses and
+// JSON.parse admits); replayTransport serves it. createNetwork plans and
 // authorizes every request first, as for Fetch, so a replay never bypasses
 // net.request; the Worker also refuses a log naming an ungranted request
-// before the instance starts. Requests claim the logged requests in start
-// order (same method and URL); logged events are released strictly in log
+// before the instance starts. Requests claim the logged requests when they
+// start, in start order (same method and URL), even when their transfer is
+// created later or never; logged events are released strictly in log
 // order, each once its request's operation is armed (its head, or a pull in
 // the logged read mode). An abort must meet the log's abort of the same
 // request. A released completion settles a promise, so it reaches the event
@@ -141,11 +143,14 @@ function snapshotNetworkLog(input) {
   else if (input instanceof Uint8Array) bytes = input;
   else fail("expected its JSON text");
   if (bytes.byteLength > R.maxLogBytes) fail("too large");
-  let log;
-  try { log = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { fail("no JSON"); }
+  // A byte order mark is no JSON whitespace for the native reader either.
+  let log, text;
+  try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); log = JSON.parse(text); } catch { fail("no JSON"); }
+  if (!strictLogJson(text)) fail("no log JSON");
   const exact = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
     && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-  const count = (value) => Number.isSafeInteger(value) && value >= 0;
+  // Steps and request indices are unsigned 32-bit integers, as natively.
+  const count = (value) => Number.isSafeInteger(value) && value >= 0 && value <= R.maxIndex;
   const token = (value) => typeof value === "string" && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value);
   const fieldText = (value) => typeof value === "string" && /^[\t -~\u0080-ÿ]*$/.test(value);
   const canonicalUrl = (value) => { try { return typeof value === "string" && new TextEncoder().encode(value).length <= N.maxUrlBytes && new URL(value).href === value; } catch { return false; } };
@@ -178,6 +183,7 @@ function snapshotNetworkLog(input) {
         const name = event.headers[i], value = event.headers[i + 1];
         if (!token(name) || name !== name.toLowerCase() || name.length > N.maxHeaderNameBytes || N.forbiddenResponseHeaders.includes(name)
           || previous !== undefined && previous >= name || !fieldText(value)) fail("headers");
+        // Field text is one byte per code unit, on the wire and natively.
         size += name.length + value.length; previous = name;
         if (size > N.maxResponseHeaderBytes) fail("headers");
       }
@@ -195,6 +201,38 @@ function snapshotNetworkLog(input) {
     return { kind, step: event.step, request: event.request };
   });
   return { format: log.format, version: log.version, requests, events };
+}
+// What JSON.parse admits but the native (serde) reader of a log refuses, in
+// text JSON.parse already accepted: a duplicate member name, a number that
+// is no unsigned integer literal (every number of a log is one; a fraction,
+// exponent or sign makes it a float or a negative value natively) and a
+// string escaping a lone surrogate.
+function strictLogJson(text) {
+  const integer = /^(?:0|[1-9][0-9]*)$/, numeric = /[-+.eE0-9]/, quote = '"', escape = "\\";
+  // Per open container: its member names (an object) or null (an array).
+  const open = [];
+  let name = false;
+  for (let i = 0; i < text.length; i++) {
+    const unit = text[i];
+    if (unit === "{") { open.push(new Set()); name = true; }
+    else if (unit === "[") { open.push(null); name = false; }
+    else if (unit === "}" || unit === "]") { open.pop(); name = false; }
+    else if (unit === ",") name = open.at(-1) instanceof Set;
+    else if (unit === quote) {
+      let end = i + 1;
+      while (text[end] !== quote) end += text[end] === escape ? 2 : 1;
+      const value = JSON.parse(text.slice(i, end + 1));
+      if (!value.isWellFormed()) return false;
+      if (name) { const names = open.at(-1); if (names.has(value)) return false; names.add(value); name = false; }
+      i = end;
+    } else if (numeric.test(unit)) {
+      let end = i;
+      while (end < text.length && numeric.test(text[end])) end++;
+      if (!integer.test(text.slice(i, end))) return false;
+      i = end - 1;
+    }
+  }
+  return true;
 }
 function replayTransport(log) {
   const R = registry.network.replay, N = registry.network, C = N.completion;
@@ -241,8 +279,9 @@ function replayTransport(log) {
     if (event?.kind !== abort || event.request !== index) throw new Error(fill(R.errors.abort, { request: index }));
     cursor++; release();
   };
-  const transport = (plan) => {
-    const index = claim(plan), transfer = { plan, waiting: undefined, closed: false };
+  // The transfer of logged request `index`, claimed when its request started.
+  const transport = (plan, index) => {
+    const transfer = { plan, waiting: undefined, closed: false };
     const wait = (read) => new Promise((resolve) => { transfer.waiting = { resolve, read }; });
     open.set(index, transfer);
     const pending = wait(undefined);
@@ -258,10 +297,11 @@ function replayTransport(log) {
     };
   };
   return {
+    claim,
     transport,
-    // A request aborted before its transport was created still claimed its
-    // logged request, as natively, and its abort is the log's next event.
-    abandon(plan) { aborted(claim(plan)); },
+    // A request aborted before its transfer was created claimed its logged
+    // request when it started, as natively; its abort is the log's next event.
+    abandon(index) { aborted(index); },
     finish() { if (cursor < log.events.length) throw new Error(fill(R.errors.unconsumed, { remaining: log.events.length - cursor })); },
     position() { return { event: cursor, remaining: log.events.length - cursor }; },
   };

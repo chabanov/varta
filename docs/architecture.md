@@ -11833,7 +11833,12 @@ A native application instance can record its real transfers into a
 versioned, bounded log, and every host can replay such a log in place of its
 transport (`varta_common::net::replay`, runtime `NetworkMode`). Recording and
 replay serve `net_request_start_v2` requests of application instances only; a
-v37 descriptor fails with `ReplayError::Descriptor`.
+v37 descriptor fails with `ReplayError::Descriptor`. A module that imports
+`varta.net.get` or `varta.net.fetch` (`net_get*`, `net_fetch*`,
+`net::replay::unserved`) reads the network outside that transport, so a
+recording would miss the read and a replay would make it for real: recording
+and replay refuse such a module before its instance is set up (before any
+prompt, guest code or socket) with `ReplayError::Unserved`.
 
 - **Log.** One JSON object: `format` (`net::replay::LOG_FORMAT`), `version`
   (`LOG_VERSION`), `requests` and `events`, with no other member. A request is
@@ -11849,8 +11854,11 @@ v37 descriptor fails with `ReplayError::Descriptor`.
   `failed` (`text`: the failure text) or `abort` (the guest aborted the open
   transfer). A request's events are a head or a failure, then chunks, then
   an end or a failure; an abort may close it at any point; nothing follows.
-  Steps never decrease. A reader refuses any other shape, a head that is no
-  canonical visible set within the response head limits, a chunk that is
+  Steps never decrease. A reader refuses any other shape (a duplicate
+  member, a number that is no unsigned integer literal, a `step` or
+  `request` above `MAX_LOG_INDEX`, a string escaping a lone surrogate), a
+  head that is no canonical visible set within the response head limits
+  (field text counts one byte per code unit, as on the wire), a chunk that is
   empty or beyond one read, a byte chunk with a unit above 0xFF, a request
   that is no `fetch` method or no URL in its own serialization, and the
   [resource limits](#resource-limits) (`NetworkLogError`).
@@ -11862,8 +11870,9 @@ v37 descriptor fails with `ReplayError::Descriptor`.
   headers or bodies) are produced by the host and never logged. A recording
   that would exceed the log limits, or a completion the log cannot hold,
   fails the instance (`ReplayError::RecordingLimit`, `Unrecordable`). The CLI
-  writes the log to a new file, also when the session failed, and never
-  overwrites one.
+  writes the log to a new file, also when the session failed after it
+  started, and never overwrites one; a session refused before it starts
+  writes none.
 - **Authorization.** Before the instance starts, every logged request must
   be admitted by the package's `net.request` grants and the host ceiling;
   otherwise the session fails with `ReplayError::Ungranted` before any guest
@@ -11871,8 +11880,11 @@ v37 descriptor fails with `ReplayError::Descriptor`.
   descriptor checks, the pending-request limit, the permission broker's
   decision and audit entry, the body and header checks. A denied or invalid
   request completes immediately as without replay and claims no logged
-  request. A granted request claims the next logged request, which must
-  have the same method and URL (`ReplayError::Request`, `Unlogged`). A
+  request. A granted request claims the next logged request when it starts,
+  in start order, which must have the same method and URL
+  (`ReplayError::Request`, `Unlogged`); a request aborted before its
+  transfer could deliver anything keeps that claim, so its abort meets the
+  log's abort of its own index. A
   replayed head shows only the logged names the replay grant also shows,
   with the replaying request's own URL: a replay never reveals a header its
   grant hides.
@@ -11886,7 +11898,8 @@ v37 descriptor fails with `ReplayError::Descriptor`.
   a transfer's does: when the instance next waits for network, after its idle
   period's maintenance, every completion released by then arrives at once,
   in log order, and each is one network turn. Nothing waits for the wall
-  clock and no socket opens.
+  clock and no socket opens (a module importing a direct network read is
+  refused before it starts, above).
 - **Failures.** A `wait_network` step that ends with a watched request armed,
   or an unscripted application that ends so, fails with
   `ReplayError::Stalled` naming the next log event. A session that ends without
@@ -11911,15 +11924,20 @@ v37 descriptor fails with `ReplayError::Descriptor`.
   divergence instead of reaching an unrecorded state.
 - **Browser host.** The generated loader accepts the log's JSON text as the
   embedder option `networkReplay` of `run` and `mount`, validates it with the
-  same rules before anything loads, and the Worker refuses an ungranted logged
-  request before instantiation. The replay transport replaces Fetch behind the
-  same request planning and grant checks, releases events by the same rules
+  same rules before anything loads (`JSON.parse` plus a scan refusing the
+  duplicate members, non-integer numbers and escaped lone surrogates that
+  serde refuses), and the Worker refuses an ungranted logged request before
+  instantiation. The replay transport replaces Fetch behind the same request
+  planning and grant checks; a request claims its logged request in
+  `net_request_start_v2`, in start order as natively, although its transfer
+  is created later by the network pump. It releases events by the same rules
   and settles each completion as Fetch does, so it reaches the event loop
   after the turn and its idle period. The browser host has no scripted
   session and does not interpret steps. An armed request the log cannot
   complete stays pending, as with a silent server (a bounded run then ends
-  at its deadline); an instance that ends with logged events undelivered
-  fails with the `Unconsumed` text. Its divergence texts are the native ones
+  at its deadline); an instance that ends, by settling or by an authorized
+  exit, with logged events undelivered fails with the `Unconsumed` text,
+  while a `mount` closed by its embedder ends without that check. Its divergence texts are the native ones
   (`registry.network.replay.errors`).
   The [embedding contract](embedding.md#recorded-network-replay-v38) states
   the wire rules for third-party hosts.

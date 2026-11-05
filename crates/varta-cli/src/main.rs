@@ -110,8 +110,11 @@ enum Commands {
         /// with their read mode, ends, failures) and every abort of an open
         /// transfer, in delivery order and with its script step, to this
         /// new network log file (never overwritten; also written when the
-        /// session fails). Heads keep only the response headers the grant
-        /// showed. The log is bounded; exceeding it fails the session.
+        /// session fails after it started). Heads keep only the response
+        /// headers the grant showed. The log is bounded; exceeding it fails
+        /// the session. Only fetch requests are recorded: a module that
+        /// imports varta.net.get or varta.net.fetch is refused before it
+        /// starts, and no log is written.
         #[arg(
             long,
             value_name = "PATH",
@@ -120,8 +123,10 @@ enum Commands {
         )]
         network_record: Option<PathBuf>,
         /// With --view-script: serve this recorded network log instead of
-        /// the network (no socket is opened). Every logged request must be
-        /// granted, or the session fails before it starts; each request is
+        /// the network (no socket is opened). A module that imports
+        /// varta.net.get or varta.net.fetch, which the log cannot serve, is
+        /// refused before it starts. Every logged request must be granted,
+        /// or the session fails before it starts; each request is
         /// still authorized when it starts and must match the next logged
         /// request's method and URL. Logged events reach the guest in log
         /// order, each once its operation is armed and the script reached

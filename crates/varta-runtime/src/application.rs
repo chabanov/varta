@@ -326,6 +326,11 @@ impl VartaRuntime {
         if crate::http_contract::read(bytes)?.is_some() {
             return Err(ApplicationError::HttpService.into());
         }
+        // A recorded or replayed instance imports no network read outside
+        // the request transport, checked before any setup or prompt.
+        if !matches!(options.network, crate::NetworkMode::Live) {
+            crate::replay::check_imports(bytes)?;
+        }
         let mode = Mode::Application {
             lifetime: options.lifetime,
         };

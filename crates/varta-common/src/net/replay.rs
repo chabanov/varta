@@ -40,6 +40,9 @@ pub const MAX_LOG_EVENTS: usize = 65_536;
 pub const MAX_FAILURE_TEXT_BYTES: usize = 8 * 1024;
 /// The step of an event recorded outside a scripted session.
 pub const UNSCRIPTED_STEP: u32 = 0;
+/// The largest `step` and `request` an event carries: both are unsigned
+/// 32-bit integers, and a reader refuses a larger number.
+pub const MAX_LOG_INDEX: u32 = u32::MAX;
 /// The lowest and highest status a logged head may carry: the three-digit
 /// codes an HTTP/1.1 status line has.
 pub const MIN_STATUS: u16 = 100;
@@ -406,7 +409,10 @@ fn check_headers(headers: &[String]) -> Result<(), EventViolation> {
     let mut bytes = 0usize;
     let mut previous: Option<&str> = None;
     for [name, value] in pairs {
-        bytes = bytes.saturating_add(name.len() + value.len());
+        // Field text is one wire byte per code unit (an obs-text byte is one
+        // unit above 0x7F, two UTF-8 bytes in the log text), as the head
+        // limit counts it and the browser reader does.
+        bytes = bytes.saturating_add(name.chars().count() + value.chars().count());
         if !declarable_response_header(name)
             || previous.is_some_and(|previous| previous >= name.as_str())
             || bytes > MAX_RESPONSE_HEADER_BYTES
@@ -419,6 +425,18 @@ fn check_headers(headers: &[String]) -> Result<(), EventViolation> {
         previous = Some(name);
     }
     Ok(())
+}
+
+/// Whether recording and replay refuse a module importing `operation`: the
+/// direct network reads `varta.net.get` and `varta.net.fetch`, which reach
+/// the network outside the request transport.
+#[must_use]
+pub fn unserved(operation: crate::HostOperation) -> bool {
+    use crate::HostOperation as H;
+    matches!(
+        operation,
+        H::NetGet | H::NetGet16 | H::NetFetch | H::NetFetch16
+    )
 }
 
 /// Replay failures. Each is fatal for the instance: the guest received
@@ -470,6 +488,14 @@ pub enum ReplayError {
     /// Recording and replay serve `net_request_start_v2` requests only.
     #[error("network recording and replay serve net_request_start_v2 requests only")]
     Descriptor,
+    /// Checked before the instance starts: the module imports a network
+    /// operation that bypasses the request transport a log records
+    /// ([`unserved`]), so a recording would miss it and a replay would
+    /// reach the network.
+    #[error(
+        "network recording and replay refuse a module importing {import}: only net_request_start_v2 requests are recorded and replayed"
+    )]
+    Unserved { import: String },
     /// A recording would exceed the log limits.
     #[error(
         "network recording exceeds its limits ({MAX_LOG_REQUESTS} requests, {MAX_LOG_EVENTS} events, {MAX_LOG_BYTES} bytes)"
@@ -624,6 +650,46 @@ mod tests {
             Err(NetworkLogError::Json(_))
         ));
         assert!(NetworkLog::parse(&vec![b' '; MAX_LOG_BYTES + 1]).is_err());
+        // The browser reader refuses these as well (network-replay.test.mjs):
+        // an index beyond 32 bits, a float, a duplicate member, an escaped
+        // lone surrogate and a byte order mark.
+        let prefix = r#"{"format":"varta-network-log","version":1,"requests":[{"method":"GET","url":"http://127.0.0.1:8080/items"}],"events":["#;
+        for event in [
+            r#"{"kind":"abort","step":4294967296,"request":0}"#,
+            r#"{"kind":"head","step":1,"request":0,"status":200.0,"statusText":"OK","location":"","headers":[]}"#,
+            r#"{"kind":"abort","step":1,"step":1,"request":0}"#,
+            r#"{"kind":"failed","step":1,"request":0,"text":"\ud800"}"#,
+        ] {
+            let text = format!("{prefix}{event}]}}");
+            assert!(
+                matches!(
+                    NetworkLog::parse(text.as_bytes()),
+                    Err(NetworkLogError::Json(_))
+                ),
+                "{text}"
+            );
+        }
+        let bom = format!("\u{feff}{prefix}]}}");
+        assert!(NetworkLog::parse(bom.as_bytes()).is_err());
+        NetworkLog::parse(format!("{prefix}]}}").as_bytes()).unwrap();
+    }
+
+    /// The response head limit counts field text as wire bytes, one per
+    /// code unit, so an obs-text value fills it exactly as on the wire.
+    #[test]
+    fn head_limits_count_one_byte_per_field_text_unit() {
+        const NAME: &str = "x-a";
+        let fill = |units: usize| {
+            log(vec![head(&[NAME, &"\u{e9}".repeat(units - NAME.len())])]).validate()
+        };
+        fill(MAX_RESPONSE_HEADER_BYTES).unwrap();
+        assert_eq!(
+            fill(MAX_RESPONSE_HEADER_BYTES + 1),
+            Err(NetworkLogError::Event {
+                index: 0,
+                violation: EventViolation::Headers
+            })
+        );
     }
 
     #[test]

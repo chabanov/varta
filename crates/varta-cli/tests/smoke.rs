@@ -18253,3 +18253,59 @@ fn v38_kv_databases_open_with_exact_grants_in_dev_and_packaged_apps() {
     );
     let _ = fs::remove_file(&outside);
 }
+
+#[test]
+fn network_recording_and_replay_refuse_net_get_and_net_fetch_modules() {
+    // varta.net.get and varta.net.fetch reach the network outside the
+    // request transport a log records: a session importing either is
+    // refused before it starts, opens no socket and writes no log.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    for (call, import) in [("get", "net_get16"), ("fetch", "net_fetch16")] {
+        let source = r#"
+          export function main():void{
+            const root=View.node();View.createElement(root,1);View.mount(root);
+            console.log(String(varta.net.__CALL__("__BASE__/legacy")));
+          }
+        "#
+        .replace("__CALL__", call)
+        .replace("__BASE__", &base);
+        let project = RegressionProject::new(
+            &source,
+            serde_json::json!({"net":{call:[format!("{base}/**")]}}),
+        );
+        project.language_profile(V38_PROFILE);
+        fs::write(
+            project.0.join("script.json"),
+            r#"{"inputs":[{"input":"wait_network","ms":200}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            project.0.join("empty.json"),
+            r#"{"format":"varta-network-log","version":1,"requests":[],"events":[]}"#,
+        )
+        .unwrap();
+        for mode in [
+            &["--network-replay", "empty.json"][..],
+            &["--network-record", "log.json"][..],
+        ] {
+            let mut args = vec!["dev", "--view-script", "script.json"];
+            args.extend_from_slice(mode);
+            let refused = project.command(&args);
+            let text = combined(&refused);
+            assert!(!refused.status.success(), "{text}");
+            assert!(
+                text.contains(&format!(
+                    "network recording and replay refuse a module importing {import}"
+                )),
+                "{text}"
+            );
+            assert!(!project.0.join("log.json").exists(), "{text}");
+            assert!(
+                matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+                "{text}"
+            );
+        }
+    }
+}

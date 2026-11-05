@@ -3460,3 +3460,19 @@ browser reader, transport and `createNetwork` paths.
 service and replays it natively and in local Chrome with the same lines,
 view text and usage. Firefox and WebKit were not run: no Playwright module is
 installed here.
+
+Review fixes: the browser replay now claims a logged request in
+`net_request_start_v2` (start order) and creates its transfer at the pump,
+so a later request aborted before the pump no longer takes an earlier
+request's slot; recording and replay refuse a module importing
+`varta.net.get` or `varta.net.fetch` before setup (`ReplayError::Unserved`),
+since those reads bypass the transport; the browser log reader refuses
+duplicate members, non-integer numbers, indices beyond 32 bits and escaped
+lone surrogates as serde does, and both readers count head field text as one
+byte per code unit; an authorized exit in the browser checks the replay was
+consumed. Tests: Node and native two-request early-abort cases, native and
+CLI refusal of `net.get`/`net.fetch` with no socket opened, a broker-denied
+request that claims nothing, reader parity cases on both sides; the Chrome
+acceptance now records the early abort, ends with an exit, compares the
+`#app` tree and accessible texts and refuses a log with an undelivered
+request on both hosts.

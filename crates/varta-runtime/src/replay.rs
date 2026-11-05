@@ -215,6 +215,30 @@ pub(crate) fn check_grants(log: &NetworkLog, policy: &Policy) -> Result<(), Repl
     Ok(())
 }
 
+/// Before a recording or replaying instance is set up (before any prompt or
+/// guest code): the module imports no network operation outside the request
+/// transport (`net.get`, `net.fetch`), which a log could neither hold nor
+/// serve. Bytes that do not parse are left to module validation, which
+/// refuses them next.
+pub(crate) fn check_imports(bytes: &[u8]) -> Result<(), ReplayError> {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        let Ok(wasmparser::Payload::ImportSection(reader)) = payload else {
+            continue;
+        };
+        for import in reader.into_iter().flatten() {
+            if import.module == varta_common::abi::HOST_MODULE
+                && varta_common::HostOperation::from_name(import.name)
+                    .is_some_and(varta_common::net::replay::unserved)
+            {
+                return Err(ReplayError::Unserved {
+                    import: import.name.to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Replay failures raised inside guest calls keep their typed error.
 pub(crate) fn typed(error: crate::RuntimeError) -> crate::RuntimeError {
     let crate::RuntimeError::Execution(source) = error else {
