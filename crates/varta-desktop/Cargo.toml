@@ -12,6 +12,12 @@ gpu = ["dep:wgpu", "dep:vello_gpu", "dep:pollster"]
 name = "varta-preview"
 path = "src/main.rs"
 
+# The production native shell: a validated packaged artifact with its
+# manifest grants, narrowed by an optional host ceiling.
+[[bin]]
+name = "varta-shell"
+path = "src/bin/varta-shell.rs"
+
 [[example]]
 name = "gpu_probe"
 required-features = ["gpu"]
@@ -21,9 +27,12 @@ name = "gpu_clip_probe"
 required-features = ["gpu"]
 
 [dependencies]
+# Packaged artifacts are read and validated exactly as the launcher reads them.
+varta-artifact = { path = "../varta-artifact" }
 varta-common = { path = "../varta-common" }
 varta-runtime = { path = "../varta-runtime" }
 varta-view = { path = "../varta-view" }
+thiserror.workspace = true
 # Windowing and CPU presentation; Apache-2.0 and MIT OR Apache-2.0 respectively.
 winit.workspace = true
 softbuffer.workspace = true

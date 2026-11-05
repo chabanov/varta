@@ -14645,6 +14645,69 @@ mean that false or empty declarations grant access. Missing declarations are saf
 to execute because the runtime denies those calls. Inspection includes full grant
 scopes, enablement, versions, imports and exports.
 
+### Native shell (`varta-shell`)
+
+`varta-shell` (crate `varta-desktop`) runs a packaged application with a view
+in a native window, with the same capability-checked runtime host as the
+companion. It is distribution code: its production and test dependencies exclude
+the compiler, SWC, project tooling, the CLI and `clap`, directly and
+transitively (`crates/varta-project/tests/boundaries.rs`). The experimental
+`varta-preview` shares its window, input and render core but runs a bare module
+unprivileged: no manifest, grants, host ceiling, file roots or storage.
+
+- **Artifact.** `varta-shell ARTIFACT` reads the artifact with
+  `varta_artifact::Artifact::read`, exactly as `varta-runtime run ARTIFACT`: a
+  portable Wasm with its sidecar manifest (a missing sidecar is zero
+  capabilities), or a VARTA3 container read at its fixed EOF footer behind any
+  native prefix. Payload bounds, matching manifest/code host ABI, the package
+  manifest rules and the frame surface are checked before grants are resolved or
+  a window opens. The runtime then validates code, language profile (the shell
+  starts an application instance, so the profile must admit `turn_budgets`),
+  contracts, budgets and required grants when the instance starts, before
+  instantiation. Native payloads are never deserialized and payload bytes are
+  never scanned for markers. A refused artifact has no guest effect: no guest
+  output, socket, file or database.
+- **Grants.** The manifest is the package request. `--policy PATH` names an
+  optional host ceiling in the companion's host policy format, read bounded and
+  checked by `Manifest::validate_ceiling` (no consent metadata; `fsRoots` only as
+  a mapping); an unreadable or invalid ceiling is a typed error before the
+  window opens. Options come from `RunOptions::from_manifests`, so budgets, file
+  roots and the conjunction follow the companion: every concrete resource must
+  match a grant of its exact `namespace.operation` id in the request and, when a
+  ceiling is given, in the ceiling. An empty ceiling denies everything and never
+  falls back to the request. Required grants within both are granted by policy;
+  optional grants (`"required": false`) are denied, because this shell has no
+  prompt yet and reads no stored decisions. A `ui.open_url` that needs a prompt
+  is therefore denied; one granted by explicit patterns is recorded by the view
+  session but not yet handed to the system browser (a later package).
+- **Storage.** Each root that a package `kv.read`/`kv.write` pattern names and
+  that the ceiling does not map is pinned (`FileRoots::open`) to the host-owned
+  directory `<base>/sha256-<digest>/<root>`, where the digest is the lowercase
+  hex SHA-256 of the portable Wasm, the application identity
+  (`varta_runtime::artifact_identity`). The shell creates it private to the user
+  (mode 0700 on Unix). `--data-dir DIR` selects the base; by default it is the
+  per-user data directory (`~/Library/Application Support/Varta/storage` on
+  macOS, `$XDG_DATA_HOME/varta/storage` or `~/.local/share/varta/storage` on
+  other Unix hosts). Nothing is created when the package requests no `kv.*` or a
+  ceiling has no `kv.read`. A ceiling's own mapping of the root wins. The mapping
+  grants nothing: KV opens, reads and commits still need the exact `kv.read` and
+  `kv.write` grants in the request and the ceiling, through the permission
+  broker ([KV storage](#kv-storage-kv)). An artifact whose Wasm differs in any
+  byte has another directory. Other declared roots stay unmapped, and so denied,
+  unless the ceiling maps them.
+- **Fonts and presentation.** `--font PATH FAMILY` supplies the explicit layout
+  and render font, bounded by `shell::MAX_FONT_BYTES`; artifact-declared fonts
+  are not read. `--renderer cpu|gpu|auto` selects presentation (GPU only in a
+  build with the `gpu` feature). Guest output goes to stdout and host
+  diagnostics to stderr.
+- **Embedding.** `varta_desktop::shell::Launch::packaged(&Package { artifact,
+  policy, storage })` prepares an application without a window and
+  `Launch::start(ViewLayout)` starts it; failures are the typed `ShellError`.
+- **Not yet.** Permission prompts and stored decisions, `ui.open_url` and guest
+  clipboard effects, manifest `app` metadata, artifact-declared fonts, OS bundles
+  and prebuilt per-target shells
+  ([desktop packaging](development-plan.md#desktop-packaging)).
+
 ## Developer compatibility inventory
 
 `varta-conformance` is an outer development-tool consumer of public common,

@@ -1,4 +1,63 @@
-# Experimental desktop preview
+# Native desktop shell and preview
+
+This crate builds two binaries over one window, input and render core
+(`src/shell/`):
+
+- `varta-shell` runs a **packaged** v38 view application with its manifest
+  grants, narrowed by an optional host ceiling;
+- `varta-preview` is the experimental preview of a bare, **unprivileged**
+  module (no manifest, grants, ceiling, file roots or storage).
+
+The crate is distribution code: it depends on common, artifact, runtime and
+view plus the window/renderer stack, never on the compiler, SWC, project
+tooling, the CLI or `clap`, not even for tests
+(`crates/varta-project/tests/boundaries.rs`). The normative contract is the
+[native shell section](../../docs/architecture.md#native-shell-varta-shell).
+
+## Native shell (`varta-shell`)
+
+```sh
+varta build --config app/varta.config.json          # writes app.wasm + app.manifest.json
+cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
+  [--policy ceiling.json] [--data-dir /abs/storage] [--font font.ttf 'Family'] [--renderer cpu|gpu|auto]
+```
+
+- **Artifact.** Read with `varta_artifact::Artifact::read`, exactly as
+  `varta-runtime run ARTIFACT`: bare Wasm with its sidecar manifest, or a
+  fixed-footer container. Malformed, tampered, truncated and foreign
+  payloads fail before the window opens; code, profile, contracts, budgets
+  and required grants are validated by the runtime at start, before any
+  guest code runs. The shell needs an application-instance (v38) profile.
+- **Grants.** The manifest is the package request. `--policy` is a host
+  ceiling in the launcher's host policy format; a resource must match the
+  exact `namespace.operation` grant in both. An empty ceiling denies
+  everything. Optional grants are denied: there is no prompt yet and no
+  stored decisions are read.
+- **Storage.** Each root that a package `kv.*` pattern names (and the ceiling
+  does not map) is pinned to `<data-dir>/sha256-<wasm digest>/<root>`,
+  created private to the user. The default base is the per-user data
+  directory (`~/Library/Application Support/Varta/storage` on macOS,
+  `$XDG_DATA_HOME/varta/storage` or `~/.local/share/varta/storage` on other
+  Unix). The mapping grants nothing by itself.
+- **Fonts.** Only explicit `--font` arguments; artifact-declared fonts are a
+  later step, as are permission prompts, `ui.open_url`/guest clipboard
+  effects, manifest `app` metadata and OS bundles.
+- **Output.** Guest `console.log` lines go to stdout, host diagnostics to
+  stderr.
+
+The headless core is `varta_desktop::shell::Launch`: `Launch::packaged`
+prepares an application without a window and `Launch::start` starts it with
+a view layout; `tests/shell.rs` drives it with a loopback HTTP server and a
+temporary storage base. Its guest is the checked-in portable artifact
+`tests/fixtures/shell-probe/probe.wasm` (with `probe.manifest.json`), built
+from the `main.ts` beside it. After a v38 ABI change, rebuild it with:
+
+```sh
+cargo run -p varta --bin varta -- build --config crates/varta-desktop/tests/fixtures/shell-probe/varta.config.json
+```
+
+Tests write their own manifests around that Wasm, so the built manifest only
+records what the probe uses.
 
 ## Host-owned copy, cut and paste
 
@@ -266,7 +325,8 @@ Report: `target/verification/20261104-131013-v4eh1yvu/report.json`.
 ## Software preview usage
 
 `varta-preview` opens a native CPU-rendered window for a precompiled v38 view
-module. Its Wasmtime application runs on a worker thread; the main thread owns
+module with no grants (packaged applications run in `varta-shell`). Its
+Wasmtime application runs on a worker thread; the main thread owns
 the window and presents bounded frames. Pass a TrueType/OpenType file and its
 family name for the currently supported explicit-font text subset:
 

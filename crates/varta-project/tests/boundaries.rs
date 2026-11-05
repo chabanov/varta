@@ -58,10 +58,18 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
         ),
         // The headless view renderer (v38) is engine code without a VM.
         ("varta-view", ["varta-common"].as_slice()),
-        // The native preview is a host shell over the public engine APIs.
+        // The native shell and preview are distribution hosts over the
+        // public engine APIs; packaged artifacts are read as the launcher
+        // reads them.
         (
             "varta-desktop",
-            ["varta-common", "varta-runtime", "varta-view"].as_slice(),
+            [
+                "varta-common",
+                "varta-artifact",
+                "varta-runtime",
+                "varta-view",
+            ]
+            .as_slice(),
         ),
         (
             "varta-project",
@@ -160,6 +168,15 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                     "development code must not enter runtime distribution: {name} -> {target}"
                 );
             }
+            // The native shell is distribution code: no source tooling, not
+            // even for its tests (they use prebuilt portable artifacts).
+            if name == "varta-desktop" {
+                assert!(
+                    !is_source_tooling(target),
+                    "the native shell must not depend on source tooling: {name} -> {target} ({})",
+                    if dev { "dev" } else { "production" }
+                );
+            }
             if !dev && name == "varta-project" {
                 assert_ne!(
                     target, "wasmtime",
@@ -183,6 +200,21 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             );
         }
     }
+}
+
+/// Compiler, SWC, project tooling, CLI and argument-parser crates.
+fn is_source_tooling(name: &str) -> bool {
+    name.starts_with("swc_")
+        || matches!(
+            name,
+            "clap"
+                | "clap_builder"
+                | "clap_derive"
+                | "varta-compiler"
+                | "varta-project"
+                | "varta"
+                | "varta-conformance"
+        )
 }
 
 /// The Deno KV storage crates (`denokv_sqlite` and what Varta names of it).
@@ -299,6 +331,18 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
             assert!(!reaches(name, "arboard"), "{name} reaches OS clipboard I/O");
         }
     }
+    // Nor does any production path of the native shell reach source tooling.
+    for name in names
+        .values()
+        .copied()
+        .filter(|name| is_source_tooling(name))
+    {
+        assert!(
+            !reaches("varta-desktop", name),
+            "varta-desktop reaches {name}"
+        );
+    }
+    assert!(reaches("varta-desktop", "varta-artifact"));
     assert!(reaches("varta-desktop", "accesskit"));
     assert!(reaches("varta-desktop", "arboard"));
 }

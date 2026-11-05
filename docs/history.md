@@ -3077,3 +3077,26 @@ cases and the 12-input Showcase script. The fresh CPU Debug bundle builds; Cua
 app selection times out after 60 s, leaving actual launch/system clipboard and
 IME/VoiceOver/other-platform acceptance open. Source comments/documentation-only
 annotations follow verification. No full-plan completion is inferred.
+
+### Native shell core (`varta-shell`) — wave 1, scoped 2026-11-04
+
+`varta-desktop` gains the production `varta-shell` binary beside
+`varta-preview`. The window, worker, input and render code moved from the
+preview's `main.rs` into the library (`src/shell/window/`) unchanged in
+behaviour; the preview remains an unprivileged bare-module host. The shell
+reads a packaged artifact with `varta-artifact` exactly as the companion does,
+takes the manifest as the request, narrows it with an optional `--policy` host
+ceiling, denies optional grants (no prompt yet) and pins KV roots to a private
+host-owned directory per artifact hash
+([contract](architecture.md#native-shell-varta-shell)). Fonts stay explicit
+arguments. The boundary test now forbids compiler, SWC, project, CLI and `clap`
+dependencies of `varta-desktop`, including dev and transitive ones; shell tests
+use a checked-in portable probe artifact built by `varta build`.
+
+Scoped checks: `verify.py local varta-desktop` passes (96 tests: 82 library,
+3 binary, 11 shell-core), as do the GPU-feature build and tests, strict
+desktop Clippy with and without `gpu`, the two dependency-boundary cases, the
+launcher tests and formatting. A manual run on macOS opened the window and
+presented the first frame of a packaged view example and of the probe (KV
+round-trip in its per-hash directory); the agent environment could not capture
+the screen. No full gate was run for this package.
