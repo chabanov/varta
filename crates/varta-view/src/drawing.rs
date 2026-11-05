@@ -119,16 +119,14 @@ pub(crate) struct SegmentCache {
     fields: BTreeMap<usize, CachedField>,
     pub hits: usize,
 }
-fn color_cell(cell: FieldCell) -> Option<ColorCell> {
+fn color_cell(cell: &FieldCell) -> ColorCell {
     let [red, green, blue, alpha] = cell.color;
-    // A transparent cell paints nothing under source-over composition.
-    if alpha == 0 {
-        return None;
-    }
+    // `Border::cells` emits no transparent cell: those pixels paint nothing.
+    debug_assert_ne!(alpha, 0, "lowered cells have nonzero alpha");
     // Premultiplied channels never exceed alpha, so these stay within [0, 1].
     let alpha = f32::from(alpha);
     let unpremultiply = |channel: u8| f32::from(channel) / alpha;
-    Some(ColorCell {
+    ColorCell {
         rect: BoxRect {
             x: cell.x as f32,
             y: cell.y as f32,
@@ -141,7 +139,7 @@ fn color_cell(cell: FieldCell) -> Option<ColorCell> {
             unpremultiply(blue),
             alpha / f32::from(u8::MAX),
         ],
-    })
+    }
 }
 fn path_bytes(path: &tiny_skia::Path) -> Option<usize> {
     path.verbs()
@@ -161,8 +159,12 @@ fn tiny_path(segments: &[PathSegment]) -> Result<tiny_skia::Path, PaintError> {
     }
     path.finish().ok_or(PaintError::Dimensions)
 }
-/// Lower one border to its contour and cells, charging both to the scene
-/// budget before allocation. An unchanged border reuses the previous lowering.
+/// Lower one border to its contour and cells. The contour segments are charged
+/// before allocation, like every path. The lowering's whole transient peak
+/// (scratch, cell lists by capacity and the converted cells) must fit the
+/// remaining scene budget; afterwards only the retained cells stay charged.
+/// `None` sends the whole frame to the explicit software fallback. An
+/// unchanged border reuses the previous lowering.
 fn color_field(
     index: usize,
     draw: &Draw,
@@ -184,12 +186,13 @@ fn color_field(
         cache.hits = cache.hits.saturating_add(1);
         (old.contour.clone(), old.cells.clone())
     } else {
-        let max_cells = (scene::MAX_SCENE_BYTES - *bytes) / cell_bytes;
-        let lowered = border.cells(draw.transform, draw.bounds, max_cells)?;
-        let mut cells = Vec::new();
-        cells.try_reserve_exact(lowered.len()).ok()?;
-        cells.extend(lowered.into_iter().filter_map(color_cell));
-        (segments(&border.path), Arc::from(cells))
+        let remaining = scene::MAX_SCENE_BYTES - *bytes;
+        let lowered = border.cells(draw.transform, draw.bounds, remaining, cell_bytes)?;
+        // An exact-length iterator allocates the shared slice once, with no
+        // intermediate vector, while `lowered` is still alive (charged above).
+        let cells: Arc<[ColorCell]> = lowered.iter().map(color_cell).collect();
+        drop(lowered);
+        (segments(&border.path), cells)
     };
     *bytes = bytes.checked_add(cells.len().checked_mul(cell_bytes)?)?;
     Some(CachedField {
@@ -360,8 +363,11 @@ impl DisplayList {
         Some(Self { commands })
     }
     /// Software consumer for conformance and fallback, with the same clipping.
+    /// A color field costs one viewport coverage mask plus its cells' area.
     pub fn rasterize(&self, metadata: FrameMetadata) -> Result<RasterImage, PaintError> {
         crate::paint::validate_dimensions(metadata.width, metadata.height, metadata.scale())?;
+        let mut image = tiny_skia::Pixmap::new(metadata.width, metadata.height)
+            .ok_or(PaintError::Dimensions)?;
         let mut draws = Vec::with_capacity(self.commands.len());
         let color = |c: [f32; 4]| {
             tiny_skia::Color::from_rgba(c[0], c[1], c[2], c[3]).ok_or(PaintError::Dimensions)
@@ -382,31 +388,27 @@ impl DisplayList {
                     },
                 ),
                 DrawPrimitive::ColorField { contour, cells } => {
-                    // The contour fills once per cell, clipped to that cell's
-                    // whole pixels: each pixel still takes one coverage pass.
+                    // Earlier commands paint first, preserving source order.
+                    scene::replay(&mut image, &draws)?;
+                    draws.clear();
+                    // The contour's coverage applies once; cells never overlap.
                     let contour = Arc::new(tiny_path(contour)?);
                     let bounds = contour
                         .bounds()
                         .transform(transform)
                         .ok_or(PaintError::Dimensions)?;
-                    for cell in cells.iter() {
-                        let rect = tiny_rect(cell.rect)?;
-                        let Some(rect) = clip.map_or(Some(rect), |clip| clip.intersect(&rect))
-                        else {
-                            continue;
-                        };
-                        draws.push(Draw {
-                            primitive: Primitive::Path(
-                                contour.clone(),
-                                tiny_skia::FillRule::EvenOdd,
-                            ),
-                            color: color(cell.color)?,
-                            transform,
-                            clip: Some(rect),
-                            clips: clips.clone(),
-                            bounds,
-                        });
-                    }
+                    let field = Draw {
+                        primitive: Primitive::Path(contour, tiny_skia::FillRule::EvenOdd),
+                        color: tiny_skia::Color::TRANSPARENT,
+                        transform,
+                        clip,
+                        clips,
+                        bounds,
+                    };
+                    let cells = cells
+                        .iter()
+                        .map(|cell| Ok((tiny_rect(cell.rect)?, color(cell.color)?)));
+                    scene::replay_field(&mut image, &field, cells)?;
                     continue;
                 }
             };
@@ -426,8 +428,8 @@ impl DisplayList {
                 bounds: bounds.transform(transform).ok_or(PaintError::Dimensions)?,
             });
         }
-        let pixels = software_pixels(&draws, metadata.width, metadata.height)?;
-        Ok(RasterImage::from_parts(metadata, pixels))
+        scene::replay(&mut image, &draws)?;
+        Ok(RasterImage::from_parts(metadata, image.take()))
     }
 }
 pub(crate) fn software_pixels(
@@ -438,4 +440,81 @@ pub(crate) fn software_pixels(
     let mut image = tiny_skia::Pixmap::new(width, height).ok_or(PaintError::Dimensions)?;
     scene::replay(&mut image, draws)?;
     Ok(image.take())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paint::border::tests::fixtures;
+    use tiny_skia::{Color, FillRule, PathBuilder, Transform};
+
+    fn field_draw() -> Draw {
+        let border = fixtures().swap_remove(1);
+        let bounds = border.path.bounds();
+        Draw {
+            primitive: Primitive::Border(Arc::new(border)),
+            color: Color::TRANSPARENT,
+            transform: Transform::identity(),
+            clip: None,
+            clips: None,
+            bounds,
+        }
+    }
+    /// An ordinary path command that leaves between `remaining` and one
+    /// segment more of the scene budget after the following color-field
+    /// command and its `contour` segment bytes.
+    fn filler(remaining: usize, contour: usize) -> Draw {
+        const ROW: usize = 64;
+        let fixed = 2 * std::mem::size_of::<DrawCommand>() + contour + remaining;
+        let verbs = (scene::MAX_SCENE_BYTES - fixed) / std::mem::size_of::<PathSegment>();
+        let mut path = PathBuilder::new();
+        path.move_to(0.0, 0.0);
+        for index in 1..verbs {
+            path.line_to((index % ROW) as f32, (index / ROW) as f32);
+        }
+        let path = path.finish().unwrap();
+        let bounds = path.bounds();
+        Draw {
+            primitive: Primitive::Path(Arc::new(path), FillRule::Winding),
+            color: Color::BLACK,
+            transform: Transform::identity(),
+            clip: None,
+            clips: None,
+            bounds,
+        }
+    }
+
+    #[test]
+    fn a_color_field_over_the_remaining_scene_budget_refuses_the_vector_frame() {
+        let field = field_draw();
+        let Primitive::Border(border) = &field.primitive else {
+            unreachable!("the fixture is a color field")
+        };
+        let contour = path_bytes(&border.path).unwrap();
+        let alone =
+            DisplayList::from_commands(std::slice::from_ref(&field), &mut Default::default())
+                .expect("an unconstrained field lowers");
+        let [
+            DrawCommand {
+                primitive: DrawPrimitive::ColorField { cells, .. },
+                ..
+            },
+        ] = alone.commands()
+        else {
+            panic!("one color-field command")
+        };
+        let retained = cells.len() * std::mem::size_of::<ColorCell>();
+        // Room for the retained cells, but not for the lowering's peak: the
+        // frame takes the explicit software fallback (`Renderer::prepare`).
+        let tight = [filler(retained, contour), field.clone()];
+        assert!(DisplayList::from_commands(&tight, &mut Default::default()).is_none());
+        const ROOM: usize = 1024 * 1024;
+        let roomy = [filler(ROOM, contour), field];
+        let list = DisplayList::from_commands(&roomy, &mut Default::default())
+            .expect("the field fits the remaining budget");
+        assert!(matches!(
+            &list.commands()[1].primitive,
+            DrawPrimitive::ColorField { cells: lowered, .. } if lowered == cells
+        ));
+    }
 }

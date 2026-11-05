@@ -245,7 +245,7 @@ impl MaskCache {
         &self.composite
     }
 }
-fn multiply(destination: &mut Mask, source: &Mask) {
+pub(crate) fn multiply(destination: &mut Mask, source: &Mask) {
     for (a, b) in destination.data_mut().iter_mut().zip(source.data()) {
         *a = ((u16::from(*a) * u16::from(*b) + 127) / 255) as u8;
     }

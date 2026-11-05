@@ -12477,18 +12477,26 @@ outline two physical pixels wide, because band-local antialiasing is not
 invariant under the band offset and can read zero on a thin taper that the global
 mask covers. Equal runs merge, and rows repeating a run extend its rectangle.
 Cells start at nonnegative coordinates and stop at the validated 4096-pixel
-viewport edge. Contour segments and cells are charged to the unchanged 16MiB
-scene budget before allocation; a field exceeding the remaining budget makes the
-whole frame take the existing explicit software fallback. An equal border at the
+viewport edge. Contour segments are charged to the unchanged 16MiB scene budget
+before allocation, like any path. Lowering itself must fit the remaining budget at
+its peak: the band mask and color row, the transformed contour and its stroked
+outline (charged once stroked; both are proportional to the already charged
+contour), the cell lists counted by allocated capacity, including a growing
+list's old buffer, and the converted cells, which are collected into the shared
+slice in one exact allocation. Afterwards only the retained cells stay charged. A
+field that does not fit makes the whole frame take the existing explicit software
+fallback (unit-tested at the display-list level). An equal border at the
 same physical placement reuses its lowered field from the existing 8MiB
 neutral-path cache. The GPU consumer pushes the contour as an even-odd clip and
 fills each cell inside it: contour coverage applies once and cells never overlap,
 so no color seam is composited twice and no layer or intermediate texture is
-needed. The software `DisplayList::rasterize` consumer fills the contour once per
-cell clip and matches the CPU painter within one channel unit in the border-color
-tests. This adds one host-side `varta-view` drawing primitive; the guest ABI and
-view protocol acquire no operation. Isolated opacity groups still use explicit
-CPU fallback.
+needed. The software `DisplayList::rasterize` consumer builds one viewport
+coverage mask from the contour and the command's clips, then fills each cell
+through it, so a field costs one mask plus its cells' area rather than a mask per
+cell; it matches the CPU painter within one channel unit in the border-color
+tests. CPU `Renderer::render` keeps retained damage for mixed borders. This adds
+one host-side `varta-view` drawing primitive; the guest ABI and view protocol
+acquire no operation. Isolated opacity groups still use explicit CPU fallback.
 
 `overflow-wrap: normal` and `anywhere` inherit and participate in line breaking
 and flex/grid minimum-content sizing; `nowrap` still suppresses soft breaks.

@@ -477,11 +477,14 @@ bound. Their maximum channel deltas (45–71) do not exceed those of the existin
 one-color `border` (64–66) and `huge-inset` (75–77) scenes in the same runs.
 Opacity scenes remain CPU fallback. Unit
 tests check that every covered pixel gets the software color exactly once,
-the cell budget and the viewport-edge clamp. Border-color integration tests check
-vector frames, field reuse and the software consumer within one channel unit.
-`verify.py local varta-view` (151 library + 349 integration), `cargo test -p
-varta-desktop --features gpu` (89 + 7 + 18) and strict all-target Clippy for
-View and Desktop with GPU pass. Probe timings were taken on a shared machine and
+the lowering's peak byte budget, the over-budget display-list refusal and the
+viewport-edge clamp. Border-color integration tests check vector frames, field
+reuse, CPU retained damage after a mutation and the software consumer within one
+channel unit, with and without an ancestor clip.
+After the review follow-up, `verify.py local varta-view` (153 library + 351
+integration), `cargo test -p varta-desktop --features gpu` (89 + 7 + 18), strict
+all-target Clippy for View and Desktop with GPU and both probes (unchanged counts,
+deltas and cells) pass. Probe timings were taken on a shared machine and
 support no speed claim. Direct GPU opacity groups, window/platform acceptance and
 other GPU devices remain open.
 

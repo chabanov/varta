@@ -33,6 +33,19 @@ mean RGB delta 0.1472 overall and 0.0780 for the mixed-border scenes;
 strict all-target Clippy for View and Desktop with GPU. Outputs are under
 `target/w3-gpu-color-fields/`. The full gate is the wave lead's.
 
+Review follow-up. Lowering said it charged cells "before allocation", but only
+capped the output count: builder lists grew by doubling and the cells were then
+copied twice, so the transient peak was about twice the charge. The builder now
+counts its lists by allocated capacity (an old buffer included while it grows),
+the band scratch and outline are charged, and conversion collects into the shared
+slice in one exact allocation; the whole peak must fit the remaining scene budget.
+Covered transparent pixels get no cell and split runs. `DisplayList::rasterize`
+filled the contour once per cell, so the scene replay cleared a viewport-sized
+clip mask per cell; it now fills cells through one coverage mask per field. Tests
+were added for the over-budget refusal and for CPU retained damage after a mixed
+border mutation, which the vector-path rewrite had dropped. The viewport edge
+and the color proof block size each have one named owner.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only
