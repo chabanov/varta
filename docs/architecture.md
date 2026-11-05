@@ -13003,10 +13003,37 @@ neither counts actual GPU presentation.
 The macOS preview installs the host-only CoreText adapter. It creates faces from
 the supplied bytes without system discovery or process-wide registration, keeps
 bounded face data, renders monochrome glyph coverage with platform smoothing,
-and preserves the existing outline fallback for nonzero collection members,
-variable and color fonts, resource refusal or unsupported platform instances.
+and preserves the existing outline fallback for color fonts, resource refusal
+or unsupported platform instances. It instantiates the exact selected face: a
+collection member is rebuilt as a standalone face from that member's own
+tables (CoreText's `head` table and glyph count must then match the member),
+and a variation instance is a CoreGraphics copy of the face with every `fvar`
+axis set to the user value whose default normalization followed by the `avar`
+(version 1) map yields the shaper's normalized coordinate. No font is looked up
+by name. CoreGraphics keys variation values by axis names of its own choosing
+(its Mac name record wins over the Windows one; the names are never localised)
+and silently ignores an unknown key, so the adapter keys each `fvar` axis by the
+name of CoreGraphics's axis record at the same index. CoreText's axis record at
+that index must carry the axis's `fvar` tag, both records'
+minimum/default/maximum must match `fvar`, and the record counts must be equal.
+CoreText's axis names follow the process's preferred languages and are never
+compared, so instances do not depend on the user's language. A mismatched tag,
+range or count, two axes with one name, or an instance whose read-back values
+differ from the requested ones are declined (`declined_variation`), never drawn
+at the default instance. Faces with bitmap or color glyph tables (`COLR`,
+`CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText would size it from the
+point size while the shaper keeps its default) or `avar` version 2 are
+declined, and their glyphs keep portable outlines. A face is charged its
+standalone bytes (a collection member's own tables, not the whole file), twice
+for a variable face whose copy CoreGraphics retains. At most 16 variation
+instances are kept per face; each is charged a fixed 32 KiB native estimate
+(a measured 6 to 20 KiB process footprint per instance on macOS 27), since
+CoreGraphics's per-instance memory is not observable. Declined glyph requests
+are counted by reason (`CoreTextRasterizer::statistics`).
 The safe pinned `core-text=21.0.0` wrapper reuses the locked CoreGraphics0.24 and
-CoreFoundation0.10 stack; only the desktop host depends on it. This implements
+CoreFoundation0.10 stack; only the desktop host depends on it, and it names that
+stack's CoreFoundation types through the same locked `core-foundation=0.10.1`
+to read CoreGraphics's and CoreText's axis records. This implements
 the platform raster distinction visible in
 [Skia's CoreText scaler](https://raw.githubusercontent.com/google/skia/main/src/ports/SkScalerContext_mac_ct.cpp).
 The same optional interface can serve other platform adapters; they are not
@@ -13420,11 +13447,48 @@ numbers, history, select-option identity, event budgets and permission checks;
 guest listeners run on later application turns. Input records retain their
 ordinary gesture classification.
 
+Native bounds and clipping come from the presented frame alone
+(`FrameMetadata::accessibility_geometry`, physical pixels): the union of a
+node's visible element fragments when it has any; for a presented row of the
+open select list, that row; for another laid-out node that is partly presented
+(such as a text node, whose box is its anonymous block or inline fragment box),
+the presented part of its layout box. A node that is not presented at all
+(scrolled out, clipped away, or a row scrolled out of the open list) gets its
+unclipped layout box at the presented scroll offsets only where a hit test
+cannot reach it: outside the frame or outside one of its clipping ancestors.
+An `overflow` hidden or scroll container clips (AccessKit `clips_children`) when
+it has bounds and every presented descendant lies inside them; a descendant
+that escapes it (an absolute box whose containing block is outside, or an open
+list drawn over it) keeps it from clipping. Other hidden nodes, such as a box
+under a scroll container's border or a row scrolled out of the open list over
+the page, and options of a closed select stay unbounded. Every AccessKit
+platform adapter (macOS, AT-SPI on Linux, UIA on Windows) hit-tests through
+`accesskit_consumer`'s `node_at_point`, which upstream ignores clipping; the
+vendored consumer searches a clipping node's descendants only inside its bounds
+([patch record](../vendor/accesskit_consumer/VARTA-PATCH.md)), so a point
+returns only a node presented there. Only the macOS build and the consumer's
+own search are verified; the AT-SPI and UIA builds were not compiled for this
+change. AccessKit's unchanged
+filter omits a clipping scroll area's children beyond the nearest one past each
+edge from the platform tree until scrolling brings them next to the area;
+scrolling the nearest included one into view brings the next one in.
+
+A node with a vertical scroll range also publishes a geometry-free vertical
+`ScrollBar` child at its 0..1 scroll position, on every platform the AccessKit
+adapter serves; its native ID is kept while the owner keeps its identity and a
+scroll range (a changed range keeps it). The pinned macOS adapter maps
+AppKit's scroll-area `AXScrollUpByPage`/`AXScrollDownByPage` to page scrolls,
+exposes that child as `AXVerticalScrollBar`, and maps the bar's
+increment/decrement to item scrolls and its settable value (finite, clamped to
+0..1) to an absolute offset. These are the existing typed actions, so the host
+queue, frame guards and core validation above apply unchanged; no new action or
+unsafe host code is added.
+
 This is not complete platform accessibility: platform acceptance of visual text
-ranges, assistive scrolling/announcements and screen-reader/target
-acceptance remain open. Offscreen, text-only and select-popup option bounds can
-be absent. Native API exposure and performance require direct platform evidence;
-headless projection tests alone do not establish it.
+ranges, assistive scrolling through a real assistive client, announcements and
+screen-reader/target acceptance remain open. Native API exposure and
+performance require direct platform evidence; headless projection tests alone
+do not establish it.
 
 Explicitly sized text inputs and buttons with explicit display, minimum sizes,
 padding and border can participate in this experimental geometry. A button with

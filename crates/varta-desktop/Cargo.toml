@@ -54,3 +54,4 @@ sha2.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-text.workspace = true
 core-graphics.workspace = true
+core-foundation.workspace = true

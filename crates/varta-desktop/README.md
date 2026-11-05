@@ -202,8 +202,32 @@ semantic tree using the headless view's existing role and accessible-name rules.
 It includes actionable roleless containers, masked password values, control
 states and stable opaque identities. The established headless JSON shape stays
 unchanged. The GUI publishes the tree only after presenting its matching CPU or
-GPU frame, with visible element-fragment unions in physical pixels. Offscreen,
-text-only and select-popup option geometry is not complete.
+GPU frame, with bounds in physical pixels from that frame
+(`FrameMetadata::accessibility_geometry`): a node with visible element
+fragments keeps their union; a presented row of the open select list keeps that
+row; another partly presented node (such as a text node, whose box is its
+anonymous block or inline fragment box) gets the presented part of its layout
+box. A node that is not presented at all (scrolled out of a scroll container,
+clipped away by `overflow: hidden`, or a row scrolled out of the open list)
+gets its unclipped layout box at the presented scroll offsets only where a hit
+test cannot reach it: outside the frame or outside a clipping ancestor. Clipping
+containers publish `clips_children` when every presented descendant lies inside
+them. Every AccessKit platform adapter (macOS, AT-SPI, UIA) hit-tests through
+`accesskit_consumer`'s `node_at_point`; the vendored consumer
+([patch record](../../vendor/accesskit_consumer/VARTA-PATCH.md)) searches a
+clipping node's descendants only inside its bounds, so a point returns only a
+node presented there. This is verified on macOS only: the Linux and Windows
+targets were not compiled here, and no AT-SPI or UIA client was driven. Other
+hidden nodes (under a scroll border, a row scrolled out of the open list over
+the page) and options of a closed select stay unbounded. AccessKit's filter
+then omits a clipping scroll area's children beyond the nearest one past each
+edge until scrolling brings them next to it. Desktop tests cover scrolled-out,
+clipped, text-only and open-list options at 2× scale, bounds following an
+assistive scroll, hit tests over visible content beside scrolled-out and
+clipped-away boxes through the consumer search all adapters share (the hidden
+box contains the point and passes the filter, so the unpatched search returns
+it), and an omitted item joining the tree once its neighbour is scrolled into
+view.
 
 Native structure elements keep their headless roles: `h1`–`h3` publish heading
 levels 1–3, `ul`/`ol` publish lists and rendered `li` items publish list items.
@@ -254,9 +278,22 @@ The auxiliary-run ceiling includes visual spans; refusal still leaves the guest
 running. Native geometry/caret checks are separate from platform acceptance.
 [Current geometry checks, artifact hashes and native timeout](../../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
 
-Assistive scrolling and announcements, screen-reader
-behavior and Linux/Windows/Pi acceptance remain open. Pure projection/queue/core
-tests do not prove platform acceptance.
+Assistive scrolling. On every AccessKit platform a scroll area also publishes a
+geometry-free vertical `ScrollBar` child whose value is its 0..1 scroll
+position. On macOS only, the pinned adapter (see
+`vendor/accesskit_macos/VARTA-PATCH.md`) lists AppKit's
+`AXScrollUpByPage`/`AXScrollDownByPage` on the area and sends page scrolls,
+returns that child as the area's `AXVerticalScrollBar`, and routes the bar's
+increment/decrement to item scrolls and its settable value to an absolute
+offset, all through the existing typed core actions. The action names and the
+settable scroll-bar value are those an in-process macOS 27.0.1 observation of
+AppKit's own `NSScrollView` reported (it lists no actions on the bar itself).
+A regression applies the adapter's exact route module to a real publication
+through the semantic FIFO. No assistive client drove Varta's window: the
+probing process is not trusted for the accessibility API on this machine.
+
+Announcements, screen-reader behavior and Linux/Windows/Pi acceptance remain
+open. Pure projection/queue/core tests do not prove platform acceptance.
 
 Local macOS observations now cover the system accessibility API in CPU Debug
 and real Metal GPU Release: names/controls, buttons, Ukrainian SetValue and
@@ -436,6 +473,54 @@ portable outline reference, whose smoothing difference stays explicit. New
 `system-text`/`system-field` GPU scenes require actual native coverage. Evidence:
 `target/paint-next-stage/glyph-raster/`. This does not establish application-window
 or cross-platform typography acceptance.
+
+CoreText face variants (wave 3). The rasterizer now instantiates the exact
+face the shaper selected, from the supplied bytes only: a collection member
+(any index) is rebuilt as a standalone face from its own tables, and CoreText's
+`head` table and glyph count must match that member; a variation instance is a
+CoreGraphics copy of the face with every `fvar` axis set to the user value whose
+normalization (default normalization, then the inverse of the `avar` v1 map)
+gives the shaper's normalized coordinate. CoreGraphics keys those values by its
+own axis names (the Mac name record wins, never localised) and ignores unknown
+keys, so each key is the name of CoreGraphics's record at the axis's `fvar`
+index; CoreText's record at that index must carry the axis's tag, both records'
+ranges must equal `fvar`'s, and every instance is read back. CoreText's axis
+names follow the process's preferred language and are never compared, so the
+same instances are drawn under any user language. Duplicate axis names, a
+mismatched tag or range, or a different read-back decline to outlines
+(`declined_variation`). Faces with bitmap or color
+glyph tables (`COLR`, `CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText
+sizes it from the point size) or `avar` v2 keep declining, so their glyphs keep
+the portable outline path. `CoreTextRasterizer::statistics` counts declined
+glyph requests by reason, collection members and variation instances. A face
+is charged its standalone bytes (a member's own tables), twice when variable;
+each of at most 16 instances per face is charged a fixed 32 KiB native
+estimate. The original fixtures `tests/fixtures/fonts/variable.ttf` (one
+`wght` axis with a nonlinear `avar`), `variable-names.ttf` (its Mac axis name
+differs from the Windows one), `variable-axes.ttf` (`wght` and `wdth`) and
+`collection.ttc` (two members) are generated reproducibly by
+`scripts/generate-desktop-face-fonts.py`; tests also rewrite name records to
+build differing and duplicate axis names.
+
+```sh
+cargo build -p varta-desktop --example native_text_probe
+target/debug/examples/native_text_probe faces variable 1.25 > variable.json   # weights 400–700
+target/debug/examples/native_text_probe faces variable-names 1.25 > names.json  # same, Mac/Windows axis names differ
+target/debug/examples/native_text_probe faces collection 1.25 > member.json   # member 1
+target/debug/examples/native_text_probe faces variable 1.25 -AppleLanguages '(uk)' > uk.json  # pinned language
+node scripts/test-native-inline.mjs variable.json
+```
+
+The faces mode fails unless every glyph used native coverage. Chrome receives
+the same face: the collection member rebuilt from its tables, and the variable
+font at weight 400 with the instance named through `font-variation-settings`
+(a FontFace without a weight range clamps the axis). At 1×/1.25×/2× every case
+of the three fonts (variable, differing axis names, collection member) reports
+zero outline glyphs and stays under the unchanged 2/255 mean (maximum 0.446;
+the differing-names face matches the variable one exactly); naming the wrong
+instance on the Chrome side fails at 10.06. The inline corpus through the same
+rasterizer still passes its 10105 checks (rechecked at 1× after the axis-key
+fix).
 
 The consolidated painting/glyph package passes3434 workspace tests with16 ignored
 and all8 full-gate checks on unchanged source; strict GPU Clippy also passes.

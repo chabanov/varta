@@ -43,10 +43,10 @@ mod wire;
 
 pub use accessibility::{
     ACCESSIBILITY_TEXT_RUN_CHARACTERS, ACCESSIBILITY_TEXT_RUN_LIMIT, ACCESSIBILITY_TEXT_WORK_LIMIT,
-    AccessibilityAction, AccessibilityError, AccessibilityNode, AccessibilityScrollAction,
-    AccessibilityScrollHint, AccessibilityScrollOffset, AccessibilityScrollUnit,
-    AccessibilitySelection, AccessibilityState, AccessibilityText, AccessibilityTextRevision,
-    AccessibilityTextRun, AccessibilityTree, AccessibilityWork,
+    AccessibilityAction, AccessibilityError, AccessibilityGeometry, AccessibilityNode,
+    AccessibilityScrollAction, AccessibilityScrollHint, AccessibilityScrollOffset,
+    AccessibilityScrollUnit, AccessibilitySelection, AccessibilityState, AccessibilityText,
+    AccessibilityTextRevision, AccessibilityTextRun, AccessibilityTree, AccessibilityWork,
 };
 pub use drawing::{
     ColorCell, DisplayList, DrawClip, DrawCommand, DrawPrimitive, PathSegment, PreparedFrame,

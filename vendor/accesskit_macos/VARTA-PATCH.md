@@ -65,8 +65,28 @@ those ordinary AccessKit properties without changing its public API:
   [Apple's contract](https://developer.apple.com/documentation/appkit/nsaccessibilitystatictext/accessibilityvisiblecharacterrange%28%29).
   Empty/nonprinting lines retain their range; absent geometry is unknown.
   These rules depend on Varta's bounded, clipped producer, rather than arbitrary
-  third-party AccessKit trees. Page/item/absolute core actions still need a
-  separately proven native route; no private page-action string is invented.
+  third-party AccessKit trees.
+- `src/scroll.rs` (wave 3) routes AppKit's scroll actions to AccessKit's
+  existing typed scroll actions; no new platform `unsafe` block is added. The
+  action names are the ones AppKit's own `NSScrollView` advertises: an in-process
+  observation on macOS 27.0.1 listed `AXScrollLeftByPage`, `AXScrollRightByPage`,
+  `AXScrollUpByPage` and `AXScrollDownByPage` for an `AXScrollArea`, a settable
+  0..1 `AXValue` on its `AXVerticalScrollBar`, and no actions on that bar.
+  A node supporting `ScrollUp`/`ScrollDown` lists the up/down page names, and
+  `accessibilityPerformAction:` sends `ScrollUp`/`ScrollDown` with
+  `ScrollUnit::Page`. A vertical `ScrollBar` child of a node with a vertical
+  scroll range is that area's `accessibilityVerticalScrollBar`; its
+  increment/decrement send `ScrollDown`/`ScrollUp` with `ScrollUnit::Item` to the
+  area (AX documents a scroll bar's line actions; AppKit's own bar exposes none),
+  and setting its numeric value (non-finite refused, clamped to 0..1) sends
+  `SetScrollOffset` at that fraction of the area's `scroll_y_min..scroll_y_max`,
+  keeping `scroll_x`. Selector checks advertise only routes the area supports.
+  Horizontal page actions are not listed: Varta's scrolling is vertical.
+
+`accessibilityHitTest:` keeps upstream's call to `accesskit_consumer`'s
+`node_at_point`. Its clip-aware search is patched once in the vendored
+consumer, which the AT-SPI and UIA adapters share
+([consumer patch record](../accesskit_consumer/VARTA-PATCH.md)).
 
 The planner is used only by Varta's bounded native observer tree. Projected
 labels/values occur once in a flat fragment buffer, with range indexes for atomic
@@ -89,5 +109,11 @@ masks, and activation baselines. They do not substitute for VoiceOver or other
 platform acceptance. Range regressions also compile the exact safe text-scroll
 module, validating overflow, Unicode/CRLF, masking, clipped lines and host
 scroll routing without selection/focus/value changes or stale-range acceptance.
+The scroll-route regression compiles the exact `src/scroll.rs` and applies its
+page, item and position requests from a real Varta publication through the
+desktop's semantic FIFO to the core page/item/absolute scroll actions, including
+refused non-finite positions and clamping. The patched Objective-C methods are
+compiled against the macOS SDK; they were not driven by an external assistive
+client (see the desktop README).
 Reassess/remove the patch when an upstream release supplies
 equivalent behavior and passes those regressions. Do not edit the registry cache.

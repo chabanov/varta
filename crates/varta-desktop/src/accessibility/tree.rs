@@ -1,6 +1,7 @@
 //! Platform projection of the shared semantic snapshot and presented geometry.
 use accesskit::{
-    Action, AriaCurrent, Invalid, Live, Node, NodeId, Rect, Role, TreeId, TreeInfo, TreeUpdate,
+    Action, AriaCurrent, Invalid, Live, Node, NodeId, Orientation, Rect, Role, TreeId, TreeInfo,
+    TreeUpdate,
 };
 use std::collections::BTreeMap;
 use varta_view::{
@@ -58,7 +59,15 @@ struct Slot {
     identity: NodeIdentity,
     native: NodeId,
     text: Option<super::text::TextSlot>,
+    /// The vertical scroll-bar child of a scroll area, kept while the source
+    /// keeps its identity and a scroll range (a changed range keeps it).
+    scroll_bar: Option<NodeId>,
 }
+/// A scroll bar's position range, as AppKit's `NSScroller` reports it. The
+/// pinned macOS adapter routes its increment, decrement and settable position
+/// to the owner's item and absolute scroll actions.
+const SCROLL_BAR_MIN: f64 = 0.0;
+const SCROLL_BAR_MAX: f64 = 1.0;
 pub(super) struct Projection {
     slots: BTreeMap<u32, Slot>,
     next: u64,
@@ -143,10 +152,12 @@ impl Projection {
                     identity: node.identity.clone(),
                     native,
                     text: None,
+                    scroll_bar: None,
                 },
             );
         }
-        let bounds = metadata.node_bounds_map();
+        let geometry = metadata.accessibility_geometry(source);
+        let bounds = &geometry.bounds;
         let mut bindings = BTreeMap::new();
         let mut text_runs = BTreeMap::new();
         let mut nodes = Vec::with_capacity(source.nodes.len() + 1);
@@ -198,6 +209,12 @@ impl Projection {
                     f64::from(rect.y + rect.height),
                 ));
             }
+            // The vendored accesskit_consumer hit test, which every platform
+            // adapter uses, searches a clipping node's descendants only inside
+            // its bounds; hidden boxes rely on it (see varta-view).
+            if geometry.clips.contains(&id) {
+                node.set_clips_children();
+            }
             let rich_text = source
                 .text
                 .as_ref()
@@ -238,6 +255,33 @@ impl Projection {
                 slots.get_mut(&id).expect("allocated source slot").text = Some(text.slot);
                 nodes.extend(text.nodes);
                 text_runs.extend(text.bindings);
+            }
+            if let Some(scroll) = scroll.filter(|_| rich_text.is_none()) {
+                let bar = match self
+                    .slots
+                    .get(&id)
+                    .filter(|old| old.identity == source.identity)
+                    .and_then(|old| old.scroll_bar)
+                {
+                    Some(bar) => bar,
+                    None => {
+                        let bar = NodeId(self.next);
+                        self.next = self
+                            .next
+                            .checked_add(1)
+                            .ok_or(ProjectionError::IdentityExhausted)?;
+                        bar
+                    }
+                };
+                node.push_child(bar);
+                nodes.push((
+                    bar,
+                    scroll_bar(f64::from(scroll.top) / f64::from(scroll.max)),
+                ));
+                slots
+                    .get_mut(&id)
+                    .expect("allocated source slot")
+                    .scroll_bar = Some(bar);
             }
             bindings.insert(
                 native,
@@ -295,6 +339,17 @@ impl Projection {
             text_runs,
         })
     }
+}
+
+/// A geometry-free vertical scroll bar at `position` in its 0..=1 range;
+/// Varta paints no scroll bar, so the node has no bounds of its own.
+fn scroll_bar(position: f64) -> Node {
+    let mut bar = Node::new(Role::ScrollBar);
+    bar.set_orientation(Orientation::Vertical);
+    bar.set_min_numeric_value(SCROLL_BAR_MIN);
+    bar.set_max_numeric_value(SCROLL_BAR_MAX);
+    bar.set_numeric_value(position.clamp(SCROLL_BAR_MIN, SCROLL_BAR_MAX));
+    bar
 }
 
 fn role(name: &str) -> Option<Role> {

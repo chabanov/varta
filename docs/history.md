@@ -71,6 +71,84 @@ decimal arithmetic, each step an Undo entry). Evidence and open items are in
 the
 [development plan](development-plan.md#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05).
 
+## 2026-11-05 — Native accessibility geometry, macOS scroll routes and CoreText face variants (wave 3, `w3-native-macos-adapters`, scoped)
+
+Three macOS-side gaps closed on `wave3/w3-native-macos-adapters`.
+
+Accessibility geometry: the native tree had bounds only for visible element
+fragments. `FrameMetadata::accessibility_bounds_map` keeps those unions and adds
+each other laid-out node's unclipped layout box at the presented scroll offsets
+(scrolled-out and clipped elements, text nodes) and the open select list's rows
+for its options, including rows scrolled out of the list. Desktop tests check
+scrolled-out, clipped, text-only and popup bounds at 2×, bounds after an
+assistive scroll, and that visible rows are the rectangles their pointer hits
+use; a view test checks text-node boxes in plain and mixed inline flows.
+
+macOS assistive scrolling: the core had page/item/absolute actions, but the
+pinned adapter routed only ScrollIntoView and visible ranges. An in-process
+observation of AppKit's `NSScrollView` on macOS 27.0.1 listed
+`AXScrollLeftByPage`, `AXScrollRightByPage`, `AXScrollUpByPage` and
+`AXScrollDownByPage` on the scroll area (up moved toward the document top), a
+settable 0..1 `AXValue` on its `AXVerticalScrollBar` (0.5 scrolled to the middle)
+and no actions on the bar, where `AXIncrement` had no effect. The adapter now
+lists and performs the up/down page actions, exposes a published vertical
+`ScrollBar` child as the area's scroll bar, and routes its increment/decrement
+to item scrolls and its value to an absolute offset. A desktop regression
+compiles the exact route module and drives all six routes from a real
+publication through the semantic FIFO into the view. No assistive client drove
+Varta's window: the probing process is not accessibility-trusted here.
+
+CoreText: collection members and variation instances were declined to outlines.
+They are now instantiated from the artifact bytes (a standalone member rebuilt
+from its tables; a CoreGraphics variation copy at user values inverted through
+`avar`). Color/bitmap tables, `opsz` and `avar` v2 keep declining with explicit
+counters. New original fixtures (`variable.ttf`, `collection.ttc`) and the
+native text probe's faces mode show zero outline glyphs; the Chrome oracle
+passes at 1×/1.25×/2× with maximum mean 0.446 (wrong instance on the Chrome
+side: 10.06). The 59-case inline corpus keeps its 10105 checks per scale.
+
+Scoped: `verify.py local varta-desktop` and `local varta-view` pass; strict
+Clippy (including the desktop `gpu` feature) and formatting pass. The full gate
+is the wave lead's.
+
+Review fixes. Unclipped boxes of scrolled-out items had made AccessKit's hit
+test (which ignores clipping) return them over visible content, such as a
+heading above a scrolled pane. `FrameMetadata::accessibility_geometry` now
+marks clipping containers (`clips_children`) whose presented descendants stay
+inside them, publishes a hidden box only where the frame and those containers
+keep the hit test away, and the pinned macOS adapter searches a clipping
+node's descendants only inside its bounds. Separately, CoreGraphics names
+variation axes by its own name record (Mac first) and ignored the
+Windows-record name the adapter used, drawing the default instance; keys now
+come from CoreGraphics's axis records by index, every instance is read back,
+and duplicate names decline. The face generator no longer stamps the current
+time into the collection's `head`, and adds `variable-names.ttf` and
+`variable-axes.ttf`.
+
+Second fix round. The clip-aware search had been patched only into the macOS
+adapter, so AT-SPI (Linux, Pi 5) and UIA (Windows) still returned scrolled-out
+boxes over visible content. It now lives once in a vendored
+`accesskit_consumer` 0.39.2 (`node_at_point`), which every adapter calls; the
+macOS adapter's private copy is removed. Variation keys are now found by
+`fvar` tag through CoreText's axis records instead of CoreGraphics record
+order.
+
+Third fix round. That match compared CoreText's axis names with CoreGraphics's,
+but CoreText localises them to the process's preferred languages (`Вага` for
+`wght` under Ukrainian) and CoreGraphics does not, so for any user
+whose first language is not English every variable instance declined to
+outlines and three unit tests failed. Each key is now CoreGraphics's own name
+at the axis's `fvar` index; CoreText's record there must carry the axis's tag,
+both ranges must match `fvar`, names must be distinct, and every instance is
+still read back. CoreText's names are never compared. A desktop test reruns
+the instances in child processes pinned to `-AppleLanguages` `(en)`, `(uk)` and
+`(de)` (it fails under `(uk)` with the previous match), and the native text
+probe's faces mode takes the same pin: all three fixtures report zero outline
+glyphs under each language, with rasters identical to English, and the Chrome
+oracle stays under 2/255. Linux and Windows targets were not compiled (their
+dependency sources are not in the offline cache; no Windows target is
+installed).
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only

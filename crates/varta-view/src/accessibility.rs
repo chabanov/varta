@@ -1,4 +1,6 @@
 //! Host-owned semantic projection. No platform toolkit, I/O or guest execution.
+mod geometry;
+pub use geometry::AccessibilityGeometry;
 mod scroll;
 mod text;
 use crate::name::Names;

@@ -35,8 +35,35 @@ pub struct SelectMenuMetrics {
 pub(super) struct SelectMenu {
     pub metrics: SelectMenuMetrics,
     rows: Vec<(u32, BoxRect, bool)>,
+    /// Every listed option in row order, including rows scrolled out of the list.
+    options: Vec<u32>,
 }
 impl SelectMenu {
+    /// Physical row bounds of every listed option, and whether the row is
+    /// presented: the presented (list-clipped) row of a visible option, and
+    /// for a row scrolled out of the list the unclipped position the list's
+    /// current scroll offset gives it.
+    fn option_bounds(&self, scale: f32) -> impl Iterator<Item = (u32, BoxRect, bool)> + '_ {
+        let viewport = self.metrics.viewport;
+        let height = self.metrics.row_height * scale;
+        self.options.iter().enumerate().map(move |(index, option)| {
+            self.rows
+                .iter()
+                .find(|(row, _, _)| row == option)
+                .map_or_else(
+                    || {
+                        let row = BoxRect {
+                            x: viewport.x,
+                            y: viewport.y + (index as f32 - self.metrics.first as f32) * height,
+                            width: viewport.width,
+                            height,
+                        };
+                        (*option, row, false)
+                    },
+                    |(_, rect, _)| (*option, *rect, true),
+                )
+        })
+    }
     pub fn hit(&self, x: f32, y: f32) -> Option<SelectHit> {
         if !x.is_finite() || !y.is_finite() {
             return None;
@@ -377,5 +404,17 @@ pub(super) fn paint_menu(
             row_height,
         },
         rows,
+        options,
     })
+}
+
+impl FrameMetadata {
+    /// Physical bounds of the open select list's options, in row order, and
+    /// whether each row is presented. Empty while no list is open.
+    pub(crate) fn select_option_bounds(&self) -> Vec<(u32, BoxRect, bool)> {
+        self.select_menu
+            .as_ref()
+            .map(|menu| menu.option_bounds(self.scale).collect())
+            .unwrap_or_default()
+    }
 }
