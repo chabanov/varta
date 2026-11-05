@@ -191,7 +191,25 @@ pub(super) async fn serve(
             shutdown: shared.stop.clone(),
         });
     }
+    let cancellable = shared.contract.version == http::UTF16_VERSION;
     while !shared.stop.stopped() {
+        if cancellable {
+            // A v2 client that leaves cancels its request's worker, which
+            // still holds the one worker permit until it stops at its next
+            // cancellation check. Serve the next connection only once that
+            // permit is free, so a request sent right after a disconnect is
+            // handled instead of refused with 503. The wait is bounded by the
+            // worker's cancellation checks and its own request deadline; the
+            // next client waits in the listener's backlog. V1 workers cannot
+            // be cancelled and keep refusing while busy.
+            let idle = tokio::select! {
+                _ = shared.stop.cancelled() => break,
+                permit = shared.workers.acquire() => permit,
+            };
+            // The semaphore is never closed; a closed one would refuse every
+            // request anyway.
+            drop(idle);
+        }
         let accepted = tokio::select! { _ = shared.stop.cancelled() => break, value = listener.accept() => value };
         let (stream, _) = accepted.map_err(HttpError::Io)?;
         let service = shared.clone();

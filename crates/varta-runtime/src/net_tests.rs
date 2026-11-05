@@ -960,3 +960,140 @@ fn v38_bursts_split_reads_within_the_turn_fuel() {
     let share = TURN_FUEL / READ_FUEL_SHARE;
     assert!(network.iter().all(|fuel| *fuel <= share), "{network:?}");
 }
+
+/// When `net_cases/v38/abort_close.ts` aborts its `/held` request, after the
+/// request started.
+const ABORT_MS: u64 = 20;
+/// The program's pause after the abort, with no request in flight.
+const PAUSE_MS: u64 = 600;
+/// How much of the pause may pass before the server sees the aborted
+/// connection close: half of it, so a close deferred to the guest's next
+/// wake (pilot finding F2) fails by the other half.
+const CLOSE_BOUND: std::time::Duration = std::time::Duration::from_millis(PAUSE_MS / 2);
+
+/// `net_cases/v38/abort_close.ts` against `base`, pausing `pause_ms` after
+/// the abort.
+fn abort_close(base: &str, pause_ms: u64) -> String {
+    include_str!("net_cases/v38/abort_close.ts")
+        .replace(BASE, base)
+        .replace("__ABORT__", &ABORT_MS.to_string())
+        .replace("__PAUSE__", &pause_ms.to_string())
+}
+
+/// Pilot finding F2: aborting a request whose head is pending closes its
+/// connection at once (the documented cancellation rule), observed as the
+/// server's end of stream, long before the guest's next wake, which used to
+/// be the first moment the runtime dropped the cancelled transfer. Both
+/// profiles with `fetch` share the transfer.
+#[test]
+fn aborted_requests_close_their_connection_before_the_guest_wakes() {
+    use crate::net_loopback::Seen;
+    for profile in [V37, V38] {
+        let server = Loopback::start();
+        let source = abort_close(&server.base, PAUSE_MS);
+        let output = VartaRuntime::new()
+            .run_wasm_bytes(&compile_with(&source, profile), &grants(&server))
+            .unwrap_or_else(|e| panic!("{profile:?}: {e:?}"));
+        assert_eq!(output.lines, lines(&["held: AbortError", "hello: 200"]));
+        let trace = server.trace();
+        let at = |seen: Seen| {
+            trace
+                .iter()
+                .find(|(observed, _)| *observed == seen)
+                .map(|(_, at)| *at)
+                .unwrap_or_else(|| panic!("{profile:?}: no {seen:?} in {trace:?}"))
+        };
+        let held = at(Seen::Arrived("/held".into()));
+        let closed = at(Seen::Closed("/held".into()));
+        let woke = at(Seen::Arrived("/hello".into()));
+        let after_abort = closed
+            .saturating_duration_since(held)
+            .saturating_sub(std::time::Duration::from_millis(ABORT_MS));
+        assert!(after_abort < CLOSE_BOUND, "{profile:?}: {after_abort:?}");
+        let before_wake = woke.saturating_duration_since(closed);
+        assert!(
+            before_wake >= std::time::Duration::from_millis(PAUSE_MS) - CLOSE_BOUND,
+            "{profile:?}: closed {before_wake:?} before the guest woke"
+        );
+    }
+}
+
+/// The timer of `net_cases/v38/held_service.ts`: far beyond the client's
+/// abort, but due before the HTTP request deadline (a timer beyond it would
+/// end the request at once).
+const HELD_MS: u64 = 3000;
+const _: () =
+    assert!(HELD_MS < abi::DEADLINE_SECONDS * varta_common::budget::MILLISECONDS_PER_SECOND);
+/// How long the test's observer keeps a cancelled worker, and so the one
+/// worker permit, before the worker ends: a worker that takes a while to
+/// stop after its client left.
+const DRAIN: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Pilot finding F2, server side: a v2 HTTP service whose client aborted
+/// (closing the connection, so the worker is cancelled) serves the client's
+/// next request, sent at once, after the cancelled worker released the
+/// permit, instead of refusing it with the runtime's own 503.
+#[test]
+fn aborted_requests_leave_the_server_worker_free_for_the_next_request() {
+    use std::sync::{Arc, Mutex, mpsc};
+    let service = compile_with(
+        &include_str!("net_cases/v38/held_service.ts").replace("__HELD__", &HELD_MS.to_string()),
+        V38,
+    );
+    let runtime = VartaRuntime::new();
+    let endpoint = runtime
+        .inspect_module(&service)
+        .unwrap()
+        .http_service
+        .unwrap()
+        .bind;
+    let (listening, ready) = mpsc::channel();
+    let outcomes = Arc::new(Mutex::new(Vec::new()));
+    let recorded = outcomes.clone();
+    let observer: RuntimeObserver = Arc::new(move |event| match event {
+        RuntimeEvent::Listening { address, shutdown } => {
+            let _ = listening.send((address, shutdown));
+        }
+        RuntimeEvent::HttpRequest(report) => {
+            if report.outcome == HttpRequestOutcome::Cancelled {
+                std::thread::sleep(DRAIN);
+            }
+            recorded.lock().unwrap().push(report.outcome);
+        }
+        RuntimeEvent::Output(_) | RuntimeEvent::Diagnostic(_) => {}
+    });
+    let options = RunOptions {
+        requested: vec![
+            CapabilityGrant {
+                id: varta_common::http::LISTEN_CAPABILITY.into(),
+                value: CapabilityValue::ListenEndpoints(vec![endpoint]),
+            },
+            boolean(TIMER_CAPABILITY),
+        ],
+        observer: Some(observer),
+        ..RunOptions::default()
+    };
+    let server = std::thread::spawn(move || runtime.run_with(&service, options));
+    let (address, shutdown) = ready
+        .recv_timeout(std::time::Duration::from_secs(15))
+        .expect("listener readiness");
+    let base = format!("http://{address}");
+    let client = compile_with(&abort_close(&base, 0), V38);
+    let grants = [
+        requests(&[format!("{base}/**")], None),
+        boolean(TIMER_CAPABILITY),
+    ];
+    let output = VartaRuntime::new().run_wasm_bytes(&client, &grants);
+    shutdown.shutdown();
+    let report = server.join().unwrap();
+    assert!(report.failure.is_none(), "{:?}", report.failure);
+    let output = output.unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(output.lines, lines(&["held: AbortError", "hello: 200"]));
+    assert_eq!(
+        *outcomes.lock().unwrap(),
+        [
+            HttpRequestOutcome::Cancelled,
+            HttpRequestOutcome::Returned { status: 200 }
+        ]
+    );
+}

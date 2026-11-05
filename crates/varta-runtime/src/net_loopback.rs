@@ -3,12 +3,14 @@
 //! binds 127.0.0.1 on an ephemeral port, never reaches another host, and
 //! counts accepted connections so denial tests can prove that no socket was
 //! opened. Routes mirror `net_cases/server.mjs`, which serves the same
-//! responses to Node 24 for the pinned expectations.
+//! responses to Node 24 for the pinned expectations; `/held` exists only
+//! here, for the connection-close tests, and its trace ([`Seen`]) records
+//! when each request arrived and when the client closed a held connection.
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Bytes of the oversized body route, beyond the response body limit.
 pub(crate) const BIG_BODY_BYTES: usize = varta_common::net::MAX_RESPONSE_BODY_BYTES + 1;
@@ -28,9 +30,20 @@ pub(crate) fn event(id: u64, size: usize) -> Vec<u8> {
     format!("data: {}\nid: {id}\n\n", "x".repeat(size)).into_bytes()
 }
 
+/// One observation of the server, in [`Loopback::trace`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Seen {
+    /// A request for this path (without its query) was read.
+    Arrived(String),
+    /// The client ended the held connection of this path.
+    Closed(String),
+}
+type Trace = Arc<Mutex<Vec<(Seen, Instant)>>>;
+
 pub(crate) struct Loopback {
     pub base: String,
     accepted: Arc<AtomicUsize>,
+    trace: Trace,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     tls: Option<Arc<rustls::ServerConfig>>,
@@ -64,8 +77,10 @@ impl Loopback {
         let scheme = if tls.is_some() { "https" } else { "http" };
         let accepted = Arc::new(AtomicUsize::new(0));
         let stop = Arc::new(AtomicBool::new(false));
+        let trace = Trace::default();
         let thread = {
             let (accepted, stop, tls) = (accepted.clone(), stop.clone(), tls.clone());
+            let trace = trace.clone();
             std::thread::spawn(move || {
                 for stream in listener.incoming() {
                     if stop.load(Ordering::SeqCst) {
@@ -73,12 +88,14 @@ impl Loopback {
                     }
                     let Ok(stream) = stream else { continue };
                     accepted.fetch_add(1, Ordering::SeqCst);
-                    let tls = tls.clone();
+                    // No read waits longer than a route that never answers.
+                    let _ = stream.set_read_timeout(Some(SILENCE));
+                    let (tls, trace) = (tls.clone(), trace.clone());
                     std::thread::spawn(move || match tls {
-                        None => answer(stream),
+                        None => answer(stream, &trace),
                         Some(config) => {
                             let connection = rustls::ServerConnection::new(config).unwrap();
-                            answer(rustls::StreamOwned::new(connection, stream));
+                            answer(rustls::StreamOwned::new(connection, stream), &trace);
                         }
                     });
                 }
@@ -87,6 +104,7 @@ impl Loopback {
         Self {
             base: format!("{scheme}://{address}"),
             accepted,
+            trace,
             stop,
             thread: Some(thread),
             tls,
@@ -96,6 +114,20 @@ impl Loopback {
     pub(crate) fn accepted(&self) -> usize {
         self.accepted.load(Ordering::SeqCst)
     }
+    /// Everything seen so far, in the order it was recorded.
+    pub(crate) fn trace(&self) -> Vec<(Seen, Instant)> {
+        self.trace
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+fn record(trace: &Trace, seen: Seen) {
+    trace
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((seen, Instant::now()));
 }
 
 impl Drop for Loopback {
@@ -166,7 +198,7 @@ fn json_text(value: Option<&str>) -> String {
     serde_json::to_string(&value).unwrap()
 }
 
-fn answer<S: Read + Write>(mut stream: S) {
+fn answer<S: Read + Write>(mut stream: S, trace: &Trace) {
     let Some(request) = read_request(&mut stream) else {
         return;
     };
@@ -201,6 +233,7 @@ fn answer<S: Read + Write>(mut stream: S) {
         .next()
         .unwrap_or_default()
         .to_owned();
+    record(trace, Seen::Arrived(path.clone()));
     match path.as_str() {
         "/hello" => fixed(
             &mut stream,
@@ -310,6 +343,13 @@ fn answer<S: Read + Write>(mut stream: S) {
             );
         }
         "/slow" => std::thread::sleep(SILENCE),
+        // Never answers; records when the client ends the connection (the
+        // end of the stream, a reset, or the read timeout at the latest).
+        "/held" => {
+            let mut byte = [0];
+            while let Ok(1..) = stream.read(&mut byte) {}
+            record(trace, Seen::Closed(path));
+        }
         // V38 long-lived streams: `count` events of `size` data bytes, one
         // every `pause` ms; `/stall` sends one event, keeps silent for `gap`
         // ms, then sends a second.
