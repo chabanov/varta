@@ -13110,14 +13110,16 @@ order of [CSS2 Appendix E](https://www.w3.org/TR/CSS2/zindex.html) for the
 admitted subset. Real stacking contexts are the view root, a box with opacity
 below 1, every `position: fixed` box, and a positioned box or an in-flow
 flex/grid item with an integer `z-index`; `z-index` on any other box has no
-effect. A context paints its own background and border, then its negative
-layers, the backgrounds of its in-flow blocks, its content phase (inline
-content, atomic flex/grid items and controls), then its layers at level zero
-and above, then outlines. Layers are ordered by z-index and then tree order;
-opacity contexts, including inline opacity contexts, are at level zero. A
-positioned box with `z-index: auto` paints atomically at level zero as a pseudo
-context: its positioned and context-creating descendants join the nearest real
-context at their own tree-order place, including those found while it paints.
+effect, including a static block that opacity makes a context. A context
+paints its own background and border, then its negative layers, the
+backgrounds of its in-flow blocks, its content phase (inline content, atomic
+flex/grid items and controls), then its layers at level zero and above, then
+outlines. Layers are ordered by z-index and then tree order; opacity contexts
+that are neither positioned nor flex/grid items, including inline opacity
+contexts, are at level zero. A positioned box with `z-index: auto` paints
+atomically at level zero as a pseudo context: its positioned and
+context-creating descendants join the nearest real context at their own
+tree-order place, including those found while it paints.
 A pre-pass over the painted element tree assigns every layer to its context
 before painting, so a negative layer paints before the in-flow ancestors that
 contain it; the same pre-pass builds each element's curved clip scope in tree

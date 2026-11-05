@@ -597,43 +597,65 @@ paint strictly in tree order; before, an opacity context inside a flex/grid item
 painted after a later block's opacity context. Chrome's minimum logical font
 size is modelled for non-absolute sizes (the wave-1 open item).
 
-`native_positioned_probe` covers 10 cases (relative boxes over later in-flow
+`native_positioned_probe` covers 12 cases (relative boxes over later in-flow
 blocks and text, z-index levels, negative layers in a context and under an
 auto-positioned box, fixed and initial-containing-block absolute boxes in a
 scrolled box, an absolute box with a scrolled containing block and a scrolled
 intermediate box, an opacity context with an inner z-index 5 below a later
 z-index 1 sibling, rounded positioned clips, flex-item z-index, fixed toasts
-with text, minimum font size) against Chrome through
-`scripts/test-native-positioned.mjs`: **5991 checks pass at each of 1×, 1.25×
+with text, minimum font size, static opacity blocks whose z-index -1 and 5 have
+no effect, and `p { font-size: 50% } > code`, whose monospace re-derivation to
+6.5px computes to 9px) against Chrome through
+`scripts/test-native-positioned.mjs`: **7347 checks pass at each of 1×, 1.25×
 and 2×**, maximum RGB mean 1.349/255 (fixed toasts with text at 1.25×) under
 the unchanged 2/255 bound, and both nearest-edge `scrollIntoView` comparisons
 change exactly the native plan. With the minimum font size disabled the probe
 fails on the first affected box height. Unit tests cover layer order, hit
 order, negative layers, late-found pseudo-context layers, tree-ordered opacity
-contexts across flex items, flex items, fixed and
-absolute scrolling and wheel chaining, the escape refusal, retained/vector
-parity and the console mockup's toast stack and narrow-viewport panel rules.
+contexts across flex items, static opacity contexts ignoring z-index, flex
+items, fixed and absolute scrolling and wheel chaining, the escape refusal,
+retained/vector parity and the console mockup's toast stack and
+narrow-viewport panel rules.
 
 The existing oracles still pass: `native_inline_probe` 58 of 59 cases (9927
 checks per scale) with `paint-overlap-hits` failing exactly as documented
 before (portable smoothing, means 5.388889/3.940351/5.369444),
 `native_paragraph_probe` 81, `native_opacity_probe` 1971,
 `native_structure_probe` 51181 per scale and `native_lengths_probe` 168.
-`python3 scripts/verify.py local varta-view` passes (127 library + 346
+`python3 scripts/verify.py local varta-view` passes (128 library + 346
 integration tests), as do strict all-target Clippy for `varta-view` and the
 104 default-feature `varta-desktop` tests; the GPU feature was not run.
 
 Outside the package's files: two refusal triggers in `crates/varta-view/tests/`
-(`headless.rs`, `renderer.rs`) now use still-unsupported content, and the two
-assistive scroll call sites use the containing block chain. The public
-`View::scroll_into_view_plan` doc comment in `lib.rs` still says positioned
-paths are rejected (owned by another wave-2 package). Open: the console source
-renders no toast or panel node yet and its initial frame still stops at the
-control-box rules, so `headless_frame` was not run; the browser host should
-make its view root a stacking context (`isolation: isolate`) to match native
-root-level negative layers; scrolled paint is not snapped to device pixels as
-in Chrome; positioned inline boxes, `position: sticky` and Metal GPU runs of
-positioned scenes remain open.
+(`headless.rs`, `renderer.rs`) now use still-unsupported content, the two
+assistive scroll call sites use the containing block chain, and the
+`View::scroll_into_view_plan` doc comment in `lib.rs` (owned by another wave-2
+package) now states that positioned targets scroll their containing-block chain.
+
+Review fixes on the same branch: a static block that is a stacking context only
+through opacity takes level zero, since `z-index` does not apply to it (before,
+it was ordered by its `z-index`, against Chrome); the minimum font size reads
+the absolute state from `style::FontSize` instead of a second flag. After
+these fixes the positioned probe, `native_structure_probe` and
+`native_inline_probe` (58 cases; `paint-overlap-hits` with the same means) were
+re-run at all three scales with the results above; the paragraph, opacity and
+lengths oracles were not re-run.
+
+Open, not met:
+
+- Acceptance "`headless_frame` of the console view no longer refuses fixed or
+  z-index nodes" is **not shown**. The console source renders no toast or panel
+  node yet and its initial frame still stops at the control-box rules, so
+  `headless_frame` was not run; a unit test with the console mockup's toast and
+  panel CSS stands in for it and does not close the item.
+- For the web-host owner (`examples/varta-web-host`): the browser applier's
+  view root must be a stacking context (`isolation: isolate` on the root
+  container) to match native root-level negative `z-index` layers, which paint
+  above the root's background. Until then those layers differ between native
+  and web.
+- Scrolled paint is not snapped to device pixels as in Chrome; positioned
+  inline boxes, `position: sticky` and Metal GPU runs of positioned scenes
+  remain open.
 
 ### Native inline painting commit gate — 2026-11-04
 
