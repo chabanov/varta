@@ -30,9 +30,9 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last committed full gate | Wave 2 integration on `a842166` (2026-11-05, macOS arm64): **3670 Rust tests passed, 0 failures, 16 ignored; 191 browser Node tests passed**; conformance 123/4 of 127, baseline matched; all nine commands with unchanged inputs. Report: `target/verification/20261105-060144-9tz0wsxo/report.json`. Linux CI and other platforms not run |
-| Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
-| Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
+| Last committed full gate | Wave 3 integration on `547c345` (2026-11-05, macOS arm64): **3820 Rust tests passed, 0 failures, 17 ignored; 216 browser Node tests passed**; conformance on `checked-f64-utf16-v38` 132/5 of 137, baseline matched; all ten commands with unchanged inputs. Report: `target/verification/20261105-131502-b32pj51h/report.json`. Linux CI and other platforms not run |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **249 tests in 36 groups and 10 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
 | Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. Wave-3 package `w3-native-controls` (scoped, not merged) gives unstyled and partially styled controls Chrome's user-agent defaults, theme, disabled colors and focus ring, and admits `input type=number` with Chrome's Up/Down stepping; whether the console view renders without a control refusal is unverified, because `headless_frame` cannot load the 4273111-byte console module ([record](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05)). Its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
 | Native white space | Wave-2 package `w2-native-whitespace` (scoped, not merged): native `pre-wrap`/`pre` tab stops at `tab-size: 8`, preserved, hanging and conditionally hanging spaces, and mixed `white-space` modes in one inline flow, checked against Chrome at 1×, 1.25× and 2× ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). Bidi text on that path, `text-overflow: ellipsis` with it and a `tab-size` property remain open |
@@ -639,6 +639,58 @@ targets were not compiled here (their dependency sources are not in the
 offline cache and no Windows target is installed); the cross-platform reach of
 the consumer patch rests on the shared lock entry until CI or a Pi 5 builds
 it.
+
+### Wave 3 integration — 2026-11-05
+
+Eleven wave-3 packages are merged on `main` after review and up to four fix
+rounds with independent re-checks: `w3-v38-bytes-unknown`,
+`w3-browser-kv-opfs`, `w3-native-controls`, `w3-network-replay`,
+`w3-console-stitching-screens`, `w3-native-consent`,
+`w3-native-macos-adapters`, `w3-gpu-color-fields`, `w3-conformance-v38`,
+`w3-ci-browser-gate` and `w3-sdk-test-sources` (`w3-hw-linux-desktop` needs a
+Linux machine and was not run). On the merged tree the pilot passes
+`check-sdk.sh` (65/65 files, 6/6 generic bodies), the console's `test.sh` (249
+tests in 36 groups and 10 view checks) and `sdk-loopback.sh` (43 cases in 6
+groups); the Chrome KV acceptance (18 cases) and the browser replay
+acceptance match native. Integration resolved code conflicts between the KV
+codec extraction, byte-value staging and network replay in the browser
+Worker, rebuilt the KV codec after the merge, and updated the CLI smoke test
+for browser builds that now ship KV storage.
+
+Owner decisions (2026-11-05): the value ABI stays 18 with the additive
+`Bytes` tag; the whole-artifact OPFS lock in the browser is an accepted,
+documented deviation; the native prompt input delay is 500 ms; number
+fields step with ArrowUp/ArrowDown as Chrome does. Lead decisions: an
+application's first-turn deadline starts after first-run approval; the KV
+value extent bound follows from the value size (shared parts count at every
+reach) so values Deno stores unshared still store and read, while
+sharing-driven expansion is refused by name; the browser refuses nested KV
+database paths.
+
+Open after integration:
+
+- KV reads: absent optional fields are not counted in the extent, so a read
+  can build up to a turn's fuel worth of nodes (measured +43 MB host RSS
+  natively); the browser reports a fatal fuel or memory exhaustion only as
+  `unreachable` or `fuel exhausted`, not with the native reason.
+- Native consent: a request whose patterns do not fit the prompt is denied
+  without a prompt natively but shown in the browser; 'allow for this
+  session', a refusal cool-down and refused-required presentation remain
+  owner decisions.
+- Accessibility hit tests, the scroll-bar child and the consumer patch are
+  built and observed on macOS only; Linux (AT-SPI) and Windows (UIA) were not
+  compiled here.
+- Number steps beyond exact integers below 10^18 are refused (Chrome prints
+  `1e+18`); a spin button and `step`/`min`/`max` beyond the admitted L0
+  attributes remain open.
+- Conformance: KV and fetch cases with real grants need file roots and a
+  loopback server in the runner (owner decision); a union-to-record argument
+  conversion is recorded as a reviewed gap.
+- The uarp-sdk own tests are pinned (3 files) but refused by `varta check`
+  (`node:assert/strict`, `import.meta.url`) until the M7 harness exists.
+- Not run: Linux/Windows/Pi 5, CI on the merged tree (nothing pushed),
+  Firefox for KV, manual live-window checks (consent prompt, clipboard and
+  link gestures), live `api.snaga.ai` sessions.
 
 ### Wave 2 integration — 2026-11-05
 
