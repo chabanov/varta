@@ -12,12 +12,15 @@
 //! the embedding runtime owns the guest, the scheduler and the permission
 //! broker, and supplies broker decisions through [`Broker`].
 //!
-//! Snapshots carry the tree, cascaded styles and accessibility tree. The
-//! separate experimental layout and CPU raster methods support bounded box and
-//! explicit-font text subsets; full native rendering is not implemented yet.
+//! Snapshots carry the tree, cascaded styles and accessibility tree; a host
+//! with explicit fonts may add the opt-in `geometry` section of layout
+//! rectangles ([`View::snapshot_with_geometry`]). The separate experimental
+//! layout and CPU raster methods support bounded box and explicit-font text
+//! subsets; full native rendering is not implemented yet.
 mod accessibility;
 mod drawing;
 mod events;
+mod geometry;
 mod glyph_raster;
 mod inline;
 mod layout;
@@ -50,6 +53,7 @@ pub use events::{
     ClipboardToken, HistoryAction, Input, Platform, PromptAnswer, Script, ScriptError, ScriptStep,
     Target,
 };
+pub use geometry::{DEFAULT_VIEWPORT_HEIGHT, GEOMETRY_KEY, GeometryRequest};
 pub use glyph_raster::{
     GlyphRasterBounds, GlyphRasterError, GlyphRasterMask, GlyphRasterRequest, GlyphRasterizer,
 };
@@ -582,6 +586,21 @@ impl View {
     #[must_use]
     pub fn snapshot(&self) -> serde_json::Value {
         snapshot::snapshot(&self.tree, &self.environment, &self.effects)
+    }
+
+    /// The headless snapshot with its opt-in `geometry` section: the
+    /// viewport, the base text size and one border-box rectangle with its
+    /// used display per displayed element, in document order, laid out with
+    /// the request's explicit fonts. Every other key equals [`Self::snapshot`].
+    /// Unsupported content or CSS fails the whole request.
+    pub fn snapshot_with_geometry(
+        &self,
+        request: &mut GeometryRequest,
+    ) -> Result<serde_json::Value, LayoutError> {
+        let section = geometry::section(&self.tree, &self.environment, request)?;
+        let mut value = self.snapshot();
+        value[GEOMETRY_KEY] = section;
+        Ok(value)
     }
 
     /// Export diagnostic JSON under its separate host byte allowance. A refused

@@ -2348,7 +2348,8 @@ everything else in this section stays draft.
 | Bubbling, `preventDefault`/`stopPropagation`, key filters, edit counters and stale `set_value`/`set_checked`, gestures | Implemented by the headless renderer (`varta-view`) and its scripted platform inputs |
 | `copy_text` / `clipboard.write`, external links / `ui.open_url` (with `https://*`), `command_result` statuses | Implemented: registered capabilities with exact grants; permission broker v1 decides from request ∩ ceiling and the grant's state, audits every outcome and prompts with the full URL for `https://*` matches through the prompt seam (never stored; scripted headless sessions answer from the script, other hosts deny); every outcome is a `command_result` record |
 | At most one commit per turn | Implemented: a second `view_commit` in one turn ends the instance |
-| Layout rectangles, fonts, `field-sizing` heights | Draft: the headless renderer serializes the tree, cascaded styles and the accessibility tree only (no Taffy/Parley dependency yet) |
+| Headless layout rectangles with explicit fonts | Implemented for the admitted native layout subset as an opt-in snapshot section ([headless geometry output](#headless-geometry-output)); ordinary snapshots keep the tree, cascaded styles and accessibility tree only |
+| Layout of content outside that subset, platform fonts, cross-renderer `field-sizing` acceptance | Draft: unsupported content or CSS fails the geometry request; no rectangles are published for it |
 | Browser applier, native renderer, hydration, measurement queries | Draft |
 | Long-lived instance and per-turn budgets | Implemented: an application instance hosts the view; every record is one turn with fresh per-turn budgets; a bounded execution renders without event delivery |
 
@@ -2594,6 +2595,63 @@ draft.
   This bounds potential name evaluation using source-byte and visit weights.
   It does not measure browser accessibility-engine CPU, whole serialized JSON,
   frame retention, platform caches, every repeated backend read or process RSS.
+- <a id="headless-geometry-output"></a>**Headless geometry output.** A host that
+  supplies explicit fonts may request one more snapshot key, `geometry`
+  (`varta_view::GEOMETRY_KEY`): `View::snapshot_with_geometry(&mut
+  GeometryRequest)`, `Application::view_snapshot_with_geometry`,
+  `VartaRuntime::run_view_with_geometry` and `varta dev --view-script S
+  --view-geometry --view-font PATH FAMILY` (repeatable). Without a request every
+  API, and the printed `varta dev --view-script` output, is unchanged byte for
+  byte; with one, every other key equals the ordinary snapshot. The section is a
+  function of the final view (after the scripted session settled), its
+  environment, the fonts and the viewport height:
+
+  | Field | Meaning |
+  | --- | --- |
+  | `viewport.width` | The environment width: the script's `viewport.width`, default `DEFAULT_VIEWPORT_WIDTH` |
+  | `viewport.height` | The request's height, `DEFAULT_VIEWPORT_HEIGHT` |
+  | `fontSize` | The base text size given to layout: the environment's reference root font size (`Environment::root_font_size`) |
+  | `boxes[]` | One entry per displayed element in document order, the view root (`id` 1) first. Text nodes, `br`, and an element with `display: none` together with its subtree have no entry |
+  | `boxes[].id` | The node id of the tree entry |
+  | `boxes[].display` | Used outer display: `block`, `inline`, `flex` or `grid` |
+  | `boxes[].x`, `y`, `width`, `height` | Border box in CSS pixels from the view root's top-left corner, as `layout_geometry_with_text` reports it; for an inline element, the union of its font-box fragments |
+
+  Numbers are the shortest decimals that round-trip the layout's
+  single-precision values (`-0` is written as `0`). **Blockification:** the tree
+  keeps the cascaded `style.display` (an inline child of a flex or grid
+  container keeps `inline`, or no `display`); its box reports the used
+  `display` `block`. A text-level element in an inline formatting context is
+  `inline`; other elements report their cascaded `flex`, `grid` or `block`, or
+  their tag's initial block display. Browser comparison maps computed
+  `list-item` to `block`.
+
+  Fonts are only the request's faces, with no OS font lookup; the first family
+  is the default when CSS names none, so a browser comparison sets the view
+  root's `font-family` to it and its `font-size` to `fontSize`. `varta dev`
+  reads each `--view-font` file under the browser font-file bound and all of
+  them under the browser resource total before the text shaper validates the
+  faces; an unreadable or refused face fails before the session starts.
+  Layout is the experimental native subset of the
+  [architecture contract](architecture.md#v38-view-protocol-and-tsx-view_protocol-tsx);
+  unsupported content or CSS fails the whole request with
+  `LayoutError` (`RuntimeError::ViewLayout` for a session that did not already
+  fail). No partial section is published: the report keeps the ordinary
+  snapshot and `varta dev` prints none and exits nonzero. A session that failed
+  on its own keeps that failure and is not laid out. The section shares the
+  diagnostic JSON byte allowance below.
+
+  `scripts/test-headless-geometry.mjs` is a local Chrome oracle, not a CI gate:
+  counter, list and form-like TSX fixtures (flex and grid containers with
+  text-level children, lists, a line break, a hidden subtree, text fields, a
+  textarea, a checkbox and buttons) run through `varta dev --view-geometry`
+  with the structure fixture faces. Chrome rebuilds each final tree from the
+  snapshot (tags, attributes, classes, field values and cascaded styles as
+  inline declarations) in a closed shadow root with the official applier's
+  root and control base rules and the same font bytes. Every box must match
+  `getBoundingClientRect` within ±1 CSS px, its `display` Chrome's computed
+  outer display, and the set and order of boxes Chrome's displayed elements.
+  The oracle does not replay the patch stream through the official browser
+  applier and does not cover pseudo-class states.
 - **Host diagnostic export and effect retention.** Native `View::snapshot_json`
   and `Application::view_snapshot_json` encode under the diagnostic JSON byte
   allowance; `encode_snapshot` (re-exported by runtime/project as

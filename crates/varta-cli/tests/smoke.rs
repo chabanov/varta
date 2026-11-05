@@ -17314,6 +17314,155 @@ fn view_capabilities_are_exact_and_scripts_fail_closed() {
     );
 }
 
+/// `varta dev --view-geometry`: a flex row of text-level children laid out
+/// with the explicit structure fixture face; `__EXTRA__` adds a row child.
+const VIEW_GEOMETRY_APP: &str = r#"
+export function main(): void {
+  View.stylesheet(1, '.app { font-family: "Varta Structure Fixture"; font-size: 16px; line-height: 20px } .row { display: flex; gap: 4px }');
+  View.mount(
+    <main class="app">
+      <div class="row" id="row"><span id="label">A</span><strong id="value">B</strong>__EXTRA__</div>
+    </main>,
+  );
+}
+"#;
+const VIEW_GEOMETRY_FONT: &[u8] =
+    include_bytes!("../../varta-view/tests/fixtures/structure-400.ttf");
+const VIEW_GEOMETRY_FAMILY: &str = "Varta Structure Fixture";
+
+#[test]
+fn view_geometry_is_an_opt_in_snapshot_section_with_explicit_fonts() {
+    let project = view_project(serde_json::json!({}));
+    let app = |extra: &str| {
+        fs::write(
+            project.0.join("src/main.tsx"),
+            VIEW_GEOMETRY_APP.replace("__EXTRA__", extra),
+        )
+        .unwrap();
+    };
+    app("");
+    fs::write(
+        project.0.join("script.json"),
+        r#"{"viewport":{"width":300}}"#,
+    )
+    .unwrap();
+    fs::write(project.0.join("font.ttf"), VIEW_GEOMETRY_FONT).unwrap();
+    let measure = [
+        "dev",
+        "--view-script",
+        "script.json",
+        "--view-geometry",
+        "--view-font",
+        "font.ttf",
+        VIEW_GEOMETRY_FAMILY,
+    ];
+    let plain = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(plain.status.success(), "{}", combined(&plain));
+    let plain = view_snapshot(&plain);
+    assert!(plain.get("geometry").is_none());
+    let measured = project.command(&measure);
+    assert!(measured.status.success(), "{}", combined(&measured));
+    assert!(combined(&measured).ends_with("varta dev: completed\n"));
+    let mut measured = view_snapshot(&measured);
+    let geometry = measured
+        .as_object_mut()
+        .unwrap()
+        .remove("geometry")
+        .unwrap();
+    assert_eq!(measured, plain, "only the geometry section is added");
+    assert_eq!(geometry["viewport"]["width"], 300.0);
+    let boxes = geometry["boxes"].as_array().unwrap();
+    assert_eq!(boxes[0]["id"], 1);
+    let entry = |ident: &str| {
+        let id = &view_node(&plain, ident)["id"];
+        boxes
+            .iter()
+            .find(|entry| &entry["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(entry("row")["display"], "flex");
+    for ident in ["label", "value"] {
+        assert!(view_node(&plain, ident).get("style").is_none());
+        assert_eq!(entry(ident)["display"], "block", "{ident}");
+        assert_eq!(entry(ident)["height"], 20.0, "{ident}");
+    }
+    let help = project.command(&["dev", "--help"]);
+    for flag in [
+        "--view-geometry",
+        "--view-font <PATH> <FAMILY>",
+        "used display",
+    ] {
+        assert!(
+            combined(&help).contains(flag),
+            "{flag}: {}",
+            combined(&help)
+        );
+    }
+    // The flags require each other and a script; a face takes a path and a family.
+    for (args, missing) in [
+        (&measure[..4], "--view-font"),
+        (
+            &[
+                "dev",
+                "--view-script",
+                "script.json",
+                "--view-font",
+                "font.ttf",
+                VIEW_GEOMETRY_FAMILY,
+            ][..],
+            "--view-geometry",
+        ),
+        (
+            &[
+                "dev",
+                "--view-geometry",
+                "--view-font",
+                "font.ttf",
+                VIEW_GEOMETRY_FAMILY,
+            ][..],
+            "--view-script",
+        ),
+        (&measure[..6], "--view-font"),
+    ] {
+        let output = project.command(args);
+        assert!(!output.status.success(), "{args:?}");
+        assert!(
+            combined(&output).contains(missing),
+            "{args:?}: {}",
+            combined(&output)
+        );
+    }
+    // Unreadable or invalid faces fail before the session prints anything.
+    fs::write(project.0.join("bad.ttf"), b"not a font").unwrap();
+    for (font, message) in [("absent.ttf", "No such file"), ("bad.ttf", "view font")] {
+        let mut args = measure;
+        args[5] = font;
+        let output = project.command(&args);
+        assert!(!output.status.success(), "{font}");
+        assert!(
+            combined(&output).contains(message),
+            "{font}: {}",
+            combined(&output)
+        );
+        assert!(!combined(&output).contains('{'), "{font}: no snapshot");
+    }
+    // Content the native layout does not admit fails the run without a
+    // partial snapshot; without the flag the same session succeeds.
+    app("<code>A</code>");
+    let unsupported = project.command(&measure);
+    assert!(!unsupported.status.success());
+    assert!(
+        combined(&unsupported).contains("unsupported layout content or style on node"),
+        "{}",
+        combined(&unsupported)
+    );
+    assert!(!combined(&unsupported).contains('{'));
+    assert!(!combined(&unsupported).contains("varta dev: completed"));
+    let plain = project.command(&["dev", "--view-script", "script.json"]);
+    assert!(plain.status.success(), "{}", combined(&plain));
+}
+
 // Profile v38 hashed dictionaries (`dictionary_hashing`, value layout 18):
 // the same program logs the same lines through `dev`, the packaged artifact
 // and both binaries, and its artifact declares value ABI 18.

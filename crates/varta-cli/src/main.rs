@@ -3,6 +3,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 use varta_project::{Artifact, CheckedProject, HostPolicy, ProjectError};
 
+/// The values of one `--view-font`: a font file path and its CSS family.
+const VIEW_FONT_VALUES: usize = 2;
+
 #[derive(Parser)]
 #[command(
     name = "varta",
@@ -79,6 +82,27 @@ enum Commands {
         /// timers. Other steps never wait for requests implicitly.
         #[arg(long, value_name = "PATH", conflicts_with = "profile_fuel")]
         view_script: Option<PathBuf>,
+        /// With --view-script, add a "geometry" section to the printed
+        /// snapshot (the rest is unchanged): the viewport, the base text size
+        /// and, per displayed element in document order, its id, used display
+        /// (an inline child of a flex or grid container is "block", while
+        /// the tree keeps its cascaded style) and border-box rectangle
+        /// x, y, width, height in CSS pixels. Layout uses the script's
+        /// viewport width, the default headless viewport height and only the
+        /// --view-font faces, never OS fonts. Unsupported layout content or
+        /// CSS fails the run.
+        #[arg(long, requires = "view_script", requires = "view_font")]
+        view_geometry: bool,
+        /// With --view-geometry: an explicit font file and the CSS family it
+        /// provides; repeat for more faces. The first family is the default
+        /// when CSS names none.
+        #[arg(
+            long,
+            num_args = VIEW_FONT_VALUES,
+            value_names = ["PATH", "FAMILY"],
+            requires = "view_geometry"
+        )]
+        view_font: Vec<String>,
     },
     /// Build validated Wasm; --single embeds it in a native launcher.
     /// --target browser writes a checked console/view bundle to dist/web
@@ -266,19 +290,33 @@ fn execute(
             config,
             execution,
             view_script: Some(script),
+            view_geometry,
+            view_font,
             ..
         }) => {
             let project = CheckedProject::load(&config)?;
             let script = varta_project::read_view_script(&script)?;
+            let mut geometry = if view_geometry {
+                let fonts: Vec<(PathBuf, String)> = view_font
+                    .as_chunks::<VIEW_FONT_VALUES>()
+                    .0
+                    .iter()
+                    .map(|[path, family]| (PathBuf::from(path), family.clone()))
+                    .collect();
+                Some(varta_project::read_view_fonts(&fonts)?)
+            } else {
+                None
+            };
             let varta_project::ViewReport {
                 mut report,
                 snapshot,
                 ..
-            } = varta_project::run_view(
+            } = varta_project::run_view_with_geometry(
                 &project.artifact,
                 policy.as_ref(),
                 project.dev_settings(settings(decisions, &execution)),
                 &script,
+                geometry.as_mut(),
             )?;
             // The output, the snapshot of a run that did not fail, then the
             // budget report and the failure.

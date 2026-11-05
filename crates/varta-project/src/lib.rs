@@ -22,8 +22,8 @@ pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
 pub use varta_runtime::{
     FileRoots, HttpReport, HttpRequestOutcome, HttpRequestReport, RunOutput, RunReport,
-    RuntimeEvent, RuntimeObserver, ViewReport, ViewScript, ViewSnapshotError, ViewSnapshotFormat,
-    encode_view_snapshot,
+    RuntimeEvent, RuntimeObserver, ViewGeometryRequest, ViewReport, ViewScript, ViewSnapshotError,
+    ViewSnapshotFormat, encode_view_snapshot,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +46,12 @@ pub enum ProjectError {
     ViewScript(#[from] varta_runtime::ViewScriptError),
     #[error(transparent)]
     ViewSnapshot(#[from] varta_runtime::ViewSnapshotError),
+    /// An explicit `--view-font` face the text shaper refuses.
+    #[error("view font: {0}")]
+    ViewFont(#[from] varta_runtime::ViewFontError),
+    /// The `--view-font` files together exceed the browser resource total.
+    #[error("view fonts exceed their {limit}-byte total")]
+    ViewFontsTooLarge { limit: usize },
     #[error("invalid artifact: {0}")]
     Artifact(String),
     #[error("{0}")]
@@ -341,16 +347,30 @@ pub fn run_view(
     settings: RunSettings,
     script: &ViewScript,
 ) -> Result<ViewReport> {
+    run_view_with_geometry(artifact, host, settings, script, None)
+}
+
+/// [`run_view`] whose final snapshot also carries the opt-in `geometry`
+/// section when `geometry` is given (`varta dev --view-geometry`); see
+/// [`varta_runtime::VartaRuntime::run_view_with_geometry`].
+pub fn run_view_with_geometry(
+    artifact: &Artifact,
+    host: Option<&HostPolicy>,
+    settings: RunSettings,
+    script: &ViewScript,
+    geometry: Option<&mut ViewGeometryRequest>,
+) -> Result<ViewReport> {
     let mut options = options(&artifact.manifest, host, &settings)?;
     options.decisions = settings.decisions;
     options.observer = settings.observer;
-    Ok(VartaRuntime::new().run_view(
+    Ok(VartaRuntime::new().run_view_with_geometry(
         &artifact.wasm,
         ApplicationOptions {
             run: options,
             ..ApplicationOptions::default()
         },
         script,
+        geometry,
     ))
 }
 
@@ -358,6 +378,32 @@ pub fn run_view(
 pub fn read_view_script(path: &Path) -> Result<ViewScript> {
     let bytes = artifact::read_bounded(path, ViewScript::MAX_BYTES)?;
     Ok(ViewScript::parse(&bytes)?)
+}
+
+/// Read explicit headless layout fonts (`varta dev --view-font PATH FAMILY`)
+/// into a geometry request. Each file is read with the browser font-file
+/// bound and all of them within the browser resource total, before the text
+/// shaper validates the faces (no OS font lookup); the first family is the
+/// default when CSS names none.
+pub fn read_view_fonts(fonts: &[(PathBuf, String)]) -> Result<ViewGeometryRequest> {
+    let mut faces = Vec::with_capacity(fonts.len());
+    let mut total = 0usize;
+    for (path, family) in fonts {
+        let data = artifact::read_bounded(path, browser::resources::MAX_RESOURCE_BYTES)?;
+        total = total.saturating_add(data.len());
+        if total > browser::resources::MAX_TOTAL_BYTES {
+            return Err(ProjectError::ViewFontsTooLarge {
+                limit: browser::resources::MAX_TOTAL_BYTES,
+            });
+        }
+        faces.push(varta_runtime::ViewFont {
+            data,
+            family: family.clone(),
+            aliases: Vec::new(),
+        });
+    }
+    let measurer = varta_runtime::ViewTextMeasurer::new_with_fonts(faces)?;
+    Ok(ViewGeometryRequest::new(measurer))
 }
 
 /// Policy review additionally requires a declaration for every privileged import.
@@ -443,4 +489,73 @@ export function main(): void {
     )?;
     fs::write(path.join("varta.d.ts"), varta_common::HOST_DECLARATIONS)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FONT: &[u8] = include_bytes!("../../varta-view/tests/fixtures/structure-400.ttf");
+    const FAMILY: &str = "Varta Structure Fixture";
+
+    /// A fresh directory for one test; removed when dropped.
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "varta-project-{name}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn view_fonts_are_read_within_the_browser_font_bounds() {
+        let scratch = Scratch::new("view-fonts");
+        let font = scratch.0.join("font.ttf");
+        fs::write(&font, FONT).unwrap();
+        assert!(read_view_fonts(&[(font.clone(), FAMILY.into())]).is_ok());
+        // One file over the per-font bound is refused while it is read.
+        let large = scratch.0.join("large.ttf");
+        fs::write(&large, vec![0; browser::resources::MAX_RESOURCE_BYTES + 1]).unwrap();
+        assert!(matches!(
+            read_view_fonts(&[(large, FAMILY.into())]),
+            Err(ProjectError::Config(_) | ProjectError::Io(_))
+        ));
+        // Files each within the bound but together over the total are refused
+        // before any face is parsed.
+        let full = scratch.0.join("full.ttf");
+        fs::write(&full, vec![0; browser::resources::MAX_RESOURCE_BYTES]).unwrap();
+        let faces = browser::resources::MAX_TOTAL_BYTES / browser::resources::MAX_RESOURCE_BYTES;
+        let fonts: Vec<_> = std::iter::repeat_n((full, FAMILY.to_owned()), faces)
+            .chain([(font, FAMILY.to_owned())])
+            .collect();
+        assert!(matches!(
+            read_view_fonts(&fonts),
+            Err(ProjectError::ViewFontsTooLarge { limit })
+                if limit == browser::resources::MAX_TOTAL_BYTES
+        ));
+        // A missing file and bytes that are not a font fail too.
+        assert!(matches!(
+            read_view_fonts(&[(scratch.0.join("absent.ttf"), FAMILY.into())]),
+            Err(ProjectError::Config(_) | ProjectError::Io(_))
+        ));
+        let bad = scratch.0.join("bad.ttf");
+        fs::write(&bad, b"not a font").unwrap();
+        assert!(matches!(
+            read_view_fonts(&[(bad, FAMILY.into())]),
+            Err(ProjectError::ViewFont(_))
+        ));
+    }
 }

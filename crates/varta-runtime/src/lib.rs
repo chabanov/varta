@@ -217,8 +217,10 @@ mod view_tests;
 #[cfg(test)]
 mod web_bytes_tests;
 pub use varta_view::{
-    Script as ViewScript, ScriptError as ViewScriptError, SnapshotError as ViewSnapshotError,
-    SnapshotFormat as ViewSnapshotFormat, ViewError, encode_snapshot as encode_view_snapshot,
+    GeometryRequest as ViewGeometryRequest, Script as ViewScript, ScriptError as ViewScriptError,
+    SnapshotError as ViewSnapshotError, SnapshotFormat as ViewSnapshotFormat, TextFont as ViewFont,
+    TextMeasureError as ViewFontError, TextMeasurer as ViewTextMeasurer, ViewError,
+    encode_snapshot as encode_view_snapshot,
 };
 
 use std::collections::BTreeMap;
