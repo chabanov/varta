@@ -12982,7 +12982,8 @@ The project loader requires explicit relative `.ts` paths starting with `./` or
 `../`. It normalizes dot segments lexically and rejects paths outside the
 canonical directory containing the configuration file. Absolute/bare paths,
 URLs, backslashes, controls, query strings and fragments are rejected; there is
-no extension probing, directory/index lookup, npm resolution or network loading.
+no extension probing, directory/index lookup or network loading, and before v38
+no package resolution (v38 package specifiers are described below).
 Parent segments are allowed when the normalized path stays inside the root.
 The root directory is pinned once; every dependency is opened relative to that
 descriptor with no-follow at every component. Both external and internal
@@ -13008,6 +13009,74 @@ existing, so loading it is then rejected. Probing never reads a file; only
 the resolved source is loaded, within the same path, size and graph
 budgets. Profiles v31–v37 keep `./x.js` → `x.ts` without probing and reject
 `.jsx` (and `.tsx`) specifiers.
+
+Profile v38 (`package_specifiers()`) adds **package specifiers**: a bare
+specifier imports a typed npm package by name and compiles the TypeScript
+source the package ships.
+
+```ts
+import { UarpClient } from "uarp-sdk";
+import { extra } from "@scope/name/extra";
+```
+
+- **Specifier.** `name`, `@scope/name`, optionally followed by `/subpath`.
+  Names follow npm's rules for new packages: at most 214 bytes with the
+  scope, lowercase `a-z`, `0-9`, `-`, `.`, `_`, `~`, not starting with `.` or
+  `_`, not `node_modules` or `favicon.ico`. A subpath is `/`-separated
+  segments without empty, `.` or `..` segments, controls, `\`, `?`, `#`, `%`,
+  `:` or `*`. An invalid name or subpath is a module error. A specifier with
+  a scheme (`node:fs`, `https:`) or a leading `.` or `/` is not a package
+  specifier and keeps the relative-path rules above.
+- **Location.** The package directory is exactly
+  `<config dir>/node_modules/<name>` (or `node_modules/@scope/<name>`). No
+  parent directory and no nested `node_modules` is searched, so bare
+  imports inside a package resolve from the same directory (npm's flat
+  layout). Every read walks the pinned configuration-directory descriptor
+  with no-follow at every component: a symlinked `node_modules`, scope,
+  package directory, manifest, source map or source is refused (npm/pnpm
+  links included).
+- **Manifest.** `package.json` is read once per package as a bounded
+  regular UTF-8 JSON object (1 MiB). Manifests and source maps count against
+  one loader budget of 4 MiB across the graph; each specifier resolves once.
+- **Export selection.** With `exports` (not `null`), the export key is `.`
+  or `./subpath`. A string, array or conditions object exports only `.`; a
+  subpath map is matched by exact key only. When no exact key matches and
+  the map has a `*` or trailing-`/` key, the import is refused as an
+  unsupported export pattern; otherwise the subpath is not exported. A
+  `null` entry is not exported; a fallback array, a nested condition under
+  `types` and an object mixing subpath and condition keys are refused. Only
+  the `types` condition directly under the entry is read, wherever it
+  appears among the conditions; `import`, `require`, `default` and every
+  other condition are ignored, so JavaScript targets never matter. When the
+  `.` entry has no `types` condition, or there is no `exports`, the root
+  uses the top-level `types` string. A subpath has no fallback, and without
+  `exports` a subpath (a deep import) is refused.
+- **Declaration.** The target must be a `.d.ts` path inside the package
+  (export targets start with `./`; the top-level `types` may omit it),
+  without `.`/`..` segments, empty segments, controls, `\`, `?`, `#`, `%`,
+  `:` or `*`, and the file must exist. `.d.mts`/`.d.cts` and a types target
+  naming a `.ts` source are refused. The declaration is never read.
+- **Source.** The adjacent `<declaration>.map` (Source Map revision 3, no
+  `sections`, empty or absent `sourceRoot`) must name exactly one source.
+  That path, relative to the map's directory without a scheme, an absolute
+  path, `\`, `?` or `#`, is normalized lexically and must stay inside the
+  package directory; it must name an existing `.ts` or `.tsx` source, not a
+  declaration. The source is then the module identity, loaded like any
+  module: a package imported by name and by a relative path is one module.
+- **Typed packages only.** A package whose `types` export or top-level
+  `types` is missing ("unsupported untyped package"), whose declarations
+  have no source map or whose mapped source is not shipped ("unsupported
+  declarations-only package"), or whose declarations map to JavaScript is
+  refused. There is no fallback to declarations or JavaScript.
+- **Graph.** Relative imports inside the package follow the module rules
+  above, within the same module, import, depth and source budgets and the
+  same sorted dependency order. All failures are module errors at the
+  import that named the package.
+
+Profiles v1–v37 reject a valid package specifier with "package specifier
+`name` requires profile checked-f64-utf16-v38". Package resolution adds no
+capability and no runtime input: packages are linked at build time like any
+module.
 
 Profile v38 (`text_imports()`) adds **text resources**, in the TC39 import
 attributes syntax that Deno, Bun and the Import Text proposal use:

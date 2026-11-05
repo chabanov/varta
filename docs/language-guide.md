@@ -140,6 +140,26 @@ are rejected. Default/namespace imports, export-from, dynamic imports, npm and
 URL imports are not supported. See the [module contract](architecture.md#local-modules)
 for path rules and graph limits.
 
+With `"languageProfile": "checked-f64-utf16-v38"`, a typed npm package
+installed in `node_modules` next to `varta.config.json` is imported by name:
+
+```ts
+// npm install uarp-sdk
+import { UarpClient } from "uarp-sdk";
+
+export function main(): void {
+  const client = new UarpClient({ apiKey: "" });
+  console.log(client.baseURL);
+}
+```
+
+Varta compiles the TypeScript source the package ships: the `types` export
+(or top-level `types`) names a `.d.ts`, and its `.d.ts.map` names the source.
+Scoped packages (`@scope/name`) and exact export subpaths (`name/sub`) work
+the same way. Packages that ship only declarations or only JavaScript,
+symlinked (linked) packages and `*` export patterns are rejected with a
+module error at the import; earlier profiles reject package names.
+
 ### Diagnostics
 
 `check`, `build` and `dev` report the actual source file and the failing source

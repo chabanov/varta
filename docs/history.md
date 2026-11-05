@@ -3077,3 +3077,24 @@ cases and the 12-input Showcase script. The fresh CPU Debug bundle builds; Cua
 app selection times out after 60 s, leaving actual launch/system clipboard and
 IME/VoiceOver/other-platform acceptance open. Source comments/documentation-only
 annotations follow verification. No full-plan completion is inferred.
+
+### V38 package specifiers (wave 1) — 2026-11-04
+
+`package_specifiers()` (v38) lets a project import a typed npm package by
+name. The project loader resolves `<config dir>/node_modules/<name>` or
+`@scope/<name>` only, through the pinned no-follow root: a bounded
+`package.json`, the exact `exports` key with only its `types` condition (the
+top-level `types` for `.`), the `.d.ts` inside the package and its adjacent
+`.d.ts.map`, whose single source must be a shipped `.ts`/`.tsx` file inside
+the package. Untyped, declarations-only, symlinked, `*`-pattern and escaping
+packages are module errors at the import; v1–v37 name the admitting profile.
+No ABI, capability or budget changed; the compiler is unchanged.
+
+Scoped verification only: `verify.py local varta-project` (60 unit, 2
+boundary, 8 package tests), `verify.py local varta-compiler`, `cargo test -p
+varta --test modules` (29), `cargo test -p varta-common`, strict Clippy of
+the affected crates and formatting pass. A scratch project outside the
+repository with a copy of the pinned `uarp-sdk` 0.13.2 checks under v38
+when importing `UarpClient` from `"uarp-sdk"` (66 modules, no declaration
+or JavaScript file) and fails under v37 with the named diagnostic. The full
+gate is left to the wave integration.
