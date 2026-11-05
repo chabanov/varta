@@ -1,6 +1,6 @@
 // Store tests: the person's actions change the model at once and queue exactly
 // one intent each, for the request layer to perform.
-import type { RunEventV1RunAwaitingApproval, RunEventV1RunAwaitingInput } from "../../node_modules/uarp-sdk/src/generated/models.js";
+import type { RunEventV1RunAwaitingApproval, RunEventV1RunAwaitingInput } from "uarp-sdk";
 import { Runtime, untracked } from "../l1/reactive.js";
 import { onAwaitingApproval, onAwaitingInput } from "../chat/timeline.js";
 import { ChatStore, type Intent } from "../chat/store.js";

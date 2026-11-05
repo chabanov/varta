@@ -18,7 +18,7 @@ import type {
   SessionStreamFrameV1Error,
   SessionStreamFrameV1RunDone,
   SessionStreamFrameV1SessionClosed,
-} from "../../node_modules/uarp-sdk/src/generated/models.js";
+} from "uarp-sdk";
 import {
   timeline,
   openSegment,

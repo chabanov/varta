@@ -28,8 +28,9 @@ Administration (creating or suspending agents) is not designed yet.
   by `crates/`, and engine crates never reference UARP types, routes or logic.
 - `uarp-sdk` (0.13.2, the v1 schema of build bd5dc091) is an exact-pinned npm dependency (`package.json`, `package-lock.json`;
   install with `npm ci --ignore-scripts`). It lives in the ignored `node_modules/`
-  and is never vendored into the repository. The console imports its closed v1
-  types type-only from `node_modules/uarp-sdk/src/generated/models.ts`.
+  and is never vendored into the repository. The console imports it by name,
+  `from "uarp-sdk"` (v38 package specifiers: Varta compiles the TypeScript source
+  the package ships); no source names a path inside `node_modules/`.
 - The application uses Varta only through its public tooling and contracts
   (`varta check`, `varta build`, the embedding contract and the L0 view protocol).
   Where Varta cannot yet compile or run something, the gap is reported to the
@@ -41,16 +42,19 @@ Administration (creating or suspending agents) is not designed yet.
 | --- | --- |
 | `src/markdown/` | Deterministic Markdown subset for chat replies, parsed into a closed tree of blocks and inline nodes that maps onto L0; incremental parsing for streaming answers |
 | `src/l1/` | L1 reactive core: signals, lazy computeds, effects, batches and keyed lists over an explicit runtime; accessors are functions, as in SolidJS |
-| `src/chat/` | Chat timeline model: the dispatcher of session-stream frames as the wire delivers them and one handler per closed v1 event type, stream resume and end rules, transcripts as history, the reactive store with the person's actions as queued intents, the request layer that performs them through the uarp-sdk client, and a compact text form for tests |
+| `src/app/` | The product entry (`varta.json`, `main.tsx`): the API key from the KV database, the real `UarpClient`, a new session with the tenant's Head Agent, the request layer wired to the store and the followed session stream; `api.ts` adapts the client to the chat's `ChatApi` and `StreamApi` |
+| `src/chat/` | Chat timeline model: the dispatcher of session-stream frames as the wire delivers them and one handler per closed v1 event type, stream resume and end rules, transcripts as history, the reactive store with the person's actions as queued intents, the request layer that performs them through the uarp-sdk client, the follower of the live session stream (`follow.ts`), and a compact text form for tests |
 | `src/ui/` | Single Chat screen in TSX (L0 view protocol, v38): the live timeline, the composer, Markdown as L0 nodes, interface strings; the stylesheet is `mockups/console.css`, imported as text |
 | `src/tests/` | Tests executed by Varta itself (`varta.test.json`, one execution per group); `frames.ts`, `transcripts.ts` and `responses.ts` hold recorded v1 frames, transcripts and API responses |
 | `fixtures/events-v1/` | The API lane's nine recorded `event_schema=1` session streams and their transcripts (anonymised; provenance in its README), read by the scenario tests through the virtual root `/project` |
 | `src/tests/sdk/` | SDK client tests executed by Varta (`varta.sdk-test.json`): the real, unmodified `UarpClient` against the loopback mock, one execution per group; `contract.ts` holds the canned bodies, headers and timings both sides share |
-| `src/tests/sdk-server/` | The loopback mock of the UARP API, itself a Varta HTTP/1 application (`varta.sdk-server.json`) |
+| `src/tests/sdk-server/` | The loopback mock of the UARP API, itself a Varta HTTP/1 application (`varta.sdk-server.json`); `e2e.ts` replays the recorded scenarios for the console end to end |
+| `src/tests/app.test.ts` | The console end to end: the product's start, request layer and follower with the real `UarpClient` against the mock, and the product manifest; `loopback.ts` is the instrumented `fetch` those tests pass to the client |
 | `src/tests/view/` | View tests: a timeline from recorded frames rendered headlessly by `varta dev --view-script` (`varta.view.json`), compared with the reviewed tree and accessibility snapshot |
 | `design/agent-studio.md` | Draft of Agent Studio (building a personal agent with Varta tools); built after the rest of the console works |
 | `design/chat-timeline.md` | Draft model of the chat timeline: sources, entries, reducer, transport, session stitching |
-| `scripts/test.sh` | Runs the Varta-executed tests group by group |
+| `scripts/test.sh` | Builds the product and the test entry once, starts the loopback mock and runs the Varta-executed tests group by group, then the view tests |
+| `scripts/mock.sh` | Starts and stops the loopback mock for `test.sh` and `sdk-loopback.sh` |
 | `scripts/check-sdk.sh` | `varta check` of every pinned SDK source file, one file at a time, then of the instantiated SDK generics |
 | `scripts/check-sdk-generics.ts` | The entry that instantiates every generic function and method of the pinned SDK, used by `check-sdk.sh` |
 | `scripts/sdk-loopback.sh` | Runs the loopback mock and the SDK client tests as two `varta dev` processes |
@@ -68,6 +72,15 @@ Secrets such as the UARP API key live in the ignored `.env.local`, never in the
 repository.
 
 ## Status
+
+Checkpoint 2026-11-04 (debug `varta` of `4fce278` with this example's working
+tree): `scripts/test.sh` passes **146 tests in 32 groups and two headless view
+checks**: the 107 tests in 28 groups below plus the four `app-*` groups (39 tests)
+of the product entry against the loopback mock ([product entry](#product-entry-and-the-console-end-to-end)).
+The product entry `varta.json` builds into one `dist/app.wasm` and
+`dist/app.manifest.json`. Headless, without a stored key, its screen shows the
+"no key" banner (`varta dev --config varta.json --view-script`, checked by hand,
+not by a test).
 
 Checkpoint 2026-11-01 (`abea3ac`): the native Varta test workflow passes
 **107 tests in 28 groups and two headless view checks on the normal CLI stack**.
@@ -107,12 +120,14 @@ performance limits or production capacity.
 | Chat model | Every frame of the session stream dispatched and parsed strictly into the closed v1 types; the nine recorded scenarios replayed from their files match an independently derived timeline; resume and end rules, history and its merge with the live stream, the store, intents and the request layer | — |
 | Single Chat screen | Live timeline over the store with the stylesheet, checked headlessly and deterministically (tree with cascaded styles, accessibility snapshot): thinking toggle, tool lines, approval, question and failure cards with their actions, streaming Markdown, the composer | Full cross-target acceptance beyond the focused official-browser interaction probes |
 | SDK source admission | `scripts/check-sdk.sh` checks 65/65 pinned 0.13.2 files unmodified under v38, plus the bodies of all six generic functions and methods through an instantiation probe (2026-11-04, debug build of `978b793`) | SDK-own tests (M7); generic bodies only for the probed type arguments |
-| Real requests to UARP | The real `UarpClient` runs natively under Varta against the loopback mock: unary JSON, problem documents and bare error bodies, retry after a 503 with `Retry-After` (and none with `x-should-retry: false`), `AbortSignal`, timeout, and `sessions.streamSessionEvents` to `[DONE]`; 43 cases in 6 groups pass (2026-11-04) | Live-service validation, long-lived or large streams, reconnect paths, cross-target acceptance; findings below |
+| Real requests to UARP | The real `UarpClient` runs natively under Varta against the loopback mock: unary JSON, problem documents and bare error bodies, retry after a 503 with `Retry-After` (and none with `x-should-retry: false`), `AbortSignal`, timeout, and `sessions.streamSessionEvents` to `[DONE]`; 43 cases in 6 groups pass (2026-11-04) | Live-service validation, streams with gaps between frames or of real size (finding F4), cross-target acceptance; findings below |
+| Product entry | `src/app/` with `varta.json`: key from KV, the real client, a new session with the Head Agent, the request layer and the followed session stream with the stream.ts reconnect rules; send, approve, answer, drop, reconnect (also after a 503) and the ends after `session_closed`, a final `error`, `[DONE]` alone and a 401 pass end to end against the recorded scenarios (2026-11-04); giving up and a refused frame are not exercised end to end | The settings screen (the key is only read), the session list and history stitching, live-service validation, the view under scripted input with the live stream, cross-target acceptance |
 
 ## Running the checks
 
 ```bash
-VARTA_BIN=/path/to/varta scripts/test.sh
+VARTA_BIN=/path/to/varta scripts/test.sh [group…]
+/path/to/varta build --config varta.json
 VARTA_BIN=/path/to/varta scripts/check-sdk.sh
 VARTA_BIN=/path/to/varta scripts/sdk-loopback.sh [group…]
 node scripts/serve-mockups.mjs 8766
@@ -167,7 +182,7 @@ type argument is not covered.
 
 `sdk-loopback.sh` starts the mock with `varta dev --config varta.sdk-server.json`.
 The mock's only grants are the exact `net.listen` grant `127.0.0.1:0` and
-`time.timer`, used by the slow route. The script reads the bound origin from
+`time.timer`, used by the slow route and the late head of the long console stream. The script reads the bound origin from
 `varta listening: …`. `net.request` ports are never wildcards, so the committed
 `varta.sdk-test.json` names the placeholder origin `http://127.0.0.1:1`. The
 script writes a copy with the bound origin next to it,
@@ -194,6 +209,66 @@ Checkpoint 2026-11-04 (debug `varta` of `978b793`): `check-sdk.sh` printed
 `65/65 passed`, the generic inventory (7 declaration sites), the instantiation probe
 and `generic bodies reached: 6/6`. `sdk-loopback.sh` passed all six groups with 43
 cases.
+
+## Product entry and the console end to end
+
+`varta build --config varta.json` builds the product entry `src/app/main.tsx` into
+one `dist/app.wasm` and its manifest `dist/app.manifest.json`. The manifest
+requests exactly:
+
+| Grant | Scope | Why |
+| --- | --- | --- |
+| `net.request` | `https://api.snaga.ai/**` (`API_BASE_URL`), `GET` and `POST`, response headers `retry-after`, `x-correlation-id`, `x-request-id`, `x-should-retry` | The SDK's requests and the session stream; the four headers are the ones the SDK reads (retry timing, `APIError` ids) |
+| `kv.read`, `kv.write` | `/data/console.kv` (`KEY_DATABASE`, root `data`) | The API key (`src/app/key.ts`); nothing writes it yet, the settings screen will |
+| `time.timer` | — | The SDK's `Transport.request` arms a `setTimeout` for its timeout on every request, so without it every request fails before the network (`NotAllowedError: <capability denied: time.timer> (setTimeout)`, observed) |
+| `time.now` | — | The SDK's `EventStream` reads `Date.now` (its default clock) when each connection opens (`core/sse.ts`, `connectedAt`) |
+
+The two `time` grants go beyond the brief, which asked for `net.request` and `kv`
+only; they are what the unmodified SDK needs. `varta dev --config varta.json` maps
+the `data` root to `data/` here (git-ignored except its `.gitignore`).
+
+At start the console reads the key from KV, constructs `UarpClient` with it and the
+base URL, reads the tenant (`tenants.getCurrentTenant`), creates a session with its
+Head Agent (`sessions.create`), wires the request layer to the store's intents and
+follows the session (`src/chat/follow.ts`):
+
+- `sessions.streamSessionEvents(sessionId, { event_schema: 1 })`; every frame goes to
+  `applyFrame` (dispatch.ts), one frame per event turn, because a read of the
+  engine's per-read delivery cap holds dozens of frames and applying them all in
+  the turn that receives the read exhausted the turn's fuel (observed: `turn 12
+  (network) exhausted its fuel budget`).
+- When a connection ends, stream.ts decides: `[DONE]` is judged by the frame
+  before it (`afterDone`), an end without it is a drop (`afterDrop`), and a resume
+  reconnects with `Last-Event-ID` of the last run event the model applied
+  (`resumeId`), not the SDK's last SSE id (which can be `run-1:done`). The SDK
+  reports a drop or a failed connection as `onState` `reconnecting` and never after
+  `[DONE]`; the follower stops the SDK's stream there and reconnects itself.
+- Waits between reconnects start at `retryMs` and double per connection in a row
+  that delivered nothing, up to `maxRetryMs`; after `maxReconnects` such
+  connections it gives up. The product uses the SDK's own defaults (2 s, 8 s, 5).
+  A 401 on connecting, or `[DONE]` with nothing before it, ends following with
+  "authenticate"; the screen shows a note for every end but `over` and `stopped`.
+
+`scripts/test.sh` runs the end-to-end groups as `varta run --app` application
+instances of the one test build, under a host ceiling that lowers the per-turn
+deadline to 250 ms (`app_deadline_ms`). The client is the real, unmodified
+`UarpClient`, given an instrumented `fetch` through `ClientOptions.fetch`
+(`src/tests/loopback.ts`): it delegates to the engine's `fetch`, records every
+request, numbers each stream connection in `x-loopback-attempt` and, where a
+scenario needs it, holds a stream connection until the test releases it. The mock
+answers a stream at once and whole (finding F4), so holding is what places the
+person's action between two connections. The mock (`src/tests/sdk-server/e2e.ts`)
+serves the recorded scenarios `approval_approve`, `ask_user` and `session_end`
+(built in as text imports), checks every request body against the recording, and
+serves frames strictly after the `Last-Event-ID` it receives. A recording's first
+connection ends without `[DONE]` at its drop point (`DROP_AFTER`).
+
+| Group | What runs |
+| --- | --- |
+| `app-manifest` | The built `dist/app.manifest.json` requests exactly the grants above, with the `data` root only |
+| `app-start` | No stored key: no request. An ungranted database: `NotAllowedError` from `kv.read` before any effect. An ungranted origin (the product's own `fetch`): the SDK's `APIConnectionError`, nothing followed. A tenant without a Head Agent: the tenant is read and no session is created |
+| `app-e2e` | `approval_approve` and `ask_user`: send, the stream to the wait, the drop, approve or answer, the reconnect with the model's `Last-Event-ID`, the run to its end; the timeline equals the reviewed expectation of that recording (scenarios.test.ts) plus the person's message, and the requests come in the expected order. `session_end`: a drop mid-run, a reconnect the mock answers with a 503, a second reconnect from the same event, then `session_closed` and `[DONE]` end following with `over`. A final `error` frame (`SESSION_NOT_FOUND`), `[DONE]` alone and a 401 end following without a reconnect, each with a note |
+| `app-e2e-long` | One connection whose head the mock delays 200 ms (within the 250 ms window) and whose 100 content chunks (about 24 KB, several reads) are applied one per turn: the stream lasts longer than one per-turn deadline although no single wait does, every chunk is applied and `session_closed` + `[DONE]` end it |
 
 ## Pilot findings
 
@@ -251,3 +326,44 @@ code, never by changing the SDK.
   cause })` is refused as well (`unsupported error constructor accepts zero or one
   string/undefined argument`), while `super(message, options)` in an `Error`
   subclass is admitted. `sdk-unary` narrows to `APIConnectionError`.
+- **F4. The loopback mock cannot send a stream over time, and one request fits
+  only a small body.** A Varta HTTP/1 handler answers with a whole body
+  (`VartaHttpResponse.body: string`), so the mock cannot send frames with gaps
+  between them, and each request runs on the HTTP entry point's fixed fuel (a
+  fresh store "with existing fuel" per request, architecture). A generated stream
+  of 200 content chunks exhausted it (`wasm trap: all fuel consumed` in the mock,
+  which answered with a 500); 100 chunks (24,470 bytes) are served. The long-stream group
+  therefore lasts longer than one per-turn deadline through a late head and many
+  read turns, not through gaps inside the body.
+- **F5. Compiling an entry that imports `"uarp-sdk"` by name takes about 25 s with
+  a debug `varta`.** `varta dev` of the unit-test entry took about 4 s per group
+  while it imported only `generated/models.ts` by path, and 27–30 s per group
+  after the switch to the package root (`index.ts` and every resource module).
+  `scripts/test.sh` therefore builds the test entry once and runs each group with
+  `varta run`; the view checks still compile per view.
+- **F6. Refused constructs met while writing the console's own code**, each
+  rewritten in the console without changing the SDK:
+  - a module constant whose initializer names a function (`const R: Responder = {
+    header: header, … }`): `unsupported reference to header in a module constant
+    initializer; only module constants are admitted`;
+  - a conditional expression whose arms are two members of a record union, assigned
+    to a variable of that union: `assignment type mismatch: expected reference
+    union, found reference union` (an `if`/`else` with one assignment per arm
+    compiles);
+  - `reject(signal.reason)` inside `new Promise<void>(…)`: `value unknown is not a
+    member of the expected union`;
+  - `shift()` on an array of functions (`(() => void)[]`): `unsupported call`;
+  - a property narrowed by `frame.id !== undefined`, then assigned to a `string`:
+    `assignment type mismatch: expected string, found primitive union` (a local
+    copy narrows);
+  - returning a promise from an `async` function whose result is a union
+    (`return events(…)` with `Promise<VartaHttpResponse>` inside
+    `Promise<VartaHttpResponse | null>`): `value promise is not a member of the
+    expected union` (`return await` compiles).
+- **F7. `sdk-loopback.sh` failed at `4fce278` before this change.** The mock
+  refused every request whose `user-agent` was not the SDK's, but v38 makes
+  `user-agent` host-owned and the native host sends none. In that run
+  `sdk-problem`, `sdk-retry`, `sdk-abort` and `sdk-timeout` failed with `400 Bad
+  Request — unexpected user agent`, and `sdk-sse` ended with `execution deadline
+  exceeded` while reconnecting. The mock now refuses a request that does carry the
+  SDK's product token, which checks the host-owned rule instead.

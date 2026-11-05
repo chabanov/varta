@@ -1,6 +1,6 @@
 // Session history tests on recorded transcripts: a transcript becomes a segment
 // keyed by run id, and the live stream's replay of a run already in it is dropped.
-import type { GetSessionMessagesResponse, RunEventV1LLMChunk, RunEventV1RunCompleted, RunEventV1RunStarted } from "../../node_modules/uarp-sdk/src/generated/models.js";
+import type { GetSessionMessagesResponse, RunEventV1LLMChunk, RunEventV1RunCompleted, RunEventV1RunStarted } from "uarp-sdk";
 import { timeline, openSegment, onRunStarted, onChunk, onRunCompleted, type Segment } from "../chat/timeline.js";
 import { loadTranscript } from "../chat/history.js";
 import { showSegment } from "../chat/show.js";

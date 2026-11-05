@@ -8,7 +8,9 @@
 // SDK's own paths (`/health`, `/api/v1/sessions/{id}/events`) follow the prefix.
 // Each request runs in a fresh store, so the mock keeps no state between requests:
 // the retry scenario reads the attempt number the client test's counting `fetch`
-// sends in `x-loopback-attempt`.
+// sends in `x-loopback-attempt`. The console's end-to-end routes (`/e2e/…`, the
+// recorded scenarios) are in e2e.ts.
+import { e2e, type Responder } from "./e2e.js";
 import {
   PLAIN_RUN_ADDED,
   PLAIN_STARTED,
@@ -26,7 +28,7 @@ import {
   NOT_FOUND_PROBLEM,
   PROBLEM_REQUEST_ID,
   RETRY_AFTER_SECONDS,
-  SDK_USER_AGENT,
+  SDK_USER_AGENT_PRODUCT,
   SESSION_ID,
   SLOW_RESPONSE_MS,
   STREAM_DONE,
@@ -97,6 +99,18 @@ function eventStream(): string {
   return body + "event: message\ndata: " + STREAM_DONE + "\n\n";
 }
 
+/** The helpers the console's end-to-end routes answer with. */
+function responder(): Responder {
+  return {
+    header: header,
+    json: (status: number, body: string): VartaHttpResponse => respond(status, JSON_TYPE, body, []),
+    problem: problem,
+    stream: (body: string): VartaHttpResponse => respond(OK, EVENT_STREAM_TYPE, body, [{ name: "cache-control", value: "no-cache" }]),
+    unavailable: (body: string): VartaHttpResponse => respond(SERVICE_UNAVAILABLE, PROBLEM_TYPE, body, []),
+    wait: delay,
+  };
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(() => resolve(), ms);
@@ -112,10 +126,13 @@ async function handle(request: VartaHttpRequest): Promise<VartaHttpResponse> {
   if (header(request, "authorization") !== "Bearer " + API_KEY) {
     return problem(UNAUTHORIZED, "Unauthorized", "missing or wrong bearer key");
   }
-  if (header(request, "user-agent") !== SDK_USER_AGENT) {
-    return problem(BAD_REQUEST, "Bad Request", "unexpected user agent " + header(request, "user-agent"));
+  // Host-owned `user-agent` (v38): the SDK's own value never reaches the wire.
+  if (header(request, "user-agent").startsWith(SDK_USER_AGENT_PRODUCT)) {
+    return problem(BAD_REQUEST, "Bad Request", "the guest's user agent was sent: " + header(request, "user-agent"));
   }
   const route = path(request.target);
+  const answered = await e2e(responder(), request, route, request.target.slice(route.length));
+  if (answered !== null) return answered;
   if (route === "/unary/health") return health(UNARY_REQUEST_ID);
   if (route === "/problem/health") {
     return respond(NOT_FOUND, PROBLEM_TYPE, NOT_FOUND_PROBLEM, [{ name: "x-request-id", value: PROBLEM_REQUEST_ID }]);

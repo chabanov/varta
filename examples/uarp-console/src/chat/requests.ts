@@ -15,8 +15,8 @@ import type {
   RunApproveRequest,
   SendSessionMessageRequest,
   SendSessionMessageResponse,
-} from "../../node_modules/uarp-sdk/src/generated/models.js";
-import { APIError } from "../../node_modules/uarp-sdk/src/core/errors.js";
+} from "uarp-sdk";
+import { APIError } from "uarp-sdk";
 import { untracked } from "../l1/reactive.js";
 import { askSent, askFailed, decideFailed, answerFailed, addNote } from "./timeline.js";
 import { ChatStore, type Intent } from "./store.js";

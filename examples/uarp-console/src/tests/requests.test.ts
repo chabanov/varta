@@ -12,8 +12,8 @@ import type {
   RunEventV1RunAwaitingInput,
   SendSessionMessageRequest,
   SendSessionMessageResponse,
-} from "../../node_modules/uarp-sdk/src/generated/models.js";
-import { NotFoundError, type ProblemDocument } from "../../node_modules/uarp-sdk/src/core/errors.js";
+} from "uarp-sdk";
+import { NotFoundError, type ProblemDocument } from "uarp-sdk";
 import { Runtime } from "../l1/reactive.js";
 import { onAwaitingApproval, onAwaitingInput } from "../chat/timeline.js";
 import { ChatStore } from "../chat/store.js";

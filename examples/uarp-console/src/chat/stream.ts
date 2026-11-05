@@ -2,7 +2,7 @@
 // `x-event-stream["1"]` of GET /api/v1/sessions/{sessionId}/events. `[DONE]`
 // means the server closed the stream on purpose and the frame before it says
 // why; a stream that ends without it is resumed with Last-Event-ID.
-import type { SessionStreamFrameV1Error } from "../../node_modules/uarp-sdk/src/generated/models.js";
+import type { SessionStreamFrameV1Error } from "uarp-sdk";
 import type { Segment } from "./timeline.js";
 
 export type EndAction =

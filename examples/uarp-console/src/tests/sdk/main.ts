@@ -16,7 +16,7 @@ import {
   UarpError,
   type StreamState,
   type UarpEvent,
-} from "../../../node_modules/uarp-sdk/src/index.js";
+} from "uarp-sdk";
 import { PLAIN_RUN_ADDED, PLAIN_STARTED, PLAIN_THINKING_1, PLAIN_CONTENT, PLAIN_COMPLETED, PLAIN_RUN_DONE } from "../frames.js";
 import { equal, report, summary, type Report } from "../check.js";
 import {
