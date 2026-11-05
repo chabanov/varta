@@ -73,6 +73,25 @@ The KV acceptance's server closes idle browser connections, so
 `test-browser-matrix.mjs --kv` finishes in Chrome; CI checks
 `varta-kv-codec` without `std` and the codec fingerprint.
 
+### Third re-check fixes (2026-11-05)
+
+A KV value's extent (`varta_kv_codec::Extent`: values and code units of
+text, a shared part at every reach, absent optional fields as values) is
+bounded by `kv::MAX_VALUE_NODES` and `kv::MAX_VALUE_UNITS` in the stage
+walk, the V8 writer and reader and the classifier on both hosts, with one
+named recoverable `TypeError`; the classifier pays fuel every deadline
+stride. Before, a diamond `x = { a: x, b: x }` stored after a dozen levels
+and its `get` exhausted the turn's fuel; after about twenty, a native `get`
+ran 5.8 s past the deadline at about 980 MB of host memory. A `get` at the
+bound now takes about 3.4 million fuel and 1.8 MiB of guest memory in its
+turn. Native (`shared_parts_keep_the_value_bound_on_set_and_get`, which
+exhausted the turn's fuel on the old codec), the wasm32 codec against the
+native build (stored and staged diamonds, both failing against the old
+module) and Chrome (`diamond`, with planted Deno-format values and the
+Chrome process tree's memory growing by about 37 MB) agree.
+`build-kv-codec.py` takes Cargo's target directory from `cargo metadata`, so
+a clean-room build with `CARGO_TARGET_DIR` completes.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only

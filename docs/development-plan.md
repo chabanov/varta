@@ -2912,6 +2912,17 @@ Review fixes (2026-11-05, lead and owner decisions):
   value stores, in either property order, exactly when its expansion (what
   a `get` classifies) is within the limit; native, the wasm32 codec and
   Chrome agree on the shared-chain cases.
+- **Value extent: shared bounds on what a read builds** (lead, third
+  re-check). A read expands shared parts, so a diamond `x = { a: x, b: x }`
+  of a few dozen stored bytes exhausted the turn's fuel on `get`, and a
+  slightly larger one ran a native decode past the deadline at about 1 GB
+  of host memory. `kv::MAX_VALUE_NODES` and `kv::MAX_VALUE_UNITS` now bound
+  the values and text a value decodes to, a shared part counted at every
+  reach, in the stage walk, the V8 writer and reader and the classifier on
+  both hosts with one named recoverable `TypeError`; the classifier also
+  pays fuel as it goes. The value bound is derived from the production
+  turn's fuel, so it also refuses unshared values with more values than it
+  (Deno stores them): a deliberate deviation for the owner to review.
 - **Writability as native**: a database opens writable when the request and
   the ceiling cover `kv.write`, whatever the broker's state; an uncertain
   container refuses reads too.
