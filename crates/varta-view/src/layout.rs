@@ -1,6 +1,6 @@
 //! Initial, deliberately bounded box-only layout using the shared native engine.
-use crate::style::{self, Environment, Name};
-use crate::text::{TextOptions, TextSource, WhiteSpaceMode};
+use crate::style::{self, Environment, Name, UaWeight};
+use crate::text::{TextAlign, TextOptions, TextSource, WhiteSpaceMode};
 use crate::tree::{Content, Tree, border_components, geometry_sides};
 use crate::units::Units;
 use crate::{TextMeasurer, TextMetrics};
@@ -638,6 +638,50 @@ type TextGeometry = (
     BTreeMap<u32, crate::inline::Frame>,
 );
 
+/// User-agent margins and list padding of a block row; author declarations
+/// replace them afterwards. Em margins use the element's own font size.
+fn ua_box(
+    tree: &Tree,
+    env: &Environment,
+    row: (u32, &style::UaDefaults),
+    base_size: Option<f32>,
+    style: &mut Style,
+) -> Result<(), LayoutError> {
+    let (id, ua) = row;
+    let nested = ua.nested_list_margin_zero
+        && tree.path(id).into_iter().skip(1).any(|ancestor| {
+            tree.element(ancestor)
+                .and_then(|e| style::ua_defaults(e.tag))
+                .is_some_and(|row| row.list.is_some())
+        });
+    if ua.margin_block_em != 0.0 && !nested {
+        // Without a text measurer there is no host medium size for em.
+        let base = base_size.ok_or(LayoutError::Unsupported(id))?;
+        let margin = resolve_text(tree, env, id, base)?.options.size * ua.margin_block_em;
+        style.margin.top = length(margin);
+        style.margin.bottom = length(margin);
+    }
+    if ua.padding_inline_start != 0.0 {
+        style.padding.left = length(ua.padding_inline_start);
+    }
+    Ok(())
+}
+
+/// CSS `direction` is always `ltr`, but the shaper derives a paragraph's base
+/// direction from its first strong character. Center/right alignment is
+/// admitted only where both agree; right-to-left runs inside an LTR base align
+/// as whole lines.
+pub(crate) fn alignment_admitted(layout: &parley::Layout<u32>, options: TextOptions) -> bool {
+    matches!(options.align, TextAlign::Start | TextAlign::Left) || !layout.is_rtl()
+}
+
+/// Inherited text properties of one element, before font families resolve.
+pub(crate) struct ResolvedText {
+    pub options: TextOptions,
+    /// The nearest declared (or user-agent) family list and its element.
+    pub family: Option<(u32, String)>,
+}
+
 pub(crate) fn text_style(
     tree: &Tree,
     env: &Environment,
@@ -645,32 +689,94 @@ pub(crate) fn text_style(
     base_size: f32,
     measurer: &TextMeasurer,
 ) -> Result<(TextOptions, Vec<String>), LayoutError> {
+    let resolved = resolve_text(tree, env, id, base_size)?;
+    let ancestor = resolved
+        .family
+        .as_ref()
+        .map_or(id, |(ancestor, _)| *ancestor);
+    let families = measurer
+        .resolve_families(resolved.family.as_ref().map(|(_, family)| family.as_str()))
+        .ok_or(LayoutError::Unsupported(ancestor))?;
+    Ok((resolved.options, families))
+}
+
+/// Admitted computed font sizes in CSS pixels.
+const MIN_FONT_SIZE: f32 = 0.01;
+const MAX_FONT_SIZE: f32 = 4096.0;
+/// The denominator of a CSS percentage.
+const PERCENT: f32 = 100.0;
+
+/// Apply an author `font-size`: a percentage scales the inherited size and
+/// keeps its absolute flag; `px` and `rem` lengths are absolute.
+fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Option<()> {
+    if let Some(number) = value.strip_suffix('%') {
+        let number: f32 = number.parse().ok()?;
+        size.scale(number / PERCENT);
+    } else {
+        size.absolute(units.pixels(value, false)?);
+    }
+    Some(())
+}
+
+/// Resolve inherited text properties along the path from the root, applying
+/// author declarations over the native user-agent table at each element.
+pub(crate) fn resolve_text(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+    base_size: f32,
+) -> Result<ResolvedText, LayoutError> {
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
-    let mut size = base_size;
+    let mut size = style::FontSize::medium(base_size);
+    // The view root's parent is the document body: proportional `medium`.
+    let mut parent_monospace = false;
     let mut line_height = None;
     let mut weight = 400.0;
     let mut italic = false;
     let mut white_space = WhiteSpaceMode::Normal;
     let mut break_anywhere = false;
     let mut family = None;
+    let mut align = TextAlign::Start;
     for ancestor in tree.path(id).into_iter().rev() {
+        let inherited = size.px;
         let properties = tree.computed_read(ancestor, env);
-        if let Some(element) = tree.element(ancestor) {
-            if element.tag == Tag::Strong && !properties.contains_key(&CssProperty::FontWeight) {
-                weight = if weight < 400.0 {
-                    400.0
-                } else if weight < 600.0 {
-                    700.0
-                } else {
-                    900.0
+        if let Some(ua) = tree
+            .element(ancestor)
+            .and_then(|element| style::ua_defaults(element.tag))
+        {
+            if !properties.contains_key(&CssProperty::FontWeight) {
+                weight = match ua.weight {
+                    UaWeight::Inherit => weight,
+                    UaWeight::Absolute(value) => value,
+                    UaWeight::Bolder if weight < 400.0 => 400.0,
+                    UaWeight::Bolder if weight < 600.0 => 700.0,
+                    UaWeight::Bolder => 900.0,
                 };
             }
-            if element.tag == Tag::Em && !properties.contains_key(&CssProperty::FontStyle) {
+            if ua.italic && !properties.contains_key(&CssProperty::FontStyle) {
                 italic = true;
             }
-            if element.tag == Tag::Code && !properties.contains_key(&CssProperty::FontFamily) {
-                family = Some((ancestor, "monospace".into()));
+            if ua.monospace && !properties.contains_key(&CssProperty::FontFamily) {
+                family = Some((ancestor, style::UA_MONOSPACE_FAMILY.into()));
             }
+            if ua.preformatted && !properties.contains_key(&CssProperty::WhiteSpace) {
+                white_space = WhiteSpaceMode::Pre;
+            }
+            if let Some(scale) = ua.font_scale
+                && !properties.contains_key(&CssProperty::FontSize)
+            {
+                size.scale(scale);
+            }
+            if let Some(value) = ua.text_align {
+                // A field's own text geometry does not follow text-align.
+                if value == TextAlign::Start && properties.contains_key(&CssProperty::TextAlign) {
+                    return Err(LayoutError::Unsupported(ancestor));
+                }
+                align = value;
+            }
+        }
+        if let Some(value) = properties.get(&CssProperty::TextAlign) {
+            align = TextAlign::parse(value).ok_or(LayoutError::Unsupported(ancestor))?;
         }
         if let Some(value) = properties.get(&CssProperty::OverflowWrap) {
             break_anywhere = match value.as_str() {
@@ -709,19 +815,20 @@ pub(crate) fn text_style(
             };
         }
         if let Some(value) = properties.get(&CssProperty::FontSize) {
-            size = if let Some(number) = value.strip_suffix('%') {
-                let number: f32 = number
-                    .parse()
-                    .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                size * number / 100.0
-            } else {
-                units
-                    .pixels(value, false)
-                    .ok_or(LayoutError::Unsupported(ancestor))?
-            };
-            if !size.is_finite() || !(0.01..=4096.0).contains(&size) {
-                return Err(LayoutError::Unsupported(ancestor));
-            }
+            author_font_size(&mut size, units, value).ok_or(LayoutError::Unsupported(ancestor))?;
+        }
+        // Chrome re-derives the size where the generic family switches to or
+        // from monospace, before a line-height percentage resolves against it.
+        let monospace = family
+            .as_ref()
+            .is_some_and(|(_, value)| style::sole_monospace(value));
+        size.switch_family(base_size, parent_monospace, monospace);
+        parent_monospace = monospace;
+        // The host's medium size is its own input; any size derived here is bounded.
+        if size.px != inherited
+            && (!size.px.is_finite() || !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size.px))
+        {
+            return Err(LayoutError::Unsupported(ancestor));
         }
         if let Some(value) = properties.get(&CssProperty::LineHeight) {
             line_height = if value == "normal" {
@@ -738,7 +845,7 @@ pub(crate) fn text_style(
                 let percentage: f32 = value
                     .parse()
                     .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                let px = size * percentage / 100.0;
+                let px = size.px * percentage / PERCENT;
                 if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
                     return Err(LayoutError::Unsupported(ancestor));
                 }
@@ -754,22 +861,19 @@ pub(crate) fn text_style(
             };
         }
     }
-    let ancestor = family.as_ref().map_or(id, |(ancestor, _)| *ancestor);
-    let families = measurer
-        .resolve_families(family.as_ref().map(|(_, family)| family.as_str()))
-        .ok_or(LayoutError::Unsupported(ancestor))?;
-    Ok((
-        TextOptions {
-            size,
+    Ok(ResolvedText {
+        options: TextOptions {
+            size: size.px,
             line_height,
             weight,
             italic,
             white_space,
             break_anywhere,
             source: TextSource::General,
+            align,
         },
-        families,
-    ))
+        family,
+    })
 }
 
 // Construct each native node before visiting its children, then connect their
@@ -782,7 +886,7 @@ fn build(
     ids: &mut BTreeMap<u32, NodeId>,
     text_metrics: &BTreeMap<u32, TextShape>,
     location: (u32, usize),
-    viewport: (f32, f32),
+    sizes: ((f32, f32), Option<f32>),
 ) -> Result<NodeId, LayoutError> {
     let mut pending = vec![(location.0, location.1, false)];
     let mut scheduled = 1usize;
@@ -798,7 +902,7 @@ fn build(
                 .map_err(|error| LayoutError::Engine(error.to_string()))?;
             continue;
         }
-        let (_, descend) = build_one(tree, env, engine, ids, text_metrics, (id, depth), viewport)?;
+        let (_, descend) = build_one(tree, env, engine, ids, text_metrics, (id, depth), sizes)?;
         if descend {
             let children = &tree.nodes[&id].children;
             scheduled = scheduled
@@ -826,9 +930,10 @@ fn build_one(
     ids: &mut BTreeMap<u32, NodeId>,
     text_metrics: &BTreeMap<u32, TextShape>,
     location: (u32, usize),
-    viewport: (f32, f32),
+    sizes: ((f32, f32), Option<f32>),
 ) -> Result<(NodeId, bool), LayoutError> {
     let (id, depth) = location;
+    let (viewport, base_size) = sizes;
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     if depth > MAX_LAYOUT_DEPTH || ids.len() >= MAX_LAYOUT_NODES {
         return Err(LayoutError::Limit);
@@ -878,12 +983,13 @@ fn build_one(
                 | Tag::Input
                 | Tag::Textarea
                 | Tag::Select
-        ) || (crate::inline::inline_tag(element.tag)
-            && element.tag != Tag::Br
-            && (crate::inline::blockified(tree, env, id)
-                || tree
-                    .computed_property(id, env, CssProperty::Display)
-                    .is_some_and(|d| matches!(d.as_str(), "block" | "flex" | "grid")))))
+        ) || style::ua_defaults(element.tag).is_some_and(|ua| ua.block)
+            || (crate::inline::inline_tag(element.tag)
+                && element.tag != Tag::Br
+                && (crate::inline::blockified(tree, env, id)
+                    || tree
+                        .computed_property(id, env, CssProperty::Display)
+                        .is_some_and(|d| matches!(d.as_str(), "block" | "flex" | "grid")))))
     {
         return Err(LayoutError::Unsupported(id));
     }
@@ -903,6 +1009,7 @@ fn build_one(
                     | CssProperty::FontStyle
                     | CssProperty::WhiteSpace
                     | CssProperty::OverflowWrap
+                    | CssProperty::TextAlign
             ) && !paint_only(*property)
         }) {
             return Err(LayoutError::Unsupported(id));
@@ -986,23 +1093,8 @@ fn build_one(
             }
             style.box_sizing = BoxSizing::BorderBox;
         }
-        if element.tag == Tag::P {
-            let font_size = if let Some(shape) = text_metrics.get(&id).filter(|s| s.rich.is_some())
-            {
-                shape.options.size
-            } else {
-                let [child] = node.children.as_slice() else {
-                    return Err(LayoutError::Unsupported(id));
-                };
-                text_metrics
-                    .get(child)
-                    .ok_or(LayoutError::Unsupported(id))?
-                    .options
-                    .size
-            };
-            // HTML's default paragraph margins are one em vertically.
-            style.margin.top = length(font_size);
-            style.margin.bottom = length(font_size);
+        if let Some(ua) = style::ua_defaults(element.tag).filter(|ua| ua.block) {
+            ua_box(tree, env, (id, ua), base_size, &mut style)?;
         }
         let computed = layout_properties(tree, env, id)?;
         let widths = border_widths(tree, env, id)?;
@@ -1042,7 +1134,14 @@ fn build_one(
                 | CssProperty::FontWeight
                 | CssProperty::FontStyle
                 | CssProperty::WhiteSpace => {}
-                CssProperty::OverflowWrap => {}
+                CssProperty::OverflowWrap | CssProperty::TextAlign => {}
+                // `clip` is the initial value; an admitted ellipsis root is a
+                // rich formatting root (see `inline::ellipsis`).
+                CssProperty::TextOverflow
+                    if value == "clip"
+                        || text_metrics
+                            .get(&id)
+                            .is_some_and(|shape| shape.rich.is_some()) => {}
                 property if paint_only(property) => {}
                 CssProperty::Width => {
                     style.size.width = if value == "auto" {
@@ -1290,7 +1389,7 @@ pub(crate) fn geometry(
     width: f32,
     height: f32,
 ) -> Result<BTreeMap<u32, BoxGeometry>, LayoutError> {
-    boxes_inner(tree, env, width, height, &BTreeMap::new(), None)
+    boxes_inner(tree, env, width, height, &BTreeMap::new(), None, None)
 }
 
 pub(crate) fn boxes_with_text(
@@ -1477,13 +1576,8 @@ fn geometry_and_text_inner(
             }
             inventory.text(text.len())?;
             let (options, families) = text_style(tree, &layout_env, parent, font_size, measurer)?;
-            let text = if options.white_space == WhiteSpaceMode::PreWrap {
-                // Tab stops and hanging edge spaces are not yet modeled.
-                if text.contains('\t')
-                    || text
-                        .lines()
-                        .any(|line| line.starts_with(' ') || line.ends_with(' '))
-                {
+            let text = if options.white_space.preserves() {
+                if !crate::inline::preserved_text_admitted(text, options.white_space) {
                     return Err(LayoutError::Unsupported(id));
                 }
                 text.replace("\r\n", "\n").replace('\r', "\n")
@@ -1493,9 +1587,12 @@ fn geometry_and_text_inner(
             if text.is_empty() {
                 return Err(LayoutError::Unsupported(id));
             }
-            let measured = measurer
-                .measure_styled(&text, None, &families, options)
+            let (measured, shaped) = measurer
+                .shape_styled(&text, None, &families, options)
                 .map_err(|e| LayoutError::Text(e.to_string()))?;
+            if !alignment_admitted(&shaped, options) {
+                return Err(LayoutError::Unsupported(parent));
+            }
             metrics.insert(
                 id,
                 TextShape {
@@ -1509,7 +1606,15 @@ fn geometry_and_text_inner(
         }
         pending.extend(node.children.iter().map(|child| (*child, depth + 1)));
     }
-    let mut boxes = boxes_inner(tree, env, width, height, &metrics, Some(measurer))?;
+    let mut boxes = boxes_inner(
+        tree,
+        env,
+        width,
+        height,
+        &metrics,
+        Some(measurer),
+        Some(font_size),
+    )?;
     let frames = crate::inline::frames(&mut boxes, &metrics, measurer)?;
     Ok((boxes, metrics, frames))
 }
@@ -1521,6 +1626,7 @@ fn boxes_inner(
     height: f32,
     text_metrics: &BTreeMap<u32, TextShape>,
     mut text_input: Option<&mut TextMeasurer>,
+    base_size: Option<f32>,
 ) -> Result<BTreeMap<u32, BoxGeometry>, LayoutError> {
     if !width.is_finite()
         || !height.is_finite()
@@ -1545,7 +1651,7 @@ fn boxes_inner(
         &mut ids,
         text_metrics,
         (ROOT_NODE, 0),
-        (width, height),
+        ((width, height), base_size),
     )?;
     // Bound worst-case implicit-grid work as well as explicit track counts.
     // A child may place lines up to 64 in either direction or create implicit

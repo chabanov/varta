@@ -25,6 +25,7 @@ impl Request<'_> {
             value.weight.to_bits().hash(hash);
             value.italic.hash(hash);
             value.white_space.hash(hash);
+            value.align.hash(hash);
             value.break_anywhere.hash(hash);
             value.source.hash(hash);
             value

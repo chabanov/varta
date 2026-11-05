@@ -95,6 +95,8 @@ pub(crate) struct TextOptions {
     pub white_space: WhiteSpaceMode,
     pub break_anywhere: bool,
     pub source: TextSource,
+    /// Inherited `text-align`; applied to lines broken at a definite width.
+    pub align: TextAlign,
 }
 
 /// One source text node's normalized byte range and resolved font style.
@@ -141,6 +143,49 @@ pub(crate) enum WhiteSpaceMode {
     Normal,
     NoWrap,
     PreWrap,
+    /// `white-space: pre`: the user-agent default of `pre`. Spaces and
+    /// newlines are preserved and only forced breaks end a line.
+    Pre,
+}
+impl WhiteSpaceMode {
+    /// Spaces, tabs and newlines are preserved rather than collapsed.
+    pub(crate) fn preserves(self) -> bool {
+        matches!(self, Self::PreWrap | Self::Pre)
+    }
+    /// Soft wrap opportunities may break lines.
+    pub(crate) fn wraps(self) -> bool {
+        matches!(self, Self::Normal | Self::PreWrap)
+    }
+}
+
+/// Inherited `text-align` (L0: `left | center | right`; initial `start`).
+/// The CSS `direction` is always `ltr`, so `start` is the left edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum TextAlign {
+    #[default]
+    Start,
+    Left,
+    Center,
+    Right,
+}
+impl TextAlign {
+    /// Parse the L0 keyword grammar.
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "left" => Self::Left,
+            "center" => Self::Center,
+            "right" => Self::Right,
+            _ => return None,
+        })
+    }
+    /// The physical Parley alignment, or `None` for the unaligned start edge.
+    fn parley(self) -> Option<parley::Alignment> {
+        match self {
+            Self::Start | Self::Left => None,
+            Self::Center => Some(parley::Alignment::Center),
+            Self::Right => Some(parley::Alignment::Right),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -204,6 +249,12 @@ impl TextMeasurer {
             })
             .map(|_| ())
             .map_err(|_| TextMeasureError::Limit)
+    }
+
+    /// Inline work left in the current outer native view request.
+    #[cfg(test)]
+    pub(crate) fn inline_work_remaining(&self) -> usize {
+        self.view_shaping.inline_remaining.load(Ordering::Relaxed)
     }
 
     pub(crate) fn cache_counts(&self) -> (usize, usize) {
@@ -386,6 +437,7 @@ impl TextMeasurer {
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
                 source: TextSource::General,
+                align: TextAlign::Start,
             },
         )
     }
@@ -413,6 +465,7 @@ impl TextMeasurer {
                 white_space: WhiteSpaceMode::Normal,
                 break_anywhere: false,
                 source: TextSource::General,
+                align: TextAlign::Start,
             },
         )
     }
@@ -534,7 +587,7 @@ impl TextMeasurer {
         } else {
             FontStyle::Normal
         }));
-        if options.white_space == WhiteSpaceMode::NoWrap {
+        if !options.white_space.wraps() {
             builder.push_default(StyleProperty::TextWrapMode(TextWrapMode::NoWrap));
         }
         if options.break_anywhere {
@@ -580,7 +633,7 @@ impl TextMeasurer {
                 range.clone(),
             );
             builder.push(
-                StyleProperty::TextWrapMode(if style.white_space == WhiteSpaceMode::NoWrap {
+                StyleProperty::TextWrapMode(if !style.white_space.wraps() {
                     TextWrapMode::NoWrap
                 } else {
                     TextWrapMode::Wrap
@@ -617,12 +670,17 @@ impl TextMeasurer {
             return Err(TextMeasureError::Limit);
         }
         let widths = layout.calculate_content_widths();
-        let min_width = if options.white_space == WhiteSpaceMode::NoWrap {
-            widths.max
-        } else {
+        let min_width = if options.white_space.wraps() {
             widths.min
+        } else {
+            widths.max
         };
         layout.break_all_lines(max_width);
+        // Alignment needs the definite line width; intrinsic measurement
+        // (no width) keeps every line at the start edge.
+        if let (Some(alignment), Some(_)) = (options.align.parley(), max_width) {
+            layout.align(alignment, parley::AlignmentOptions::default());
+        }
         let result = (
             TextMetrics {
                 width: layout.width(),
@@ -1114,6 +1172,7 @@ mod tests {
                 white_space: WhiteSpaceMode::NoWrap,
                 break_anywhere: false,
                 source: TextSource::General,
+                align: TextAlign::Start,
             };
             let (expected, shaped) = measurer
                 .shape_styled(text, None, &families, options)
@@ -1370,6 +1429,7 @@ mod tests {
                         white_space: WhiteSpaceMode::NoWrap,
                         break_anywhere: false,
                         source: TextSource::General,
+                        align: TextAlign::Start,
                     },
                 )
                 .unwrap();

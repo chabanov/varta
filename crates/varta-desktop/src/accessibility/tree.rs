@@ -525,6 +525,81 @@ mod tests {
         assert!(ids.iter().all(|id| !activated.bindings.contains_key(id)));
     }
     #[test]
+    fn structure_headings_lists_and_items_publish_levels_roles_and_frame_bounds() {
+        use varta_common::view::CssProperty as P;
+        let mut view = View::default();
+        let mut batch = BatchWriter::new();
+        batch.create_element(2, Tag::Div).insert(1, 2, 0);
+        for (property, value) in [
+            (P::FontFamily, "\"Varta Structure Fixture\""),
+            (P::FontSize, "10px"),
+            (P::LineHeight, "10px"),
+        ] {
+            batch.set_style(2, property, value);
+        }
+        batch
+            .create_element(3, Tag::H3)
+            .create_text(4, "A")
+            .insert(3, 4, 0)
+            .insert(2, 3, 0)
+            .create_element(5, Tag::Ol)
+            .insert(2, 5, 0)
+            .create_element(6, Tag::Li)
+            .create_text(7, "B")
+            .insert(6, 7, 0)
+            .insert(5, 6, 0);
+        commit(&mut view, &batch);
+        let mut font = varta_view::TextMeasurer::new_with_fonts(
+            [
+                include_bytes!("../../../varta-view/tests/fixtures/structure-400.ttf").as_slice(),
+                include_bytes!("../../../varta-view/tests/fixtures/structure-700.ttf").as_slice(),
+            ]
+            .into_iter()
+            .map(|data| varta_view::TextFont {
+                data: data.to_vec(),
+                family: "Varta Structure Fixture".into(),
+                aliases: Vec::new(),
+            })
+            .collect(),
+        )
+        .unwrap();
+        let geometry = view
+            .layout_boxes_with_text(80.0, 60.0, &mut font, 16.0)
+            .unwrap();
+        let metadata = view
+            .rasterize_with_text(80, 60, &mut font, 16.0)
+            .unwrap()
+            .into_metadata();
+        let publication = Projection::default()
+            .build(
+                &view.accessibility_tree().unwrap(),
+                &metadata,
+                version(),
+                "test",
+            )
+            .unwrap();
+        let find = |role| {
+            &publication
+                .update
+                .nodes
+                .iter()
+                .find(|(_, node)| node.role() == role)
+                .unwrap()
+                .1
+        };
+        let heading = find(Role::Heading);
+        assert_eq!(heading.level(), Some(2));
+        let bounds = heading.bounds().unwrap();
+        assert_eq!((bounds.x0, bounds.x1), (0.0, 80.0));
+        assert!(bounds.y0 <= f64::from(geometry[&3].y));
+        let list = find(Role::List).bounds().unwrap();
+        assert_eq!(list.y0, f64::from(geometry[&5].y));
+        // The item's frame spans its box and its outside "1. " marker.
+        let item = find(Role::ListItem).bounds().unwrap();
+        assert!(item.x0 < f64::from(geometry[&6].x));
+        assert_eq!(item.x1, f64::from(geometry[&6].x + geometry[&6].width));
+    }
+    #[test]
     fn native_control_states_actions_heading_levels_and_geometry_match_source() {
         let mut view = View::default();
         let mut batch = BatchWriter::new();

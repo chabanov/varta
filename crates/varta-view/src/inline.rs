@@ -1,4 +1,5 @@
 //! Bounded rich-text formatting contexts for inline descendants of a box.
+mod ellipsis;
 use crate::layout::{self, BoxGeometry, BoxRect, LayoutError, TextShape};
 use crate::style::Environment;
 use crate::text::{TextSpan, WhiteSpaceMode, edges::TextEdge};
@@ -68,6 +69,8 @@ pub(crate) struct ContentFlow {
     /// left/right margin and padding of each owning element.
     edges: Vec<TextEdge>,
     spacing: BTreeMap<u32, Horizontal>,
+    /// `text-overflow: ellipsis` truncates the root's single line.
+    ellipsis: bool,
 }
 #[derive(Clone, Copy)]
 struct Horizontal {
@@ -183,7 +186,7 @@ pub(crate) struct Frame {
 pub(crate) fn inline_tag(tag: Tag) -> bool {
     matches!(
         tag,
-        Tag::Span | Tag::Strong | Tag::Em | Tag::Code | Tag::A | Tag::Br
+        Tag::Span | Tag::Strong | Tag::Em | Tag::Code | Tag::A | Tag::Br | Tag::Label
     )
 }
 pub(crate) fn blockified(tree: &Tree, env: &Environment, id: u32) -> bool {
@@ -229,6 +232,7 @@ fn validate(tree: &Tree, env: &Environment, id: u32) -> Result<layout::InlineSpa
             | P::FontStyle
             | P::WhiteSpace
             | P::OverflowWrap
+            | P::TextAlign
             | P::Color
             | P::Cursor
             | P::BorderRadius
@@ -330,7 +334,9 @@ pub(crate) fn collect(
     {
         return Ok(None);
     }
+    let ellipsis = ellipsis::requested(tree, env, root)?;
     let needed = root == ROOT_NODE
+        || ellipsis
         || inline_tag(element.tag)
         || node.children.len() > 1
         || node
@@ -492,9 +498,7 @@ pub(crate) fn collect(
         };
         inventory.text(source.len())?;
         let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
-        if (style.white_space == WhiteSpaceMode::PreWrap)
-            != (options.white_space == WhiteSpaceMode::PreWrap)
-        {
+        if style.white_space.preserves() != options.white_space.preserves() {
             return Err(LayoutError::Unsupported(id));
         }
         let index = spans.len();
@@ -526,7 +530,7 @@ pub(crate) fn collect(
             if ch.is_control() && !matches!(ch, '\t' | '\n' | '\u{000c}') {
                 return Err(LayoutError::Unsupported(id));
             }
-            if style.white_space != WhiteSpaceMode::PreWrap && ch.is_ascii_whitespace() {
+            if !style.white_space.preserves() && ch.is_ascii_whitespace() {
                 if !text.is_empty() && !text.ends_with('\n') {
                     whitespace.get_or_insert(index);
                 }
@@ -541,12 +545,7 @@ pub(crate) fn collect(
             append(&mut text, &mut spans, index, ch)?;
         }
     }
-    if options.white_space == WhiteSpaceMode::PreWrap
-        && (text.contains('\t')
-            || text
-                .lines()
-                .any(|line| line.starts_with(' ') || line.ends_with(' ')))
-    {
+    if !preserved_text_admitted(&text, options.white_space) {
         return Err(LayoutError::Unsupported(root));
     }
     let strut = if text.is_empty() && edges.is_empty() {
@@ -600,6 +599,7 @@ pub(crate) fn collect(
         empty,
         edges,
         spacing,
+        ellipsis,
     });
     let mut shape = TextShape {
         text,
@@ -630,11 +630,16 @@ pub(crate) fn collect(
             return Err(LayoutError::Unsupported(first.owner));
         }
         shape.metrics = shaped.metrics;
-    } else {
-        shape.metrics = shape
-            .measure(measurer, None)
+    } else if let Some(rich) = &shape.rich {
+        let shaped = rich
+            .shape(&shape, measurer, None)
             .map_err(|e| LayoutError::Text(e.to_string()))?;
+        if !layout::alignment_admitted(&shaped.layout, shape.options) {
+            return Err(LayoutError::Unsupported(root));
+        }
+        shape.metrics = shaped.metrics;
     }
+    ellipsis::admitted(root, &shape)?;
     Ok(Some(shape))
 }
 
@@ -668,6 +673,26 @@ fn edge(
         advance,
     });
     Ok(())
+}
+
+/// Preserved white space the native line model reproduces. Tab stops are not
+/// modeled. `pre-wrap` hangs edge spaces at soft breaks, which are refused;
+/// `pre` lines never break softly, so leading indentation is exact, while
+/// trailing spaces (part of the line's width in CSS but hung by the shaper)
+/// are refused.
+pub(crate) fn preserved_text_admitted(text: &str, mode: WhiteSpaceMode) -> bool {
+    match mode {
+        WhiteSpaceMode::Normal | WhiteSpaceMode::NoWrap => true,
+        WhiteSpaceMode::PreWrap => {
+            !text.contains('\t')
+                && !text
+                    .lines()
+                    .any(|line| line.starts_with(' ') || line.ends_with(' '))
+        }
+        WhiteSpaceMode::Pre => {
+            !text.contains('\t') && !text.lines().any(|line| line.ends_with(' '))
+        }
+    }
 }
 
 fn append(
@@ -788,7 +813,7 @@ impl ContentFlow {
             let range = line.text_range();
             // Parley hangs break spaces beyond the line's advance. CSS normal
             // whitespace removes those spaces from inline fragments and hits.
-            let trimmed_end = if source.options.white_space == WhiteSpaceMode::PreWrap {
+            let trimmed_end = if source.options.white_space.preserves() {
                 range.end
             } else {
                 range.start + source.text[range].trim_end_matches([' ', '\n']).len()
@@ -1066,7 +1091,17 @@ pub(crate) fn frames(
         let shaped = rich
             .shape(shape, measurer, Some(rect.width.clamp(0.01, 1_000_000.0)))
             .map_err(|e| LayoutError::Text(e.to_string()))?;
-        let frame = rich.project(shaped, shape, bounds, measurer, &mut fragments_left)?;
+        let mut frame = rich.project(shaped, shape, bounds, measurer, &mut fragments_left)?;
+        if rich.ellipsis
+            && let Some((flow, visible, shaped)) =
+                ellipsis::truncate(rich, shape, &frame.shaped, rect.width, measurer, id)?
+        {
+            // Pointer fragments and geometry stay untruncated; glyphs do not.
+            let projected =
+                flow.project(shaped, &visible, bounds, measurer, &mut fragments_left)?;
+            frame.shaped = projected.shaped;
+            frame.glyph_owners = projected.glyph_owners;
+        }
         for &node in &rich.nodes {
             let pieces = frame.fragments.get(&node);
             let mut union = BoxRect {

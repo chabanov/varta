@@ -28,6 +28,21 @@ comparisons, including a 13-turn session with idle collection) and Firefox 157
 through the matrix (six effect cases and 13 generated fixtures). WebKit was not
 run. The full gate is the wave lead's.
 
+## 2026-11-04 — Native structure, alignment and ellipsis (wave-1 branch)
+
+The wave-1 package `w1-native-structure-text` added the versioned native
+user-agent table and with it native `h1`–`h3`, `ul`/`ol`/`li` outside markers,
+`pre` (`white-space: pre`, generic monospace sized by Chrome's family switch)
+and inline `label`, inherited `text-align` through Parley alignment and one-line
+ellipsis that hides glyphs while keeping untruncated geometry and hits. Chrome
+observations fixed the details: symbol markers are Blink's integer-ascent shapes
+in CSS pixels at every device scale, the marker box (line box united with the
+font content area) is the item's pointer target, and truncated text still hits
+its element. Scoped results: 30246 Chrome checks per scale for the new
+`native_structure_probe`; earlier probes' native output unchanged. The console
+triage before/after and the open items are recorded in the
+[development plan](development-plan.md#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04).
+
 ## 2026-11-03 — Painted field geometry and visual native text ranges
 
 UI-2.3 exposes borrowed cluster/line geometry from the exact painted frame,

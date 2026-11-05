@@ -34,7 +34,7 @@ ECMAScript, Node or npm compatibility.
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; recorded wave-3a probe checks 65/65 source files unmodified. The current UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's complete own-test acceptance or live-service/cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. The old UARP node-16 refusal is historical. |
+| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. The console view still stops at the button/textarea control-box rules (nodes 16/12); its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
@@ -456,6 +456,99 @@ result/status documentation annotations follow it. Distinct border
 side colors and other border styles, device-pixel border-width snapping (open for
 all boxes), bidi edge reordering, horizontal percentages and
 real-font/window/platform acceptance remain open.
+
+### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
+
+Branch `wave1/w1-native-structure-text` (on `cc3a94d`) admits `h1`–`h3`, `ul`,
+`ol`, `li` with outside disc/circle/square/decimal markers, `pre` and `label`,
+inherited `text-align: left | center | right` and one-line `text-overflow:
+ellipsis` in native layout and paint. Defaults come from the new versioned
+native user-agent table in `varta-view` (`NATIVE_UA_DEFAULTS`); see the
+[architecture contract](architecture.md#native-structure-and-user-agent-defaults).
+Labels forward clicks through the existing headless `for` activation; headings,
+lists and items publish their levels/roles with frame bounds in the headless and
+AccessKit trees. A second Chrome comparison showed that truncated text keeps its
+pointer targets; by owner decision native ellipsis keeps Chrome's behaviour, so
+hidden truncated text still hits its element (there are no visible-glyph-only
+targets).
+
+Console refusal triage, unchanged artifact (SHA-256 `ac764bd1…3043164`), Arial
+(regular/bold) for `system-ui`/`sans-serif` and Courier New for `monospace`,
+1024×768. `headless_frame` still stops at node 16 (chat) and node 12 (stream)
+before and after; a scratch triage that neutralizes each refusal and continues
+lists them in order. Before: chat 16 `button` control box rule plus
+`text-align: left`, 17 `text-align: center`, 19 `text-overflow: ellipsis`, 39
+`textarea` control rule, 43 `button` control rule plus transition properties,
+then paint refusals of synthesized weight 500 (19, 43); stream 12 `textarea`, 16
+`button` and transitions, weight 500. The final reviewed trees additionally
+refuse `h2` (190, 208, 178; stream 69) and `pre` (202; stream 81). After: only the
+`button`/`textarea` control box rules, the transition properties and weight 500
+remain; replacing 500 with an available face admits every remaining text,
+heading, `pre`, alignment and ellipsis node. Control defaults belong to the
+controls package; weight 500 is font coverage, not engine policy.
+
+`native_structure_probe` covers 9 cases (headings, overrides, lists, nested
+lists, list spans, `pre`, `label`, aligned wrapped/bidi/decorated paragraphs,
+ellipsis) against Chrome through `scripts/test-native-structure.mjs` with two
+original weighted faces: **30246 checks** pass at each of 1×, 1.25× and 2×,
+maximum whole-viewport RGB mean 0.577/255 under the unchanged 2/255 bound.
+`portable_edge_probe` (68837) and `native_paragraph_probe` (81) pass, and the
+native outputs of the inline, edge, opacity, spacing, outline, decoration,
+fields and lengths probes are byte-identical to `cc3a94d`.
+
+Review fixes on the same branch. The monospace size rule now follows Blink's
+generic-family switch (`style::FontSize`): `px`/`rem` sizes are absolute, heading
+scales and percentages keep the parent's state, and 13/16 applies at each
+element whose sole-`monospace` family state changes, before a percentage line
+height resolves. Six new probe cases reproduce Chrome 156's `h1 > code` 26px,
+`h3 > pre` 15.21px, `p { font-size: 150% } > code` 19.5px, `pre > span {
+font-size: 200% }` 26px, `h2 { font-family: monospace }` 19.5px and
+`pre { line-height: 150% }` 19.5px; Chrome draws generic monospace with a system
+face, so each monospace element is a flex container whose `line-height: 100%`
+(or 150%) records its size and whose fixture-font item also checks the switch
+back. List markers resolve styles and ordinals in one walk (each `ol` counts
+its children once) and charge the walk, path reads and baseline search to the
+inline work allowance. With the 15 cases the structure oracle passes **51181
+checks** at each of 1×, 1.25× and 2× (maximum whole-viewport RGB mean
+0.577/255); the monospace cases' means are at most 0.141. `portable_edge_probe`
+(68837), the desktop CoreText `native_text_probe` through the inline oracle
+(10105) and `native_paragraph_probe` (81) pass.
+
+The structure probe's portable outlines leave two Chrome differences in the
+`headings` case, which passes only on its whole-viewport mean (rgbMaxDelta 255
+at 1×, 1.25× and 2×); neither is margin collapse or snapping (every box matches
+within 0.02 and the h1–h3 baselines match). First, Chrome 156 on macOS rounds an
+exact half-pixel primary ascent or descent down, while Varta rounds half away
+from zero: with the fixture's 800/200 units, the 12.5px paragraph descent of
+2.5px becomes 2 in Chrome and 3 natively, so its half leading is 2 instead of 1
+and Chrome paints its glyph one CSS pixel lower (rows 115–123 versus 114–122 at
+1×, two device rows at 2×, about 1.25 at 1.25×). Chrome baseline offsets in a 100px
+line confirm it for ten sizes: descents 2.5, 3.5, 4.5, 5.5, 6.5 and 12.5px
+(12.5–62.5px) and ascents 10.5, 15.5, 17.5 and 4.5px (13.125, 19.375, 21.875,
+5.625px) all round down, 12.505px (descent 2.501) still rounds down and 12.51px
+rounds up. Blink rounds Skia metrics half up, so the platform metric input is
+below the half on CoreText; matching it needs a platform metric decision for
+every text path, not a structure fix, and stays open. Second, Chrome's CoreText
+glyphs are dilated (about 0.5 device pixel upward and 0.2 sideways for the bold
+h1 at 2×, none below the baseline) and their baselines are whole device pixels
+at 1.25×, whereas the portable outlines are undilated at a fractional device
+baseline; this is the documented portable smoothing difference that the
+desktop host coverage path removes.
+
+The `native_inline_probe` oracle's `paint-overlap-hits` failure (RGB mean
+5.39/3.94/5.37 at 1×/1.25×/2×) is that same portable smoothing difference, not
+a Chrome or Varta regression: today's Chrome screenshot of the case is
+byte-identical to the failing run of 12:20 on 2026-11-04 (Chrome
+156.0.8078.80), and the passing evidence of 14:56 used the host CoreText
+rasterizer (`text_rasterizer: host`, mean 0.64), as the desktop
+`native_text_probe` does. Four overlapping 20px lines stack Chrome's sideways
+dilation into the 24×30 region's glyph edge columns (RGB delta up to 49 on
+every row) where the portable outlines leave white.
+
+Still open: Chrome's half-pixel ascent/descent rounding above, normal line
+height with fractional ascent/descent (Chrome rounds each), ordinal attributes,
+`list-style`, marker `tabular-nums`, multi-line ellipsis, decorated or bidi
+ellipsis, author `text-align` on fields and the full gate after merge.
 
 ### Native inline painting commit gate — 2026-11-04
 

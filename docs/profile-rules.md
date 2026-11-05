@@ -4314,6 +4314,34 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   `RING_PAINT_WORK`. Resolve slice radii with absent-edge corners zeroed before
   normalization (`resolve_slice_radii`); middle fragments are square. Keep border
   widths unsnapped like block boxes.
+- Native user-agent defaults live only in the versioned `style::NATIVE_UA_DEFAULTS`
+  table (`NATIVE_UA_VERSION`); bump the version with any row change and check new
+  rows against Chrome with `native_structure_probe`. Resolve inherited text
+  (`layout::resolve_text`) along the path with author declarations replacing a
+  row's value at that element; never special-case a tag elsewhere. Em margins
+  need the host text size (refuse on the geometry-only path). Model font sizes
+  with Blink's state (`style::FontSize`): `px`/`rem` set the absolute flag,
+  user-agent heading scales and percentages keep the parent's flag and drop the
+  `medium` keyword, and the 13/16 monospace ratio applies at each element whose
+  sole-`monospace` family state differs from its parent's, after its own
+  font-size and before a percentage line-height resolves. Never apply the ratio
+  once after the path walk. Admit no size source whose state is not modeled
+  (keywords such as `small` or `larger`, `em` lengths) rather than
+  approximating. Extend the table for controls rather than adding control
+  constants in layout.
+- List markers (`list.rs`) never change geometry: resolve styles and ordinals in
+  one walk from the root (each `ol` counts its children once), compute Blink's
+  integer symbol geometry from the rounded ascent in CSS pixels, align with the
+  first line found through leading blocks, and push the marker box as the item's
+  hit region. Charge the walk, counting, path reads and baseline search to the
+  frame's inline work allowance; never rescan siblings or ancestor paths per
+  item. Refuse items without a line, clipped items and non-direct `ol` items
+  instead of guessing.
+- `text-align` belongs to `TextOptions` (and the shape-cache key); apply Parley
+  alignment only for a definite width, never to fields, and refuse center/right
+  for a right-to-left base paragraph. Ellipsis (`inline::ellipsis`) keeps the
+  untruncated projection for geometry and hits and replaces only the painted
+  layout and glyph owners; admit only one undecorated unbroken line.
 - Optional native glyph coverage is a host input, never an engine OS/font lookup.
   Keep selected bytes/index/coordinates and shaped glyph IDs/advances unchanged.
   Validate mask extents, arithmetic and byte length before conversion; return to
