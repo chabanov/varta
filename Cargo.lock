@@ -5141,6 +5141,7 @@ dependencies = [
  "varta-compiler",
  "varta-kv-codec",
  "varta-runtime",
+ "wasmtime",
 ]
 
 [[package]]
