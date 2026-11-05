@@ -2535,14 +2535,21 @@ fn rasterize_inner_scoped(
                 default_focus_ring(tree, &env, id, geometry[&id].rect, units)?
             {
                 let bounds = geometry[&id];
-                paint_border(
-                    &mut pixmap,
-                    rect,
-                    bounds.clip,
-                    [width; 4],
-                    radii,
-                    [color; 4],
-                )?;
+                let (halo, halo_radii, halo_width, halo_color) =
+                    theme::focus_ring_halo(rect, radii);
+                for (rect, radii, width, color) in [
+                    (halo, halo_radii, halo_width, halo_color),
+                    (rect, radii, width, color),
+                ] {
+                    paint_border(
+                        &mut pixmap,
+                        rect,
+                        bounds.clip,
+                        [width; 4],
+                        radii,
+                        [color; 4],
+                    )?;
+                }
             } else if let Some((width, offset, color)) = outline(tree, &env, id)? {
                 let bounds = geometry[&id];
                 // CSS UI4 keeps an outline visible even when a very negative

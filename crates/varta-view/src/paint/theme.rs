@@ -57,6 +57,13 @@ pub(super) const PLACEHOLDER: Rgba = rgba(0x75, 0x75, 0x75, OPAQUE);
 const FOCUS_RING: Rgba = rgba(0x00, 0x5f, 0xcc, OPAQUE);
 /// The focus ring's stroke width in CSS pixels.
 const FOCUS_RING_WIDTH: f32 = 2.0;
+/// The light scheme's outer ring color (Blink's `PaintFocusRing` draws the
+/// auto ring as a white ring under the colored one).
+const FOCUS_RING_HALO: Rgba = rgba(0xff, 0xff, 0xff, OPAQUE);
+/// How far the white outer ring sits outside the colored ring: Blink splits
+/// the three-pixel auto stroke into a two-pixel outer and a one-pixel inner
+/// width, and draws the white ring at the offset plus the inner width.
+const FOCUS_RING_HALO_GAP: f32 = 1.0;
 /// `outline-offset` of focused checkboxes and radios.
 const CHECKABLE_FOCUS_OFFSET: f32 = 2.0;
 /// A border at least this wide takes one pixel of the ring inside the box
@@ -367,7 +374,8 @@ pub(super) struct AuthorRing {
 /// `#005fcc`. A themed control keeps its theme part radius at the ring's
 /// center whatever the offset (a radio's is half its longer side, limited to
 /// the ring); an author radius is outset by half the ring. Returns the ring's outer
-/// rectangle and radii; it is painted as a two-pixel border.
+/// rectangle and radii; it is painted as a two-pixel border over its white
+/// outer ring ([`focus_ring_halo`]).
 pub(super) fn focus_ring(
     kind: ControlKind,
     themed: bool,
@@ -414,6 +422,24 @@ pub(super) fn focus_ring(
         radii,
         FOCUS_RING_WIDTH,
         author.color.unwrap_or(FOCUS_RING.color()),
+    )
+}
+
+/// The light scheme's white ring that Chrome paints under the colored auto
+/// ring ([`focus_ring`]): the same two-pixel width, one pixel further out,
+/// with its radii grown by that pixel. It shows one pixel outside the
+/// colored ring and wherever that ring is translucent.
+pub(super) fn focus_ring_halo(ring: BoxRect, radii: Corners) -> (BoxRect, Corners, f32, Color) {
+    (
+        BoxRect {
+            x: ring.x - FOCUS_RING_HALO_GAP,
+            y: ring.y - FOCUS_RING_HALO_GAP,
+            width: ring.width + 2.0 * FOCUS_RING_HALO_GAP,
+            height: ring.height + 2.0 * FOCUS_RING_HALO_GAP,
+        },
+        radii.outset(FOCUS_RING_HALO_GAP, FOCUS_RING_HALO_GAP),
+        FOCUS_RING_WIDTH,
+        FOCUS_RING_HALO.color(),
     )
 }
 
@@ -631,6 +657,45 @@ mod tests {
         assert_eq!((ring.width, ring.height), (15.0, 64.0));
         assert_eq!(radii, round(7.5));
         assert_eq!(color, Color::BLACK);
+    }
+
+    /// Chrome 156 on a gray (#808080) row: a white pixel row outside the
+    /// colored ring, and with a transparent `outline-color` a white band
+    /// that hides the frame.
+    #[test]
+    fn the_auto_ring_has_a_white_outer_ring() {
+        const GRAY: [u8; 3] = [0x80; 3];
+        let focused = |color: Option<&str>| {
+            raster(|b| {
+                b.set_style(2, P::BackgroundColor, "#808080");
+                b.create_element(3, Tag::Input).insert(2, 3, 0);
+                if let Some(color) = color {
+                    b.set_style(3, P::OutlineColor, color);
+                }
+                b.command(3, Command::Focus, 0.0);
+            })
+        };
+        let ring = focused(None);
+        assert_eq!(pixel(&ring, 100, 8), GRAY);
+        assert_eq!(pixel(&ring, 100, 9), rgb(FOCUS_RING_HALO));
+        assert_eq!(pixel(&ring, 100, 10), rgb(FOCUS_RING));
+        assert_eq!(pixel(&ring, 100, 11), rgb(FOCUS_RING));
+        let clear = focused(Some("#ff000000"));
+        assert_eq!(pixel(&clear, 100, 8), GRAY);
+        for y in 9..=11 {
+            assert_eq!(pixel(&clear, 100, y), rgb(FOCUS_RING_HALO), "row {y}");
+        }
+        let (halo, radii, width, _) = focus_ring_halo(
+            BoxRect {
+                x: 7.0,
+                y: 7.0,
+                width: 19.0,
+                height: 19.0,
+            },
+            round(PART_RADIUS + 1.0),
+        );
+        assert_eq!((halo.x, halo.width, width), (6.0, 21.0, FOCUS_RING_WIDTH));
+        assert_eq!(radii, round(PART_RADIUS + 2.0));
     }
 
     #[test]

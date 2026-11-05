@@ -13384,6 +13384,12 @@ ring is a stadium); an author radius is outset by half the ring. Native
 `:focus-visible` matches any focus, so the ring follows the same rule. An
 author `outline` shorthand or `outline-style` ends `auto`: `solid` draws the
 author outline, while `none`, or a shorthand without `solid`, draws nothing.
+Under the colored ring Chrome's light scheme paints a white ring of the same
+width one pixel further out, with radii grown by that pixel (Blink's
+`PaintFocusRing` outer ring): it shows as a white pixel outside the colored
+ring on a non-white background, and through a translucent or transparent
+author `outline-color`. Dark-scheme rings are not modelled (the official host
+sets no `color-scheme`).
 The ring paints after the contents and does not change layout or hit regions.
 
 *Number fields.* `input type=number` edits its value with the shared field

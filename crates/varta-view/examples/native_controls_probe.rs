@@ -430,6 +430,28 @@ fn case(name: &str) -> (B, Option<u32>) {
             b.set_style(12, P::Padding, "10px");
             None
         }
+        // Chrome paints a white ring under the colored auto ring, one pixel
+        // further out: visible on a gray row, and through a transparent
+        // author `outline-color`.
+        "focus-halo-text" | "focus-halo-clear" | "focus-halo-radio" | "focus-halo-button" => {
+            b.set_style(2, P::BackgroundColor, "#808080");
+            match name {
+                "focus-halo-radio" => {
+                    input(&mut b, 10, "radio");
+                    b.set_checked(10, 1, 0);
+                }
+                "focus-halo-button" => {
+                    control(&mut b, 10, Tag::Button);
+                    label(&mut b, 10, "AB");
+                }
+                _ => input(&mut b, 10, "text"),
+            }
+            if name == "focus-halo-clear" {
+                b.set_style(10, P::OutlineColor, "#ff000000");
+            }
+            b.command(10, Command::Focus, 0.0);
+            Some(10)
+        }
         _ => unreachable!("listed case"),
     };
     (b, focus)
@@ -464,6 +486,10 @@ const CASES: &[&str] = &[
     "padding-flex",
     "padding-stretch",
     "padding-grid",
+    "focus-halo-text",
+    "focus-halo-clear",
+    "focus-halo-radio",
+    "focus-halo-button",
 ];
 
 /// `input type=number` values set by the guest and the Up/Down presses
