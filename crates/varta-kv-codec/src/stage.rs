@@ -5,7 +5,9 @@
 //! by the module's data limits and the turn deadline. It keeps what V8 keeps
 //! and JSON drops: present fields and dictionary entries holding `undefined`,
 //! `-0`, NaN and the infinities. A record reached twice is one object written
-//! once (V8's back-reference); a cycle, a function, a promise, an Error, a
+//! once (V8's back-reference), and counts toward the shared depth limit at
+//! its deepest reach, as a reader that expands it sees it; a cycle, a
+//! function, a promise, an Error, a
 //! BigInt, an array hole and a record with private state (an engine class or
 //! `#private` fields) fail with a `TypeError`, before anything is stored.
 //!
@@ -57,8 +59,11 @@ pub struct Stager<'a, M: Memory + ?Sized, D: Deadline + ?Sized> {
     nodes: usize,
     /// Aggregates on the current path (a cycle check).
     path: BTreeSet<usize>,
-    /// Aggregates already read, by handle address: written once by V8.
-    seen: BTreeMap<usize, Rc<Object>>,
+    /// Aggregates already read, by handle address: written once by V8, with
+    /// their height (the levels below them), checked again at every reach.
+    seen: BTreeMap<usize, (Rc<Object>, usize)>,
+    /// The deepest level reached inside the aggregate being read.
+    deepest: usize,
 }
 
 impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
@@ -70,6 +75,7 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
             nodes: 0,
             path: BTreeSet::new(),
             seen: BTreeMap::new(),
+            deepest: 0,
         }
     }
 
@@ -78,15 +84,24 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
         if self.nodes.is_multiple_of(crate::DEADLINE_STRIDE) && self.deadline.passed() {
             return Err(fatal("execution deadline"));
         }
-        // The shared KV depth first: recoverable on every host, before the
-        // module's (deeper) fatal JSON limits.
+        self.reach(depth)?;
+        if self.nodes > self.module.limits.data.json_nodes {
+            return Err(fatal("depth or node limit"));
+        }
+        Ok(())
+    }
+
+    /// Whether a value may sit at level `depth`: the shared KV depth first,
+    /// recoverable on every host, before the module's (deeper) fatal JSON
+    /// depth.
+    fn reach(&mut self, depth: usize) -> Result<(), StageError> {
         if depth > crate::MAX_VALUE_DEPTH {
             return Err(StageError::Unsupported(crate::too_deep()));
         }
-        let limits = self.module.limits.data;
-        if depth > limits.json_depth || self.nodes > limits.json_nodes {
+        if depth > self.module.limits.data.json_depth {
             return Err(fatal("depth or node limit"));
         }
+        self.deepest = self.deepest.max(depth);
         Ok(())
     }
 
@@ -174,7 +189,10 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
     }
 
     /// Read an aggregate once: a second reach shares the first object, a
-    /// reach from inside itself is a cycle.
+    /// reach from inside itself is a cycle. Every reach keeps the depth
+    /// limit for the whole aggregate below it, so a value stored with
+    /// shared parts is never deeper, expanded, than one stored without:
+    /// whatever `set` accepts, a `get` (which expands shared parts) reads.
     fn aggregate(
         &mut self,
         packed: u64,
@@ -182,15 +200,20 @@ impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
         read: fn(&mut Self, u64, usize) -> Result<Object, StageError>,
     ) -> Result<Rc<Object>, StageError> {
         let ptr = packed as u32 as usize;
-        if let Some(object) = self.seen.get(&ptr) {
-            return Ok(Rc::clone(object));
+        if let Some((object, height)) = self.seen.get(&ptr) {
+            let (object, height) = (Rc::clone(object), *height);
+            self.reach(depth + height)?;
+            return Ok(object);
         }
         if !self.path.insert(ptr) {
             return Err(unsupported("a cyclic value"));
         }
+        let outer = core::mem::replace(&mut self.deepest, depth);
         let object = Rc::new(read(self, packed, depth)?);
+        let height = self.deepest - depth;
+        self.deepest = self.deepest.max(outer);
         self.path.remove(&ptr);
-        self.seen.insert(ptr, Rc::clone(&object));
+        self.seen.insert(ptr, (Rc::clone(&object), height));
         Ok(object)
     }
 

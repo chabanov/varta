@@ -23,7 +23,9 @@
 //!   (`;`…`:`), `Set` (`'`…`,`) and `Uint8Array` over its own `ArrayBuffer`
 //!   (`B` then `V` with subtag `B`);
 //! - back-references (`^`) to completed objects; a reference to an object
-//!   still being read is a cycle and is rejected.
+//!   still being read is a cycle and is rejected. A shared object keeps the
+//!   depth limit at its deepest reach, read or written, as an expanding
+//!   reader sees it.
 //!
 //! Every other tag (other typed arrays, standalone or shared buffers,
 //! primitive wrappers, `RegExp`, errors, host objects, transfers), a
@@ -223,6 +225,7 @@ pub fn decode(bytes: &[u8], limits: Limits) -> Result<Value, V8Error> {
         version: 0,
         objects: Vec::new(),
         nodes: 0,
+        deepest: 0,
         limits,
     };
     if reader.byte()? != tag::VERSION {
@@ -244,7 +247,8 @@ pub fn decode(bytes: &[u8], limits: Limits) -> Result<Value, V8Error> {
 enum Slot {
     /// Being read: a reference to it is a cycle.
     Open,
-    Done(Rc<Object>),
+    /// A complete object and its height (the levels below it).
+    Done(Rc<Object>, usize),
     /// The buffer of a `Uint8Array`, which has no value of its own here.
     Buffer,
 }
@@ -256,6 +260,8 @@ struct Reader<'a> {
     /// Every object by its serializer id.
     objects: Vec<Slot>,
     nodes: usize,
+    /// The deepest level reached inside the object being read.
+    deepest: usize,
     limits: Limits,
 }
 
@@ -320,10 +326,15 @@ impl Reader<'_> {
         if self.nodes > self.limits.nodes {
             return Err(V8Error::Limit("node"));
         }
+        self.reach(depth)
+    }
+    /// Whether a value may sit at level `depth`.
+    fn reach(&mut self, depth: usize) -> Result<(), V8Error> {
         let limit = self.limits.depth.min(crate::MAX_VALUE_DEPTH);
         if depth > limit {
             return Err(V8Error::Depth(limit));
         }
+        self.deepest = self.deepest.max(depth);
         Ok(())
     }
     fn value(&mut self, depth: usize) -> Result<Value, V8Error> {
@@ -344,7 +355,11 @@ impl Reader<'_> {
             tag::OBJECT_REFERENCE => {
                 let id = self.varint()? as usize;
                 match self.objects.get(id) {
-                    Some(Slot::Done(object)) => Value::Object(Rc::clone(object)),
+                    Some(Slot::Done(object, height)) => {
+                        let (object, height) = (Rc::clone(object), *height);
+                        self.reach(depth + height)?;
+                        Value::Object(object)
+                    }
                     Some(Slot::Open) => return Err(V8Error::Cycle),
                     Some(Slot::Buffer) => {
                         return Err(V8Error::Unsupported("shared ArrayBuffer of views"));
@@ -455,8 +470,15 @@ impl Reader<'_> {
         }
         Ok(properties)
     }
-    /// Read an object begun by `tag`, registering its id first as V8 does.
+    /// Read an object begun by `tag`, registering its id first as V8 does,
+    /// with its height once complete.
     fn object(&mut self, tag: u8, depth: usize) -> Result<Rc<Object>, V8Error> {
+        let outer = core::mem::replace(&mut self.deepest, depth);
+        let object = self.contents(tag, depth)?;
+        self.deepest = self.deepest.max(outer);
+        Ok(object)
+    }
+    fn contents(&mut self, tag: u8, depth: usize) -> Result<Rc<Object>, V8Error> {
         let id = self.objects.len();
         self.objects.push(Slot::Open);
         let object = match tag {
@@ -499,7 +521,7 @@ impl Reader<'_> {
             }
         };
         let object = Rc::new(object);
-        self.objects[id] = Slot::Done(Rc::clone(&object));
+        self.objects[id] = Slot::Done(Rc::clone(&object), self.deepest - depth);
         Ok(object)
     }
     fn dense(&mut self, depth: usize) -> Result<Object, V8Error> {
@@ -574,7 +596,8 @@ impl Reader<'_> {
             offset,
             length: view,
         });
-        self.objects[view_id] = Slot::Done(Rc::clone(&object));
+        // A view holds no values: nothing below it.
+        self.objects[view_id] = Slot::Done(Rc::clone(&object), 0);
         Ok(object)
     }
 }
@@ -599,11 +622,13 @@ fn index_of(number: f64) -> Result<u32, V8Error> {
 /// Encode `value` with the serializer header Deno 2.9.x writes. Objects
 /// shared by `Rc` are written once and back-referenced after, as V8 writes
 /// one object reached twice. Fails beyond `max_bytes` of output and below
-/// [`crate::MAX_VALUE_DEPTH`] levels.
+/// [`crate::MAX_VALUE_DEPTH`] levels, a shared object at its deepest reach.
 pub fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
     let mut writer = Writer {
         out: Vec::new(),
         ids: BTreeMap::new(),
+        heights: BTreeMap::new(),
+        deepest: 0,
         next: 0,
         max_bytes,
     };
@@ -617,11 +642,24 @@ pub fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
 struct Writer {
     out: Vec<u8>,
     ids: BTreeMap<*const Object, u32>,
+    /// The height (levels below it) of every object written, checked again
+    /// at each back-reference to it.
+    heights: BTreeMap<*const Object, usize>,
+    /// The deepest level reached inside the object being written.
+    deepest: usize,
     next: u32,
     max_bytes: usize,
 }
 
 impl Writer {
+    /// Whether a value may sit at level `depth`.
+    fn reach(&mut self, depth: usize) -> Result<(), V8Error> {
+        if depth > crate::MAX_VALUE_DEPTH {
+            return Err(V8Error::Depth(crate::MAX_VALUE_DEPTH));
+        }
+        self.deepest = self.deepest.max(depth);
+        Ok(())
+    }
     fn check(&self) -> Result<(), V8Error> {
         if self.out.len() > self.max_bytes {
             return Err(V8Error::Limit("value size"));
@@ -695,9 +733,7 @@ impl Writer {
     }
     fn value(&mut self, value: &Value, depth: usize) -> Result<(), V8Error> {
         self.check()?;
-        if depth > crate::MAX_VALUE_DEPTH {
-            return Err(V8Error::Depth(crate::MAX_VALUE_DEPTH));
-        }
+        self.reach(depth)?;
         match value {
             Value::Undefined => self.out.push(tag::UNDEFINED),
             Value::Null => self.out.push(tag::NULL),
@@ -715,13 +751,30 @@ impl Writer {
         self.next += 1;
         id
     }
+    /// Write `object` once; a later reach writes a back-reference and keeps
+    /// the depth limit for the whole object below it.
     fn object(&mut self, object: &Rc<Object>, depth: usize) -> Result<(), V8Error> {
         let identity = Rc::as_ptr(object);
-        if let Some(id) = self.ids.get(&identity) {
+        if let Some(id) = self.ids.get(&identity).copied() {
+            // An `Rc` graph has no cycles: a written object is complete.
+            let height = *self.heights.get(&identity).ok_or(V8Error::Cycle)?;
+            self.reach(depth + height)?;
             self.out.push(tag::OBJECT_REFERENCE);
-            self.varint(*id);
+            self.varint(id);
             return Ok(());
         }
+        let outer = core::mem::replace(&mut self.deepest, depth);
+        self.contents(object, identity, depth)?;
+        self.heights.insert(identity, self.deepest - depth);
+        self.deepest = self.deepest.max(outer);
+        self.check()
+    }
+    fn contents(
+        &mut self,
+        object: &Rc<Object>,
+        identity: *const Object,
+        depth: usize,
+    ) -> Result<(), V8Error> {
         // A Uint8Array writes its buffer first, which takes the first id.
         if matches!(**object, Object::Bytes { .. }) {
             self.assign();
@@ -799,7 +852,7 @@ impl Writer {
                 self.varint(0);
             }
         }
-        self.check()
+        Ok(())
     }
 }
 

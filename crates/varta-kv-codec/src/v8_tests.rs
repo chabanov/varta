@@ -424,6 +424,91 @@ fn writes_keep_the_shared_depth_limit_and_read_back() {
     assert_eq!(V8Error::Depth(max).to_string(), crate::too_deep());
 }
 
+/// `{ a: .., b: .. }` holding a chain `x` of `inner` arrays and `y`, `wraps`
+/// arrays around the same `x`: `x` under `a` when `x_first`.
+fn shared_chain(inner: usize, wraps: usize, x_first: bool) -> Value {
+    let x = chain(inner);
+    let y = (0..wraps).fold(x.clone(), |inner, _| {
+        Value::Object(Rc::new(Object::Dense(vec![Some(inner)])))
+    });
+    let (first, second) = if x_first { (x, y) } else { (y, x) };
+    Value::Object(Rc::new(Object::Plain(vec![
+        (Key::Name(units("a")), first),
+        (Key::Name(units("b")), second),
+    ])))
+}
+
+/// The V8 bytes of [`shared_chain`] as V8 writes it (the second reach of
+/// `x` a back-reference), built without the writer's depth check, so a
+/// read meets a shared object deeper than the limit.
+fn shared_chain_bytes(inner: usize, wraps: usize, x_first: bool) -> Vec<u8> {
+    const OPEN: [u8; 2] = [b'A', 1];
+    const CLOSE: [u8; 3] = [b'$', 0, 1];
+    let key = |name: u8| [b'"', 1, name];
+    let open = |bytes: &mut Vec<u8>, depth: usize| {
+        bytes.extend(core::iter::repeat_n(OPEN, depth).flatten());
+    };
+    let close = |bytes: &mut Vec<u8>, depth: usize| {
+        bytes.extend(core::iter::repeat_n(CLOSE, depth).flatten());
+    };
+    let chain = |bytes: &mut Vec<u8>, depth: usize| {
+        open(bytes, depth);
+        bytes.push(b'_');
+        close(bytes, depth);
+    };
+    let mut bytes = vec![0xFF, u8::try_from(WRITE_VERSION).unwrap(), b'o'];
+    bytes.extend(key(b'a'));
+    // Object ids: the holder 0, then every array in the order written.
+    if x_first {
+        chain(&mut bytes, inner);
+        bytes.extend(key(b'b'));
+        open(&mut bytes, wraps);
+        bytes.extend([b'^', 1]);
+        close(&mut bytes, wraps);
+    } else {
+        open(&mut bytes, wraps);
+        chain(&mut bytes, inner);
+        close(&mut bytes, wraps);
+        bytes.extend(key(b'b'));
+        // One-byte varint: the id stays below 0x80 here.
+        bytes.extend([b'^', u8::try_from(1 + wraps).unwrap()]);
+    }
+    bytes.extend([b'{', 2]);
+    bytes
+}
+
+/// A shared object keeps the depth limit at its deepest reach, in either
+/// property order, written and read: a value whose expansion is within the
+/// limit round-trips with its sharing, one level deeper fails by name
+/// (before, the back-reference let it through in one order only).
+#[test]
+fn shared_objects_keep_the_depth_limit_at_their_deepest_reach() {
+    let max = crate::MAX_VALUE_DEPTH;
+    // The holder is level 0, `y` level 1, the `x` inside it `1 + WRAPS`.
+    const WRAPS: usize = 10;
+    let fits = max - 1 - WRAPS;
+    let deep = Limits {
+        depth: max * 2,
+        ..LIMITS
+    };
+    for x_first in [true, false] {
+        let value = shared_chain(fits, WRAPS, x_first);
+        let bytes = encode(&value, 1 << 16).unwrap();
+        assert_eq!(bytes, shared_chain_bytes(fits, WRAPS, x_first), "{x_first}");
+        assert_eq!(decode(&bytes, deep), Ok(value), "{x_first}");
+        assert_eq!(
+            encode(&shared_chain(fits + 1, WRAPS, x_first), 1 << 16),
+            Err(V8Error::Depth(max)),
+            "{x_first}"
+        );
+        assert_eq!(
+            decode(&shared_chain_bytes(fits + 1, WRAPS, x_first), deep),
+            Err(V8Error::Depth(max)),
+            "{x_first}"
+        );
+    }
+}
+
 #[test]
 fn values_built_for_writing_match_deno() {
     let name = |text: &str| Key::Name(units(text));

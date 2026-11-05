@@ -68,15 +68,19 @@ pub const DEADLINE_STRIDE: usize = 1024;
 /// [`v8::decode`]) and the classifier ([`decode::Classifier`]) refuse a
 /// value with anything below this level with the recoverable `TypeError`
 /// [`too_deep`], on every host; the construction ([`build`]) is iterative.
+/// An object reached more than once (written once, then back-referenced)
+/// counts at its deepest reach, as the classifier, which expands it, sees
+/// it: the limit never refuses on a `get` what a `set` stored.
 ///
 /// Derivation. Each of those walks recurses once per level, and in a
 /// browser a wasm call frame lives on the engine's native stack, which a
 /// module cannot size (the codec's linear-memory stack holds only its
 /// address-taken locals). Measured on 2026-11-05 with a shallow guest and a
-/// chain of records: Chrome 156 sustained about 700 levels (the decode of a
-/// `get`), WebKit 26.5 about 150 (the stage walk of a `set`), and an
-/// unoptimized native build overflowed its 8 MiB main thread at 1500 (the
-/// process aborted). The limit is the legacy checked-JSON depth
+/// chain of records: Chrome 156 trapped the guest ("Maximum call stack size
+/// exceeded") from about 750 levels (the decode of a `get`), WebKit 26.5
+/// from about 170 (the stage walk of a `set`), and an unoptimized native
+/// build overflowed its 8 MiB main thread at 1500 (the process aborted).
+/// The limit is the legacy checked-JSON depth
 /// ([`varta_common::value::MAX_JSON_DEPTH`]), under half of the smallest
 /// measured bound, so at least half of the engine stack stays the guest's.
 pub const MAX_VALUE_DEPTH: usize = varta_common::value::MAX_JSON_DEPTH;

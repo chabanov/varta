@@ -1480,6 +1480,113 @@ fn values_keep_the_shared_kv_depth_limit() {
     );
 }
 
+/// Levels a shared chain is wrapped by in [`shared_parts_keep_the_depth_limit_at_their_deepest_reach`].
+const SHARED_WRAPS: usize = 10;
+/// The shared chain the re-check reported stored but unreadable.
+const SHARED_REPORTED: (usize, usize) = (SHARED_WRAPS, 60);
+
+/// The program of the shared-part depth cases, for each `(wraps, inner)`:
+/// a holder `{ a, b }` of a chain `x` of `inner` records and `y`, `wraps`
+/// records around the same `x`, in both property orders; each stores or is
+/// refused, and whatever stored reads back whole. Then a cycle through a
+/// holder. The browser KV acceptance (scripts/test-browser-kv.mjs, `dag`)
+/// runs the same program.
+fn shared_parts_program(cases: &[(usize, usize)]) -> String {
+    let list = |part: fn(&(usize, usize)) -> usize| {
+        cases
+            .iter()
+            .map(|case| part(case).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (wraps, inners) = (list(|case| case.0), list(|case| case.1));
+    let body = format!(
+        "    const wrapsOf: number[] = [{wraps}]; const innerOf: number[] = [{inners}];\n\
+         for (let i = 0; i < wrapsOf.length; i++) {{\n\
+         const wraps = wrapsOf[i]; const inner = innerOf[i];\n\
+         for (const xFirst of [true, false]) {{\n\
+         const x = wrap({{}}, inner); const y = wrap(x, wraps);\n\
+         const holder: Holder = xFirst ? {{ a: x, b: y }} : {{ a: y, b: x }};\n\
+         const label = String(wraps) + ' ' + String(inner) + (xFirst ? ' x' : ' y');\n\
+         try {{ await kv.set(['dag', label], holder); console.log('set ' + label); }}\n\
+         catch (e) {{ if (e instanceof Error) {{ console.log(label + ' ' + e.name + ': ' + e.message); }} }}\n\
+         try {{\n\
+         const got = await kv.get<Holder>(['dag', label]);\n\
+         if (got.value === null) {{ console.log('get ' + label + ' absent'); }}\n\
+         else {{ console.log('get ' + label + ' ' + String(length(got.value.a)) + ' ' + String(length(got.value.b))); }}\n\
+         }} catch (e) {{ if (e instanceof Error) {{ console.log('get ' + label + ' ' + e.name + ': ' + e.message); }} }}\n\
+         }}\n\
+         }}\n\
+         const c: Chain = {{}}; const d: Chain = {{ next: c }}; c.next = d;\n\
+         try {{ await kv.set(['dag', 'cycle'], {{ a: c, b: d }}); console.log('set cycle'); }}\n\
+         catch (e) {{ if (e instanceof Error) {{ console.log('cycle ' + e.name + ': ' + e.message); }} }}"
+    );
+    format!(
+        "interface Chain {{ next?: Chain }}\n\
+         interface Holder {{ a: Chain; b: Chain }}\n\
+         function wrap(inner: Chain, levels: number): Chain {{\n\
+         let value: Chain = inner;\n\
+         for (let i = 0; i < levels; i++) {{ value = {{ next: value }}; }}\n\
+         return value;\n\
+         }}\n\
+         function length(chain: Chain): number {{\n\
+         let n = 0; let at: Chain | null = chain;\n\
+         while (at !== null && at.next !== undefined) {{ at = at.next; n++; }}\n\
+         return n;\n\
+         }}\n{}",
+        guarded("/data/dag.kv", &body)
+    )
+}
+
+/// What [`shared_parts_program`] logs: a holder stores when its deepest
+/// reach (holder 0, `x` inside `y` at `1 + wraps`, the end of `x` at
+/// `1 + wraps + inner`) is within the shared limit, whichever part comes
+/// first, and is refused by name otherwise; a stored one reads back whole.
+fn shared_parts_logs(cases: &[(usize, usize)]) -> Vec<String> {
+    let refused = format!("TypeError: {}", varta_kv_codec::too_deep());
+    let mut logs = Vec::new();
+    for (wraps, inner) in cases {
+        for x_first in [true, false] {
+            let label = format!("{wraps} {inner} {}", if x_first { "x" } else { "y" });
+            if 1 + wraps + inner <= varta_kv_codec::MAX_VALUE_DEPTH {
+                let (x, y) = (*inner, wraps + inner);
+                let (a, b) = if x_first { (x, y) } else { (y, x) };
+                logs.push(format!("set {label}"));
+                logs.push(format!("get {label} {a} {b}"));
+            } else {
+                logs.push(format!("{label} {refused}"));
+                logs.push(format!("get {label} absent"));
+            }
+        }
+    }
+    logs.push("cycle TypeError: a cyclic value cannot be stored in a KV value".into());
+    logs.push("done".into());
+    logs
+}
+
+/// A part shared within a value keeps the shared depth limit at its
+/// deepest reach: the value stores in either property order exactly when
+/// its expansion (what `get` reads) is within the limit, so everything
+/// `set` accepts `get` reads. Before, a shared part reached a second time
+/// deeper than the limit stored when the shallow reach came first, and
+/// never read back.
+#[test]
+fn shared_parts_keep_the_depth_limit_at_their_deepest_reach() {
+    let tree = Tree::new();
+    let max = varta_kv_codec::MAX_VALUE_DEPTH;
+    let cases = [
+        (0, max - 1),
+        (0, max),
+        (SHARED_WRAPS, max - 1 - SHARED_WRAPS),
+        (SHARED_WRAPS, max - SHARED_WRAPS),
+        SHARED_REPORTED,
+    ];
+    assert_eq!(
+        run(&shared_parts_program(&cases), read_write(), tree.roots()),
+        shared_parts_logs(&cases)
+    );
+}
+
 #[test]
 fn earlier_profiles_have_no_kv() {
     let source = "export async function main(): Promise<void> { const kv = await varta.kv.open('/data/a.kv'); }";

@@ -758,8 +758,8 @@ differences:
   waits for a lock.
 
 Values nest at most `varta_kv_codec::MAX_VALUE_DEPTH` levels on every host
-(`registry.kv.maxValueDepth`, [contract](architecture.md#kv-storage-kv)); the
-limit keeps the shared codec's recursion within the engine's native stack,
+(`registry.kv.maxValueDepth`, [contract](architecture.md#kv-storage-kv)), a
+part shared within a value counted at its deepest reach; the limit keeps the shared codec's recursion within the engine's native stack,
 where the codec's wasm frames live. The KV wire facts and the bookkeeping flag (`kvBookkeeping`) are
 generated registry data (`browser::registry().kv`); `scripts/test-browser-kv.mjs`
 compares browser and reference runs in Chrome and, through Playwright, in

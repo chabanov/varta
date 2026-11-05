@@ -28,7 +28,10 @@
 //   host-created directory, fails to open it too;
 // - deep: values just below, at and above the shared KV depth limit (and
 //   far above it) store, read back or fail by name equal to native, within
-//   the engine's own stack.
+//   the engine's own stack;
+// - dag: values with a part shared at two depths count it at its deepest
+//   reach in either property order (whatever stores reads back), and a
+//   cycle fails by name, equal to native.
 //
 //   node scripts/test-browser-kv.mjs <varta-executable> [--playwright <module> <firefox|webkit>]
 //
@@ -156,6 +159,55 @@ const DEEP = DEEP_RECURSIVE + GUARDED(`    const kv = await varta.kv.open(${JSON
       console.log('get ' + String(n));
     }
     kv.close();`);
+// Holders { a, b } of a chain x of `inner` records and y, `wraps` records
+// around the same x, in both property orders (the native
+// shared_parts_keep_the_depth_limit_at_their_deepest_reach program): a
+// shared part counts at its deepest reach, so a holder stores exactly when
+// its expansion fits, and whatever stores reads back whole. Then a cycle.
+const SHARED_WRAPS = 10, SHARED_REPORTED = [SHARED_WRAPS, 60];
+const DAG_CASES = [[0, K.maxValueDepth - 1], [0, K.maxValueDepth], [SHARED_WRAPS, K.maxValueDepth - 1 - SHARED_WRAPS],
+  [SHARED_WRAPS, K.maxValueDepth - SHARED_WRAPS], SHARED_REPORTED];
+const DAG = `interface Chain { next?: Chain }
+interface Holder { a: Chain; b: Chain }
+function wrap(inner: Chain, levels: number): Chain {
+  let value: Chain = inner;
+  for (let i = 0; i < levels; i++) { value = { next: value }; }
+  return value;
+}
+function length(chain: Chain): number {
+  let n = 0; let at: Chain | null = chain;
+  while (at !== null && at.next !== undefined) { at = at.next; n++; }
+  return n;
+}
+` + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
+    const wrapsOf: number[] = [${DAG_CASES.map(([wraps]) => wraps).join(', ')}];
+    const innerOf: number[] = [${DAG_CASES.map(([, inner]) => inner).join(', ')}];
+    for (let i = 0; i < wrapsOf.length; i++) {
+      const wraps = wrapsOf[i]; const inner = innerOf[i];
+      for (const xFirst of [true, false]) {
+        const x = wrap({}, inner); const y = wrap(x, wraps);
+        const holder: Holder = xFirst ? { a: x, b: y } : { a: y, b: x };
+        const label = String(wraps) + ' ' + String(inner) + (xFirst ? ' x' : ' y');
+        try { await kv.set(['dag', label], holder); console.log('set ' + label); }
+        catch (e) { if (e instanceof Error) { console.log(label + ' ' + e.name + ': ' + e.message); } }
+        try {
+          const got = await kv.get<Holder>(['dag', label]);
+          if (got.value === null) { console.log('get ' + label + ' absent'); }
+          else { console.log('get ' + label + ' ' + String(length(got.value.a)) + ' ' + String(length(got.value.b))); }
+        } catch (e) { if (e instanceof Error) { console.log('get ' + label + ' ' + e.name + ': ' + e.message); } }
+      }
+    }
+    const c: Chain = {}; const d: Chain = { next: c }; c.next = d;
+    try { await kv.set(['dag', 'cycle'], { a: c, b: d }); console.log('set cycle'); }
+    catch (e) { if (e instanceof Error) { console.log('cycle ' + e.name + ': ' + e.message); } }
+    kv.close();`);
+/** What DAG logs: the holder's deepest reach is 1 + wraps + inner. */
+const dagLogs = () => [...DAG_CASES.flatMap(([wraps, inner]) => [true, false].flatMap((xFirst) => {
+  const label = `${wraps} ${inner} ${xFirst ? 'x' : 'y'}`;
+  if (1 + wraps + inner > K.maxValueDepth) return [`${label} ${K.errors.typeError}: ${K.valueTooDeep}`, `get ${label} absent`];
+  const [x, y] = [inner, wraps + inner];
+  return [`set ${label}`, `get ${label} ${xFirst ? x : y} ${xFirst ? y : x}`];
+})), `cycle ${K.errors.typeError}: a cyclic value cannot be stored in a KV value`].map((line) => LOG_PREFIX + line);
 const COUNTER = GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
     const count = (await kv.get<KvU64>(['count'])).value;
     const twin = (await kv.get<KvU64>(['twin'])).value;
@@ -274,6 +326,7 @@ export async function runKv(varta, driver) {
     await add('aborted', COUNTER, {...GRANTS, time: {timer: true}});
     await add('nested', NESTED, {kv: {read: [`/${ROOT}/**`], write: [`/${ROOT}/**`]}});
     await add('deep', DEEP, GRANTS);
+    await add('dag', DAG, GRANTS);
     const {server, origin} = await serveBundles(bundles);
     const page = async (name) => driver.page(`${origin}/${name}/blank.html`);
     const same = (label, browser, native) => {
@@ -421,6 +474,15 @@ export async function runKv(varta, driver) {
         same('deep', await tab.evaluate(runExpression('deep')), native);
         await tab.close();
         pass('deep');
+      }
+      // Shared parts: equal to native, and to the deepest-reach rule.
+      {
+        const native = nativeRun(varta, directories.get('dag'));
+        assert.deepEqual(native.logs, dagLogs());
+        const tab = await page('dag');
+        same('dag', await tab.evaluate(runExpression('dag')), native);
+        await tab.close();
+        pass('dag');
       }
     } finally { await new Promise((done) => server.close(done)); }
   } finally { await rm(root, {recursive: true, force: true}); }

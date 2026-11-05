@@ -11529,10 +11529,15 @@ into the static type the program names. V37 and earlier profiles reject
   anything is stored.
 - **Depth.** A value nests at most `varta_kv_codec::MAX_VALUE_DEPTH` levels
   below its root (the legacy checked-JSON depth `value::MAX_JSON_DEPTH`;
-  every element, property or entry is one level below its aggregate). The
-  stage walk and the V8 writer refuse a deeper value before anything is
-  stored, and the V8 reader and the classifier refuse a deeper stored value
-  (one Deno wrote), each with the recoverable `TypeError` `a KV value cannot
+  every element, property or entry is one level below its aggregate). A
+  part reached more than once (one object, written once with
+  back-references) counts at its deepest reach, so a value stores exactly
+  when its expansion, which a read classifies, is within the limit,
+  whatever the property order, and the limit never refuses on a `get` what
+  a `set` stored. The stage walk and the V8 writer refuse a deeper value
+  before anything is stored, and the V8 reader and the classifier refuse a
+  deeper stored value (one Deno wrote), each with the recoverable
+  `TypeError` `a KV value cannot
   nest deeper than <limit> levels` (on a read prefixed by `KV value does not
   match the checked type: `), on every host; the construction of a result is
   iterative. The limit is derived from measured engine stacks (the crate

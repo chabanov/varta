@@ -578,6 +578,113 @@ fn the_wasm32_codec_keeps_the_shared_depth_limit_as_natively() {
     }
 }
 
+/// Levels around the stub in [`the_wasm32_codec_keeps_the_depth_limit_of_shared_parts_as_natively`].
+const SHARED_WRAPS: usize = 10;
+
+/// The V8 bytes of a two-element array of `Nested`: a chain `x` of `inner`
+/// arrays around `null` and `y`, `SHARED_WRAPS` arrays around `null` (the
+/// stub), `x` first when `x_first`.
+fn pair_bytes(inner: usize, x_first: bool) -> Vec<u8> {
+    let body = |depth: usize| {
+        let mut bytes: Vec<u8> = std::iter::repeat_n([b'A', 1], depth).flatten().collect();
+        bytes.push(b'0');
+        bytes.extend(std::iter::repeat_n([b'$', 0, 1], depth).flatten());
+        bytes
+    };
+    let (x, y) = (body(inner), body(SHARED_WRAPS));
+    let mut bytes = vec![
+        0xFF,
+        u8::try_from(varta_kv_codec::v8::WRITE_VERSION).unwrap(),
+        b'A',
+        2,
+    ];
+    let (first, second) = if x_first { (x, y) } else { (y, x) };
+    bytes.extend(first);
+    bytes.extend(second);
+    bytes.extend([b'$', 0, 2]);
+    bytes
+}
+
+/// The array a `Nested` handle (a reference union cell) holds.
+fn nested_array(guest: &Fake, handle: u64) -> value::Vector {
+    let version = value::HASHED_DICTIONARY_VALUE_VERSION;
+    let cell = value::ReferenceBox::read_in(&guest.memory[..], handle, version, module()).unwrap();
+    value::Vector::read_in(&guest.memory[..], cell.payload, version, module()).unwrap()
+}
+
+/// Where element `index` of `array` sits in guest memory.
+fn element_at(array: &value::Vector, index: usize) -> std::ops::Range<usize> {
+    let at = array.storage + value::ARRAY_META_BYTES + index * value::ARRAY_SLOT_BYTES;
+    at..at + value::ARRAY_SLOT_BYTES
+}
+
+/// Both builds stage a guest value with a shared part alike, keeping the
+/// shared depth limit at the part's deepest reach in either order: the
+/// stub at the bottom of `y` is replaced by the very cell of `x`, so `x` is
+/// reached at level 1 and at `1 + SHARED_WRAPS`. Within the limit both stage
+/// it, and what they stage decodes and stages back alike (the read-back
+/// guarantee); one level deeper both refuse it by name before encoding.
+#[test]
+fn the_wasm32_codec_keeps_the_depth_limit_of_shared_parts_as_natively() {
+    let mut wasm = Wasm::new();
+    let max = varta_kv_codec::MAX_VALUE_DEPTH;
+    let fits = max - 1 - SHARED_WRAPS;
+    let refused = protocol::KvError::type_error(varta_kv_codec::too_deep())
+        .text()
+        .into_bytes();
+    let kind = value::ValueKind::ReferenceUnion as u32;
+    for x_first in [true, false] {
+        for inner in [fits, fits + 1] {
+            let stored = Stored::V8(pair_bytes(inner, x_first));
+            let (status, handle, mut guest) =
+                native_decode(Fake::new(NESTED), Entry::Value(&stored), NESTED.len());
+            assert_eq!(status, C::OK, "{inner} {x_first}");
+            assert_eq!(guest.thrown, None, "{inner} {x_first}");
+            let handle = u64::from_le_bytes(handle.try_into().unwrap());
+            let pair = nested_array(&guest, handle);
+            let (x_slot, y_slot) = if x_first {
+                (element_at(&pair, 0), element_at(&pair, 1))
+            } else {
+                (element_at(&pair, 1), element_at(&pair, 0))
+            };
+            let mut stub = u64::from_le_bytes(guest.memory[y_slot].try_into().unwrap());
+            for _ in 1..SHARED_WRAPS {
+                let level = nested_array(&guest, stub);
+                stub = u64::from_le_bytes(guest.memory[element_at(&level, 0)].try_into().unwrap());
+            }
+            let bottom = element_at(&nested_array(&guest, stub), 0);
+            let x_cell = guest.memory[x_slot].to_vec();
+            guest.memory[bottom].copy_from_slice(&x_cell);
+            let native = native_stage(&guest, kind, handle);
+            assert_eq!(
+                wasm.stage(guest.clone(), kind, handle),
+                native,
+                "{inner} {x_first}"
+            );
+            if inner > fits {
+                assert_eq!(native, (C::FAILED, refused.clone()), "{inner} {x_first}");
+                continue;
+            }
+            assert_eq!(native.0, C::OK, "{inner} {x_first}");
+            // What staged reads back: the shared encoding decodes and stages
+            // back alike in both builds.
+            let staged = Stager::new(&guest.memory[..], module(), &Never)
+                .value(kind, handle, 0)
+                .unwrap();
+            let stored = Stored::V8(
+                varta_kv_codec::v8::encode(&staged, varta_kv_codec::wire::MAX_VALUE_BYTES).unwrap(),
+            );
+            let mut input = vec![C::ENTRY_VALUE, u8::try_from(stored.encoding()).unwrap()];
+            input.extend(stored.bytes());
+            assert_eq!(
+                agree(&mut wasm, NESTED, (false, &input, Entry::Value(&stored))),
+                Outcome::Staged,
+                "{inner} {x_first}"
+            );
+        }
+    }
+}
+
 fn hex_text(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
