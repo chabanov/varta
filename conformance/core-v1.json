@@ -3,7 +3,7 @@
   "id": "checked-core-v1",
   "edition": "ECMAScript 2025",
   "sourceModel": "checked-ts-main-v1",
-  "profile": "checked-f64-utf16-v37",
+  "profile": "checked-f64-utf16-v38",
   "features": [
     {
       "id": "binary64",
@@ -682,6 +682,75 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md"
+    },
+    {
+      "id": "web-bytes",
+      "title": "Web byte bodies: Blob, ArrayBuffer and Response bytes",
+      "core": [
+        "CORE-05",
+        "CORE-10"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#web-bytes-web_bytes"
+    },
+    {
+      "id": "typed-global-this",
+      "title": "Typed globalThis and typeof of engine globals",
+      "core": [
+        "CORE-10",
+        "CORE-12"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#web-bytes-web_bytes"
+    },
+    {
+      "id": "strict-members",
+      "title": "Strict members over wide discriminated unions",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#strict-members-and-wide-unions-strict_members"
+    },
+    {
+      "id": "structural-subtyping",
+      "title": "Structural record views and callable signatures",
+      "core": [
+        "CORE-02",
+        "CORE-03"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#structural-subtyping-structural_subtyping"
+    },
+    {
+      "id": "fetch",
+      "title": "fetch, Request and Response with injected and denied transports",
+      "core": [
+        "CORE-10",
+        "CORE-11"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#network-requests-net_request"
+    },
+    {
+      "id": "kv-storage",
+      "title": "Deno-compatible KV storage behind exact kv grants",
+      "core": [
+        "CORE-11",
+        "CORE-13"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#kv-storage-kv"
+    },
+    {
+      "id": "sdk-paths",
+      "title": "Error option causes and collection instanceof",
+      "core": [
+        "CORE-04",
+        "CORE-05"
+      ],
+      "origin": "varta_contract",
+      "reference": "docs/architecture.md#sdk-paths-sdk_paths"
     }
   ],
   "cases": [
@@ -1018,7 +1087,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "unsupported_syntax",
-        "reason": "Class declarations inside functions are not admitted; v32 admits top-level classes only."
+        "reason": "Class declarations inside functions are not admitted; v32 through v38 admit top-level classes only."
       }
     },
     {
@@ -1261,7 +1330,7 @@
       "baseline": {
         "status": "known_unsupported",
         "diagnostic": "type_error",
-        "reason": "Generator return types are not inferred: v33 requires an explicit Generator<T, TReturn, TNext> return annotation."
+        "reason": "Generator return types are not inferred: v33 through v38 require an explicit Generator<T, TReturn, TNext> return annotation."
       }
     },
     {
@@ -2567,6 +2636,186 @@
       ],
       "baseline": {
         "status": "supported"
+      }
+    },
+    {
+      "id": "web-bytes-bodies",
+      "feature": "web-bytes",
+      "path": "cases/web-bytes-bodies.ts",
+      "sha256": "9fa8bfff65ece04d4610c820c39f5cb2b5ad952e057e0ab66e16822374879a76",
+      "stdout": [
+        "varta log: 6 13 text/plain",
+        "varta log: €uro and AB",
+        "varta log: 5 117 114 111 32 97 2 0",
+        "varta log: 13 3 36,130,172 226",
+        "varta log: 201 true false application/json",
+        "varta log: 1 true",
+        "varta log: reread true",
+        "varta log: true 3 text/x-sample",
+        "varta log: 0,0,0 null",
+        "varta log: PUT https://example.test/upload"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "global-this-detection",
+      "feature": "typed-global-this",
+      "path": "cases/global-this-detection.ts",
+      "sha256": "96c2e0fa6e518d5fd398782019750aef78d3bed6dc209e3f6fccaad81d48d62a",
+      "stdout": [
+        "varta log: global custom",
+        "varta log: 36 4 5 false",
+        "varta log: 8 8",
+        "varta log: function function function function function",
+        "varta log: object object object function",
+        "varta log: a%20b%26c /a%20b?c=%E2%82%AC",
+        "varta log: undefined"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "strict-member-unions",
+      "feature": "strict-members",
+      "path": "cases/strict-member-unions.ts",
+      "sha256": "bd126834a79e6f39ba952fdc22da26706b81e3699f6666b8412357c2c3d74f24",
+      "stdout": [
+        "varta log: e01 1 - 0",
+        "varta log: e09 2 api 30",
+        "varta log: e14 ABC",
+        "varta log: e19 on",
+        "varta log: e20 2:x+y",
+        "varta log: e17 -0.5 - 0",
+        "varta log: e06 off",
+        "varta log: e07 0:",
+        "varta log: e13 7 - 5",
+        "varta log: e13 8 - 5 7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "structural-views",
+      "feature": "structural-subtyping",
+      "path": "cases/structural-views.ts",
+      "sha256": "2f740558e559885affc8ad71674a4c13dff282a224855273f9dfd082269d790a",
+      "stdout": [
+        "varta log: lit docs lit:2 docs:3",
+        "varta log: lit docs inline",
+        "varta log: renamed moved true",
+        "varta log: 8,10,12",
+        "varta log: 0=4,1=5",
+        "varta log: hi x! hi y?",
+        "varta log: 2 end true",
+        "varta log: value 3 error no"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "fetch-injected-transport",
+      "feature": "fetch",
+      "path": "cases/fetch-injected-transport.ts",
+      "sha256": "1dc9aed28c10ff45370b123a6c898b8ade33f5de5f187746180a38791d9c17f5",
+      "stdout": [
+        "varta log: a1 3 3",
+        "varta log: GET https://api.example.test/v1/items/a1 1 application/json",
+        "varta log: GET https://api.example.test/v1/items/a1 2 application/json",
+        "varta log: GET https://api.example.test/v1/items/a1 3 application/json",
+        "varta log: HTTP 404: missing",
+        "varta log: x-a=1, 3;x-b=2",
+        "varta log: 204 true 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "fetch-denied",
+      "feature": "fetch",
+      "path": "cases/fetch-denied.ts",
+      "sha256": "5ead1739af06cca10bfce1166d47dddb5cd3ed294cb9bb92d92f15421a068548",
+      "stdout": [
+        "varta log: <capability denied: net.request> (GET http://127.0.0.1:9/never)",
+        "varta log: denied NotAllowedError",
+        "varta log: relative true",
+        "varta log: continued"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "kv-denied-open",
+      "feature": "kv-storage",
+      "path": "cases/kv-denied-open.ts",
+      "sha256": "05f29aae4bc19dcc4be2fea56a73bc9c48664b8e990745bd2cd191bd39137ce5",
+      "stdout": [
+        "varta log: <capability denied: kv.read> (/data/app.kv)",
+        "varta log: NotAllowedError",
+        "varta log: 18446744073709551615 18446744073709551615 true",
+        "varta log: negative true",
+        "varta log: continued"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "sdk-error-causes",
+      "feature": "sdk-paths",
+      "path": "cases/sdk-error-causes.ts",
+      "sha256": "123fe307c87ed573e26112754dfe74bda671c4cfbd748469554601c5e42710ea",
+      "stdout": [
+        "varta log: APIConnectionError:Connection error <- TypeError:socket closed <- value:ECONNRESET",
+        "varta log: true true APIConnectionError: Connection error",
+        "varta log: RangeError:plain",
+        "varta log: Error:empty options",
+        "varta log: APIConnectionError:retry exhausted <- APIConnectionError:Connection error <- TypeError:socket closed <- value:ECONNRESET",
+        "varta log: bytes 3, text 4",
+        "varta log: map 1, text, none, set true, number 2"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "template-literal-forms",
+      "feature": "template-literals",
+      "path": "cases/template-literal-forms.ts",
+      "sha256": "67cadadb985a700612c590f04073870e7ba94023c9cffe93d7e6df6f797a3b22",
+      "stdout": [
+        "varta log: sdk/3.6",
+        "varta log: sdk/3.6 app/1",
+        "varta log: timeout=250ms retries=none",
+        "varta log: /v1/items?page=2&filter%20by=a%26b",
+        "varta log: <s><1.5><false><null><18446744073709551616>",
+        "varta log: 003|xxx|wide 3",
+        "varta log: 3 \"line one\\n  line two\\ttab\\nend\"",
+        "varta log: k1,k2",
+        "varta log: Request timed out after 250 ms"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "union-record-argument",
+      "feature": "structural-subtyping",
+      "path": "cases/union-record-argument.ts",
+      "sha256": "794a7e86edfd131ee3d1f8856000c2b35d59d11d94622bfddd7de3de1243b10c",
+      "stdout": [
+        "varta log: 1 2"
+      ],
+      "baseline": {
+        "status": "known_unsupported",
+        "diagnostic": "type_error",
+        "reason": "A union of record shapes does not convert to one record type: v38 views a single record or class instance as a narrower record, but rejects an A | B argument for { n: number } (argument type mismatch)."
       }
     }
   ]

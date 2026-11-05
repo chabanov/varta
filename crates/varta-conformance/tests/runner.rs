@@ -244,6 +244,10 @@ fn reviewed_case_grants_are_exact_and_limited_to_timers() {
         json!(["time.now"]),
         json!(["fs.read"]),
         json!(["process.exit"]),
+        json!(["net.request"]),
+        json!(["kv.read"]),
+        json!(["kv.write"]),
+        json!(["env.get"]),
         json!(["time.timer", "time.timer"]),
         json!(["unknown"]),
         json!([""]),
@@ -276,6 +280,43 @@ fn host_access_is_denied_and_parent_environment_is_not_disclosed() {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("NEVER_DISCLOSE"));
+}
+/// The v38 inventory cases read `process.env` and open KV databases without
+/// grants: the environment snapshot lists nothing even when the parent sets
+/// the name, a static `process.env` key is a logged `env` denial, and a KV
+/// open is a recoverable `NotAllowedError` before any file is touched.
+#[test]
+fn v38_environment_and_kv_globals_reach_no_ambient_authority() {
+    let mut fixture = Fixture::new(concat!(
+        "export async function main():Promise<void>{",
+        "const name='VARTA_CONFORMANCE_SECRET';",
+        "const env=(globalThis as {process?:{env?:Record<string,string|undefined>}}).process?.env;",
+        "console.log(String(env?.[name]));",
+        "console.log(String(globalThis.process.env.VARTA_CONFORMANCE_SECRET));",
+        "try{await varta.kv.open('/data/x.kv');}",
+        "catch(error){console.log(error instanceof DOMException?error.name:'other');}}",
+    ));
+    fixture.value["profile"] = json!("checked-f64-utf16-v38");
+    fixture.value["cases"][0]["stdout"] = json!([
+        "varta log: undefined",
+        "varta log: <capability denied: env> (VARTA_CONFORMANCE_SECRET)",
+        "varta log: undefined",
+        "varta log: <capability denied: kv.read> (/data/x.kv)",
+        "varta log: NotAllowedError"
+    ]);
+    fixture.save();
+    let output = fixture
+        .command()
+        .args(["--require-supported"])
+        .env("VARTA_CONFORMANCE_SECRET", "NEVER_DISCLOSE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
     );
     assert!(!String::from_utf8_lossy(&output.stdout).contains("NEVER_DISCLOSE"));
 }
