@@ -8,7 +8,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-use varta_common::{HostOperation as H, budget::BudgetKind};
+use varta_common::{HostOperation as H, budget::BudgetKind, language::LanguageProfile};
 
 const SCHEMA_VERSION: u32 = 1;
 const TRUSTED_TYPES_POLICY: &str = "varta-worker";
@@ -52,6 +52,8 @@ const PAGE_STYLE: &str = "html,body{height:100%;margin:0}body{display:flex;flex-
 
 /// Current R1 effect implementations. Unsupported effects fail before producing
 /// a runnable bundle; extending this surface requires matching effect tests.
+/// An implementation is admitted only under the profiles whose native host
+/// imports that operation ([`admitted_effect`]).
 const EFFECTS: &[H] = &[
     H::LogInt,
     H::LogFloatV2,
@@ -91,6 +93,31 @@ const EFFECTS: &[H] = &[
     H::EnvSnapshot,
     H::ExitFloat,
 ];
+
+/// Whether the browser host implements `name` for a `profile` module: an
+/// implemented effect that the profile's native host can import, exactly as
+/// the generated registry's `admittedUnder` lists it for the Worker gate. An
+/// implementation never widens a profile: the pilot effects keep the native
+/// first profile of each operation (`number_random` from v17,
+/// `process_exit_f64` in the f64 profiles, `date_now` from v37,
+/// `env_snapshot` in v38).
+fn admitted_effect(profile: LanguageProfile, name: &str) -> bool {
+    EFFECTS.iter().any(|operation| {
+        operation.name() == name && varta_common::browser::admits(profile, *operation)
+    })
+}
+
+/// The imports of a `profile` module that the browser host refuses, in
+/// import order.
+pub(super) fn unimplemented_effects<'a>(
+    profile: LanguageProfile,
+    imports: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
+    imports
+        .into_iter()
+        .filter(|name| !admitted_effect(profile, name))
+        .collect()
+}
 
 /// Engine-owned ESM sources become isolated lexical modules in the verified
 /// loader/Worker. No generated file follows a transitive or unverified import.
@@ -271,13 +298,13 @@ impl BrowserArtifact {
                     .into(),
             ));
         }
-        let gaps: Vec<_> = self
-            .inspection
-            .imports
-            .iter()
-            .filter(|import| !EFFECTS.iter().any(|op| op.name() == import.name))
-            .map(|import| import.name.as_str())
-            .collect();
+        let gaps = unimplemented_effects(
+            self.inspection.language.profile.unwrap_or_default(),
+            self.inspection
+                .imports
+                .iter()
+                .map(|import| import.name.as_str()),
+        );
         if !gaps.is_empty() {
             return Err(ProjectError::Usage(format!(
                 "browser host effects not implemented: {}",

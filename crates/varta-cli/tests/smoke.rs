@@ -17594,6 +17594,50 @@ fn web_bytes_env_snapshots_and_byte_bodies_follow_exact_grants() {
     let _ = fs::remove_dir_all(&project);
 }
 
+/// The browser host's too-large text (the generated registry's
+/// `effects.failures.tooLarge`) is the native diagnostic: a `process.env`
+/// snapshot whose UTF-16 result exceeds `abi::MAX_RESULT_BYTES` logs it and
+/// is empty, while a static name still reads its one variable.
+#[test]
+fn env_snapshot_too_large_text_equals_the_browser_registry() {
+    // Below the per-string limit of process environments (128 KiB on Linux).
+    const VALUE_BYTES: usize = 96 * 1024;
+    const PREFIX: &str = "VARTA_SNAPSHOT_LARGE_";
+    let registry = varta_common::browser::registry();
+    let too_large = registry["effects"]["failures"]["tooLarge"]
+        .as_str()
+        .unwrap();
+    const UTF16_UNIT_BYTES: usize = std::mem::size_of::<u16>();
+    // Enough granted ASCII values that their UTF-16 result is too large.
+    let count = varta_common::abi::MAX_RESULT_BYTES / UTF16_UNIT_BYTES / VALUE_BYTES + 1;
+    let names: Vec<String> = (0..count).map(|index| format!("{PREFIX}{index}")).collect();
+    let project = RegressionProject::new(
+        &format!(
+            "export function main(): void {{
+  console.log(Object.keys(globalThis.process.env).length);
+  console.log((globalThis.process.env.{} ?? '').length);
+}}
+",
+            names[0]
+        ),
+        serde_json::json!({"env": {"get": names}}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    let value = "x".repeat(VALUE_BYTES);
+    let mut command = varta();
+    command.current_dir(&project.0).arg("dev");
+    for name in &names {
+        command.env(name, &value);
+    }
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "{}", combined(&output));
+    let line = |text: &str| format!("varta log: {text}");
+    assert_eq!(
+        stdout_lines(&output),
+        [line(too_large), line("0"), line(&VALUE_BYTES.to_string()),]
+    );
+}
+
 const TYPEOF_GLOBALS_CASE: &str =
     include_str!("../../varta-runtime/src/web_bytes_cases/typeof_globals.ts");
 

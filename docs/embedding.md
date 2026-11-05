@@ -668,6 +668,9 @@ The official browser host (the generated Worker of `varta build --target
 browser` and `varta dev --target browser`) implements these pilot effects with
 the reference host's results, statuses, output, fuel and host-call charges. Each
 import pays the shared call charge first; the other columns are the handler.
+Each is admitted exactly under the profiles that admit the import in the
+[host operation table](#host-operation-table), as for the reference host; a
+module of any other profile that imports it gets no bundle.
 Browser capability mappings remain [unstable](#what-is-unstable).
 
 | Import | Browser source | Decision before the effect | Result |

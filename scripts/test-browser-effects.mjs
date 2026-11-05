@@ -1,6 +1,9 @@
 // Native/browser equivalence of the pilot effects (Date.now, new Date,
 // Math.random, crypto.getRandomValues, crypto.randomUUID, process.env,
-// process.exit) and of idle collection between the turns of a long session.
+// process.exit) and of idle collection between the turns of a long session,
+// including their recoverable failures (an invalid exit code, a too-large
+// environment snapshot) and the older profiles that import a pilot effect
+// natively (v37's clock, entropy and exit, v20's entropy and exit).
 // Each program runs natively (`varta dev --budget-report`, `--app` for the
 // session) and in the browser host served by `varta dev --target browser`;
 // logs, exit codes and exact fuel, host-call, microtask, output and
@@ -23,9 +26,13 @@ import assert from 'node:assert/strict';
 import {registry} from '../crates/varta-common/browser/registry.mjs';
 
 const PROFILE = 'checked-f64-utf16-v38';
+const CLOCK_PROFILE = 'checked-f64-utf16-v37';
+const ENTROPY_PROFILE = 'checked-f64-utf16-v20';
 const HOST_ABI = registry.profiles.find((profile) => profile.name === PROFILE).hostAbi;
 const COLLECTOR = registry.effects.collector;
 const EXIT_CODE = 3;
+// Not an integer: a recoverable invalid-input failure on both hosts.
+const INVALID_EXIT_CODE = 1.5;
 const SESSION_TIMERS = 12;
 // Long enough that every timer turn ends before the next timer is due, so
 // each gap is one idle period on both hosts.
@@ -90,12 +97,51 @@ function tick(): void {
 export function main(): void { setTimeout(tick, ${SESSION_DELAY_MS}); }
 `;
 
+// The exits of the older-profile cases: an invalid code, then an exit.
+const EXITS = `  varta.process.exit(${INVALID_EXIT_CODE});
+  console.log('after invalid exit');
+  varta.process.exit(${EXIT_CODE});
+  console.log('after exit');
+`;
+const ENTROPY = `  let inRange = true;
+  for (let i = 0; i < 64; i++) {
+    const sample = Math.random();
+    if (!(sample >= 0 && sample < 1)) { inRange = false; }
+  }
+  console.log(inRange);
+`;
+// Granted, so the clock cannot throw (a v37 catch would import the
+// error-class operation, which the browser host does not implement).
+const CLOCK_V37 = `export function main(): void {
+  const now = Date.now();
+  console.log(Number.isInteger(now) && now > 1600000000000);
+${ENTROPY}${EXITS}}
+`;
+const ENTROPY_V20 = `export function main(): void {
+${ENTROPY}${EXITS}}
+`;
+
+// Granted ASCII values whose snapshot's UTF-16 result exceeds the native
+// result limit (registry.environment.maxResultBytes); each one alone fits,
+// and each stays below the per-string limit of a Linux process environment.
+const UTF16_UNIT_BYTES = Uint16Array.BYTES_PER_ELEMENT;
+const LARGE_VALUE_BYTES = 96 * 1024;
+const LARGE = Array.from({length: Math.floor(registry.environment.maxResultBytes / UTF16_UNIT_BYTES / LARGE_VALUE_BYTES) + 1},
+  (_, index) => [`VARTA_EFFECT_LARGE_${index}`, 'x'.repeat(LARGE_VALUE_BYTES)]);
+const TOO_LARGE = `export function main(): void {
+  console.log(Object.keys(globalThis.process.env).length);
+  console.log((globalThis.process.env.${LARGE[0][0]} ?? '').length);
+  varta.process.exit(${INVALID_EXIT_CODE});
+  console.log('after invalid exit');
+}
+`;
+
 const ENVIRONMENT = [['VARTA_EFFECT_ONE', 'Привіт 😀'], ['VARTA_EFFECT_TWO', 'two "quoted"\n'], ['VARTA_EFFECT_WILD_X', 'wild'], ['VARTA_EFFECT_SECRET', 'PRIVATE']];
 const GRANTED = {time: {now: true}, env: {get: ['VARTA_EFFECT_ONE', 'VARTA_EFFECT_TWO', 'VARTA_EFFECT_ABSENT', 'VARTA_EFFECT_WILD_*']}, process: {exit: true}};
 
 /** The cases: a project, its native arguments and the browser options. */
 export const CASES = [
-  {name: 'effects', source: EFFECTS, capabilities: GRANTED, exit: EXIT_CODE},
+  {name: 'effects', source: EFFECTS, capabilities: GRANTED, exit: EXIT_CODE, clockReads: 2},
   // An empty host ceiling denies the clock, the environment and the exit
   // before any effect; entropy stays available (it is ungated).
   {name: 'effects-empty-ceiling', source: EFFECTS, capabilities: GRANTED, policy: [], ceiling: {}, exit: 0, denied: true},
@@ -107,13 +153,22 @@ export const CASES = [
   // step, list no period and keep the same turns.
   {name: 'session-maintenance-ceiling', source: SESSION, capabilities: {time: {timer: true}}, session: true, exit: 0,
     policy: [{id: 'time.timer', enabled: true}], ceiling: {'time.timer': true}, budgets: {[COLLECTOR.fuelBudget]: COLLECTOR.stepFuel - 1}},
+  // The snapshot is too large and the exit code invalid: both recoverable,
+  // with the native diagnostics; a static name still reads its variable.
+  {name: 'failures', source: TOO_LARGE, environment: LARGE, capabilities: {env: {get: LARGE.map(([name]) => name)}, process: {exit: true}}, exit: 0,
+    diagnostics: [registry.effects.failures.tooLarge, registry.effects.failures.invalid]},
+  // Older profiles keep exactly the pilot effects their native host imports.
+  {name: 'v37-clock-entropy-exit', profile: CLOCK_PROFILE, source: CLOCK_V37, capabilities: {time: {now: true}, process: {exit: true}}, exit: EXIT_CODE, clockReads: 1,
+    diagnostics: [registry.effects.failures.invalid]},
+  {name: 'v20-entropy-exit', profile: ENTROPY_PROFILE, source: ENTROPY_V20, capabilities: {process: {exit: true}}, exit: EXIT_CODE,
+    diagnostics: [registry.effects.failures.invalid]},
 ];
 
 async function project(root, item) {
   const directory = join(root, item.name);
   await mkdir(directory);
   await writeFile(join(directory, 'main.ts'), item.source);
-  await writeFile(join(directory, 'varta.config.json'), JSON.stringify({entry: 'main.ts', target: 'wasm', out: 'dist/app', languageProfile: PROFILE, capabilities: item.capabilities}));
+  await writeFile(join(directory, 'varta.config.json'), JSON.stringify({entry: 'main.ts', target: 'wasm', out: 'dist/app', languageProfile: item.profile ?? PROFILE, capabilities: item.capabilities}));
   if (item.policy) await writeFile(join(directory, 'host-policy.json'), JSON.stringify({schemaVersion: 1, abiVersion: item.budgets ? HOST_ABI : 1, capabilities: item.policy, ...(item.budgets ? {budgets: item.budgets} : {})}));
   return directory;
 }
@@ -122,12 +177,13 @@ const number = Number;
 function nativeRun(varta, directory, item) {
   const environment = {...process.env};
   for (const name of Object.keys(environment)) if (name.startsWith('VARTA_EFFECT_')) delete environment[name];
-  for (const [name, value] of ENVIRONMENT) environment[name] = value;
+  for (const [name, value] of item.environment ?? ENVIRONMENT) environment[name] = value;
   const args = [...(item.policy ? ['--policy', 'host-policy.json'] : []), 'dev', '--budget-report', ...(item.session ? ['--app'] : [])];
   const run = spawnSync(varta, args, {cwd: directory, encoding: 'utf8', env: environment});
   if (run.error) throw run.error;
-  const turns = [...run.stderr.matchAll(/varta budget: turn (\d+) (\w+): fuel (\d+)\/\d+, host calls (\d+)\/\d+, microtasks (\d+),/g)]
-    .map(([, turn, kind, fuel, hostCalls, microtasks]) => ({turn: number(turn), kind, fuel: number(fuel), hostCalls: number(hostCalls), microtasks: number(microtasks)}));
+  // Turn budgets (v38) report each turn; earlier profiles one execution.
+  const turns = [...run.stderr.matchAll(/varta budget: (?:turn (\d+) (\w+)|(execution)): fuel (\d+)\/\d+, host calls (\d+)\/\d+, microtasks (\d+),/g)]
+    .map(([, turn, kind, execution, fuel, hostCalls, microtasks]) => ({turn: number(turn ?? 1), kind: kind ?? execution, fuel: number(fuel), hostCalls: number(hostCalls), microtasks: number(microtasks)}));
   const maintenance = [...run.stderr.matchAll(/varta budget: maintenance after turn (\d+): fuel (\d+)\/\d+, steps (\d+), cycle (completed|continues), wall \d+ ms \(\d+ ms per idle period\), memory (\d+)\/\d+ bytes/g)]
     .map(([, afterTurn, fuel, steps, cycle, memoryBytes]) => ({afterTurn: number(afterTurn), fuel: number(fuel), steps: number(steps), completed: cycle === 'completed', memoryBytes: number(memoryBytes)}));
   const total = /varta budget: total: (\d+) turns, fuel (\d+), peak memory \d+\/\d+ bytes, output (\d+)\/\d+ bytes/.exec(run.stderr);
@@ -165,7 +221,7 @@ async function stop(child) {
 // One browser execution; the expression is self-contained so that both the
 // CDP and the Playwright drivers evaluate it unchanged.
 function expression(item) {
-  const options = JSON.stringify({environmentInputs: ENVIRONMENT, ...(item.ceiling ? {permissionCeiling: item.ceiling} : {}), ...(item.budgets ? {budgetCeiling: item.budgets} : {})});
+  const options = JSON.stringify({environmentInputs: item.environment ?? ENVIRONMENT, ...(item.ceiling ? {permissionCeiling: item.ceiling} : {}), ...(item.budgets ? {budgetCeiling: item.budgets} : {})});
   const pick = `{status:r.status,error:r.error,exitCode:r.exitCode,logs:r.logs,fuelUsed:r.fuelUsed,hostCalls:r.hostCalls,microtasks:r.microtasks,outputBytes:r.outputBytes,turns:r.turns,maintenance:r.maintenance,maintenancePeriods:r.maintenancePeriods,maintenanceFuel:r.maintenanceFuel,audit:r.permissions.audit.map(a=>[a.operation,a.outcome])}`;
   return item.session
     ? `(async()=>{const {mount}=await import(document.querySelector('script[data-varta-dev]').src);const usages=[];const app=mount({...${options},onTurn:u=>usages.push(u)});const r=await app.finished;return {...${pick},usages};})()`
@@ -207,8 +263,12 @@ function compare(item, native, browser) {
     assert(clock.length >= 1 && clock.every((outcome) => outcome === 'denied'), label('clock audit'));
   } else if (item.exit !== 0) {
     assert(!native.logs.includes('varta log: after exit'), label('exit ends the run'));
-    assert(clock.length >= 2 && clock.every((outcome) => outcome === 'granted'), label('clock audit'));
   }
+  if (!item.denied && item.clockReads) assert(clock.length >= item.clockReads && clock.every((outcome) => outcome === 'granted'), label('clock audit'));
+  // The registry's failure texts are the native diagnostics (the browser's
+  // logs equal native's above), and execution continues after each.
+  for (const text of item.diagnostics ?? []) assert(native.logs.includes(`varta log: ${text}`), label(`native diagnostic ${text}`));
+  if (item.diagnostics?.includes(registry.effects.failures.invalid)) assert(native.logs.includes('varta log: after invalid exit'), label('an invalid exit continues'));
   assert(unaudited <= (item.capabilities.env ? 1 : 0) + (item.capabilities.process ? 1 : 0), label('unaudited effects'));
 }
 
@@ -239,5 +299,5 @@ if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href) {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   })));
-  console.log(`Chrome effect acceptance passed (${passed.join(', ')}): logs, exit codes, exact host-call/microtask/output usage, exact fuel (except the value-dependent randomUUID prelude) and idle maintenance equal native`);
+  console.log(`Chrome effect acceptance passed (${passed.join(', ')}): logs (including the registry's failure diagnostics), exit codes, exact host-call/microtask/output usage, exact fuel (except the value-dependent randomUUID prelude) and idle maintenance equal native`);
 }

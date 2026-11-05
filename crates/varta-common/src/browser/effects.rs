@@ -1,8 +1,16 @@
 //! Wire facts of the browser host's pilot effects (clock, entropy, environment
 //! snapshot, exit) and of idle collection between turns. The diagnostic texts
-//! repeat the native runtime's; `varta-project`'s browser tests compare the
-//! maintenance templates with the runtime's typed error, and the Chrome effect
-//! acceptance compares every other text with native goldens.
+//! repeat the native runtime's private ones, and tests compare each with what
+//! the native runtime produces: `varta-project`'s browser tests compare the
+//! maintenance templates with the runtime's typed `BudgetExhausted` error and
+//! `failures.invalid` with the log of a native `process.exit(1.5)`; the CLI
+//! smoke suite compares `failures.tooLarge` with the log of a native
+//! `process.env` snapshot above the result limit; `varta-runtime`'s
+//! maintenance tests compare `collector.invalidStatus` with the native error
+//! of an idle export rewritten to return an invalid status (compiled modules
+//! cannot); and the Chrome effect acceptance compares the clock and exit
+//! denial texts, `failures.invalid` and `failures.tooLarge` with native logs
+//! of the same programs.
 use crate::{HostOperation as H, budget, collector};
 use serde_json::{Value, json};
 

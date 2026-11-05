@@ -467,3 +467,152 @@ fn maintenance_exhaustion_texts_equal_the_native_runtime_errors() {
         assert_eq!(collector[wire], budget.wire_name());
     }
 }
+
+/// Browser effect admission is the native profile's import admission: each
+/// implemented effect is admitted exactly under the profiles whose native
+/// host imports it, and refused under every other profile.
+#[test]
+fn effect_admission_follows_the_native_profile_imports() {
+    use super::bundle::unimplemented_effects;
+    use varta_common::{HostOperation as H, language::SUPPORTED_PROFILES};
+    let pilot = [H::DateNow, H::MathRandom, H::EnvSnapshot, H::ExitFloat];
+    for profile in SUPPORTED_PROFILES.iter().copied() {
+        for operation in pilot {
+            assert_eq!(
+                unimplemented_effects(profile, [operation.name()]).is_empty(),
+                varta_common::browser::admits(profile, operation),
+                "{} under {:?}",
+                operation.name(),
+                profile
+            );
+        }
+    }
+    // The first native profile of each pilot effect, and the one before it.
+    for (operation, first, before) in [
+        (
+            H::DateNow,
+            LanguageProfile::CheckedF64Utf16V37,
+            LanguageProfile::CheckedF64Utf16V36,
+        ),
+        (
+            H::MathRandom,
+            LanguageProfile::CheckedF64Utf16V17,
+            LanguageProfile::CheckedF64Utf16V16,
+        ),
+        (
+            H::EnvSnapshot,
+            LanguageProfile::CheckedF64Utf16V38,
+            LanguageProfile::CheckedF64Utf16V37,
+        ),
+        (
+            H::ExitFloat,
+            LanguageProfile::CheckedF64Utf8V1,
+            LanguageProfile::CheckedI32Utf8V1,
+        ),
+    ] {
+        assert!(unimplemented_effects(first, [operation.name()]).is_empty());
+        assert_eq!(
+            unimplemented_effects(before, [operation.name()]),
+            [operation.name()]
+        );
+    }
+}
+
+fn profile_source(source: &str, profile: LanguageProfile) -> Artifact {
+    let mut artifact = artifact(profile);
+    artifact.wasm = varta_compiler::compile_typescript_with_profile(source, profile)
+        .unwrap_or_else(|error| panic!("{error}\n{source}"));
+    artifact
+}
+
+/// Older profiles keep the pilot effects their native host imports: v37's
+/// clock, entropy and exit and v20's entropy and exit produce bundles. The
+/// Chrome effect acceptance compares their runs with native.
+#[test]
+fn older_profile_bundles_admit_exactly_their_native_pilot_effects() {
+    use varta_common::HostOperation as H;
+    for (profile, source, effects) in [
+        (
+            LanguageProfile::CheckedF64Utf16V37,
+            "export function main():void{console.log(Date.now()>0);console.log(Math.random()<1);varta.process.exit(3);}",
+            &[H::DateNow, H::MathRandom, H::ExitFloat][..],
+        ),
+        (
+            LanguageProfile::CheckedF64Utf16V20,
+            "export function main():void{console.log(Math.random()<1);varta.process.exit(3);}",
+            &[H::MathRandom, H::ExitFloat][..],
+        ),
+    ] {
+        let prepared = BrowserArtifact::prepare(&profile_source(source, profile), None).unwrap();
+        for operation in effects {
+            assert!(
+                prepared
+                    .inspection()
+                    .imports
+                    .iter()
+                    .any(|import| import.name == operation.name()),
+                "{} not imported under {:?}",
+                operation.name(),
+                profile
+            );
+        }
+        prepared.bundle().unwrap();
+    }
+}
+
+/// The default i32 profile exits through its own `process_exit` import,
+/// which the browser host does not implement: no bundle exists.
+#[test]
+fn the_i32_profile_exit_is_refused_before_a_bundle_exists() {
+    use varta_common::HostOperation as H;
+    let profile = LanguageProfile::CheckedI32Utf8V1;
+    let prepared = BrowserArtifact::prepare(
+        &profile_source(
+            "export function main():void{varta.process.exit(3);}",
+            profile,
+        ),
+        None,
+    )
+    .unwrap();
+    let error = match prepared.bundle() {
+        Ok(_) => panic!("the i32 exit produced a bundle"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.ends_with(&format!(
+            "browser host effects not implemented: {}",
+            H::Exit.name()
+        )),
+        "{error}"
+    );
+}
+
+/// The prefix of a guest diagnostic line in native output.
+const LOG_PREFIX: &str = "varta log: ";
+
+/// The browser registry's invalid-input text is the native runtime's: an
+/// authorized `process.exit` with a non-integer code logs it natively and
+/// continues, exactly as the Worker's handler does.
+#[test]
+fn invalid_input_failure_text_equals_the_native_runtime_diagnostic() {
+    use varta_common::{CapabilityGrant, CapabilityValue, HostOperation as H};
+    let failures = &varta_common::browser::registry()["effects"]["failures"];
+    let invalid = failures["invalid"].as_str().unwrap();
+    let source = v38_source(
+        "export function main():void{varta.process.exit(1.5);console.log('after exit');}",
+    );
+    let grant = CapabilityGrant {
+        id: H::ExitFloat.capability().unwrap().into(),
+        value: CapabilityValue::Boolean(true),
+    };
+    let output = varta_runtime::VartaRuntime::new()
+        .run_wasm_bytes(&source.wasm, &[grant])
+        .unwrap();
+    assert_eq!(
+        output.lines,
+        [
+            format!("{LOG_PREFIX}{invalid}"),
+            format!("{LOG_PREFIX}after exit")
+        ]
+    );
+}
