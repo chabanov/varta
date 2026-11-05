@@ -14,7 +14,7 @@ import { Runtime, signal, effect, untracked, type Accessor } from "../l1/reactiv
 import { mapKeyed } from "../l1/list.js";
 import type { ChatStore } from "../chat/store.js";
 import type { ChildCard, Turn, TurnState } from "../chat/timeline.js";
-import { checkSettings, startText, type ConsoleApp, type StartState } from "../app/console.js";
+import { startText, type ConsoleApp, type StartState } from "../app/console.js";
 import { Composer } from "./composer.js";
 import { segmentsInto } from "./timeline.js";
 import { commitSoon } from "./commit.js";
@@ -324,7 +324,7 @@ function settingsDialog(app: ConsoleApp, confirmation: Confirmation): SettingsDi
   const submit = (): void => {
     const typed = key;
     const baseURL = untracked<string>(rt, url.get);
-    const check = checkSettings(baseURL, typed);
+    const check = app.check(baseURL, typed);
     if (check !== null) {
       problem.set(check.kind === "key_missing" ? KEY_MISSING : URL_INVALID);
       return;

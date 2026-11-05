@@ -245,6 +245,7 @@ function consoleFor(baseURL: string, keyDatabase: string, gate: GatedFetch | nul
   const fetcher = gate === null ? null : (input: string, init: RequestInit): Promise<Response> => gate.fetch(input, init);
   return new ConsoleApp(store, {
     defaultBaseURL: baseURL,
+    localBaseURL: null,
     settings: new KvSettings(keyDatabase),
     connect: clientApi(fetcher),
     follow: follow,

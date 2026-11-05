@@ -238,6 +238,7 @@ export function consoleScreen(rt: Runtime, name: string): void {
   const api = new RecordedConsoleApi(screen.tenant, screen.scenario);
   const app = new ConsoleApp(store, {
     defaultBaseURL: VIEW_BASE_URL,
+    localBaseURL: null,
     settings: new MemorySettings(screen.key),
     connect: (baseURL: string, apiKey: string): ConsoleApi => api,
     follow: FOLLOW_DEFAULTS,

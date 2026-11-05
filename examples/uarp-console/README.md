@@ -59,6 +59,8 @@ Administration (creating or suspending agents) is not designed yet.
 | `scripts/check-sdk-generics.ts` | The entry that instantiates every generic function and method of the pinned SDK, used by `check-sdk.sh` |
 | `scripts/sdk-loopback.sh` | Runs the loopback mock and the SDK client tests as two `varta dev` processes |
 | `scripts/test-browser-sdk.mjs` | Records every SDK group natively against the loopback mock, replays it natively and in local Chrome from the program's own browser bundle, and requires identical lines and usage |
+| `varta.proxy.json`, `src/proxy/` | The local API proxy: a Varta HTTP application on `127.0.0.1:8771` that forwards the console's `/api/v1/…` GET and POST requests to the API from outside the browser and answers the local page origin with CORS headers |
+| `varta.local.json`, `src/app/main.local.tsx` | The local build: the product console whose API base URL is the proxy (the one plaintext base URL it admits besides https) |
 | `scripts/test-browser-settings.mjs` | Runs the product natively and in local Chrome with the network closed: the key saved in the settings is kept in KV (OPFS in Chrome) and read back after a reload, in the same states and with the same log lines |
 | `mockups/` | Static Single Chat screens in plain HTML/CSS restricted to the L0 v1 subset. `console.css` is the guest stylesheet, `frame.css` the embedding page, `lint.html` checks every screen against the common registry and official host model |
 | `mockups/conformance/` | Renders every screen through the official browser host and compares structure, live control state and boxes with the mockup |
@@ -282,6 +284,29 @@ their logs match. The confirm dialog focuses Cancel when it opens
 action. The console stays at `Підключення…` after the denial on both
 hosts because the SDK retries a denied request as a connection error (pilot
 finding F10).
+
+### The console in a local browser
+
+A browser refuses the API's answers to a page origin the API does not allow,
+and `api.snaga.ai` sends no CORS headers, so the browser build cannot call it
+directly (`TypeError: fetch failed`, the browser console names the CORS
+refusal). The local build goes through a proxy that runs natively on Varta:
+
+```sh
+/path/to/varta dev --config varta.proxy.json
+/path/to/varta dev --target browser --app --config varta.local.json --listen 127.0.0.1:8770
+```
+
+Then open `http://127.0.0.1:8770/` (the exact loopback host; `localhost` is
+refused). The proxy accepts only that page origin, only `/api/v1/…` paths,
+only GET and POST (and the CORS preflight), forwards only the request headers
+the SDK sends (`authorization` carries the key, which it neither logs nor
+stores), and its `net.request` grant names the API alone. An event stream
+needs a streaming response, which a Varta HTTP handler cannot give yet: the
+proxy answers it with a named 501, so the live session does not follow
+through the proxy until streaming responses exist. Checked against the
+loopback mock (preflight, forwarding, refused origin, path, method and
+stream).
 
 ## SDK own test sources
 
@@ -613,6 +638,14 @@ code, never by changing the SDK.
   a defect, but it made the console's old microtask `commitSoon` unsafe once a
   click awaits an in-process promise (a history load in the view tests).
   `src/ui/commit.ts` now commits in a zero-delay timer turn of its own.
+- **F11. The API returns a field the SDK does not declare.** `GET
+  /api/v1/tenants/me` returns `entitled_packages`, which `Tenant` lacks in
+  0.13.2 and in the latest 0.13.5. JavaScript ignores it; Varta checks the
+  SDK's `as Tenant` as a closed record, so the console's start fails with
+  `TypeError: type assertion to T failed`. Every other field, nested object
+  and null of that response matches. Reported to the SDK side for a
+  regenerated release; any field the API adds ahead of the SDK breaks a
+  Varta client the same way.
 - **F10. The SDK retries a request the host denied.** `Transport.request`
   (`core/transport.ts:145-155`) wraps every `fetch` rejection in
   `APIConnectionError('Connection error', { cause })` and retries it within

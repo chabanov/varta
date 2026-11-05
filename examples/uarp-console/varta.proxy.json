@@ -1,0 +1,36 @@
+{
+  "entry": "src/proxy/main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "dist/proxy",
+  "languageProfile": "checked-f64-utf16-v38",
+  "capabilities": {
+    "env": {
+      "get": [
+        "PROXY_UPSTREAM",
+        "PROXY_PAGE_ORIGIN"
+      ]
+    },
+    "net": {
+      "listen": [
+        "127.0.0.1:8771"
+      ],
+      "request": {
+        "urls": [
+          "https://api.snaga.ai/api/v1/**"
+        ],
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "responseHeaders": [
+          "content-type",
+          "retry-after",
+          "x-correlation-id",
+          "x-request-id",
+          "x-should-retry"
+        ]
+      }
+    }
+  }
+}

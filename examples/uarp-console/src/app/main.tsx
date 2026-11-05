@@ -14,6 +14,15 @@ import { KvSettings } from "./key.js";
 import { API_BASE_URL, KEY_DATABASE } from "./config.js";
 
 export function main(): void {
+  startConsole(API_BASE_URL, null);
+}
+
+/**
+ * The console over `baseURL` (when the settings hold none); `localBaseURL` is
+ * the one plaintext base URL the build admits besides https (the local
+ * build's loopback proxy), null in the product.
+ */
+export function startConsole(baseURL: string, localBaseURL: string | null): void {
   const rt = new Runtime();
   View.setEffect((run: () => void): void => {
     effect(rt, run);
@@ -24,7 +33,8 @@ export function main(): void {
   const toasts = new Toasts(rt, TOAST_MS, commitSoon);
   const confirmation = new Confirmation(rt);
   const app = new ConsoleApp(store, {
-    defaultBaseURL: API_BASE_URL,
+    defaultBaseURL: baseURL,
+    localBaseURL: localBaseURL,
     settings: new KvSettings(KEY_DATABASE),
     connect: clientApi(null),
     follow: FOLLOW_DEFAULTS,

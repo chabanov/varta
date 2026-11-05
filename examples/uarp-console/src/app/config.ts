@@ -6,3 +6,8 @@
 export const API_BASE_URL = "https://api.snaga.ai";
 /** The Deno KV database holding the API key, under the `data` root. */
 export const KEY_DATABASE = "/data/console.kv";
+/**
+ * The local build's API base URL (`varta.local.json`): the loopback proxy of
+ * `varta.proxy.json`, which forwards to the API from outside the browser.
+ */
+export const LOCAL_PROXY_URL = "http://127.0.0.1:8771";

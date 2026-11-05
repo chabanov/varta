@@ -51,6 +51,11 @@ import type { SettingsStore } from "./key.js";
 export interface ConsoleOptions {
   /** The base URL when the settings hold none; `net.request` must grant the one used. */
   defaultBaseURL: string;
+  /**
+   * The one plaintext base URL a local build may use besides https: the
+   * loopback API proxy (`varta.local.json`); null in the product.
+   */
+  localBaseURL: string | null;
   /** Where the key and base URL live (the product: the KV database). */
   settings: SettingsStore;
   /** The API for a base URL and key (the product: the real UarpClient). */
@@ -98,19 +103,21 @@ export type SaveOutcome =
  */
 const URL_SCHEME = "https:";
 
-/** Whether a base URL parses and uses https. */
-export function secureBaseURL(baseURL: string): boolean {
+/** Whether a base URL parses and uses https, or is exactly the local build's loopback proxy. */
+export function secureBaseURL(baseURL: string, local: string | null): boolean {
+  const trimmed = baseURL.trim();
+  if (local !== null && trimmed === local) return true;
   try {
-    return new URL(baseURL.trim()).protocol === URL_SCHEME;
+    return new URL(trimmed).protocol === URL_SCHEME;
   } catch (error) {
     return false;
   }
 }
 
-/** Whether settings can be saved: a key, and a base URL that parses and uses https. */
-export function checkSettings(baseURL: string, apiKey: string): SaveOutcome | null {
+/** Whether settings can be saved: a key, and a base URL that `secureBaseURL` admits. */
+export function checkSettings(baseURL: string, apiKey: string, local: string | null): SaveOutcome | null {
   if (apiKey.trim() === "") return { kind: "key_missing" };
-  if (!secureBaseURL(baseURL)) return { kind: "url_invalid" };
+  if (!secureBaseURL(baseURL, local)) return { kind: "url_invalid" };
   return null;
 }
 
@@ -214,7 +221,7 @@ export class ConsoleApp {
       return none({ kind: "unavailable", reason: describeFailure(error) });
     }
     if (apiKey === null) return none({ kind: "no_key" });
-    if (stored !== null && !secureBaseURL(stored)) return none({ kind: "url_invalid" });
+    if (stored !== null && !secureBaseURL(stored, this.options.localBaseURL)) return none({ kind: "url_invalid" });
     const api = this.options.connect(this.baseURL.get(), apiKey);
     try {
       const tenant = await api.tenants.getCurrentTenant();
@@ -284,8 +291,13 @@ export class ConsoleApp {
    * only; a console that never got as far as the session list starts again
    * with them.
    */
+  /** Whether the settings the person entered can be saved by this build. */
+  check(baseURL: string, apiKey: string): SaveOutcome | null {
+    return checkSettings(baseURL, apiKey, this.options.localBaseURL);
+  }
+
   async saveSettings(baseURL: string, apiKey: string): Promise<SaveOutcome> {
-    const problem = checkSettings(baseURL, apiKey);
+    const problem = this.check(baseURL, apiKey);
     if (problem !== null) return problem;
     const url = baseURL.trim();
     try {
