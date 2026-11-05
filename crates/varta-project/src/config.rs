@@ -54,6 +54,10 @@ pub struct VartaConfig {
     /// Browser distribution inputs; these are package files, never host grants.
     #[serde(default)]
     pub browser: Option<BrowserConfig>,
+    /// Font faces packaged into the artifact's resource section
+    /// (checked-f64-utf16-v38); package files, never host grants.
+    #[serde(default)]
+    pub fonts: Vec<crate::artifact::FontSpec>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -133,6 +137,7 @@ impl VartaConfig {
                 }
             }
         }
+        crate::artifact::validate_fonts(self)?;
         varta_common::validate_grants(&grants)?;
         if let Some(fs) = &self.fs {
             if !self.language_profile.file_roots() {

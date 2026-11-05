@@ -166,6 +166,9 @@ impl View {
         self.platform.prompt == PromptAnswer::Allow
     }
     pub(crate) fn write_clipboard(&mut self, text: &str) -> CommandStatus {
+        if let Some(effects) = &self.platform_effects {
+            return crate::platform_effects::status(effects.write_clipboard(text));
+        }
         if self.platform.clipboard_fails {
             return CommandStatus::RefusedByPlatform;
         }
@@ -173,6 +176,9 @@ impl View {
         CommandStatus::Ok
     }
     fn open(&mut self, url: &str) -> CommandStatus {
+        if let Some(effects) = &self.platform_effects {
+            return crate::platform_effects::status(effects.open_url(url));
+        }
         if self.platform.browser_fails {
             return CommandStatus::RefusedByPlatform;
         }

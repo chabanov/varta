@@ -2,7 +2,7 @@
 //! between guest turns and renders frames for the window to present.
 use super::{Console, GuiEvent, PointerState, PresentedFrame, ROOT_FONT_SIZE, WorkerMessage};
 use crate::pixels::update_rgb;
-use crate::shell::Launch;
+use crate::shell::{Launch, NativeEffects};
 use crate::{clipboard, timing, wake};
 use std::sync::{
     Arc, Mutex,
@@ -11,7 +11,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use varta_runtime::Step;
-use varta_view::{FrameMetadata, SelectHit, TextMeasurer};
+use varta_view::{FrameMetadata, SelectHit};
 use winit::event_loop::EventLoopProxy;
 
 /// How long the worker waits for a first window size, a message or a wake.
@@ -33,7 +33,6 @@ pub(super) struct WorkerState {
 
 pub(super) fn worker(
     launch: Launch,
-    font: Option<(Vec<u8>, String)>,
     state: WorkerState,
     messages: Receiver<WorkerMessage>,
     proxy: EventLoopProxy<GuiEvent>,
@@ -60,15 +59,16 @@ pub(super) fn worker(
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
             }
         };
-        let layout_font = font
-            .as_ref()
-            .map(|(data, family)| {
-                TextMeasurer::new(data.clone(), family).map_err(|e| e.to_string())
-            })
-            .transpose()?;
-        let render_font = font
-            .map(|(data, family)| TextMeasurer::new(data, &family).map_err(|e| e.to_string()))
-            .transpose()?;
+        // The layout and the renderer each own a measurer over every face
+        // (validated when the launch was prepared).
+        let measurer = || {
+            launch
+                .fonts()
+                .map(|fonts| fonts.measurer().map_err(|e| e.to_string()))
+                .transpose()
+        };
+        let layout_font = measurer()?;
+        let render_font = measurer()?;
         let mut renderer =
             varta_view::Renderer::new(render_font, ROOT_FONT_SIZE).map_err(|e| e.to_string())?;
         #[cfg(target_os = "macos")]
@@ -87,7 +87,9 @@ pub(super) fn worker(
         )
         .map_err(|e| e.to_string())?
         .with_dark_mode(initial_dark);
-        let mut app = launch.start(layout).map_err(|e| e.to_string())?;
+        let mut app = launch
+            .start(layout, Arc::new(NativeEffects::default()))
+            .map_err(|e| e.to_string())?;
         if let Some(error) = app.failure() {
             return Err(error.to_string());
         }

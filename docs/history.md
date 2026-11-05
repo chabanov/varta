@@ -3181,3 +3181,35 @@ initialize; `auto` keeps the CPU fallback. KV directories are gated per root
 by the ceiling's `kv.read` patterns, a ceiling mapping of a KV root is tested
 to win, and the contract states that the directories precede the runtime's
 code validation (which runs once, at start).
+
+### Shell fonts and guest effects (`varta-shell`) — wave 2, scoped 2026-11-04
+
+`varta-artifact` gained a versioned resource section (`Resources`, section
+version 1): canonically ordered font faces with per-face SHA-256, bound to the
+SHA-256 of the portable Wasm, each face admitted only when its own `name` and
+`OS/2` tables state the declared family, weight and style. Bare artifacts carry
+it as `<out>.resources` (a stale sidecar is removed on rebuild); containers
+use format 2 with the section and its length before the unchanged footer, and
+write format 1 bytes without resources. `Artifact::read` and `embedded` validate
+and drop the section, so the runtime companion refuses tampered sections too.
+`varta-project` packages the configuration's new top-level `fonts` list through
+the pinned no-follow loader (`artifact.rs`; one field in `config.rs`, two calls
+in `lib.rs`). `varta-shell` loads every face through `FontSet` and
+`TextMeasurer::new_with_fonts` before creating storage and refuses `--font` for
+an artifact that ships fonts. `varta-view` gained the `PlatformEffects` sink
+(`platform_effects.rs`, two calls in `events.rs`, a field and builder in
+`lib.rs`) and `varta-runtime` passes `ApplicationOptions::platform_effects` to
+hosted views; the shell's `NativeEffects` writes the system clipboard and runs
+`/usr/bin/open -u` (macOS) or `/usr/bin/xdg-open` with a bounded wait.
+`scripts/test-native-inline.mjs` accepts several faces with weight and style
+(`fonts`), keeping the single-face input; the existing native inline corpus
+still passes with it. The new `native_font_probe` passes it at 1, 1.25 and 2
+(852 checks each, mean RGB delta below 0.35, both for the self-packaged
+fixture faces and for the view probe built by `varta build`). Scoped
+verification: `verify.py local varta-desktop` and `local varta-artifact`,
+the launcher tests, the boundary tests, the view library tests, the runtime's
+view-filtered library tests, the project library tests, the CLI smoke tests
+filtered to `build`, formatting and strict Clippy (desktop also with `gpu`).
+A manual run presented the view probe's four lines from artifact fonts; no
+trusted clicks could be performed in the agent environment. No full gate was
+run for this package.

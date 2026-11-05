@@ -4317,10 +4317,32 @@ exact-operation ceilings, denial before effect for `net.request` and KV, a
 loopback request and a KV round-trip across instances, and a rendered first
 frame. On the development Mac `varta-shell` opened a window and presented the
 first frame of a packaged view example (log evidence; no screen capture was
-possible). Still open: the first-run grant list and prompts with stored
-decisions, `ui.open_url` and guest clipboard effects, manifest `app` metadata,
-artifact-declared fonts, OS bundles, prebuilt per-target shells, the code cache
-and UARP console acceptance in the shell.
+possible). Fonts and guest effects followed in wave 2 (below).
+
+**Shell status (wave 2, 2026-11-04).** Artifacts ship their fonts: a v38
+configuration's `fonts` list is packaged into a versioned, payload-bound
+[resource section](architecture.md#resource-section-artifact-fonts)
+(`app.resources` beside `app.wasm`, or container format 2), and the shell
+loads every face through `TextMeasurer::new_with_fonts` with real weight and
+style selection; synthesis stays refused. Granted `copy_text` and external
+links of trusted gestures reach the system clipboard and browser through a
+`PlatformEffects` sink, with the existing `command_result` statuses
+([native shell](architecture.md#native-shell-varta-shell)). Tests cover the
+section round trip, tampered/foreign/oversized/malformed fonts before guest
+start, face selection, and positive, refused and denied effects through a
+recording sink. The packaged-font Chrome oracle (`native_font_probe` with
+`scripts/test-native-inline.mjs`) passes at 1, 1.25 and 2 under the 2/255
+bound. On the development Mac `varta-shell` presented the view probe's
+regular, bold, italic and monospace lines from its artifact fonts and logged
+`invalid_context` for the copy in main; trusted clicks on the copy target and
+link were not performed manually (no UI automation was available), so the
+gesture paths rest on the headless trusted-input tests. Still open: the
+first-run grant list and prompts with stored decisions (so `https://*` links
+are denied), the browser bundle reading the same resource section (it still
+packages `browser.fonts`, one normal face per family), real-font typography
+acceptance beyond the synthetic fixtures, manifest `app` metadata, OS
+bundles, prebuilt per-target shells, the code cache and UARP console
+acceptance in the shell.
 
 #### Browser security model and honest guarantees
 

@@ -66,8 +66,6 @@ impl Console {
 pub struct WindowConfig {
     /// The window title until the guest sets one.
     pub title: &'static str,
-    /// An explicit layout and render font: its bytes and family name.
-    pub font: Option<(Vec<u8>, String)>,
     /// The presentation backend ([`check_renderer`]).
     pub renderer: Renderer,
     pub console: Console,
@@ -226,8 +224,7 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         accessibility_active,
         console: config.console,
     };
-    let font = config.font;
-    std::thread::spawn(move || worker::worker(launch, font, state, receiver, proxy));
+    std::thread::spawn(move || worker::worker(launch, state, receiver, proxy));
     let mut host = Host {
         accessibility: Some(accessibility),
         accessibility_adapter: None,

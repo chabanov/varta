@@ -5,8 +5,9 @@
 //! (`crates/varta-project/tests/boundaries.rs`). So, as an outside user
 //! would, the tests run the workspace's `varta` binary as a separate
 //! process: Cargo builds it (offline and locked, into the same target
-//! directory) and `varta build` compiles `fixtures/shell-probe` into a
-//! portable v38 artifact in a temporary directory. Each test then writes
+//! directory) and `varta build` compiles `fixtures/shell-probe`, and
+//! `fixtures/view-probe` with its declared fonts, into portable v38
+//! artifacts in temporary directories. Each test then writes
 //! its own packaged artifact with `varta_artifact::Artifact`, as the
 //! `varta-launcher` tests do, with the manifest (the package request) it
 //! needs.
@@ -14,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use varta_artifact::Artifact;
+use varta_artifact::{Artifact, PackagedArtifact};
 
 /// The workspace package and binary that compile TypeScript.
 const CLI_PACKAGE: &str = "varta";
@@ -57,18 +58,55 @@ impl Drop for Temp {
     }
 }
 
+/// The view probe's sources and configuration: text in the artifact's
+/// faces, a copy button and an external link.
+const VIEW_PROBE_DIRECTORY: &str = "tests/fixtures/view-probe";
+/// The faces the view probe declares, copied from the view crate's
+/// generated fixtures into the probe's `fonts` directory.
+const VIEW_PROBE_FONTS: [(&str, &str); 4] = [
+    ("regular.ttf", "advance-400.ttf"),
+    ("bold.ttf", "bold-900.ttf"),
+    ("italic.ttf", "italic-900.ttf"),
+    ("mono.ttf", "advance-900.ttf"),
+];
+const FONT_FIXTURES: &str = "../varta-view/tests/fixtures";
+const VIEW_PROBE_FONT_DIRECTORY: &str = "fonts";
+
 /// The probe artifact as `varta build` wrote it (Wasm and manifest), built
 /// once per test binary.
 pub fn probe() -> &'static Artifact {
     static PROBE: OnceLock<Artifact> = OnceLock::new();
-    PROBE.get_or_init(build_probe)
+    PROBE.get_or_init(|| build(PROBE_DIRECTORY, &[]).artifact)
 }
 
-fn build_probe() -> Artifact {
+/// The view probe as `varta build` wrote it: Wasm, manifest and the
+/// resource section of its four declared faces, built once per test binary.
+pub fn view_probe() -> &'static PackagedArtifact {
+    static PROBE: OnceLock<PackagedArtifact> = OnceLock::new();
+    PROBE.get_or_init(|| {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FONT_FIXTURES);
+        let fonts: Vec<_> = VIEW_PROBE_FONTS
+            .iter()
+            .map(|(name, fixture)| (*name, std::fs::read(fixtures.join(fixture)).unwrap()))
+            .collect();
+        build(VIEW_PROBE_DIRECTORY, &fonts)
+    })
+}
+
+/// Copy a fixture project (and `fonts` into its `fonts` directory), build it
+/// with `varta build` and read the artifact it wrote.
+fn build(directory: &str, fonts: &[(&str, Vec<u8>)]) -> PackagedArtifact {
     let temp = Temp::new("varta-shell-probe-build");
-    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join(PROBE_DIRECTORY);
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join(directory);
     for source in PROBE_SOURCES {
         std::fs::copy(sources.join(source), temp.path(source)).unwrap();
+    }
+    if !fonts.is_empty() {
+        let directory = temp.path(VIEW_PROBE_FONT_DIRECTORY);
+        std::fs::create_dir(&directory).unwrap();
+        for (name, bytes) in fonts {
+            std::fs::write(directory.join(name), bytes).unwrap();
+        }
     }
     let output = Command::new(varta_binary())
         .arg("build")
@@ -77,7 +115,7 @@ fn build_probe() -> Artifact {
         .output()
         .unwrap();
     assert!(output.status.success(), "varta build failed: {output:?}");
-    Artifact::read(&temp.path(PROBE_ARTIFACT)).unwrap()
+    Artifact::read_packaged(&temp.path(PROBE_ARTIFACT)).unwrap()
 }
 
 /// Build the workspace's `varta` binary and return its path.

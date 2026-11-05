@@ -8,6 +8,10 @@ const scale=oracle.scale??1;
 assert(Number.isFinite(scale)&&scale>=0.25&&scale<=8,'invalid oracle scale');
 const viewport=oracle.viewport??{width:100,height:100};
 assert(Number.isInteger(viewport.width)&&viewport.width>0&&viewport.width<=4096&&Number.isInteger(viewport.height)&&viewport.height>0&&viewport.height<=4096,'invalid oracle viewport');
+// One face ({family, font}) or, from native_font_probe, every packaged face
+// with its weight and style ({fonts: [{family, weight, style, font}]}).
+const faces=oracle.fonts??[{family:oracle.family,font:oracle.font}];
+assert(faces.length>0&&faces.every(face=>typeof face.family==='string'&&Array.isArray(face.font)),'invalid oracle fonts');
 let checks=0;
 const MAX_MEAN_RGB_DELTA=2; // Same bound as the native/GPU scene probes.
 await withBrowserPage('about:blank',async call=>{
@@ -16,7 +20,7 @@ await withBrowserPage('about:blank',async call=>{
     assert(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));return r.result.value;
   }
   await call('Emulation.setDeviceMetricsOverride',{...viewport,deviceScaleFactor:scale,mobile:false});
-  await evaluate(`(async()=>{document.open();document.write("<!doctype html><html><head></head><body></body></html>");document.close();document.fonts.add(await new FontFace(${JSON.stringify(oracle.family)},Uint8Array.from(${JSON.stringify(oracle.font)})).load());document.body.style.margin='0';document.body.style.background='white';document.documentElement.style.colorScheme='light';})()`);
+  await evaluate(`(async()=>{document.open();document.write("<!doctype html><html><head></head><body></body></html>");document.close();for(const face of ${JSON.stringify(faces)})document.fonts.add(await new FontFace(face.family,Uint8Array.from(face.font),{weight:String(face.weight??400),style:face.style??'normal'}).load());document.body.style.margin='0';document.body.style.background='white';document.documentElement.style.colorScheme='light';})()`);
   for(const fixture of oracle.cases) {
     const actual=await evaluate(`(()=>{
       document.body.replaceChildren();const nodes=new Map();

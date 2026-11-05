@@ -14835,6 +14835,66 @@ at a fixed EOF position with checked arithmetic and capped lengths. Payload byte
 are never scanned for markers. Outputs are written through temporary files and
 renamed into place.
 
+### Resource section (artifact fonts)
+
+A v38 configuration may declare the font faces the application ships as a
+top-level `fonts` list: `{"family", "path", "weight"?, "style"?, "generic"?}` per
+face, `weight` 100–900 in steps of 100 (default 400), `style` `normal` (default)
+or `italic`, `generic` a list of `sans-serif`, `serif`, `monospace` and
+`system-ui`. Paths use the common view resource grammar and are read under the
+configuration directory through the project's pinned no-follow loader; they are
+package files, never host grants. Packaging (`CheckedProject::load`, the
+`varta-project` artifact module) bounds every face and the total by
+`varta_artifact::MAX_FONT_FACE_BYTES`, `MAX_FONT_BYTES` and `MAX_FONT_FACES`
+(the native text shaper's collection ceilings) and builds a
+`varta_artifact::Resources`, which admits a face only when it is an
+OpenType/TrueType file (collections and WOFF/WOFF2 are refused) with a bounded,
+aligned, non-overlapping, duplicate-free table directory, the `cmap`, `head`,
+`name` and `OS/2` tables, an `OS/2` `usWeightClass` equal to the declared weight,
+`fsSelection` italic or oblique exactly when the declared style is italic, and a
+`name` family (typographic family when present, otherwise the legacy family)
+equal, ASCII case-insensitively, to the declared family. Family names follow
+the browser package-font rule (bounded ASCII, not generic or CSS-wide). Faces
+of one family must agree on its spelling and generic families, a generic family
+belongs to at most one family, and duplicate family/weight/style faces are
+refused. Faces are stored in canonical order: families in first-declaration
+order (the first family is the default), each family's faces by weight, then
+style; one declaration therefore has one encoding.
+
+The section (version `RESOURCE_VERSION`, little-endian) is the magic
+`VARTARS\0`, the version and face count (`u32`), the SHA-256 of the portable
+Wasm it was packaged with, one fixed descriptor per face (family length `u16`,
+weight `u16`, style `u8`, generic-family bits `u8`, a reserved zero `u16`, font
+length `u32` and font SHA-256), then each face's family bytes and font bytes. A
+reader refuses another magic or version, a nonzero reserved field, a count
+outside 1..=`MAX_FONT_FACES`, any length past the bounds or trailing bytes, a
+font that does not match its digest, a section whose payload digest is not the
+artifact's Wasm, a non-canonical order and every face rule above. The section
+is therefore bound to its payload: it cannot travel to another build. This is
+integrity, not authenticity; package signatures remain separate work.
+
+- **Bare form.** `varta build` writes `<out>.resources` beside `<out>.wasm` and
+  `<out>.manifest.json` when fonts are declared, and removes a stale
+  `<out>.resources` otherwise. A missing sidecar means no resources; an
+  unreadable or invalid one is an error.
+- **Container form.** Without resources `build --single` writes the unchanged
+  format 1 bytes. With resources it writes format 2:
+
+  ```text
+  native launcher | portable Wasm | manifest JSON | resource section | resource length (u64) | fixed 32-byte footer
+  ```
+
+  The footer keeps its layout with format version 2; the resource length
+  (nonzero, at most `MAX_RESOURCE_SECTION_BYTES`) sits immediately before it.
+  Formats 1 and 2 are read; any other version fails before anything runs.
+
+`Artifact::read_packaged` returns the artifact with its validated
+`Resources`; `Artifact::read` and `Artifact::embedded` validate the section the
+same way and drop it, so the `varta-runtime` companion refuses a tampered
+section too, before any guest code runs. Every artifact older than the section
+reads as one without resources. The browser bundle does not read this
+section yet: it still packages `browser.fonts` (one normal face per family).
+
 Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserialization
 are removed. Rebuild existing native artifacts. Native launchers currently compile
 embedded portable Wasm at startup. Reintroducing cached/AOT machine code requires
@@ -14844,7 +14904,8 @@ a separate, authenticated provenance design; checksums alone are insufficient.
 
 `varta-artifact::Artifact` owns portable/container I/O. The tooling re-export
 `varta_project::Artifact` remains available; its I/O methods now return the shared
-`VartaError`. The container layout/version is unchanged. Existing VARTA3 containers
+`VartaError`. The format 1 container layout is unchanged; format 2 adds only the
+[resource section](#resource-section-artifact-fonts). Existing VARTA3 containers
 with a development-CLI native prefix remain readable by both loaders; their own
 native argument interface remains whatever was built into that prefix. Embedded
 manifests always win over sidecars. This does not restore VARTA1/VARTA2 or AOT.
@@ -14915,11 +14976,13 @@ an external process, not by linking it. The experimental
 unprivileged: no manifest, grants, host ceiling, file roots or storage.
 
 - **Artifact.** `varta-shell ARTIFACT` reads the artifact with
-  `varta_artifact::Artifact::read`, exactly as `varta-runtime run ARTIFACT`: a
-  portable Wasm with its sidecar manifest (a missing sidecar is zero
-  capabilities), or a VARTA3 container read at its fixed EOF footer behind any
-  native prefix. Payload bounds, matching manifest/code host ABI, the package
-  manifest rules and the frame surface are checked before grants are resolved or
+  `varta_artifact::Artifact::read_packaged`, the validation of
+  `varta-runtime run ARTIFACT` that keeps the resource section: a portable Wasm
+  with its sidecar manifest (a missing sidecar is zero capabilities) and
+  optional sidecar resource section, or a VARTA3 container of format 1 or 2
+  read at its fixed EOF footer behind any native prefix. Payload bounds,
+  matching manifest/code host ABI, the package manifest rules, the resource
+  section and the frame surface are checked before grants are resolved or
   a window opens. The runtime then validates code, language profile (the shell
   starts an application instance, so the profile must admit `turn_budgets`),
   contracts, budgets and required grants when the instance starts, before
@@ -14938,8 +15001,28 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   falls back to the request. Required grants within both are granted by policy;
   optional grants (`"required": false`) are denied, because this shell has no
   prompt yet and reads no stored decisions. A `ui.open_url` that needs a prompt
-  is therefore denied; one granted by explicit patterns is recorded by the view
-  session but not yet handed to the system browser (a later package).
+  (a URL matched only by `https://*`) is therefore denied (`not_allowed`).
+- **Guest platform effects.** `copy_text` and external link activations follow
+  the [command results](embedding.md#view-draft-v0-round-5-command-results) and
+  [gesture rules](embedding.md#view-draft-v0-round-6-gestures-and-platform-refusals)
+  of the headless and browser hosts. The view performs a granted effect through
+  the host's `varta_view::PlatformEffects` sink, which the runtime takes as
+  `ApplicationOptions::platform_effects` (a view without a sink keeps simulating
+  the platform, as headless sessions do). The sink is reached only after the
+  gesture rule (`copy_text` in the batch of a trusted `click`, `keydown` or
+  `submit` turn; a link only inside the trusted activation itself) and the
+  permission broker's exact grant (`clipboard.write` enabled, or a `ui.open_url`
+  pattern of the request and the ceiling): a denial reports `not_allowed` and
+  a non-gesture copy `invalid_context` without any effect. `Launch::start`
+  takes the sink; the window passes `shell::NativeEffects`, which writes the
+  system clipboard (`arboard`) and hands the URL to the system browser through
+  an absolute launcher path, never a `PATH` lookup (`/usr/bin/open -u URL` on
+  macOS, `/usr/bin/xdg-open URL` on other Unix hosts; elsewhere every opening is
+  refused). Only an absolute `https:`/`http:` URL without whitespace or control
+  characters reaches the launcher. A clipboard error, a launcher that cannot
+  start, exits unsuccessfully or outlives its five-second deadline (it is then
+  killed) reports `refused_by_platform`. With a sink the snapshot records no
+  clipboard text or opened URL.
 - **Storage.** A root is pinned (`FileRoots::open`) to the host-owned directory
   `<base>/sha256-<digest>/<root>`, where the digest is the lowercase hex SHA-256
   of the portable Wasm, the application identity
@@ -14957,7 +15040,7 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   macOS, `$XDG_DATA_HOME/varta/storage` or `~/.local/share/varta/storage` on
   other Unix hosts). The directories are created by `Launch::packaged`, after
   the artifact checks above and the ceiling's validation and, in the binary,
-  after the renderer and `--font` are checked, but before the runtime validates
+  after the renderer, `--font` and the artifact's fonts are checked, but before the runtime validates
   code and language profile in `Launch::start` (which compiles the module once,
   with the roots already pinned): an artifact the runtime then refuses leaves
   its directories behind, empty. The mapping grants nothing: KV opens, reads
@@ -14966,9 +15049,20 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   ([KV storage](#kv-storage-kv)). An artifact whose Wasm differs in any byte
   has another directory. Other declared roots stay unmapped, and so denied,
   unless the ceiling maps them.
-- **Fonts and presentation.** `--font PATH FAMILY` supplies the explicit layout
-  and render font, nonempty and bounded by `shell::MAX_FONT_BYTES`;
-  artifact-declared fonts are not read. `--renderer cpu|gpu|auto` selects
+- **Fonts and presentation.** The shell lays out and renders with the faces of
+  the artifact's [resource section](#resource-section-artifact-fonts), read with
+  the artifact: `shell::FontSet::from_resources` keeps its canonical order (the
+  first family is the default) and maps each family's declared generic
+  families as CSS aliases, and `TextMeasurer::new_with_fonts` registers every
+  face. `Launch::packaged` parses the faces with the text shaper before storage
+  directories are created; a refused face is `ShellError::Fonts`, a refused
+  section `ShellError::Artifact`, both before any guest code. Weight and style
+  select the face whose own tables state them, so bold and italic text uses
+  the packaged faces; a weight or style without a face would need synthesis,
+  which stays refused at paint. `--font PATH FAMILY` (nonempty, at most
+  `shell::MAX_FONT_BYTES`) supplies one explicit face for an artifact without
+  fonts and is refused (`ShellError::FontConflict`) for one that ships fonts.
+  `--renderer cpu|gpu|auto` selects
   presentation (default `cpu`). An explicit `gpu` is refused before anything
   else in a build without the `gpu` feature, and is an error
   (`ShellError::GpuUnavailable`) when the GPU does not initialize; `auto` then
@@ -14978,9 +15072,9 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
 - **Embedding.** `varta_desktop::shell::Launch::packaged(&Package { artifact,
   policy, storage })` prepares an application without a window and
   `Launch::start(ViewLayout)` starts it; failures are the typed `ShellError`.
-- **Not yet.** Permission prompts and stored decisions, `ui.open_url` and guest
-  clipboard effects, manifest `app` metadata, artifact-declared fonts, OS bundles
-  and prebuilt per-target shells
+- **Not yet.** Permission prompts and stored decisions (so `https://*` links
+  are denied), manifest `app` metadata, OS bundles and prebuilt per-target
+  shells
   ([desktop packaging](development-plan.md#desktop-packaging)).
 
 ## Developer compatibility inventory
