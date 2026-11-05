@@ -1599,9 +1599,11 @@ fn geometry_and_text_inner(
             if text.is_empty() {
                 return Err(LayoutError::Unsupported(id));
             }
+            // Every refusal of a plain text flow names its flow's node, the
+            // parent element, as the alignment refusal below does.
             let (measured, shaped) = measurer
                 .shape_styled(&text, None, &families, options)
-                .map_err(LayoutError::text(id))?;
+                .map_err(LayoutError::text(parent))?;
             if !alignment_admitted(&shaped, options) {
                 return Err(LayoutError::Unsupported(parent));
             }
@@ -1629,6 +1631,15 @@ fn geometry_and_text_inner(
     )?;
     let frames = crate::inline::frames(&mut boxes, &metrics, measurer)?;
     Ok((boxes, metrics, frames))
+}
+
+/// The node that owns `id`'s inline flow: a text node's parent element, or
+/// the element itself.
+fn flow_node(tree: &Tree, id: u32) -> u32 {
+    match tree.nodes.get(&id) {
+        Some(node) if matches!(node.content, Content::Text(_)) => node.parent.unwrap_or(id),
+        _ => id,
+    }
 }
 
 fn boxes_inner(
@@ -1685,10 +1696,11 @@ fn boxes_inner(
     }
     let mut measurement_error = None;
     let mut measured_bytes = 0usize;
-    // Measurement contexts carry no node id; a refusal reports its node.
+    // Measurement contexts carry no node id; a refusal reports its flow's
+    // node: a rich flow's root, or a plain text node's parent element.
     let owners: BTreeMap<u64, u32> = ids
         .iter()
-        .map(|(&id, &node)| (u64::from(node), id))
+        .map(|(&id, &node)| (u64::from(node), flow_node(tree, id)))
         .collect();
     engine
         .compute_layout_with_measure(

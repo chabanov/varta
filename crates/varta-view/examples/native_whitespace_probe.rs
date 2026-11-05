@@ -47,6 +47,12 @@ fn block(tag: Tag, style: &[(P, &'static str)], children: Vec<Node>) -> Node {
 /// The probe cases: the root element and its descendants.
 fn fixtures() -> Vec<(&'static str, Node)> {
     let pre_wrap = (P::WhiteSpace, "pre-wrap");
+    let underline = (P::TextDecoration, "underline");
+    let pre_underline = [
+        (P::Margin, "0"),
+        (P::FontFamily, "\"Varta Inline Fixture\""),
+        underline,
+    ];
     vec![
         // Stops 64px apart from the line start: after one glyph, directly
         // at a stop, and twice in a row.
@@ -271,6 +277,45 @@ fn fixtures() -> Vec<(&'static str, Node)> {
                         (P::TextDecoration, "underline"),
                     ],
                     vec![text("A   \nA    ")],
+                )],
+            ),
+        ),
+        // Chrome underlines glyphs and preserved spaces, never a preserved
+        // tab: inside a line, or trailing it.
+        (
+            "pre-underline-tab",
+            block(
+                Tag::Div,
+                &[(P::Width, "200px")],
+                vec![block(Tag::Pre, &pre_underline, vec![text("A\tA")])],
+            ),
+        ),
+        (
+            "pre-underline-trailing-tab",
+            block(
+                Tag::Div,
+                &[(P::Width, "200px")],
+                vec![block(Tag::Pre, &pre_underline, vec![text("A\t\nA \t")])],
+            ),
+        ),
+        (
+            "pre-wrap-underline-tab",
+            block(
+                Tag::Div,
+                &[pre_wrap, (P::Width, "200px"), underline],
+                vec![text("A\tA\nA \t")],
+            ),
+        ),
+        // The same on the rich path: a span inside the decorated `pre`.
+        (
+            "pre-underline-tab-rich",
+            block(
+                Tag::Div,
+                &[(P::Width, "200px")],
+                vec![block(
+                    Tag::Pre,
+                    &pre_underline,
+                    vec![text("A\t"), span(&[], vec![text("A")]), text("\t\nA \t")],
                 )],
             ),
         ),

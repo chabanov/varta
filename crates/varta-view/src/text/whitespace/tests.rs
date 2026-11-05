@@ -374,13 +374,20 @@ fn collapsing_and_preserving_text_nodes_share_one_flow() {
 #[test]
 fn native_white_space_refusals_name_their_node() {
     use varta_common::view::CssProperty as P;
-    // A plain text node (3) and a rich flow's root (2): right-to-left text
-    // the model does not reproduce is refused, not reported as a failure.
+    // Right-to-left text the model does not reproduce is refused, not
+    // reported as a failure, and every refusal of one flow names the flow's
+    // node: for a plain text node (3) its parent element (2), as alignment
+    // refuses centered right-to-left text there.
     let rtl = "\u{0644}  \u{0627}";
     assert!(matches!(
         flow(&[(P::WhiteSpace, "pre-wrap")], &[(None, rtl)]),
-        Err(crate::LayoutError::Unsupported(3))
+        Err(crate::LayoutError::Unsupported(2))
     ));
+    assert!(matches!(
+        flow(&[(P::TextAlign, "center")], &[(None, rtl)]),
+        Err(crate::LayoutError::Unsupported(2))
+    ));
+    // A rich flow's root (2).
     assert!(matches!(
         flow(&[], &[(None, "A"), (Some("pre-wrap"), rtl)]),
         Err(crate::LayoutError::Unsupported(2))

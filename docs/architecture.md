@@ -12009,7 +12009,10 @@ every other flow keeps Parley's own line breaking. Field display is unchanged.
   excluded, as in Chrome.
 - Inline fragments, hits and underlines keep preserved spaces, including
   hanging ones and the trailing spaces of a plain `pre` or `pre-wrap` text
-  node, and drop collapsible spaces at a line end.
+  node, and drop collapsible spaces at a line end. As in Chrome, where a
+  preserved tab is a control item without a text fragment, underlines skip
+  each tab's whole advance, inside a line or at its end, on plain and rich
+  flows.
 
 The model is logical-order only: a flow on this path with a right-to-left run
 or base direction is refused, as is a `text-overflow: ellipsis` root on it.
@@ -12019,7 +12022,8 @@ API (per-line advances and reverts) plus one hidden hook:
 `BreakLines::set_prior_line_width`, `#[doc(hidden)]` in the vendored Parley,
 sets the width center/right alignment uses for each re-broken line. Every
 realized line is checked against the line the model located; any disagreement
-refuses the layout, with the flow's node as an unsupported-content error,
+refuses the layout, with the flow's node (a rich flow's root, a plain text
+node's parent element) as an unsupported-content error,
 instead of painting a different one. The extra breaking work is charged to the view
 request's shaping-operation allowance and repaid by cached results. Min-content
 reuses the final lines' tab advances, so a tab that cannot end a min-content

@@ -541,8 +541,24 @@ unfixed code and pass now: the probe's 17 cases give **15150 checks** at each of
 only at `paint-overlap-hits` (mean 5.39) and passes 9927 checks without it. A
 ligature that joins text from two elements (the fixture's `AA`) gives the later
 element a zero-width line fragment, which the native element box includes and
-Chrome's `getBoundingClientRect` does not (seen with a `pre` root and a
-`normal` span, other mode pairs not checked); the fixtures avoid it.
+Chrome's `getBoundingClientRect` does not. The difference is independent of
+`white-space`: it also occurs with a `normal` root and a `normal` span, on
+Parley's own path; the fixtures avoid it.
+
+Second review fixes (scoped, 2026-11-05): underlines skip preserved tabs,
+which Chrome never decorates, on the plain and rich paths, and keep trailing
+preserved spaces; every refusal of a plain text flow, including Taffy
+measurement, names its parent element. Native tests cover both underline
+rules and the plain `pre`/`pre-wrap` trailing-space underline and hit
+fragment. Four probe cases (`pre-underline-tab`,
+`pre-underline-trailing-tab`, `pre-wrap-underline-tab`,
+`pre-underline-tab-rich`) each fail against the unfixed code at 1× (RGB
+means 4.096, 5.363, 5.495, 9.065) and pass now: 21 cases, **18753 checks** at
+each of 1×, 1.25× and 2×, maximum ROI RGB mean unchanged at 1.052/1.627/1.071.
+Structure (51181 per scale) and paragraph (81) oracles pass; the inline oracle
+stops only at `paint-overlap-hits` (mean 5.39) and passes 9927 checks without
+it. A paint-time reshaping failure of a plain text node still reports a text
+error without a node.
 
 ### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
 

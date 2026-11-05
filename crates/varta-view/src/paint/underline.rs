@@ -11,6 +11,9 @@ const MAX_GLYPHS: usize = 65_536;
 const STROKE_WORK: usize = 96;
 // A cubic has at most three y-monotone pieces, each with two stripe crossings.
 const CURVE_WORK: usize = clip_curve::ROOT_STEPS * 6;
+/// A preserved tab's source text. Collapsible tabs never reach paragraph
+/// shaping, so every tab cluster of a paragraph is a preserved one.
+const TAB: &str = "\t";
 
 fn charge(work: &mut usize, amount: usize, id: u32) -> Result<(), PaintError> {
     *work = work.saturating_add(amount);
@@ -265,6 +268,9 @@ impl Plan {
         if self.strokes.is_empty() || surface.groups.last().is_some_and(|g| g.hidden) {
             return Ok(());
         }
+        if paragraph {
+            self.skip_tabs(layout, bounds.rect.x, text, (work, id))?;
+        }
         let mut glyph_count = 0usize;
         for (line_index, line) in layout.lines().enumerate() {
             let mut skip = Vec::new();
@@ -406,6 +412,49 @@ impl Plan {
         // nested decoration order and lets paint stream once, before each line.
         self.index.clear();
         self.strokes.sort_by_key(|stroke| stroke.line);
+        Ok(())
+    }
+    /// Chrome decorates text fragments, and a preserved tab is a control item
+    /// with no text fragment: its whole advance, inside a line or hanging at
+    /// its end, is cut from every stroke of its line. Preserved spaces stay
+    /// decorated. Field display keeps its own editing model and is unchanged.
+    fn skip_tabs(
+        &mut self,
+        layout: &Layout<u32>,
+        left: f32,
+        text: &str,
+        budget: (&mut usize, u32),
+    ) -> Result<(), PaintError> {
+        let (work, id) = budget;
+        for (line_index, line) in layout.lines().enumerate() {
+            let strokes: Vec<usize> = self
+                .index
+                .range((line_index, u32::MIN)..=(line_index, u32::MAX))
+                .flat_map(|(_, indices)| indices.iter().copied())
+                .collect();
+            if strokes.is_empty() {
+                continue;
+            }
+            for item in line.items() {
+                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                    continue;
+                };
+                let mut x = left + glyph_run.offset();
+                for cluster in glyph_run.run().visual_clusters() {
+                    let advance = cluster.advance();
+                    if text.get(cluster.text_range()) == Some(TAB) {
+                        if !x.is_finite() || !advance.is_finite() {
+                            return Err(PaintError::Unsupported(id));
+                        }
+                        for &index in &strokes {
+                            charge(work, 1, id)?;
+                            self.strokes[index].gaps.push((x, x + advance));
+                        }
+                    }
+                    x += advance;
+                }
+            }
+        }
         Ok(())
     }
     pub fn paint_line(&mut self, surface: &mut Surface, line: usize, mask: Option<&ClipMask>) {
