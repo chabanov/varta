@@ -1,6 +1,6 @@
 //! `input type=number` edits its string value with the shared text editor
-//! and Undo. L0 decides no numeric semantics: the value is never sanitized,
-//! and Up/Down do not step it (no stepping is decided yet).
+//! and Undo; the value is never sanitized. Up/Down step it as Chrome does
+//! with the default step ([`super::number_step`]), as one Undo entry.
 use super::{HistoryAction, Input, Target};
 use crate::{Access, BatchWriter, Broker, Filter, View};
 use varta_common::view::{Attribute, EventKind, Tag};
@@ -77,19 +77,29 @@ fn text_key(view: &mut View, key: &str, text: &str, history: Option<HistoryActio
 }
 
 fn key(view: &mut View, key: &str) {
+    key_with(view, key, false);
+}
+
+fn key_with(view: &mut View, key: &str, alt: bool) {
     view.input(
         &Input::Key {
             target: Target::Node(FIELD),
             key: key.into(),
             shift: false,
             ctrl: false,
-            alt: false,
+            alt,
             meta: false,
             composing: false,
         },
         &mut Deny,
     )
     .unwrap();
+}
+
+fn kinds(view: &mut View) -> Vec<(EventKind, String)> {
+    std::iter::from_fn(|| view.next_delivery())
+        .map(|delivery| (delivery.record.kind, delivery.record.value))
+        .collect()
 }
 
 #[test]
@@ -118,18 +128,88 @@ fn number_fields_edit_and_undo_their_string_value() {
 }
 
 #[test]
-fn number_arrow_keys_do_not_step_and_inactive_fields_refuse_edits() {
+fn arrow_keys_step_the_value_as_one_undo_entry_each() {
+    let mut view = number("1.5", None);
+    select_end(&mut view);
+    kinds(&mut view);
+    key(&mut view, "ArrowUp");
+    assert_eq!(value(&view), "2");
+    assert_eq!(kinds(&mut view), [(EventKind::Input, "2".to_owned())]);
+    key(&mut view, "ArrowUp");
+    key(&mut view, "ArrowDown");
+    key(&mut view, "ArrowDown");
+    assert_eq!(value(&view), "1");
+    // Each step is its own Undo entry, back to the typed string.
+    for expected in ["2", "3", "2", "1.5"] {
+        text_key(&mut view, "z", "", Some(HistoryAction::Undo));
+        assert_eq!(value(&view), expected);
+    }
+    text_key(&mut view, "z", "", Some(HistoryAction::Redo));
+    assert_eq!(value(&view), "2");
+    // An invalid typed value steps from 0, and typing continues after it.
+    let mut view = number("12e", None);
+    select_end(&mut view);
+    key(&mut view, "ArrowDown");
+    assert_eq!(value(&view), "-1");
+    text_key(&mut view, "5", "5", None);
+    assert_eq!(value(&view), "-15");
+}
+
+#[test]
+fn a_step_dispatches_input_then_change() {
+    let mut view = View::default();
+    let mut batch = BatchWriter::new();
+    batch
+        .create_element(FIELD, Tag::Input)
+        .set_attribute(FIELD, Attribute::Type, "number")
+        .set_value(FIELD, "41", 0)
+        .listen(FIELD, EventKind::Input, HANDLER, Filter::default())
+        .listen(FIELD, EventKind::Change, HANDLER + 1, Filter::default())
+        .insert(1, FIELD, 0);
+    view.commit(&batch.finish(), false, &mut Deny).unwrap();
+    select_end(&mut view);
+    kinds(&mut view);
+    key(&mut view, "ArrowUp");
+    assert_eq!(
+        kinds(&mut view),
+        [
+            (EventKind::Input, "42".to_owned()),
+            (EventKind::Change, "42".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn alt_down_inactive_fields_and_inexact_values_do_not_step() {
     let mut view = number("41", None);
     select_end(&mut view);
-    while view.next_delivery().is_some() {}
-    for arrow in ["ArrowUp", "ArrowDown"] {
-        key(&mut view, arrow);
-        assert_eq!(value(&view), "41", "{arrow}");
-    }
-    assert!(
-        std::iter::from_fn(|| view.next_delivery())
-            .all(|delivery| delivery.record.kind != EventKind::Input)
-    );
+    kinds(&mut view);
+    key_with(&mut view, "ArrowDown", true);
+    assert_eq!(value(&view), "41");
+    key_with(&mut view, "ArrowUp", true);
+    assert_eq!(value(&view), "42");
+    // A value Chrome would step with Decimal precision loss is refused.
+    let mut view = number("999999999999999999", None);
+    select_end(&mut view);
+    kinds(&mut view);
+    key(&mut view, "ArrowUp");
+    assert_eq!(value(&view), "999999999999999999");
+    assert!(kinds(&mut view).is_empty());
+    // Up/Down do not navigate a number field's text.
+    assert!(matches!(
+        view.input(
+            &Input::TextNavigate {
+                target: Target::Node(FIELD),
+                key: "ArrowUp".into(),
+                position: 0,
+                preferred_x: None,
+                upstream: false,
+                shift: false,
+            },
+            &mut Deny,
+        ),
+        Err(crate::InputError::Key(_))
+    ));
     for attribute in [Attribute::Disabled, Attribute::Readonly] {
         let mut view = number("5", Some(attribute));
         let _ = view.input(
@@ -140,6 +220,7 @@ fn number_arrow_keys_do_not_step_and_inactive_fields_refuse_edits() {
             &mut Deny,
         );
         key(&mut view, "Backspace");
+        key(&mut view, "ArrowUp");
         assert_eq!(value(&view), "5", "{attribute:?}");
     }
 }
