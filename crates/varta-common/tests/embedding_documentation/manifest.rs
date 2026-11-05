@@ -377,12 +377,12 @@ fn kv_limits() -> String {
             "`kv::MAX_VALUE_BYTES`",
         ),
         (
-            "Values a value decodes to (shared parts at every reach, absent optional fields included)",
+            "Values a value expands to (shared parts at every reach)",
             kv::MAX_VALUE_NODES,
             "`kv::MAX_VALUE_NODES`",
         ),
         (
-            "Code units of text a value decodes to (shared parts at every reach)",
+            "Code units of text a value expands to (shared parts at every reach)",
             kv::MAX_VALUE_UNITS,
             "`kv::MAX_VALUE_UNITS`",
         ),

@@ -11547,33 +11547,70 @@ into the static type the program names. V37 and earlier profiles reject
   at about 1500.
 - **Extent.** A read builds a part shared within a value at every reach, so
   a small stored value can expand exponentially (`x = { a: x, b: x }`
-  repeated). A value decodes to at most `kv::MAX_VALUE_NODES` values and
+  repeated). A value expands to at most `kv::MAX_VALUE_NODES` values and
   `kv::MAX_VALUE_UNITS` code units of text (its
-  `varta_kv_codec::Extent`): every value, string code unit and property-key
-  code unit (an array index as its decimal digits) counts at every reach of
-  a shared part, and the `undefined` of every absent optional field counts
-  as a value. A `set` of a larger value fails before anything is stored,
-  after Deno's encoded-size check (whose `Value too large` wins for a value
-  both refuse), over the extents the stage walk and the V8 writer count
-  (neither expands a shared part); the V8 reader and the classifier refuse
-  a larger stored value (one Deno or an earlier build wrote) before the
-  host builds past the bounds, each with the recoverable `TypeError` `a KV value cannot
-  expand to more than <values> values or <units> code units of text` (on a
-  read prefixed as above), on every host. Each walk records the extent
-  below every aggregate with its height and adds it again at every later
-  reach. The V8 codec cannot see absent fields and never counts more than
-  the stage walk, so a `get` at the type a value was stored at never
-  refuses what its `set` stored; a `get` at another type may count more
-  absent fields and refuse by name. The value bound keeps the decode of the
-  largest value within `kv::DECODE_FUEL_SHARE` of a production turn's fuel
-  (asserted in `budget`); the text bound is what an unshared value of
-  `kv::MAX_VALUE_BYTES` can hold. Deno, which keeps shared parts shared, has
-  neither bound: a value beyond them that Deno stores and reads, whether
-  shared or not (an array of more numbers than the value bound fits in
-  `kv::MAX_VALUE_BYTES`), is refused here.
-  The classifier also pays the decoded values' fuel as it goes, every
-  `varta_kv_codec::DEADLINE_STRIDE` values, so neither a stored value nor
-  the turn's fuel lets it build past what the turn pays for.
+  `varta_kv_codec::Extent`): every stored value (an element, a property's
+  value, a `Map` key or value, a `Set` value; not a hole), every code unit
+  of a string and every code unit of a plain object's property key (an
+  array-index key as its decimal digits) counts again at every reach of a
+  shared part. The bounds stop only sharing-driven blow-up: every value
+  Deno stores without shared parts within `kv::MAX_VALUE_BYTES` is within
+  them, so no such value is refused here. Their derivation, asserted at
+  compile time in `varta_common::kv`:
+  - values: each value Deno's serializer writes takes at least
+    `kv::MIN_ENCODED_VALUE_BYTES` (a tag alone: `null`, `undefined`,
+    `true`, `false`), so `kv::MAX_VALUE_NODES` is `kv::MAX_VALUE_BYTES`
+    divided by it;
+  - text: a Latin-1 (one-byte) string carries at most one code unit per
+    encoded byte, a two-byte string at most half of one (a UTF-8 string,
+    which the reader also accepts, at most one); an array-index key of `d`
+    digits takes a number tag and a varint (`I` zigzag or `U` plain, the
+    shorter counted) and its value at least one byte, densest at nine
+    digits: `kv::DENSEST_TEXT_UNITS` code units in `kv::DENSEST_TEXT_BYTES`
+    bytes, checked for every digit count of a `u32` index. So
+    `kv::MAX_VALUE_UNITS` is `kv::MAX_VALUE_BYTES` at that rate.
+
+  The `undefined` a read builds for an absent optional field is no stored
+  value and does not count: what a read builds for absent fields costs the
+  same with or without sharing, and it pays its fuel (below). The V8 codec
+  keeps the bounds, on every host: on `set` the V8 writer counts the whole
+  value (it never expands a shared part, so it need not stop early) after
+  Deno's encoded-size check, whose `Value too large` wins for a value both
+  refuse; on `get` the V8 reader refuses a stored value (one Deno or an
+  earlier build wrote) as soon as it passes the bounds, before the
+  classifier builds anything. Each records the extent below every aggregate
+  with its height and adds it again at every later reach, in constant time.
+  The refusal is the recoverable `TypeError` `a KV value cannot expand to
+  more than <values> values or <units> code units of text` (on a read
+  prefixed as above). Both walks count alike, so a `get` never refuses by
+  extent what a `set` stored.
+- **Staged values and keys.** The guest stages keys and values alike, so a
+  stage never fails for its value form: a value Deno's size check, the
+  depth limit of the V8 writer or the extent bounds refuse is staged with
+  that refusal, which a commit reports where Deno checks value sizes (after
+  every key check of the commit). A staged key never meets a value's
+  bounds: keys and range selectors keep Deno's own `Key too large for
+  write` and `Key too large for read` limits exactly, whatever their parts
+  (also a key whose V8 form is past `kv::MAX_VALUE_BYTES`).
+- **Decoding cost.** A read pays `fuel::JSON_PARSE_VALUE` for every value it
+  decodes and every absent optional field it builds, in the turn that reads
+  it, as checked JSON does; the classifier pays as it goes, every
+  `varta_kv_codec::DEADLINE_STRIDE` values, before it builds anything in the
+  guest. A value within the bounds whose decoding costs more than the
+  turn's remaining fuel, or whose result needs more than the instance's
+  memory, ends the run with the ordinary fatal fuel or memory exhaustion,
+  as any other too expensive operation does, on every host; such a value
+  is not refused by name. What one turn decodes:
+  - `get`: its one entry;
+  - `getMany`: every entry found, all in the turn of the call (several
+    values that each fit a turn can together exhaust it);
+  - `list`: every entry of one batch (`batchSize`, Deno's default when
+    omitted), decoded together when the batch is read, before the first of
+    them is yielded; the next batch is read when the iteration reaches it,
+    in the same turn unless the program awaited a task (a timer) between.
+
+  A program spreads the decoding of large values over turns by reading
+  them one per task or with a smaller `batchSize`.
 - **V8 codec** (`varta-runtime` `kv::v8`, owned code, no V8). The writer emits
   the header `0xFF 0x10` (serializer version 16, what V8 15.0 in Deno 2.9.x
   writes) and one value: an integral number in the 32-bit Smi range other than

@@ -245,9 +245,9 @@ export const registry = freeze({
       "uncertain": "the KV storage of {path} is unavailable after an unfinished write; reload the application"
     },
     "valueExtent": {
-      "maxUnits": 65536,
-      "maxValues": 2048,
-      "tooExpanded": "a KV value cannot expand to more than 2048 values or 65536 code units of text"
+      "maxUnits": 98304,
+      "maxValues": 65536,
+      "tooExpanded": "a KV value cannot expand to more than 65536 values or 98304 code units of text"
     },
     "valueTooDeep": "a KV value cannot nest deeper than 64 levels"
   },

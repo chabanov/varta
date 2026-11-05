@@ -32,8 +32,16 @@ impl Writer {
     }
     /// The staged record of `staged`.
     pub fn staged(&mut self, staged: &Staged) {
-        self.u8(staged.value.encoding() as u8);
-        self.bytes(&staged.value.bytes());
+        match &staged.value {
+            Ok(value) => {
+                self.u8(value.encoding() as u8);
+                self.bytes(&value.bytes());
+            }
+            Err(text) => {
+                self.u8(codec::VALUE_FAILURE);
+                self.bytes(text.as_bytes());
+            }
+        }
         match &staged.key {
             Ok(key) => {
                 self.u8(codec::KEY_BYTES);
@@ -86,8 +94,10 @@ impl<'a> Reader<'a> {
     }
     /// One staged record.
     pub fn staged(&mut self) -> Option<Staged> {
-        let encoding = i64::from(self.u8()?);
-        let value = Stored::of(encoding, self.bytes()?.to_vec())?;
+        let value = match self.u8()? {
+            codec::VALUE_FAILURE => Err(String::from_utf8(self.bytes()?.to_vec()).ok()?),
+            encoding => Ok(Stored::of(i64::from(encoding), self.bytes()?.to_vec())?),
+        };
         let key = match self.u8()? {
             codec::KEY_BYTES => Ok(self.bytes()?.to_vec()),
             codec::KEY_FAILURE => Err(String::from_utf8(self.bytes()?.to_vec()).ok()?),
@@ -115,16 +125,20 @@ mod tests {
     fn staged_records_round_trip() {
         let records = [
             Staged {
-                value: Stored::V8(vec![0xff, 0x10, b'_']),
+                value: Ok(Stored::V8(vec![0xff, 0x10, b'_'])),
                 key: Ok(vec![2, b'a', 0]),
             },
             Staged {
-                value: Stored::U64(u64::MAX),
+                value: Ok(Stored::U64(u64::MAX)),
                 key: Err("a KV key must be an array".into()),
             },
             Staged {
-                value: Stored::Bytes(vec![]),
+                value: Ok(Stored::Bytes(vec![])),
                 key: Ok(vec![]),
+            },
+            Staged {
+                value: Err("Value too large (max 65536 bytes)".into()),
+                key: Ok(vec![2, b'k', 0]),
             },
         ];
         let mut writer = Writer::default();

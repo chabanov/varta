@@ -32,11 +32,6 @@ pub const MAX_FUEL_PER_TURN: u64 = 1_000_000_000;
 /// response and updates a 50-row view needs about 5.6 million). Every earlier
 /// profile keeps [`abi::FUEL`] per execution.
 pub const TURN_FUEL: u64 = 8_000_000;
-// A KV value at its decoded-size bound decodes within its share of a turn.
-const _: () = assert!(
-    crate::kv::MAX_VALUE_NODES as u64 * crate::fuel::JSON_PARSE_VALUE
-        <= TURN_FUEL / crate::kv::DECODE_FUEL_SHARE
-);
 pub const MAX_DEADLINE_PER_TURN_MS: u64 = 60_000;
 pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_HOST_CALLS_PER_TURN: u32 = 1 << 20;

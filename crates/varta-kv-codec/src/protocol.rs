@@ -154,10 +154,18 @@ impl Stored {
 }
 
 /// One staged guest value, encoded when it was staged.
+///
+/// The guest stages keys and values alike (`kv_stage` cannot tell them
+/// apart), so the value form keeps why the value cannot be stored instead
+/// of failing the stage: a read or commit that uses the staged value as a
+/// key never sees it, and one that stores it reports it where Deno checks
+/// value sizes, after every key check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Staged {
-    /// The stored form of the value.
-    pub value: Stored,
+    /// The stored form of the value, or the `TypeError` message of why it
+    /// cannot be stored (Deno's `Value too large`, the shared depth limit
+    /// or the extent bounds).
+    pub value: Result<Stored, String>,
     /// The key bytes, when the value is a key (an array of strings and
     /// numbers), or why it is none.
     pub key: Result<Vec<u8>, String>,
@@ -167,45 +175,36 @@ impl Staged {
     /// The encoded bytes this value keeps staged.
     #[must_use]
     pub fn size(&self) -> usize {
-        self.value.len() + self.key.as_ref().map_or(0, Vec::len)
+        self.value.as_ref().map_or(0, Stored::len) + self.key.as_ref().map_or(0, Vec::len)
     }
 }
 
-/// The stored form of `value` staged in `mode`. A value (`StageMode::Value`)
-/// fails after Deno's own size check (whose message wins) when its
-/// `extent`, the stage walk's ([`crate::stage::Stager::extent`]), or the V8
-/// encoder's is beyond the [`crate::Extent`] bounds.
-pub fn staged_value(
-    mode: StageMode,
-    value: &v8::Value,
-    extent: crate::Extent,
-) -> Result<Staged, KvError> {
+/// The stored form of `value` staged in `mode`. A value
+/// (`StageMode::Value`) that Deno's encoded-size check, the shared depth
+/// limit or the [`crate::Extent`] bounds refuse (in that order) is staged
+/// with the refusal ([`Staged::value`]); a `KvU64` or a top-level
+/// `Uint8Array` that is malformed fails the stage.
+pub fn staged_value(mode: StageMode, value: &v8::Value) -> Result<Staged, KvError> {
     let text = || match value {
         v8::Value::String(units) => Ok(units),
         _ => Err(KvError::type_error("invalid staged KV value")),
     };
     let value_form = match mode {
-        StageMode::Value => {
-            let bytes = v8::encode(value, wire::MAX_VALUE_BYTES).map_err(|error| match error {
-                v8::V8Error::Depth(_) => KvError::type_error(crate::too_deep()),
-                v8::V8Error::Expanded => KvError::type_error(crate::too_expanded()),
-                _ => value_too_large(),
-            })?;
-            if !extent.within() {
-                return Err(KvError::type_error(crate::too_expanded()));
-            }
-            Stored::V8(bytes)
-        }
+        StageMode::Value => v8::encode(value, wire::MAX_VALUE_BYTES)
+            .map(Stored::V8)
+            .map_err(|error| match error {
+                v8::V8Error::Depth(_) => crate::too_deep(),
+                v8::V8Error::Expanded => crate::too_expanded(),
+                _ => value_too_large().message,
+            }),
         StageMode::U64 => {
             let digits =
                 String::from_utf16(text()?).map_err(|_| KvError::type_error("invalid KvU64"))?;
-            Stored::U64(
-                digits.parse().map_err(|_| {
-                    KvError::range_error("Value must fit in a 64-bit unsigned integer")
-                })?,
-            )
+            Ok(Stored::U64(digits.parse().map_err(|_| {
+                KvError::range_error("Value must fit in a 64-bit unsigned integer")
+            })?))
         }
-        StageMode::Bytes => Stored::Bytes(byte_values(value)?),
+        StageMode::Bytes => Ok(Stored::Bytes(byte_values(value)?)),
     };
     Ok(Staged {
         value: value_form,
@@ -701,12 +700,13 @@ pub fn parse_commit<E>(
         } else {
             None
         };
+        // A value that cannot be stored fails after every key check.
         let kind = match (code, value) {
-            (MutationCode::Set, Some(value)) => Kind::Set(value),
-            (MutationCode::Delete, None) => Kind::Delete,
-            (MutationCode::Sum, Some(Stored::U64(number))) => Kind::Sum(number),
-            (MutationCode::Min, Some(Stored::U64(number))) => Kind::Min(number),
-            (MutationCode::Max, Some(Stored::U64(number))) => Kind::Max(number),
+            (MutationCode::Set, Some(value)) => value.map(Kind::Set),
+            (MutationCode::Delete, None) => Ok(Kind::Delete),
+            (MutationCode::Sum, Some(Ok(Stored::U64(number)))) => Ok(Kind::Sum(number)),
+            (MutationCode::Min, Some(Ok(Stored::U64(number)))) => Ok(Kind::Min(number)),
+            (MutationCode::Max, Some(Ok(Stored::U64(number)))) => Ok(Kind::Max(number)),
             _ => return Err(Fatal("mutation value")),
         };
         let expire_at = if expire_in.is_empty() {
@@ -722,17 +722,13 @@ pub fn parse_commit<E>(
                 }
             }
         };
-        parsed.push(Mutation {
-            key,
-            kind,
-            expire_at,
-        });
+        parsed.push((key, kind, expire_at));
     }
     let (mut payload, mut keys) = (0usize, 0usize);
     for key in parsed_checks
         .iter()
         .map(|check| &check.key)
-        .chain(parsed.iter().map(|mutation| &mutation.key))
+        .chain(parsed.iter().map(|(key, _, _)| key))
     {
         if key.is_empty() {
             return Ok(Err(KvError::type_error("key cannot be empty")));
@@ -745,16 +741,25 @@ pub fn parse_commit<E>(
         }
         payload += key.len();
     }
-    for mutation in &parsed {
-        let Some(value) = mutation.kind.value() else {
-            continue;
+    let mut mutations = Vec::with_capacity(parsed.len());
+    for (key, kind, expire_at) in parsed {
+        let kind = match kind {
+            Ok(kind) => kind,
+            Err(message) => return Ok(Err(KvError::type_error(message))),
         };
-        let size = value.len();
-        if size > wire::MAX_VALUE_BYTES {
-            return Ok(Err(value_too_large()));
+        if let Some(value) = kind.value() {
+            let size = value.len();
+            if size > wire::MAX_VALUE_BYTES {
+                return Ok(Err(value_too_large()));
+            }
+            payload += size + key.len();
+            keys += key.len();
         }
-        payload += size + mutation.key.len();
-        keys += mutation.key.len();
+        mutations.push(Mutation {
+            key,
+            kind,
+            expire_at,
+        });
     }
     if payload > wire::MAX_TOTAL_MUTATION_BYTES {
         return Ok(Err(KvError::type_error(format!(
@@ -775,7 +780,7 @@ pub fn parse_commit<E>(
     Ok(Ok(Commit {
         id,
         checks: parsed_checks,
-        mutations: parsed,
+        mutations,
     }))
 }
 
@@ -819,31 +824,110 @@ mod tests {
         assert_eq!(expire_at_ms(0, u64::MAX), None);
     }
 
-    /// A staged value beyond the extent bounds fails by name, after Deno's
-    /// own size check, whose message wins for a value both refuse; the
-    /// extent applies to values only, not to a top-level `Uint8Array`.
+    /// The descriptor of `fields` after the version line.
+    fn descriptor(fields: &[&str]) -> String {
+        let mut text = String::from(wire::DESCRIPTOR_VERSION);
+        for field in fields {
+            text.push(wire::DESCRIPTOR_SEPARATOR);
+            text.push_str(field);
+        }
+        text
+    }
+
+    /// A value is staged whatever its value form, since the guest stages
+    /// keys and values alike: Deno's size check and then the extent bounds
+    /// refuse it only where a commit stores it, after every key check, and
+    /// a staged key never meets them (Deno's key-size limits name it).
     #[test]
-    fn staging_refuses_an_extent_after_denos_size_check() {
-        let message = |result: Result<Staged, KvError>| result.unwrap_err().text();
-        let beyond = crate::Extent {
-            values: crate::MAX_VALUE_NODES + 1,
-            units: 0,
+    fn values_that_cannot_be_stored_fail_where_they_are_stored() {
+        use alloc::{rc::Rc, string::ToString, vec};
+        // `x = { a: x, b: x }` sixteen times over `{}`: a few hundred bytes
+        // expanding past the value bound.
+        const LEVELS: usize = 16;
+        let name = |text: &str| v8::Key::Name(text.encode_utf16().collect());
+        let diamond = (0..LEVELS).fold(
+            v8::Value::Object(Rc::new(v8::Object::Plain(vec![]))),
+            |x, _| {
+                v8::Value::Object(Rc::new(v8::Object::Plain(vec![
+                    (name("a"), x.clone()),
+                    (name("b"), x),
+                ])))
+            },
+        );
+        let array = |parts: Vec<v8::Value>| {
+            v8::Value::Object(Rc::new(v8::Object::Dense(
+                parts.into_iter().map(Some).collect(),
+            )))
         };
-        let small = v8::Value::Null;
-        assert_eq!(
-            message(staged_value(StageMode::Value, &small, beyond)),
-            KvError::type_error(crate::too_expanded()).text()
+        let stage = |value: &v8::Value| staged_value(StageMode::Value, value).unwrap();
+        let small_key = stage(&array(vec![v8::Value::String(
+            "k".encode_utf16().collect(),
+        )]));
+        let expanded = stage(&diamond);
+        assert_eq!(expanded.value, Err(crate::too_expanded()));
+        let long = stage(&v8::Value::String(vec![
+            u16::from(b'x');
+            wire::MAX_VALUE_BYTES
+        ]));
+        assert_eq!(long.value, Err(value_too_large().message));
+        // A key whose V8 form is past Deno's value size (a double takes a
+        // tag and eight bytes): staged, its key bytes past Deno's key size.
+        let doubles = array(vec![
+            v8::Value::Number(0.5);
+            wire::MAX_VALUE_BYTES / size_of::<f64>()
+        ]);
+        let big_key = stage(&doubles);
+        assert_eq!(big_key.value, Err(value_too_large().message));
+        assert!(big_key.key.as_ref().unwrap().len() > wire::MAX_READ_KEY_BYTES);
+        // Neither bound applies to a top-level `Uint8Array`.
+        let bytes = array(vec![v8::Value::Number(1.0); crate::MAX_VALUE_NODES + 1]);
+        assert!(
+            staged_value(StageMode::Bytes, &bytes)
+                .unwrap()
+                .value
+                .is_ok()
         );
-        assert!(staged_value(StageMode::Value, &small, crate::Extent::default()).is_ok());
-        let long = v8::Value::String(alloc::vec![u16::from(b'x'); crate::MAX_VALUE_UNITS + 1]);
+        let staged = [small_key, expanded, big_key, long];
+        let commit = |fields: &[&str]| {
+            parse_commit(&descriptor(fields), &staged, |_| Some(()))
+                .unwrap()
+                .map(|_| ())
+                .map_err(|error| error.text())
+        };
+        let set = (MutationCode::Set as u8).to_string();
+        // set(['k'], diamond): refused by name.
         assert_eq!(
-            message(staged_value(StageMode::Value, &long, beyond)),
-            value_too_large().text()
+            commit(&["1", "0", "1", &set, "0", "1", ""]),
+            Err(KvError::type_error(crate::too_expanded()).text())
         );
-        let bytes = v8::Value::Object(alloc::rc::Rc::new(v8::Object::Dense(alloc::vec![
-            Some(v8::Value::Number(1.0));
-            crate::MAX_VALUE_NODES + 1
-        ])));
-        assert!(staged_value(StageMode::Bytes, &bytes, beyond).is_ok());
+        // set(['k'], 'x'.repeat(...)): Deno's message.
+        assert_eq!(
+            commit(&["1", "0", "1", &set, "0", "3", ""]),
+            Err(value_too_large().text())
+        );
+        // A later mutation's oversized key wins over an earlier value.
+        assert_eq!(
+            commit(&["1", "0", "2", &set, "0", "1", "", &set, "2", "3", ""]),
+            Err(KvError::type_error(format!(
+                "Key too large for write (max {} bytes)",
+                wire::MAX_WRITE_KEY_BYTES
+            ))
+            .text())
+        );
+        // The big key read: Deno's read limit, never a value failure.
+        let selector = (Selector::Key as u8).to_string();
+        let read = parse_read(
+            &descriptor(&["1", "1", &selector, "2", "", "1", "0", ""]),
+            &staged,
+        )
+        .unwrap();
+        assert_eq!(
+            read.unwrap_err().text(),
+            KvError::type_error(format!(
+                "Key too large for read (max {} bytes)",
+                wire::MAX_READ_KEY_BYTES
+            ))
+            .text()
+        );
     }
 }

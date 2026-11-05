@@ -639,27 +639,58 @@ fn shared_objects_count_toward_the_extent_at_every_reach() {
     assert_eq!(V8Error::Expanded.to_string(), crate::too_expanded());
 }
 
-/// Without sharing a value holds at most [`crate::MAX_VALUE_NODES`] values:
-/// an array of one fewer element is written and read, one more fails.
+/// Every value without shared parts that fits Deno's encoded size is
+/// within the extent bounds: the most values (an array of `null`, one byte
+/// each) and the densest text (nine-digit index keys, nine code units in
+/// six bytes, as Varta writes them with `I` and as `U` could) are written
+/// and read; one more element fails Deno's size check, never the extent.
 #[test]
-fn unshared_values_keep_the_value_bound() {
+fn unshared_values_within_denos_size_keep_the_extent_bounds() {
+    use crate::wire::{MAX_VALUE_BYTES, MIN_ENCODED_VALUE_BYTES};
     let nulls =
         |count: usize| Value::Object(Rc::new(Object::Dense(vec![Some(Value::Null); count])));
-    let bytes = |count: usize| {
-        let mut bytes = header();
-        bytes.push(b'A');
-        varint(&mut bytes, count);
-        bytes.extend(core::iter::repeat_n(b'0', count));
-        bytes.extend([b'$', 0]);
-        varint(&mut bytes, count);
-        bytes
+    // At most one element per byte, less the array itself; its tags and
+    // lengths take a few more bytes.
+    let mut most = MAX_VALUE_BYTES / MIN_ENCODED_VALUE_BYTES - 1;
+    while encode(&nulls(most), usize::MAX).unwrap().len() > MAX_VALUE_BYTES {
+        most -= 1;
+    }
+    assert!(most < crate::MAX_VALUE_NODES, "the array and its elements");
+    let written = encode(&nulls(most), MAX_VALUE_BYTES).unwrap();
+    assert_eq!(decode(&written, LIMITS), Ok(nulls(most)));
+    assert_eq!(
+        encode(&nulls(most + 1), MAX_VALUE_BYTES),
+        Err(V8Error::Limit("value size"))
+    );
+    // `{ 100000000: null, 100000001: null, … }`.
+    const FIRST: u32 = 100_000_000;
+    let keyed = |count: u32| {
+        Value::Object(Rc::new(Object::Plain(
+            (FIRST..FIRST + count)
+                .map(|index| (Key::Index(index), Value::Null))
+                .collect(),
+        )))
     };
-    let fits = crate::MAX_VALUE_NODES - 1;
-    let written = encode(&nulls(fits), usize::MAX).unwrap();
-    assert_eq!(written, bytes(fits));
-    assert_eq!(decode(&written, LIMITS), Ok(nulls(fits)));
-    assert_eq!(encode(&nulls(fits + 1), usize::MAX), Err(V8Error::Expanded));
-    assert_eq!(decode(&bytes(fits + 1), LIMITS), Err(V8Error::Expanded));
+    let mut count = u32::try_from(MAX_VALUE_BYTES / crate::wire::DENSEST_TEXT_BYTES).unwrap();
+    while encode(&keyed(count), usize::MAX).unwrap().len() > MAX_VALUE_BYTES {
+        count -= 1;
+    }
+    let units = count as usize * crate::wire::DENSEST_TEXT_UNITS;
+    assert!(units > MAX_VALUE_BYTES && units <= crate::MAX_VALUE_UNITS);
+    let written = encode(&keyed(count), MAX_VALUE_BYTES).unwrap();
+    assert_eq!(decode(&written, LIMITS), Ok(keyed(count)));
+    // The same keys as `U` (an unsigned varint), which V8 also reads.
+    let mut unsigned = header();
+    unsigned.push(b'o');
+    for index in FIRST..FIRST + count {
+        unsigned.push(b'U');
+        varint(&mut unsigned, index as usize);
+        unsigned.push(b'0');
+    }
+    unsigned.push(b'{');
+    varint(&mut unsigned, count as usize);
+    assert!(unsigned.len() <= MAX_VALUE_BYTES);
+    assert_eq!(decode(&unsigned, LIMITS), Ok(keyed(count)));
 }
 
 /// Text counts at every reach too: `count` elements of an array share one

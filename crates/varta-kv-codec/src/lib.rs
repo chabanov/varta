@@ -92,14 +92,14 @@ pub fn too_deep() -> alloc::string::String {
     alloc::format!("a KV value cannot nest deeper than {MAX_VALUE_DEPTH} levels")
 }
 
-/// The most values a KV value decodes to ([`wire::MAX_VALUE_NODES`]).
+/// The most values a KV value expands to ([`wire::MAX_VALUE_NODES`]).
 pub const MAX_VALUE_NODES: usize = wire::MAX_VALUE_NODES;
-/// The most code units of text a KV value decodes to
+/// The most code units of text a KV value expands to
 /// ([`wire::MAX_VALUE_UNITS`]).
 pub const MAX_VALUE_UNITS: usize = wire::MAX_VALUE_UNITS;
 
 /// The recoverable `TypeError` text of a value whose [`Extent`] exceeds
-/// [`MAX_VALUE_NODES`] or [`MAX_VALUE_UNITS`], staged, encoded or decoded.
+/// [`MAX_VALUE_NODES`] or [`MAX_VALUE_UNITS`], encoded or decoded.
 #[must_use]
 pub fn too_expanded() -> alloc::string::String {
     alloc::format!(
@@ -107,34 +107,39 @@ pub fn too_expanded() -> alloc::string::String {
     )
 }
 
-/// What a KV value expands to when a `get` decodes it: its values and its
-/// code units of text, a part shared within the value (stored once, then
-/// back-referenced) counted again at every reach.
+/// What a KV value expands to when a read builds it: its stored values and
+/// its code units of text, a part shared within the value (stored once,
+/// then back-referenced) counted again at every reach.
 ///
 /// Sharing makes a small stored value expand exponentially (`x = { a: x,
-/// b: x }` repeated), and a read builds every reach. So each walk keeps the
-/// running extent of the whole value, and a value beyond [`MAX_VALUE_NODES`]
-/// values or [`MAX_VALUE_UNITS`] code units fails with the recoverable
-/// `TypeError` [`too_expanded`] on every host. A `set` fails before anything
-/// is stored ([`protocol::staged_value`], over the extent of the stage walk
-/// [`stage::Stager`] and the V8 encoder [`v8::encode`]), after Deno's own
-/// encoded-size check, whose message wins for a value both refuse; neither
-/// walk expands a shared part, so neither needs to stop early. The V8
-/// decoder ([`v8::decode`]) and the classifier ([`decode::Classifier`])
-/// refuse a value stored elsewhere (by Deno or an earlier build) as soon as
-/// it passes the bounds, before the host builds more. Each aggregate's
-/// extent below it is recorded with its height and added again at every
-/// later reach, in constant time.
+/// b: x }` repeated), and a read builds every reach. The bounds stop only
+/// that: a value without shared parts that fits [`wire::MAX_VALUE_BYTES`]
+/// is always within them (their derivation in `varta_common::kv`), so
+/// sharing never makes a read build more than the largest unshared value.
 ///
-/// What counts, alike on every walk: every value (an element, a property's
+/// The bounds are kept by the V8 codec, the one walk every stored value
+/// passes on every host:
+/// - on `set`, the encoder ([`v8::encode`]) counts the whole value after
+///   Deno's encoded-size check, whose message wins for a value both refuse
+///   (it never expands a shared part, so it need not stop early), and the
+///   staged value fails with the recoverable `TypeError` [`too_expanded`]
+///   when it is used as a stored value; a key is never counted (Deno's own
+///   key-size limits name it);
+/// - on `get`, the decoder ([`v8::decode`]) refuses a stored value (by Deno
+///   or an earlier build) by name as soon as it passes the bounds, before
+///   the classifier builds anything.
+///
+/// Each aggregate's extent below it is recorded with its height and added
+/// again at every later reach, in constant time.
+///
+/// What counts, alike on both walks: every value (an element, a property's
 /// value, a `Map` key or value, a `Set` value; not a hole), every code unit
-/// of a string and of a property key (an array-index key as its decimal
-/// digits). The stage walk and the classifier, which see the record's type,
-/// also count the `undefined` of every absent optional field, which a read
-/// builds; the V8 codec cannot see absent fields, so its count is never
-/// larger. A `get` of the type a value was stored at therefore never
-/// refuses what its `set` stored; a `get` of another type may count more
-/// absent fields and refuse by name.
+/// of a string and of a property key of a plain object (an array-index key
+/// as its decimal digits). The `undefined` a read builds for an absent
+/// optional field is no stored value and does not count: it costs what it
+/// costs for an unshared value, its fair fuel (the classifier pays it), so
+/// the result of a `get` depends on the stored value only, never on the
+/// type it is read at.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Extent {
     /// Values, each reach of a shared part counted.

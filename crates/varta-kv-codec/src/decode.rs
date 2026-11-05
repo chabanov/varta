@@ -11,12 +11,14 @@
 //! schema yet and fails, like every mismatch, with a recoverable `TypeError`.
 //!
 //! The classifier expands a part shared within the value at every reach, as
-//! the result it builds does, so it counts the [`crate::Extent`] of what it
-//! builds as it goes and refuses a value beyond its bounds by name (one
-//! stored by Deno or an earlier build), and it pays the fair fuel of the
-//! values it classifies as it goes, every [`crate::DEADLINE_STRIDE`] values:
-//! neither a stored value nor the turn's fuel can make a host build more
-//! than the bounds.
+//! the result it builds does; the V8 decoder has already refused a value
+//! whose [`crate::Extent`] passes the bounds, so sharing never makes it
+//! build more than the largest unshared value. It pays the fair fuel of the
+//! values it classifies (and of the `undefined` of every absent optional
+//! field it builds) as it goes, every [`crate::DEADLINE_STRIDE`] values, so
+//! a value whose decode costs more than the turn's fuel ends the turn with
+//! the ordinary fatal fuel exhaustion after at most one stride of unpaid
+//! work, on every host.
 use super::v8::{Key, Object, Value};
 use crate::Deadline;
 use alloc::{
@@ -83,8 +85,6 @@ pub struct Classifier<'a, D: Deadline + ?Sized> {
     nodes: usize,
     /// Values already paid for.
     paid: usize,
-    /// The extent of the result built so far.
-    extent: crate::Extent,
 }
 
 impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
@@ -96,7 +96,6 @@ impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
             pay,
             nodes: 0,
             paid: 0,
-            extent: crate::Extent::default(),
         }
     }
 
@@ -108,20 +107,10 @@ impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
             }
             self.settle()?;
         }
-        self.grow(1, 0)?;
         if depth > self.limits.json_depth || self.nodes > self.limits.json_nodes {
             return Err(mismatch("the stored value exceeds the depth or node limit"));
         }
         Ok(())
-    }
-
-    /// Count `values` and `units` of the result toward its extent.
-    fn grow(&mut self, values: usize, units: usize) -> Result<(), DecodeError> {
-        if self.extent.grow(values, units) {
-            Ok(())
-        } else {
-            Err(mismatch(crate::too_expanded()))
-        }
     }
 
     /// Pay for the values visited and not yet paid for.
@@ -194,7 +183,6 @@ impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
                 if units.len() > self.limits.string_bytes / 2 {
                     return Err(mismatch("a stored string exceeds the string limit"));
                 }
-                self.grow(0, units.len())?;
                 JsonValue::String16(units.clone())
             }
             (JsonType::Record { fields, .. }, Value::Object(object)) => {
@@ -269,7 +257,6 @@ impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
         let mut values: Vec<Option<JsonValue>> = (0..fields.len()).map(|_| None).collect();
         for (key, value) in properties {
             let name = key_text(key)?;
-            self.grow(0, key.units())?;
             let slot = fields
                 .binary_search_by(|field| field.name.as_str().cmp(&name))
                 .map_err(|_| mismatch(format!("the stored object has the unknown field {name}")))?;
@@ -315,7 +302,6 @@ impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
         let mut entries = Vec::with_capacity(properties.len());
         for (key, value) in properties {
             let units: Vec<u16> = key_text(key)?.encode_utf16().collect();
-            self.grow(0, units.len())?;
             entries.push((units, self.classify(value, element, depth + 1)?));
         }
         // Own-key order: array indices ascending, then insertion order.
@@ -442,38 +428,24 @@ mod tests {
         })
     }
 
-    /// The values a `D` diamond decodes to: every reach, and the two absent
-    /// fields of every `{}` at the bottom: `2^(levels + 2) - 1`.
-    fn decoded(levels: usize) -> usize {
+    /// The values a `D` diamond's classification visits: every reach, and
+    /// the two absent fields of every `{}` at the bottom (each paid for):
+    /// `2^(levels + 2) - 1`.
+    fn visited(levels: usize) -> usize {
         (1 << (levels + 2)) - 1
     }
 
-    /// The classifier counts what it builds: every reach of a shared part
-    /// and every absent optional field. The largest diamond within
-    /// [`crate::MAX_VALUE_NODES`] decodes; the next one and one of millions
-    /// of values are refused by name, after at most the bound's work.
+    /// The classifier expands every reach of a shared part and visits (and
+    /// pays for) every absent optional field it builds; the extent bounds
+    /// are the V8 decoder's, so it refuses nothing by extent itself.
     #[test]
-    fn classification_counts_every_reach_and_absent_field() {
+    fn classification_visits_every_reach_and_absent_field() {
         let schema = diamond_schema();
-        let fits = (crate::MAX_VALUE_NODES + 1).ilog2() as usize - 2;
-        assert!(decoded(fits) <= crate::MAX_VALUE_NODES);
-        assert!(decoded(fits + 1) > crate::MAX_VALUE_NODES);
+        const LEVELS: usize = 12;
         let mut free = |_| true;
         let mut classifier = Classifier::new(&schema, DataLimits::V38, &Never, &mut free);
-        assert!(classifier.root(&diamond(fits)).is_ok());
-        assert_eq!(classifier.values(), decoded(fits));
-        const FAR: usize = 40;
-        for levels in [fits + 1, FAR] {
-            let mut free = |_| true;
-            let mut classifier = Classifier::new(&schema, DataLimits::V38, &Never, &mut free);
-            match classifier.root(&diamond(levels)) {
-                Err(DecodeError::Mismatch(message)) => {
-                    assert_eq!(message, crate::too_expanded(), "{levels}");
-                }
-                other => panic!("{levels}: {other:?}"),
-            }
-            assert_eq!(classifier.values(), crate::MAX_VALUE_NODES + 1, "{levels}");
-        }
+        assert!(classifier.root(&diamond(LEVELS)).is_ok());
+        assert_eq!(classifier.values(), visited(LEVELS));
     }
 
     /// The classifier pays for the values it visits every
@@ -482,7 +454,7 @@ mod tests {
     #[test]
     fn classification_pays_as_it_goes() {
         let schema = diamond_schema();
-        let levels = (crate::MAX_VALUE_NODES + 1).ilog2() as usize - 2;
+        let levels = 12;
         let mut payments = Vec::new();
         let mut pay = |values| {
             payments.push(values);

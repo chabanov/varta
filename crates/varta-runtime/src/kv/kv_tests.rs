@@ -7,12 +7,12 @@ use denokv_proto::KeyPart;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use varta_common::{CapabilityGrant, CapabilityValue, language::LanguageProfile};
-use varta_kv_codec::{Extent, wire::MutationCode};
+use varta_kv_codec::wire::MutationCode;
 
 const FIXTURE: &[u8] = include_bytes!("../kv_cases/deno-2.9.4/fixture.kv");
 const MANIFEST: &str = include_str!("../kv_cases/deno-2.9.4/manifest.json");
 const ROWS: &str = include_str!("../kv_cases/deno-2.9.4/rows.json");
-const LOG: &str = "varta log: ";
+pub(super) const LOG: &str = "varta log: ";
 /// When Deno's generator wrote the fixture's one expiring entry,
 /// `["fixture", "expire"]` (`expireIn` one day), in Unix milliseconds:
 /// 2026-10-30T16:53:27.447Z. Derived from the fixture's own data by
@@ -89,7 +89,7 @@ pub(super) fn compile(source: &str) -> Vec<u8> {
     bytes
 }
 
-fn run_with(
+pub(super) fn run_with(
     source: &str,
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
@@ -114,7 +114,7 @@ fn run_with(
     })
 }
 
-fn run(source: &str, requested: Vec<CapabilityGrant>, roots: FileRoots) -> Vec<String> {
+pub(super) fn run(source: &str, requested: Vec<CapabilityGrant>, roots: FileRoots) -> Vec<String> {
     run_with(source, requested, None, roots).unwrap_or_else(|e| panic!("{e}\n{source}"))
 }
 
@@ -127,7 +127,7 @@ fn program(path: &str, body: &str) -> String {
 
 /// A program that reports `<name>: <message>` of what opening or `body`
 /// rejects with.
-fn guarded(path: &str, body: &str) -> String {
+pub(super) fn guarded(path: &str, body: &str) -> String {
     format!(
         "export async function main(): Promise<void> {{\n  try {{\n    const kv = await varta.kv.open('{path}');\n{body}\n    kv.close();\n    console.log('done');\n  }} catch (error) {{\n    if (error instanceof Error) {{ console.log(error.name + ': ' + error.message); }}\n  }}\n}}\n"
     )
@@ -355,10 +355,10 @@ fn expire_in_is_stamped_on_the_kv_clock_as_deno_stamped_the_fixture() {
     ])));
     state
         .staged
-        .push(protocol::staged_value(StageMode::Value, &key, Extent::default()).unwrap());
-    state.staged.push(
-        protocol::staged_value(StageMode::Value, &text("lives a day"), Extent::default()).unwrap(),
-    );
+        .push(protocol::staged_value(StageMode::Value, &key).unwrap());
+    state
+        .staged
+        .push(protocol::staged_value(StageMode::Value, &text("lives a day")).unwrap());
     // Database 1, no checks; one set of stage 0 to stage 1 with `expireIn`.
     let code = (MutationCode::Set as u8).to_string();
     let expire_in = DAY_MS.to_string();
@@ -1097,7 +1097,7 @@ fn open_fixture(tree: &Tree) -> store::Database {
 }
 
 /// The database at the virtual `path` of `tree`, opened directly.
-fn open_at(tree: &Tree, path: &str, writable: bool) -> store::Database {
+pub(super) fn open_at(tree: &Tree, path: &str, writable: bool) -> store::Database {
     let policy = crate::policy::Policy::with_files(
         &read_write(),
         None,
@@ -1584,175 +1584,6 @@ fn shared_parts_keep_the_depth_limit_at_their_deepest_reach() {
     assert_eq!(
         run(&shared_parts_program(&cases), read_write(), tree.roots()),
         shared_parts_logs(&cases)
-    );
-}
-
-/// Levels of the largest diamond of `D` (`interface D { a?: D; b?: D }`,
-/// each level `{ a: x, b: x }` of the one below, `{}` at the bottom) a read
-/// builds within `MAX_VALUE_NODES` values: it builds
-/// [`diamond_decoded`]`(levels)`.
-fn diamond_fits() -> usize {
-    (varta_kv_codec::MAX_VALUE_NODES + 1).ilog2() as usize - 2
-}
-
-/// The values a read of a `D` diamond builds: every reach of every level and
-/// both absent fields of the `{}` at the bottom.
-fn diamond_decoded(levels: usize) -> usize {
-    (1 << (levels + 2)) - 1
-}
-
-/// A diamond far beyond the bound: millions of values expanded from about
-/// two hundred stored bytes. Read before the extent bound, its decode ran
-/// past the turn deadline and grew the native host to about 1 GB.
-const FAR_DIAMOND: usize = 22;
-
-/// The V8 bytes of a `D` diamond of `levels` as Deno (or an earlier Varta)
-/// writes it: level `k` (object id `levels - k`) back-references level
-/// `k - 1` in `b`.
-fn diamond_bytes(levels: usize) -> Vec<u8> {
-    fn body(bytes: &mut Vec<u8>, level: usize, levels: usize) {
-        bytes.push(b'o');
-        if level == 0 {
-            bytes.extend([b'{', 0]);
-            return;
-        }
-        bytes.extend([b'"', 1, b'a']);
-        body(bytes, level - 1, levels);
-        // One-byte varint: the ids stay below 0x80 here.
-        let id = u8::try_from(levels - level + 1).unwrap();
-        assert!(id < 0x80);
-        bytes.extend([b'"', 1, b'b', b'^', id, b'{', 2]);
-    }
-    let mut bytes = vec![0xFF, u8::try_from(v8::WRITE_VERSION).unwrap()];
-    body(&mut bytes, levels, levels);
-    bytes
-}
-
-/// The diamond program (the browser KV acceptance, scripts/test-browser-kv.mjs
-/// `diamond`, runs the same one): `set` and `get` of the diamonds of
-/// `levels`, each in its own turn, then a `get` of every planted diamond
-/// (`["planted", levels]`, written beforehand as Deno would). A read logs the
-/// values it built, absent fields included.
-fn diamond_program(levels: &[usize], planted: &[usize]) -> String {
-    let list = |values: &[usize]| {
-        values
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let body = format!(
-        "    for (const levels of [{}]) {{\n\
-         const label = String(levels);\n\
-         await turn();\n\
-         try {{ await kv.set(['diamond', label], diamond(levels)); console.log('set ' + label); }}\n\
-         catch (e) {{ if (e instanceof Error) {{ console.log(label + ' ' + e.name + ': ' + e.message); }} }}\n\
-         await turn();\n\
-         const got = await kv.get<D>(['diamond', label]);\n\
-         console.log('get ' + label + ' ' + (got.value === null ? 'absent' : String(size(got.value))));\n\
-         }}\n\
-         for (const levels of [{}]) {{\n\
-         const label = String(levels);\n\
-         await turn();\n\
-         try {{\n\
-         const got = await kv.get<D>(['planted', label]);\n\
-         console.log('planted ' + label + ' ' + (got.value === null ? 'absent' : String(size(got.value))));\n\
-         }} catch (e) {{ if (e instanceof Error) {{ console.log('planted ' + label + ' ' + e.name + ': ' + e.message); }} }}\n\
-         }}",
-        list(levels),
-        list(planted)
-    );
-    format!(
-        "interface D {{ a?: D; b?: D }}\n\
-         function diamond(levels: number): D {{\n\
-         let x: D = {{}};\n\
-         for (let i = 0; i < levels; i++) {{ x = {{ a: x, b: x }}; }}\n\
-         return x;\n\
-         }}\n\
-         function size(d: D | undefined): number {{ return d === undefined ? 1 : 1 + size(d.a) + size(d.b); }}\n\
-         function turn(): Promise<void> {{ return new Promise<void>((done) => {{ setTimeout(() => done(), 0); }}); }}\n{}",
-        guarded("/data/diamond.kv", &body)
-    )
-}
-
-/// What [`diamond_program`] logs: a diamond within the bound stores and
-/// reads back whole, one beyond it is refused by name before anything is
-/// stored; a planted one within the bound reads back, one beyond it is
-/// refused by name on read (by the classifier when only the absent fields
-/// take it past the bound, by the V8 reader far beyond it).
-fn diamond_logs(levels: &[usize], planted: &[usize]) -> Vec<String> {
-    let fits = |levels: usize| diamond_decoded(levels) <= varta_kv_codec::MAX_VALUE_NODES;
-    let mut logs = Vec::new();
-    for levels in levels {
-        if fits(*levels) {
-            logs.push(format!("set {levels}"));
-            logs.push(format!("get {levels} {}", diamond_decoded(*levels)));
-        } else {
-            logs.push(format!(
-                "{levels} TypeError: {}",
-                varta_kv_codec::too_expanded()
-            ));
-            logs.push(format!("get {levels} absent"));
-        }
-    }
-    for levels in planted {
-        logs.push(if fits(*levels) {
-            format!("planted {levels} {}", diamond_decoded(*levels))
-        } else {
-            format!(
-                "planted {levels} TypeError: KV value does not match the checked type: {}",
-                varta_kv_codec::too_expanded()
-            )
-        });
-    }
-    logs.push("done".into());
-    logs
-}
-
-/// A part shared within a value counts toward the extent bounds at every
-/// reach, on `set` and on `get`: a diamond just within the bound stores and
-/// reads back whole, the next one (a few dozen stored bytes) is refused by
-/// name; diamonds written by Deno or an earlier build read back within the
-/// bound and are refused by name beyond it, the far one without building
-/// it (before, a get of it ran past the turn deadline at about 1 GB).
-#[test]
-fn shared_parts_keep_the_value_bound_on_set_and_get() {
-    let tree = Tree::new();
-    let fits = diamond_fits();
-    assert!(diamond_decoded(fits) <= varta_kv_codec::MAX_VALUE_NODES);
-    assert!(diamond_decoded(fits + 1) > varta_kv_codec::MAX_VALUE_NODES);
-    let planted = [fits, fits + 1, FAR_DIAMOND];
-    let runtime = waiting_runtime();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut database = open_at(&tree, "/data/diamond.kv", true);
-    let mutations = planted
-        .iter()
-        .map(|levels| denokv_proto::Mutation {
-            key: denokv_proto::encode_key(&denokv_proto::Key(vec![
-                KeyPart::String("planted".into()),
-                KeyPart::String(levels.to_string()),
-            ]))
-            .unwrap(),
-            kind: MutationKind::Set(KvValue::V8(diamond_bytes(*levels))),
-            expire_at: None,
-        })
-        .collect();
-    assert!(
-        database
-            .commit(&runtime, deadline, Vec::new(), mutations)
-            .unwrap()
-            .is_some()
-    );
-    drop(database);
-    let mut grants = read_write();
-    grants.push(CapabilityGrant {
-        id: "time.timer".into(),
-        value: CapabilityValue::Boolean(true),
-    });
-    let levels = [fits, fits + 1];
-    assert_eq!(
-        run(&diamond_program(&levels, &planted), grants, tree.roots()),
-        diamond_logs(&levels, &planted)
     );
 }
 

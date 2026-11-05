@@ -54,26 +54,90 @@ pub const MAX_OPEN_DATABASES: usize = 8;
 pub const MAX_STAGED: usize = 2 * MAX_MUTATIONS + MAX_CHECKS;
 /// Encoded bytes staged at once (the largest commit's keys and values).
 pub const MAX_STAGED_BYTES: usize = MAX_TOTAL_MUTATION_BYTES + MAX_TOTAL_KEY_BYTES;
-/// Values one KV value decodes to: every stored value, a part shared within
-/// the value counted again at every reach (a read expands it), and the
-/// `undefined` of every absent optional field of its records. A `get` pays
-/// `fuel::JSON_PARSE_VALUE` for each, so the bound keeps the
-/// decode of the largest value within [`DECODE_FUEL_SHARE`] of a production
-/// v38 turn (`budget::TURN_FUEL`, asserted there). Deno KV, which keeps
-/// shared parts shared and has no fuel, has no such bound.
-pub const MAX_VALUE_NODES: usize = 2 * 1024;
-/// UTF-16 code units of text one KV value decodes to (its strings and
-/// property keys, an array-index key as its decimal digits), a shared part
-/// counted again at every reach: what a value without shared parts of
-/// [`MAX_VALUE_BYTES`] encoded bytes can hold (a Latin-1 code unit takes one
-/// byte), so sharing never makes a read build more text than an unshared
-/// value of the largest size.
-pub const MAX_VALUE_UNITS: usize = MAX_VALUE_BYTES;
-/// The share of a production v38 turn's fuel the decode of a KV value at
-/// [`MAX_VALUE_NODES`] may use: one half, leaving the other half to the read
-/// itself (its operation, entry and byte charges), the guest allocator that
-/// builds the result and the application.
-pub const DECODE_FUEL_SHARE: u64 = 2;
+/// The fewest bytes Deno's V8 serializer writes for one value: a tag alone
+/// (`null`, `undefined`, `true`, `false`); every other value takes a tag and
+/// more.
+pub const MIN_ENCODED_VALUE_BYTES: usize = 1;
+/// Values one KV value expands to: its stored values (an element, a
+/// property's value, a `Map` key or value, a `Set` value; not a hole), a
+/// part shared within the value (written once, then back-referenced)
+/// counted again at every reach, as a read builds it.
+///
+/// The bound only stops sharing-driven blow-up: a value without shared
+/// parts has at most one value per [`MIN_ENCODED_VALUE_BYTES`] of its at
+/// most [`MAX_VALUE_BYTES`] encoded bytes, so every value Deno stores
+/// without sharing is within it (asserted below), and an expanded value is
+/// never larger than an unshared value of the largest size. Deno KV, which
+/// keeps shared parts shared, has no such bound.
+pub const MAX_VALUE_NODES: usize = MAX_VALUE_BYTES / MIN_ENCODED_VALUE_BYTES;
+const _: () = assert!(MAX_VALUE_NODES * MIN_ENCODED_VALUE_BYTES >= MAX_VALUE_BYTES);
+
+/// The densest text an unshared encoded value carries: an array-index
+/// property key of nine decimal digits (at least `10^8`), which Deno writes
+/// as a number tag and a varint of four bytes, followed by its value of at
+/// least [`MIN_ENCODED_VALUE_BYTES`].
+pub const DENSEST_TEXT_UNITS: usize = 9;
+/// The encoded bytes of [`DENSEST_TEXT_UNITS`]: tag, varint and value.
+pub const DENSEST_TEXT_BYTES: usize = 6;
+/// UTF-16 code units of text one KV value expands to: the code units of
+/// its strings and of the property keys of its plain objects (an
+/// array-index key counted as its decimal digits), a shared part counted
+/// again at every reach.
+///
+/// Derivation: the most text a value without shared parts of
+/// [`MAX_VALUE_BYTES`] encoded bytes can carry, at the densest rate of any
+/// V8 form of text:
+/// - a Latin-1 (one-byte) string takes a tag, a length and one byte per
+///   code unit: at most one unit per byte;
+/// - a two-byte string takes two bytes per code unit: at most half a unit
+///   per byte (a UTF-8 string, which V8 still reads, at most one);
+/// - an array-index key of `d` digits takes a number tag (`I` with a
+///   zigzag varint, or `U` with a plain one, the shorter) and a varint of
+///   `ceil(bits / 7)` bytes, then its value: `d` units in
+///   `1 + varint + MIN_ENCODED_VALUE_BYTES` bytes, densest at nine digits
+///   (nine units in six bytes, three units per two bytes; asserted below
+///   for every digit count of a `u32` index).
+///
+/// So every value Deno stores without sharing is within the bound.
+pub const MAX_VALUE_UNITS: usize = MAX_VALUE_BYTES * DENSEST_TEXT_UNITS / DENSEST_TEXT_BYTES;
+
+/// The payload bits of one varint byte (V8's base-128 varints).
+const VARINT_PAYLOAD_BITS: u32 = 7;
+/// Decimal digits of the largest array index (`2^32 - 2`).
+const MAX_INDEX_DIGITS: u32 = 10;
+/// The decimal radix of an array-index key's text.
+const DECIMAL: u32 = 10;
+/// The tag byte of a number written as a property key.
+const KEY_TAG_BYTES: usize = 1;
+
+/// The fewest bytes of an array-index key of `digits` decimal digits and
+/// its value: the plain varint of the smallest such index (never longer
+/// than the zigzag varint of an `I` key).
+const fn index_key_bytes(digits: u32) -> usize {
+    let smallest = DECIMAL.pow(digits - 1);
+    // A varint of zero still takes one byte.
+    let bits = u32::BITS - smallest.leading_zeros();
+    let varint = if bits > 0 { bits } else { 1 }.div_ceil(VARINT_PAYLOAD_BITS) as usize;
+    KEY_TAG_BYTES + varint + MIN_ENCODED_VALUE_BYTES
+}
+
+/// Whether no form of text is denser than [`DENSEST_TEXT_UNITS`] in
+/// [`DENSEST_TEXT_BYTES`], and the densest form is that one.
+const fn densest_text_is_nine_digit_keys() -> bool {
+    // One-byte strings: one unit per byte.
+    if DENSEST_TEXT_BYTES > DENSEST_TEXT_UNITS {
+        return false;
+    }
+    let mut digits = 1;
+    while digits <= MAX_INDEX_DIGITS {
+        if digits as usize * DENSEST_TEXT_BYTES > DENSEST_TEXT_UNITS * index_key_bytes(digits) {
+            return false;
+        }
+        digits += 1;
+    }
+    index_key_bytes(DENSEST_TEXT_UNITS as u32) == DENSEST_TEXT_BYTES
+}
+const _: () = assert!(densest_text_is_nine_digit_keys());
 
 /// Deno KV's limits (`deno_kv::KvConfig` defaults of Deno 2.9.4).
 pub const MAX_WRITE_KEY_BYTES: usize = 2048;
@@ -333,6 +397,10 @@ pub mod codec {
     /// Host work stopped at the turn deadline.
     pub const DEADLINE: u32 = 3;
 
+    /// The value of a staged record: its encoding byte (one of Deno's
+    /// value encodings, `super::ENCODING_*`) and stored bytes, or this byte
+    /// and the text of why the value cannot be stored.
+    pub const VALUE_FAILURE: u8 = 0;
     /// The key of a staged record: encoded key bytes, or the text of why
     /// the value is no key.
     pub const KEY_BYTES: u8 = 0;
@@ -366,8 +434,17 @@ mod tests {
             assert_eq!(EntryField::from_code(field as u8), Some(field));
         }
         assert_eq!(StageMode::from_code(3), None);
+        for encoding in [ENCODING_V8, ENCODING_U64, ENCODING_BYTES] {
+            assert_ne!(encoding, i64::from(codec::VALUE_FAILURE));
+        }
         assert_eq!(MAX_READ_KEY_BYTES, 2049);
         assert_eq!(MAX_TOTAL_MUTATION_BYTES, 819_200);
+        // One value per encoded byte; three code units per two bytes.
+        assert_eq!(MAX_VALUE_NODES, 65_536);
+        assert_eq!(MAX_VALUE_UNITS, 98_304);
+        assert_eq!(index_key_bytes(1), 3);
+        assert_eq!(index_key_bytes(9), DENSEST_TEXT_BYTES);
+        assert_eq!(index_key_bytes(MAX_INDEX_DIGITS), 7);
         const { assert!(MAX_STAGED_BYTES <= crate::abi::MAX_MEMORY_BYTES) };
     }
 }
