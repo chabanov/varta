@@ -134,10 +134,14 @@ The shell is a host with a prompt seam for the runtime's permission broker
   to the current state, and use in `prompt` state is denied recoverably.
 - **The prompt** is a separate always-on-top host window (`Varta permission
   request`) drawn by `shell::consent::PromptLayer` with its own bitmap font:
-  capability, application identity and exact patterns first, the package's
-  `purpose` only as a marked quote, non-ASCII as `\u{...}` escapes. Deny has
-  focus; answers need a real press and release (or Enter/Space) after
-  `PROMPT_INPUT_DELAY`; Escape or closing the window dismisses. While it is
+  capability, application identity and every requested pattern in full
+  (paged, `RESOURCE_PAGE_LINES` per page; Allow stays disabled until every
+  page was shown), the package's `purpose` only as a marked quote, non-ASCII
+  as `\u{...}` escapes. A request needing more than `MAX_RESOURCE_LINES`
+  lines is never shown: it is denied and audited as `prompt-too-long`. Deny
+  has focus; answers need a real press and release (or Enter/Space) after
+  `PROMPT_INPUT_DELAY` (500 ms, owner decision); Escape or closing the window
+  dismisses. While it is
   open the application's window drops keys, IME, pointer and wheel input.
 - **Rate limits** are the broker's: at most `permission::MAX_OPEN_PROMPTS`
   open prompts and a stored denial after `permission::MAX_DISMISSALS`
@@ -145,7 +149,8 @@ The shell is a host with a prompt seam for the runtime's permission broker
 - **Revocation.** `--revoke CAPABILITY` stores a denial and exits; a running
   shell of the same artifact denies new operations of it once it rereads the
   decision file (checked between turns, at most once per
-  `consent::STORE_POLL_INTERVAL`).
+  `consent::STORE_POLL_INTERVAL`). Every writer of the decision file holds
+  the lock `permissions.lock`, so a revocation is never overwritten.
 - **Audit log.** `permission-audit.jsonl` in the same directory gets one
   JSON row per broker decision (sequence, time, source, operation, resource,
   outcome, artifact and run), rotated once at `MAX_AUDIT_LOG_BYTES`.

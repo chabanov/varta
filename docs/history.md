@@ -3466,12 +3466,31 @@ with a scripted decision provider and the new `consent-probe` fixture for
 first-run approval, refusal (stored or dismissed), gesture-only prompts,
 persisted allow and deny, revocation from outside and inside, two-request and
 dismissal rate limits, audit rows, the deadline and invalid decision files; a
-binary test for `--revoke`. Existing shell tests now check that no KV root is
-created instead of no directory, since every start writes the audit log.
+binary test for `--revoke`. Existing shell tests now check that host storage
+holds only the artifact's consent files (`consent::CONSENT_FILES`) instead of
+no directory, since every start writes the audit log.
 Scoped verification: `verify.py local varta-desktop`, `verify.py local
-varta-runtime --filter permission`, the runtime library and integration tests,
-the boundary tests, formatting and strict Clippy (desktop also with `gpu`,
-runtime). A manual run on the development Mac showed the first-run prompt
+varta-runtime --filter permission`, the boundary tests, formatting and strict
+Clippy (desktop also with `gpu`, runtime). The whole runtime library run had
+one load-induced wall-clock failure (`codegen_v2_tests` case corpus, passing
+alone), so cargo stopped before the runtime integration tests; those were run
+separately only by the review (112 passed). A manual run on the development Mac showed the first-run prompt
 window over the blank application window with no guest output, and a start
 with the required grant stored ran without a prompt; the gesture-triggered
 prompt was not clicked manually. No full gate was run for this package.
+
+Review fixes (same day). The prompt hid every pattern after one that did not
+fit its eight resource lines, so a long first pattern or a long `ui.open_url`
+link left nothing visible. It now shows every pattern in full on pages
+(`RESOURCE_PAGE_LINES`, first lines marked, "Next page", Page Down/Up), keeps
+Allow disabled until every page was shown and for `PROMPT_INPUT_DELAY` after
+the last one appeared, and never shows a request needing more than
+`MAX_RESOURCE_LINES`: the consent seam answers it Deny and audits a
+`prompt-too-long` row (layer tests: a 512-byte pattern of ASCII, Cyrillic and
+control characters, a grant's 64 patterns, a long non-ASCII URL; a window
+test; a shell test of the refusal and its row). Decision-file writers hold an
+advisory lock (`permissions.lock`), so `--revoke` and an instance's sync no
+longer lose updates; the worker syncs consent on every exit and the window
+waits up to `WORKER_EXIT_WAIT` for it; a guest title containing the prompt
+title is not applied. `PROMPT_INPUT_DELAY` = 500 ms was confirmed by the
+owner. The manual gesture-prompt acceptance remains unmet.

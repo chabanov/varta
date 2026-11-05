@@ -4617,7 +4617,11 @@ install time) as a plain-language list ("connect to https://api.example.com",
 "store data on this computer", "read the clipboard") and stores the user's decision
 as the host ceiling in the user's configuration directory. Denied requests stay
 denied at runtime with the usual status. Changing grants is an explicit settings
-action, never a prompt triggered by guest code.
+action, never a prompt triggered by guest code. *Superseded in part by the
+accepted [permission model](#permission-model) and the P10b shell
+status below:* user decisions are stored per artifact hash as stored decisions
+(not as the host ceiling, which stays separate), and an optional grant may be
+asked when guest code calls `request()` in a user-gesture turn.
 
 **Updates.** Later, and only with C3 provenance: a signed update manifest names the
 new payload hash and shell version; the shell verifies the signature and runs the
@@ -4703,14 +4707,20 @@ audit rows and the deadline; window unit tests show that a covering guest
 frame cannot reach an open prompt. On the development Mac the first-run
 prompt window appeared over the blank application window with no guest
 output, and a start with the required grant stored ran main without any
-prompt (`start prompt`, `start kv NotAllowedError`); the gesture-triggered
-prompt was not clicked manually (no UI automation was available), so that
-path rests on the headless trusted-click tests. Still open (owner
-decisions): "allow for this session", a cool-down and its value, the
-presentation of a refused required permission beyond the stderr message, the
-identity key before C3, and confirmation of the input delay value; also an
-accessible and dark-mode prompt, non-ASCII text in the prompt (escaped
-today) and non-macOS prompt windows.
+prompt (`start prompt`, `start kv NotAllowedError`). The manual acceptance
+of a gesture-triggered optional prompt in a live window is **not met**: it
+was never clicked (no UI automation was available), so that path rests only
+on the headless trusted-click tests. Review fixes: the prompt shows every
+requested pattern in full on pages and enables Allow only after every page
+was shown; a request that does not fit `consent::MAX_RESOURCE_LINES` is
+denied without a prompt and audited; decision-file writers hold a lock; the
+worker syncs consent on every exit; a guest cannot title its window like the
+prompt. `PROMPT_INPUT_DELAY` = 500 ms is an owner decision (2026-11-05).
+Still open (owner decisions): "allow for this session", a cool-down and its
+value, the presentation of a refused required permission beyond the stderr
+message and the identity key before C3; also an accessible and dark-mode
+prompt, non-ASCII text in the prompt (escaped today) and non-macOS prompt
+windows.
 
 #### Browser security model and honest guarantees
 

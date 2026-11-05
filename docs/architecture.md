@@ -15425,7 +15425,12 @@ decides; the shell stores, asks and audits.
   identity, is `ShellError::Decisions`, never an empty set. The decisions
   apply on every start, with or without a prompt (`Launch::start` too).
   Writes validate the file, go to a private (0600 on Unix) temporary file in
-  the same directory and are renamed over the old one.
+  the same directory and are renamed over the old one. Every
+  read-modify-write (an instance's sync, a refused start's answers,
+  `--revoke`) holds an exclusive advisory lock on `consent::LOCK_FILE` in the
+  same directory (`ConsentStore::locked`), so writers of one identity never
+  interleave. `consent::CONSENT_FILES` lists every file the store creates;
+  each name contains a `.`, so none can be a guest file root.
 - **First-run approval.** `Launch::start_with` with a prompter asks for each
   required grant within the request and the ceiling that has no stored
   decision, once, before instantiation; no guest code runs while the user
@@ -15446,22 +15451,46 @@ decides; the shell stores, asks and audits.
   while the event loop shows the question in a separate top-level window
   titled `Varta permission request`, always on top and not resizable; it is
   never an L0 node. Its content is `consent::PromptLayer`: the capability id,
-  the application identity and each exact requested pattern (the broker's own
-  description), then the package `purpose` as a quote marked by a bar, all
-  drawn with the layer's own 5x9 bitmap font, never with artifact fonts;
-  every character outside printable ASCII is shown as its `\u{...}` escape.
-  At most `consent::MAX_RESOURCE_LINES` resource lines and
-  `consent::MAX_QUOTE_LINES` quote lines are shown (further patterns are
-  counted, a longer quote is cut), so the Deny, Dismiss and Allow buttons keep
-  their place below the text. Deny has the initial focus; Tab and the arrow
-  keys move it, Enter and Space activate, Escape and the close button
-  dismiss. Apart from the close button, an answer needs a press and release
-  on the same button or a non-repeated, non-synthetic key, and such input
-  during the first `consent::PROMPT_INPUT_DELAY` after the window appears is
-  ignored, so a click or key meant for the application cannot answer it.
+  the application identity and every exact requested pattern in full (the
+  broker's own description), then the package `purpose` as a quote marked by
+  a bar, all drawn with the layer's own 5x9 bitmap font, never with artifact
+  fonts; every character outside printable ASCII is shown as its `\u{...}`
+  escape. A pattern is never cut or left out: patterns are hard-wrapped, the
+  first line of each is marked by a host square in the margin, and the
+  resource lines are paged, `consent::RESOURCE_PAGE_LINES` per page, with a
+  host page line ("Page N of M") and a "Next page" button (also Page Down and
+  Page Up). Allow is drawn disabled, cannot take focus and ignores presses and
+  keys until every page has been shown, and it answers only
+  `consent::PROMPT_INPUT_DELAY` after the last unseen page appeared; going
+  back from the first page to the last does not count the pages between.
+  Deny and Dismiss work on any page. A request whose resources need more than
+  `consent::MAX_RESOURCE_LINES` lines (`consent::MAX_RESOURCE_PAGES` pages)
+  is never shown (`consent::PromptTooLong`): the consent seam answers it Deny
+  without asking (stored like any Deny of a required or optional grant, whose
+  package request never changes; never stored for a `ui.open_url` link) and
+  appends an audit row with `refused` = `consent::UNPRESENTABLE_PROMPT`,
+  `operation`, `outcome` `denied`, `resource_lines` and
+  `max_resource_lines`; the window repeats the check and denies too. One
+  pattern of `MAX_PATTERN_BYTES` always fits, whatever its characters; as
+  many longest patterns as one grant holds, or a link URL near
+  `net::MAX_URL_BYTES`, do not. Only the advisory purpose quote is bounded:
+  at most `consent::MAX_QUOTE_LINES` lines, a longer quote is cut with a
+  visible `...`. The answer buttons keep their place below the text on every
+  page. Deny has the initial focus; Tab and the arrow keys move it among the
+  usable buttons, Enter and Space activate, Escape and the close button
+  dismiss. Apart from the close button, an answer or a page turn needs a
+  press and release on the same button or a non-repeated, non-synthetic key,
+  and such input during the first `consent::PROMPT_INPUT_DELAY` after the
+  window appears is ignored, so a click or key meant for the application
+  cannot answer it. `PROMPT_INPUT_DELAY` is 500 ms (owner decision,
+  2026-11-05).
 - **Isolation from the guest.** The guest's frame, nodes, styles, fonts and
   title are not inputs of the prompt layer, and the prompt window is a
-  separate surface, so guest content cannot paint over it. While a prompt is
+  separate surface, so guest content cannot paint over it. A guest title
+  containing `Varta permission request` (in any ASCII case) is not applied:
+  the application's window keeps the host's default title. A lookalike title
+  made of other characters remains possible; the prompt is identified as the
+  shell's only always-on-top window, not by its title alone. While a prompt is
   open the application's window drops user input (keys, IME, pointer buttons
   and motion, wheel, touch) instead of sending it to the guest, a press begun
   there never completes as a click, the guest's pointer leaves, and focusing
@@ -15485,7 +15514,9 @@ decides; the shell stores, asks and audits.
   answer, and wins over it. A denial stored
   from outside revokes the grant for new operations (operations already
   authorized keep running) and wins over a concurrent answer in the
-  instance. An allow stored from outside applies only to later starts. A
+  instance: the instance's reread and write hold the store lock, so it sees
+  a revocation stored before its write and never writes over it, and a
+  revocation stored after its write is seen at the next sync. An allow stored from outside applies only to later starts. A
   revocation inside the instance (`Application::revoke`) is stored at the
   next sync.
 - **Audit log.** `Consent::sync` appends every new entry of the broker's
@@ -15500,13 +15531,17 @@ decides; the shell stores, asks and audits.
   next rows. The guest can neither read nor write it. Every start of a
   packaged application writes its start decisions, so the per-artifact
   directory exists after any start. A failed write ends the session with an
-  error (fail closed); entries of turns after the last sync before the window
-  closes are not written.
+  error (fail closed). The worker syncs once more on every exit (a closed
+  window, a failed turn, a host error; after a failure the failure is
+  reported, not a sync error). Once the event loop ends, the worker runs no
+  new turn, any open prompt is dismissed, and the window waits up to
+  `WORKER_EXIT_WAIT` (1 s) for that final sync; a turn still running after
+  it is not waited for, and its entries are then lost.
 - **Open points (owner decisions, not implemented).** "Allow for this
   session", a cool-down after refusals and its value, how a refused required
   permission is presented beyond the stderr message, and the identity key
-  before C3 provenance. The value of `consent::PROMPT_INPUT_DELAY` is the
-  shell's own choice and awaits confirmation. The prompt window has no
+  before C3 provenance. (`consent::PROMPT_INPUT_DELAY` = 500 ms was
+  confirmed by the owner on 2026-11-05.) The prompt window has no
   AccessKit tree, follows no dark appearance and draws only printable ASCII
   (other characters as escapes); `PermissionPrompt` does not say whether a
   `ui.open_url` prompt is a one-time activation, so the native prompt uses
