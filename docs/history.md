@@ -3472,4 +3472,13 @@ against a 2 s bound (a few milliseconds each locally; the regex needed 4.0 s for
 32,769-code-unit run and 23.3 s for 65,536 under Node). A review gate run also
 failed once at `test-browser-navigation.mjs` with `ENOTEMPTY` while removing the
 Chrome profile; `scripts/browser-probe.mjs` now waits for the killed Chrome and
-retries the removal.
+retries the removal. With both fixes on `9fb24a9`, three whole gate runs at
+starting load averages of about 94, 63 and 15 passed all 34 commands (no skips,
+no known gaps; oracle suite 7 then 11 tests, execution matrix 75/0, integrity
+15/0, dev matrix 9/0, the variables driver with 23 fixtures, 253 computed-style
+and 34 live observations in Chrome, Firefox and WebKit, and the variable bundle
+in all three), and the Firefox variables selection passed 5 of 5 standalone
+runs, two of them beside 30 spinning threads. An earlier run on `cdcd08b` was
+void: a documentation edit changed the source during it, and at a load average
+above 100 one WebKit execution-matrix case hit the browser execution deadline.
+No CI run has been observed.
