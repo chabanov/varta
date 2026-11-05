@@ -281,3 +281,92 @@ fn ink_gaps_respect_script_runs_hanging_whitespace_and_device_clip_edges() {
         "hard physical cutout edge"
     );
 }
+/// Pixel rows of the underline on each 24px line of the 20px fixture.
+const UNDERLINE_ROWS: [[u32; 2]; 2] = [[19, 20], [43, 44]];
+/// The fixture's `A` and space advance, and its first tab stop (eight spaces).
+const CELL: u32 = 8;
+const TAB_STOP: u32 = 8 * CELL;
+/// `setup`'s flow with preserved white space: `pre` is the user-agent mode of
+/// a `pre` element, so that root is a margin-free `pre`.
+fn preserved(text: &str, white_space: &str, rich: bool) -> B {
+    let mut b = B::new();
+    if white_space == "pre" {
+        b.create_element(2, Tag::Pre).set_style(2, P::Margin, "0");
+    } else {
+        b.create_element(2, Tag::Div)
+            .set_style(2, P::WhiteSpace, white_space);
+    }
+    b.set_style(1, P::BackgroundColor, "#ffffff")
+        .insert(1, 2, 0)
+        .set_style(2, P::Width, "80px")
+        .set_style(2, P::FontFamily, "\"Varta Decoration Fixture\"")
+        .set_style(2, P::FontSize, "20px")
+        .set_style(2, P::LineHeight, "24px")
+        .set_style(2, P::Color, "#ff0000")
+        .set_style(2, P::TextDecoration, "underline");
+    if rich {
+        b.create_element(3, Tag::Span).insert(2, 3, 0);
+    }
+    b.create_text(4, text)
+        .insert(if rich { 3 } else { 2 }, 4, 0);
+    b
+}
+fn assert_row(
+    image: &varta_view::RasterImage,
+    line: usize,
+    // Half-open `[start, end)` pixel spans that are underlined.
+    red: &[(u32, u32)],
+    end: u32,
+    case: &str,
+) {
+    for y in UNDERLINE_ROWS[line] {
+        for x in 0..end {
+            let expected = if red.iter().any(|&(start, stop)| (start..stop).contains(&x)) {
+                RED
+            } else {
+                WHITE
+            };
+            assert_eq!(pixel(image, x, y), expected, "{case} line {line} {x}/{y}");
+        }
+    }
+}
+#[test]
+fn underline_skips_preserved_tabs_but_keeps_preserved_spaces() {
+    // Chrome decorates text fragments only, and a preserved tab is a control
+    // item of its own: its advance is never underlined, inside a line or
+    // hanging at its end, while preserved spaces are.
+    for white_space in ["pre", "pre-wrap"] {
+        for rich in [false, true] {
+            let image = render(&view(preserved("A\tA\nA \t", white_space, rich)));
+            let case = format!("{white_space} rich{rich}");
+            assert_row(
+                &image,
+                0,
+                &[(0, CELL), (TAB_STOP, TAB_STOP + CELL)],
+                80,
+                &case,
+            );
+            assert_row(&image, 1, &[(0, 2 * CELL)], 80, &case);
+        }
+    }
+}
+#[test]
+fn plain_preserved_trailing_spaces_keep_underline_and_hits() {
+    // The text overflows its 8px block, so only the text fragment, not the
+    // block, can answer a hit over the trailing spaces.
+    for white_space in ["pre", "pre-wrap"] {
+        let mut b = preserved("A   \nA    ", white_space, false);
+        b.set_style(2, P::Width, "8px");
+        let image = render(&view(b));
+        assert_row(&image, 0, &[(0, 4 * CELL)], 48, white_space);
+        assert_row(&image, 1, &[(0, 5 * CELL)], 48, white_space);
+        for (x, y) in [(3 * CELL, 10), (4 * CELL + CELL / 2, 34)] {
+            assert_eq!(
+                image.hit_test(x as f32 + 0.5, y as f32),
+                Some(2),
+                "{white_space} hit {x}/{y}"
+            );
+        }
+        assert_eq!(image.hit_test((5 * CELL) as f32 + 0.5, 34.0), None);
+    }
+}

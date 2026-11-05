@@ -11907,9 +11907,9 @@ size. Symbols, supplementary scalars, combining marks, bidirectional runs and
 Unicode line breaking use the same bounded shaper as fields. NUL is rejected
 by the view protocol; other control characters except TAB/LF/CR/FF are rejected
 by native text layout. The general 64 KiB UTF-8 source allowance still applies.
-Supported `white-space` modes include `normal`, `nowrap`, a `pre-wrap` subset and
-the user-agent `pre` of `<pre>` (below); tabs and leading/trailing line spaces in
-`pre-wrap` are rejected. Pixel/rem/percentage
+Supported `white-space` modes are `normal`, `nowrap`, `pre-wrap` and the
+user-agent `pre` of `<pre>` (below); preserved tabs and spaces follow
+[native preserved white space](#native-preserved-white-space). Pixel/rem/percentage
 font sizes, supported weights/styles, and normal, numeric, pixel/rem or percentage line heights inherit along
 the element tree. A CSS family list resolves against the supplied fonts; an
 unmapped generic family before a match is rejected. The embedding host may
@@ -12107,6 +12107,62 @@ therefore hits the block even where an earlier line's decorated fragment
 overlaps it, while a point inside a later fragment's rectangle (even outside its
 curve) or beyond the line's contents still reaches earlier fragments.
 
+#### Native preserved white space
+
+Each text node keeps its own inherited `white-space` mode inside one inline
+flow, so collapsing (`normal`, `nowrap`) and preserving (`pre-wrap`, `pre`)
+nodes mix. Collapsible spaces collapse across node boundaries as before; one
+following a preserved space is kept, as in CSS Text 3. Min-content honours each
+node's own mode, so a wrapping node inside a `pre` or `nowrap` root wraps at
+every opportunity it owns. A flow whose preserved
+text holds a tab, or a preserved space next to other white space or before a
+newline or the end of the text, is shaped and broken by `text::whitespace`;
+every other flow keeps Parley's own line breaking. Field display is unchanged.
+
+- A preserved tab shapes as a space in its own run and advances to the next tab
+  stop at `tab-size: 8`: eight space advances of the flow root's (block
+  container's) font, measured from the start of its line, whatever the tab's
+  own font or size, as in Chrome. A stop closer than half of that space is
+  skipped (Blink's `Font::TabWidth`). Because stops depend on where lines
+  break, the flow is reshaped until every tab's advance agrees with the stop
+  computed from its final line; a flow that does not agree within the bounded
+  number of passes is refused.
+- At a soft wrap a whole run of preserved spaces and tabs hangs past the line
+  end, and the next line starts after it; a forced break that follows the run
+  stays on its line. Parley alone hangs only the first overflowing space, so
+  such a line is broken again with an advance that admits the whole run, and
+  Parley's own break opportunities end it.
+- A line's width excludes the white space that hangs at a soft wrap and
+  collapsible spaces at its end. Before a forced break or the end of the text,
+  `pre-wrap` spaces conditionally hang: they count while they fit, fully in
+  max-content and not in min-content; `pre` spaces always count. Center and
+  right alignment use these widths; a soft-wrapped line's hanging run is
+  excluded, as in Chrome.
+- Inline fragments, hits and underlines keep preserved spaces, including
+  hanging ones and the trailing spaces of a plain `pre` or `pre-wrap` text
+  node, and drop collapsible spaces at a line end. As in Chrome, where a
+  preserved tab is a control item without a text fragment, underlines skip
+  each tab's whole advance, inside a line or at its end, on plain and rich
+  flows.
+
+The model is logical-order only: a flow on this path with a right-to-left run
+or base direction is refused, as is a `text-overflow: ellipsis` root on it.
+Preserved tabs per shaping request are bounded (`MAX_PRESERVED_TABS`), because
+each is its own styled run. The line breaker is driven through Parley's public
+API (per-line advances and reverts) plus one hidden hook:
+`BreakLines::set_prior_line_width`, `#[doc(hidden)]` in the vendored Parley,
+sets the width center/right alignment uses for each re-broken line. Every
+realized line is checked against the line the model located; any disagreement
+refuses the layout, with the flow's node (a rich flow's root, a plain text
+node's parent element) as an unsupported-content error,
+instead of painting a different one. The extra breaking work is charged to the view
+request's shaping-operation allowance and repaid by cached results. Min-content
+reuses the final lines' tab advances, so a tab that cannot end a min-content
+line (before a character that admits no break) is not re-stopped. Chrome breaks
+before a closing bracket that follows spaces, which Parley's Unicode line
+breaking does not; that difference predates this model and applies to every
+`white-space` mode.
+
 #### Native structure and user-agent defaults
 
 Native layout admits `h1`–`h3`,
@@ -12151,9 +12207,9 @@ descendant percentages keep deriving from the unclamped specified size: with
 `> span { font-size: 200% }` at 16px and `p { font-size: 50% }` keeps 8px
 margins, while `div { font-size: 8px } > span` stays 8px.
 
-`white-space: pre` preserves spaces and forced breaks and never wraps softly;
-leading indentation is measured exactly, while tabs and trailing line spaces
-(not modeled) are refused, as for `pre-wrap`. A `li` whose display is the
+`white-space: pre` preserves spaces, tabs and forced breaks and never wraps
+softly; tabs advance to tab stops and trailing spaces count in the line's width
+([native preserved white space](#native-preserved-white-space)). A `li` whose display is the
 user-agent `list-item` paints an outside marker: `ul` items a disc, a `ul`
 inside one list a circle and inside two or more a square, `ol` items `N. ` with
 the `list-item` counter over rendered sibling items. Symbols follow Blink's

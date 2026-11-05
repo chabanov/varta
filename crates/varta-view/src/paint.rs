@@ -2447,8 +2447,9 @@ fn rasterize_inner_scoped(
                     x: bounds.rect.x + metrics.offset + metrics.inline_min_coord,
                     y: bounds.rect.y + metrics.baseline + paragraph_baseline_offset(metrics)
                         - metrics.ascent.round(),
+                    // Preserved trailing spaces stay in the text fragment.
                     width: metrics.advance
-                        - if shape.options.white_space == WhiteSpaceMode::PreWrap {
+                        - if shape.options.white_space.preserves() {
                             0.0
                         } else {
                             metrics.trailing_whitespace

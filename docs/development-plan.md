@@ -35,6 +35,7 @@ ECMAScript, Node or npm compatibility.
 | Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
 | Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. The console view still stops at the button/textarea control-box rules (nodes 16/12); its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
+| Native white space | Wave-2 package `w2-native-whitespace` (scoped, not merged): native `pre-wrap`/`pre` tab stops at `tab-size: 8`, preserved, hanging and conditionally hanging spaces, and mixed `white-space` modes in one inline flow, checked against Chrome at 1×, 1.25× and 2× ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). Bidi text on that path, `text-overflow: ellipsis` with it and a `tab-size` property remain open |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
@@ -537,6 +538,75 @@ the loopback `/gate` route answers once the server holds `/held`, and the
 checks read the order of the server's trace, keeping only the close-to-wake
 margin as wall time. The `server_tests::cancellation` disconnect checks
 (all v2) now require the next request to be served, with no 503.
+
+### Native preserved white space — wave-2 package `w2-native-whitespace`, scoped 2026-11-04
+
+Branch `wave2/w2-native-whitespace` (on `4fce278`) replaces the refusals of
+`pre-wrap`/`pre` tabs and leading/trailing line spaces, and of text nodes whose
+`white-space` mode differs from their flow root, with the
+[native preserved white space](architecture.md#native-preserved-white-space)
+model in `varta-view` (`text::whitespace`; inline flow changes in `inline.rs`).
+Flows without such preserved text keep Parley's breaking unchanged.
+
+Scoped results: `python3 scripts/verify.py local varta-view` passes (lib 124,
+integration 346); `cargo clippy -p varta-view --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` pass. The new `native_whitespace_probe` (12 cases:
+tab stops and a skipped near stop, preserved, hanging and conditionally hanging
+spaces and tabs, wrapping at the right edge, mixed modes in both directions,
+`pre` and `pre-wrap` shrink-to-fit and min-content, center alignment) passes
+`scripts/test-native-inline.mjs` with **10636 checks** at each of 1×, 1.25× and
+2×, maximum ROI RGB mean 1.052/1.627/1.071 under the 2/255 bound.
+`native_structure_probe` (its `pre` case now takes the new path) passes 51181
+checks per scale; `native_paragraph_probe` 81 and `native_fields_probe` 28 pass.
+`native_inline_probe` still stops at the documented pre-existing
+`paint-overlap-hits` case with unchanged means 5.39/3.94/5.37; without that case
+it passes 9927 (1×) and 4227 (1.25×, 2× decorations) checks. Chrome 156.0.8078.80
+on macOS arm64; the probe's JSON goes to the existing inline oracle:
+
+```sh
+cargo run -p varta-view --example native_whitespace_probe --locked -- 1.25 > target/native-whitespace-125.json
+node scripts/test-native-inline.mjs target/native-whitespace-125.json
+```
+
+Open: right-to-left runs on this path are refused; ellipsis roots whose text
+needs it are refused; the L0 grammar has no `tab-size` (tabs always use 8);
+min-content keeps the final lines' tab advances for a tab that cannot end a
+line. Chrome breaks before a closing bracket after spaces in every mode, which
+Parley's line breaking does not (pre-existing, observed in Chrome 156 only).
+Two integration tests that asserted the old refusals (`paragraphs.rs`,
+`structure.rs`) now assert the laid-out lines.
+
+Review fixes (scoped, 2026-11-05): tab stops use the flow root's space advance
+whatever the tab's own font size; a wrapping node inside a `pre`/`nowrap` root
+wraps at min-content on Parley's path too; underlines and hit fragments keep
+trailing `pre` spaces on the plain-text paint path; the model's refusals become
+`LayoutError::Unsupported` with the flow's node. Five new probe cases
+(`tab-small-span`, `tab-mixed-spans`, `pre-normal-span-min-content`,
+`nowrap-normal-span-min-content`, `pre-underline-trailing`) fail against the
+unfixed code and pass now: the probe's 17 cases give **15150 checks** at each of
+1×, 1.25× and 2×, maximum ROI RGB mean unchanged at 1.052/1.627/1.071. Structure
+(51181 per scale) and paragraph (81) oracles pass; the inline oracle again stops
+only at `paint-overlap-hits` (mean 5.39) and passes 9927 checks without it. A
+ligature that joins text from two elements (the fixture's `AA`) gives the later
+element a zero-width line fragment, which the native element box includes and
+Chrome's `getBoundingClientRect` does not. The difference is independent of
+`white-space`: it also occurs with a `normal` root and a `normal` span, on
+Parley's own path; the fixtures avoid it.
+
+Second review fixes (scoped, 2026-11-05): underlines skip preserved tabs,
+which Chrome never decorates, on the plain and rich paths, and keep trailing
+preserved spaces; every refusal of a plain text flow, including Taffy
+measurement, names its parent element. Native tests cover both underline
+rules and the plain `pre`/`pre-wrap` trailing-space underline and hit
+fragment. Four probe cases (`pre-underline-tab`,
+`pre-underline-trailing-tab`, `pre-wrap-underline-tab`,
+`pre-underline-tab-rich`) each fail against the unfixed code at 1× (RGB
+means 4.096, 5.363, 5.495, 9.065) and pass now: 21 cases, **18753 checks** at
+each of 1×, 1.25× and 2×, maximum ROI RGB mean unchanged at 1.052/1.627/1.071.
+Structure (51181 per scale) and paragraph (81) oracles pass; the inline oracle
+stops only at `paint-overlap-hits` (mean 5.39) and passes 9927 checks without
+it. A paint-time reshaping failure of a plain text node still reports a text
+error without a node.
 
 ### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
 

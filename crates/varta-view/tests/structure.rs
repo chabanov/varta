@@ -251,15 +251,16 @@ fn pre_preserves_lines_and_resolves_the_monospace_face() {
     b.set_style(3, P::FontFamily, "\"Varta Structure Fixture\"");
     let g = boxes(&view(&b), &mut font());
     assert_eq!(g[&3].height, 10.0);
-    // Tabs and trailing spaces are not modeled and are refused.
-    for text in ["A\tB", "A \nB"] {
+    // Tabs and trailing spaces are laid out natively (`text::whitespace`):
+    // neither adds a line.
+    for (text, lines) in [("A\tB", 1.0), ("A \nB", 2.0)] {
         let mut b = base("200px");
         add(&mut b, 2, 3, Tag::Pre, text);
         b.set_style(3, P::FontFamily, "\"Varta Structure Fixture\"");
-        assert!(matches!(
-            view(&b).layout_boxes_with_text(200.0, 200.0, &mut font(), HOST_SIZE),
-            Err(LayoutError::Unsupported(_))
-        ));
+        let g = view(&b)
+            .layout_boxes_with_text(200.0, 200.0, &mut font(), HOST_SIZE)
+            .unwrap();
+        assert_eq!(g[&3].height, lines * 10.0, "{text:?}");
     }
 }
 

@@ -125,17 +125,19 @@ fn unicode_paragraphs_wrap_without_losing_css_whitespace_rules() {
         view.rasterize_scaled(320, 240, 2.0, Some((&mut font, 20.0)))
             .unwrap();
     }
-    for text in ["↑\u{0007}", "↑\u{0085}", "\t↑", "↑ "] {
-        let whitespace = if text.starts_with('\t') || text.ends_with(' ') {
-            "pre-wrap"
-        } else {
-            "normal"
-        };
+    for text in ["↑\u{0007}", "↑\u{0085}"] {
         assert!(matches!(
-            paragraph(text, "block", whitespace, 120)
+            paragraph(text, "block", "normal", 120)
                 .layout_boxes_with_text(160.0, 80.0, &mut font, 20.0),
             Err(LayoutError::Unsupported(3))
         ));
+    }
+    // A preserved tab and trailing space are laid out on their one line.
+    for text in ["\t↑", "↑ "] {
+        let rects = paragraph(text, "block", "pre-wrap", 120)
+            .layout_boxes_with_text(160.0, 80.0, &mut font, 20.0)
+            .unwrap();
+        assert_eq!(rects[&2].height, 20.0, "{text:?}");
     }
     // NUL is rejected earlier, while decoding the transaction itself.
     let mut view = paragraph("↑", "block", "normal", 120);

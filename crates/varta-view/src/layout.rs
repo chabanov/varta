@@ -239,6 +239,18 @@ pub enum LayoutError {
     Text(String),
 }
 
+impl LayoutError {
+    /// A text measurement failure on `node`. Text the native white-space
+    /// model does not reproduce is refused like other unsupported content,
+    /// keeping the node; other failures stay measurement errors.
+    pub(crate) fn text(node: u32) -> impl Fn(crate::TextMeasureError) -> Self {
+        move |error| match error {
+            crate::TextMeasureError::Unsupported => Self::Unsupported(node),
+            error => Self::Text(error.to_string()),
+        }
+    }
+}
+
 fn factor(value: &str) -> Option<f32> {
     let number: f32 = value.parse().ok()?;
     (number.is_finite() && (0.0..=1000.0).contains(&number)).then_some(number)
@@ -1611,7 +1623,7 @@ fn geometry_and_text_inner(
             options.source = TextSource::Field;
             let measured = measurer
                 .measure_styled(&text, None, &families, options)
-                .map_err(|error| LayoutError::Text(error.to_string()))?;
+                .map_err(LayoutError::text(id))?;
             metrics.insert(
                 id,
                 TextShape {
@@ -1672,9 +1684,11 @@ fn geometry_and_text_inner(
             if text.is_empty() {
                 return Err(LayoutError::Unsupported(id));
             }
+            // Every refusal of a plain text flow names its flow's node, the
+            // parent element, as the alignment refusal below does.
             let (measured, shaped) = measurer
                 .shape_styled(&text, None, &families, options)
-                .map_err(|e| LayoutError::Text(e.to_string()))?;
+                .map_err(LayoutError::text(parent))?;
             if !alignment_admitted(&shaped, options) {
                 return Err(LayoutError::Unsupported(parent));
             }
@@ -1702,6 +1716,15 @@ fn geometry_and_text_inner(
     )?;
     let frames = crate::inline::frames(&mut boxes, &metrics, measurer)?;
     Ok((boxes, metrics, frames))
+}
+
+/// The node that owns `id`'s inline flow: a text node's parent element, or
+/// the element itself.
+fn flow_node(tree: &Tree, id: u32) -> u32 {
+    match tree.nodes.get(&id) {
+        Some(node) if matches!(node.content, Content::Text(_)) => node.parent.unwrap_or(id),
+        _ => id,
+    }
 }
 
 fn boxes_inner(
@@ -1758,6 +1781,12 @@ fn boxes_inner(
     }
     let mut measurement_error = None;
     let mut measured_bytes = 0usize;
+    // Measurement contexts carry no node id; a refusal reports its flow's
+    // node: a rich flow's root, or a plain text node's parent element.
+    let owners: BTreeMap<u64, u32> = ids
+        .iter()
+        .map(|(&id, &node)| (u64::from(node), flow_node(tree, id)))
+        .collect();
     engine
         .compute_layout_with_measure(
             root,
@@ -1765,7 +1794,7 @@ fn boxes_inner(
                 width: AvailableSpace::Definite(width),
                 height: AvailableSpace::Definite(height),
             },
-            |inputs, _, context, style| {
+            |inputs, node, context, style| {
                 taffy::compute_leaf_layout(
                     inputs,
                     style,
@@ -1801,13 +1830,18 @@ fn boxes_inner(
                         });
                         measured_bytes = measured_bytes.saturating_add(shape.text.len());
                         let measured = if measured_bytes > 8 * 1024 * 1024 {
-                            measurement_error = Some("text shaping work limit exceeded".to_owned());
+                            measurement_error = Some(LayoutError::Text(
+                                "text shaping work limit exceeded".to_owned(),
+                            ));
                             shape.metrics
                         } else if let Some(measurer) = text_input.as_mut() {
                             match shape.measure(measurer, Some(target.clamp(0.01, 1_000_000.0))) {
                                 Ok(metrics) => metrics,
                                 Err(error) => {
-                                    measurement_error = Some(error.to_string());
+                                    measurement_error = Some(match owners.get(&u64::from(node)) {
+                                        Some(&owner) => LayoutError::text(owner)(error),
+                                        None => LayoutError::Text(error.to_string()),
+                                    });
                                     shape.metrics
                                 }
                             }
@@ -1832,7 +1866,7 @@ fn boxes_inner(
         )
         .map_err(|e| LayoutError::Engine(e.to_string()))?;
     if let Some(error) = measurement_error {
-        return Err(LayoutError::Text(error));
+        return Err(error);
     }
     let mut result = BTreeMap::new();
     let viewport = BoxRect {

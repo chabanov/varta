@@ -72,6 +72,38 @@ pub(crate) struct ContentFlow {
     /// `text-overflow: ellipsis` truncates the root's single line.
     ellipsis: bool,
 }
+/// Per-byte white-space preservation of a flow's text nodes.
+enum Preserved {
+    Uniform(bool),
+    Mixed(Vec<bool>),
+}
+impl Preserved {
+    /// Empty spans keep their creation offset, so ranges are filled rather
+    /// than searched.
+    fn new(text: &str, spans: &[TextSpan], root: WhiteSpaceMode) -> Self {
+        let mut modes = spans
+            .iter()
+            .filter(|span| !span.range.is_empty())
+            .map(|span| span.options.white_space.preserves());
+        let first = modes.next().unwrap_or(root.preserves());
+        if modes.all(|value| value == first) {
+            return Self::Uniform(first);
+        }
+        let mut bytes = vec![root.preserves(); text.len()];
+        for span in spans {
+            if let Some(target) = bytes.get_mut(span.range.clone()) {
+                target.fill(span.options.white_space.preserves());
+            }
+        }
+        Self::Mixed(bytes)
+    }
+    fn at(&self, byte: usize) -> bool {
+        match self {
+            Self::Uniform(value) => *value,
+            Self::Mixed(bytes) => bytes.get(byte).copied().unwrap_or(false),
+        }
+    }
+}
 #[derive(Clone, Copy)]
 struct Horizontal {
     margin: [f32; 2],
@@ -446,7 +478,7 @@ pub(crate) fn collect(
                 let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
                 let (_, sample) = measurer
                     .shape_styled(" ", None, &names, style)
-                    .map_err(|e| LayoutError::Text(e.to_string()))?;
+                    .map_err(LayoutError::text(id))?;
                 if let Some(run) = sample.lines().next().and_then(|line| line.runs().next()) {
                     font_boxes.insert(
                         id,
@@ -497,10 +529,9 @@ pub(crate) fn collect(
             Content::Text(value) => value,
         };
         inventory.text(source.len())?;
+        // Each text node keeps its own white-space mode: collapsing and
+        // preserving modes mix in one flow, as CSS Text 3 defines.
         let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
-        if style.white_space.preserves() != options.white_space.preserves() {
-            return Err(LayoutError::Unsupported(id));
-        }
         let index = spans.len();
         spans.push(TextSpan {
             owner: id,
@@ -545,7 +576,8 @@ pub(crate) fn collect(
             append(&mut text, &mut spans, index, ch)?;
         }
     }
-    if !preserved_text_admitted(&text, options.white_space) {
+    // Every tab left after collapsing is preserved.
+    if !crate::text::whitespace::tabs_admitted(&text) {
         return Err(LayoutError::Unsupported(root));
     }
     let strut = if text.is_empty() && edges.is_empty() {
@@ -553,7 +585,7 @@ pub(crate) fn collect(
     } else {
         let (_, layout) = measurer
             .shape_styled(" ", None, &families, options)
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(root))?;
         if let Some(run) = layout.lines().next().and_then(|line| line.runs().next()) {
             font_boxes.insert(
                 root,
@@ -618,7 +650,7 @@ pub(crate) fn collect(
     {
         let shaped = rich
             .shape(&shape, measurer, None)
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(root))?;
         // Decoration edges are placed in logical order. Bidi reordering of
         // a decorated box's fragments is not admitted yet.
         if shaped
@@ -633,13 +665,21 @@ pub(crate) fn collect(
     } else if let Some(rich) = &shape.rich {
         let shaped = rich
             .shape(&shape, measurer, None)
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(root))?;
         if !layout::alignment_admitted(&shaped.layout, shape.options) {
             return Err(LayoutError::Unsupported(root));
         }
         shape.metrics = shaped.metrics;
     }
     ellipsis::admitted(root, &shape)?;
+    // Truncation measures the untruncated line by Parley's trailing white
+    // space, not by the native white-space model's extents.
+    if ellipsis
+        && let Some(rich) = &shape.rich
+        && crate::text::whitespace::native(&shape.text, shape.options, &rich.spans)
+    {
+        return Err(LayoutError::Unsupported(root));
+    }
     Ok(Some(shape))
 }
 
@@ -675,24 +715,12 @@ fn edge(
     Ok(())
 }
 
-/// Preserved white space the native line model reproduces. Tab stops are not
-/// modeled. `pre-wrap` hangs edge spaces at soft breaks, which are refused;
-/// `pre` lines never break softly, so leading indentation is exact, while
-/// trailing spaces (part of the line's width in CSS but hung by the shaper)
-/// are refused.
+/// Preserved white space the native line model reproduces: tab stops,
+/// hanging and conditionally hanging spaces and `pre` trailing spaces are
+/// modeled by `text::whitespace`. Only the number of preserved tabs, each
+/// shaped as its own run, is bounded.
 pub(crate) fn preserved_text_admitted(text: &str, mode: WhiteSpaceMode) -> bool {
-    match mode {
-        WhiteSpaceMode::Normal | WhiteSpaceMode::NoWrap => true,
-        WhiteSpaceMode::PreWrap => {
-            !text.contains('\t')
-                && !text
-                    .lines()
-                    .any(|line| line.starts_with(' ') || line.ends_with(' '))
-        }
-        WhiteSpaceMode::Pre => {
-            !text.contains('\t') && !text.lines().any(|line| line.ends_with(' '))
-        }
-    }
+    !mode.preserves() || crate::text::whitespace::tabs_admitted(text)
 }
 
 fn append(
@@ -808,16 +836,27 @@ impl ContentFlow {
             left: fragments_left,
         };
         let mut glyph_owners = Vec::new();
+        let preserved = Preserved::new(&source.text, &self.spans, source.options.white_space);
+        if matches!(preserved, Preserved::Mixed(_)) {
+            measurer
+                .charge_inline_work(self.spans.len())
+                .map_err(|_| LayoutError::Limit)?;
+        }
         for (index, line) in shaped.layout.lines().enumerate() {
             let mut line_owners = Vec::new();
             let range = line.text_range();
-            // Parley hangs break spaces beyond the line's advance. CSS normal
-            // whitespace removes those spaces from inline fragments and hits.
-            let trimmed_end = if source.options.white_space.preserves() {
-                range.end
-            } else {
-                range.start + source.text[range].trim_end_matches([' ', '\n']).len()
-            };
+            // Parley hangs break spaces beyond the line's advance. CSS removes
+            // collapsible spaces at a line end from inline fragments and hits;
+            // preserved spaces keep their (hanging) advance. The scan stays
+            // within the line's clusters, which are charged below.
+            let mut trimmed_end = range.end;
+            for (offset, ch) in source.text[range.clone()].char_indices().rev() {
+                let byte = range.start + offset;
+                if !matches!(ch, ' ' | '\n') || preserved.at(byte) {
+                    break;
+                }
+                trimmed_end = byte;
+            }
             let mut x = line.metrics().offset + line.metrics().inline_min_coord;
             let top = bounds.rect.y + line.metrics().baseline + shaped.offsets[index];
             for item in line.items_unpositioned() {
@@ -1090,7 +1129,7 @@ pub(crate) fn frames(
         };
         let shaped = rich
             .shape(shape, measurer, Some(rect.width.clamp(0.01, 1_000_000.0)))
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(id))?;
         let mut frame = rich.project(shaped, shape, bounds, measurer, &mut fragments_left)?;
         if rich.ellipsis
             && let Some((flow, visible, shaped)) =

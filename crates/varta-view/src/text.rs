@@ -2,6 +2,7 @@
 mod cache;
 pub(crate) mod edges;
 pub(crate) mod field_display;
+pub(crate) mod whitespace;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{
     FontContext, FontFamilyName, FontStyle, FontWeight, Layout, LayoutContext, LineHeight,
@@ -137,7 +138,7 @@ impl TextSource {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum WhiteSpaceMode {
     #[default]
     Normal,
@@ -194,6 +195,9 @@ pub enum TextMeasureError {
     Font,
     #[error("invalid text size or layout limit")]
     Limit,
+    /// Text whose layout the native white-space model does not reproduce.
+    #[error("text layout outside the native white-space model")]
+    Unsupported,
 }
 
 fn same_family(a: &FontFamilyName<'_>, b: &FontFamilyName<'_>) -> bool {
@@ -565,6 +569,62 @@ impl TextMeasurer {
             }
             return Ok(value.clone());
         }
+        let (result, operations) = match whitespace::Flow::analyze(text, options, spans)? {
+            Some(flow) => whitespace::shape(
+                self, &flow, text, max_width, families, options, spans, edges,
+            )?,
+            None => {
+                let (mut layout, operations) =
+                    self.build_layout(text, families, options, spans, edges, &[])?;
+                let widths = layout.calculate_content_widths();
+                // Parley's min-content honours each cluster's own wrap mode,
+                // so a flow wraps at min-content when any of its text does:
+                // a `pre` or `nowrap` root may hold a wrapping span.
+                let wraps = options.white_space.wraps()
+                    || spans
+                        .iter()
+                        .any(|span| !span.range.is_empty() && span.options.white_space.wraps());
+                let min_width = if wraps { widths.min } else { widths.max };
+                layout.break_all_lines(max_width);
+                // Alignment needs the definite line width; intrinsic measurement
+                // (no width) keeps every line at the start edge.
+                if let (Some(alignment), Some(_)) = (options.align.parley(), max_width) {
+                    layout.align(alignment, parley::AlignmentOptions::default());
+                }
+                (
+                    (
+                        TextMetrics {
+                            width: layout.width(),
+                            min_width,
+                            height: layout.height(),
+                            lines: layout.len(),
+                        },
+                        layout,
+                    ),
+                    operations,
+                )
+            }
+        };
+        if let Some(cache) = self.cached.as_mut() {
+            cache.insert(request, &result, operations);
+        }
+        Ok(result)
+    }
+
+    /// Builds one shaped layout, charging its shaping operations to the
+    /// current view request. Preserved tabs shape as spaces with `tabs`'
+    /// spacing. Returns the layout and its charged operations.
+    fn build_layout(
+        &mut self,
+        text: &str,
+        families: &[String],
+        options: TextOptions,
+        spans: &[TextSpan],
+        edges: &[edges::TextEdge],
+        tabs: &[whitespace::TabStyle],
+    ) -> Result<(Layout<u32>, usize), TextMeasureError> {
+        let remaining = self.view_shaping.remaining.load(Ordering::Relaxed);
+        let scoped = remaining != NO_VIEW_REQUEST;
         self.layout.set_shaping_operation_ceiling(
             scoped.then_some(remaining.min(u32::MAX as usize) as u32),
         );
@@ -649,7 +709,14 @@ impl TextMeasurer {
                 range,
             );
         }
-        let mut layout: Layout<u32> = builder.build(text);
+        for &tab in tabs {
+            builder.push(StyleProperty::WordSpacing(tab.spacing), tab.range());
+            builder.push(
+                StyleProperty::FontFeatures(whitespace::TabStyle::features()),
+                tab.range(),
+            );
+        }
+        let layout: Layout<u32> = builder.build(text);
         if scoped {
             let used = self.layout.shaping_operations();
             if self
@@ -669,31 +736,53 @@ impl TextMeasurer {
         if !self.layout.shaping_succeeded() {
             return Err(TextMeasureError::Limit);
         }
-        let widths = layout.calculate_content_widths();
-        let min_width = if options.white_space.wraps() {
-            widths.min
-        } else {
-            widths.max
-        };
-        layout.break_all_lines(max_width);
-        // Alignment needs the definite line width; intrinsic measurement
-        // (no width) keeps every line at the start edge.
-        if let (Some(alignment), Some(_)) = (options.align.parley(), max_width) {
-            layout.align(alignment, parley::AlignmentOptions::default());
+        let operations = usize::try_from(self.layout.shaping_operations())
+            .map_err(|_| TextMeasureError::Limit)?;
+        Ok((layout, operations))
+    }
+
+    /// The space (U+0020) advance in the flow root's font, which sets the
+    /// tab stops of the whole flow. Returns it and its charged operations.
+    fn root_space_advance(
+        &mut self,
+        families: &[String],
+        options: TextOptions,
+    ) -> Result<(f32, usize), TextMeasureError> {
+        const SPACE: &str = " ";
+        let (mut layout, operations) =
+            self.build_layout(SPACE, families, options, &[], &[], &[])?;
+        layout.break_all_lines(None);
+        let advance = layout
+            .lines()
+            .flat_map(|line| line.runs().collect::<Vec<_>>())
+            .flat_map(|run| {
+                run.clusters()
+                    .map(|cluster| cluster.advance())
+                    .collect::<Vec<_>>()
+            })
+            .next()
+            .ok_or(TextMeasureError::Unsupported)?;
+        Ok((advance, operations))
+    }
+
+    /// Charges `amount` units of line-model work to the current view request
+    /// as shaping operations. Returns the amount a cached result repays.
+    fn debit_shaping(&self, amount: usize) -> Result<usize, TextMeasureError> {
+        if self.view_shaping.remaining.load(Ordering::Relaxed) != NO_VIEW_REQUEST
+            && self
+                .view_shaping
+                .remaining
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                    (left != NO_VIEW_REQUEST)
+                        .then(|| left.checked_sub(amount))
+                        .flatten()
+                })
+                .is_err()
+        {
+            self.view_shaping.remaining.store(0, Ordering::Relaxed);
+            return Err(TextMeasureError::Limit);
         }
-        let result = (
-            TextMetrics {
-                width: layout.width(),
-                min_width,
-                height: layout.height(),
-                lines: layout.len(),
-            },
-            layout,
-        );
-        if let Some(cache) = self.cached.as_mut() {
-            cache.insert(request, &result, self.layout.shaping_operations() as usize);
-        }
-        Ok(result)
+        Ok(amount)
     }
 }
 
