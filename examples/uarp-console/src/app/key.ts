@@ -3,7 +3,7 @@
 // will, and the tests seed it with `writeApiKey`.
 
 /** The key's entry in the database. */
-const API_KEY_ENTRY: KvKey = ["uarp", "apiKey"];
+export const API_KEY_ENTRY: KvKey = ["uarp", "apiKey"];
 
 /** The stored key, or null when there is none. */
 export async function readApiKey(kv: Kv): Promise<string | null> {

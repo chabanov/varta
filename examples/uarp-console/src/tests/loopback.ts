@@ -4,7 +4,9 @@
 // connection is numbered in `x-loopback-attempt` for the stateless mock and,
 // when holding, waits until the test releases it: the mock answers a stream at
 // once and whole, so holding is what puts the person's actions between two
-// connections in a fixed order, as a live server would interleave them.
+// connections in a fixed order, as a live server would interleave them. With a
+// `streamOrigin` it sends the stream connections there instead, so a test can
+// point only the stream at an origin no grant names.
 import { ATTEMPT_HEADER } from "./sdk/contract.js";
 
 const EVENT_STREAM_TYPE = "text/event-stream";
@@ -15,6 +17,8 @@ const ABORTED = "the stream connection was aborted while held";
 export class GatedFetch {
   /** Hold each stream connection until `release()`. */
   hold: boolean;
+  /** The origin stream connections are sent to instead of the client's; null keeps it. */
+  streamOrigin: string | null;
   /** Every request in order: method and path (stream connections included). */
   requests: string[] = [];
   /** `Last-Event-ID` of each stream connection, `-` when it had none. */
@@ -26,15 +30,17 @@ export class GatedFetch {
   private woken: number = 0;
   private watchers: { count: number; resolve: () => void }[] = [];
 
-  constructor(hold: boolean) {
+  constructor(hold: boolean, streamOrigin: string | null) {
     this.hold = hold;
+    this.streamOrigin = streamOrigin;
   }
 
-  fetch(input: string, init: RequestInit): Promise<Response> {
+  fetch(given: string, init: RequestInit): Promise<Response> {
     const headers = new Headers(init.headers);
-    const url = new URL(input);
+    const url = new URL(given);
     this.requests.push(String(init.method) + " " + url.pathname);
-    if (headers.get("accept") !== EVENT_STREAM_TYPE) return this.send(input, init, headers);
+    if (headers.get("accept") !== EVENT_STREAM_TYPE) return this.send(given, init, headers);
+    const input = this.streamOrigin === null ? given : this.streamOrigin + url.pathname + url.search;
     const resume = headers.get("last-event-id");
     this.resumes.push(resume === null ? NO_RESUME : resume);
     headers.set(ATTEMPT_HEADER, String(this.resumes.length));

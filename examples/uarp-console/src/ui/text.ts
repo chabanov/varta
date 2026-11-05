@@ -45,4 +45,5 @@ export const UNAVAILABLE = "API недоступний: ";
 export const STREAM_FAILED = "Сесію не знайдено: ";
 export const STREAM_AUTHENTICATE = "Ключ API більше не дійсний.";
 export const STREAM_GAVE_UP = "З'єднання втрачено: ";
+export const STREAM_REFUSED = "Потік не відкрився: ";
 export const STREAM_INVALID = "Недійсний кадр потоку: ";

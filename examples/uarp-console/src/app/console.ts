@@ -8,8 +8,9 @@ import { effect, signal, type Signal } from "../l1/reactive.js";
 import type { ChatStore } from "../chat/store.js";
 import { Requests } from "../chat/requests.js";
 import { SessionFollower, type FollowEnd, type FollowOptions } from "../chat/follow.js";
+import { describeFailure } from "../chat/failure.js";
 import { addNote, type Segment } from "../chat/timeline.js";
-import { NO_AGENT, NO_KEY, STARTING, STREAM_AUTHENTICATE, STREAM_FAILED, STREAM_GAVE_UP, STREAM_INVALID, UNAVAILABLE } from "../ui/text.js";
+import { NO_AGENT, NO_KEY, STARTING, STREAM_AUTHENTICATE, STREAM_FAILED, STREAM_GAVE_UP, STREAM_INVALID, STREAM_REFUSED, UNAVAILABLE } from "../ui/text.js";
 import { ClientApi, createClient, type FetchFunction } from "./api.js";
 import { readApiKey } from "./key.js";
 
@@ -41,11 +42,6 @@ export interface ConsoleSession {
   ended: Promise<FollowEnd>;
 }
 
-function describe(error: unknown): string {
-  if (error instanceof Error) return error.name + ": " + error.message;
-  return String(error);
-}
-
 /** The line the screen shows for a start state; empty while following. */
 export function startText(state: StartState): string {
   switch (state.kind) {
@@ -74,6 +70,8 @@ export function endText(end: FollowEnd): string {
       return STREAM_AUTHENTICATE;
     case "gave_up":
       return STREAM_GAVE_UP + end.reason;
+    case "refused":
+      return STREAM_REFUSED + end.reason;
     case "invalid":
       return STREAM_INVALID + end.reason;
   }
@@ -102,10 +100,13 @@ export class ConsoleApp {
     let key: string | null = null;
     try {
       const kv = await varta.kv.open(this.options.keyDatabase);
-      key = await readApiKey(kv);
-      kv.close();
+      try {
+        key = await readApiKey(kv);
+      } finally {
+        kv.close();
+      }
     } catch (error) {
-      return { kind: "unavailable", reason: describe(error) };
+      return { kind: "unavailable", reason: describeFailure(error) };
     }
     if (key === null) return { kind: "no_key" };
     const client = createClient(this.options.baseURL, key, this.options.fetcher);
@@ -116,7 +117,7 @@ export class ConsoleApp {
       const session = await client.sessions.create({ agent_id: agentId });
       sessionId = session.session_id;
     } catch (error) {
-      return { kind: "unavailable", reason: describe(error) };
+      return { kind: "unavailable", reason: describeFailure(error) };
     }
     this.session = this.follow(new ClientApi(client), sessionId);
     return { kind: "following", sessionId: sessionId };

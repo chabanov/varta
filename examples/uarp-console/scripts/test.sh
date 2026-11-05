@@ -10,12 +10,14 @@
 #    and builds the test entry once. A run killed without its exit trap leaves
 #    that file and possibly the mock behind; delete and stop them by hand.
 # 3. Each group is one `varta run` of that build (TEST_GROUP=<name>) under a host
-#    policy that repeats the build's grants exactly and maps the virtual roots:
-#    `project` to this directory, `data` (the KV databases) to a fresh temporary
-#    directory. Unit groups are bounded runs with production budgets; the app
-#    groups run as application instances (--app) whose ceiling lowers the
-#    per-turn deadline to app_deadline_ms, so a stream must outlive single turns.
-#    Every group must end with `SUMMARY N passed, 0 failed`.
+#    policy derived from the built manifest (dist/tests.manifest.json): its ABI
+#    version and grants as they are, its virtual roots mapped (`project` to this
+#    directory, `data`, the KV databases, to a fresh temporary directory). Unit
+#    groups are bounded runs with production budgets; the app groups run as
+#    application instances (--app) under the budgets of src/tests/app-ceiling.json,
+#    which lower the per-turn deadline so a stream must outlive single turns
+#    (app.test.ts reads the same file). Every group must end with
+#    `SUMMARY N passed, 0 failed`.
 # 4. Without arguments, each src/tests/view/<name>.script.json is performed
 #    headlessly (TEST_VIEW=<name>) by `varta dev --view-script` and its output must
 #    equal <name>.expected.json.
@@ -30,8 +32,8 @@ cd "$(dirname "$0")/.."
 . scripts/mock.sh
 
 placeholder="http://127.0.0.1:1"
-# The per-turn deadline of the app groups (src/tests/app.test.ts TEST_DEADLINE_MS).
-app_deadline_ms=250
+# The host ceiling budgets of the app groups, one JSON object.
+app_ceiling="src/tests/app-ceiling.json"
 unit_groups="markdown-inline markdown-blocks markdown-code markdown-stream-early markdown-stream-late reactive list-mapping list-update list-move list-remove chat-turns chat-waits chat-strict chat-stream chat-dispatch chat-history chat-history-merge chat-store chat-requests scenario-plain scenario-reasoning scenario-tool_call scenario-delegation scenario-approval_approve scenario-approval_reject scenario-ask_user scenario-error scenario-session_end"
 app_groups="app-manifest app-start app-e2e app-e2e-long"
 groups="${*:-$unit_groups $app_groups}"
@@ -81,35 +83,49 @@ if ! "$varta" build --config "$config" > "$work/build.out" 2>&1; then
   exit 1
 fi
 
-# The host policy: the build's own grants (varta.test.json), the roots mapped.
+# The host policy, derived from the built manifest: its schema and ABI versions
+# and its grants as they are, the package members (entry, target, policy) left
+# out, each root name mapped to its directory and, when given, the budgets
+# ($1, one JSON object). The manifest is varta's pretty-printed JSON, one
+# top-level member per line; a root without a directory or a manifest without
+# fsRoots fails the run.
 mkdir "$work/data"
 policy() {
-  budgets="$1"
-  cat <<EOF
-{
-  "schemaVersion": 1,
-  "abiVersion": 34,$budgets
-  "fsRoots": { "project": "$(pwd)", "data": "$work/data" },
-  "capabilities": [
-    { "id": "env.get", "patterns": ["SDK_BASE_URL", "TEST_GROUP"] },
-    { "id": "fs.read", "patterns": ["/project/dist/app.manifest.json", "/project/fixtures/**"] },
-    { "id": "kv.read", "patterns": ["/data/e2e-empty.kv", "/data/e2e.kv"] },
-    { "id": "kv.write", "patterns": ["/data/e2e-empty.kv", "/data/e2e.kv"] },
-    {
-      "id": "net.request",
-      "patterns": ["$origin/**"],
-      "methods": ["GET", "POST"],
-      "responseHeaders": ["retry-after", "x-correlation-id", "x-request-id", "x-should-retry"]
-    },
-    { "id": "time.now", "enabled": true },
-    { "id": "time.timer", "enabled": true }
-  ]
-}
-EOF
+  POLICY_BUDGETS="$1" PROJECT_DIR="$(pwd)" DATA_DIR="$work/data" awk '
+    function fail(message) {
+      print "FAIL policy: " message > "/dev/stderr"
+      failed = 1
+      exit 1
+    }
+    /^  "(entry|target|policy)": / { next }
+    /^  "abiVersion": / {
+      print
+      if (ENVIRON["POLICY_BUDGETS"] != "") print "  \"budgets\": " ENVIRON["POLICY_BUDGETS"] ","
+      next
+    }
+    /^  "fsRoots": \[$/ { in_roots = 1; mapped = ""; next }
+    in_roots && /^  \]/ {
+      in_roots = 0
+      has_roots = 1
+      sub(/^  \]/, "")
+      print "  \"fsRoots\": {" mapped " }" $0
+      next
+    }
+    in_roots {
+      name = $0
+      gsub(/[ ",]/, "", name)
+      if (name == "project") dir = ENVIRON["PROJECT_DIR"]
+      else if (name == "data") dir = ENVIRON["DATA_DIR"]
+      else fail("no directory for the root " name)
+      mapped = mapped (mapped == "" ? " " : ", ") "\"" name "\": \"" dir "\""
+      next
+    }
+    { print }
+    END { if (!failed && !has_roots) fail("no fsRoots in the manifest") }
+  ' dist/tests.manifest.json
 }
 policy "" > "$work/unit-policy.json"
-policy "
-  \"budgets\": { \"deadlinePerTurnMs\": $app_deadline_ms }," > "$work/app-policy.json"
+policy "$(cat "$app_ceiling")" > "$work/app-policy.json"
 
 for group in $groups; do
   case "$group" in

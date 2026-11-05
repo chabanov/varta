@@ -26,10 +26,12 @@
     "kv": {
       "read": [
         "/data/e2e-empty.kv",
+        "/data/e2e-malformed.kv",
         "/data/e2e.kv"
       ],
       "write": [
         "/data/e2e-empty.kv",
+        "/data/e2e-malformed.kv",
         "/data/e2e.kv"
       ]
     },

@@ -11,10 +11,16 @@ import { END_SESSION_CLOSED, PLAIN_COMPLETED, PLAIN_CONTENT, PLAIN_RUN_ADDED, PL
 import {
   ANSWER,
   ATTEMPT_HEADER,
+  BUSY_SCENARIO,
+  CONNECTED_ONLY_SCENARIO,
   DROP_AFTER,
   E2E_PREFIX,
+  EMPTY_SCENARIO,
   EXPIRED_SCENARIO,
+  FORBIDDEN_DETAIL,
+  FORBIDDEN_SCENARIO,
   HEAD_AGENT_ID,
+  INVALID_SCENARIO,
   LONG_CHUNKS,
   LONG_DELTA,
   LONG_FIRST_CHUNK_SEQ,
@@ -22,6 +28,7 @@ import {
   LONG_SCENARIO,
   MISSING_SCENARIO,
   NO_HEAD_SCENARIO,
+  REOPEN_EMPTY_SCENARIO,
   RUN_ID,
   SESSION_ID,
   STREAM_DONE,
@@ -49,6 +56,7 @@ const OK = 200;
 const CREATED = 201;
 const BAD_REQUEST = 400;
 const UNAUTHORIZED = 401;
+const FORBIDDEN = 403;
 const NOT_FOUND = 404;
 const NOT_ACCEPTABLE = 406;
 
@@ -68,6 +76,12 @@ const CONNECTED_ID = "0";
 /** The `connected` frame of approval_approve.json. */
 const CONNECTED = "{\"session_id\":\"" + SESSION_ID + "\",\"connected_at\":\"2026-01-01T00:00:00.098Z\",\"runs\":[]}";
 const TERMINATOR_EVENT = "message";
+/** A comment line: it keeps the connection alive and delivers no frame. */
+const KEEP_ALIVE = ": keep-alive\n\n";
+/** REOPEN_EMPTY_SCENARIO's stream requests come in pairs: the open and the SDK's reconnect. */
+const REOPEN_PERIOD = 2;
+/** The required `seq` of the plain run.started, removed from INVALID_SCENARIO's frame. */
+const REQUIRED_SEQ = "\"seq\":1,";
 const CREATE_STEP = "create_session";
 const SEND_STEP = "send_message";
 const APPROVE_STEP = "approve";
@@ -171,6 +185,13 @@ function generatedStream(r: Responder, scenario: string): VartaHttpResponse | nu
   // Nothing before `[DONE]`, not even `connected`: the credential is no longer valid.
   if (scenario === EXPIRED_SCENARIO) return r.stream(frameText(TERMINATOR_EVENT, undefined, STREAM_DONE));
   if (scenario === UNAUTHORIZED_SCENARIO) return r.problem(UNAUTHORIZED, "Unauthorized", "the key was revoked");
+  // No `[DONE]` and nothing the follower counts as progress: it must give up.
+  if (scenario === CONNECTED_ONLY_SCENARIO) return r.stream(connected());
+  if (scenario === EMPTY_SCENARIO) return r.stream(KEEP_ALIVE);
+  if (scenario === INVALID_SCENARIO) return r.stream(connected() + frameText("run.started", RUN_ID + ":1", PLAIN_STARTED.replace(REQUIRED_SEQ, "")));
+  // Failures when the stream opens: a permanent one and a transient one.
+  if (scenario === FORBIDDEN_SCENARIO) return r.problem(FORBIDDEN, "Forbidden", FORBIDDEN_DETAIL);
+  if (scenario === BUSY_SCENARIO) return r.unavailable(UNAVAILABLE_PROBLEM);
   return null;
 }
 
@@ -182,6 +203,10 @@ async function events(r: Responder, request: VartaHttpRequest, scenario: string,
     // client's per-turn deadline: with its many frames the stream then lasts
     // longer than one deadline while no single wait does.
     if (scenario === LONG_SCENARIO) await r.wait(LONG_HEAD_DELAY_MS);
+    // Opens (odd attempts) fail, the SDK's reconnects (even attempts) deliver nothing.
+    if (scenario === REOPEN_EMPTY_SCENARIO) {
+      return Number(r.header(request, ATTEMPT_HEADER)) % REOPEN_PERIOD !== 0 ? r.unavailable(UNAVAILABLE_PROBLEM) : r.stream(KEEP_ALIVE);
+    }
     const generated = generatedStream(r, scenario);
     return generated === null ? r.problem(NOT_FOUND, "Not Found", "no stream for " + scenario) : generated;
   }

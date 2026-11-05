@@ -73,11 +73,29 @@ export const LONG_SCENARIO = "long";
 export const MISSING_SCENARIO = "missing";
 export const EXPIRED_SCENARIO = "expired";
 export const UNAUTHORIZED_SCENARIO = "unauthorized";
+/** Every connection delivers only the session's `connected` frame and closes without `[DONE]`. */
+export const CONNECTED_ONLY_SCENARIO = "connected-only";
+/** Every connection delivers only a keep-alive comment and closes: no frame at all. */
+export const EMPTY_SCENARIO = "empty";
+/** `connected`, then a run event missing a required field, which strict parsing refuses. */
+export const INVALID_SCENARIO = "invalid";
+/** Every stream connection is answered 403: a failure the same request repeats. */
+export const FORBIDDEN_SCENARIO = "forbidden";
+/** Every stream connection is answered 503 (UNAVAILABLE_PROBLEM): a transient failure that never clears. */
+export const BUSY_SCENARIO = "busy";
+/**
+ * Each stream open is answered 503 and the SDK's reconnect after it with a
+ * keep-alive comment only: the stream reopens and ends with no frame, which
+ * the SDK ends as silently as `[DONE]`.
+ */
+export const REOPEN_EMPTY_SCENARIO = "reopen-empty";
+/** The detail of FORBIDDEN_SCENARIO's 403. */
+export const FORBIDDEN_DETAIL = "the key may not read this session";
 /** Content chunks of the long stream, one frame each, after its run.started (seq 1). */
 export const LONG_CHUNKS = 100;
 /**
  * How late the long stream's head comes: below the per-turn deadline of the
- * app groups (scripts/test.sh `app_deadline_ms`, app.test.ts TEST_DEADLINE_MS),
+ * app groups (src/tests/app-ceiling.json, the ceiling scripts/test.sh applies),
  * so the head arrives within one window.
  */
 export const LONG_HEAD_DELAY_MS = 200;
