@@ -478,7 +478,7 @@ pub(crate) fn collect(
                 let (style, names) = layout::text_style(tree, env, id, size, measurer)?;
                 let (_, sample) = measurer
                     .shape_styled(" ", None, &names, style)
-                    .map_err(|e| LayoutError::Text(e.to_string()))?;
+                    .map_err(LayoutError::text(id))?;
                 if let Some(run) = sample.lines().next().and_then(|line| line.runs().next()) {
                     font_boxes.insert(
                         id,
@@ -585,7 +585,7 @@ pub(crate) fn collect(
     } else {
         let (_, layout) = measurer
             .shape_styled(" ", None, &families, options)
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(root))?;
         if let Some(run) = layout.lines().next().and_then(|line| line.runs().next()) {
             font_boxes.insert(
                 root,
@@ -650,7 +650,7 @@ pub(crate) fn collect(
     {
         let shaped = rich
             .shape(&shape, measurer, None)
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(root))?;
         // Decoration edges are placed in logical order. Bidi reordering of
         // a decorated box's fragments is not admitted yet.
         if shaped
@@ -665,7 +665,7 @@ pub(crate) fn collect(
     } else if let Some(rich) = &shape.rich {
         let shaped = rich
             .shape(&shape, measurer, None)
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(root))?;
         if !layout::alignment_admitted(&shaped.layout, shape.options) {
             return Err(LayoutError::Unsupported(root));
         }
@@ -1129,7 +1129,7 @@ pub(crate) fn frames(
         };
         let shaped = rich
             .shape(shape, measurer, Some(rect.width.clamp(0.01, 1_000_000.0)))
-            .map_err(|e| LayoutError::Text(e.to_string()))?;
+            .map_err(LayoutError::text(id))?;
         let mut frame = rich.project(shaped, shape, bounds, measurer, &mut fragments_left)?;
         if rich.ellipsis
             && let Some((flow, visible, shaped)) =

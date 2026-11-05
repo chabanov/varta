@@ -11981,14 +11981,17 @@ curve) or beyond the line's contents still reaches earlier fragments.
 Each text node keeps its own inherited `white-space` mode inside one inline
 flow, so collapsing (`normal`, `nowrap`) and preserving (`pre-wrap`, `pre`)
 nodes mix. Collapsible spaces collapse across node boundaries as before; one
-following a preserved space is kept, as in CSS Text 3. A flow whose preserved
+following a preserved space is kept, as in CSS Text 3. Min-content honours each
+node's own mode, so a wrapping node inside a `pre` or `nowrap` root wraps at
+every opportunity it owns. A flow whose preserved
 text holds a tab, or a preserved space next to other white space or before a
 newline or the end of the text, is shaped and broken by `text::whitespace`;
 every other flow keeps Parley's own line breaking. Field display is unchanged.
 
 - A preserved tab shapes as a space in its own run and advances to the next tab
-  stop at `tab-size: 8`: eight advances of that space, in the tab's own font,
-  measured from the start of its line. A stop closer than half a space is
+  stop at `tab-size: 8`: eight space advances of the flow root's (block
+  container's) font, measured from the start of its line, whatever the tab's
+  own font or size, as in Chrome. A stop closer than half of that space is
   skipped (Blink's `Font::TabWidth`). Because stops depend on where lines
   break, the flow is reshaped until every tab's advance agrees with the stop
   computed from its final line; a flow that does not agree within the bounded
@@ -12004,16 +12007,20 @@ every other flow keeps Parley's own line breaking. Field display is unchanged.
   max-content and not in min-content; `pre` spaces always count. Center and
   right alignment use these widths; a soft-wrapped line's hanging run is
   excluded, as in Chrome.
-- Inline fragments and hits keep preserved spaces, including hanging ones, and
-  drop collapsible spaces at a line end.
+- Inline fragments, hits and underlines keep preserved spaces, including
+  hanging ones and the trailing spaces of a plain `pre` or `pre-wrap` text
+  node, and drop collapsible spaces at a line end.
 
 The model is logical-order only: a flow on this path with a right-to-left run
 or base direction is refused, as is a `text-overflow: ellipsis` root on it.
 Preserved tabs per shaping request are bounded (`MAX_PRESERVED_TABS`), because
 each is its own styled run. The line breaker is driven through Parley's public
-API (per-line advances and reverts), and every realized line is checked against
-the line the model located; any disagreement refuses the layout instead of
-painting a different one. The extra breaking work is charged to the view
+API (per-line advances and reverts) plus one hidden hook:
+`BreakLines::set_prior_line_width`, `#[doc(hidden)]` in the vendored Parley,
+sets the width center/right alignment uses for each re-broken line. Every
+realized line is checked against the line the model located; any disagreement
+refuses the layout, with the flow's node as an unsupported-content error,
+instead of painting a different one. The extra breaking work is charged to the view
 request's shaping-operation allowance and repaid by cached results. Min-content
 reuses the final lines' tab advances, so a tab that cannot end a min-content
 line (before a character that admits no break) is not re-stopped. Chrome breaks

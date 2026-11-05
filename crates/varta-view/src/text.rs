@@ -577,11 +577,14 @@ impl TextMeasurer {
                 let (mut layout, operations) =
                     self.build_layout(text, families, options, spans, edges, &[])?;
                 let widths = layout.calculate_content_widths();
-                let min_width = if options.white_space.wraps() {
-                    widths.min
-                } else {
-                    widths.max
-                };
+                // Parley's min-content honours each cluster's own wrap mode,
+                // so a flow wraps at min-content when any of its text does:
+                // a `pre` or `nowrap` root may hold a wrapping span.
+                let wraps = options.white_space.wraps()
+                    || spans
+                        .iter()
+                        .any(|span| !span.range.is_empty() && span.options.white_space.wraps());
+                let min_width = if wraps { widths.min } else { widths.max };
                 layout.break_all_lines(max_width);
                 // Alignment needs the definite line width; intrinsic measurement
                 // (no width) keeps every line at the start edge.
@@ -736,6 +739,30 @@ impl TextMeasurer {
         let operations = usize::try_from(self.layout.shaping_operations())
             .map_err(|_| TextMeasureError::Limit)?;
         Ok((layout, operations))
+    }
+
+    /// The space (U+0020) advance in the flow root's font, which sets the
+    /// tab stops of the whole flow. Returns it and its charged operations.
+    fn root_space_advance(
+        &mut self,
+        families: &[String],
+        options: TextOptions,
+    ) -> Result<(f32, usize), TextMeasureError> {
+        const SPACE: &str = " ";
+        let (mut layout, operations) =
+            self.build_layout(SPACE, families, options, &[], &[], &[])?;
+        layout.break_all_lines(None);
+        let advance = layout
+            .lines()
+            .flat_map(|line| line.runs().collect::<Vec<_>>())
+            .flat_map(|run| {
+                run.clusters()
+                    .map(|cluster| cluster.advance())
+                    .collect::<Vec<_>>()
+            })
+            .next()
+            .ok_or(TextMeasureError::Unsupported)?;
+        Ok((advance, operations))
     }
 
     /// Charges `amount` units of line-model work to the current view request

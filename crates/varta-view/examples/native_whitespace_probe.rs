@@ -195,6 +195,85 @@ fn fixtures() -> Vec<(&'static str, Node)> {
                 ],
             ),
         ),
+        // Tab stops follow the root's 8px space whatever the tab's own
+        // font: a 10px span's tab still reaches the 64px stop.
+        (
+            "tab-small-span",
+            block(
+                Tag::Div,
+                &[pre_wrap, (P::Width, "200px")],
+                vec![text("A"), span(&[(P::FontSize, "10px")], vec![text("\tA")])],
+            ),
+        ),
+        // A 30px span's tab also stops on the root grid, and so does a
+        // following 10px span's tab.
+        (
+            "tab-mixed-spans",
+            block(
+                Tag::Div,
+                &[pre_wrap, (P::Width, "200px")],
+                vec![
+                    text("A"),
+                    span(&[(P::FontSize, "30px")], vec![text("A\t")]),
+                    span(&[(P::FontSize, "10px")], vec![text("\tA")]),
+                ],
+            ),
+        ),
+        // A wrapping span inside `pre` wraps at min-content, though the
+        // flow needs no preserved-space model. The span's last space keeps
+        // the fixture's `AA` ligature from joining the two text nodes.
+        (
+            "pre-normal-span-min-content",
+            block(
+                Tag::Div,
+                &[(P::Display, "flex"), (P::Width, "4px")],
+                vec![block(
+                    Tag::Pre,
+                    &[
+                        (P::Margin, "0"),
+                        (P::FontFamily, "\"Varta Inline Fixture\""),
+                    ],
+                    vec![
+                        span(&[(P::WhiteSpace, "normal")], vec![text("A A A ")]),
+                        text("A"),
+                    ],
+                )],
+            ),
+        ),
+        // The same inside a `nowrap` root.
+        (
+            "nowrap-normal-span-min-content",
+            block(
+                Tag::Div,
+                &[(P::Display, "flex"), (P::Width, "4px")],
+                vec![block(
+                    Tag::Div,
+                    &[(P::WhiteSpace, "nowrap")],
+                    vec![
+                        span(&[(P::WhiteSpace, "normal")], vec![text("A A A ")]),
+                        text("A"),
+                    ],
+                )],
+            ),
+        ),
+        // The underline spans trailing `pre` spaces, before a forced break
+        // and at the end.
+        (
+            "pre-underline-trailing",
+            block(
+                Tag::Div,
+                &[(P::Width, "200px")],
+                vec![block(
+                    Tag::Pre,
+                    &[
+                        (P::Margin, "0"),
+                        (P::FontFamily, "\"Varta Inline Fixture\""),
+                        (P::TextDecoration, "underline"),
+                    ],
+                    vec![text("A   \nA    ")],
+                )],
+            ),
+        ),
     ]
 }
 

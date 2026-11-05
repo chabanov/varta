@@ -178,8 +178,10 @@ impl Plan {
             let fragment = BoxRect {
                 x: bounds.rect.x + m.offset + m.inline_min_coord,
                 y: 0.0,
+                // Preserved trailing spaces are part of the line's text
+                // fragment, which the decoration spans.
                 width: m.advance
-                    - if white_space == WhiteSpaceMode::PreWrap {
+                    - if white_space.preserves() {
                         0.0
                     } else {
                         m.trailing_whitespace

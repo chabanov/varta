@@ -528,6 +528,22 @@ Parley's line breaking does not (pre-existing, observed in Chrome 156 only).
 Two integration tests that asserted the old refusals (`paragraphs.rs`,
 `structure.rs`) now assert the laid-out lines.
 
+Review fixes (scoped, 2026-11-05): tab stops use the flow root's space advance
+whatever the tab's own font size; a wrapping node inside a `pre`/`nowrap` root
+wraps at min-content on Parley's path too; underlines and hit fragments keep
+trailing `pre` spaces on the plain-text paint path; the model's refusals become
+`LayoutError::Unsupported` with the flow's node. Five new probe cases
+(`tab-small-span`, `tab-mixed-spans`, `pre-normal-span-min-content`,
+`nowrap-normal-span-min-content`, `pre-underline-trailing`) fail against the
+unfixed code and pass now: the probe's 17 cases give **15150 checks** at each of
+1×, 1.25× and 2×, maximum ROI RGB mean unchanged at 1.052/1.627/1.071. Structure
+(51181 per scale) and paragraph (81) oracles pass; the inline oracle again stops
+only at `paint-overlap-hits` (mean 5.39) and passes 9927 checks without it. A
+ligature that joins text from two elements (the fixture's `AA`) gives the later
+element a zero-width line fragment, which the native element box includes and
+Chrome's `getBoundingClientRect` does not (seen with a `pre` root and a
+`normal` span, other mode pairs not checked); the fixtures avoid it.
+
 ### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
 
 Branch `wave1/w1-native-structure-text` (on `cc3a94d`) admits `h1`–`h3`, `ul`,

@@ -6,10 +6,13 @@
 //! lacks, for the flows that need it:
 //!
 //! - Tab stops. Each preserved tab shapes as a space in its own run, and its
-//!   advance reaches the next stop at `tab-size: 8` (eight advances of that
-//!   space) from the start of its line. A stop closer than half a space is
-//!   skipped. Stops depend on where lines break, so the flow is reshaped until
-//!   every tab's advance matches the stop computed from its final line.
+//!   advance reaches the next stop at `tab-size: 8` from the start of its
+//!   line. As in Chrome, stops are measured in space advances of the flow
+//!   root's (block container's) font, whatever the tab's own font: one flow
+//!   has one grid of stops. A stop closer than half of that space is
+//!   skipped. Stops depend on where lines break, so the flow is reshaped
+//!   until every tab's advance matches the stop computed from its final
+//!   line.
 //! - Hanging. A sequence of preserved spaces and tabs at a soft wrap hangs as a
 //!   whole. Parley hangs only the first overflowing space and starts the next
 //!   line with the rest, so such a line is broken again with an advance that
@@ -19,9 +22,11 @@
 //!   not in min-content. `pre` spaces never hang, and collapsible spaces at a
 //!   line end are removed. Center/right alignment uses the same extents.
 //!
-//! The line breaker is driven only through Parley's public API, so every
-//! realized line is checked against the line this module expects; any
-//! disagreement refuses the layout rather than painting a different one.
+//! The line breaker is driven through Parley's public API plus one hidden
+//! hook, `BreakLines::set_prior_line_width` (`#[doc(hidden)]` in the vendored
+//! Parley), which alignment relies on. Every realized line is checked
+//! against the line this module expects; any disagreement refuses the layout
+//! rather than painting a different one.
 //! Field display keeps its own editing model and never takes this path.
 use super::{TextMeasureError, TextMeasurer, TextMetrics, TextOptions, TextSource, TextSpan};
 use super::{WhiteSpaceMode, edges::TextEdge};
@@ -232,9 +237,17 @@ pub(super) fn shape(
             spacing: 0.0,
         })
         .collect();
-    // The shaped advance of each tab's space, before any spacing.
+    // The shaped advance of each tab's space in its own font, before any
+    // spacing, and the root font's space advance that sets the stops.
     let mut spaces = Vec::new();
     let mut operations = 0usize;
+    let interval = if flow.tabs.is_empty() {
+        0.0
+    } else {
+        let (space, built) = measurer.root_space_advance(families, options)?;
+        operations = operations.saturating_add(built);
+        space
+    };
     let breaking = width.unwrap_or(f32::MAX);
     for pass in 0..MAX_TAB_PASSES {
         let (mut layout, built) =
@@ -253,7 +266,7 @@ pub(super) fn shape(
             }
         }
         let lines = realize(&mut layout, &units, breaking, measurer, &mut operations)?;
-        if flow.tabs.is_empty() || stops_agree(&units, &lines, &spaces, &mut styles) {
+        if flow.tabs.is_empty() || stops_agree(&units, &lines, (&spaces, interval), &mut styles) {
             return finish(measurer, (layout, &units), width, options, &mut operations)
                 .map(|result| (result, operations));
         }
@@ -636,10 +649,17 @@ pub(crate) fn tab_advance(x: f32, space: f32) -> f32 {
     distance
 }
 
-/// Recomputes every tab's stop from the lines it was broken into. Returns
+/// Recomputes every tab's stop from the lines it was broken into, on the
+/// grid of `interval` (the root font's space advance). `spaces` holds each
+/// tab's space advance in its own font, which its spacing extends. Returns
 /// whether all shaped advances already match; otherwise updates `styles`
 /// for the next pass.
-fn stops_agree(units: &[Unit], lines: &[Line], spaces: &[f32], styles: &mut [TabStyle]) -> bool {
+fn stops_agree(
+    units: &[Unit],
+    lines: &[Line],
+    (spaces, interval): (&[f32], f32),
+    styles: &mut [TabStyle],
+) -> bool {
     let mut agree = true;
     for line in lines {
         let mut x = 0.0f32;
@@ -647,12 +667,11 @@ fn stops_agree(units: &[Unit], lines: &[Line], spaces: &[f32], styles: &mut [Tab
         while index < line.end {
             let (advance, next) = step(units, index);
             if let Kind::Cluster { tab: Some(tab), .. } = units[index].kind {
-                let space = spaces[tab];
-                let stop = tab_advance(x, space);
+                let stop = tab_advance(x, interval);
                 if (stop - advance).abs() > TAB_EPSILON {
                     agree = false;
                 }
-                styles[tab].spacing = stop - space;
+                styles[tab].spacing = stop - spaces[tab];
                 x += stop;
             } else {
                 x += advance;

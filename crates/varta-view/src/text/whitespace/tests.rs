@@ -143,6 +143,79 @@ fn tabs_advance_to_stops_from_their_line_start() {
     assert_eq!(advance_at(&layout, 9), STOP - 3.0 * SPACE);
 }
 
+/// One span over `range` of the flow, with its own white space and size.
+fn sized_span(range: std::ops::Range<usize>, white_space: WhiteSpaceMode, size: f32) -> TextSpan {
+    TextSpan {
+        range,
+        owner: 1,
+        options: TextOptions {
+            size,
+            ..options(white_space)
+        },
+        families: vec!["Varta Inline Fixture".into()],
+    }
+}
+
+#[test]
+fn tab_stops_use_the_root_font_space_in_every_span() {
+    let families = vec!["Varta Inline Fixture".to_owned()];
+    let pre_wrap = options(WhiteSpaceMode::PreWrap);
+    // A tab in a half-size or a larger span still stops on the root's
+    // 64px grid, not on the 32px or 96px grid of its own space.
+    for size in [SIZE / 2.0, SIZE * 1.5] {
+        let spans = [sized_span(1..3, WhiteSpaceMode::PreWrap, size)];
+        let (metrics, layout) = measurer()
+            .with_view_shaping(|font| {
+                font.shape_with_spans("A\tA", None, &families, pre_wrap, &spans)
+            })
+            .unwrap();
+        assert_eq!(advance_at(&layout, 1), STOP - SPACE, "{size}");
+        assert_eq!(metrics.width, STOP + SPACE * size / SIZE, "{size}");
+    }
+    // Two tabs of different sizes share the grid: the second starts on a
+    // stop and advances a whole interval.
+    let spans = [
+        sized_span(1..3, WhiteSpaceMode::PreWrap, SIZE * 1.5),
+        sized_span(3..5, WhiteSpaceMode::PreWrap, SIZE / 2.0),
+    ];
+    let (_, layout) = measurer()
+        .with_view_shaping(|font| {
+            font.shape_with_spans("AA\t\tA", None, &families, pre_wrap, &spans)
+        })
+        .unwrap();
+    assert_eq!(advance_at(&layout, 2), STOP - SPACE - 1.5 * SPACE);
+    assert_eq!(advance_at(&layout, 3), STOP);
+}
+
+#[test]
+fn a_wrapping_span_in_a_non_wrapping_root_wraps_at_min_content() {
+    let families = vec!["Varta Inline Fixture".to_owned()];
+    for root in [WhiteSpaceMode::Pre, WhiteSpaceMode::NoWrap] {
+        // `A` keeps the root's mode; ` A A` wraps after each space. No
+        // preserved space needs the native model, so Parley measures it.
+        let text = "A A A";
+        let spans = [sized_span(1..text.len(), WhiteSpaceMode::Normal, SIZE)];
+        assert!(
+            Flow::analyze(text, options(root), &spans)
+                .unwrap()
+                .is_none()
+        );
+        let metrics = measurer()
+            .with_view_shaping(|font| {
+                font.shape_with_spans(text, None, &families, options(root), &spans)
+            })
+            .unwrap()
+            .0;
+        assert_eq!((metrics.min_width, metrics.width), (SPACE, 5.0 * SPACE));
+        // Without a wrapping span the root's mode keeps one line.
+        let metrics = measurer()
+            .shape_styled(text, None, &families, options(root))
+            .unwrap()
+            .0;
+        assert_eq!(metrics.min_width, 5.0 * SPACE, "{root:?}");
+    }
+}
+
 #[test]
 fn a_run_of_preserved_spaces_or_tabs_hangs_as_a_whole() {
     let pre_wrap = options(WhiteSpaceMode::PreWrap);
@@ -296,6 +369,22 @@ fn collapsing_and_preserving_text_nodes_share_one_flow() {
     .unwrap();
     assert_eq!((boxes[&4].x, boxes[&4].width), (SPACE, 3.0 * SPACE));
     assert_eq!((boxes[&6].x, boxes[&6].width), (4.0 * SPACE, 3.0 * SPACE));
+}
+
+#[test]
+fn native_white_space_refusals_name_their_node() {
+    use varta_common::view::CssProperty as P;
+    // A plain text node (3) and a rich flow's root (2): right-to-left text
+    // the model does not reproduce is refused, not reported as a failure.
+    let rtl = "\u{0644}  \u{0627}";
+    assert!(matches!(
+        flow(&[(P::WhiteSpace, "pre-wrap")], &[(None, rtl)]),
+        Err(crate::LayoutError::Unsupported(3))
+    ));
+    assert!(matches!(
+        flow(&[], &[(None, "A"), (Some("pre-wrap"), rtl)]),
+        Err(crate::LayoutError::Unsupported(2))
+    ));
 }
 
 #[test]
