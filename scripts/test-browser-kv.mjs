@@ -33,12 +33,27 @@
 //   reach in either property order (whatever stores reads back), and a
 //   cycle fails by name, equal to native;
 // - diamond: a part shared at every level (`x = { a: x, b: x }`) counts
-//   toward the value's extent at every reach: just within the bound it
-//   stores and reads back whole, just past it `set` fails by name; diamonds
-//   planted in storage as Deno writes them (in OPFS here, in Deno's SQLite
-//   file natively) read back within the bound and fail by name past it and
-//   far past it, equal to native, with the Chrome process tree's resident
-//   memory growing by at most RSS_GROWTH_BYTES.
+//   toward the value's extent at every reach: within the bound it stores,
+//   just past it `set` fails by name; diamonds planted in storage as Deno
+//   writes them (in OPFS here, in Deno's SQLite file natively) fail by name
+//   on read past the bound and far past it, equal to native;
+// - diamond-built: with the largest budgets, one level below the bound
+//   reads back whole, stored or planted, equal to native;
+// - diamond-bound: the worst accepted value, the planted diamond at the
+//   bound, with the largest budgets: decoded whole, it builds past a v38
+//   guest's memory and the run fails fatally, after the same logs and
+//   usage as native;
+// - diamond-fuel: the same read under production budgets ends with the
+//   fatal fuel exhaustion while the codec classifies it (it pays as it
+//   goes), after the same logs and usage as native;
+//   in every diamond case the Chrome process tree's resident memory grows
+//   by at most RSS_GROWTH_BYTES;
+// - unshared: arrays of 2048 and 3000 numbers and 500 records of three
+//   fields, which Deno stores, set and get under production budgets, equal
+//   to native;
+// - decode-fuel: three such arrays read one per turn, then a getMany of
+//   all three in one turn ends with the fatal fuel exhaustion while they
+//   are classified, after the same logs and usage as native.
 //
 //   node scripts/test-browser-kv.mjs <varta-executable> [--playwright <module> <firefox|webkit>]
 //
@@ -216,16 +231,24 @@ const dagLogs = () => [...DAG_CASES.flatMap(([wraps, inner]) => [true, false].fl
   return [`set ${label}`, `get ${label} ${xFirst ? x : y} ${xFirst ? y : x}`];
 })), `cycle ${K.errors.typeError}: a cyclic value cannot be stored in a KV value`].map((line) => LOG_PREFIX + line);
 // Diamonds of `D`: each level `{ a: x, b: x }` of the one below, `{}` at
-// the bottom; a read builds every reach and both absent fields of the
-// bottom `{}`. The largest within the value bound, the next, and a far one
-// (millions of values from about two hundred stored bytes) that once ran a
-// native decode past the turn deadline at about 1 GB. The native
-// shared_parts_keep_the_value_bound_on_set_and_get program, each set and
-// get in its own timer turn.
-const diamondDecoded = (levels) => 2 ** (levels + 2) - 1;
-const DIAMOND_FITS = Math.floor(Math.log2(K.valueExtent.maxValues + 1)) - 2, FAR_DIAMOND = 22;
-const DIAMOND_LEVELS = [DIAMOND_FITS, DIAMOND_FITS + 1], PLANTED_LEVELS = [DIAMOND_FITS, DIAMOND_FITS + 1, FAR_DIAMOND];
-// How much the Chrome process tree's resident memory may grow over the
+// the bottom. A diamond of `levels` stores `2^(levels + 1) - 1` values
+// expanded; a read builds every reach and both absent fields of every
+// bottom `{}`. The largest within the value bound (FITS), the next, a far
+// one (millions of values from about two hundred stored bytes) that once
+// ran a native decode past the turn deadline at about 1 GB, and the
+// largest a v38 guest's memory builds (BUILT, one level below FITS). The
+// native kv::extent_tests::shared_parts_expand_within_the_value_bound
+// steps, each set and read in its own timer turn.
+const diamondValues = (levels) => 2 ** (levels + 1) - 1, diamondBuilt = (levels) => 2 ** (levels + 2) - 1;
+const DIAMOND_FITS = Math.floor(Math.log2(K.valueExtent.maxValues + 1)) - 1, FAR_DIAMOND = 22;
+const BUILT_DIAMOND = DIAMOND_FITS - 1;
+const PLANTED_LEVELS = [BUILT_DIAMOND, DIAMOND_FITS, DIAMOND_FITS + 1, FAR_DIAMOND];
+// Test-only budgets (CLAUDE.md §11), requested by the package and allowed
+// by both hosts: the engine's most fuel per turn and its longest turn
+// deadline (`budget::MAX_DEADLINE_PER_TURN_MS`), so the largest decodes
+// finish whatever the machine's load; the memory stays the production one.
+const LARGEST_BUDGETS = {fuelPerTurn: registry.maxTurnFuel, deadlinePerTurnMs: 60 * 1000};
+// How much the Chrome process tree's resident memory may grow over a
 // diamond run: generous for a page, its Worker and their wasm memories,
 // a small fraction of what building the far diamond took.
 const RSS_GROWTH_BYTES = 256 * 1024 * 1024;
@@ -237,7 +260,7 @@ const PS_RSS_UNIT_BYTES = 1024;
 const V8_HEADER = [0xFF, 0x10], TUPLE_STRING = 0x02, TUPLE_END = 0x00;
 // The largest object id a one-byte varint carries.
 const ONE_BYTE_VARINT = 0x80;
-const DIAMOND = `interface D { a?: D; b?: D }
+const DIAMOND_HELPERS = `interface D { a?: D; b?: D }
 function diamond(levels: number): D {
   let x: D = {};
   for (let i = 0; i < levels; i++) { x = { a: x, b: x }; }
@@ -245,36 +268,95 @@ function diamond(levels: number): D {
 }
 function size(d: D | undefined): number { return d === undefined ? 1 : 1 + size(d.a) + size(d.b); }
 function turn(): Promise<void> { return new Promise<void>((done) => { setTimeout(() => done(), 0); }); }
-` + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
-    for (const levels of [${DIAMOND_LEVELS.join(', ')}]) {
-      const label = String(levels);
-      await turn();
-      try { await kv.set(['diamond', label], diamond(levels)); console.log('set ' + label); }
-      catch (e) { if (e instanceof Error) { console.log(label + ' ' + e.name + ': ' + e.message); } }
-      await turn();
-      const got = await kv.get<D>(['diamond', label]);
-      console.log('get ' + label + ' ' + (got.value === null ? 'absent' : String(size(got.value))));
-    }
-    for (const levels of [${PLANTED_LEVELS.join(', ')}]) {
-      const label = String(levels);
-      await turn();
-      try {
-        const got = await kv.get<D>(['planted', label]);
-        console.log('planted ' + label + ' ' + (got.value === null ? 'absent' : String(size(got.value))));
-      } catch (e) { if (e instanceof Error) { console.log('planted ' + label + ' ' + e.name + ': ' + e.message); } }
-    }
+`;
+/** One timer turn per step: `set` stores a diamond at `["diamond",
+ * levels]`, `get` reads it back and `planted` reads `["planted", levels]`,
+ * each logging what it built or why it failed (a fatal failure ends the
+ * run). */
+const diamondProgram = (steps) => DIAMOND_HELPERS + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
+${steps.map(([step, levels]) => step === 'set'
+    ? `    await turn();
+    try { await kv.set(['diamond', '${levels}'], diamond(${levels})); console.log('set ${levels}'); }
+    catch (e) { if (e instanceof Error) { console.log('set ${levels} ' + e.name + ': ' + e.message); } }`
+    : `    await turn();
+    try { const got = await kv.get<D>(['${step === 'get' ? 'diamond' : 'planted'}', '${levels}']); console.log('${step} ${levels} ' + (got.value === null ? 'absent' : String(size(got.value)))); }
+    catch (e) { if (e instanceof Error) { console.log('${step} ${levels} ' + e.name + ': ' + e.message); } }`).join('\n')}
     kv.close();`);
-/** What DIAMOND logs: within the bound a diamond stores and reads back
- * whole; past it `set` and a read of a planted one fail by name. */
+// Within the bound a diamond stores, past it `set` fails by name, and a
+// read of a planted one past it (and far past it) fails by name.
+const DIAMOND_STEPS = [['set', BUILT_DIAMOND], ['set', DIAMOND_FITS], ['set', DIAMOND_FITS + 1], ['get', DIAMOND_FITS + 1],
+  ['planted', DIAMOND_FITS + 1], ['planted', FAR_DIAMOND]];
 const diamondLogs = () => {
-  const fits = (levels) => diamondDecoded(levels) <= K.valueExtent.maxValues;
   const refused = `${K.errors.typeError}: ${K.valueExtent.tooExpanded}`;
-  return [
-    ...DIAMOND_LEVELS.flatMap((levels) => fits(levels) ? [`set ${levels}`, `get ${levels} ${diamondDecoded(levels)}`] : [`${levels} ${refused}`, `get ${levels} absent`]),
-    ...PLANTED_LEVELS.map((levels) => fits(levels) ? `planted ${levels} ${diamondDecoded(levels)}`
-      : `planted ${levels} ${K.errors.typeError}: KV value does not match the checked type: ${K.valueExtent.tooExpanded}`),
-  ].map((line) => LOG_PREFIX + line);
+  const mismatch = `${K.errors.typeError}: KV value does not match the checked type: ${K.valueExtent.tooExpanded}`;
+  assert(diamondValues(DIAMOND_FITS) <= K.valueExtent.maxValues && diamondValues(DIAMOND_FITS + 1) > K.valueExtent.maxValues);
+  return [`set ${BUILT_DIAMOND}`, `set ${DIAMOND_FITS}`, `set ${DIAMOND_FITS + 1} ${refused}`, `get ${DIAMOND_FITS + 1} absent`,
+    `planted ${DIAMOND_FITS + 1} ${mismatch}`, `planted ${FAR_DIAMOND} ${mismatch}`].map((line) => LOG_PREFIX + line);
 };
+// With the largest budgets, one level below the bound reads back whole,
+// stored by Varta or planted.
+const DIAMOND_BUILT_STEPS = [['set', BUILT_DIAMOND], ['get', BUILT_DIAMOND], ['planted', BUILT_DIAMOND]];
+const diamondBuiltLogs = () => [`set ${BUILT_DIAMOND}`, `get ${BUILT_DIAMOND} ${diamondBuilt(BUILT_DIAMOND)}`,
+  `planted ${BUILT_DIAMOND} ${diamondBuilt(BUILT_DIAMOND)}`].map((line) => LOG_PREFIX + line);
+// The worst accepted value: the diamond at the bound. With the largest
+// budgets its read decodes it whole and builds past a v38 guest's memory,
+// a fatal memory exhaustion; under a production turn's fuel its decoding
+// ends the turn with the fatal fuel exhaustion while it is classified.
+const DIAMOND_BOUND_STEPS = [['planted', DIAMOND_FITS]];
+// Values Deno and the earlier v38 build store without sharing: arrays of
+// 2048 and 3000 numbers and 500 records of three fields set and get, each
+// in its own production turn (the native
+// unshared_values_deno_stores_set_and_get_in_a_production_turn program).
+const UNSHARED_NUMBERS = [2048, 3000], UNSHARED_RECORDS = 500;
+const UNSHARED = `interface Run { id: string; n: number; done: boolean }
+function turn(): Promise<void> { return new Promise<void>((done) => { setTimeout(() => done(), 0); }); }
+` + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
+    for (const n of [${UNSHARED_NUMBERS.join(', ')}]) {
+      const numbers: number[] = [];
+      for (let i = 0; i < n; i++) { numbers.push(i); }
+      await turn();
+      await kv.set(['numbers', n], numbers);
+      await turn();
+      const got = await kv.get<number[]>(['numbers', n]);
+      let sum = 0;
+      if (got.value !== null) { for (const x of got.value) { sum = sum + x; } }
+      console.log('numbers ' + String(got.value === null ? 0 : got.value.length) + ' ' + String(sum));
+    }
+    const runs: Run[] = [];
+    for (let i = 0; i < ${UNSHARED_RECORDS}; i++) { runs.push({ id: 'r' + String(i), n: i, done: i % 2 === 0 }); }
+    await turn();
+    await kv.set(['runs'], runs);
+    await turn();
+    const got = await kv.get<Run[]>(['runs']);
+    console.log('runs ' + String(got.value === null ? 0 : got.value.length));
+    kv.close();`);
+const unsharedLogs = () => [...UNSHARED_NUMBERS.map((n) => `numbers ${n} ${n * (n - 1) / 2}`), `runs ${UNSHARED_RECORDS}`].map((line) => LOG_PREFIX + line);
+// A read that decodes more than its turn's fuel pays: three arrays of 3000
+// numbers each read alone in its own turn, then all three by one getMany
+// in one turn, which ends with the fatal fuel exhaustion while the codec
+// classifies them (it pays as it goes), equal to native.
+const DECODE_FUEL_VALUES = 3, DECODE_FUEL_NUMBERS = 3000;
+// The browser host's fatal fuel failure (`FuelExhausted`, fuel.mjs).
+const FUEL_EXHAUSTED = /^fuel exhausted$/;
+const DECODE_FUEL = `function turn(): Promise<void> { return new Promise<void>((done) => { setTimeout(() => done(), 0); }); }
+` + GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PATH)});
+    const keys: KvKey[] = [];
+    for (let k = 0; k < ${DECODE_FUEL_VALUES}; k++) {
+      const numbers: number[] = [];
+      for (let i = 0; i < ${DECODE_FUEL_NUMBERS}; i++) { numbers.push(i); }
+      await turn();
+      await kv.set(['big', k], numbers);
+      keys.push(['big', k]);
+    }
+    for (const key of keys) {
+      await turn();
+      const got = await kv.get<number[]>(key);
+      console.log('read ' + String(got.value === null ? 0 : got.value.length));
+    }
+    await turn();
+    const all = await kv.getMany<number[]>(keys);
+    console.log('read all ' + String(all.length));
+    kv.close();`);
 /** The V8 bytes of a `D` diamond of `levels` as Deno writes it: level `k`
  * (object id `levels - k`) back-references level `k - 1` in `b`. */
 function diamondBytes(levels) {
@@ -338,22 +420,36 @@ const COUNTER = GUARDED(`    const kv = await varta.kv.open(${JSON.stringify(PAT
     }
     kv.close();`);
 
-async function project(root, name, source, capabilities, policy) {
+/** The project `name`; `policy` is a native host ceiling of capabilities,
+ * `budgets` budgets the package requests and the native host allows (the
+ * browser run allows them through its `budgetCeiling`). */
+async function project(root, name, source, capabilities, policy, budgets) {
   const directory = join(root, name);
   await mkdir(join(directory, ROOT), {recursive: true});
   await writeFile(join(directory, 'main.ts'), source);
   await writeFile(join(directory, 'varta.config.json'), JSON.stringify({entry: 'main.ts', target: 'wasm', out: OUT, languageProfile: PROFILE,
-    fs: {roots: {[ROOT]: ROOT}}, capabilities}));
-  if (policy) await writeFile(join(directory, 'host-policy.json'), JSON.stringify({schemaVersion: 1, abiVersion: HOST_ABI, fsRoots: {[ROOT]: join(directory, ROOT)}, capabilities: policy}));
+    fs: {roots: {[ROOT]: ROOT}}, capabilities, ...(budgets ? {budgets} : {})}));
+  if (policy || budgets) {
+    await writeFile(join(directory, 'host-policy.json'), JSON.stringify({schemaVersion: 1, abiVersion: HOST_ABI, fsRoots: {[ROOT]: join(directory, ROOT)},
+      capabilities: policy ?? ceilingOf(capabilities), ...(budgets ? {budgets} : {})}));
+  }
   return directory;
 }
+/** The native host ceiling that allows exactly the package's KV and timer
+ * grants. */
+const ceilingOf = (capabilities) => [
+  ...Object.entries(capabilities.kv ?? {}).map(([operation, patterns]) => ({id: K.capabilities[operation], patterns})),
+  ...(capabilities.time?.timer ? [{id: 'time.timer', enabled: true}] : []),
+];
 
 const number = Number;
-function nativeRun(varta, directory, policy) {
+/** A native run of `directory` (with its host policy when `policy`):
+ * its logs, usage and, for a run that `fails`, the failure line. */
+function nativeRun(varta, directory, policy, fails = false) {
   const args = [...(policy ? ['--policy', 'host-policy.json'] : []), 'dev', '--budget-report'];
   const run = spawnSync(varta, args, {cwd: directory, encoding: 'utf8'});
   if (run.error) throw run.error;
-  assert.equal(run.status, 0, run.stderr);
+  if (fails) assert.notEqual(run.status, 0, run.stderr); else assert.equal(run.status, 0, run.stderr);
   const turns = [...run.stderr.matchAll(/varta budget: turn \d+ \w+: fuel (\d+)\/\d+, host calls (\d+)\/\d+, microtasks (\d+),/g)]
     .map(([, fuel, hostCalls, microtasks]) => ({fuel: number(fuel), hostCalls: number(hostCalls), microtasks: number(microtasks)}));
   const total = /varta budget: total: (\d+) turns, fuel (\d+), peak memory \d+\/\d+ bytes, output (\d+)\/\d+ bytes/.exec(run.stderr);
@@ -363,6 +459,7 @@ function nativeRun(varta, directory, policy) {
     logs: run.stdout.split(/\r?\n/).filter((line) => line.startsWith(LOG_PREFIX)),
     usage: {turns: number(total[1]), fuelUsed: number(total[2]), outputBytes: number(total[3]),
       hostCalls: turns.reduce((sum, turn) => sum + turn.hostCalls, 0), microtasks: turns.reduce((sum, turn) => sum + turn.microtasks, 0)},
+    failure: /^varta failed: (.*)$/m.exec(run.stderr)?.[1],
   };
 }
 
@@ -429,10 +526,10 @@ export async function runKv(varta, driver) {
   const root = await mkdtemp(join(tmpdir(), 'varta-browser-kv-'));
   const passed = [];
   const pass = (...names) => { passed.push(...names); console.log(`PASS ${names.join(', ')}`); };
-  const directories = new Map(), bundles = new Map();
-  const add = async (name, source, capabilities, policy) => {
-    const directory = await project(root, name, source, capabilities, policy);
-    directories.set(name, directory); bundles.set(name, build(varta, directory));
+  const directories = new Map(), bundles = new Map(), budgetsOf = new Map();
+  const add = async (name, source, capabilities, policy, budgets) => {
+    const directory = await project(root, name, source, capabilities, policy, budgets);
+    directories.set(name, directory); bundles.set(name, build(varta, directory)); budgetsOf.set(name, budgets);
     return directory;
   };
   try {
@@ -447,11 +544,27 @@ export async function runKv(varta, driver) {
     await add('nested', NESTED, {kv: {read: [`/${ROOT}/**`], write: [`/${ROOT}/**`]}});
     await add('deep', DEEP, GRANTS);
     await add('dag', DAG, GRANTS);
-    await add('diamond', DIAMOND, {...GRANTS, time: {timer: true}});
+    const TIMED = {...GRANTS, time: {timer: true}};
+    await add('diamond', diamondProgram(DIAMOND_STEPS), TIMED);
+    await add('diamond-built', diamondProgram(DIAMOND_BUILT_STEPS), TIMED, undefined, LARGEST_BUDGETS);
+    await add('diamond-bound', diamondProgram(DIAMOND_BOUND_STEPS), TIMED, undefined, LARGEST_BUDGETS);
+    // The same program as diamond-bound under production budgets (each
+    // run first replaces the container with the planted one).
+    await add('diamond-fuel', diamondProgram(DIAMOND_BOUND_STEPS), TIMED);
+    await add('unshared', UNSHARED, TIMED);
+    await add('decode-fuel', DECODE_FUEL, TIMED);
     const {server, origin} = await serveBundles(bundles);
     const page = async (name) => driver.page(`${origin}/${name}/blank.html`);
     const same = (label, browser, native) => {
       assert.equal(browser.status, 'ok', `${label}: ${browser.error}`);
+      assert.deepEqual(browser.logs, native.logs, `${label}: logs`);
+      assert.deepEqual(browser.usage, native.usage, `${label}: usage`);
+    };
+    // A fatal end alike: the browser's run fails (the instance ended, its
+    // error text the browser host's own) after the same logs and usage.
+    const failsAlike = (label, browser, native) => {
+      assert.equal(browser.status, 'failed', `${label}: ${JSON.stringify(browser)}`);
+      console.log(`${label}: native "${native.failure}", browser "${browser.error}"`);
       assert.deepEqual(browser.logs, native.logs, `${label}: logs`);
       assert.deepEqual(browser.usage, native.usage, `${label}: usage`);
     };
@@ -606,29 +719,65 @@ export async function runKv(varta, driver) {
         pass('dag');
       }
       // Diamonds: equal to native on set and on read of planted values,
-      // within the value bound and past it, the browser's memory bounded.
-      {
-        const directory = directories.get('diamond');
+      // within the value bound and past it, the browser's memory bounded;
+      // with the largest budgets one level below the bound reads back
+      // whole, and the worst accepted value (the diamond at the bound)
+      // decodes whole and builds past the guest's memory, fatally alike.
+      // Under production fuel the same read ends while it is classified.
+      for (const [name, label, logs, fails, browserFails] of [
+        ['diamond', 'diamond', diamondLogs()],
+        ['diamond-built', 'diamond built', diamondBuiltLogs()],
+        ['diamond-bound', 'worst accepted value', [], /memory budget exhausted/],
+        ['diamond-fuel', 'fuel exhaustion while classifying a diamond', [], /exhausted its fuel budget/, FUEL_EXHAUSTED],
+      ]) {
+        const directory = directories.get(name);
         await plantNative(directory);
-        const native = nativeRun(varta, directory);
-        assert.deepEqual(native.logs, diamondLogs());
-        const tab = await page('diamond');
-        await tab.evaluate(corruptExpression(await artifactDirectory(bundles.get('diamond')), Array.from(plantedContainer())));
+        const largest = budgetsOf.get(name);
+        const native = nativeRun(varta, directory, largest !== undefined, fails !== undefined);
+        assert.deepEqual(native.logs, logs, `${label}: native logs`);
+        if (fails) assert.match(native.failure ?? '', fails, `${label}: native failure`);
+        const tab = await page(name);
+        await tab.evaluate(corruptExpression(await artifactDirectory(bundles.get(name)), Array.from(plantedContainer())));
+        const options = largest === undefined ? '{}' : `{budgetCeiling:${JSON.stringify(largest)}}`;
         const before = driver.rss ? await driver.rss() : undefined;
         let peak = before, done = false;
-        const running = tab.evaluate(runExpression('diamond')).finally(() => { done = true; });
+        const running = tab.evaluate(runExpression(name, options)).finally(() => { done = true; });
         while (before !== undefined && !done) {
           peak = Math.max(peak, await driver.rss());
           await new Promise((resolve) => setTimeout(resolve, STARTUP_POLL_MS));
         }
-        same('diamond', await running, native);
+        const browser = await running;
+        if (fails) failsAlike(label, browser, native);
+        else same(label, browser, native);
+        if (browserFails) assert.match(browser.error, browserFails, `${label}: browser failure`);
         await tab.close();
-        if (before === undefined) console.log('SKIP diamond memory: this driver cannot measure resident memory');
+        if (before === undefined) console.log(`SKIP ${name} memory: this driver cannot measure resident memory`);
         else {
-          assert(peak - before <= RSS_GROWTH_BYTES, `diamond: Chrome grew by ${peak - before} bytes`);
-          console.log(`diamond: Chrome's resident memory grew by at most ${peak - before} bytes`);
+          assert(peak - before <= RSS_GROWTH_BYTES, `${label}: Chrome grew by ${peak - before} bytes`);
+          console.log(`${name}: Chrome's resident memory grew by at most ${peak - before} bytes`);
         }
-        pass('diamond');
+        pass(name);
+      }
+      // Unshared values Deno stores set and get; a getMany past its turn's
+      // fuel ends while the codec classifies, fatally alike.
+      {
+        const native = nativeRun(varta, directories.get('unshared'));
+        assert.deepEqual(native.logs, unsharedLogs());
+        const tab = await page('unshared');
+        same('unshared values', await tab.evaluate(runExpression('unshared')), native);
+        await tab.close();
+        pass('unshared');
+      }
+      {
+        const native = nativeRun(varta, directories.get('decode-fuel'), false, true);
+        assert.deepEqual(native.logs, Array.from({length: DECODE_FUEL_VALUES}, () => `${LOG_PREFIX}read ${DECODE_FUEL_NUMBERS}`));
+        assert.match(native.failure ?? '', /exhausted its fuel budget/);
+        const tab = await page('decode-fuel');
+        const browser = await tab.evaluate(runExpression('decode-fuel'));
+        failsAlike('getMany past its fuel', browser, native);
+        assert.match(browser.error, FUEL_EXHAUSTED, 'getMany past its fuel: browser failure');
+        await tab.close();
+        pass('decode-fuel');
       }
     } finally {
       // A browser may keep an idle keep-alive connection to the server
