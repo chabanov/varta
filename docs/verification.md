@@ -549,6 +549,15 @@ needs a reproducible failure; a selection that fails only on some runs is not
 waived, so a failing run fails the scope. The table is currently empty, and all
 three engine selections of `test-browser-variables.mjs` run.
 
+Open intermittent defect: in Firefox 153 the first `page.evaluate` of
+`test-browser-variables.mjs` can throw `too much recursion` from
+`rewriteRootSelector` in `view-css.mjs` (its outer `text.replace` over
+`"[^"]*"|[^{}"]+(?=\{)`). On one macOS host the same command, oracle and
+sources passed every run at a lower system load and failed most runs at a load
+average near 75; Chrome and WebKit did not fail. The browser host really throws
+there, so the gate fails on such a run rather than waiving the selection, until
+`rewriteRootSelector` is fixed.
+
 The gate does not cover `test-browser-select-bundle.mjs` (its `examples/select`
 fixture is not in the repository), the native oracles (`test-native-*.mjs`,
 `test-headless-geometry.mjs`, `test-select-work-runtime.mjs`), the fuel probe
