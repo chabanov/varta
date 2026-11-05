@@ -14164,7 +14164,9 @@ instantiation leaves even one unit of guest fuel untouched, and the start
 function charge, on every CI host, and compiles the case corpus twice to
 compare bytes; a host-dependent engine setting or compiler output fails it.
 
-### Browser fuel transform foundation (in development)
+<a id="browser-fuel-transform-foundation-in-development"></a>
+
+### Browser fuel transform and official browser host
 
 `varta_compiler::browser_meter::instrument` derives a private execution image
 from validated portable Wasm. It leaves the original artifact unchanged. The
@@ -14187,9 +14189,11 @@ SIMD, sign extension, saturating conversion, multi-value and tail calls. Unmodel
 proposals, variable table operations, shared/memory64/custom-page, non-function imports, Wasm
 start functions and already instrumented input are rejected. Input/output module,
 type and function-body sizes are checked against Wasm implementation limits.
-Start-function instantiation charges remain a host gap. An initial library-built
-console loader and build command are described below; a complete official host
-and browser dev delivery remain in development.
+Because Wasm start functions are rejected, their instantiation charge is never
+modelled: such a module gets no browser bundle. The official browser host built
+on this image (the library loader, `varta build --target browser` and
+`varta dev --target browser`) is described below; its multi-browser and pilot
+acceptance remain open.
 `varta_common::browser` generates the frozen ES registry in
 `crates/varta-common/browser/registry.mjs` directly from Rust (profiles, exact
 operation signatures/admission, entry points, value/frame acceptance, fair-work
@@ -14215,8 +14219,10 @@ equivalent of native Store growth limits without changing portable bytes. Shared
 64-bit and custom-page memories and shared/64-bit tables remain unsupported.
 `instrument` uses the production memory cap; `instrument_with_memory_limit` accepts
 the already resolved trusted cap. Unsupported input never falls back to an
-unmetered image. The initial console bundle supplies integrity binding to this prepared pair;
-general artifact loading and permission/effect enforcement remain open.
+unmetered image. The bundle supplies integrity binding to this prepared pair.
+The browser host loads only such prepared bundles, never arbitrary unprepared
+artifacts; its permission enforcement and the effects it implements are described
+below, and a module importing any other effect gets no bundle.
 
 `BrowserArtifact::bundle` builds a checked console/view bundle:
 `app.wasm`, `app.private.wasm`, `app.manifest.json`, `varta-worker.js`,
@@ -14235,7 +14241,9 @@ are refused. The distribution flag does not reinterpret the original manifest
 `--target native` selects the existing verified companion packaging path, like
 `--single`. `--launcher` requires either native selector; `--single` and `--target`
 conflict. Host policies remain runtime inputs and cannot be passed to build.
-Browser dev and broader host effects remain in development; checked view sessions are described below.
+Browser dev (`varta dev --target browser`) and checked view sessions are described
+below; an effect outside the accepted import list is not implemented, and its module
+gets no bundle.
 
 The browser checkpoint owns a bounded FIFO of resume tokens and pending reaction
 serials. It dispatches only through `varta_resume` with the normal/undefined
@@ -14273,7 +14281,8 @@ native headless operation. The v38 broker and interactive prompt path are descri
 below; legacy modes retain their policy behavior.
 V2 denial arms nothing, schedules frame cleanup and reports the recoverable
 permission error; legacy denial remains fatal. Timer bookkeeping pays fuel but
-never ordinary host-call counts. External host-event turns remain open.
+never ordinary host-call counts. External host-event turns (`app.deliver`) are
+described below.
 
 The v38 network adapter consumes only descriptor version 2, with generated ABI,
 completion, buffer and limit facts. Starts pay the ordinary host-call budget;
@@ -14811,9 +14820,15 @@ legacy profiles retain their existing host-charge semantics.
 The explicit `browser_meter_probe`/`browser/probe.mjs` and `probe.html` verification
 tools compare one trusted v38 fixture with native under Node and Chrome, including
 host call/byte-charge boundaries. These are not general artifact loaders. The
-full cross-host corpus, other fair host charges, long-lived Worker turns, Firefox
-and WebKit, overhead and delivery acceptance remain open. The prototype remains
-unmetered; memory/view layouts and their encodings still need official generation.
+full cross-host corpus, other fair host charges, overhead and delivery acceptance
+remain open; long-lived application turns and the Firefox/WebKit/Chrome effect
+matrix are compared with native by the browser effect acceptance
+([verification](verification.md#browser-registry-and-fuel-probe-development)), not
+by these probes. The prototype third-party host (`examples/varta-web-host`) remains
+unmetered. The value layouts and view protocol facts the official host reads are
+generated from Rust by `varta_common::browser::registry()` and checked by its drift
+test; that registry is not a copy of every generated table of the
+[embedding contract](embedding.md).
 
 ## Artifact format and validation
 

@@ -3715,7 +3715,7 @@ What a browser host needs beyond the probe, for the v35/v36 surface:
 | macOS arm64/x86-64, Linux x86-64 | Wasmtime launcher | `--single`: native launcher + portable Wasm + manifest (VARTA3) | Implemented for the build host's own OS/CPU |
 | Windows x86-64/arm64 | Wasmtime launcher | Same container | Unverified |
 | Linux aarch64 (Raspberry Pi 5) | Static musl Wasmtime launcher | Same container with a prebuilt aarch64 launcher | Launcher cross-builds and runs (probe); packaging needs offline launcher metadata |
-| Browser, Worker (recommended) | Generated JS host in a dedicated Worker; generated applier on the main thread | `dist/web/`: `app.wasm`, `app.private.wasm`, `app.manifest.json`, self-contained `varta-worker.js`/`varta-host.js` (applier embedded), `index.html` with CSP and SRI | Partial: R1 plus v38 view sessions through CLI/library; resource packaging, broader host/dev and multi-browser acceptance remain open |
+| Browser, Worker (recommended) | Generated JS host in a dedicated Worker; generated applier on the main thread | `dist/web/`: `app.wasm`, `app.private.wasm`, `app.manifest.json`, self-contained `varta-worker.js`/`varta-host.js` (applier embedded), `index.html` with CSP and SRI | Partial: R1 plus v38 view sessions, packaged PNG/font resources and local `varta dev --target browser` with rebuild/reload through CLI/library; remaining host effects and full multi-browser and pilot acceptance remain open |
 | Browser, main thread | Generated JS host | Same bundle with `mode: "main"` | Development only: no deadline enforcement |
 | Desktop/Pi5 with UI | `varta-desktop` shell: Wasmtime + [native renderer](#native-renderer-for-desktop-and-raspberry-pi-5) in one process (no webview) | Prebuilt shell + payload in an OS bundle ([desktop packaging](#desktop-packaging)) | Not implemented |
 
@@ -3733,6 +3733,16 @@ What a browser host needs beyond the probe, for the v35/v36 surface:
 - **Browser.** One artifact, not a separate compilation: the browser bundle reuses
   the same validated portable Wasm and manifest. The generated host and applier are
   versioned with the host ABI and value ABI; a mismatch fails at load.
+- **Proposed embedding level A1 (owner decision open).** The
+  [embedding contract](embedding.md#conformance-levels) has no level for the
+  official application/view host. The proposal: **A1 — application/view host**,
+  R2 plus the v38 application instance (long-lived turns, host event delivery,
+  close and permission revocation),
+  `view_commit` with the L0 view protocol and an applier, the event-source imports,
+  per-turn renewal with metered fuel and the browser effect mapping, specified in
+  its own embedding section. No host may claim it until the instance and event
+  interfaces leave "unstable" and full multi-browser acceptance passes; until the
+  owner accepts it, embedding.md keeps its current levels.
 
 #### Application lifecycle and event turns
 
