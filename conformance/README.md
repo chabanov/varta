@@ -1,6 +1,6 @@
 # Checked core compatibility inventory
 
-This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v37** profile
+This developer suite pins **ECMAScript 2025**, the **checked-f64-utf16-v38** profile
 and the **checked-ts-main-v1** source model. Its original cases are checked
 TypeScript programs with a Varta `main` entry point and observable runtime output.
 Feature rows identify their CORE work streams and either an ECMAScript section or
@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 73 feature rows and 127 cases:
-123 pass, 4 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 80 feature rows and 137 cases:
+132 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -317,3 +317,65 @@ rely on, which the integration fixed in the compiler rather than in the
 cases. The four remaining known gaps (`symbol-type`, `class-instance`,
 `define-data-property`, `generator-next`) are unchanged, and `fetch` remains
 the recorded gap above.
+
+The v38 integration moves the pin to `checked-f64-utf16-v38`. Under it every
+earlier case keeps its status with unchanged output, and the four known gaps
+are rejected with their reviewed diagnostic codes, so nothing was promoted;
+the `class-instance` and `generator-next` reasons now name v38. Seven feature
+rows, each a Varta contract with its architecture anchor, and ten original
+cases cover the v38 paths the pinned SDK and the console use:
+
+- `web-bytes` (CORE-05, CORE-10) with `web-bytes-bodies`: `Blob` parts of
+  text and bytes, slices, `ArrayBuffer` copies, `Response` bodies read as
+  text, bytes and JSON (a second read is a `TypeError`) and a `Request` built
+  with a byte body;
+- `typed-global-this` (CORE-10, CORE-12) with `global-this-detection`: an
+  optional `globalThis.fetch`, `crypto.randomUUID`/`getRandomValues`, an
+  optional `process.env` read and `typeof` of engine globals;
+- `strict-members` (CORE-02) with `strict-member-unions`: a twenty-member
+  discriminated union selected from JSON, an exhaustive `switch` ending in
+  `never`, optional chains over declared fields and a literal computed key;
+- `structural-subtyping` (CORE-02, CORE-03) with `structural-views` (object
+  literals and class instances viewed as narrower interfaces, writes through
+  a view, callbacks with fewer parameters, an extra optional parameter and a
+  boolean-field guard) and the known gap `union-record-argument`;
+- `fetch` (CORE-10, CORE-11) with `fetch-injected-transport` (an SDK-style
+  injected `FetchLike` answering with constructed `Response`s, a retry loop,
+  `Request`/`Headers` construction) and `fetch-denied`;
+- `kv-storage` (CORE-11, CORE-13) with `kv-denied-open`;
+- `sdk-paths` (CORE-04, CORE-05) with `sdk-error-causes`: `cause` options
+  through `super` and native families, causes read through `unknown`, and
+  `instanceof` of `Uint8Array`, `Map` and `Set` members of closed unions;
+- `template-literal-forms` on the existing `template-literals` row: nested
+  templates, private fields and getters, optional chains with `??`, BigInt
+  and union values, multi-line text and dictionary keys.
+
+Seven of the nine new supported cases, all but `fetch-denied` and
+`kv-denied-open`, print what Node.js v24.20.0 type stripping prints (with
+`await main();` appended); the stored output of the known gap
+`union-record-argument` is also Node's. Those two are Varta contracts: the runner grants nothing, so an
+ungranted `fetch` rejects with a logged, recoverable `NotAllowedError` before
+any socket, where Node attempts the connection, and `varta.kv.open` (which
+Node lacks) rejects the same way before any file is touched. Both fetch cases
+also run with the same output under v37; the v37 compiler rejects the other
+new cases. The reviewed per-case `grants` still admit only `time.timer`: a
+granted `fetch` needs a loopback server and a KV database a virtual file root
+with a host directory, which this executor does not provide, so those paths
+stay covered by the runtime's loopback and Deno-fixture KV tests. Running
+granted KV and `fetch` cases inside the runner would change its security model
+and remains an open owner decision. A runner
+test pins that `net.request`, `kv.read`, `kv.write` and `env.get` grants fail
+inventory loading and that the v38 `process.env` and KV globals disclose
+nothing of the parent environment.
+
+`union-record-argument` is a reviewed `type_error` gap: TypeScript accepts an
+`A | B` of record interfaces where `{ n: number }` is expected (Node prints
+`1 2`), while v38 views only a single record or class instance as a narrower
+record. Writing the cases also met forms v38 rejects that are not inventory
+cases yet: a `this` return type, `Array.prototype.shift`, a union of `Map` and
+`Set`, template-literal computed keys in object literals, `await` inside a
+template literal or inside a call argument such as `String((await g()).n)`
+(an awaited property base in a declaration, `const n = (await g()).n`, is
+admitted), `===` between two `Uint8Array` values, `Request` body
+readers such as `arrayBuffer()`, a local binding
+named `log`, and function members read through `globalThis.globalThis`.
