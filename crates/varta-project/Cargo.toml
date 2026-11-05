@@ -22,3 +22,10 @@ hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
 tokio = { workspace = true, features = ["signal"] }
+
+[dev-dependencies]
+# The shared KV value layer, whose texts the browser registry repeats.
+varta-kv-codec = { path = "../varta-kv-codec" }
+# Runs the checked-in wasm32 KV codec beside the native build of the same
+# crate (`browser::kv_codec_tests`); already locked through varta-runtime.
+wasmtime.workspace = true

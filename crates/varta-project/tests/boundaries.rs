@@ -42,9 +42,17 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 "varta-common",
                 "varta-bigint",
                 "varta-intrinsics",
+                "varta-kv-codec",
                 "varta-view",
             ]
             .as_slice(),
+        ),
+        // The KV value layer is shared by the runtime and, compiled to
+        // wasm32, the browser host; it reads common's `no_std` core.
+        ("varta-kv-codec", ["varta-common"].as_slice()),
+        (
+            "varta-kv-codec-wasm",
+            ["varta-kv-codec", "varta-common"].as_slice(),
         ),
         // The linked intrinsics read the value layout from common's `no_std`
         // core (checked below: default features off).
@@ -106,7 +114,11 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 // common only through its `no_std` value-layout core.
                 if matches!(
                     name,
-                    "varta-bigint" | "varta-intrinsics" | "varta-intrinsics-wasm"
+                    "varta-bigint"
+                        | "varta-intrinsics"
+                        | "varta-intrinsics-wasm"
+                        | "varta-kv-codec"
+                        | "varta-kv-codec-wasm"
                 ) && target == "varta-common"
                 {
                     assert_eq!(
@@ -126,6 +138,8 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                         | "varta-bigint"
                         | "varta-intrinsics"
                         | "varta-intrinsics-wasm"
+                        | "varta-kv-codec"
+                        | "varta-kv-codec-wasm"
                         | "varta-view"
                         | "varta-compiler"
                         | "varta-runtime"
@@ -138,6 +152,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                             "varta-common"
                                 | "varta-bigint"
                                 | "varta-intrinsics"
+                                | "varta-kv-codec"
                                 | "varta-view"
                                 | "varta-compiler"
                                 | "varta-runtime"
@@ -320,6 +335,8 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
         "varta-artifact",
         "varta-intrinsics",
         "varta-intrinsics-wasm",
+        "varta-kv-codec",
+        "varta-kv-codec-wasm",
         "varta-view",
     ] {
         assert!(

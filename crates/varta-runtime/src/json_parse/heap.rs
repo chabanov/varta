@@ -29,7 +29,7 @@ impl Writer {
     }
     /// Allocate a guest block of `len` payload bytes through the module's
     /// host-free allocator and check what it returned.
-    fn block(
+    pub(super) fn block(
         &self,
         caller: &mut Caller<'_, RuntimeContext>,
         len: usize,
@@ -39,24 +39,8 @@ impl Writer {
         }
         let request = i32::try_from(len).map_err(|_| error("allocation size"))?;
         let ptr = self.allocate.call(&mut *caller, request)? as u32 as usize;
-        if ptr < abi::OWNED_STRING_BASE + abi::STRING_HEADER_BYTES
-            || !ptr.is_multiple_of(HEAP_ALIGNMENT)
-        {
-            return Err(error("allocator returned an invalid pointer"));
-        }
-        let header = ptr - abi::STRING_HEADER_BYTES;
-        let memory = self.memory.data(&*caller);
-        let [size, flags, _, _] = words::<4>(memory, header)?;
-        if flags != HEAP_ALLOCATED_FLAG
-            || (size as usize) < abi::STRING_HEADER_BYTES + len
-            || !size.is_multiple_of(HEAP_ALIGNMENT as u32)
-            || header
-                .checked_add(size as usize)
-                .is_none_or(|end| end > memory.len())
-        {
-            return Err(error("allocator returned an invalid block"));
-        }
-        bytes(memory, ptr, len)?;
+        // The shared check of what the untrusted allocator returned.
+        varta_kv_codec::build::check_block(self.memory.data(&*caller), ptr, len).map_err(error)?;
         Ok(ptr)
     }
     /// An owned UTF-16 string holding `text` (v38 `json_stringify_owned`),
@@ -93,21 +77,6 @@ impl Writer {
         self.memory.write(&mut *caller, at, &chunk)?;
         self.publish(caller, ptr, len, 0, 0)
     }
-    /// A stamped block holding `data` that is not retained: the caller
-    /// stores its handle into a reachable slot before anything else
-    /// allocates (v38 top-down construction, `tree`).
-    pub(super) fn unretained(
-        &self,
-        caller: &mut Caller<'_, RuntimeContext>,
-        data: &[u8],
-        flag: i32,
-        link: u32,
-    ) -> Result<u64, wasmtime::Error> {
-        let ptr = self.block(caller, data.len())?;
-        self.memory.write(&mut *caller, ptr, data)?;
-        self.stamp(caller, ptr, flag, link)?;
-        Ok(((data.len() as u64) << i32::BITS) | ptr as u64)
-    }
     /// The shared top-down builder's view of this writer
     /// (`varta_common::json::build`).
     pub(super) fn heap<'a, 'b>(
@@ -118,34 +87,6 @@ impl Writer {
             writer: self,
             caller,
         }
-    }
-    /// Write one payload slot of a published container.
-    pub(super) fn store(
-        &self,
-        caller: &mut Caller<'_, RuntimeContext>,
-        at: usize,
-        payload: u64,
-    ) -> Result<(), wasmtime::Error> {
-        self.memory
-            .write(&mut *caller, at, &payload.to_le_bytes())
-            .map_err(wasmtime::Error::new)
-    }
-    fn stamp(
-        &self,
-        caller: &mut Caller<'_, RuntimeContext>,
-        ptr: usize,
-        flag: i32,
-        link: u32,
-    ) -> Result<(), wasmtime::Error> {
-        let header = ptr - abi::STRING_HEADER_BYTES;
-        self.memory.write(
-            &mut *caller,
-            header + HEAP_FLAGS_OFFSET,
-            &(HEAP_ALLOCATED_FLAG | flag as u32).to_le_bytes(),
-        )?;
-        self.memory
-            .write(&mut *caller, header + HEAP_LINK_OFFSET, &link.to_le_bytes())?;
-        Ok(())
     }
     /// Stamp the block's kind flag and edge word, then retain its handle.
     fn publish(
@@ -515,7 +456,18 @@ impl varta_common::json::build::Heap for HostHeap<'_, '_> {
         Ok(())
     }
     fn retain(&mut self, handle: u64) -> Result<(), wasmtime::Error> {
-        let retained = self.writer.retain.call(&mut *self.caller, handle as i64)?;
+        self.writer.retain_handle(self.caller, handle)
+    }
+}
+impl Writer {
+    /// Retain `handle` through the module's retention helper, which must
+    /// return it unchanged.
+    pub(super) fn retain_handle(
+        &self,
+        caller: &mut Caller<'_, RuntimeContext>,
+        handle: u64,
+    ) -> Result<(), wasmtime::Error> {
+        let retained = self.retain.call(&mut *caller, handle as i64)?;
         if retained as u64 != handle {
             return Err(error("retention helper changed the value"));
         }

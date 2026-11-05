@@ -1,0 +1,25 @@
+[package]
+name = "varta-kv-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# One `no_std` + `alloc` value layer of v38 KV storage: the native runtime
+# calls it for its `kv_*` host imports, and the official browser host runs the
+# same code compiled to wasm32 (`varta-kv-codec-wasm`, built by
+# `scripts/build-kv-codec.py`). Default features stay off so the wasm32 build
+# never needs `std`; in a workspace build the runtime's `std` features unify
+# as before.
+[dependencies]
+# The one owner of the value layout and of the checked JSON schema, as its
+# `no_std` core (no `std` feature).
+varta-common = { path = "../varta-common", default-features = false }
+# BigInt values of the V8 serializer subset (`no_std`).
+num-bigint = { version = "=0.4.8", default-features = false }
+thiserror = { version = "2.0", default-features = false }
+# Portable binary64 rounding (already locked through the intrinsics), since
+# `f64::fract` and `f64::trunc` need `std`.
+libm = "=0.2.16"
+
+[dev-dependencies]
+serde_json.workspace = true

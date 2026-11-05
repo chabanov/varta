@@ -3,14 +3,16 @@
 //! and schema checks.
 use super::*;
 use crate::policy::FileRoots;
+use denokv_proto::KeyPart;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use varta_common::{CapabilityGrant, CapabilityValue, language::LanguageProfile};
+use varta_kv_codec::wire::MutationCode;
 
 const FIXTURE: &[u8] = include_bytes!("../kv_cases/deno-2.9.4/fixture.kv");
 const MANIFEST: &str = include_str!("../kv_cases/deno-2.9.4/manifest.json");
 const ROWS: &str = include_str!("../kv_cases/deno-2.9.4/rows.json");
-const LOG: &str = "varta log: ";
+pub(super) const LOG: &str = "varta log: ";
 /// When Deno's generator wrote the fixture's one expiring entry,
 /// `["fixture", "expire"]` (`expireIn` one day), in Unix milliseconds:
 /// 2026-10-30T16:53:27.447Z. Derived from the fixture's own data by
@@ -87,7 +89,7 @@ pub(super) fn compile(source: &str) -> Vec<u8> {
     bytes
 }
 
-fn run_with(
+pub(super) fn run_with(
     source: &str,
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
@@ -112,7 +114,7 @@ fn run_with(
     })
 }
 
-fn run(source: &str, requested: Vec<CapabilityGrant>, roots: FileRoots) -> Vec<String> {
+pub(super) fn run(source: &str, requested: Vec<CapabilityGrant>, roots: FileRoots) -> Vec<String> {
     run_with(source, requested, None, roots).unwrap_or_else(|e| panic!("{e}\n{source}"))
 }
 
@@ -125,7 +127,7 @@ fn program(path: &str, body: &str) -> String {
 
 /// A program that reports `<name>: <message>` of what opening or `body`
 /// rejects with.
-fn guarded(path: &str, body: &str) -> String {
+pub(super) fn guarded(path: &str, body: &str) -> String {
     format!(
         "export async function main(): Promise<void> {{\n  try {{\n    const kv = await varta.kv.open('{path}');\n{body}\n    kv.close();\n    console.log('done');\n  }} catch (error) {{\n    if (error instanceof Error) {{ console.log(error.name + ': ' + error.message); }}\n  }}\n}}\n"
     )
@@ -353,36 +355,51 @@ fn expire_in_is_stamped_on_the_kv_clock_as_deno_stamped_the_fixture() {
     ])));
     state
         .staged
-        .push(staged_value(StageMode::Value, &key).unwrap());
+        .push(protocol::staged_value(StageMode::Value, &key).unwrap());
     state
         .staged
-        .push(staged_value(StageMode::Value, &text("lives a day")).unwrap());
-    // No checks; one set of stage 0 to stage 1 with `expireIn`.
+        .push(protocol::staged_value(StageMode::Value, &text("lives a day")).unwrap());
+    // Database 1, no checks; one set of stage 0 to stage 1 with `expireIn`.
     let code = (MutationCode::Set as u8).to_string();
     let expire_in = DAY_MS.to_string();
-    let descriptor =
-        ["0", "1", &code, "0", "1", &expire_in].join(&kv::DESCRIPTOR_SEPARATOR.to_string());
-    let (checks, mutations) = parse_commit(&state, &mut descriptor.split(kv::DESCRIPTOR_SEPARATOR))
+    let descriptor = [
+        kv::DESCRIPTOR_VERSION,
+        "1",
+        "0",
+        "1",
+        &code,
+        "0",
+        "1",
+        &expire_in,
+    ]
+    .join(&kv::DESCRIPTOR_SEPARATOR.to_string());
+    let commit = |state: &Kv| {
+        let now = state.clock.now();
+        protocol::parse_commit(&descriptor, &state.staged, |milliseconds| {
+            clock::expire_at(now, milliseconds)
+        })
         .unwrap()
-        .unwrap();
-    assert!(checks.is_empty());
-    let [mutation] = &mutations[..] else {
-        panic!("{} mutations", mutations.len());
+        .unwrap()
+    };
+    let parsed = commit(&state);
+    assert!(parsed.checks.is_empty());
+    let [mutation] = &parsed.mutations[..] else {
+        panic!("{} mutations", parsed.mutations.len());
     };
     let (deno_value, deno_encoding) = deno_row(&mutation.key);
     assert_eq!(deno_encoding, 1);
     assert!(
-        matches!(&mutation.kind, MutationKind::Set(KvValue::V8(bytes)) if *bytes == deno_value)
+        matches!(&mutation.kind, protocol::Kind::Set(Stored::V8(bytes)) if *bytes == deno_value)
     );
     assert_eq!(
         mutation.expire_at.map(|at| at.timestamp_millis()),
         Some(expiration)
     );
+    // The browser host's stamp on the same clock reading is the same.
+    assert_eq!(protocol::expire_at_ms(written, DAY_MS), Some(expiration));
     // The system clock stamps a later expiration than Deno's.
     state.clock = clock::Clock::System;
-    let (_, mutations) = parse_commit(&state, &mut descriptor.split(kv::DESCRIPTOR_SEPARATOR))
-        .unwrap()
-        .unwrap();
+    let mutations = commit(&state).mutations;
     assert!(mutations[0].expire_at.unwrap().timestamp_millis() > expiration);
 }
 
@@ -1080,7 +1097,7 @@ fn open_fixture(tree: &Tree) -> store::Database {
 }
 
 /// The database at the virtual `path` of `tree`, opened directly.
-fn open_at(tree: &Tree, path: &str, writable: bool) -> store::Database {
+pub(super) fn open_at(tree: &Tree, path: &str, writable: bool) -> store::Database {
     let policy = crate::policy::Policy::with_files(
         &read_write(),
         None,
@@ -1331,6 +1348,250 @@ fn values_outside_the_subset_are_rejected() {
     );
 }
 
+/// The parity target the browser container replicates (kv-store.test.mjs):
+/// in `denokv_sqlite` 0.14.0 a commit whose `sum` meets a value that is not
+/// a KvU64 fails with that TypeError, yet the mutations before it and the
+/// version step stay committed and the mutations after it are not applied
+/// (`atomic_write_batched` swallows the per-write error and `run_tx`
+/// commits). A change of the engine's atomicity fails here first.
+#[test]
+fn a_failing_sum_keeps_the_earlier_mutations_of_its_commit() {
+    let tree = Tree::new();
+    let path = tree.root().join("partial.kv");
+    let runtime = waiting_runtime();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let key = |name: &str| {
+        denokv_proto::encode_key(&denokv_proto::Key(vec![KeyPart::String(name.into())])).unwrap()
+    };
+    let value = v8::encode(
+        &v8::Value::String(vec![u16::from(b'x')]),
+        kv::MAX_VALUE_BYTES,
+    )
+    .unwrap();
+    let set = |name: &str| denokv_proto::Mutation {
+        key: key(name),
+        kind: MutationKind::Set(KvValue::V8(value.clone())),
+        expire_at: None,
+    };
+    let sum = denokv_proto::Mutation {
+        key: key("before"),
+        kind: MutationKind::Sum {
+            value: KvValue::U64(1),
+            min_v8: Vec::new(),
+            max_v8: Vec::new(),
+            clamp: false,
+        },
+        expire_at: None,
+    };
+    let mut database = open_at(&tree, "/data/partial.kv", true);
+    let version = data_version(&path);
+    let outcome = database.commit(
+        &runtime,
+        deadline,
+        Vec::new(),
+        vec![set("before"), sum, set("after")],
+    );
+    assert_eq!(
+        failed_message(outcome),
+        "Failed to perform 'sum' mutation on a non-U64 value in the database"
+    );
+    assert_eq!(
+        present(&mut database, &[key("before"), key("after")]),
+        [true, false]
+    );
+    drop(database);
+    assert!(data_version(&path) > version);
+}
+
+/// The V8 bytes of a chain of `depth` objects `{ next }` around `{}`, as
+/// Deno writes it: deeper than Varta itself stores.
+fn chain_bytes(depth: usize) -> Vec<u8> {
+    const NEXT: &[u8] = b"next";
+    let mut bytes = vec![0xFF, u8::try_from(v8::WRITE_VERSION).unwrap()];
+    for _ in 0..depth {
+        bytes.extend([b'o', b'"', u8::try_from(NEXT.len()).unwrap()]);
+        bytes.extend(NEXT);
+    }
+    bytes.extend([b'o', b'{', 0]);
+    bytes.extend(std::iter::repeat_n([b'{', 1], depth).flatten());
+    bytes
+}
+
+/// One shared depth limit (`varta_kv_codec::MAX_VALUE_DEPTH`) for every
+/// walk of a KV value: a value at or just below it stores and reads back,
+/// one level deeper is the named recoverable `TypeError` on `set`, far
+/// deeper never reaches host recursion (it aborted the process before),
+/// and a stored value deeper than the limit fails its `get` by the same
+/// name.
+#[test]
+fn values_keep_the_shared_kv_depth_limit() {
+    let tree = Tree::new();
+    let max = varta_kv_codec::MAX_VALUE_DEPTH;
+    let far = 2000;
+    let runtime = waiting_runtime();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut database = open_at(&tree, "/data/deep.kv", true);
+    let stored = denokv_proto::Mutation {
+        key: denokv_proto::encode_key(&denokv_proto::Key(vec![KeyPart::String("stored".into())]))
+            .unwrap(),
+        kind: MutationKind::Set(KvValue::V8(chain_bytes(max + 1))),
+        expire_at: None,
+    };
+    assert!(
+        database
+            .commit(&runtime, deadline, Vec::new(), vec![stored])
+            .unwrap()
+            .is_some()
+    );
+    drop(database);
+    let source = guarded(
+        "/data/deep.kv",
+        &format!(
+            "    for (const depth of [{below}, {max}, {above}, {far}]) {{\n\
+             let value: Chain = {{}};\n\
+             for (let i = 0; i < depth; i++) {{ value = {{ next: value }}; }}\n\
+             try {{ await kv.set(['deep', depth], value); console.log('set ' + String(depth)); }}\n\
+             catch (e) {{ if (e instanceof Error) {{ console.log(e.name + ': ' + e.message); }} }}\n\
+             const got = await kv.get<Chain>(['deep', depth]);\n\
+             let n = 0; let at = got.value;\n\
+             while (at !== null && at.next !== undefined) {{ at = at.next; n++; }}\n\
+             console.log('get ' + String(n));\n\
+             }}\n\
+             try {{ await kv.get<Chain>(['stored']); }}\n\
+             catch (e) {{ if (e instanceof Error) {{ console.log(e.name + ': ' + e.message); }} }}",
+            below = max - 1,
+            above = max + 1,
+        ),
+    );
+    let source = format!("interface Chain {{ next?: Chain }}\n{source}");
+    let refused = format!("TypeError: {}", varta_kv_codec::too_deep());
+    assert_eq!(
+        run(&source, read_write(), tree.roots()),
+        [
+            format!("set {}", max - 1),
+            format!("get {}", max - 1),
+            format!("set {max}"),
+            format!("get {max}"),
+            refused.clone(),
+            "get 0".into(),
+            refused,
+            "get 0".into(),
+            format!(
+                "TypeError: KV value does not match the checked type: {}",
+                varta_kv_codec::too_deep()
+            ),
+            "done".into(),
+        ]
+    );
+}
+
+/// Levels a shared chain is wrapped by in [`shared_parts_keep_the_depth_limit_at_their_deepest_reach`].
+const SHARED_WRAPS: usize = 10;
+/// The shared chain the re-check reported stored but unreadable.
+const SHARED_REPORTED: (usize, usize) = (SHARED_WRAPS, 60);
+
+/// The program of the shared-part depth cases, for each `(wraps, inner)`:
+/// a holder `{ a, b }` of a chain `x` of `inner` records and `y`, `wraps`
+/// records around the same `x`, in both property orders; each stores or is
+/// refused, and whatever stored reads back whole. Then a cycle through a
+/// holder. The browser KV acceptance (scripts/test-browser-kv.mjs, `dag`)
+/// runs the same program.
+fn shared_parts_program(cases: &[(usize, usize)]) -> String {
+    let list = |part: fn(&(usize, usize)) -> usize| {
+        cases
+            .iter()
+            .map(|case| part(case).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (wraps, inners) = (list(|case| case.0), list(|case| case.1));
+    let body = format!(
+        "    const wrapsOf: number[] = [{wraps}]; const innerOf: number[] = [{inners}];\n\
+         for (let i = 0; i < wrapsOf.length; i++) {{\n\
+         const wraps = wrapsOf[i]; const inner = innerOf[i];\n\
+         for (const xFirst of [true, false]) {{\n\
+         const x = wrap({{}}, inner); const y = wrap(x, wraps);\n\
+         const holder: Holder = xFirst ? {{ a: x, b: y }} : {{ a: y, b: x }};\n\
+         const label = String(wraps) + ' ' + String(inner) + (xFirst ? ' x' : ' y');\n\
+         try {{ await kv.set(['dag', label], holder); console.log('set ' + label); }}\n\
+         catch (e) {{ if (e instanceof Error) {{ console.log(label + ' ' + e.name + ': ' + e.message); }} }}\n\
+         try {{\n\
+         const got = await kv.get<Holder>(['dag', label]);\n\
+         if (got.value === null) {{ console.log('get ' + label + ' absent'); }}\n\
+         else {{ console.log('get ' + label + ' ' + String(length(got.value.a)) + ' ' + String(length(got.value.b))); }}\n\
+         }} catch (e) {{ if (e instanceof Error) {{ console.log('get ' + label + ' ' + e.name + ': ' + e.message); }} }}\n\
+         }}\n\
+         }}\n\
+         const c: Chain = {{}}; const d: Chain = {{ next: c }}; c.next = d;\n\
+         try {{ await kv.set(['dag', 'cycle'], {{ a: c, b: d }}); console.log('set cycle'); }}\n\
+         catch (e) {{ if (e instanceof Error) {{ console.log('cycle ' + e.name + ': ' + e.message); }} }}"
+    );
+    format!(
+        "interface Chain {{ next?: Chain }}\n\
+         interface Holder {{ a: Chain; b: Chain }}\n\
+         function wrap(inner: Chain, levels: number): Chain {{\n\
+         let value: Chain = inner;\n\
+         for (let i = 0; i < levels; i++) {{ value = {{ next: value }}; }}\n\
+         return value;\n\
+         }}\n\
+         function length(chain: Chain): number {{\n\
+         let n = 0; let at: Chain | null = chain;\n\
+         while (at !== null && at.next !== undefined) {{ at = at.next; n++; }}\n\
+         return n;\n\
+         }}\n{}",
+        guarded("/data/dag.kv", &body)
+    )
+}
+
+/// What [`shared_parts_program`] logs: a holder stores when its deepest
+/// reach (holder 0, `x` inside `y` at `1 + wraps`, the end of `x` at
+/// `1 + wraps + inner`) is within the shared limit, whichever part comes
+/// first, and is refused by name otherwise; a stored one reads back whole.
+fn shared_parts_logs(cases: &[(usize, usize)]) -> Vec<String> {
+    let refused = format!("TypeError: {}", varta_kv_codec::too_deep());
+    let mut logs = Vec::new();
+    for (wraps, inner) in cases {
+        for x_first in [true, false] {
+            let label = format!("{wraps} {inner} {}", if x_first { "x" } else { "y" });
+            if 1 + wraps + inner <= varta_kv_codec::MAX_VALUE_DEPTH {
+                let (x, y) = (*inner, wraps + inner);
+                let (a, b) = if x_first { (x, y) } else { (y, x) };
+                logs.push(format!("set {label}"));
+                logs.push(format!("get {label} {a} {b}"));
+            } else {
+                logs.push(format!("{label} {refused}"));
+                logs.push(format!("get {label} absent"));
+            }
+        }
+    }
+    logs.push("cycle TypeError: a cyclic value cannot be stored in a KV value".into());
+    logs.push("done".into());
+    logs
+}
+
+/// A part shared within a value keeps the shared depth limit at its
+/// deepest reach: the value stores in either property order exactly when
+/// its expansion (what `get` reads) is within the limit, so everything
+/// `set` accepts `get` reads. Before, a shared part reached a second time
+/// deeper than the limit stored when the shallow reach came first, and
+/// never read back.
+#[test]
+fn shared_parts_keep_the_depth_limit_at_their_deepest_reach() {
+    let tree = Tree::new();
+    let max = varta_kv_codec::MAX_VALUE_DEPTH;
+    let cases = [
+        (0, max - 1),
+        (0, max),
+        (SHARED_WRAPS, max - 1 - SHARED_WRAPS),
+        (SHARED_WRAPS, max - SHARED_WRAPS),
+        SHARED_REPORTED,
+    ];
+    assert_eq!(
+        run(&shared_parts_program(&cases), read_write(), tree.roots()),
+        shared_parts_logs(&cases)
+    );
+}
+
 #[test]
 fn earlier_profiles_have_no_kv() {
     let source = "export async function main(): Promise<void> { const kv = await varta.kv.open('/data/a.kv'); }";
@@ -1403,15 +1664,100 @@ fn reads_keep_denos_limits() {
     );
 }
 
+/// The shared key codec writes and reads exactly `denokv_proto`'s bytes:
+/// every key part Varta writes, and every part Deno can write, which the
+/// decoder must at least name.
 #[test]
-fn cursors_are_padded_base64url() {
-    for bytes in [&b""[..], b"a", b"ab", b"abc", &[0xFF, 0xFE, 0x00, 0x01]] {
-        let text = base64url_encode(bytes);
-        assert_eq!(base64url_decode(&text).as_deref(), Some(bytes), "{text}");
+fn the_shared_key_codec_is_denos() {
+    use varta_kv_codec::key::{self, Encode, Part};
+    let numbers = [
+        0.0,
+        -0.0,
+        1.5,
+        -1.5,
+        f64::MIN_POSITIVE,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+    ];
+    let texts = ["", "a", "a\0b", "\0", "Привіт 😀", "\u{ff}"];
+    for text in texts {
+        for number in numbers {
+            let deno = denokv_proto::encode_key(&denokv_proto::Key(vec![
+                KeyPart::String(text.into()),
+                KeyPart::Float(number),
+            ]))
+            .unwrap();
+            assert_eq!(
+                key::encode([Encode::String(text), Encode::Float(number)]),
+                deno
+            );
+            let parts = key::decode(&deno).unwrap();
+            assert_eq!(parts[0], Part::String(text.into()));
+            let deno_parts = denokv_proto::decode_key(&deno).unwrap().0;
+            assert!(
+                matches!((&parts[1], &deno_parts[1]), (Part::Float(read), KeyPart::Float(deno)) if read.to_bits() == deno.to_bits())
+            );
+        }
     }
-    assert_eq!(base64url_encode(&[0xFB, 0xFF]), "-_8=");
-    for bad in ["a", "ab=", "a===", "Zg=a", "Zh==", "Z!=="] {
-        assert_eq!(base64url_decode(bad), None, "{bad}");
+    let foreign = [
+        KeyPart::Int(0.into()),
+        KeyPart::Int(1.into()),
+        KeyPart::Int((-1).into()),
+        KeyPart::Int(num_bigint::BigInt::from(u64::MAX) * num_bigint::BigInt::from(1000)),
+        KeyPart::Int(-(num_bigint::BigInt::from(u64::MAX) * num_bigint::BigInt::from(1000))),
+        KeyPart::Bytes(vec![0, 1, 0, 255]),
+        KeyPart::True,
+        KeyPart::False,
+    ];
+    for part in foreign {
+        let expected = match &part {
+            KeyPart::Int(_) => Part::Int,
+            KeyPart::Bytes(_) => Part::Bytes,
+            KeyPart::True => Part::Boolean(true),
+            _ => Part::Boolean(false),
+        };
+        let deno =
+            denokv_proto::encode_key(&denokv_proto::Key(vec![part, KeyPart::Float(1.0)])).unwrap();
+        assert_eq!(key::decode(&deno).unwrap(), [expected, Part::Float(1.0)]);
+    }
+    // What Deno rejects, the shared decoder rejects.
+    for bytes in [
+        &[2u8, b'a'][..],
+        &[0x21, 0],
+        &[0x15],
+        &[0x7f],
+        &[2, 0xff, 0],
+    ] {
+        assert!(denokv_proto::decode_key(bytes).is_err(), "{bytes:?}");
+        assert!(key::decode(bytes).is_err(), "{bytes:?}");
+    }
+}
+
+/// The browser host's expiration bound is the native instant type's.
+#[test]
+fn the_shared_expiration_bound_is_chronos() {
+    assert_eq!(
+        protocol::MAX_EXPIRATION_MS,
+        chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis()
+    );
+    let now = chrono::DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+    for milliseconds in [0, 1, DAY_MS, u64::MAX, i64::MAX as u64] {
+        assert_eq!(
+            clock::expire_at(now, milliseconds).map(|at| at.timestamp_millis()),
+            protocol::expire_at_ms(now.timestamp_millis(), milliseconds),
+            "{milliseconds}"
+        );
+    }
+    let last = u64::try_from(protocol::MAX_EXPIRATION_MS - now.timestamp_millis()).unwrap();
+    for milliseconds in [last, last + 1] {
+        assert_eq!(
+            clock::expire_at(now, milliseconds).map(|at| at.timestamp_millis()),
+            protocol::expire_at_ms(now.timestamp_millis(), milliseconds),
+            "{milliseconds}"
+        );
     }
 }
 

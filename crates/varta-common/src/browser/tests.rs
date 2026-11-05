@@ -231,16 +231,51 @@ fn kv_facts_name_the_registered_operations_capabilities_and_bookkeeping() {
     assert_eq!(facts["notAllowed"], json!(crate::kv::error::NOT_ALLOWED));
     let denial = facts["denialText"].as_str().unwrap();
     assert!(denial.contains(facts["pathPlaceholder"].as_str().unwrap()));
-    assert!(denial.contains(crate::kv::READ_CAPABILITY));
-    // The build refusal of KV grants is the registry's prefix followed by
-    // the granted ids, so scripts can expect it exactly.
-    let grants = [crate::kv::READ_CAPABILITY, crate::kv::WRITE_CAPABILITY];
+    assert!(denial.contains(facts["capabilityPlaceholder"].as_str().unwrap()));
+    // The Worker's refusal on a host without sync access handles is the
+    // registry's prefix followed by the grant, so scripts expect it exactly.
     assert_eq!(
-        kv_storage_refusal(grants),
+        kv_storage_unavailable(crate::kv::READ_CAPABILITY),
         format!(
             "{}{}",
-            facts["storageRefusal"].as_str().unwrap(),
-            grants.join(facts["refusalSeparator"].as_str().unwrap())
+            facts["storageUnavailable"].as_str().unwrap(),
+            crate::kv::READ_CAPABILITY
         )
+    );
+    assert_eq!(facts["committed"], json!(crate::kv::COMMITTED));
+    assert_eq!(facts["checkFailed"], json!(crate::kv::CHECK_FAILED));
+    assert_eq!(facts["fuel"]["operation"], json!(crate::fuel::KV_OPERATION));
+    // The codec module's interface: every import and export it names is
+    // distinct, and the statuses are distinct.
+    let codec = &facts["codec"];
+    assert_eq!(
+        codec["importModule"],
+        json!(crate::kv::codec::IMPORT_MODULE)
+    );
+    let imports = codec["imports"].as_object().unwrap();
+    assert_eq!(
+        imports
+            .values()
+            .map(|name| name.as_str().unwrap())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(crate::kv::codec::IMPORTS)
+    );
+    let exports = codec["exports"].as_object().unwrap();
+    assert_eq!(
+        exports
+            .values()
+            .map(Value::to_string)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        exports.len()
+    );
+    let statuses = codec["statuses"].as_object().unwrap();
+    assert_eq!(
+        statuses
+            .values()
+            .map(Value::to_string)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        statuses.len()
     );
 }

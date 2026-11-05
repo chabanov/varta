@@ -52,6 +52,22 @@ function resolveBudgets(ceiling) {
   if (budgets.memoryBytes !== descriptor.budgets.memoryBytes) throw new Error("this private image cannot enforce a different memory ceiling");
   return budgets;
 }
+// A KV path-pattern ceiling (`kv.read`, `kv.write`), validated as a native
+// host ceiling's grant: at most `maxPatterns` patterns, each at most
+// `maxPatternBytes` UTF-8 bytes, not blank or wildcard-only, without NUL, an
+// absolute path without a `..` component. Patterns that no virtual path can
+// match are valid and match nothing, as natively.
+const RUST_WHITESPACE=/^\p{White_Space}+|\p{White_Space}+$/gu,WILDCARDS=/^[*?]+|[*?]+$/g;
+function kvCeiling(value){
+  const K=descriptor.kv,invalid=()=>new TypeError("invalid KV permission ceiling");
+  if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).some((key)=>key!=="patterns")||!Array.isArray(value.patterns)||value.patterns.length>K.maxPatterns)throw invalid();
+  const patterns=Array.from(value.patterns);
+  for(const pattern of patterns){
+    if(typeof pattern!=="string"||new TextEncoder().encode(pattern).length>K.maxPatternBytes||pattern.replace(RUST_WHITESPACE,"")===""||pattern.replace(WILDCARDS,"")===""||pattern.includes("\0"))throw invalid();
+    if(!pattern.startsWith(K.separator)||pattern.split(K.separator).includes(".."))throw invalid();
+  }
+  return {patterns};
+}
 function resolvePermissions(ceiling) {
   if (ceiling === undefined) return undefined;
   if (ceiling === null || typeof ceiling !== "object" || Array.isArray(ceiling)) throw new TypeError("invalid permission ceiling");
@@ -68,6 +84,7 @@ function resolvePermissions(ceiling) {
     if (id === descriptor.network.capability) {
       snapshot[id] = networkPolicy({capabilities:[]}).scope(value); continue;
     }
+    if(descriptor.kv&&Object.values(descriptor.kv.capabilities).includes(id)){snapshot[id]=kvCeiling(value);continue;}
     if(id===descriptor.view.capabilities.openUrl){
       if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).some((key)=>key!=="patterns")||!Array.isArray(value.patterns)||value.patterns.length>descriptor.network.maxPatterns)throw new TypeError("invalid view permission ceiling");
       const patterns=Array.from(value.patterns);networkPolicy({capabilities:[]}).scope({patterns:patterns.filter((pattern)=>pattern!==descriptor.view.capabilities.anyHttps)});
@@ -200,9 +217,9 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       const base = new URL("./", import.meta.url);
       // Every response is bounded and verified before Worker creation. In
       // particular, Workers do not follow an unchecked URL/import graph.
-      const [original, image, manifest, script, ...resourceBytes] = await Promise.all(
-        [descriptor.original, descriptor.image, descriptor.manifest, descriptor.worker, ...descriptor.resources.map((resource)=>resource.file)]
-          .map((item) => verifiedFile(base, item, controller.signal)));
+      const [original, image, manifest, script, kvCodec, ...resourceBytes] = await Promise.all(
+        [descriptor.original, descriptor.image, descriptor.manifest, descriptor.worker, descriptor.kvCodec, ...descriptor.resources.map((resource)=>resource.file)]
+          .map((item) => item===undefined?undefined:verifiedFile(base, item, controller.signal)));
       if (settled) return;
       const packageManifest=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(manifest));
       const clipboard=descriptor.view.capabilities.clipboard;
@@ -345,7 +362,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       };
       worker.onerror = () => finish(new Error("browser worker failed"));
       worker.onmessageerror = () => finish(new Error("invalid browser worker message"));
-      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), networkReplay:replayLog, original, image, manifest }, [original.buffer, image.buffer, manifest.buffer]);
+      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), networkReplay:replayLog, original, image, manifest, kvCodec }, [original.buffer, image.buffer, manifest.buffer, ...(kvCodec?[kvCodec.buffer]:[])]);
       onControl({deliver(event){
         const E=descriptor.permissions.events;
         if(settled)return Promise.reject(new Error('browser application ended'));

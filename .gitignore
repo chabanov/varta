@@ -4,6 +4,8 @@
 *.cwasm
 # The checked-in v38 guest intrinsic library (`scripts/build-intrinsics.py`).
 !/crates/varta-compiler/src/link/intrinsics.wasm
+# The checked-in browser KV codec module (`scripts/build-kv-codec.py`).
+!/crates/varta-project/src/browser/kv-codec.wasm
 .DS_Store
 # uarp-sdk's own test sources, fetched at the pinned commit by
 # examples/uarp-console/scripts/fetch-sdk-tests.py; never vendored.

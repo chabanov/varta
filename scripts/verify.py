@@ -20,9 +20,11 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = (
     "varta", "varta-artifact", "varta-bigint", "varta-common", "varta-compiler",
-    "varta-conformance", "varta-desktop", "varta-intrinsics", "varta-launcher", "varta-project",
-    "varta-runtime", "varta-view",
+    "varta-conformance", "varta-desktop", "varta-intrinsics", "varta-kv-codec", "varta-launcher",
+    "varta-project", "varta-runtime", "varta-view",
 )
+# The checked-in browser KV codec must match its sources (scripts/build-kv-codec.py).
+KV_CODEC_CHECK = [sys.executable, "scripts/build-kv-codec.py", "--check"]
 CORE = ["varta-common", "varta-compiler", "varta-runtime", "varta-artifact"]
 # The browser host's engine modules (registry, fuel, Worker, loader) run in
 # Node's built-in test runner; no npm dependency is installed.
@@ -203,6 +205,8 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
         # for an unfiltered check of a crate that owns browser modules.
         if args.package in BROWSER_NODE_PACKAGES and not args.filter:
             result.append(browser_node_tests())
+        if args.package == "varta-kv-codec":
+            result.append(KV_CODEC_CHECK)
         return result
     if args.scope == "feature":
         return [
@@ -218,8 +222,9 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
         cargo("fmt", "--all", "--", "--check"),
         check + ["--lib", "--locked"],
         # The value-layout core the wasm32 intrinsic library builds against.
-        cargo("check", "-p", "varta-common", "-p", "varta-intrinsics", "--no-default-features",
-              "--lib", "--locked"),
+        cargo("check", "-p", "varta-common", "-p", "varta-intrinsics", "-p", "varta-kv-codec",
+              "--no-default-features", "--lib", "--locked"),
+        KV_CODEC_CHECK,
         companion(),
         cargo("clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"),
         cargo("build", "--workspace", "--all-targets", "--locked"),

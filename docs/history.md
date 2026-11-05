@@ -149,6 +149,123 @@ oracle stays under 2/255. Linux and Windows targets were not compiled (their
 dependency sources are not in the offline cache; no Windows target is
 installed).
 
+## 2026-11-05 — Browser KV storage on OPFS (wave 3, `w3-browser-kv-opfs`, scoped)
+
+The official browser host stores KV databases instead of denying every open,
+on the agreed design. The value layer moved out of `varta-runtime/src/kv`
+into the safe `no_std` crate `varta-kv-codec` (staging, the V8 codec, a Deno
+key codec replacing the `denokv_proto` calls, descriptors, cursors,
+versionstamp text, fair fuel, the decode classifier and the top-down
+construction of the result and of checked JSON's recoverable errors); the
+native runtime calls it, and `varta-kv-codec-wasm` compiles it to a
+checked-in wasm32 module with a source fingerprint
+(`scripts/build-kv-codec.py`). The Worker acquires one OPFS container per
+artifact through a sync access handle before instantiation and commits
+through a write-ahead record and two checksummed header slots; the loader
+validates KV ceilings; the browser build admits KV grants. Lead decisions on
+the design's open questions are recorded in the
+[development plan](development-plan.md#browser-kv-storage-agreed-design-wave-3).
+
+Scoped evidence on `wave3/w3-browser-kv-opfs`: `verify.py local varta-runtime
+--filter kv` (25, the fuel goldens included, unchanged) and the runtime
+`json` tests (160) whose shared builder and error publication moved; a
+differential test of the key codec against `denokv_proto` and of the
+expiration bound against `chrono`; `varta-kv-codec` (18), common `browser::`
+(7) and project `browser::` (49) tests, the boundary test, the documentation
+tests and 201 Node tests (container crash points at every write, flush and
+truncate, compaction included, quota, corruption, lock, WebKit's lock error,
+the Worker's refusal without sync access handles); the codec build
+reproduces its fingerprint; strict Clippy of the touched crates and of the
+wasm32 shim. `scripts/test-browser-kv.mjs` passed in local Chrome three
+times (logs and exact fuel, host calls, microtasks, output bytes and turns
+equal to native for the basic, reload, isolation, missing-grant and ceiling
+cases; two tabs, corrupt, full and aborted storage) and in Playwright WebKit
+(all but the quota case, which needs Chrome's DevTools quota override);
+Playwright Firefox did not launch here. The full gate is the wave lead's.
+
+### Review fixes (2026-11-05)
+
+A shared KV value depth limit (`varta_kv_codec::MAX_VALUE_DEPTH`) now
+bounds the stage walk, the V8 encoder and decoder and the classifier on both
+hosts with one recoverable `TypeError`; before it Chrome trapped from about
+750 levels, WebKit from about 170, and a native debug `varta dev` aborted at
+1500. The browser refuses database paths below a directory of their root by
+name, opens databases writable as native does, and refuses reads from an
+uncertain container; the whole-artifact lock is an accepted deviation. A
+native test pins `denokv_sqlite`'s partial commit; a project test runs the
+checked-in wasm32 codec beside the native build over every Deno fixture and
+probe value; `test-browser-matrix.mjs --kv` runs through a persistent
+Playwright context; `verify.py` knows `varta-kv-codec` and checks the codec
+fingerprint. Scoped evidence: `verify.py local varta-runtime --filter kv`
+(27), `varta-kv-codec` (20), common `browser::` (7), project `browser::`
+(51), 204 Node tests, a clean-room codec build byte-identical to the
+checked-in module, and `scripts/test-browser-kv.mjs` in Chrome 156 (11
+cases) and Playwright WebKit 26.5 (10, no quota override).
+
+### Second re-check fixes (2026-11-05)
+
+A part shared within a KV value now counts at its deepest reach: the stage
+walk, the V8 writer and the V8 reader keep each aggregate's height and check
+it again at every later reach. Before, `{ a: x, b: y }` with `y` wrapping the
+same `x` deeper than the limit stored ("set ok") and never read back, while
+`{ a: y, b: x }` was refused. Native, the wasm32 codec (a new
+wasm-vs-native stage test over a guest with a shared cell) and Chrome agree
+on the shared-chain cases in both orders and on a cycle (new `dag` case).
+The KV acceptance's server closes idle browser connections, so
+`test-browser-matrix.mjs --kv` finishes in Chrome; CI checks
+`varta-kv-codec` without `std` and the codec fingerprint.
+
+### Third re-check fixes (2026-11-05)
+
+A KV value's extent (`varta_kv_codec::Extent`: values and code units of
+text, a shared part at every reach, absent optional fields as values) is
+bounded by `kv::MAX_VALUE_NODES` and `kv::MAX_VALUE_UNITS` in the stage
+walk, the V8 writer and reader and the classifier on both hosts, with one
+named recoverable `TypeError`; the classifier pays fuel every deadline
+stride. Before, a diamond `x = { a: x, b: x }` stored after a dozen levels
+and its `get` exhausted the turn's fuel; after about twenty, a native `get`
+ran 5.8 s past the deadline at about 980 MB of host memory. A `get` at the
+bound now takes about 3.4 million fuel and 1.8 MiB of guest memory in its
+turn. Native (`shared_parts_keep_the_value_bound_on_set_and_get`, which
+exhausted the turn's fuel on the old codec), the wasm32 codec against the
+native build (stored and staged diamonds, both failing against the old
+module) and Chrome (`diamond`, with planted Deno-format values and the
+Chrome process tree's memory growing by about 37 MB) agree.
+`build-kv-codec.py` takes Cargo's target directory from `cargo metadata`, so
+a clean-room build with `CARGO_TARGET_DIR` completes.
+
+### Extent bounds from the value size (2026-11-05)
+
+Lead decision: the fuel-derived value bound refused unshared values Deno
+and the earlier v38 build store and read (arrays of 2048 or 3000 numbers,
+about 500 records of three fields), so the extent bounds now only stop
+sharing-driven blow-up. `kv::MAX_VALUE_NODES` is `kv::MAX_VALUE_BYTES`
+over the fewest bytes of one encoded value, `kv::MAX_VALUE_UNITS` the
+value size at the densest text rate (a nine-digit index key, nine units in
+six bytes); both derivations are compile-time assertions in
+`varta_common::kv`. Absent optional fields no longer count (they still pay
+fuel), so the stage walk and the classifier no longer count extents: the
+V8 writer and reader keep the bounds, and a `get` never refuses by extent
+what a `set` stored. A staged value keeps its refusal (`Value too large`,
+depth, extent) in its staged record and a commit reports it where Deno
+checks value sizes, so keys and range selectors keep Deno's own key-size
+messages for any number of parts (before, 2048 or more numeric parts gave
+the extent error). The largest unshared values (an array of one-byte
+values filling the value size, an object of nine-digit index keys) set
+and get natively under the engine's largest fuel; arrays of 2048 and 3000
+numbers and 500 records do so under production budgets natively and in
+Chrome (`unshared`). A diamond one level below the bound reads back whole
+with the largest fuel (`diamond-built`); the worst accepted value, the
+diamond at the bound, decodes whole and builds past a v38 guest's memory,
+a fatal memory exhaustion (`diamond-bound`), and under production fuel ends
+with the fatal fuel exhaustion while it is classified (`diamond-fuel`), as
+does a `getMany` of three arrays of 3000 numbers in one turn
+(`decode-fuel`), with logs and usage equal to native in Chrome. Measured:
+reading the worst accepted value grows a native debug process from about
+76 MB to 101 MB and the codec module's memory by 5 MiB; Chrome's process
+tree grows by at most about 120 MB over any diamond case; refusals grow
+neither.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only

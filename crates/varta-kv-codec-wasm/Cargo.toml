@@ -1,0 +1,18 @@
+[package]
+name = "varta-kv-codec-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The browser host's KV value layer: `varta-kv-codec` compiled to one core
+# wasm32 module by `scripts/build-kv-codec.py` (profile `intrinsics`). The
+# browser bundle embeds the checked-in result and the Worker instantiates it
+# beside the guest. On native targets this crate is empty.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+varta-kv-codec = { path = "../varta-kv-codec" }
+# The value-layout core (static region, limits, schema reader).
+varta-common = { path = "../varta-common", default-features = false }

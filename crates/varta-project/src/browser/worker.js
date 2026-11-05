@@ -14,7 +14,7 @@ self.onmessage = async ({ data }) => {
   const application = data.mode === "application";
   const prompting=application&&descriptor.turnBudgets&&data.prompting===true,prompts=new Map();
   const logs = [];
-  let tank, scheduler, network, replay, view, events, calls = 0, totalCalls = 0, outputBytes = 0, instance, closedFuel = 0, turns = 1;
+  let tank, scheduler, network, replay, view, events, calls = 0, totalCalls = 0, outputBytes = 0, instance, closedFuel = 0, turns = 1, kvStorage;
   const maintenance = [];
   let maintenanceFuel = 0, maintenancePeriods = 0;
   try {
@@ -143,11 +143,28 @@ self.onmessage = async ({ data }) => {
     implementations.env_has16=(ptr,len)=>environmentImport('env_has16',ptr,len);
     const snapshotOperation=registry.effects.environment.operation;
     implementations[snapshotOperation]=(ptr,len)=>environmentImport(snapshotOperation,ptr,len);
-    // V38 KV storage: the contract of a host without KV storage (kvStore),
-    // created by the first KV call like the environment imports.
-    let kvHost;
-    for(const name of Object.values(registry.kv.operations))implementations[name]=(...args)=>(kvHost??=kvStore.createKvHost({memory:()=>instance.exports[descriptor.memoryExport],broker,emit,writeResult,
-      chargeBytes:n=>{if(profile.fairFuel)tank.charge('byte',n);}}))[name](...args);
+    // V38 KV storage (kvStore): the shared value layer compiled to wasm32
+    // and, when a grant covers kv.read, the artifact's OPFS container,
+    // acquired here, before instantiation. A Worker without sync access
+    // handles refuses such a program by name instead of denying silently.
+    let kvHost, kvTurnStarted = performance.now();
+    const usesKv = descriptor.imports.some((item) => item.name === registry.kv.operations.open);
+    if (usesKv && !(data.kvCodec instanceof Uint8Array)) throw new Error("missing KV codec module");
+    const kvCodec = usesKv ? await WebAssembly.compile(data.kvCodec) : undefined;
+    if (usesKv && broker.coveredGrant(registry.kv.capabilities.read)) {
+      if (!kvStore.syncHandlesSupported(self)) throw new Error(registry.kv.storageUnavailable + registry.kv.capabilities.read);
+      kvStorage = await kvStore.openKvStorage(navigator.storage, descriptor.original.identity);
+    }
+    // Exact codec fuel, charged at the unit (`byte`) rate.
+    const chargeKvFuel = (amount) => { if (profile.fairFuel && amount > 0) tank.charge('byte', Number(amount)); };
+    const kvDeadline = () => kvTurnStarted + descriptor.budgets.deadlinePerTurnMs;
+    // Created by the first KV call, like the environment imports.
+    const kvHostFor = () => kvHost ??= kvStore.createKvHost({memory: () => instance.exports[descriptor.memoryExport], broker,
+      codec: kvStore.createCodec({codec: kvCodec, guest: module, memory: () => instance.exports[descriptor.memoryExport], exports: () => instance.exports,
+        deadlinePassed: () => performance.now() >= kvDeadline(), chargeFuel: chargeKvFuel, version: profile.exceptionVersion}),
+      policy: kvStore.createKvPolicy(manifest, permissions), storage: kvStorage, emit, writeResult,
+      chargeBytes: (n) => { if (profile.fairFuel) tank.charge('byte', n); }, chargeFuel: chargeKvFuel, turnDeadline: kvDeadline});
+    for(const name of Object.values(registry.kv.operations))implementations[name]=(...args)=>kvHostFor()[name](...args);
     // Pilot effects, each equal to its native handler after the shared call
     // charge. The clock is an audited `time.now` operation (exact package
     // request and the ceiling's own `true`, decided before the clock is read);
@@ -282,6 +299,7 @@ self.onmessage = async ({ data }) => {
     checkException(true);
     const loopStarted = performance.now();
     self.postMessage({ type: "entered" });
+    kvTurnStarted = performance.now();
     start();
     checkException();
     let turnOpen = true, activeEvent;
@@ -293,6 +311,8 @@ self.onmessage = async ({ data }) => {
         tank.beginTurn(descriptor.budgets.fuelPerTurn); calls = 0; scheduler.renew(); turns++;
       }
       view.begin(); gesture = false; turnOpen = true; maintained = false;
+      // As natively, only a long-lived instance renews its deadline per turn.
+      if (application) kvTurnStarted = performance.now();
       if (application) self.postMessage({type:"turn_begin"});
     };
     // Idle collection (v38), as the native runtime's maintenance: once per
@@ -383,6 +403,7 @@ self.onmessage = async ({ data }) => {
     view.close();
     network.close();
     events.close();
+    kvStorage?.container?.close();
     // A replay that ends with logged events undelivered diverged.
     replay?.finish();
     self.postMessage({ type: "result", status: "ok", logs, exitCode: 0, fuelRemaining: tank.remaining, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns, maintenance, maintenanceFuel, maintenancePeriods });
@@ -390,6 +411,7 @@ self.onmessage = async ({ data }) => {
     view?.close();
     network?.close();
     events?.close();
+    kvStorage?.container?.close();
     // An authorized exit is not a failure: the instance ends with its code,
     // unless a replay ends with logged events undelivered, as natively.
     let exited = error instanceof GuestExit;

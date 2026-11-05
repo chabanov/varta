@@ -107,4 +107,6 @@ impl BrowserArtifact {
 }
 
 #[cfg(test)]
+mod kv_codec_tests;
+#[cfg(test)]
 mod tests;

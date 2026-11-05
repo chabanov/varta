@@ -699,36 +699,88 @@ Browser capability mappings remain [unstable](#what-is-unstable).
 | `number_random` | `crypto.getRandomValues`, one fresh 64-bit word per call | None (ungated entropy, never a seed) | The word's top 53 bits times 2^-53, exactly the reference conversion |
 | `env_snapshot` | The embedder's `environmentInputs` snapshot, never page state | `env.get` request and ceiling scopes and the broker's current state; not an audited operation | Empty name: a JSON object of the set variables whose names both scopes list exactly, in the reference (Unicode scalar) order. Another name: one `env.get` lookup, `{}` when unset, status 1 when denied. Status 2 for invalid input, 4 above `abi::MAX_RESULT_BYTES` |
 | `process_exit_f64` | Ends the Worker's instance | Enabled `process.exit` request and the ceiling's own `true`; not an audited operation | Authorized: the run or `mount` session ends with status `ok` and the exit code (`exitCode`, 0 for a normal end); no later turn runs. Denied (status 1) or a non-integral or out-of-range code (status 2): the guest continues |
-| `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_entry`, `kv_key`, `kv_value`, `kv_text`, `kv_close` (v38) | None: no KV storage, no browser storage touched | `kv_open`: the path is read as the reference host reads it (an invalid range, an odd length, a lone surrogate, a NUL or a path above `kv::MAX_DESCRIPTOR_BYTES` is fatal), then the broker audits a denied `kv.read` operation, whatever the ceiling. A bundle never carries a KV grant: the build refuses one | `kv_open`: `kv::FAILED`, the denial logged and `NotAllowedError\n<capability denied: kv.read> (<path>)` in `kv_text`. No database id, staged value or entry exists, so `kv_read`, `kv_commit`, `kv_stage`, `kv_entry`, `kv_key` and `kv_value` are fatal; `kv_text` returns the last text; `kv_close` does nothing. Every import pays the call fuel, `kv_open` also its path bytes and `kv_text` its result bytes; all but `kv_entry`, `kv_text` and `kv_close` are charged to the host-call budget |
+| `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_entry`, `kv_key`, `kv_value`, `kv_text`, `kv_close` (v38) | The artifact's Varta KV container in OPFS (`varta-kv/sha256-<digest>/kv.varta`) through one `FileSystemSyncAccessHandle`, and the shared value layer (`varta-kv-codec`) compiled to wasm32 | `kv_open`: the path is read as the reference host reads it, then the broker audits `kv.read` on the path a package pattern and the ceiling cover under a declared root; `kv.write` decides writability. `kv_read` and `kv_commit` audit `kv.read` and `kv.write` again. Decided before the container is touched | As the reference host: database ids, `kv::FAILED` with `<ErrorName>\n<message>` in `kv_text`, `kv::CHECK_FAILED`, `kv::COMMITTED` once the commit's last flush returned, the reference host's fuel and host-call charges. Storage failures (another holder of the container, a corrupt container, an exhausted quota, unavailable storage) are recoverable `TypeError`s ([texts](#kv-storage-v38)) |
 
-The browser host links the KV imports but offers no KV storage, the case the
-[KV storage](#kv-storage-v38) contract provides for: the imports are
-synchronous host calls and a commit may be reported only once it is durable,
-which IndexedDB, the browser's asynchronous store, cannot give a running
-guest call. Since such a grant could never be honoured, `varta build --target
-browser` and `varta dev --target browser` refuse a manifest that grants
-`kv.read` or `kv.write` before any output
-(`browser KV storage is not implemented; the manifest grants …`,
-`browser::kv_storage_refusal`); a program that links the KV imports without a
-grant still builds. Every open is denied like an open no grant covers, so for
-a program the compiler produces a run equals the reference host's run of the
-same program without a `kv.read` grant (logs, fuel, host calls, microtasks,
-output bytes and turns; checked in Chrome by `scripts/test-browser-kv.mjs`
-and in every engine by `scripts/test-browser-matrix.mjs --kv`). A
-hand-crafted module that calls `kv_stage`, `kv_read` or `kv_commit` without
-an open database is the exception: these are fatal here at once, while the
-reference host stages the value, or reads and charges the descriptor (and
-may return a recoverable descriptor failure) before it fails on the unknown
-id. The engine prelude never makes those calls. The KV
-wire facts, the build refusal and the bookkeeping flag (`kvBookkeeping`) are
-generated registry data (`browser::registry().kv`).
+The browser host implements [KV storage](#kv-storage-v38) on the agreed
+design ([development plan](development-plan.md#browser-kv-storage-agreed-design-wave-3)):
+
+- **Values.** The Worker instantiates the shared value layer, the Rust crate
+  the reference host runs, compiled to wasm32 (`varta-kv-codec.wasm`, served
+  beside a program that imports KV and pinned by the loader's descriptor),
+  with its own memory. It reaches guest memory, the module's allocation and
+  retention helpers, the exception channel, the turn deadline and the fuel
+  tank only through the `varta_kv_host` imports (`kv::codec`). Staging,
+  descriptors, cursors, versionstamp text, decoding and the construction of
+  the result therefore take the same bytes, fuel and guest allocations as
+  natively.
+- **Storage.** One Varta KV container per artifact, named from the artifact
+  identity (a new artifact version starts empty). The Worker acquires its
+  `FileSystemSyncAccessHandle` before instantiation, only when the program
+  imports KV and the package's `kv.read` grant is covered by the ceiling. A
+  Worker that cannot hold sync access handles refuses such a program by name
+  before instantiation (`browser::kv_storage_unavailable`); a Worker whose
+  origin storage fails (a private window, a refused directory) fails every
+  open recoverably instead. Without a covered grant nothing is acquired and
+  every open is denied as the reference host denies it without a grant.
+- **Durability.** A commit appends one write-ahead record, flushes, then
+  writes the other of two checksummed header slots and flushes again; it
+  reports `kv::COMMITTED` only after that last flush. A crash or a closed tab
+  leaves the old or the new state; a failed write before the header applies
+  nothing.
+- **Authority.** `kv.read` and `kv.write` path patterns of the package and
+  the ceiling are matched like the reference host's virtual file roots, and
+  the loader validates a KV ceiling (`{"kv.read": {"patterns": [...]}}`) like
+  a reference host ceiling's grant.
+
+The failure texts are generated registry data (`browser::registry().kv.texts`),
+the reference host's where it has one (`locked` for a container another tab or
+Worker holds), and the browser host's own for a container that is not format
+version 1 (`corrupt`), an exhausted quota (`full`) and a header write whose
+outcome is unknown (`uncertain`; the container then refuses every operation
+until the application reloads, reads included). As the reference host, a
+database opens writable when the request and the ceiling cover `kv.write`,
+whatever the broker's state; the broker decides each commit. Known
+differences:
+
+- The container is locked per artifact, so a second tab cannot open even a
+  read-only database; the owner accepted this (2026-11-05), and coordination
+  between tabs may come later. The Worker acquires the container once, at
+  start, whenever the package's `kv.read` is covered (a later prompt or
+  decision may still grant it) and holds it until the run or the
+  application ends, so a tab that found it locked fails every open until it
+  reloads; the reference host probes the lock at every open.
+- A database path with a directory below its root (`/data/sub/app.kv`) is
+  refused with a recoverable `TypeError` (`unavailable` with
+  `registry.kv.noDirectories`), since the container has no directories; the
+  reference host opens it only inside a directory the host created and
+  fails otherwise.
+- Expired entries are collected at a writable open only; a commit never
+  waits for a lock.
+
+Values nest at most `varta_kv_codec::MAX_VALUE_DEPTH` levels on every host
+(`registry.kv.maxValueDepth`, [contract](architecture.md#kv-storage-kv)), a
+part shared within a value counted at its deepest reach; the limit keeps the
+shared codec's recursion within the engine's native stack, where the codec's
+wasm frames live. A value also expands to at most the values and code
+units of text in the [KV limits](#kv-storage-v38)
+(`registry.kv.valueExtent`), a shared part counted at every reach, so a
+small stored value cannot make a host build an exponential expansion; every
+value Deno stores without shared parts is within them, and a staged key
+never meets them. A read pays the decoding fuel of what it builds as the
+codec classifies it (the codec's `charge` import, called repeatedly); a
+value whose decoding is past the turn's fuel, or whose result is past the
+guest's memory, ends the run with the ordinary fatal exhaustion, as on the
+reference host ([decoding cost](architecture.md#kv-storage-kv)). The KV
+wire facts and the bookkeeping flag (`kvBookkeeping`) are generated
+registry data (`browser::registry().kv`); `scripts/test-browser-kv.mjs`
+compares browser and reference runs in Chrome and, through Playwright, in
+WebKit.
 
 The `environmentInputs` an embedder passes to `run` or `mount` are the
 per-run snapshot behind `env.get`, `env.has` and `env_snapshot`, not a
 credential store: the host only reads them, never writes or persists them, and
 the embedder supplies them again for every run. An application that must keep
-a secret across runs (the UARP console's API key) needs KV storage, which the
-browser host does not offer yet.
+a secret across runs (the UARP console's API key) keeps it in KV storage.
 
 ### Logging
 
@@ -858,7 +910,18 @@ host without a grant. A host that does MUST:
 5. Encode and decode values only in the subset of the contract, failing with a
    typed error and no partial value, and decode into the module's schema with
    checked-JSON strictness (a mismatch is a recoverable `TypeError` through the
-   exception channel, as for `json_parse_v19`).
+   exception channel, as for `json_parse_v19`). A value nesting deeper than
+   the shared KV depth limit fails with its named recoverable `TypeError`,
+   staged or stored ([contract](architecture.md#kv-storage-kv)).
+
+A host without file roots may keep its databases in a store of its own with
+the same observable semantics instead of Deno KV files: the official browser
+host keeps one Varta KV container per artifact in OPFS
+([mapping](#browser-effect-mapping-official-host)). Points 2 and 3 then
+apply to that store: no database outside the artifact's own container, a
+container of another format version fails before any write, and a holder in
+another tab or Worker fails clearly. A store without directories refuses a
+path with a directory below its root by name instead of creating one.
 
 The host enforces the limits below (the key, value, read and commit limits
 are Deno KV's defaults). Exceeding one is a recoverable failure except where the
@@ -872,6 +935,8 @@ row says fatal.
 | Encoded key to write (bytes) | 2048 | `kv::MAX_WRITE_KEY_BYTES` |
 | Encoded key of a range selector (bytes) | 2049 | `kv::MAX_READ_KEY_BYTES` |
 | Encoded value (bytes) | 65536 | `kv::MAX_VALUE_BYTES` |
+| Values a value expands to (shared parts at every reach) | 65536 | `kv::MAX_VALUE_NODES` |
+| Code units of text a value expands to (shared parts at every reach) | 98304 | `kv::MAX_VALUE_UNITS` |
 | Ranges per read | 10 | `kv::MAX_READ_RANGES` |
 | Entries per read | 1000 | `kv::MAX_READ_ENTRIES` |
 | Checks per commit | 100 | `kv::MAX_CHECKS` |

@@ -11647,6 +11647,90 @@ into the static type the program names. V37 and earlier profiles reject
   `unknown` holding an Error, a function, a promise, a BigInt, an array with
   holes or a cyclic graph rejects at run time with a `TypeError` before
   anything is stored.
+- **Depth.** A value nests at most `varta_kv_codec::MAX_VALUE_DEPTH` levels
+  below its root (the legacy checked-JSON depth `value::MAX_JSON_DEPTH`;
+  every element, property or entry is one level below its aggregate). A
+  part reached more than once (one object, written once with
+  back-references) counts at its deepest reach, so a value stores exactly
+  when its expansion, which a read classifies, is within the limit,
+  whatever the property order, and the depth limit never refuses on a `get`
+  what a `set` stored. The stage walk and the V8 writer refuse a deeper value
+  before anything is stored, and the V8 reader and the classifier refuse a
+  deeper stored value (one Deno wrote), each with the recoverable
+  `TypeError` `a KV value cannot
+  nest deeper than <limit> levels` (on a read prefixed by `KV value does not
+  match the checked type: `), on every host; the construction of a result is
+  iterative. The limit is derived from measured engine stacks (the crate
+  documentation records the derivation): each walk recurses once per level,
+  and a browser's wasm frames live on the engine's native stack, which
+  Chrome and WebKit exhaust at a few hundred levels and a native debug build
+  at about 1500.
+- **Extent.** A read builds a part shared within a value at every reach, so
+  a small stored value can expand exponentially (`x = { a: x, b: x }`
+  repeated). A value expands to at most `kv::MAX_VALUE_NODES` values and
+  `kv::MAX_VALUE_UNITS` code units of text (its
+  `varta_kv_codec::Extent`): every stored value (an element, a property's
+  value, a `Map` key or value, a `Set` value; not a hole), every code unit
+  of a string and every code unit of a plain object's property key (an
+  array-index key as its decimal digits) counts again at every reach of a
+  shared part. The bounds stop only sharing-driven blow-up: every value
+  Deno stores without shared parts within `kv::MAX_VALUE_BYTES` is within
+  them, so no such value is refused here. Their derivation, asserted at
+  compile time in `varta_common::kv`:
+  - values: each value Deno's serializer writes takes at least
+    `kv::MIN_ENCODED_VALUE_BYTES` (a tag alone: `null`, `undefined`,
+    `true`, `false`), so `kv::MAX_VALUE_NODES` is `kv::MAX_VALUE_BYTES`
+    divided by it;
+  - text: a Latin-1 (one-byte) string carries at most one code unit per
+    encoded byte, a two-byte string at most half of one (a UTF-8 string,
+    which the reader also accepts, at most one); an array-index key of `d`
+    digits takes a number tag and a varint (`I` zigzag or `U` plain, the
+    shorter counted) and its value at least one byte, densest at nine
+    digits: `kv::DENSEST_TEXT_UNITS` code units in `kv::DENSEST_TEXT_BYTES`
+    bytes, checked for every digit count of a `u32` index. So
+    `kv::MAX_VALUE_UNITS` is `kv::MAX_VALUE_BYTES` at that rate.
+
+  The `undefined` a read builds for an absent optional field is no stored
+  value and does not count: what a read builds for absent fields costs the
+  same with or without sharing, and it pays its fuel (below). The V8 codec
+  keeps the bounds, on every host: on `set` the V8 writer counts the whole
+  value (it never expands a shared part, so it need not stop early) after
+  Deno's encoded-size check, whose `Value too large` wins for a value both
+  refuse; on `get` the V8 reader refuses a stored value (one Deno or an
+  earlier build wrote) as soon as it passes the bounds, before the
+  classifier builds anything. Each records the extent below every aggregate
+  with its height and adds it again at every later reach, in constant time.
+  The refusal is the recoverable `TypeError` `a KV value cannot expand to
+  more than <values> values or <units> code units of text` (on a read
+  prefixed as above). Both walks count alike, so a `get` never refuses by
+  extent what a `set` stored.
+- **Staged values and keys.** The guest stages keys and values alike, so a
+  stage never fails for its value form: a value Deno's size check, the
+  depth limit of the V8 writer or the extent bounds refuse is staged with
+  that refusal, which a commit reports where Deno checks value sizes (after
+  every key check of the commit). A staged key never meets a value's
+  bounds: keys and range selectors keep Deno's own `Key too large for
+  write` and `Key too large for read` limits exactly, whatever their parts
+  (also a key whose V8 form is past `kv::MAX_VALUE_BYTES`).
+- **Decoding cost.** A read pays `fuel::JSON_PARSE_VALUE` for every value it
+  decodes and every absent optional field it builds, in the turn that reads
+  it, as checked JSON does; the classifier pays as it goes, every
+  `varta_kv_codec::DEADLINE_STRIDE` values, before it builds anything in the
+  guest. A value within the bounds whose decoding costs more than the
+  turn's remaining fuel, or whose result needs more than the instance's
+  memory, ends the run with the ordinary fatal fuel or memory exhaustion,
+  as any other too expensive operation does, on every host; such a value
+  is not refused by name. What one turn decodes:
+  - `get`: its one entry;
+  - `getMany`: every entry found, all in the turn of the call (several
+    values that each fit a turn can together exhaust it);
+  - `list`: every entry of one batch (`batchSize`, Deno's default when
+    omitted), decoded together when the batch is read, before the first of
+    them is yielded; the next batch is read when the iteration reaches it,
+    in the same turn unless the program awaited a task (a timer) between.
+
+  A program spreads the decoding of large values over turns by reading
+  them one per task or with a smaller `batchSize`.
 - **V8 codec** (`varta-runtime` `kv::v8`, owned code, no V8). The writer emits
   the header `0xFF 0x10` (serializer version 16, what V8 15.0 in Deno 2.9.x
   writes) and one value: an integral number in the 32-bit Smi range other than
@@ -11742,29 +11826,83 @@ into the static type the program names. V37 and earlier profiles reject
   path or with `:memory:` are not available (a program naming them fails to
   compile); `sum` takes no `min`/`max`/`clamp`; operations settle in the turn
   that started them.
-- **Browser host.** The official browser host admits the nine `kv_*` imports
-  of a v38 module but offers no KV storage: the operations are synchronous
-  host calls and a commit is reported only once durable, which IndexedDB, the
-  browser's asynchronous store, cannot provide inside a running guest call.
-  It implements the embedding contract's host without KV storage
-  ([mapping](embedding.md#browser-effect-mapping-official-host)): every
-  `kv_open` reads its path as the native host does, the broker audits a denied
-  `kv.read` operation, the denial is logged and the open rejects with
-  `NotAllowedError: <capability denied: kv.read> (<path>)`, whatever the host
-  ceiling. A grant could never be honoured, so `varta build --target browser`
-  and `varta dev --target browser` refuse a manifest that grants `kv.read` or
-  `kv.write` before any output (`browser KV storage is not implemented; the
-  manifest grants …`); a program that links the imports without a grant still
-  builds. No database is ever open, so the other id, stage and entry imports
-  are fatal; the engine prelude reaches none of them. For a program the
-  compiler produces, a browser run equals the native run of the same program
-  without a grant, including exact fair fuel and host calls
-  (`scripts/test-browser-kv.mjs`). A hand-crafted module that calls
-  `kv_stage`, `kv_read` or `kv_commit` without an open database is the
-  exception: the browser host fails fatally at once, while the native host
-  stages the value, or reads its descriptor first. Browser KV storage is an
-  open item of the
-  [development plan](development-plan.md#batch-v38-in-development).
+- **Shared value layer.** Everything the imports do to values is one safe
+  `no_std` crate, `varta-kv-codec`: the value18 staging walk, the V8
+  serializer subset, Deno's key codec (byte-identical with `denokv_proto`
+  0.14.0, checked by a differential test), the read and commit descriptors
+  with Deno's limits, cursors and versionstamp text, the fair fuel of KV work,
+  the classification of a stored entry into the module's schema and the
+  top-down construction of the result (or the recoverable `TypeError`)
+  through the guest's own allocator. The native runtime calls it directly
+  (its checked JSON values and recoverable JSON errors build through the same
+  `build` and `guest` modules); the browser host runs the same crate compiled
+  to wasm32 (`varta-kv-codec-wasm`, a checked-in build with a source
+  fingerprint, `scripts/build-kv-codec.py`). Only the storage engine differs.
+- **Browser host.** The official browser host stores KV databases in the
+  origin private file system (OPFS) and implements the
+  [embedding contract](embedding.md#kv-storage-v38) with the
+  [mapping](embedding.md#browser-effect-mapping-official-host) there:
+  - one Varta KV container file per artifact,
+    `varta-kv/sha256-<digest>/kv.varta`, named from the artifact identity, so
+    two artifacts on one origin never share databases and a new artifact
+    version starts empty, as the native `varta-shell` keys
+    `<data-dir>/sha256-<digest>/`; a virtual path names one database inside
+    it; the guest never chooses an OPFS name;
+  - the dedicated Worker acquires the container's
+    `FileSystemSyncAccessHandle` before instantiation, only when the program
+    imports KV and a package `kv.read` grant is covered by the ceiling; its
+    reads, writes and flushes are synchronous, so the imports stay
+    synchronous host calls; a Worker without sync access handles refuses
+    such a program by name before instantiation (`browser KV storage needs
+    OPFS sync access handles …`), never as a silent denial;
+  - `kv.read` and `kv.write` are decided like native virtual file roots
+    (declared root, request and ceiling patterns, the broker's state) before
+    any storage is touched; as natively, a database opens writable when the
+    request and the ceiling cover `kv.write`, whatever the broker's state,
+    and the broker decides each commit; `resolvePermissions` validates a KV
+    path-pattern ceiling like a native host ceiling's grant;
+  - the container (format version 1) is a write-ahead log behind two
+    checksummed header slots: a commit appends one record, flushes, then
+    writes the other header slot and flushes again, and reports `COMMITTED`
+    only after that last flush; a crash or a closed tab leaves the old or the
+    new state; the log is compacted into a checkpoint without changing the
+    logical state;
+  - the observable semantics are native's: per-database data versions
+    advance by a random step of 1 to 9 per commit and by one per expiry
+    collection (versionstamps keep Deno's format and order, not its values),
+    checks, `set`/`delete`/`sum`/`min`/`max` and expiry collection at a
+    writable open follow `denokv_sqlite` 0.14.0, including its partial
+    application of a commit whose `sum`, `min` or `max` meets a non-`KvU64`
+    value;
+  - failures are recoverable `kv::FAILED` with a named `TypeError`, never
+    `COMMITTED` and never a trap: a second tab or Worker holding the
+    container (native's "locked by another writer" text), a corrupt
+    container, an exhausted quota (nothing applied), storage the origin
+    cannot provide, and a header write whose outcome is unknown (the
+    container then refuses every operation until the application reloads).
+  Deviations:
+  - the lock is per artifact, so a second tab cannot open even a read-only
+    database (accepted by the owner, 2026-11-05; coordination between tabs
+    may come later); the Worker acquires the container once, at start,
+    whenever the package's `kv.read` is covered (a later prompt or decision
+    may still grant it) and holds it until the run or application ends, so a
+    tab that found it locked stays locked out until it reloads, where native
+    probes the lock at every open;
+  - a database path with a directory below its root (`/data/sub/app.kv`) is
+    refused by name (`cannot open the KV database <path>: the browser host
+    keeps KV databases only directly in a file root, with no directories`,
+    `registry.kv.noDirectories`), since the container has no directories;
+    native opens it only inside a directory the host created, and fails
+    otherwise;
+  - expired entries are collected at a writable open only, never later in
+    the instance; a commit never waits for a lock.
+
+  For the programs `scripts/test-browser-kv.mjs` compares with native
+  (commits, checks, sums, lists, a strict decode mismatch, a reload over
+  stored data, another artifact, a missing grant, a narrower ceiling and
+  values at, below and above the depth limit) a browser run
+  equals the native run, logs and exact fair fuel, host calls, microtasks,
+  output bytes and turns included.
 - **Tests** never use production data: the Deno 2.9.4 fixture
   (`kv_cases/deno-2.9.4`, written in a throwaway container by its generator,
   with every row in hex) and the Deno 2.9.7 serializer probe

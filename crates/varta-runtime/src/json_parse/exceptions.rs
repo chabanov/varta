@@ -83,7 +83,7 @@ pub(super) fn publish(
     publish_message(caller, memory, schema, class, message)
 }
 /// Publish a recoverable `class` error with `message` (the checked JSON
-/// messages above; v38 KV decodes name what did not match).
+/// messages above) through the shared value layer, as a v38 KV decode does.
 pub(super) fn publish_message(
     caller: &mut Caller<'_, RuntimeContext>,
     memory: wasmtime::Memory,
@@ -91,56 +91,8 @@ pub(super) fn publish_message(
     class: ErrorClass,
     message: &str,
 ) -> Result<u64, wasmtime::Error> {
-    if !matches!(class, ErrorClass::SyntaxError | ErrorClass::TypeError) {
-        return Err(invalid());
-    }
-    ready(caller)?;
-    let writer = heap::Writer::new(caller, memory)?;
-    let message = writer.owned(caller, &varta_common::text::encode(message), 0, 0)?;
-    let mut object = Vec::with_capacity(ERROR_BYTES);
-    object.extend((((class as u32) << ERROR_CLASS_SHIFT) | ERROR_OWN_MESSAGE).to_le_bytes());
-    object.extend(1u32.to_le_bytes());
-    object.extend(message.to_le_bytes());
-    let object = writer.owned(caller, &object, HEAP_ERROR_FLAG, 1)?;
-    let mut cell = Vec::with_capacity(UNION_BYTES);
-    cell.extend((ValueKind::Error as u32).to_le_bytes());
-    cell.extend(1u32.to_le_bytes());
-    cell.extend(object.to_le_bytes());
-    let cell = writer.owned(caller, &cell, HEAP_UNION_FLAG, 1)?;
-    // Allocators/retainers are untrusted Wasm, even though their call graphs are
-    // host-free. Validate their final product and all metadata before publication.
-    ready(caller)?;
-    deadline(caller)?;
-    descriptors(
-        schema,
-        memory.data(&*caller),
-        caller.data().module.static_region,
-    )?;
-    let module = caller.data().module;
-    let value = ReferenceBox::read_in(memory.data(&*caller), cell, schema.value_version(), module)
-        .map_err(wasmtime::Error::new)?;
-    if value.kind != ValueKind::Error || value.payload != object {
-        return Err(invalid());
-    }
-    let checked =
-        ErrorObject::read_with_version(memory.data(&*caller), object, schema.value_version())
-            .map_err(wasmtime::Error::new)?;
-    if checked.class != class || !checked.has_message || checked.message != message {
-        return Err(invalid());
-    }
-    let Some(Extern::Global(value)) = caller.get_export(channel::VALUE) else {
-        return Err(invalid());
-    };
-    let Some(Extern::Global(pending)) = caller.get_export(channel::PENDING) else {
-        return Err(invalid());
-    };
-    let Some(Extern::Global(length)) = caller.get_export(abi::RESULT_LEN) else {
-        return Err(invalid());
-    };
-    length.set(&mut *caller, Val::I32(0))?;
-    memory.write(&mut *caller, channel::ROOT, &cell.to_le_bytes())?;
-    value.set(&mut *caller, Val::I64(cell as i64))?;
-    pending.set(&mut *caller, Val::I32(1))?;
-    // Caller checks pending before unpacking this physical placeholder.
-    Ok(0)
+    // The shared value layer builds and checks the Error cell and throws it.
+    let mut host = super::guest::Host::new(caller, memory);
+    let module = host.module();
+    varta_kv_codec::guest::error(&mut host, module, schema, class, message)
 }

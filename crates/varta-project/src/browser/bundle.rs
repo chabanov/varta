@@ -41,6 +41,10 @@ const EVENT_SOURCES: &str = include_str!("event-sources.mjs");
 const ENVIRONMENT: &str = include_str!("environment.mjs");
 const ENVIRONMENT_ABI: &str = include_str!("environment-abi.mjs");
 const KV_STORE: &str = include_str!("kv-store.mjs");
+/// The KV value layer (`varta-kv-codec`) compiled to wasm32 by
+/// `scripts/build-kv-codec.py`; served beside a program that imports KV.
+const KV_CODEC: &[u8] = include_bytes!("kv-codec.wasm");
+const KV_CODEC_FILE: &str = "varta-kv-codec.wasm";
 const FUEL: &str = include_str!("../../../varta-common/browser/fuel.mjs");
 const ORIGINAL: &str = "app.wasm";
 const IMAGE: &str = "app.private.wasm";
@@ -93,8 +97,8 @@ const EFFECTS: &[H] = &[
     H::MathRandom,
     H::EnvSnapshot,
     H::ExitFloat,
-    // V38 KV storage: the contract of a host without KV storage (every
-    // `kv_open` is denied like an open no grant covers; `kv-store.mjs`).
+    // V38 KV storage: OPFS container and the shared value layer
+    // (`kv-store.mjs`, `kv-codec.wasm`).
     H::KvOpen,
     H::KvRead,
     H::KvCommit,
@@ -247,7 +251,12 @@ fn embedded_sources(dom: bool) -> String {
         source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;const {createCustomPropertyStyles}=viewCustomProperties;", VIEW_DOM, "createViewDom,encodeViewEvent"));
     } else {
         // The Worker's KV imports; the parent page never handles KV.
-        source.push_str(&module("kvStore", "", KV_STORE, "createKvHost"));
+        source.push_str(&module(
+            "kvStore",
+            "",
+            KV_STORE,
+            "createKvHost,createKvPolicy,createCodec,openKvStorage,syncHandlesSupported",
+        ));
     }
     source
 }
@@ -325,26 +334,6 @@ impl BrowserArtifact {
                 "browser host effects not implemented: {}",
                 gaps.join(", ")
             )));
-        }
-        // This host offers no KV storage (`kv-store.mjs`): a KV grant could
-        // never be honoured, so it is refused here rather than at every open.
-        let mut kv_grants = self
-            .original
-            .manifest
-            .capabilities
-            .iter()
-            .filter(|grant| {
-                matches!(
-                    grant.id.as_str(),
-                    varta_common::kv::READ_CAPABILITY | varta_common::kv::WRITE_CAPABILITY
-                )
-            })
-            .map(|grant| grant.id.as_str())
-            .peekable();
-        if kv_grants.peek().is_some() {
-            return Err(ProjectError::Usage(
-                varta_common::browser::kv_storage_refusal(kv_grants),
-            ));
         }
         if self.inspection.imports.iter().any(|import| {
             [H::PermissionQuery, H::PermissionRequest]
@@ -430,6 +419,18 @@ impl BrowserArtifact {
             resource_files.insert(name,resource.bytes.clone());
             descriptor
         }).collect::<Vec<_>>();
+        // A program that imports KV gets the codec module beside it; every
+        // descriptor carries the KV ceiling rules `resolvePermissions` checks.
+        let uses_kv = self
+            .inspection
+            .imports
+            .iter()
+            .any(|import| import.name == H::KvOpen.name());
+        let kv = &registry_data["kv"];
+        let kv_ceiling = serde_json::json!({
+            "capabilities":kv["capabilities"],"separator":kv["paths"]["separator"],
+            "maxPatterns":kv["paths"]["maxPatterns"],"maxPatternBytes":kv["paths"]["maxPatternBytes"],
+        });
         let descriptor = serde_json::json!({
             "schemaVersion":SCHEMA_VERSION,"profile":profile,"trustedTypesPolicy":TRUSTED_TYPES_POLICY,
             "hostModule":varta_common::abi::HOST_MODULE,
@@ -447,7 +448,13 @@ impl BrowserArtifact {
             "decodeChunkBytes":varta_common::abi::WASM_PAGE_BYTES,
             "resources":resource_descriptors,
             "fairFuel":profile.fair_fuel(),
+            "kv":kv_ceiling,
         });
+        let mut descriptor = descriptor;
+        if uses_kv {
+            descriptor["kvCodec"] = file(KV_CODEC_FILE, KV_CODEC);
+            resource_files.insert(KV_CODEC_FILE.to_owned(), KV_CODEC.to_vec());
+        }
         let descriptor = serde_json::to_string(&descriptor)
             .map_err(|e| ProjectError::Artifact(e.to_string()))?;
         let parent_view = embedded_sources(true);
