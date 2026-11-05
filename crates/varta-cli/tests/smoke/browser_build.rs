@@ -337,29 +337,23 @@ fn browser_permission_sources_build_without_embedding_host_decisions() {
 /// or `kv.write` is refused by name before any output, while the same KV
 /// program without a grant builds and is denied at `kv_open`, as natively.
 #[test]
-fn browser_build_refuses_kv_grants_and_admits_ungranted_kv_programs() {
+fn browser_build_ships_the_kv_codec_for_granted_and_ungranted_kv_programs() {
+    // Browser KV storage exists (OPFS with the shared codec): a manifest that
+    // grants KV builds, and a KV program without a grant still builds and is
+    // denied at open, as natively.
     let source = "export async function main():Promise<void>{try{const kv=await varta.kv.open(\"/data/app.kv\");kv.close();}catch(error){if(error instanceof Error){console.log(error.name);}}}";
     let pattern = serde_json::json!(["/data/*.kv"]);
-    for (capabilities, named) in [
-        (
-            serde_json::json!({"kv":{"read":pattern,"write":pattern}}),
-            "kv.read, kv.write",
-        ),
-        (serde_json::json!({"kv":{"read":pattern}}), "kv.read"),
+    for capabilities in [
+        serde_json::json!({"kv":{"read":pattern,"write":pattern}}),
+        serde_json::json!({"kv":{"read":pattern}}),
     ] {
         let granted = project(source);
         granted.configure("fs", serde_json::json!({"roots":{"data":"data"}}));
         granted.configure("capabilities", capabilities);
         let built = granted.command(&["build", "--target", "browser"]);
-        assert!(!built.status.success());
-        assert!(
-            combined(&built).contains(&format!(
-                "browser KV storage is not implemented; the manifest grants {named}"
-            )),
-            "{}",
-            combined(&built)
-        );
-        assert!(!granted.0.join("dist").exists());
+        assert!(built.status.success(), "{}", combined(&built));
+        assert!(granted.0.join("dist/web/varta-worker.js").is_file());
+        assert!(granted.0.join("dist/web/varta-kv-codec.wasm").is_file());
     }
     let ungranted = project(source);
     let built = ungranted.command(&["build", "--target", "browser"]);
