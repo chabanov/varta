@@ -3733,6 +3733,16 @@ What a browser host needs beyond the probe, for the v35/v36 surface:
 - **Browser.** One artifact, not a separate compilation: the browser bundle reuses
   the same validated portable Wasm and manifest. The generated host and applier are
   versioned with the host ABI and value ABI; a mismatch fails at load.
+- **Proposed embedding level A1 (owner decision open).** The
+  [embedding contract](embedding.md#conformance-levels) has no level for the
+  official application/view host. The proposal: **A1 — application/view host**,
+  R2 plus the v38 application instance (long-lived turns, host event delivery,
+  close and permission revocation),
+  `view_commit` with the L0 view protocol and an applier, the event-source imports,
+  per-turn renewal with metered fuel and the browser effect mapping, specified in
+  its own embedding section. No host may claim it until the instance and event
+  interfaces leave "unstable" and full multi-browser acceptance passes; until the
+  owner accepts it, embedding.md keeps its current levels.
 
 #### Application lifecycle and event turns
 
