@@ -73,16 +73,44 @@ test("Fetch-decoded bodies are admitted and hide their coding and coded length",
 test("UTF8 carry survives chunk boundaries, byte-mode transitions and BOMs", async () => {
   const t = context.transport(plan(), async () => response([[0xef, 0xbb, 0xbf, 0x61, 0xe2, 0x82], [0xac]]));
   await t.head;
-  const a = await t.pull(false); assert.equal(a.kind, C.chunk); assert.equal(a.text, "﻿a");
-  assert.equal((await t.pull(true)).text, "â\u0082");
-  assert.equal((await t.pull(true)).text, "¬");
+  const a = await t.pull(false); assert.equal(a.kind, C.chunk); assert.equal(a.text, "\uFEFFa");
+  assert.equal((await t.pull(true)).text, "\u00e2\u0082");
+  assert.equal((await t.pull(true)).text, "\u00ac");
   assert.equal((await t.pull(false)).kind, C.end);
   const incomplete = context.transport(plan(), async () => response([[0x61, 0xe2, 0x82]])); await incomplete.head;
-  assert.equal((await incomplete.pull(false)).text, "a"); assert.equal((await incomplete.pull(false)).text, "�"); assert.equal((await incomplete.pull(false)).kind, C.end);
+  assert.equal((await incomplete.pull(false)).text, "a"); assert.equal((await incomplete.pull(false)).text, "\ufffd"); assert.equal((await incomplete.pull(false)).kind, C.end);
+});
+// The length of every chunk `transport` delivers in one read mode, to the end.
+async function reads(transport, bytes) {
+  await transport.head;
+  const lengths = [];
+  for (let chunk = await transport.pull(bytes); chunk.kind === C.chunk; chunk = await transport.pull(bytes)) lengths.push(bytes ? chunk.text.length : new TextEncoder().encode(chunk.text).length);
+  return lengths;
+}
+test("one read delivers at most the per-read cap, splitting larger Fetch chunks like the native host", async () => {
+  const cap = N.maxReadBytes;
+  assert(cap > 0 && cap < N.maxChunkBytes);
+  // A chunk of more than the old chunk bound, then one byte: the cap-sized
+  // reads, the remainder, then the next chunk (the native read sequence).
+  const split = Array.from({ length: Math.floor((N.maxChunkBytes + 3) / cap) }, () => cap);
+  split.push((N.maxChunkBytes + 3) % cap, 1);
+  for (const bytes of [true, false]) {
+    const t = context.transport(plan(), async () => response([new Uint8Array(N.maxChunkBytes + 3).fill(65), [65]]));
+    assert.deepEqual(await reads(t, bytes), split, String(bytes));
+  }
+  // Text reads count held-back bytes of a split sequence against the cap.
+  const euro = new TextEncoder().encode("\u20ac".repeat(N.maxChunkBytes));
+  const lengths = await reads(context.transport(plan(), async () => response([euro])), false);
+  assert(lengths.every((length) => length <= cap), JSON.stringify(lengths));
+  assert.equal(lengths.reduce((a, b) => a + b, 0), euro.length);
+  // Byte reads put held-back bytes first, and buffered bytes after them
+  // still count against the cap.
+  const held = context.transport(plan(), async () => response([[0x61, 0xe2], new Uint8Array(2 * cap).fill(66)])); await held.head;
+  assert.equal((await held.pull(false)).text, "a");
+  assert.equal((await held.pull(true)).text, "\u00e2");
+  assert.deepEqual(await reads(held, true), [cap, cap]);
 });
 test("body chunks stay bounded and the body limit applies per read, not per body", async () => {
-  const t = context.transport(plan(), async () => response([new Uint8Array(N.maxChunkBytes + 3).fill(65)])); await t.head;
-  assert.equal((await t.pull(true)).text.length, N.maxChunkBytes); assert.equal((await t.pull(true)).text, "AAA"); assert.equal((await t.pull(true)).kind, C.end);
   // A long stream of ordinary reads passes the old per-body total.
   const count = Math.floor(N.maxBodyBytes / N.maxChunkBytes) + 2;
   const long = context.transport(plan(), async () => response(Array.from({ length: count }, () => new Uint8Array(N.maxChunkBytes).fill(66)))); await long.head;
@@ -95,7 +123,7 @@ test("body chunks stay bounded and the body limit applies per read, not per body
 });
 test("native invalid-prefix decoding, visible-header limits and body failures stay explicit", async () => {
   const t = context.transport(plan(), async () => response([[0x61, 0xe0], [0xa0, 0x80]])); await t.head;
-  assert.equal((await t.pull(false)).text, "a�"); assert.equal((await t.pull(false)).text, "��");
+  assert.equal((await t.pull(false)).text, "a\ufffd"); assert.equal((await t.pull(false)).text, "\ufffd\ufffd");
   const fields = new Headers(Array.from({ length: N.maxResponseHeaders + 1 }, (_, i) => [`x-${i}`, "v"]));
   const h = context.transport(plan(), async () => response([], { headers: fields })); assert.equal((await h.head).kind, C.failed);
   const broken = context.transport(plan(), async () => response([], { body: { getReader() { return { async read() { throw new Error("closed"); }, async cancel() {} }; } } })); await broken.head;

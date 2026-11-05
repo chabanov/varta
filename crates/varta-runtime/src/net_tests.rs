@@ -894,3 +894,65 @@ export async function main(): Promise<void> {{
         BODY_LIMIT_FUEL,
     );
 }
+
+/// The burst of `net_cases/v38/burst.ts`: back-to-back events far larger
+/// than one read's delivery cap (the reviewed reproduction).
+const BURST_COUNT: u64 = 12;
+const BURST_BYTES: usize = 60_000;
+const _: () = assert!(BURST_BYTES > varta_common::net::MAX_READ_DELIVERY_BYTES);
+
+/// V38 under the production budgets: a burst of large events completes in
+/// an application instance, because each read (one event turn) delivers at
+/// most `MAX_READ_DELIVERY_BYTES` and larger received data waits for the
+/// next reads; every network turn stays within the byte path's stated share
+/// of the turn fuel. Before the cap, a read coalesced up to
+/// `MAX_CHUNK_BYTES` and exhausted `budget::TURN_FUEL`.
+#[test]
+fn v38_bursts_split_reads_within_the_turn_fuel() {
+    use varta_common::budget::TURN_FUEL;
+    use varta_common::net::{MAX_READ_DELIVERY_BYTES, READ_FUEL_SHARE};
+    let server = Loopback::start();
+    let source = program(include_str!("net_cases/v38/burst.ts"), &server)
+        .replace("__COUNT__", &BURST_COUNT.to_string())
+        .replace("__SIZE__", &BURST_BYTES.to_string())
+        .replace("__CAP__", &MAX_READ_DELIVERY_BYTES.to_string());
+    let bytes = compile_with(&source, V38);
+    let run = RunOptions {
+        requested: grants(&server),
+        ..RunOptions::default()
+    };
+    let report = VartaRuntime::new().run_application(
+        &bytes,
+        ApplicationOptions {
+            run,
+            ..ApplicationOptions::default()
+        },
+    );
+    let budget = report.budget.expect("an instance ran");
+    assert!(
+        report.failure.is_none(),
+        "{:?} {:?}",
+        report.failure,
+        budget.lines()
+    );
+    assert_eq!(budget.budgets.fuel_per_turn, TURN_FUEL);
+    let total: usize = (1..=BURST_COUNT)
+        .map(|id| crate::net_loopback::event(id, BURST_BYTES).len())
+        .sum();
+    assert_eq!(
+        report.output.lines,
+        lines(&[
+            &format!("bytes: 200 {total} bytes, last id: {BURST_COUNT}, reads within cap true"),
+            &format!("text: 200 {total} units, last id: {BURST_COUNT}"),
+        ])
+    );
+    let network: Vec<u64> = budget
+        .turns
+        .iter()
+        .filter(|turn| turn.kind == crate::turns::TurnKind::Network)
+        .map(|turn| turn.fuel)
+        .collect();
+    assert!(network.len() as u64 > 2 * total as u64 / MAX_READ_DELIVERY_BYTES as u64);
+    let share = TURN_FUEL / READ_FUEL_SHARE;
+    assert!(network.iter().all(|fuel| *fuel <= share), "{network:?}");
+}

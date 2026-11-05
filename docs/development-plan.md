@@ -3470,16 +3470,23 @@ end-to-end deadline, whole-body bound and headers as given.
   sent) on both hosts; the native host sends `accept-encoding: identity` and
   fails another coding; the browser admits Fetch-decoded bodies and hides
   `content-encoding`/`content-length` for them.
+- One read delivers at most `net::MAX_READ_DELIVERY_BYTES` on both hosts
+  (owner decision: cap the delivery rather than document the fatal
+  outcome). The v38 byte read path costs about `net::READ_BYTE_FUEL` fuel
+  per byte (1 KiB about 0.23 M, 8 KiB about 1.7 M, 32 KiB about 6.7 M fuel
+  per read turn), so a read coalesced up to `net::MAX_CHUNK_BYTES` exhausted
+  `budget::TURN_FUEL` during a burst; larger received data is now split
+  across reads (`/events?count=12&size=60000&pause=0` completes under the
+  production budgets natively and in Chrome).
+- Owner decision: the header and coding rules stay as documented (native
+  fail-closed on a non-identity coding; the other browser-controlled request
+  headers, `cookie`, `origin`, `referer`, `sec-*`, …, differ between hosts).
 - Verification: native loopback tests (`net_tests`, `net::tests`,
   `net::client::tests`), the transport's Node tests and
   `scripts/test-browser-streaming.mjs` (local Chrome against native, same
-  lines). Open items: the other browser-controlled request headers
-  (`cookie`, `origin`, `referer`, `sec-*`, …) still differ between hosts
-  (owner decision); the v38 byte read path costs about 205 fuel per byte
-  (1 KiB about 0.23 M, 8 KiB about 1.7 M, 32 KiB about 6.7 M fuel per read
-  turn), so one read of more than about 38 KiB exceeds `budget::TURN_FUEL`
-  and a stream whose chunks coalesce up to `net::MAX_CHUNK_BYTES` ends the
-  instance with a fuel budget error.
+  lines, the long stream and the burst). The prototype web host
+  (`examples/varta-web-host`) records the new rules as stated deviations
+  and does not implement them.
 
 ### Current integration backlog
 

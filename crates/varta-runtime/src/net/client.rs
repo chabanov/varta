@@ -355,12 +355,15 @@ fn latin1(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| char::from(*byte)).collect()
 }
 
-/// Reads a response body in chunks of at most [`MAX_CHUNK_BYTES`] and decodes
-/// them as UTF-8, completing a sequence split between chunks from the next
-/// one; a sequence still incomplete at the end becomes U+FFFD. A chunk takes
-/// every frame already received (up to the bound) without waiting for more,
-/// so small frames cost one guest read together while a quiet stream (SSE)
-/// still delivers each event as soon as it arrives. Every wait for frames
+/// Reads a response body in chunks of at most [`BodyBound::delivery`] bytes
+/// ([`MAX_CHUNK_BYTES`] for v37, `net::MAX_READ_DELIVERY_BYTES` for v38) and
+/// decodes them as UTF-8, completing a sequence split between chunks from the
+/// next one; a sequence still incomplete at the end becomes U+FFFD. A chunk
+/// takes every frame already received (up to the bound) without waiting for
+/// more, so small frames cost one guest read together while a quiet stream
+/// (SSE) still delivers each event as soon as it arrives; received bytes
+/// beyond the bound wait for the next reads, so host memory holds at most one
+/// received frame beyond the bound plus a split sequence. Every wait for frames
 /// ends at [`Timing::until`] of its own start, and the received bytes are
 /// counted against [`MAX_RESPONSE_BODY_BYTES`] per [`BodyBound`].
 struct BodyReader<B = Incoming> {
@@ -404,7 +407,7 @@ where
                 let take = self
                     .buffer
                     .len()
-                    .min(MAX_CHUNK_BYTES.saturating_sub(bytes.len()));
+                    .min(self.bound.delivery().saturating_sub(bytes.len()));
                 let rest = self.buffer.split_off(take);
                 bytes.extend_from_slice(&std::mem::replace(&mut self.buffer, rest));
                 return Ok(Some(latin1(&bytes)));
@@ -412,7 +415,7 @@ where
             if !self.buffer.is_empty() {
                 let rest = self
                     .buffer
-                    .split_off(self.buffer.len().min(MAX_CHUNK_BYTES));
+                    .split_off(self.buffer.len().min(self.text_take()));
                 let bytes = std::mem::replace(&mut self.buffer, rest);
                 let text = self.decode(&bytes);
                 if !text.is_empty() {
@@ -434,10 +437,19 @@ where
                 .map_err(|_| RequestFailure::BodyTimeout)??;
         }
     }
+    /// The buffered bytes a text read decodes: the chunk (v37, the held-back
+    /// bytes of a split sequence added), or the cap less those bytes (v38),
+    /// so a v38 read never decodes more than its cap.
+    fn text_take(&self) -> usize {
+        match self.bound {
+            BodyBound::Response => MAX_CHUNK_BYTES,
+            BodyBound::Read => self.bound.delivery().saturating_sub(self.carry.len()),
+        }
+    }
     /// Take every frame that is ready, until the chunk bound or the end; wait
     /// only while nothing was taken.
     fn fill(&mut self, context: &mut std::task::Context<'_>) -> Poll<Result<(), RequestFailure>> {
-        while self.buffer.len() < MAX_CHUNK_BYTES {
+        while self.buffer.len() < self.bound.delivery() {
             match std::pin::Pin::new(&mut self.body).poll_frame(context) {
                 Poll::Pending if self.buffer.is_empty() => return Poll::Pending,
                 Poll::Pending => break,
@@ -604,19 +616,81 @@ mod tests {
     /// Read `body` to its end, as bytes; the delivered byte count or the
     /// failure.
     fn drain(body: Frames, timing: Timing, bound: BodyBound) -> Result<usize, RequestFailure> {
+        reads(body, timing, bound, ReadMode::Bytes).map(|chunks| chunks.iter().sum())
+    }
+    /// Read `body` to its end in `mode`: the UTF-8 length of every chunk
+    /// (for a byte read or valid UTF-8 text, the bytes it delivered), each
+    /// checked against the bound's delivery cap.
+    fn reads<B>(
+        body: B,
+        timing: Timing,
+        bound: BodyBound,
+        mode: ReadMode,
+    ) -> Result<Vec<usize>, RequestFailure>
+    where
+        B: Body<Data = Bytes> + Unpin,
+        B::Error: std::fmt::Display,
+    {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
             .unwrap();
         runtime.block_on(async {
             let mut reader = BodyReader::new(body, timing, bound);
-            let mut bytes = 0;
-            while let Some(chunk) = reader.next(ReadMode::Bytes).await? {
-                assert!(chunk.len() <= MAX_CHUNK_BYTES);
-                bytes += chunk.len();
+            let mut chunks = Vec::new();
+            while let Some(chunk) = reader.next(mode).await? {
+                let delivered = match mode {
+                    ReadMode::Bytes => chunk.chars().count(),
+                    ReadMode::Text => chunk.len(),
+                };
+                assert!(delivered <= bound.delivery(), "{delivered}");
+                chunks.push(delivered);
             }
-            Ok(bytes)
+            Ok(chunks)
         })
+    }
+
+    /// V38 delivers at most `MAX_READ_DELIVERY_BYTES` per read, splitting a
+    /// larger received frame (or ready frames together) across reads, in
+    /// both read modes and across split UTF-8 sequences; v37 keeps its
+    /// `MAX_CHUNK_BYTES` chunks unchanged.
+    #[test]
+    fn v38_reads_never_exceed_the_delivery_cap() {
+        use varta_common::net::MAX_READ_DELIVERY_BYTES as CAP;
+        let sizes = [MAX_CHUNK_BYTES + 3, 1, CAP - 1, CAP + 1, 3 * CAP];
+        let total: usize = sizes.iter().sum();
+        for mode in [ReadMode::Bytes, ReadMode::Text] {
+            let chunks = reads(
+                frames(&sizes, false),
+                inactive(WINDOW),
+                BodyBound::Read,
+                mode,
+            )
+            .unwrap();
+            assert_eq!(chunks.iter().sum::<usize>(), total);
+            assert_eq!(chunks.iter().max(), Some(&CAP));
+            assert!(chunks.len() >= total.div_ceil(CAP));
+        }
+        // Three-byte characters never fit a cap evenly, so text reads hold
+        // back a split sequence; every read still stays within the cap.
+        let euro = "\u{20ac}".repeat(MAX_CHUNK_BYTES);
+        let body = Frames {
+            frames: [Bytes::from(euro.clone().into_bytes())].into(),
+            stall: false,
+        };
+        let chunks = reads(body, inactive(WINDOW), BodyBound::Read, ReadMode::Text).unwrap();
+        assert_eq!(chunks.iter().sum::<usize>(), euro.len());
+        assert!(chunks.len() > euro.len() / CAP);
+        // V37: frames are coalesced and split at the frozen chunk bound.
+        let timing = Timing::Transfer(Instant::now() + WINDOW);
+        let chunks = reads(
+            frames(&[MAX_CHUNK_BYTES + 3, 1], false),
+            timing,
+            BodyBound::Response,
+            ReadMode::Bytes,
+        )
+        .unwrap();
+        assert_eq!(chunks, [MAX_CHUNK_BYTES, 3, 1]);
     }
 
     /// V37 bounds the whole body; v38 bounds what one read receives, so a

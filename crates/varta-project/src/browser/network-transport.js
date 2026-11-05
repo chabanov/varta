@@ -75,6 +75,11 @@ function browserTransport(plan, fetcher = fetch) {
     }
     return 0;
   };
+  // V38 (net::MAX_READ_DELIVERY_BYTES): one read delivers at most this many
+  // body bytes (a text read: the bytes it decodes, held-back bytes included),
+  // so its guest work fits one turn's fuel; a larger Fetch chunk waits in
+  // `buffer` for the next reads, which receive nothing new.
+  const cap = N.maxReadBytes;
   const pull = async (bytes) => {
     // V38 (net::BodyBound::Read): the bound counts what this read receives;
     // a body has no total byte bound.
@@ -82,7 +87,7 @@ function browserTransport(plan, fetcher = fetch) {
     try {
       while (true) {
         if (bytes && (carry.length || buffer.length)) {
-          const count = Math.min(buffer.length, N.maxChunkBytes - carry.length), data = new Uint8Array(carry.length + count);
+          const count = Math.min(buffer.length, cap - carry.length), data = new Uint8Array(carry.length + count);
           data.set(carry); data.set(buffer.subarray(0, count), carry.length); carry = new Uint8Array(0); buffer = buffer.subarray(count);
           let text = "";
           // Keep argument counts bounded even on engines with smaller JS stacks.
@@ -91,7 +96,7 @@ function browserTransport(plan, fetcher = fetch) {
           return { kind: C.chunk, text };
         }
         if (buffer.length) {
-          const count = Math.min(buffer.length, N.maxChunkBytes), input = new Uint8Array(carry.length + count);
+          const count = Math.min(buffer.length, cap - carry.length), input = new Uint8Array(carry.length + count);
           input.set(carry); input.set(buffer.subarray(0, count), carry.length); buffer = buffer.subarray(count);
           const keep = incomplete(input); carry = input.slice(input.length - keep);
           const text = utf8.decode(input.subarray(0, input.length - keep));
@@ -99,7 +104,7 @@ function browserTransport(plan, fetcher = fetch) {
           continue;
         }
         if (ended) {
-          if (carry.length) { carry = new Uint8Array(0); return { kind: C.chunk, text: "�" }; }
+          if (carry.length) { carry = new Uint8Array(0); return { kind: C.chunk, text: "\ufffd" }; }
           return { kind: C.end, text: "" };
         }
         const { value, done } = await within(reader.read()); ended = done;

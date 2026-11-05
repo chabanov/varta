@@ -252,9 +252,14 @@ fn net_limits() -> String {
             "net::MAX_RESPONSE_HEADER_BYTES",
         ),
         row(
-            "Body bytes of one `net_body_read` completion",
+            "Body bytes of one `net_body_read` completion (v37)",
             net::MAX_CHUNK_BYTES,
             "net::MAX_CHUNK_BYTES",
+        ),
+        row(
+            "Body bytes one v38 read delivers (a text read: the bytes it decodes)",
+            net::MAX_READ_DELIVERY_BYTES,
+            "net::MAX_READ_DELIVERY_BYTES",
         ),
         row(
             "Body bytes of one response (v37), or received while serving one read (v38)",

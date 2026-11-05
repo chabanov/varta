@@ -8819,7 +8819,8 @@ as unknown names and keep their bytes and diagnostics.
   `net::MAX_RESPONSE_HEADERS` fields and `net::MAX_RESPONSE_HEADER_BYTES`;
   request headers by `net::MAX_REQUEST_HEADERS` and
   `net::MAX_REQUEST_HEADER_BYTES`. A body chunk carries every frame already
-  received up to `net::MAX_CHUNK_BYTES` without waiting for more (so SSE events
+  received up to `net::MAX_CHUNK_BYTES` (v38: `net::MAX_READ_DELIVERY_BYTES`,
+  the rest waiting for the next reads) without waiting for more (so SSE events
   arrive as soon as they are sent) and is decoded as UTF-8 across chunk
   boundaries (U+FFFD for invalid bytes, as a non-fatal `TextDecoder`). A body
   beyond `net::MAX_RESPONSE_BODY_BYTES` fails the read (v38: a read that
@@ -10976,8 +10977,9 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   `net_body_read_bytes (id:f64) -> ()` arms the next chunk like
   `net_body_read` but delivers its bytes undecoded (bytes a text read kept for
   an unfinished UTF-8 sequence come first); it is bookkeeping (no
-  capability, no host-call charge, the deadline observed). Chunks keep
-  `net::MAX_CHUNK_BYTES`; `net::MAX_RESPONSE_BODY_BYTES` bounds what one read
+  capability, no host-call charge, the deadline observed). A v38 read
+  delivers at most `net::MAX_READ_DELIVERY_BYTES` (v37 chunks keep
+  `net::MAX_CHUNK_BYTES`); `net::MAX_RESPONSE_BODY_BYTES` bounds what one read
   receives ([long-lived transfers](#long-lived-transfers-and-host-owned-headers-v38));
   a byte request body is at most half of `net::MAX_REQUEST_BYTES`
   ([values](embedding.md#network-request-limits-v37)).
@@ -11018,7 +11020,7 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   transfers and host-owned headers.** A typed SDK's session stream
   (server-sent events) runs for minutes and may carry any total, and an
   unmodified SDK sets `User-Agent` on every request; `net_request_start_v2`
-  therefore differs from the frozen v37 start in four ways, identically on
+  therefore differs from the frozen v37 start in five ways, identically on
   every host. (1) **Inactivity, not an end-to-end deadline:** the head must
   arrive within one window of the start and each wait of an armed body read
   lasts at most one window, where the window is the per-turn deadline
@@ -11033,10 +11035,20 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   bound:** `net::MAX_RESPONSE_BODY_BYTES` bounds the bytes the host receives
   while serving one read (`net::BodyBound::Read`), not the body; there is no
   total byte bound. A body is bounded in time by the window and the
-  instance lifetime, in host memory by one chunk (the transfer reads only
-  when the guest arms a read), and what the guest keeps by its memory budget
-  (the v37 rationale, one string value of `abi::MAX_STRING_BYTES`, does not
-  hold under the v38 data limits). (3) **Host-owned request headers**
+  instance lifetime, in host memory by one received transport chunk plus a
+  held-back split sequence (the transfer receives only while the guest has a
+  read armed), and what the guest keeps by its memory budget (the v37
+  rationale, one string value of `abi::MAX_STRING_BYTES`, does not hold under
+  the v38 data limits). (5) **Per-read delivery cap** (owner decision, over
+  documenting the fatal outcome): one read delivers at most
+  `net::MAX_READ_DELIVERY_BYTES`, held-back bytes included, and larger
+  received data is split across successive reads. Each read is one event
+  turn, and the guest byte path costs about `net::READ_BYTE_FUEL` fuel per
+  delivered byte (measured), so a read of `net::MAX_CHUNK_BYTES` would
+  exhaust `budget::TURN_FUEL` and terminate a well-behaved instance during a
+  burst; the cap keeps that path within one `net::READ_FUEL_SHARE`-th of the
+  turn fuel (a compile-time assertion in `varta_common::net`), and a guest
+  `TextDecoder` over every read still fits. No production budget changed. (3) **Host-owned request headers**
   (`net::HOST_REQUEST_HEADERS`: `accept-encoding`, `user-agent`): a guest
   value is checked like any header, then ignored and never sent, because a
   browser always sends its own; the native reference host sends no
@@ -11047,10 +11059,12 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   shows neither `content-encoding` nor `content-length` for it. Other headers
   a browser controls (cookie, origin, referer, `sec-*`, `proxy-*`, …) are not
   host-owned: the native host sends them, a browser host refuses them (owner
-  decision pending). `net_request_start` (v37) keeps one end-to-end deadline,
-  the whole-body bound and every header as given. The wire rules, failure
-  texts and the browser hosts' implementation are in
-  [Transfer timing](embedding.md#transfer-timing-v38) and
+  decision: accepted as documented, like the native fail-closed rule for
+  codings). `net_request_start` (v37) keeps one end-to-end deadline, its
+  chunk bytes, the whole-body bound and every header as given. The wire
+  rules, failure texts and the browser hosts' obligations are in
+  [Transfer timing](embedding.md#transfer-timing-v38),
+  [Per-read delivery cap](embedding.md#per-read-delivery-cap-v38) and
   [Host-owned headers](embedding.md#host-owned-headers-and-content-codings-v38).
 - **`ArrayBuffer`, `Blob`, `FormData`** (`<varta>/web/blob.ts`, guest code,
   no host import, loaded when a module names one of them). `ArrayBuffer`

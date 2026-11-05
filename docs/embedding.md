@@ -837,7 +837,8 @@ URL is bounded by the [limits table](#manifest-limits).
 | Request header name and value bytes | 16384 | `net::MAX_REQUEST_HEADER_BYTES` |
 | Response header fields | 100 | `net::MAX_RESPONSE_HEADERS` |
 | Response header name and value bytes | 65536 | `net::MAX_RESPONSE_HEADER_BYTES` |
-| Body bytes of one `net_body_read` completion | 65536 | `net::MAX_CHUNK_BYTES` |
+| Body bytes of one `net_body_read` completion (v37) | 65536 | `net::MAX_CHUNK_BYTES` |
+| Body bytes one v38 read delivers (a text read: the bytes it decodes) | 8192 | `net::MAX_READ_DELIVERY_BYTES` |
 | Body bytes of one response (v37), or received while serving one read (v38) | 524288 | `net::MAX_RESPONSE_BODY_BYTES` |
 | First descriptor line: `net_request_start` / `net_request_start_v2` | `varta-net-request-1` / `varta-net-request-2` | `net::DESCRIPTOR_VERSION`, `net::DESCRIPTOR_VERSION_BYTES` |
 <!-- generated:embedding-net-limits:end -->
@@ -938,13 +939,40 @@ A server-sent event stream therefore lives as long as the instance while it
 sends something within every window. The body bound of the
 [limits](#network-request-limits-v37) counts the bytes the host receives while
 serving one read (`net::BodyBound::Read`), not the whole body, so such a
-stream may deliver any total. Host memory stays bounded by one chunk (the
-transfer reads only when the guest arms a read); what the guest keeps is
+stream may deliver any total. Each read delivers at most the per-read bytes
+of the limits (`net::MAX_READ_DELIVERY_BYTES`, the [per-read
+cap](#per-read-delivery-cap-v38)); host memory stays bounded by one received
+transport chunk plus the bytes held back for a split sequence (the transfer
+receives only while the guest has a read armed); what the guest keeps is
 bounded by its own memory budget.
 
-A browser host implements the same rule with `AbortController`: the window
-is its per-turn deadline, armed for the head and for each wait of a reader
-read, cleared when that wait ends. Its timeout failures use the same texts.
+A browser host MUST observe the same rule: the window is its per-turn
+deadline, it starts when the head is requested and when each wait of a reader
+read starts, it ends when that wait settles, and an expired window fails the
+head or the read with the same texts and cancels the transfer (no later
+completion, no further bytes). How the host measures and cancels is its own
+choice; the generated host races each wait against a timer and then cancels
+the Fetch and its reader.
+
+#### Per-read delivery cap (v38)
+
+Every read of a body is served in one event turn of the guest, and a turn's
+work on the delivered bytes grows with their number: the v38 byte path
+(`net_body_read_bytes` into a `Uint8Array` of `ReadableStreamDefaultReader.read()`)
+costs about `net::READ_BYTE_FUEL` guest fuel per byte measured, so a read of the
+v37 chunk bytes would exhaust the production turn fuel (`budget::TURN_FUEL`)
+and terminate the instance, however well the program behaves. Under
+`net_request_start_v2` a host therefore MUST deliver at most
+`net::MAX_READ_DELIVERY_BYTES` per read completion (the
+[limits](#network-request-limits-v37)): a byte read counts the bytes held back
+by an earlier text read first; a text read counts the held-back bytes it
+completes plus the bytes it decodes. The cap keeps the byte path within one
+`net::READ_FUEL_SHARE`-th of the turn fuel, leaving the rest to the
+application. When the host has received more (one large transport chunk, or
+several ready chunks), the rest waits in the host for the next reads, which
+receive nothing new until it is delivered; it is never dropped and never
+merged beyond the cap. `net_request_start` (v37) keeps its chunk bytes
+unchanged.
 
 #### Request descriptor
 
@@ -1192,7 +1220,8 @@ when the browser exposes it.
 #### Body chunks
 
 Each chunk completion holds the bytes already received when the read is served,
-up to the chunk bytes of the [limits](#network-request-limits-v37). A text
+up to the chunk bytes of the [limits](#network-request-limits-v37) (v37) or
+the [per-read cap](#per-read-delivery-cap-v38) (v38). A text
 read also decodes the at most three bytes held back from the previous chunk.
 The read waits only while no byte is available. A chunk is never empty: the end of the
 body is the `End` completion. The two read imports return the same bytes in

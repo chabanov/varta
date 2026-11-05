@@ -44,6 +44,31 @@ pub const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 /// Body bytes delivered by one `net_body_read` completion (as UTF-16 text
 /// it stays far below the host result buffer).
 pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
+/// V38 (`net_request_start_v2`): body bytes one `net_body_read` or
+/// `net_body_read_bytes` completion delivers, at most (text reads: the bytes
+/// it decodes, held-back bytes of a split sequence included). A larger
+/// received chunk is split across successive reads. The guest handles each
+/// read in one event turn, and its byte path costs about
+/// [`READ_BYTE_FUEL`] fuel per delivered byte, so a read of
+/// [`MAX_CHUNK_BYTES`] (about 13 million fuel) would exhaust
+/// `budget::TURN_FUEL` and terminate the instance. The cap keeps the byte
+/// path within one [`READ_FUEL_SHARE`]-th of the turn fuel, leaving the
+/// rest to the application (a guest `TextDecoder` over each read, about
+/// 620 fuel per byte together with the byte path, still fits).
+pub const MAX_READ_DELIVERY_BYTES: usize = 8 * 1024;
+/// Measured v38 guest fuel per byte a `ReadableStreamDefaultReader.read()`
+/// delivers as a `Uint8Array` (`net_body_read_bytes`, the `/events` burst
+/// of the runtime's network tests: about 199 per byte, rounded up to the
+/// reviewed figure). Basis of [`MAX_READ_DELIVERY_BYTES`] only; no budget
+/// uses it.
+pub const READ_BYTE_FUEL: u64 = 205;
+/// The share of `budget::TURN_FUEL` one read's byte path may use: one
+/// quarter, so three quarters remain for the application's own work.
+pub const READ_FUEL_SHARE: u64 = 4;
+const _: () = assert!(
+    MAX_READ_DELIVERY_BYTES as u64 * READ_BYTE_FUEL <= crate::budget::TURN_FUEL / READ_FUEL_SHARE
+);
+const _: () = assert!(MAX_READ_DELIVERY_BYTES <= MAX_CHUNK_BYTES);
 /// Body bytes of one response (v37, across all its chunks: the largest ASCII
 /// body whose UTF-16 text still fits one v37 string value,
 /// `abi::MAX_STRING_BYTES`), or the bytes the host receives while serving
@@ -152,6 +177,15 @@ impl BodyBound {
         match version {
             DescriptorVersion::V1 => Self::Response,
             DescriptorVersion::V2 => Self::Read,
+        }
+    }
+    /// The most body bytes one read completion delivers: [`MAX_CHUNK_BYTES`]
+    /// (v37, frozen) or [`MAX_READ_DELIVERY_BYTES`] (v38).
+    #[must_use]
+    pub fn delivery(self) -> usize {
+        match self {
+            Self::Response => MAX_CHUNK_BYTES,
+            Self::Read => MAX_READ_DELIVERY_BYTES,
         }
     }
 }
@@ -776,6 +810,9 @@ mod tests {
         );
         assert_eq!(BodyBound::of(DescriptorVersion::V1), BodyBound::Response);
         assert_eq!(BodyBound::of(DescriptorVersion::V2), BodyBound::Read);
+        // V37 keeps its chunk; v38 delivers at most the per-read cap.
+        assert_eq!(BodyBound::Response.delivery(), MAX_CHUNK_BYTES);
+        assert_eq!(BodyBound::Read.delivery(), MAX_READ_DELIVERY_BYTES);
     }
 
     #[test]
