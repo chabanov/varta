@@ -54,6 +54,26 @@ fn base(b: &mut B, width: &str) {
     }
 }
 
+/// A root block with the fixture font and no font-size, so sizes start from the
+/// initial `medium` keyword (16px proportional, 13px fixed in Chrome).
+fn medium_base(b: &mut B) {
+    b.create_element(2, Tag::Div).insert(1, 2, 0);
+    b.set_style(2, P::Width, "200px")
+        .set_style(2, P::FontFamily, "\"Varta Structure Fixture\"")
+        .set_style(2, P::Color, "#000000");
+}
+
+/// Chrome draws generic `monospace` with a system face no host can supply, so a
+/// monospace element `id` is a flex container (no strut of its own) whose
+/// `line-height` records its computed size; its only item, `id + 1`, switches
+/// back to the fixture font and draws `text` (node `id + 2`).
+fn monospace_probe(b: &mut B, id: u32, line_height: &str, text: &str) {
+    b.set_style(id, P::Display, "flex")
+        .set_style(id, P::LineHeight, line_height);
+    text_element(b, id, id + 1, Tag::Span, text);
+    b.set_style(id + 1, P::FontFamily, "\"Varta Structure Fixture\"");
+}
+
 /// Element `id` with `tag` under `parent`, holding text node `id + 1`.
 fn text_element(b: &mut B, parent: u32, id: u32, tag: Tag, text: &str) {
     b.create_element(id, tag)
@@ -244,6 +264,51 @@ fn case(name: &str) -> B {
             text_element(&mut b, 16, 17, Tag::Span, "AA BB AA BB");
             b.set_style(17, P::FontWeight, "700");
         }
+        // Chrome 156: h1 > code is 26px (2em, then 13/16 at the switch) and its
+        // fixture-font child returns to 32px.
+        "mono-h1-code" => {
+            medium_base(&mut b);
+            b.create_element(3, Tag::H1).insert(2, 3, 0);
+            b.create_element(4, Tag::Code).insert(3, 4, 0);
+            monospace_probe(&mut b, 4, "100%", "AB");
+        }
+        // h3 > pre: 18.72px becomes 15.21px, also the pre's 1em margins.
+        "mono-h3-pre" => {
+            medium_base(&mut b);
+            b.create_element(3, Tag::H3).insert(2, 3, 0);
+            b.create_element(4, Tag::Pre).insert(3, 4, 0);
+            monospace_probe(&mut b, 4, "100%", "AB");
+        }
+        // p { font-size: 150% } > code: 24px becomes 19.5px.
+        "mono-percent-code" => {
+            medium_base(&mut b);
+            b.create_element(3, Tag::P).insert(2, 3, 0);
+            b.set_style(3, P::FontSize, "150%");
+            b.create_element(4, Tag::Code).insert(3, 4, 0);
+            monospace_probe(&mut b, 4, "100%", "AB");
+        }
+        // pre (13px) > span { font-size: 200% } stays monospace at 26px.
+        "mono-pre-span" => {
+            medium_base(&mut b);
+            b.create_element(3, Tag::Pre).insert(2, 3, 0);
+            b.set_style(3, P::Display, "flex");
+            b.create_element(4, Tag::Span).insert(3, 4, 0);
+            b.set_style(4, P::FontSize, "200%");
+            monospace_probe(&mut b, 4, "100%", "AB");
+        }
+        // h2 { font-family: monospace }: 24px becomes 19.5px, margins 0.83em of it.
+        "mono-h2-family" => {
+            medium_base(&mut b);
+            b.create_element(3, Tag::H2).insert(2, 3, 0);
+            b.set_style(3, P::FontFamily, "monospace");
+            monospace_probe(&mut b, 3, "100%", "AB");
+        }
+        // pre { line-height: 150% } resolves against 13px: 19.5px lines.
+        "mono-pre-line-height" => {
+            medium_base(&mut b);
+            b.create_element(3, Tag::Pre).insert(2, 3, 0);
+            monospace_probe(&mut b, 3, "150%", "AB");
+        }
         _ => unreachable!("listed case"),
     }
     b
@@ -259,6 +324,12 @@ const CASES: &[&str] = &[
     "label",
     "align",
     "ellipsis",
+    "mono-h1-code",
+    "mono-h3-pre",
+    "mono-percent-code",
+    "mono-pre-span",
+    "mono-h2-family",
+    "mono-pre-line-height",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

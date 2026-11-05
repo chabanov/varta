@@ -263,6 +263,102 @@ fn pre_preserves_lines_and_resolves_the_monospace_face() {
     }
 }
 
+/// Chrome 156 sizes where the generic family switches to or from monospace:
+/// each case's flex element records its size in a `100%` (or `150%`) line
+/// height; its fixture-font item returns to the proportional size.
+#[test]
+fn monospace_sizes_switch_at_the_family_change_like_chrome() {
+    struct Case {
+        outer: (Tag, &'static str),
+        /// Inner tag and its extra author declarations.
+        inner: (Tag, &'static [(P, &'static str)]),
+        line_height: &'static str,
+        /// Expected inner line height and the item's text box height.
+        expected: (f32, f32),
+    }
+    const NONE: &[(P, &str)] = &[];
+    // The item text box is the rounded ascent plus the rounded descent
+    // (18.72px gives 15 + 4).
+    let cases = [
+        Case {
+            outer: (Tag::H1, ""),
+            inner: (Tag::Code, NONE),
+            line_height: "100%",
+            expected: (26.0, 32.0),
+        },
+        Case {
+            outer: (Tag::H3, ""),
+            inner: (Tag::Pre, NONE),
+            line_height: "100%",
+            expected: (15.21, 19.0),
+        },
+        Case {
+            outer: (Tag::P, "150%"),
+            inner: (Tag::Code, NONE),
+            line_height: "100%",
+            expected: (19.5, 24.0),
+        },
+        Case {
+            outer: (Tag::Pre, ""),
+            inner: (Tag::Span, &[(P::FontSize, "200%")]),
+            line_height: "100%",
+            expected: (26.0, 32.0),
+        },
+        Case {
+            outer: (Tag::Div, ""),
+            inner: (Tag::H2, &[(P::FontFamily, "monospace")]),
+            line_height: "100%",
+            expected: (19.5, 24.0),
+        },
+        Case {
+            outer: (Tag::Div, ""),
+            inner: (Tag::Pre, NONE),
+            line_height: "150%",
+            expected: (19.5, 16.0),
+        },
+    ];
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    let mut mono = fonts(&[REGULAR, BOLD], &["monospace"]);
+    for case in cases {
+        let mut b = B::new();
+        b.create_element(2, Tag::Div).insert(1, 2, 0);
+        b.set_style(2, P::FontFamily, "\"Varta Structure Fixture\"");
+        b.create_element(3, case.outer.0).insert(2, 3, 0);
+        if !case.outer.1.is_empty() {
+            b.set_style(3, P::FontSize, case.outer.1);
+        }
+        b.set_style(3, P::Display, "flex");
+        b.create_element(4, case.inner.0).insert(3, 4, 0);
+        for &(property, value) in case.inner.1 {
+            b.set_style(4, property, value);
+        }
+        b.set_style(4, P::Display, "flex")
+            .set_style(4, P::LineHeight, case.line_height);
+        add(&mut b, 4, 5, Tag::Span, "A");
+        b.set_style(5, P::FontFamily, "\"Varta Structure Fixture\"");
+        let g = boxes(&view(&b), &mut mono);
+        let inner = case.inner.0;
+        assert!(
+            close(g[&4].height, case.expected.0),
+            "{inner:?}: {}",
+            g[&4].height
+        );
+        assert!(
+            close(g[&6].height, case.expected.1),
+            "{inner:?}: {}",
+            g[&6].height
+        );
+    }
+    // An absolute size (`px`, `rem`) is never re-derived.
+    for size in ["1rem", "16px"] {
+        let mut b = B::new();
+        add(&mut b, 1, 2, Tag::Pre, "A");
+        b.set_style(2, P::FontSize, size);
+        let g = boxes(&view(&b), &mut mono);
+        assert!(close(g[&3].height, HOST_SIZE), "{size}");
+    }
+}
+
 #[test]
 fn a_label_click_activates_its_associated_control() {
     let mut b = base("200px");

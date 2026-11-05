@@ -164,11 +164,66 @@ pub(crate) const UA_BOLD_WEIGHT: f32 = 700.0;
 /// Inline-start padding of `ul`/`ol` (`padding-inline-start: 40px`).
 pub(crate) const UA_LIST_PADDING_PX: f32 = 40.0;
 /// Chrome's default fixed (monospace) font size over its default proportional
-/// size (13px / 16px). A generic `monospace`-only family whose size is still the
-/// initial keyword `medium` uses this fraction of the host's medium size.
-pub(crate) const UA_MONOSPACE_MEDIUM_RATIO: f32 = 13.0 / 16.0;
+/// size (13px / 16px). See [`FontSize::switch_family`].
+pub(crate) const UA_MONOSPACE_RATIO: f32 = 13.0 / 16.0;
 /// The generic family name the user-agent table gives `pre` and `code`.
 pub(crate) const UA_MONOSPACE_FAMILY: &str = "monospace";
+
+/// Whether a `font-family` value is exactly the generic `monospace` family
+/// (Blink's `IsMonospace`): a list such as `monospace, monospace` is not.
+pub(crate) fn sole_monospace(family: &str) -> bool {
+    family.trim().eq_ignore_ascii_case(UA_MONOSPACE_FAMILY)
+}
+
+/// Blink's computed font-size state along an element path, which decides how
+/// the size changes where the generic family switches to or from monospace.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FontSize {
+    /// Computed size in CSS pixels.
+    pub px: f32,
+    /// Still the initial `medium` keyword: no font-size applies on the path.
+    keyword: bool,
+    /// Fixed by an absolute length (`px`, `rem`); em-like user-agent scales
+    /// and percentages inherit the parent's flag.
+    absolute: bool,
+}
+impl FontSize {
+    /// The initial `medium` size of the host's proportional default.
+    pub(crate) fn medium(base: f32) -> Self {
+        Self {
+            px: base,
+            keyword: true,
+            absolute: false,
+        }
+    }
+    /// `font-size` as a multiple of the inherited size (em scale or percentage).
+    pub(crate) fn scale(&mut self, factor: f32) {
+        self.px *= factor;
+        self.keyword = false;
+    }
+    /// `font-size` as an absolute length in CSS pixels.
+    pub(crate) fn absolute(&mut self, px: f32) {
+        self.px = px;
+        self.keyword = false;
+        self.absolute = true;
+    }
+    /// Blink's `CheckForGenericFamilyChange`: where the family switches between
+    /// the sole generic `monospace` and anything else, a non-absolute size is
+    /// re-derived. The `medium` keyword takes the host medium size, scaled by
+    /// [`UA_MONOSPACE_RATIO`] for monospace; any other size is multiplied
+    /// (into monospace) or divided (out of it) by that ratio.
+    pub(crate) fn switch_family(&mut self, base: f32, parent_monospace: bool, monospace: bool) {
+        if self.absolute || parent_monospace == monospace {
+            return;
+        }
+        self.px = match (self.keyword, monospace) {
+            (true, true) => base * UA_MONOSPACE_RATIO,
+            (true, false) => base,
+            (false, true) => self.px * UA_MONOSPACE_RATIO,
+            (false, false) => self.px / UA_MONOSPACE_RATIO,
+        };
+    }
+}
 
 /// How a row changes the inherited font weight when the author sets none.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -409,6 +464,51 @@ mod ua_tests {
         );
         assert!(ua_defaults(Tag::Div).is_none());
         assert_eq!(NATIVE_UA_VERSION, 1);
+    }
+
+    /// Chrome 156 computed sizes with a 16px proportional and 13px fixed default.
+    #[test]
+    fn monospace_switch_follows_blink_keyword_and_absolute_state() {
+        const BASE: f32 = 16.0;
+        let close = |size: FontSize, expected: f32| (size.px - expected).abs() < 1e-4;
+        // body > pre: the medium keyword takes the fixed default.
+        let mut pre = FontSize::medium(BASE);
+        pre.switch_family(BASE, false, true);
+        assert!(close(pre, 13.0));
+        // pre > span { font-family: serif }: back to the proportional keyword.
+        let mut span = pre;
+        span.switch_family(BASE, true, false);
+        assert!(close(span, 16.0));
+        // h1 > code: the 2em heading keeps the non-absolute state.
+        let mut code = FontSize::medium(BASE);
+        code.scale(2.0);
+        code.switch_family(BASE, false, true);
+        assert!(close(code, 26.0));
+        // h3 > pre: 18.72px becomes 15.21px.
+        let mut pre = FontSize::medium(BASE);
+        pre.scale(1.17);
+        pre.switch_family(BASE, false, true);
+        assert!(close(pre, 15.21));
+        // pre > span { font-size: 200% } stays monospace.
+        let mut span = FontSize::medium(BASE);
+        span.switch_family(BASE, false, true);
+        span.scale(2.0);
+        span.switch_family(BASE, true, true);
+        assert!(close(span, 26.0));
+        // h1 > pre (26px) > span { font-family: serif } returns to 32px.
+        let mut span = code;
+        span.switch_family(BASE, true, false);
+        assert!(close(span, 32.0));
+        // Absolute lengths (px, rem) are never re-derived.
+        let mut fixed = FontSize::medium(BASE);
+        fixed.absolute(16.0);
+        fixed.switch_family(BASE, false, true);
+        assert!(close(fixed, 16.0));
+        fixed.scale(1.5);
+        fixed.switch_family(BASE, true, false);
+        assert!(close(fixed, 24.0));
+        assert!(sole_monospace(" Monospace ") && !sole_monospace("monospace, monospace"));
+        assert!(!sole_monospace("\"monospace\""));
     }
 }
 

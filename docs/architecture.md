@@ -11929,10 +11929,22 @@ in a list) and 40px inline-start padding; `pre` is `font-family: monospace` and
 `white-space: pre` with 1em margins; `strong`, `em` and `code` keep their bolder,
 italic and monospace defaults; `button` is `text-align: center` and the other
 form controls `start`, which stops inherited alignment at the control. Author
-declarations always replace a row's value. A generic `monospace`-only family whose
-size is still the initial `medium` keyword (no author or user-agent `font-size`
-on the path) uses 13/16 of the host medium size, like Chrome's default fixed
-font size. The user-agent family must resolve through the host's explicit
+declarations always replace a row's value. Font sizes follow Blink's
+generic-family switch. Along the path each size is either the initial `medium`
+keyword, absolute (set by a `px` or `rem` length) or relative (a user-agent
+heading scale or a percentage of a non-absolute size, which keep the parent's
+state). At an element whose family switches between exactly `monospace` and
+anything else (a list such as `monospace, monospace` is not monospace), a
+non-absolute size is re-derived after the element's own `font-size` applies:
+`medium` becomes the host medium size times 13/16 (Chrome's 13px fixed
+default over its 16px proportional default) for monospace and the host medium
+size otherwise; a relative size is multiplied by 13/16 into monospace and
+divided by it out of monospace. So `pre` is 13px, `h1 > code` 26px, `h3 > pre`
+15.21px, `p { font-size: 150% } > code` 19.5px and `pre > span { font-size:
+200% }` 26px, while `pre { font-size: 16px }` stays 16px and a fixture-font
+child of a 26px `code` returns to 32px. A percentage `line-height` resolves
+against the element's size after that step (`pre { line-height: 150% }` is
+19.5px). The user-agent family must resolve through the host's explicit
 aliases; an unmapped `monospace` is refused, and bold without a bold face stays
 a refused synthesized face. Em margins need the host text size, so the
 geometry-only path refuses them.
@@ -11943,14 +11955,21 @@ leading indentation is measured exactly, while tabs and trailing line spaces
 user-agent `list-item` paints an outside marker: `ul` items a disc, a `ul`
 inside one list a circle and inside two or more a square, `ol` items `N. ` with
 the `list-item` counter over rendered sibling items. Symbols follow Blink's
-integer arithmetic on the item font's rounded ascent `a` in CSS pixels: a square
-of `(⌊2a/3⌋+1)/2` at one pixel inside a marker box ending `⌊2a/3⌋+8` pixels
-before the content edge, `3(a−⌊2a/3⌋)/2` below the box top; a disc fills, a circle
-strokes a one-pixel ring centered on the inscribed ellipse. Decimal text ends at
-the content edge in the item's font and color. The marker aligns with the first
-line baseline found in the item's leading content (through nested blocks) and its
-box, the line box united with the font's content area, is the item's pointer
-target and part of its frame bounds. Markers never change layout. An item without
+integer arithmetic on the item font's rounded ascent `a` in CSS pixels, with
+`o = ⌊2a/3⌋`: a marker box starting `o+8` pixels before the content edge and
+`⌊(o+1)/2⌋+2` pixels wide holds, one pixel inside its left edge, a square of
+side `⌊(o+1)/2⌋` whose top is `⌊3(a−o)/2⌋` below `baseline − a` (the top of
+the font's rounded content area on the marker baseline), with its edges rounded
+to whole CSS pixels; a disc fills, a circle strokes a one-pixel ring centered
+on the inscribed ellipse. Decimal text ends at the content edge in the item's
+font and color. The marker aligns with the first line baseline found in the
+item's leading content (through nested blocks) and its box, the line box united
+with the font's content area, is the item's pointer target and part of its
+frame bounds. Markers never change layout. Marker resolution walks the tree
+once, counts each `ol`'s items in one pass over its children and debits the
+frame's existing native inline work allowance per visited node, counted child,
+item path element and examined baseline child; exhausting it refuses the frame
+with the layout limit error. An item without
 a line, an item with a non-visible overflow, an `ol` item that is not a direct
 child and a missing font are refused. Ordinal attributes, `list-style`, marker
 `font-variant-numeric: tabular-nums` feature shaping and `::marker` styling are

@@ -11,7 +11,7 @@ statements in them are historical. Current status is in the
 
 The wave-1 package `w1-native-structure-text` added the versioned native
 user-agent table and with it native `h1`–`h3`, `ul`/`ol`/`li` outside markers,
-`pre` (`white-space: pre`, generic monospace with Chrome's medium-keyword size)
+`pre` (`white-space: pre`, generic monospace sized by Chrome's family switch)
 and inline `label`, inherited `text-align` through Parley alignment and one-line
 ellipsis that hides glyphs while keeping untruncated geometry and hits. Chrome
 observations fixed the details: symbol markers are Blink's integer-ascent shapes

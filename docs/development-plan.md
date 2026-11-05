@@ -468,8 +468,9 @@ native user-agent table in `varta-view` (`NATIVE_UA_DEFAULTS`); see the
 Labels forward clicks through the existing headless `for` activation; headings,
 lists and items publish their levels/roles with frame bounds in the headless and
 AccessKit trees. A second Chrome comparison showed that truncated text keeps its
-pointer targets, so native ellipsis keeps untruncated hits (the brief asked for
-visible-glyph-only hits; that would diverge from the browser host).
+pointer targets; by owner decision native ellipsis keeps Chrome's behaviour, so
+hidden truncated text still hits its element (there are no visible-glyph-only
+targets).
 
 Console refusal triage, unchanged artifact (SHA-256 `ac764bd1…3043164`), Arial
 (regular/bold) for `system-ui`/`sans-serif` and Courier New for `monospace`,
@@ -493,13 +494,61 @@ original weighted faces: **30246 checks** pass at each of 1×, 1.25× and 2×,
 maximum whole-viewport RGB mean 0.577/255 under the unchanged 2/255 bound.
 `portable_edge_probe` (68837) and `native_paragraph_probe` (81) pass, and the
 native outputs of the inline, edge, opacity, spacing, outline, decoration,
-fields and lengths probes are byte-identical to `cc3a94d`. The
-`native_inline_probe` oracle fails `paint-overlap-hits` (RGB mean 5.39/3.94/5.37)
-with byte-identical native output to `cc3a94d`, so that failure predates this
-package (Chrome 156 here). Still open: normal line height with fractional
-ascent/descent (Chrome rounds each), ordinal attributes, `list-style`, marker
-`tabular-nums`, multi-line ellipsis, decorated or bidi ellipsis, author
-`text-align` on fields and the full gate after merge.
+fields and lengths probes are byte-identical to `cc3a94d`.
+
+Review fixes on the same branch. The monospace size rule now follows Blink's
+generic-family switch (`style::FontSize`): `px`/`rem` sizes are absolute, heading
+scales and percentages keep the parent's state, and 13/16 applies at each
+element whose sole-`monospace` family state changes, before a percentage line
+height resolves. Six new probe cases reproduce Chrome 156's `h1 > code` 26px,
+`h3 > pre` 15.21px, `p { font-size: 150% } > code` 19.5px, `pre > span {
+font-size: 200% }` 26px, `h2 { font-family: monospace }` 19.5px and
+`pre { line-height: 150% }` 19.5px; Chrome draws generic monospace with a system
+face, so each monospace element is a flex container whose `line-height: 100%`
+(or 150%) records its size and whose fixture-font item also checks the switch
+back. List markers resolve styles and ordinals in one walk (each `ol` counts
+its children once) and charge the walk, path reads and baseline search to the
+inline work allowance. With the 15 cases the structure oracle passes **51181
+checks** at each of 1×, 1.25× and 2× (maximum whole-viewport RGB mean
+0.577/255); the monospace cases' means are at most 0.141. `portable_edge_probe`
+(68837), the desktop CoreText `native_text_probe` through the inline oracle
+(10105) and `native_paragraph_probe` (81) pass.
+
+The structure probe's portable outlines leave two Chrome differences in the
+`headings` case, which passes only on its whole-viewport mean (rgbMaxDelta 255
+at 1×, 1.25× and 2×); neither is margin collapse or snapping (every box matches
+within 0.02 and the h1–h3 baselines match). First, Chrome 156 on macOS rounds an
+exact half-pixel primary ascent or descent down, while Varta rounds half away
+from zero: with the fixture's 800/200 units, the 12.5px paragraph descent of
+2.5px becomes 2 in Chrome and 3 natively, so its half leading is 2 instead of 1
+and Chrome paints its glyph one CSS pixel lower (rows 115–123 versus 114–122 at
+1×, two device rows at 2×, about 1.25 at 1.25×). Chrome baseline offsets in a 100px
+line confirm it for ten sizes: descents 2.5, 3.5, 4.5, 5.5, 6.5 and 12.5px
+(12.5–62.5px) and ascents 10.5, 15.5, 17.5 and 4.5px (13.125, 19.375, 21.875,
+5.625px) all round down, 12.505px (descent 2.501) still rounds down and 12.51px
+rounds up. Blink rounds Skia metrics half up, so the platform metric input is
+below the half on CoreText; matching it needs a platform metric decision for
+every text path, not a structure fix, and stays open. Second, Chrome's CoreText
+glyphs are dilated (about 0.5 device pixel upward and 0.2 sideways for the bold
+h1 at 2×, none below the baseline) and their baselines are whole device pixels
+at 1.25×, whereas the portable outlines are undilated at a fractional device
+baseline; this is the documented portable smoothing difference that the
+desktop host coverage path removes.
+
+The `native_inline_probe` oracle's `paint-overlap-hits` failure (RGB mean
+5.39/3.94/5.37 at 1×/1.25×/2×) is that same portable smoothing difference, not
+a Chrome or Varta regression: today's Chrome screenshot of the case is
+byte-identical to the failing run of 12:20 on 2026-11-04 (Chrome
+156.0.8078.80), and the passing evidence of 14:56 used the host CoreText
+rasterizer (`text_rasterizer: host`, mean 0.64), as the desktop
+`native_text_probe` does. Four overlapping 20px lines stack Chrome's sideways
+dilation into the 24×30 region's glyph edge columns (RGB delta up to 49 on
+every row) where the portable outlines leave white.
+
+Still open: Chrome's half-pixel ascent/descent rounding above, normal line
+height with fractional ascent/descent (Chrome rounds each), ordinal attributes,
+`list-style`, marker `tabular-nums`, multi-line ellipsis, decorated or bidi
+ellipsis, author `text-align` on fields and the full gate after merge.
 
 ### Native inline painting commit gate — 2026-11-04
 

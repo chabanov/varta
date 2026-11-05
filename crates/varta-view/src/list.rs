@@ -13,7 +13,7 @@ use crate::text::{TextAlign, WhiteSpaceMode};
 use crate::tree::{Content, Tree};
 use parley::Layout;
 use std::collections::BTreeMap;
-use varta_common::view::{CssProperty, Tag};
+use varta_common::view::{CssProperty, ROOT_NODE, Tag};
 
 /// Blink's padding between a symbol marker and the item content (`kCMarkerPaddingPx`).
 const SYMBOL_PADDING_PX: i32 = 7;
@@ -54,65 +54,103 @@ pub(crate) struct Marker {
     pub clip: BoxRect,
 }
 
-/// The marker style of a visible `li`, or `None` when it is not a list item.
-pub(crate) fn style(
-    tree: &Tree,
-    env: &Environment,
-    id: u32,
-) -> Result<Option<MarkerStyle>, LayoutError> {
-    let Some(element) = tree.element(id) else {
-        return Ok(None);
-    };
-    if element.tag != Tag::Li
-        || tree
+/// A `li` with no authored `display` keeps the user-agent `list-item` display.
+fn list_item(tree: &Tree, env: &Environment, id: u32) -> bool {
+    tree.element(id).is_some_and(|e| e.tag == Tag::Li)
+        && tree
             .computed_property(id, env, CssProperty::Display)
-            .is_some()
-    {
-        return Ok(None);
-    }
-    let mut list = None;
-    let mut depth = 0usize;
-    for ancestor in tree.path(id).into_iter().skip(1) {
-        let kind = tree
-            .element(ancestor)
-            .and_then(|e| crate::style::ua_defaults(e.tag))
-            .and_then(|ua| ua.list);
-        if let Some(kind) = kind {
-            if list.is_none() {
-                list = Some((ancestor, kind));
-            } else {
-                depth += 1;
-            }
-        }
-    }
-    Ok(Some(match list {
-        None => MarkerStyle::Disc,
-        Some((owner, ListKind::Ordered)) => {
-            let parent = tree.nodes[&id].parent;
-            if parent != Some(owner) {
-                return Err(LayoutError::Unsupported(id));
-            }
-            MarkerStyle::Decimal(ordinal(tree, env, owner, id))
-        }
-        Some((_, ListKind::Unordered)) if depth >= SQUARE_DEPTH => MarkerStyle::Square,
-        Some((_, ListKind::Unordered)) if depth >= CIRCLE_DEPTH => MarkerStyle::Circle,
-        Some((_, ListKind::Unordered)) => MarkerStyle::Disc,
-    }))
+            .is_none()
 }
 
-/// The CSS `list-item` counter: rendered list items before `id`, plus one.
-fn ordinal(tree: &Tree, env: &Environment, list: u32, id: u32) -> usize {
-    1 + tree.nodes[&list]
-        .children
-        .iter()
-        .take_while(|&&child| child != id)
-        .filter(|&&child| {
-            tree.element(child).is_some_and(|e| e.tag == Tag::Li)
-                && tree
-                    .computed_property(child, env, CssProperty::Display)
-                    .is_none()
-        })
-        .count()
+fn display_none(tree: &Tree, env: &Environment, id: u32) -> bool {
+    tree.computed_property(id, env, CssProperty::Display)
+        .is_some_and(|value| value == "none")
+}
+
+/// The list context a node inherits from its ancestors.
+#[derive(Clone, Copy, Default)]
+struct ListContext {
+    /// The nearest `ul`/`ol` ancestor.
+    nearest: Option<(u32, ListKind)>,
+    /// `ul`/`ol` ancestors in all.
+    lists: usize,
+    /// Path length from the root, as text-style resolution walks it.
+    depth: usize,
+}
+
+/// One rendered list item: its marker style and element path length.
+struct Item {
+    id: u32,
+    style: MarkerStyle,
+    depth: usize,
+}
+
+/// Every rendered list item in document order, found in one walk from the
+/// root that skips `display: none` subtrees. An `ol` assigns its items' CSS
+/// `list-item` counter values (rendered items before each, plus one) in one
+/// pass over its children. `charge` debits one unit per visited node and per
+/// counted child.
+fn items(
+    tree: &Tree,
+    env: &Environment,
+    charge: &mut dyn FnMut(usize) -> Result<(), LayoutError>,
+) -> Result<Vec<Item>, LayoutError> {
+    let mut found = Vec::new();
+    let mut ordinals = BTreeMap::new();
+    let mut pending = vec![(ROOT_NODE, ListContext::default())];
+    while let Some((id, context)) = pending.pop() {
+        charge(1)?;
+        let Some(node) = tree.nodes.get(&id) else {
+            return Err(LayoutError::Unsupported(id));
+        };
+        let Some(element) = tree.element(id) else {
+            continue;
+        };
+        if display_none(tree, env, id) {
+            continue;
+        }
+        if list_item(tree, env, id) {
+            let style = match context.nearest {
+                None => MarkerStyle::Disc,
+                Some((owner, ListKind::Ordered)) => {
+                    if node.parent != Some(owner) {
+                        return Err(LayoutError::Unsupported(id));
+                    }
+                    MarkerStyle::Decimal(*ordinals.get(&id).ok_or(LayoutError::Unsupported(id))?)
+                }
+                Some((_, ListKind::Unordered)) => match context.lists - 1 {
+                    depth if depth >= SQUARE_DEPTH => MarkerStyle::Square,
+                    depth if depth >= CIRCLE_DEPTH => MarkerStyle::Circle,
+                    _ => MarkerStyle::Disc,
+                },
+            };
+            found.push(Item {
+                id,
+                style,
+                depth: context.depth + 1,
+            });
+        }
+        let mut inner = ListContext {
+            depth: context.depth + 1,
+            ..context
+        };
+        if let Some(kind) = crate::style::ua_defaults(element.tag).and_then(|ua| ua.list) {
+            inner.nearest = Some((id, kind));
+            inner.lists += 1;
+            if kind == ListKind::Ordered {
+                charge(node.children.len())?;
+                let mut count = 0;
+                for &child in &node.children {
+                    if list_item(tree, env, child) {
+                        count += 1;
+                        ordinals.insert(child, count);
+                    }
+                }
+            }
+        }
+        pending.extend(node.children.iter().rev().map(|&child| (child, inner)));
+    }
+    Ok(found)
 }
 
 /// Rendering inputs shared by every marker of one frame.
@@ -126,30 +164,41 @@ pub(crate) struct Inputs<'a> {
     pub snap: fn(f32) -> f32,
 }
 
-/// Resolve every rendered list item's marker. Items need explicit fonts.
-pub(crate) fn markers(
-    inputs: &Inputs<'_>,
-    mut font: Option<(&mut TextMeasurer, f32)>,
-) -> Result<BTreeMap<u32, Marker>, LayoutError> {
-    let mut result = BTreeMap::new();
-    for &id in inputs.tree.nodes.keys() {
-        if hidden(inputs.tree, inputs.env, id) {
-            continue;
-        }
-        let Some(style) = style(inputs.tree, inputs.env, id)? else {
-            continue;
-        };
-        let (measurer, size) = font.as_mut().ok_or(LayoutError::Unsupported(id))?;
-        result.insert(id, marker(inputs, id, style, (measurer, *size))?);
-    }
-    Ok(result)
+fn charge(measurer: &mut TextMeasurer, amount: usize) -> Result<(), LayoutError> {
+    measurer
+        .charge_inline_work(amount)
+        .map_err(|_| LayoutError::Limit)
 }
 
-fn hidden(tree: &Tree, env: &Environment, id: u32) -> bool {
-    tree.path(id).into_iter().any(|node| {
-        tree.computed_property(node, env, CssProperty::Display)
-            .is_some_and(|value| value == "none")
-    })
+/// Resolve every rendered list item's marker. Items need explicit fonts. The
+/// walk, ordinal counting, style-path reads and baseline search debit the
+/// frame's native inline work allowance.
+pub(crate) fn markers(
+    inputs: &Inputs<'_>,
+    font: Option<(&mut TextMeasurer, f32)>,
+) -> Result<BTreeMap<u32, Marker>, LayoutError> {
+    let Some((measurer, size)) = font else {
+        // A frame without text has no allowance; this one linear walk over
+        // the admitted tree only finds the first item to refuse.
+        let found = items(inputs.tree, inputs.env, &mut |_| Ok(()))?;
+        return match found.first() {
+            Some(item) => Err(LayoutError::Unsupported(item.id)),
+            None => Ok(BTreeMap::new()),
+        };
+    };
+    let found = items(inputs.tree, inputs.env, &mut |amount| {
+        charge(measurer, amount)
+    })?;
+    let mut result = BTreeMap::new();
+    for item in found {
+        // Text-style resolution reads each element on the item's path.
+        charge(measurer, item.depth)?;
+        result.insert(
+            item.id,
+            marker(inputs, item.id, item.style, (measurer, size))?,
+        );
+    }
+    Ok(result)
 }
 
 fn marker(
@@ -271,11 +320,16 @@ fn first_baseline(
                 (inputs.snap)(frame.bounds.rect.y) + line.metrics().baseline + offset,
             ));
         }
-        let Some(&first) = inputs.tree.nodes[&node]
-            .children
-            .iter()
-            .find(|&&child| !hidden(inputs.tree, inputs.env, child))
-        else {
+        // `node` is rendered, so a child is hidden only by its own display.
+        let mut leading = None;
+        for &child in &inputs.tree.nodes[&node].children {
+            charge(measurer, 1)?;
+            if !display_none(inputs.tree, inputs.env, child) {
+                leading = Some(child);
+                break;
+            }
+        }
+        let Some(first) = leading else {
             return Ok(None);
         };
         match &inputs.tree.nodes[&first].content {
@@ -355,14 +409,103 @@ mod tests {
         b.set_style(13, P::Display, "block");
         let view = tree(&b);
         let env = Environment::default();
-        let style = |id| super::style(&view.tree, &env, id).unwrap();
-        assert_eq!(style(3), Some(MarkerStyle::Disc));
-        assert_eq!(style(5), Some(MarkerStyle::Circle));
-        assert_eq!(style(7), Some(MarkerStyle::Decimal(1)));
-        assert_eq!(style(9), Some(MarkerStyle::Square));
-        assert_eq!(style(11), Some(MarkerStyle::Decimal(2)));
-        assert_eq!(style(12), Some(MarkerStyle::Disc));
-        assert_eq!(style(13), None);
-        assert_eq!(style(2), None);
+        let mut visits = 0;
+        let found = items(&view.tree, &env, &mut |amount| {
+            visits += amount;
+            Ok(())
+        })
+        .unwrap();
+        let styles: Vec<_> = found.iter().map(|item| (item.id, item.style)).collect();
+        assert_eq!(
+            styles,
+            [
+                (3, MarkerStyle::Disc),
+                (5, MarkerStyle::Circle),
+                (7, MarkerStyle::Decimal(1)),
+                (9, MarkerStyle::Square),
+                (11, MarkerStyle::Decimal(2)),
+                (12, MarkerStyle::Disc),
+            ]
+        );
+        // Every visited node and each counted `ol` child is charged once;
+        // the hidden item's (empty) subtree is not entered.
+        assert_eq!(visits, 13 + 3);
+        // An `ol` item that is not a direct child is refused.
+        let mut b = B::new();
+        b.create_element(2, Tag::Ol).insert(1, 2, 0);
+        b.create_element(3, Tag::Div).insert(2, 3, 0);
+        b.create_element(4, Tag::Li).insert(3, 4, 0);
+        assert!(matches!(
+            items(&tree(&b).tree, &env, &mut |_| Ok(())),
+            Err(LayoutError::Unsupported(4))
+        ));
+    }
+
+    /// Item count of the large list. A marker needs a line, so the native
+    /// ceiling of 1024 text leaves per frame bounds the markable items.
+    const LARGE_LIST_ITEMS: u32 = 1000;
+    /// Marker work per item: walk, counting, path reads and the baseline search.
+    const MAX_WORK_PER_ITEM: usize = 8;
+
+    #[test]
+    fn a_large_list_charges_linear_marker_work_to_the_inline_allowance() {
+        const FIRST_ITEM: u32 = 3;
+        let mut b = B::new();
+        b.create_element(2, Tag::Ol).insert(1, 2, 0);
+        for index in 0..LARGE_LIST_ITEMS {
+            let id = FIRST_ITEM + 2 * index;
+            b.create_element(id, Tag::Li)
+                .insert(2, id, 0)
+                .create_text(id + 1, "A")
+                .insert(id, id + 1, 0);
+        }
+        let view = tree(&b);
+        let env = Environment::default();
+        let mut font = TextMeasurer::new(
+            include_bytes!("../tests/fixtures/structure-400.ttf").to_vec(),
+            "Varta Structure Fixture",
+        )
+        .unwrap();
+        const SIZE: f32 = 16.0;
+        const VIEWPORT: f32 = 400.0;
+        // `reserve`: leave this much allowance before resolving markers.
+        let run = |font: &mut TextMeasurer, reserve: Option<usize>| {
+            font.with_view_shaping(|font| {
+                let (geometry, shapes, flows) = crate::layout::geometry_and_text(
+                    &view.tree, &env, VIEWPORT, VIEWPORT, font, SIZE,
+                )
+                .unwrap();
+                if let Some(reserve) = reserve {
+                    let spare = font.inline_work_remaining() - reserve;
+                    font.charge_inline_work(spare).unwrap();
+                }
+                let before = font.inline_work_remaining();
+                let inputs = Inputs {
+                    tree: &view.tree,
+                    env: &env,
+                    geometry: &geometry,
+                    shapes: &shapes,
+                    flows: &flows,
+                    snap: f32::round,
+                };
+                let markers = markers(&inputs, Some((&mut *font, SIZE)));
+                (markers, before - font.inline_work_remaining())
+            })
+        };
+        let (markers, used) = run(&mut font, None);
+        let markers = markers.unwrap();
+        let last = FIRST_ITEM + 2 * (LARGE_LIST_ITEMS - 1);
+        assert_eq!(markers.len(), LARGE_LIST_ITEMS as usize);
+        assert_eq!(
+            markers[&last].style,
+            MarkerStyle::Decimal(LARGE_LIST_ITEMS as usize)
+        );
+        assert!(
+            used <= MAX_WORK_PER_ITEM * LARGE_LIST_ITEMS as usize,
+            "{used}"
+        );
+        // One unit short of that work refuses the frame with the budget error.
+        let (markers, _) = run(&mut font, Some(used - 1));
+        assert!(matches!(markers, Err(LayoutError::Limit)));
     }
 }

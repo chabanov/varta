@@ -700,6 +700,24 @@ pub(crate) fn text_style(
     Ok((resolved.options, families))
 }
 
+/// Admitted computed font sizes in CSS pixels.
+const MIN_FONT_SIZE: f32 = 0.01;
+const MAX_FONT_SIZE: f32 = 4096.0;
+/// The denominator of a CSS percentage.
+const PERCENT: f32 = 100.0;
+
+/// Apply an author `font-size`: a percentage scales the inherited size and
+/// keeps its absolute flag; `px` and `rem` lengths are absolute.
+fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Option<()> {
+    if let Some(number) = value.strip_suffix('%') {
+        let number: f32 = number.parse().ok()?;
+        size.scale(number / PERCENT);
+    } else {
+        size.absolute(units.pixels(value, false)?);
+    }
+    Some(())
+}
+
 /// Resolve inherited text properties along the path from the root, applying
 /// author declarations over the native user-agent table at each element.
 pub(crate) fn resolve_text(
@@ -709,10 +727,9 @@ pub(crate) fn resolve_text(
     base_size: f32,
 ) -> Result<ResolvedText, LayoutError> {
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
-    let mut size = base_size;
-    // Whether the size is still the initial `medium` keyword: no author or
-    // user-agent font-size applies anywhere along the path.
-    let mut medium = true;
+    let mut size = style::FontSize::medium(base_size);
+    // The view root's parent is the document body: proportional `medium`.
+    let mut parent_monospace = false;
     let mut line_height = None;
     let mut weight = 400.0;
     let mut italic = false;
@@ -721,6 +738,7 @@ pub(crate) fn resolve_text(
     let mut family = None;
     let mut align = TextAlign::Start;
     for ancestor in tree.path(id).into_iter().rev() {
+        let inherited = size.px;
         let properties = tree.computed_read(ancestor, env);
         if let Some(ua) = tree
             .element(ancestor)
@@ -747,8 +765,7 @@ pub(crate) fn resolve_text(
             if let Some(scale) = ua.font_scale
                 && !properties.contains_key(&CssProperty::FontSize)
             {
-                size *= scale;
-                medium = false;
+                size.scale(scale);
             }
             if let Some(value) = ua.text_align {
                 // A field's own text geometry does not follow text-align.
@@ -798,20 +815,20 @@ pub(crate) fn resolve_text(
             };
         }
         if let Some(value) = properties.get(&CssProperty::FontSize) {
-            medium = false;
-            size = if let Some(number) = value.strip_suffix('%') {
-                let number: f32 = number
-                    .parse()
-                    .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                size * number / 100.0
-            } else {
-                units
-                    .pixels(value, false)
-                    .ok_or(LayoutError::Unsupported(ancestor))?
-            };
-            if !size.is_finite() || !(0.01..=4096.0).contains(&size) {
-                return Err(LayoutError::Unsupported(ancestor));
-            }
+            author_font_size(&mut size, units, value).ok_or(LayoutError::Unsupported(ancestor))?;
+        }
+        // Chrome re-derives the size where the generic family switches to or
+        // from monospace, before a line-height percentage resolves against it.
+        let monospace = family
+            .as_ref()
+            .is_some_and(|(_, value)| style::sole_monospace(value));
+        size.switch_family(base_size, parent_monospace, monospace);
+        parent_monospace = monospace;
+        // The host's medium size is its own input; any size derived here is bounded.
+        if size.px != inherited
+            && (!size.px.is_finite() || !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size.px))
+        {
+            return Err(LayoutError::Unsupported(ancestor));
         }
         if let Some(value) = properties.get(&CssProperty::LineHeight) {
             line_height = if value == "normal" {
@@ -828,7 +845,7 @@ pub(crate) fn resolve_text(
                 let percentage: f32 = value
                     .parse()
                     .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                let px = size * percentage / 100.0;
+                let px = size.px * percentage / PERCENT;
                 if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
                     return Err(LayoutError::Unsupported(ancestor));
                 }
@@ -844,20 +861,9 @@ pub(crate) fn resolve_text(
             };
         }
     }
-    // Chrome sizes a generic-monospace-only family at its fixed default while
-    // the size is still the initial keyword (`pre`, `code`, `font-family: monospace`).
-    if medium
-        && family.as_ref().is_some_and(|(_, value)| {
-            value
-                .trim()
-                .eq_ignore_ascii_case(style::UA_MONOSPACE_FAMILY)
-        })
-    {
-        size *= style::UA_MONOSPACE_MEDIUM_RATIO;
-    }
     Ok(ResolvedText {
         options: TextOptions {
-            size,
+            size: size.px,
             line_height,
             weight,
             italic,

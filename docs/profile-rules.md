@@ -4293,15 +4293,24 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   rows against Chrome with `native_structure_probe`. Resolve inherited text
   (`layout::resolve_text`) along the path with author declarations replacing a
   row's value at that element; never special-case a tag elsewhere. Em margins
-  need the host text size (refuse on the geometry-only path). Keep the generic
-  monospace medium-keyword rule tied to "no author or user-agent font-size on
-  the path". Extend the table for controls rather than adding control
+  need the host text size (refuse on the geometry-only path). Model font sizes
+  with Blink's state (`style::FontSize`): `px`/`rem` set the absolute flag,
+  user-agent heading scales and percentages keep the parent's flag and drop the
+  `medium` keyword, and the 13/16 monospace ratio applies at each element whose
+  sole-`monospace` family state differs from its parent's, after its own
+  font-size and before a percentage line-height resolves. Never apply the ratio
+  once after the path walk. Admit no size source whose state is not modeled
+  (keywords such as `small` or `larger`, `em` lengths) rather than
+  approximating. Extend the table for controls rather than adding control
   constants in layout.
-- List markers (`list.rs`) never change geometry: resolve style/ordinal from the
-  nearest `ul`/`ol` row, compute Blink's integer symbol geometry from the rounded
-  ascent in CSS pixels, align with the first line found through leading blocks,
-  and push the marker box as the item's hit region. Refuse items without a line,
-  clipped items and non-direct `ol` items instead of guessing.
+- List markers (`list.rs`) never change geometry: resolve styles and ordinals in
+  one walk from the root (each `ol` counts its children once), compute Blink's
+  integer symbol geometry from the rounded ascent in CSS pixels, align with the
+  first line found through leading blocks, and push the marker box as the item's
+  hit region. Charge the walk, counting, path reads and baseline search to the
+  frame's inline work allowance; never rescan siblings or ancestor paths per
+  item. Refuse items without a line, clipped items and non-direct `ol` items
+  instead of guessing.
 - `text-align` belongs to `TextOptions` (and the shape-cache key); apply Parley
   alignment only for a definite width, never to fields, and refuse center/right
   for a right-to-left base paragraph. Ellipsis (`inline::ellipsis`) keeps the

@@ -251,6 +251,12 @@ impl TextMeasurer {
             .map_err(|_| TextMeasureError::Limit)
     }
 
+    /// Inline work left in the current outer native view request.
+    #[cfg(test)]
+    pub(crate) fn inline_work_remaining(&self) -> usize {
+        self.view_shaping.inline_remaining.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn cache_counts(&self) -> (usize, usize) {
         self.cached
             .as_ref()
