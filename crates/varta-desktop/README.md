@@ -18,15 +18,17 @@ dev-dependency, directly or transitively
 ## Native shell (`varta-shell`)
 
 ```sh
-varta build --config app/varta.config.json          # writes app.wasm + app.manifest.json
+varta build --config app/varta.config.json          # writes app.wasm + app.manifest.json (+ app.resources with fonts)
 cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
   [--policy ceiling.json] [--data-dir /abs/storage] [--font font.ttf 'Family'] [--renderer cpu|gpu|auto]
 ```
 
-- **Artifact.** Read with `varta_artifact::Artifact::read`, exactly as
-  `varta-runtime run ARTIFACT`: bare Wasm with its sidecar manifest, or a
-  fixed-footer container. Malformed, tampered, truncated and foreign
-  payloads fail before the window opens; code, profile, contracts, budgets
+- **Artifact.** Read with `varta_artifact::Artifact::read_packaged`, the
+  validation of `varta-runtime run ARTIFACT` that keeps the resource
+  section: bare Wasm with its sidecar manifest and optional sidecar
+  `app.resources`, or a fixed-footer container (format 1, or 2 with
+  resources). Malformed, tampered, truncated and foreign payloads and
+  resource sections fail before the window opens; code, profile, contracts, budgets
   and required grants are validated by the runtime at start, before any
   guest code runs. The shell needs an application-instance (v38) profile.
 - **Grants.** The manifest is the package request. `--policy` is a host
@@ -48,10 +50,30 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
   `--data-dir` are checked and the artifact and ceiling are validated, but
   before the runtime validates the code and its profile at start, so a
   module the runtime then refuses leaves them behind, empty.
-- **Fonts.** Only explicit `--font` arguments (nonempty, at most
-  `shell::MAX_FONT_BYTES`); artifact-declared fonts are a later step, as are
-  permission prompts, `ui.open_url`/guest clipboard effects, manifest `app`
-  metadata and OS bundles.
+- **Fonts.** The faces of the artifact's resource section (the
+  configuration's `fonts` list, packaged by `varta build`; see the
+  [resource section](../../docs/architecture.md#resource-section-artifact-fonts)),
+  loaded through `shell::FontSet` and `TextMeasurer::new_with_packaged_fonts`
+  in the section's canonical order, with each family's declared generic
+  families as aliases that name the family (a mapped `monospace`, including
+  the user-agent family of `pre` and `code`, is sized as that family, as in
+  the browser build). They are parsed before storage is created. Bold and italic text
+  selects the packaged faces by the weight and style their own tables state;
+  synthesis stays refused at paint. `--font PATH FAMILY` (nonempty, at most
+  `shell::MAX_FONT_BYTES`) is one explicit face for an artifact without
+  fonts and is refused for an artifact that ships fonts.
+- **Guest effects.** A granted `copy_text` in a trusted gesture turn writes
+  the system clipboard, and a trusted activation of a granted external link
+  hands the URL to the system browser (`/usr/bin/open -u` on macOS,
+  `/usr/bin/xdg-open` on other Unix hosts, started detached; the opening
+  succeeds once the launcher is spawned and is never awaited, and at most
+  `MAX_RUNNING_LAUNCHERS` launchers may still run), through
+  `shell::NativeEffects`. The Linux launcher is not exercised by the tests.
+  Denials (`not_allowed`) and non-gesture copies (`invalid_context`) happen
+  before any effect; platform failures report `refused_by_platform`. Tests
+  use a recording sink and never touch the system clipboard or browser.
+  Permission prompts (and so `https://*` links), manifest `app` metadata and
+  OS bundles are later steps.
 - **Renderer.** `--renderer cpu` (default), `gpu` or `auto`. Without the
   `gpu` feature an explicit `gpu` is refused before anything else; with it,
   a GPU that does not initialize is an error, while `auto` falls back to the
@@ -61,13 +83,36 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
 
 The headless core is `varta_desktop::shell::Launch`: `Launch::packaged`
 prepares an application without a window and `Launch::start` starts it with
-a view layout; `tests/shell.rs` drives it with a loopback HTTP server and a
+a view layout and a `PlatformEffects` sink; `tests/shell.rs` drives it with a loopback HTTP server and a
 temporary storage base. Its guest is compiled at test time from
 `tests/fixtures/shell-probe/` (`main.ts` and `varta.config.json`): the tests
 build the workspace's `varta` binary with Cargo (offline, locked) and run
 `varta build` on a copy in a temporary directory, as an external process,
 so no Wasm is checked in and no source tooling becomes a dependency. Tests
-write their own manifests around that Wasm.
+write their own manifests around that Wasm. `tests/fixtures/view-probe/`
+declares four faces (copied at test time from the view crate's generated
+fixtures: a regular, bold and italic face of `Varta Fixture 400` and the
+monospace family `Varta Fixture 900`), a copy target and an external link;
+its tests cover the packaged canonical order, face selection, refused
+synthesis, tampered/foreign/oversized sections and malformed `--font`
+before storage, and granted, refused and denied effects through a
+recording `PlatformEffects` sink.
+
+The packaged-font Chrome oracle loads the faces of a packaged artifact
+(by default the fixture faces packaged beside an empty module in a
+temporary directory; or the `ARTIFACT` argument, such as the view probe
+built by `varta build`) through `FontSet`, renders bold, italic, monospace,
+generic `monospace`, default-family and mixed lines, and `code`/`pre` and a
+guest-set `monospace` at absolute, medium and inherited relative sizes, with
+the shell's macOS glyph rasterizer, and gives Chrome the same face bytes with
+their weights, styles and generic families, which the oracle registers and
+resolves through the browser applier's own font namespace and base font
+rules (`view-fonts.mjs`):
+
+```sh
+cargo run -p varta-desktop --example native_font_probe -- 1.25 [ARTIFACT] > fonts.json
+node scripts/test-native-inline.mjs fonts.json
+```
 
 ## Host-owned copy, cut and paste
 

@@ -17,6 +17,58 @@ impl varta_runtime::PermissionPrompter for FixedPrompt {
     }
 }
 
+/// The resource section of `view-font-packaged`: regular, bold and italic
+/// faces of one family and a monospace family, validated and ordered as the
+/// native shell loads them.
+fn packaged_faces() -> Result<Vec<BrowserResource>, Box<dyn std::error::Error>> {
+    use varta_artifact::{FontFace, FontStyle, GenericFamily, NORMAL_FONT_WEIGHT, Resources};
+    const SANS: &str = "Varta Fixture 400";
+    const MONO: &str = "Varta Fixture 900";
+    const BOLD_WEIGHT: u16 = 700;
+    let face = |family: &str, weight, style, generics: &[GenericFamily], data: &[u8]| FontFace {
+        family: family.into(),
+        weight,
+        style,
+        generics: generics.to_vec(),
+        data: data.to_vec(),
+    };
+    let section = Resources::new(vec![
+        face(
+            SANS,
+            NORMAL_FONT_WEIGHT,
+            FontStyle::Normal,
+            &[],
+            include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf"),
+        ),
+        face(
+            SANS,
+            BOLD_WEIGHT,
+            FontStyle::Normal,
+            &[],
+            include_bytes!("../../varta-view/tests/fixtures/bold-900.ttf"),
+        ),
+        face(
+            SANS,
+            NORMAL_FONT_WEIGHT,
+            FontStyle::Italic,
+            &[],
+            include_bytes!("../../varta-view/tests/fixtures/italic-900.ttf"),
+        ),
+        face(
+            MONO,
+            NORMAL_FONT_WEIGHT,
+            FontStyle::Normal,
+            &[GenericFamily::Monospace],
+            include_bytes!("../../varta-view/tests/fixtures/advance-900.ttf"),
+        ),
+    ])?;
+    Ok(section
+        .fonts()
+        .iter()
+        .map(BrowserResource::packaged)
+        .collect::<Result<_, _>>()?)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = std::env::args_os()
         .nth(1)
@@ -191,6 +243,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ] {
         cases.push((name, font_source.into()));
     }
+    // Packaged faces (configuration `fonts`): the default family without a
+    // font-family, real bold and italic faces, the `monospace` alias reached
+    // by a guest-set family and by the user-agent family of `code` and
+    // `pre`, with an absolute, the medium (keyword) and an inherited
+    // relative size, form controls (div 1, span 2, strong 15, code 17,
+    // pre 18, button 20, textarea 25) and a bold run in a family without a
+    // bold face.
+    cases.push(("view-font-packaged",r#"function item(parent:number,tag:number,id:string,size:string,property:number,value:string,text:string):number{const e=View.node();View.createElement(e,tag);View.setAttribute(e,1,id);if(size!==""){View.setStyle(e,54,size);}if(property!==0){View.setStyle(e,property,value);}if(text!==""){const t=View.node();View.createText(t,text);View.insert(e,t,0);}View.insert(parent,e,0);return e;}export function main():void{const root=View.node();View.createElement(root,1);item(root,1,"regular","20px",0,"","AAAA");item(root,1,"bold","20px",55,"700","AAAA");item(root,1,"italic","20px",56,"italic","AAAA");item(root,1,"generic","20px",53,"monospace","AAAA");item(root,17,"ua-code","20px",0,"","AAAA");item(root,18,"ua-pre","20px",0,"","AAAA");item(root,17,"ua-code-medium","",0,"","AAAA");item(root,1,"generic-medium","",53,"monospace","AAAA");const pre=item(root,18,"pre-outer","",0,"","");item(pre,2,"pre-inherited","150%",0,"","AAAA");item(root,20,"control","20px",0,"","AAAA");item(root,25,"field","20px",0,"","");item(root,15,"synthesis","20px",53,"monospace","AAAA");View.mount(root);console.log("packaged fonts ready");}"#.into()));
     cases.push(("view-font-as-image",r#"export function main():void{const root=View.node();View.createElement(root,30);View.setAttribute(root,13,"Brand");View.mount(root);console.log("must not run");}"#.into()));
     cases.push(("permission-query",r#"export async function main():Promise<void>{console.log((await varta.permissions.query({name:"time.timer"})).state);console.log((await varta.permissions.request({name:"time.timer"})).state);console.log((await varta.permissions.query({name:"net.request",resource:"https://api.test/public/item"})).state);console.log((await varta.permissions.query({name:"net.request",resource:"https://api.test/public/item?"})).state);try{await varta.permissions.query({name:"time.fake"});}catch(e){console.log((e as Error).name);}try{await varta.permissions.request({name:"time.timer",resource:"x"});}catch(e){console.log((e as Error).name);}}"#.into()));
     let permission_source = r#"export async function main():Promise<void>{console.log("before permission");console.log((await varta.permissions.query({name:"time.timer"})).state);console.log((await varta.permissions.request({name:"time.timer"})).state);try{setTimeout(()=>{console.log("timer");},1);}catch(e){console.log((e as Error).name);}}"#;
@@ -634,7 +694,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             Vec::new()
         };
-        if name.starts_with("view-font-") {
+        if name == "view-font-packaged" {
+            resources.extend(packaged_faces()?);
+        } else if name.starts_with("view-font-") {
             let mut bytes = match name {
                 "view-font-otf" => {
                     include_bytes!("../tests/fixtures/browser-fonts/advance-400.otf").to_vec()

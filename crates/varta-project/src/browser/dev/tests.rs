@@ -390,3 +390,65 @@ fn browser_dev_and_distribution_reject_http_contracts_before_output() {
     );
     assert!(!project.0.join("dist").exists());
 }
+
+#[test]
+fn browser_builds_carry_every_packaged_face_of_the_resource_section() {
+    const REGULAR: &[u8] = include_bytes!("../../../../varta-view/tests/fixtures/advance-400.ttf");
+    const BOLD: &[u8] = include_bytes!("../../../../varta-view/tests/fixtures/bold-900.ttf");
+    const ITALIC: &[u8] = include_bytes!("../../../../varta-view/tests/fixtures/italic-900.ttf");
+    const MONO: &[u8] = include_bytes!("../../../../varta-view/tests/fixtures/advance-900.ttf");
+    let project = Project::new();
+    std::fs::create_dir(project.0.join("fonts")).unwrap();
+    for (name, bytes) in [
+        ("regular.ttf", REGULAR),
+        ("bold.ttf", BOLD),
+        ("italic.ttf", ITALIC),
+        ("mono.ttf", MONO),
+    ] {
+        std::fs::write(project.0.join("fonts").join(name), bytes).unwrap();
+    }
+    let fonts = serde_json::json!([
+        {"family": "Varta Fixture 400", "path": "fonts/bold.ttf", "weight": 700},
+        {"family": "Varta Fixture 900", "path": "fonts/mono.ttf", "generic": ["monospace"]},
+        {"family": "Varta Fixture 400", "path": "fonts/italic.ttf", "style": "italic"},
+        {"family": "Varta Fixture 400", "path": "fonts/regular.ttf"},
+    ]);
+    let config = |browser: serde_json::Value| {
+        let mut config = serde_json::json!({"entry":"main.ts","target":"wasm","out":"dist/app","languageProfile":"checked-f64-utf16-v38","fonts":fonts});
+        if !browser.is_null() {
+            config["browser"] = browser;
+        }
+        std::fs::write(project.config(), config.to_string()).unwrap();
+    };
+    // `fonts` serves every renderer; a second, browser-only face list is refused.
+    config(serde_json::json!({"fonts":{"Brand":"fonts/regular.ttf"}}));
+    let error = super::super::build_browser(&project.config()).unwrap_err();
+    assert!(
+        error.to_string().contains("cannot both be declared"),
+        "{error}"
+    );
+    assert!(!project.0.join("dist").exists());
+
+    config(serde_json::Value::Null);
+    super::super::build_browser(&project.config()).unwrap();
+    let web = project.0.join("dist/web");
+    // The resource section's canonical order: the default family's faces by
+    // weight, then style, then the monospace family.
+    for (index, bytes) in [REGULAR, ITALIC, BOLD, MONO].into_iter().enumerate() {
+        assert_eq!(
+            std::fs::read(web.join(format!("varta-resource-{index}.ttf"))).unwrap(),
+            bytes,
+            "face {index}"
+        );
+    }
+    // Descriptor keys are serialized in sorted order.
+    let loader = std::fs::read_to_string(web.join("varta-host.js")).unwrap();
+    for descriptor in [
+        r#""generics":[],"key":"Varta Fixture 400","mediaType":"font/ttf","style":"normal","weight":400"#,
+        r#""generics":[],"key":"Varta Fixture 400","mediaType":"font/ttf","style":"italic","weight":400"#,
+        r#""generics":[],"key":"Varta Fixture 400","mediaType":"font/ttf","style":"normal","weight":700"#,
+        r#""generics":["monospace"],"key":"Varta Fixture 900","mediaType":"font/ttf","style":"normal","weight":400"#,
+    ] {
+        assert!(loader.contains(descriptor), "{descriptor}");
+    }
+}

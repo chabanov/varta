@@ -4,7 +4,7 @@
 use std::process::ExitCode;
 use std::time::Instant;
 use varta_desktop::shell::{
-    Launch, Package,
+    FontSet, Launch, Package,
     args::{self, Command, USAGE},
     default_storage_base, read_font,
     window::{self, Console, WindowConfig},
@@ -14,11 +14,12 @@ const LABEL: &str = "varta-shell";
 
 fn run(arguments: args::ShellArgs, started: Instant) -> Result<(), Box<dyn std::error::Error>> {
     // Every cheap input is checked before the artifact is prepared, because
-    // preparing it creates the artifact's storage directories.
+    // preparing it creates the artifact's storage directories (after its
+    // fonts are parsed).
     window::check_renderer(arguments.renderer)?;
     let font = arguments
         .font
-        .map(|(path, family)| read_font(&path).map(|bytes| (bytes, family)))
+        .map(|(path, family)| read_font(&path).map(|bytes| FontSet::single(bytes, family)))
         .transpose()?;
     let storage = match arguments.data_dir {
         Some(directory) => std::path::absolute(directory)?,
@@ -28,12 +29,12 @@ fn run(arguments: args::ShellArgs, started: Instant) -> Result<(), Box<dyn std::
         artifact: &arguments.artifact,
         policy: arguments.policy.as_deref(),
         storage: &storage,
+        font: font.as_ref(),
     })?;
     window::run(
         launch,
         WindowConfig {
             title: "Varta",
-            font,
             renderer: arguments.renderer,
             console: Console {
                 label: LABEL,

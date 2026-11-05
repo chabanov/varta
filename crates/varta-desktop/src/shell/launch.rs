@@ -1,13 +1,16 @@
-//! Preparing an application instance: the packaged artifact, its grants
-//! within the host ceiling and its storage.
-use super::{ShellError, storage};
+//! Preparing an application instance: the packaged artifact, its fonts, its
+//! grants within the host ceiling and its storage.
+use super::{FontSet, ShellError, storage};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use varta_artifact::{Artifact, MAX_MANIFEST_BYTES, read_bounded};
 use varta_common::{CapabilityGrant, Manifest, VartaError};
 use varta_runtime::{Application, ApplicationOptions, RunOptions, VartaRuntime, ViewLayout};
+use varta_view::PlatformEffects;
 
-/// The largest font file the shell reads from the command line.
-pub const MAX_FONT_BYTES: usize = 4 * 1024 * 1024;
+/// The largest font file the shell reads from the command line: the
+/// artifact resource section's per-face limit.
+pub const MAX_FONT_BYTES: usize = varta_artifact::MAX_FONT_FACE_BYTES;
 /// The largest bare module the preview reads (unchanged from the preview's
 /// own reader); the runtime then applies the module's profile limit.
 const MAX_WASM_BYTES: usize = varta_common::abi::MAX_WASM_BYTES;
@@ -17,37 +20,53 @@ const EMPTY_FILE: &str = "empty file";
 /// Where a packaged application comes from and what bounds it.
 #[derive(Debug, Clone, Copy)]
 pub struct Package<'a> {
-    /// The packaged artifact `varta build` wrote: `app.wasm` with its
-    /// `app.manifest.json`, or a fixed-footer container.
+    /// The packaged artifact `varta build` wrote: `app.wasm` beside
+    /// `app.manifest.json` (and `app.resources` when it ships fonts), or a
+    /// fixed-footer container.
     pub artifact: &'a Path,
     /// The optional host ceiling: a host policy in the launcher's format.
     pub policy: Option<&'a Path>,
     /// The absolute host directory under which each artifact hash gets its
     /// own storage directory.
     pub storage: &'a Path,
+    /// An explicit font (`--font`) for an artifact that ships no fonts; an
+    /// artifact that ships fonts refuses it.
+    pub font: Option<&'a FontSet>,
 }
 
-/// A validated application ready to start: its portable Wasm, the resolved
-/// run options and its identity (the `sha256:` digest of the Wasm).
+/// A validated application ready to start: its portable Wasm, its fonts,
+/// the resolved run options and its identity (the `sha256:` digest of the
+/// Wasm).
 pub struct Launch {
     wasm: Vec<u8>,
     run: RunOptions,
     identity: String,
+    fonts: Option<FontSet>,
 }
 
 impl Launch {
     /// A precompiled module with no manifest: no grants, no host ceiling, no
-    /// file roots and no storage (`varta-preview`).
-    #[must_use]
-    pub fn unprivileged(wasm: Vec<u8>) -> Self {
-        Self {
+    /// file roots and no storage (`varta-preview`), with an optional
+    /// explicit font, parsed here.
+    pub fn unprivileged(wasm: Vec<u8>, font: Option<FontSet>) -> Result<Self, ShellError> {
+        if let Some(font) = &font {
+            validate(font)?;
+        }
+        Ok(Self {
             identity: varta_runtime::artifact_identity(&wasm),
             wasm,
             run: RunOptions::default(),
-        }
+            fonts: font,
+        })
     }
 
-    /// Read and validate a packaged artifact and resolve its grants.
+    /// Read and validate a packaged artifact, its fonts and its grants.
+    ///
+    /// The artifact's resource section (bounded, digest-checked, bound to
+    /// the Wasm, every face matching its declaration) is read with the
+    /// artifact; its faces are then parsed by the text shaper. A malformed,
+    /// tampered or oversized font fails here, before storage directories
+    /// exist and before any guest code runs.
     ///
     /// The manifest is the package request and the host ceiling, when
     /// given, narrows it: the runtime admits a concrete resource only when
@@ -58,21 +77,31 @@ impl Launch {
     /// code.
     ///
     /// This is where the per-artifact KV storage directories are created:
-    /// after the artifact (payload bounds, host ABI, package manifest) and
-    /// the ceiling are validated, but before the runtime validates the code
-    /// and its language profile, which happens in [`Launch::start`] together
-    /// with instantiation (the runtime compiles the module once, from the
-    /// options that already carry the pinned roots). A module the runtime
-    /// then refuses leaves those directories behind, empty. A caller should
-    /// therefore read its cheaper inputs (fonts and other arguments) first.
+    /// after the artifact (payload bounds, host ABI, package manifest,
+    /// resource section and fonts) and the ceiling are validated, but
+    /// before the runtime validates the code and its language profile, which
+    /// happens in [`Launch::start`] together with instantiation (the runtime
+    /// compiles the module once, from the options that already carry the
+    /// pinned roots). A module the runtime then refuses leaves those
+    /// directories behind, empty. A caller should therefore read its cheaper
+    /// inputs (fonts and other arguments) first.
     pub fn packaged(package: &Package<'_>) -> Result<Self, ShellError> {
         let artifact_error = |source| ShellError::Artifact {
             path: package.artifact.to_path_buf(),
             source,
         };
-        let artifact = Artifact::read(package.artifact).map_err(artifact_error)?;
+        let packaged = Artifact::read_packaged(package.artifact).map_err(artifact_error)?;
+        let artifact = packaged.artifact;
         // Bounded portable payload, matching host ABI and package rules.
         artifact.grants().map_err(artifact_error)?;
+        let fonts = match (FontSet::from_resources(&packaged.resources), package.font) {
+            (Some(_), Some(_)) => return Err(ShellError::FontConflict),
+            (Some(fonts), None) => Some(fonts),
+            (None, font) => font.cloned(),
+        };
+        if let Some(fonts) = &fonts {
+            validate(fonts)?;
+        }
         let ceiling = package.policy.map(read_policy).transpose()?;
         let mut run = RunOptions::from_manifests(&artifact.manifest, ceiling.as_ref())?;
         let identity = varta_runtime::artifact_identity(&artifact.wasm);
@@ -87,6 +116,7 @@ impl Launch {
             wasm: artifact.wasm,
             run,
             identity,
+            fonts,
         })
     }
 
@@ -113,19 +143,38 @@ impl Launch {
         self.run.file_roots.names()
     }
 
+    /// The fonts the application is laid out and rendered with: the
+    /// artifact's faces, the explicit font, or none.
+    #[must_use]
+    pub fn fonts(&self) -> Option<&FontSet> {
+        self.fonts.as_ref()
+    }
+
     /// Validate the module and start its application instance with the
     /// given view layout. Validation (code, profile, contracts, required
-    /// grants and budgets) completes before any guest code runs.
-    pub fn start(self, layout: ViewLayout) -> Result<Application, ShellError> {
+    /// grants and budgets) completes before any guest code runs. Granted
+    /// `copy_text` and external link effects of trusted user gestures go to
+    /// `effects` (the window passes the system clipboard and browser).
+    pub fn start(
+        self,
+        layout: ViewLayout,
+        effects: Arc<dyn PlatformEffects>,
+    ) -> Result<Application, ShellError> {
         Ok(VartaRuntime::new().start_application(
             &self.wasm,
             ApplicationOptions {
                 run: self.run,
                 view_layout: Some(layout),
+                platform_effects: Some(effects),
                 ..ApplicationOptions::default()
             },
         )?)
     }
+}
+
+/// Parse every face with the text shaper, as the renderer will.
+fn validate(fonts: &FontSet) -> Result<(), ShellError> {
+    fonts.measurer().map(drop).map_err(ShellError::Fonts)
 }
 
 /// A validated host ceiling file.

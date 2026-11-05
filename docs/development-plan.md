@@ -4590,10 +4590,49 @@ exact-operation ceilings, denial before effect for `net.request` and KV, a
 loopback request and a KV round-trip across instances, and a rendered first
 frame. On the development Mac `varta-shell` opened a window and presented the
 first frame of a packaged view example (log evidence; no screen capture was
-possible). Still open: the first-run grant list and prompts with stored
-decisions, `ui.open_url` and guest clipboard effects, manifest `app` metadata,
-artifact-declared fonts, OS bundles, prebuilt per-target shells, the code cache
-and UARP console acceptance in the shell.
+possible). Fonts and guest effects followed in wave 2 (below).
+
+**Shell status (wave 2, 2026-11-04).** Artifacts ship their fonts: a v38
+configuration's `fonts` list is packaged into a versioned, payload-bound
+[resource section](architecture.md#resource-section-artifact-fonts)
+(`app.resources` beside `app.wasm`, or container format 2), and the shell
+loads every face through `TextMeasurer::new_with_fonts` with real weight and
+style selection; synthesis stays refused. Granted `copy_text` and external
+links of trusted gestures reach the system clipboard and browser through a
+`PlatformEffects` sink, with the existing `command_result` statuses
+([native shell](architecture.md#native-shell-varta-shell)). Tests cover the
+section round trip, tampered/foreign/oversized/malformed fonts before guest
+start, face selection, and positive, refused and denied effects through a
+recording sink. The packaged-font Chrome oracle (`native_font_probe` with
+`scripts/test-native-inline.mjs`) passes at 1, 1.25 and 2 under the 2/255
+bound. On the development Mac `varta-shell` presented the view probe's
+regular, bold, italic and monospace lines from its artifact fonts and logged
+`invalid_context` for the copy in main; trusted clicks on the copy target and
+link were not performed manually (no UI automation was available), so the
+gesture paths rest on the headless trusted-input tests; a human still has to
+click the copy target and the link once in a live `varta-shell` window. After
+review, browser builds carry the same section (every face with its weight,
+style and generic families, registered before the first view commit, the
+first family as the default), `fonts` and `browser.fonts` are mutually
+exclusive, the oracle adds the `monospace` alias and default-family cases
+through the applier's own font namespace, `varta build --single` with fonts
+refuses a companion without container format 2 (launcher protocol 3), and the
+browser launcher is started detached (Linux not exercised). After the second
+review the two renderers agree on every admitted way to reach a packaged
+generic: the browser base sheet maps the user-agent `monospace` of `pre` and
+`code` to the declaring family, controls inherit their family and synthesis
+is off, and the shell's packaged measurer
+(`TextMeasurer::new_with_packaged_fonts`) sizes a mapped `monospace` as that
+named family, without the 13/16 fixed-font ratio Chrome no longer applies;
+the bundle and native oracles add `code`/`pre` at absolute, medium and
+inherited sizes, and the shell keeps at most `MAX_RUNNING_LAUNCHERS` browser
+launchers instead of one reaper thread per opening. The prototype
+`varta-web-host` refuses artifacts with a resource section (sidecar or
+container format 2) instead of loading fonts. Still open: the manual
+trusted-gesture run above, the first-run grant list and prompts with stored
+decisions (so `https://*` links are denied), real-font typography acceptance
+beyond the synthetic fixtures, manifest `app` metadata, OS bundles, prebuilt
+per-target shells, the code cache and UARP console acceptance in the shell.
 
 #### Browser security model and honest guarantees
 

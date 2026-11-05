@@ -718,7 +718,7 @@ fn ua_box(
     tree: &Tree,
     env: &Environment,
     row: (u32, &style::UaDefaults),
-    base_size: Option<f32>,
+    base_size: Option<style::FontBase>,
     style: &mut Style,
 ) -> Result<(), LayoutError> {
     let (id, ua) = row;
@@ -768,7 +768,11 @@ pub(crate) fn text_style(
     base_size: f32,
     measurer: &TextMeasurer,
 ) -> Result<(TextOptions, Vec<String>), LayoutError> {
-    let resolved = resolve_text(tree, env, id, base_size)?;
+    let base = style::FontBase {
+        px: base_size,
+        fixed_monospace: measurer.fixed_monospace(),
+    };
+    let resolved = resolve_text(tree, env, id, base)?;
     let ancestor = resolved
         .family
         .as_ref()
@@ -820,10 +824,10 @@ pub(crate) fn resolve_text(
     tree: &Tree,
     env: &Environment,
     id: u32,
-    base_size: f32,
+    base: style::FontBase,
 ) -> Result<ResolvedText, LayoutError> {
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
-    let mut size = style::FontSize::medium(base_size);
+    let mut size = style::FontSize::medium(base.px);
     // The view root's parent is the document body: proportional `medium`.
     let mut parent_monospace = false;
     let mut line_height = None;
@@ -915,10 +919,11 @@ pub(crate) fn resolve_text(
         }
         // Chrome re-derives the size where the generic family switches to or
         // from monospace, before a line-height percentage resolves against it.
-        let monospace = family
-            .as_ref()
-            .is_some_and(|(_, value)| style::sole_monospace(value));
-        size.switch_family(base_size, parent_monospace, monospace);
+        let monospace = base.fixed_monospace
+            && family
+                .as_ref()
+                .is_some_and(|(_, value)| style::sole_monospace(value));
+        size.switch_family(base.px, parent_monospace, monospace);
         parent_monospace = monospace;
         // The host's medium size is its own input; any size derived here is bounded.
         if size.px != inherited
@@ -983,7 +988,7 @@ fn build(
     ids: &mut BTreeMap<u32, NodeId>,
     text_metrics: &BTreeMap<u32, TextShape>,
     location: (u32, usize),
-    sizes: ((f32, f32), Option<f32>),
+    sizes: ((f32, f32), Option<style::FontBase>),
 ) -> Result<NodeId, LayoutError> {
     let mut pending = vec![(location.0, location.1, false)];
     let mut scheduled = 1usize;
@@ -1027,7 +1032,7 @@ fn build_one(
     ids: &mut BTreeMap<u32, NodeId>,
     text_metrics: &BTreeMap<u32, TextShape>,
     location: (u32, usize),
-    sizes: ((f32, f32), Option<f32>),
+    sizes: ((f32, f32), Option<style::FontBase>),
 ) -> Result<(NodeId, bool), LayoutError> {
     let (id, depth) = location;
     let (viewport, base_size) = sizes;
@@ -1752,6 +1757,12 @@ fn boxes_inner(
         width: f64::from(width),
         ..*env
     };
+    let base = base_size.map(|px| style::FontBase {
+        px,
+        fixed_monospace: text_input
+            .as_deref()
+            .is_none_or(TextMeasurer::fixed_monospace),
+    });
     let root = build(
         tree,
         &layout_env,
@@ -1759,7 +1770,7 @@ fn boxes_inner(
         &mut ids,
         text_metrics,
         (ROOT_NODE, 0),
-        ((width, height), base_size),
+        ((width, height), base),
     )?;
     // Bound worst-case implicit-grid work as well as explicit track counts.
     // A child may place lines up to 64 in either direction or create implicit

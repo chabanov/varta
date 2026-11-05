@@ -72,7 +72,16 @@ formatting, BigInt) are not specified here at the bit level; see
   JSON | 32-byte footer`. A host MAY read the portable payload with the footer
   rules in [architecture.md](architecture.md#artifact-format-and-validation); it
   MUST NOT execute the native prefix or scan payload bytes for markers. The
-  embedded manifest wins over any sidecar, even when empty.
+  embedded manifest wins over any sidecar, even when empty. Container format 2
+  adds a [resource section](architecture.md#resource-section-artifact-fonts)
+  (the application's fonts) before the footer; the bare form carries it as a
+  sidecar `*.resources`. A host that renders views MUST validate the section
+  and load its faces as the reference hosts do (each face with its weight and
+  style, declared generic families mapped to their family and sized as that
+  family, including the user-agent `monospace` of `pre` and `code`, the first
+  family as the default, inherited by form controls, no synthesized bold or
+  italic) or refuse the artifact; it MUST NOT silently substitute its own
+  fonts.
 - **Host ceiling** (optional): a policy owned by the embedder, never by the
   package. It uses the [manifest](#manifest) schema with its defaults, so the
   smallest valid ceiling is `{"capabilities":[]}` (deny everything). Its

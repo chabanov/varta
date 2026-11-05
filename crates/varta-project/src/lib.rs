@@ -93,6 +93,9 @@ pub struct CheckedProject {
     /// The configuration's v38 file roots, pinned when the project loads
     /// (`file_roots`); `varta dev` reads under them.
     pub roots: FileRoots,
+    /// The artifact's resource section: the configuration's validated font
+    /// faces in canonical order (empty without declared fonts).
+    pub resources: varta_artifact::Resources,
 }
 
 impl CheckedProject {
@@ -104,25 +107,33 @@ impl CheckedProject {
         let manifest = config.manifest();
         let output = base.join(&config.out);
         let roots = roots::pin(&base, &config)?;
+        let resources = artifact::resources(&config, &base)?;
         Ok(Self {
             config,
             artifact: Artifact { wasm, manifest },
             output,
             modules: compilation.modules,
             roots,
+            resources,
         })
     }
 
+    /// Write `<out>.wasm` with its sidecar manifest and, when fonts are
+    /// declared, its sidecar resource section `<out>.resources`; with
+    /// `single`, also the container `<out>` around the verified runtime.
     pub fn build(&self, single: bool, launcher: &Path) -> Result<Vec<PathBuf>> {
         let launcher = single
-            .then(|| launcher::VerifiedLauncher::prepare(launcher, &self.artifact))
+            .then(|| launcher::VerifiedLauncher::prepare(launcher, &self.artifact, &self.resources))
             .transpose()?;
         let wasm = PathBuf::from(format!("{}.wasm", self.output.display()));
-        self.artifact.write_wasm(&wasm)?;
-        let mut paths = vec![wasm];
+        self.artifact.write_wasm_with(&wasm, &self.resources)?;
+        let mut paths = vec![wasm.clone()];
+        if !self.resources.is_empty() {
+            paths.push(wasm.with_extension(artifact::RESOURCE_SIDECAR_EXTENSION));
+        }
         if let Some(launcher) = launcher {
             self.artifact
-                .write_executable(&self.output, launcher.path())?;
+                .write_executable_with(&self.output, launcher.path(), &self.resources)?;
             paths.push(self.output.clone());
         }
         Ok(paths)

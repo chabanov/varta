@@ -3362,3 +3362,70 @@ idempotent, the 188 Node tests, the documentation drift tests, formatting and
 strict Clippy of the three crates; the KV cases pass in local Chrome and,
 through Playwright 1.62.1, in WebKit 26.5 and Chrome 156 (Firefox did not
 launch in this environment).
+
+### Shell fonts and guest effects (`varta-shell`) — wave 2, scoped 2026-11-04
+
+`varta-artifact` gained a versioned resource section (`Resources`, section
+version 1): canonically ordered font faces with per-face SHA-256, bound to the
+SHA-256 of the portable Wasm, each face admitted only when its own `name` and
+`OS/2` tables state the declared family, weight and style. Bare artifacts carry
+it as `<out>.resources` (a stale sidecar is removed on rebuild); containers
+use format 2 with the section and its length before the unchanged footer, and
+write format 1 bytes without resources. `Artifact::read` and `embedded` validate
+and drop the section, so the runtime companion refuses tampered sections too.
+`varta-project` packages the configuration's new top-level `fonts` list through
+the pinned no-follow loader (`artifact.rs`; one field in `config.rs`, two calls
+in `lib.rs`). `varta-shell` loads every face through `FontSet` and
+`TextMeasurer::new_with_fonts` before creating storage and refuses `--font` for
+an artifact that ships fonts. `varta-view` gained the `PlatformEffects` sink
+(`platform_effects.rs`, two calls in `events.rs`, a field and builder in
+`lib.rs`) and `varta-runtime` passes `ApplicationOptions::platform_effects` to
+hosted views; the shell's `NativeEffects` writes the system clipboard and runs
+`/usr/bin/open -u` (macOS) or `/usr/bin/xdg-open` with a bounded wait.
+`scripts/test-native-inline.mjs` accepts several faces with weight and style
+(`fonts`), keeping the single-face input; the existing native inline corpus
+still passes with it. The new `native_font_probe` passes it at 1, 1.25 and 2
+(852 checks each, mean RGB delta below 0.35, both for the self-packaged
+fixture faces and for the view probe built by `varta build`). Scoped
+verification: `verify.py local varta-desktop` and `local varta-artifact`,
+the launcher tests, the boundary tests, the view library tests, the runtime's
+view-filtered library tests, the project library tests, the CLI smoke tests
+filtered to `build`, formatting and strict Clippy (desktop also with `gpu`).
+A manual run presented the view probe's four lines from artifact fonts; no
+trusted clicks could be performed in the agent environment. No full gate was
+run for this package.
+
+Review fixes (same wave): `varta build --target browser` and the browser
+development server now carry the resource section's faces (built once through
+the same loader) with weight, style and generic families; the loader registers
+them as `FontFace`s before the renderer exists, the applier maps declared
+generic families and names the first family on the view root, and a
+configuration with both `fonts` and `browser.fonts` is refused. The Chrome
+oracle registers packaged faces through `view-fonts.mjs`'s namespace and adds
+`generic` and `default` cases (mutations dropping the alias or reordering the
+default family fail it), and `browser_bundle_probe`'s `view-font-packaged`
+bundle passes `scripts/test-browser-fonts.mjs`. Launcher protocol 3 adds
+`containerFormats`; packaging a section refuses a companion without format 2
+before writing output and validates the sidecar section through the probe.
+The shell's browser launcher is detached and succeeds on spawn. The font
+limits moved to `varta_common::view::fonts`, a repeated generic family in one
+face is `ResourceError::DuplicateGeneric`, and a leftover debug print in a
+runtime view test was removed.
+
+Second review fixes (same wave): the applier's base sheet, from
+`createFontNamespace(...).rules`, maps the user-agent `monospace` of `pre`
+and `code` to the declaring packaged family, makes form controls inherit
+their family and sets `font-synthesis: none`; the shell loads a resource
+section through `TextMeasurer::new_with_packaged_fonts`, which sizes a mapped
+`monospace` as that family (Chrome drops its 13/16 fixed-font ratio once the
+family is rewritten). The registry exports `UA_MONOSPACE_TAGS` and
+`CONTROL_FONT_TAGS`, which a view test ties to the native user-agent rows.
+`test-browser-fonts.mjs` adds `code`/`pre`/guest-set `monospace` at absolute,
+medium and inherited sizes, control families and synthesis (a mutation without
+the rules fails at `ua-code`, 48.17 against 72), and `native_font_probe` adds
+five such cases that pass `test-native-inline.mjs` at 1, 1.25 and 2 (2356
+checks each); without the packaged measurer `ua-medium` fails. The shell keeps
+at most `MAX_RUNNING_LAUNCHERS` launchers instead of a reaper thread per
+opening, the prototype `varta-web-host` refuses artifacts with a resource
+section, and the sfnt record offsets and the renderer's family/alias limits
+are named. The manual trusted-gesture run is still open.

@@ -7,3 +7,6 @@ license.workspace = true
 [dependencies]
 varta-common = { path = "../varta-common" }
 wasmparser.workspace = true
+# Resource section integrity: the already locked SHA-256 of the runtime.
+sha2.workspace = true
+thiserror.workspace = true

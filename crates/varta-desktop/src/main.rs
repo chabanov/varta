@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 use varta_desktop::shell::{
-    Launch,
+    FontSet, Launch,
     args::Renderer,
     read_font, read_module,
     window::{self, Console, WindowConfig},
@@ -39,7 +39,7 @@ fn run(started: Instant) -> Result<(), Box<dyn std::error::Error>> {
     window::check_renderer(renderer)?;
     let wasm = read_module(Path::new(&args[0]))?;
     let font = if args.len() == 3 {
-        Some((
+        Some(FontSet::single(
             read_font(Path::new(&args[1]))?,
             args[2]
                 .to_str()
@@ -50,10 +50,9 @@ fn run(started: Instant) -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     window::run(
-        Launch::unprivileged(wasm),
+        Launch::unprivileged(wasm, font)?,
         WindowConfig {
             title: "Varta preview",
-            font,
             renderer,
             console: Console {
                 label: LABEL,

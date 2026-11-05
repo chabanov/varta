@@ -49,6 +49,10 @@ pub struct ApplicationOptions {
     pub view: Option<ViewPlatform>,
     /// Optional native geometry used by scroll commands from the first turn.
     pub view_layout: Option<ViewLayout>,
+    /// A native host's clipboard and system browser: granted `copy_text`
+    /// and external link effects are performed there instead of being
+    /// simulated. Ignored with a simulated [`Self::view`].
+    pub platform_effects: Option<std::sync::Arc<dyn varta_view::PlatformEffects>>,
 }
 
 /// Explicit host geometry and optional font for layout-dependent view commands.
@@ -329,7 +333,7 @@ impl VartaRuntime {
         } = prepared;
         execution.store.data_mut().view = match options.view {
             Some(view) => crate::view::Session::simulated(view.environment, view.platform),
-            None => crate::view::Session::hosted(),
+            None => crate::view::Session::hosted(options.platform_effects),
         };
         if let Some(layout) = options.view_layout {
             execution.store.data_mut().view.set_layout(layout)?;

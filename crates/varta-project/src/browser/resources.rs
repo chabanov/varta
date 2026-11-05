@@ -1,6 +1,7 @@
 //! Build-owned image inventory. Package names never become ambient fetch paths.
 use crate::{ProjectError, Result};
 use std::collections::BTreeMap;
+use varta_artifact::{FontFace, FontStyle, Resources};
 use varta_common::view::{AttributeValue, Tag, attributes};
 
 pub const MAX_RESOURCES: usize = 64;
@@ -18,7 +19,18 @@ pub struct BrowserResource {
     pub(super) media_type: &'static str,
     pub(super) extension: &'static str,
     pub(super) font: bool,
+    /// The descriptors of a face from the artifact's resource section
+    /// (configuration `fonts`); `None` for images and `browser.fonts` faces.
+    pub(super) packaged: Option<PackagedFace>,
     decoded_bytes: usize,
+}
+
+/// A packaged face's `FontFace` descriptors and the generic families its
+/// family stands for, which the applier maps as the native shell does.
+pub(super) struct PackagedFace {
+    pub(super) weight: u16,
+    pub(super) style: FontStyle,
+    pub(super) generics: Vec<&'static str>,
 }
 impl BrowserResource {
     pub fn png(name: &str, bytes: Vec<u8>) -> Result<Self> {
@@ -83,6 +95,7 @@ impl BrowserResource {
             media_type: "image/png",
             extension: "png",
             font: false,
+            packaged: None,
         })
     }
 
@@ -97,8 +110,22 @@ impl BrowserResource {
             media_type,
             extension,
             font: true,
+            packaged: None,
             decoded_bytes,
         })
+    }
+
+    /// One face of an artifact's validated resource section, with the same
+    /// bytes, family, weight, style and generic families the native shell
+    /// loads.
+    pub fn packaged(face: &FontFace) -> Result<Self> {
+        let mut resource = Self::font(&face.family, face.data.clone())?;
+        resource.packaged = Some(PackagedFace {
+            weight: face.weight,
+            style: face.style,
+            generics: face.generics.iter().map(|generic| generic.name()).collect(),
+        });
+        Ok(resource)
     }
 }
 pub(crate) fn validate_family(family: &str) -> Result<()> {
@@ -146,14 +173,17 @@ pub(super) fn validate(resources: &[BrowserResource]) -> Result<()> {
         ));
     }
     for resource in resources {
-        let key = (
-            resource.font,
-            if resource.font {
-                resource.name.to_ascii_lowercase()
-            } else {
-                resource.name.clone()
-            },
-        );
+        // Images are keyed by their exact name; font faces by family
+        // (case-insensitive) and, for packaged faces, weight and style.
+        let face = resource
+            .packaged
+            .as_ref()
+            .map(|face| (face.weight, face.style));
+        let key = if resource.font {
+            (true, resource.name.to_ascii_lowercase(), face)
+        } else {
+            (false, resource.name.clone(), face)
+        };
         if names.insert(key, ()).is_some() {
             return Err(ProjectError::Usage(
                 "duplicate browser resource name".into(),
@@ -167,7 +197,7 @@ pub(crate) fn load(
     config: &crate::VartaConfig,
     root: &std::path::Path,
 ) -> Result<Vec<BrowserResource>> {
-    if config.browser.is_none() {
+    if config.browser.is_none() && config.fonts.is_empty() {
         return Ok(Vec::new());
     }
     let root = root.canonicalize()?;
@@ -180,18 +210,23 @@ pub(crate) fn load_with_loader(
     root: &std::path::Path,
     loader: &crate::modules::SourceLoader,
 ) -> Result<Vec<BrowserResource>> {
-    let Some(browser) = &config.browser else {
-        return Ok(Vec::new());
-    };
     let root = root.canonicalize()?;
-    let mut resources = Vec::new();
-    let mut total = 0;
+    // The configuration's `fonts` are the artifact's resource section: the
+    // same validated faces the native shell loads, never a second reading.
+    let mut resources = packaged_faces(&crate::artifact::resources_with_loader(
+        config, &root, loader,
+    )?)?;
+    let Some(browser) = &config.browser else {
+        validate(&resources)?;
+        return Ok(resources);
+    };
+    let mut total = resources.iter().map(|r| r.bytes.len()).sum::<usize>();
     for (name, path) in &browser.resources {
         validate_name(name)?;
         validate_name(path)?;
         let bytes = loader.read_bytes(
             &root.join(path),
-            MAX_RESOURCE_BYTES.min(MAX_TOTAL_BYTES - total),
+            MAX_RESOURCE_BYTES.min(MAX_TOTAL_BYTES.saturating_sub(total)),
         )?;
         total += bytes.len();
         resources.push(BrowserResource::png(name, bytes)?);
@@ -201,13 +236,23 @@ pub(crate) fn load_with_loader(
         validate_name(path)?;
         let bytes = loader.read_bytes(
             &root.join(path),
-            MAX_RESOURCE_BYTES.min(MAX_TOTAL_BYTES - total),
+            MAX_RESOURCE_BYTES.min(MAX_TOTAL_BYTES.saturating_sub(total)),
         )?;
         total += bytes.len();
         resources.push(BrowserResource::font(family, bytes)?);
     }
     validate(&resources)?;
     Ok(resources)
+}
+
+/// Browser resources for every face of a validated resource section, in its
+/// canonical order (the first family is the default family).
+pub(crate) fn packaged_faces(section: &Resources) -> Result<Vec<BrowserResource>> {
+    section
+        .fonts()
+        .iter()
+        .map(BrowserResource::packaged)
+        .collect()
 }
 
 #[cfg(test)]
@@ -269,6 +314,7 @@ mod tests {
                 media_type: "image/png",
                 extension: "png",
                 font: false,
+                packaged: None,
                 decoded_bytes: 0,
             })
             .collect::<Vec<_>>();

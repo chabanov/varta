@@ -360,6 +360,89 @@ fn monospace_sizes_switch_at_the_family_change_like_chrome() {
     }
 }
 
+/// A packaged face that declares `monospace` (`new_with_packaged_fonts`)
+/// makes the generic name its family, as the official browser host rewrites
+/// it before Chrome sees it: neither the user-agent family of `pre`/`code`
+/// nor a guest-set `monospace` takes the fixed-font size ratio, with or
+/// without an explicit or inherited size.
+#[test]
+fn packaged_monospace_is_sized_as_its_named_family() {
+    let packaged = || {
+        TextMeasurer::new_with_packaged_fonts(
+            [REGULAR, BOLD]
+                .iter()
+                .map(|data| TextFont {
+                    data: data.to_vec(),
+                    family: FAMILY.into(),
+                    aliases: vec!["monospace".into()],
+                })
+                .collect(),
+        )
+        .unwrap()
+    };
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    // `pre` at the medium keyword: 16px (not 13px), margins 1em of it, two
+    // preserved lines of ascent+descent.
+    let mut b = B::new();
+    b.create_element(2, Tag::Div).insert(1, 2, 0);
+    add(&mut b, 2, 3, Tag::Pre, "A\n  AB");
+    let g = view(&b)
+        .layout_boxes_with_text(200.0, 200.0, &mut packaged(), HOST_SIZE)
+        .unwrap();
+    assert_eq!((g[&3].y, g[&3].height), (HOST_SIZE, 2.0 * HOST_SIZE));
+    // Switching into and out of the generic keeps the inherited size: each
+    // flex element records its size in a 100% line height.
+    let cases = [
+        // h1 (32px) > code stays 32px.
+        (Tag::H1, None, Tag::Code, None, 32.0),
+        // p { font-size: 150% } > code stays 24px.
+        (Tag::P, Some("150%"), Tag::Code, None, 24.0),
+        // pre > span { font-size: 200% } is 32px.
+        (Tag::Pre, None, Tag::Span, Some("200%"), 32.0),
+        // h2 { font-family: monospace } stays 24px.
+        (Tag::Div, None, Tag::H2, Some("monospace"), 24.0),
+    ];
+    for (outer, outer_size, inner, inner_value, expected) in cases {
+        let mut b = B::new();
+        b.create_element(2, Tag::Div).insert(1, 2, 0);
+        b.set_style(2, P::FontFamily, "\"Varta Structure Fixture\"");
+        b.create_element(3, outer).insert(2, 3, 0);
+        if let Some(size) = outer_size {
+            b.set_style(3, P::FontSize, size);
+        }
+        b.set_style(3, P::Display, "flex");
+        b.create_element(4, inner).insert(3, 4, 0);
+        match (inner, inner_value) {
+            (Tag::Span, Some(size)) => {
+                b.set_style(4, P::FontSize, size);
+            }
+            (_, Some(family)) => {
+                b.set_style(4, P::FontFamily, family);
+            }
+            _ => {}
+        }
+        b.set_style(4, P::Display, "flex")
+            .set_style(4, P::LineHeight, "100%");
+        add(&mut b, 4, 5, Tag::Span, "A");
+        let g = boxes(&view(&b), &mut packaged());
+        assert!(close(g[&4].height, expected), "{inner:?}: {}", g[&4].height);
+    }
+    // With the same faces loaded as stand-ins for the browser's generic
+    // font, `pre` keeps the ratio (13px).
+    let mut b = B::new();
+    b.create_element(2, Tag::Div).insert(1, 2, 0);
+    add(&mut b, 2, 3, Tag::Pre, "A");
+    let g = view(&b)
+        .layout_boxes_with_text(
+            200.0,
+            200.0,
+            &mut fonts(&[REGULAR, BOLD], &["monospace"]),
+            HOST_SIZE,
+        )
+        .unwrap();
+    assert_eq!(g[&3].y, 13.0);
+}
+
 #[test]
 fn a_label_click_activates_its_associated_control() {
     let mut b = base("200px");

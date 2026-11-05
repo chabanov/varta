@@ -5,6 +5,7 @@
 //   node cli.mjs validate <app.wasm>
 //
 // A sidecar <app>.manifest.json next to the Wasm is used when --manifest is absent.
+// A sidecar <app>.resources (packaged fonts) makes the host refuse the artifact.
 import { readFileSync, existsSync } from "node:fs";
 import { createHost } from "./host.js";
 
@@ -31,6 +32,8 @@ if (!command || !wasmPath) {
 }
 const sidecar = wasmPath.replace(/\.wasm$/, ".manifest.json");
 if (options.manifest === null && existsSync(sidecar)) options.manifest = readFileSync(sidecar, "utf8");
+const resources = wasmPath.replace(/\.wasm$/, ".resources");
+if (resources !== wasmPath && existsSync(resources)) options.resources = readFileSync(resources);
 const bytes = new Uint8Array(readFileSync(wasmPath));
 
 if (command === "validate") {

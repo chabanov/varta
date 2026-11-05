@@ -1,0 +1,21 @@
+{
+  "entry": "main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "probe",
+  "languageProfile": "checked-f64-utf16-v38",
+  "fonts": [
+    { "family": "Varta Fixture 400", "path": "fonts/bold.ttf", "weight": 700 },
+    { "family": "Varta Fixture 900", "path": "fonts/mono.ttf", "generic": ["monospace"] },
+    { "family": "Varta Fixture 400", "path": "fonts/italic.ttf", "style": "italic" },
+    { "family": "Varta Fixture 400", "path": "fonts/regular.ttf" }
+  ],
+  "capabilities": {
+    "ui": {
+      "open_url": ["https://docs.test/**"]
+    },
+    "clipboard": {
+      "write": true
+    }
+  }
+}

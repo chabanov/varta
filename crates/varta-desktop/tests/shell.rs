@@ -1,29 +1,70 @@
 //! The native shell core without a window: packaged artifact validation,
 //! grant resolution against the host ceiling, denial before effect, a
-//! loopback `net.request`, a KV round-trip in host-owned storage and a
-//! rendered first frame.
+//! loopback `net.request`, a KV round-trip in host-owned storage, a
+//! rendered first frame, artifact fonts with real face selection, and guest
+//! clipboard and link effects through a recording platform sink.
 //!
-//! The guest is `fixtures/shell-probe`, compiled at test time by the
-//! workspace's `varta` binary into a portable v38 artifact ([`support`]):
-//! this crate never depends on the compiler, not even for tests. As in the
-//! `varta-launcher` tests, each test writes its own packaged artifact with
-//! `varta_artifact::Artifact` into a temporary directory, here with the
-//! manifest (the package request) the test needs.
+//! The guests are `fixtures/shell-probe` and `fixtures/view-probe` (with its
+//! declared fonts), compiled at test time by the workspace's `varta` binary
+//! into portable v38 artifacts ([`support`]): this crate never depends on
+//! the compiler, not even for tests. As in the `varta-launcher` tests, each
+//! test writes its own packaged artifact with `varta_artifact::Artifact`
+//! into a temporary directory, here with the manifest (the package request)
+//! the test needs. No test touches the system clipboard or browser.
 mod support;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use support::probe;
-use varta_artifact::Artifact;
+use support::{probe, view_probe};
+use varta_artifact::{Artifact, Resources};
 use varta_common::Manifest;
 use varta_desktop::shell::{
-    Launch, Package, STORAGE_DIRECTORY_PREFIX, ShellError, storage_directory,
+    FontSet, Launch, Package, STORAGE_DIRECTORY_PREFIX, ShellError, storage_directory,
 };
 use varta_runtime::{Application, Step, ViewLayout};
+use varta_view::{PlatformEffects, PlatformRefusal};
+
+/// A platform sink that records every effect it receives and answers with
+/// `refuse`; it never touches the system clipboard or browser.
+#[derive(Debug, Default)]
+struct Recording {
+    refuse: bool,
+    clipboard: Mutex<Vec<String>>,
+    opened: Mutex<Vec<String>>,
+}
+impl Recording {
+    fn answer(&self) -> Result<(), PlatformRefusal> {
+        if self.refuse {
+            Err(PlatformRefusal)
+        } else {
+            Ok(())
+        }
+    }
+    fn clipboard(&self) -> Vec<String> {
+        self.clipboard.lock().unwrap().clone()
+    }
+    fn opened(&self) -> Vec<String> {
+        self.opened.lock().unwrap().clone()
+    }
+}
+impl PlatformEffects for Recording {
+    fn write_clipboard(&self, text: &str) -> Result<(), PlatformRefusal> {
+        self.clipboard.lock().unwrap().push(text.into());
+        self.answer()
+    }
+    fn open_url(&self, url: &str) -> Result<(), PlatformRefusal> {
+        self.opened.lock().unwrap().push(url.into());
+        self.answer()
+    }
+}
+/// A recording sink for tests that only need one.
+fn effects() -> Arc<dyn PlatformEffects> {
+    Arc::new(Recording::default())
+}
 
 /// The guest log prefix of `console.log` lines.
 const LOG: &str = "varta log: ";
@@ -193,6 +234,7 @@ fn prepare(temp: &Temp, artifact: &Path, policy: Option<&Path>) -> Result<Launch
         artifact,
         policy,
         storage: &temp.storage(),
+        font: None,
     })
 }
 
@@ -203,7 +245,7 @@ fn layout() -> ViewLayout {
 /// Start `launch` without a window and step it until the probe is done;
 /// the instance and its guest log lines.
 fn run(launch: Launch) -> (Application, Vec<String>) {
-    let mut app = launch.start(layout()).unwrap();
+    let mut app = launch.start(layout(), effects()).unwrap();
     let mut lines = Vec::new();
     let deadline = Instant::now() + PROBE_DEADLINE;
     loop {
@@ -589,6 +631,7 @@ fn invalid_host_ceilings_and_storage_bases_are_typed_errors() {
             artifact: &artifact,
             policy: None,
             storage: Path::new("relative/storage"),
+            font: None,
         }),
         Err(ShellError::StorageNotAbsolute(_))
     ));
@@ -607,7 +650,7 @@ fn assert_refused_before_any_guest_effect(
     let refusal = match prepare(temp, artifact, Some(&ceiling)) {
         Err(ShellError::Artifact { .. }) => Refusal::Package,
         Err(other) => panic!("{artifact:?}: unexpected error {other}"),
-        Ok(launch) => match launch.start(layout()) {
+        Ok(launch) => match launch.start(layout(), effects()) {
             Err(ShellError::Runtime(_)) => Refusal::Start,
             Err(other) => panic!("{artifact:?}: unexpected error {other}"),
             Ok(mut app) => panic!("{artifact:?} started: {:?}", app.take_output()),
@@ -797,4 +840,378 @@ fn the_shell_core_renders_the_first_frame_without_a_window() {
     };
     assert_eq!(pixel(PANEL.0 / 2, PANEL.1 / 2), GREEN);
     assert_ne!(pixel(PANEL.0 + PANEL.0 / 2, PANEL.1 + PANEL.1 / 2), GREEN);
+}
+
+/// The view probe's sans family (regular, italic and bold faces) and its
+/// monospace family, as its configuration declares them.
+const SANS: &str = "Varta Fixture 400";
+const MONO: &str = "Varta Fixture 900";
+/// The fixture faces' `A` advance in em: the regular face is narrow, the
+/// bold, italic and monospace faces are wide.
+const NARROW_EM: f32 = 0.4;
+const WIDE_EM: f32 = 0.9;
+const TEXT_SIZE: f32 = 20.0;
+/// Layout tolerance of an advance, in CSS pixels.
+const ADVANCE_TOLERANCE: f32 = 0.01;
+/// The probe's copy text, link and the results it logs.
+const GESTURE_COPY: &str = "copied by a gesture";
+const LINK: &str = "https://docs.test/guide";
+const MAIN_COPY_INVALID_CONTEXT: &str = "main copy 3";
+fn click_copy(status: u32) -> String {
+    format!("click copy {status}")
+}
+fn open_url(status: u32) -> String {
+    format!("open_url {status}")
+}
+/// `command_result` statuses ([`varta_common::view::CommandStatus`]).
+const OK: u32 = 0;
+const NOT_ALLOWED: u32 = 1;
+const REFUSED_BY_PLATFORM: u32 = 2;
+
+/// The view probe packaged with `capabilities` as its request: its Wasm,
+/// its built manifest with that request, and its resource section.
+fn package_view(temp: &Temp, capabilities: serde_json::Value) -> PathBuf {
+    let built = view_probe();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&built.artifact.manifest.to_bytes().unwrap()).unwrap();
+    manifest["capabilities"] = capabilities;
+    // The shell probe's file roots, so a request may also name KV paths.
+    manifest["fsRoots"] = probe_manifest()["fsRoots"].clone();
+    let path = temp.path("view.wasm");
+    Artifact {
+        wasm: built.artifact.wasm.clone(),
+        manifest: Manifest::parse(&serde_json::to_vec(&manifest).unwrap()).unwrap(),
+    }
+    .write_wasm_with(&path, &built.resources)
+    .unwrap();
+    path
+}
+fn view_grants() -> serde_json::Value {
+    serde_json::json!([
+        {"id": "ui.open_url", "patterns": ["https://docs.test/**"]},
+        {"id": "clipboard.write", "enabled": true},
+    ])
+}
+
+/// Start the view probe with `fonts` laid out and `sink` as its platform,
+/// and step it through main.
+fn start_view(launch: Launch, sink: Arc<dyn PlatformEffects>) -> (Application, Vec<String>) {
+    let font = launch.fonts().map(|fonts| fonts.measurer().unwrap());
+    let layout =
+        ViewLayout::new(VIEW_WIDTH as f32, VIEW_HEIGHT as f32, font, ROOT_FONT_SIZE).unwrap();
+    let mut app = launch.start(layout, sink).unwrap();
+    let mut lines = Vec::new();
+    settle(&mut app, &mut lines, MAIN_COPY_INVALID_CONTEXT);
+    (app, lines)
+}
+
+/// Step `app` until it logged `expected`.
+fn settle(app: &mut Application, lines: &mut Vec<String>, expected: &str) {
+    let deadline = Instant::now() + PROBE_DEADLINE;
+    loop {
+        lines.extend(
+            app.take_output()
+                .into_iter()
+                .map(|line| line.strip_prefix(LOG).unwrap_or(&line).to_owned()),
+        );
+        if lines.iter().any(|line| line == expected) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "no {expected:?}: {lines:?}");
+        match app.step(Some(STEP_WAIT)) {
+            Step::Turn(_) | Step::Idle | Step::Finished { .. } => {}
+            Step::Failed => panic!("view probe failed: {:?} {lines:?}", app.failure()),
+        }
+    }
+}
+
+/// A trusted click on the element with `id`.
+fn click(app: &mut Application, id: &str) {
+    let clicked = app.view_input(&varta_view::Input::Click {
+        target: varta_view::Target::Ident(format!("#{id}")),
+    });
+    assert!(clicked.is_ok(), "{id}: {:?}", app.failure());
+}
+
+/// A broker that grants nothing, for layout-only views.
+struct NoGrants;
+impl varta_view::Broker for NoGrants {
+    fn link_requested(&self, _: &str) -> bool {
+        false
+    }
+    fn open_url(&mut self, _: &str) -> varta_view::Access {
+        varta_view::Access::Denied
+    }
+    fn clipboard_write(&mut self) -> varta_view::Access {
+        varta_view::Access::Denied
+    }
+}
+
+/// One `A` per face style: regular, bold, italic and the monospace generic
+/// family, each a span of one 20px line.
+fn face_view() -> (varta_view::View, Vec<u32>) {
+    use varta_common::view::{CssProperty as P, Tag};
+    const LINE: u32 = 2;
+    const FIRST_SPAN: u32 = 10;
+    const FIRST_TEXT: u32 = 20;
+    let styles: [Option<(P, &str)>; 4] = [
+        None,
+        Some((P::FontWeight, "700")),
+        Some((P::FontStyle, "italic")),
+        Some((P::FontFamily, "monospace")),
+    ];
+    let mut batch = varta_view::BatchWriter::new();
+    batch
+        .create_element(LINE, Tag::Div)
+        .insert(1, LINE, 0)
+        .set_style(LINE, P::FontSize, "20px")
+        .set_style(LINE, P::LineHeight, "20px")
+        .set_style(LINE, P::Color, "#000");
+    let mut spans = Vec::new();
+    for (index, style) in (0u32..).zip(styles) {
+        let (span, text) = (FIRST_SPAN + index, FIRST_TEXT + index);
+        batch
+            .create_element(span, Tag::Span)
+            .insert(LINE, span, 0)
+            .create_text(text, "A")
+            .insert(span, text, 0);
+        if let Some((property, value)) = style {
+            batch.set_style(span, property, value);
+        }
+        spans.push(span);
+    }
+    let mut view = varta_view::View::default();
+    view.commit(&batch.finish(), false, &mut NoGrants).unwrap();
+    (view, spans)
+}
+
+#[test]
+fn artifact_fonts_are_packaged_read_and_selected_by_weight_and_style() {
+    let temp = Temp::new();
+    // `varta build` wrote the four declared faces in canonical order: the
+    // first declared family first (the default), each family's faces by
+    // weight and style.
+    let faces: Vec<_> = view_probe()
+        .resources
+        .fonts()
+        .iter()
+        .map(|face| (face.family.as_str(), face.weight, face.style.name()))
+        .collect();
+    assert_eq!(
+        faces,
+        [
+            (SANS, 400, "normal"),
+            (SANS, 400, "italic"),
+            (SANS, 700, "normal"),
+            (MONO, 400, "normal"),
+        ]
+    );
+    let artifact = package_view(&temp, view_grants());
+    let launch = prepare(&temp, &artifact, None).unwrap();
+    let fonts = launch.fonts().unwrap();
+    assert_eq!(fonts.len(), faces.len());
+    assert_eq!(
+        fonts.families().last(),
+        Some((MONO, ["monospace".to_owned()].as_slice()))
+    );
+    // Real faces: bold, italic and the monospace generic each select their
+    // own wide face; the default family's regular face is narrow.
+    let (view, spans) = face_view();
+    let mut measurer = fonts.measurer().unwrap();
+    let boxes = view
+        .layout_boxes_with_text(
+            VIEW_WIDTH as f32,
+            VIEW_HEIGHT as f32,
+            &mut measurer,
+            TEXT_SIZE,
+        )
+        .unwrap();
+    let widths: Vec<f32> = spans.iter().map(|span| boxes[span].width).collect();
+    for (width, em) in widths.iter().zip([NARROW_EM, WIDE_EM, WIDE_EM, WIDE_EM]) {
+        assert!(
+            (width - em * TEXT_SIZE).abs() < ADVANCE_TOLERANCE,
+            "{widths:?}"
+        );
+    }
+    assert!(
+        view.rasterize_scaled(
+            VIEW_WIDTH,
+            VIEW_HEIGHT,
+            1.0,
+            Some((&mut measurer, TEXT_SIZE))
+        )
+        .is_ok()
+    );
+    // With only the regular face, bold and italic would need synthesis,
+    // which stays refused at paint.
+    let regular = FontSet::single(view_probe().resources.fonts()[0].data.clone(), SANS.into());
+    let mut regular = regular.measurer().unwrap();
+    assert!(
+        view.rasterize_scaled(
+            VIEW_WIDTH,
+            VIEW_HEIGHT,
+            1.0,
+            Some((&mut regular, TEXT_SIZE))
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn the_view_probe_renders_bold_italic_and_mono_text_from_its_artifact() {
+    let temp = Temp::new();
+    let artifact = package_view(&temp, view_grants());
+    let launch = prepare(&temp, &artifact, None).unwrap();
+    let render_font = launch.fonts().map(|fonts| fonts.measurer().unwrap());
+    let (app, lines) = start_view(launch, effects());
+    assert!(lines.contains(&MAIN_COPY_INVALID_CONTEXT.to_owned()));
+    let mut renderer = varta_view::Renderer::new(render_font, ROOT_FONT_SIZE).unwrap();
+    let frame = app
+        .view_render(&mut renderer, VIEW_WIDTH, VIEW_HEIGHT, 1.0)
+        .unwrap();
+    // Some text ink was painted.
+    assert!(
+        frame
+            .pixels
+            .chunks(4)
+            .any(|rgba| rgba[3] != 0 && rgba[..3] == [0, 0, 0])
+    );
+}
+
+#[test]
+fn granted_gesture_effects_reach_the_platform_and_report_its_answer() {
+    for (refuse, status) in [(false, OK), (true, REFUSED_BY_PLATFORM)] {
+        let temp = Temp::new();
+        let artifact = package_view(&temp, view_grants());
+        let sink = Arc::new(Recording {
+            refuse,
+            ..Recording::default()
+        });
+        let (mut app, mut lines) =
+            start_view(prepare(&temp, &artifact, None).unwrap(), sink.clone());
+        // The copy in main is not a gesture: `invalid_context`, no effect.
+        assert!(sink.clipboard().is_empty());
+        click(&mut app, "copy");
+        settle(&mut app, &mut lines, &click_copy(status));
+        assert_eq!(sink.clipboard(), [GESTURE_COPY]);
+        click(&mut app, "docs");
+        settle(&mut app, &mut lines, &open_url(status));
+        assert_eq!(sink.opened(), [LINK]);
+    }
+}
+
+#[test]
+fn denied_effects_never_reach_the_platform() {
+    let temp = Temp::new();
+    // The request admits both, the ceiling neither: an empty ceiling
+    // denies everything.
+    let artifact = package_view(&temp, view_grants());
+    let ceiling = policy(
+        &temp,
+        &serde_json::json!({"abiVersion": 34, "capabilities": []}),
+    );
+    let sink = Arc::new(Recording::default());
+    let (mut app, mut lines) = start_view(
+        prepare(&temp, &artifact, Some(&ceiling)).unwrap(),
+        sink.clone(),
+    );
+    click(&mut app, "copy");
+    settle(&mut app, &mut lines, &click_copy(NOT_ALLOWED));
+    click(&mut app, "docs");
+    settle(&mut app, &mut lines, &open_url(NOT_ALLOWED));
+    // A request without the clipboard grant (the link pattern stays: an
+    // external href must match the request at patch time).
+    let artifact = package_view(
+        &temp,
+        serde_json::json!([{"id": "ui.open_url", "patterns": ["https://docs.test/**"]}]),
+    );
+    let (mut app, mut lines) = start_view(prepare(&temp, &artifact, None).unwrap(), sink.clone());
+    click(&mut app, "copy");
+    settle(&mut app, &mut lines, &click_copy(NOT_ALLOWED));
+    assert!(sink.clipboard().is_empty());
+    assert!(sink.opened().is_empty());
+}
+
+#[test]
+fn tampered_oversized_and_malformed_fonts_are_refused_before_guest_start() {
+    let temp = Temp::new();
+    // KV grants: a launch that got past its fonts would create storage.
+    let grants = serde_json::json!(kv_grants());
+    let artifact = package_view(&temp, grants.clone());
+    let sidecar = artifact.with_extension("resources");
+    let section = std::fs::read(&sidecar).unwrap();
+    let refused = |expected: fn(&ShellError) -> bool, font: Option<&FontSet>| {
+        let result = Launch::packaged(&Package {
+            artifact: &artifact,
+            policy: None,
+            storage: &temp.storage(),
+            font,
+        });
+        match result {
+            Err(error) => assert!(expected(&error), "{error}"),
+            Ok(_) => panic!("the launch was prepared"),
+        }
+        assert_eq!(files_under(&temp.storage()), Vec::<PathBuf>::new());
+        assert!(!temp.storage().exists());
+    };
+    let artifact_error = |error: &ShellError| matches!(error, ShellError::Artifact { .. });
+    // A flipped font byte, a section packaged with another payload and an
+    // oversized section.
+    let mut tampered = section.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 1;
+    std::fs::write(&sidecar, &tampered).unwrap();
+    refused(artifact_error, None);
+    let foreign = view_probe().resources.encode(&probe().wasm).unwrap();
+    std::fs::write(&sidecar, &foreign).unwrap();
+    refused(artifact_error, None);
+    std::fs::write(
+        &sidecar,
+        vec![0; varta_artifact::MAX_RESOURCE_SECTION_BYTES + 1],
+    )
+    .unwrap();
+    refused(artifact_error, None);
+    // The same tampering inside a format 2 container.
+    std::fs::write(&sidecar, &section).unwrap();
+    let prefix = temp.path("prefix.bin");
+    std::fs::write(&prefix, b"native prefix").unwrap();
+    let container = temp.path("view.bin");
+    Artifact::read(&artifact)
+        .unwrap()
+        .write_executable_with(&container, &prefix, &view_probe().resources)
+        .unwrap();
+    let mut bytes = std::fs::read(&container).unwrap();
+    let in_section = bytes.len() - FOOTER_BYTES - size_of::<u64>() - 1;
+    bytes[in_section] ^= 1;
+    std::fs::write(&container, bytes).unwrap();
+    assert!(matches!(
+        prepare(&temp, &container, None),
+        Err(ShellError::Artifact { .. })
+    ));
+    assert!(!temp.storage().exists());
+    // `--font` is for artifacts without fonts, and is parsed before storage.
+    let explicit = FontSet::single(view_probe().resources.fonts()[0].data.clone(), SANS.into());
+    refused(
+        |error| matches!(error, ShellError::FontConflict),
+        Some(&explicit),
+    );
+    let plain = package(&temp, grants);
+    let malformed = FontSet::single(b"not a font at all".to_vec(), SANS.into());
+    let launch = Launch::packaged(&Package {
+        artifact: &plain,
+        policy: None,
+        storage: &temp.storage(),
+        font: Some(&malformed),
+    });
+    assert!(matches!(launch, Err(ShellError::Fonts(_))));
+    assert!(!temp.storage().exists());
+    // An unchanged section still prepares (and so creates storage).
+    let unchanged = Resources::decode(&section, &probe_wasm_of(&artifact)).unwrap();
+    assert_eq!(&unchanged, &view_probe().resources);
+    assert!(prepare(&temp, &artifact, None).unwrap().fonts().is_some());
+    assert!(temp.storage().exists());
+}
+
+fn probe_wasm_of(artifact: &Path) -> Vec<u8> {
+    Artifact::read(artifact).unwrap().wasm
 }

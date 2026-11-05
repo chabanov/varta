@@ -226,13 +226,16 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       if(prompting)await broker.initialize(ask,save,observe);
       else if(onAudit)for(const entry of broker.snapshot().audit)onAudit({...entry});
       if(settled)return;
-      const fonts=viewFonts.createFontNamespace(crypto.randomUUID().replaceAll('-',''),descriptor.resources.filter((resource)=>resource.font).map((resource)=>resource.key));
+      // Faces arrive in the resource section's canonical order: the first
+      // family is the default family and each face's generic families map to
+      // its family, exactly as the native shell resolves them.
+      const fonts=viewFonts.createFontNamespace(crypto.randomUUID().replaceAll('-',''),...viewFonts.packagedFamilies(descriptor.resources.filter((resource)=>resource.font)));
       // Decode bounded resources before creating DOM nodes or entering guest code.
       // Neither a logical name nor an HTTP Content-Type supplies fetch authority.
       for(let index=0;index<descriptor.resources.length;index++){
         const resource=descriptor.resources[index];
         if(resource.font){
-          const face=new FontFace(fonts.family(resource.key),resourceBytes[index]);await face.load();
+          const face=new FontFace(fonts.family(resource.key),resourceBytes[index],viewFonts.faceDescriptors(resource));await face.load();
           if(settled)return;fontFaces.push(face);
         }else{
           const blob=new Blob([resourceBytes[index]],{type:resource.mediaType});

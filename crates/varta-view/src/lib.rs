@@ -28,6 +28,7 @@ mod list;
 mod name;
 mod naming_work;
 mod paint;
+mod platform_effects;
 mod render;
 mod select;
 mod snapshot;
@@ -62,6 +63,7 @@ pub use paint::{
     FieldTextCluster, FieldTextGeometry, FieldTextLine, FrameMetadata, PaintError, PointerCursor,
     RasterImage, SelectHit, SelectMenuMetrics, TextNavigation,
 };
+pub use platform_effects::{PlatformEffects, PlatformRefusal};
 pub use render::{RenderStats, Renderer};
 pub use snapshot::project_flex_blockification;
 pub use snapshot_json::{SnapshotError, SnapshotFormat, encode_snapshot};
@@ -319,6 +321,8 @@ pub struct View {
     commits: usize,
     history: VecDeque<events::HistoryEntry>,
     pending_clipboard: Option<ClipboardToken>,
+    /// The embedder's real clipboard and system browser, when it has them.
+    platform_effects: platform_effects::Sink,
 }
 
 impl View {
@@ -329,6 +333,15 @@ impl View {
             platform,
             ..Self::default()
         }
+    }
+
+    /// Perform granted `copy_text` and external link effects on the
+    /// embedder's real platform instead of simulating them
+    /// ([`PlatformEffects`]).
+    #[must_use]
+    pub fn with_platform_effects(mut self, effects: std::sync::Arc<dyn PlatformEffects>) -> Self {
+        self.platform_effects = Some(effects);
+        self
     }
 
     /// Capture an attached element for a deferred host action.

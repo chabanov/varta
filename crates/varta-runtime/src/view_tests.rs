@@ -766,11 +766,6 @@ fn copy_text_results_reach_the_guest_and_denials_are_recoverable() {
     let click = r##"{"inputs":[{"input":"click","target":"#copy"}]}"##;
     // Granted: the main turn is not a gesture (invalid_context), the click is.
     let granted = run(COPY, click, &[clipboard(true)]);
-    eprintln!(
-        "DEBUG {:?} {:?}",
-        granted.report.budget.as_ref().map(|b| b.lines()),
-        granted.commits
-    );
     assert_eq!(
         granted.output.lines,
         ["varta log: main copy 3", "varta log: click copy 0"]

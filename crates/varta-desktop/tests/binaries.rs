@@ -4,7 +4,7 @@ mod support;
 
 use std::path::Path;
 use std::process::{Command, Output};
-use support::{Temp, probe};
+use support::{Temp, probe, view_probe};
 use varta_desktop::shell::MAX_FONT_BYTES;
 
 const SHELL_LABEL: &str = "varta-shell: ";
@@ -116,6 +116,51 @@ fn a_bad_font_is_refused_before_any_storage_is_created() {
         );
         assert!(!storage.exists(), "{font:?}");
     }
+}
+
+#[test]
+fn fonts_are_parsed_and_conflicts_refused_before_any_storage_is_created() {
+    let temp = Temp::new("varta-shell-binary-test");
+    let storage = temp.storage();
+    // A file that is bounded and nonempty but not a font: the text shaper
+    // refuses it before the probe's KV storage would be created.
+    let artifact = packaged_probe(&temp);
+    let malformed = temp.path("malformed.ttf");
+    std::fs::write(&malformed, b"bounded, nonempty and not a font").unwrap();
+    let run = |artifact: &Path, font: &Path| {
+        shell()
+            .arg(artifact)
+            .arg("--font")
+            .arg(font)
+            .arg("Fixture")
+            .arg("--data-dir")
+            .arg(&storage)
+            .output()
+            .unwrap()
+    };
+    let output = run(&artifact, &malformed);
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).starts_with(&format!("{SHELL_LABEL}fonts: ")),
+        "{output:?}"
+    );
+    assert!(!storage.exists());
+    // An artifact that ships its fonts refuses `--font`.
+    let fonts = temp.path("fonts.wasm");
+    let built = view_probe();
+    built
+        .artifact
+        .write_wasm_with(&fonts, &built.resources)
+        .unwrap();
+    let face = temp.path("face.ttf");
+    std::fs::write(&face, &built.resources.fonts()[0].data).unwrap();
+    let output = run(&fonts, &face);
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("ships its own fonts"),
+        "{output:?}"
+    );
+    assert!(!storage.exists());
 }
 
 #[test]

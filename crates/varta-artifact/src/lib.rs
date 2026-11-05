@@ -9,10 +9,25 @@ use varta_common::{Manifest, abi};
 use varta_common::{Result, VartaError};
 
 mod frames;
+mod resources;
+
+pub use resources::{
+    FONT_WEIGHT_STEP, FaceError, FontFace, FontStyle, GenericFamily, MAX_FAMILY_BYTES,
+    MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES, MAX_FONT_WEIGHT,
+    MAX_RESOURCE_SECTION_BYTES, MIN_FONT_WEIGHT, NORMAL_FONT_WEIGHT, RESOURCE_MAGIC,
+    RESOURCE_VERSION, ResourceError, Resources,
+};
 
 const MAGIC: &[u8; 8] = b"VARTA3\0\0";
-const FORMAT_VERSION: u32 = 1;
-/// The footer's reserved word, zero in format version 1.
+/// Container format 1: Wasm and manifest, no resource section.
+const FORMAT_VERSION: u32 = varta_common::launcher::CONTAINER_FORMAT;
+/// Container format 2: Wasm, manifest and a resource section, whose
+/// little-endian `u64` length precedes the fixed footer. The runtime
+/// companion advertises the formats it reads (launcher protocol 3).
+const RESOURCE_FORMAT_VERSION: u32 = varta_common::launcher::RESOURCE_CONTAINER_FORMAT;
+/// The bare form's resource sidecar beside `app.wasm`: `app.resources`.
+pub const RESOURCE_SIDECAR_EXTENSION: &str = "resources";
+/// The footer's reserved word, zero in formats 1 and 2.
 const RESERVED: u32 = 0;
 /// Footer fields in order: the little-endian `u64` Wasm and manifest
 /// lengths, the `u32` format version, the reserved `u32`, then the magic.
@@ -38,6 +53,13 @@ pub struct Artifact {
     pub manifest: Manifest,
 }
 
+/// An artifact with its validated resource section (empty when it ships
+/// none, as every artifact older than the section).
+pub struct PackagedArtifact {
+    pub artifact: Artifact,
+    pub resources: Resources,
+}
+
 impl Artifact {
     /// Validate the bounded format and matching manifest/code ABI before using
     /// requests, including for artifacts constructed directly by an embedder.
@@ -46,7 +68,18 @@ impl Artifact {
         self.validate_payload()?;
         self.manifest.grants()
     }
+    /// Read and validate an artifact, including its resource section (which
+    /// is then dropped): a section that is malformed, tampered with or
+    /// packaged with another payload fails here, as in [`Self::read_packaged`].
     pub fn read(path: &Path) -> Result<Self> {
+        Self::read_packaged(path).map(|packaged| packaged.artifact)
+    }
+
+    /// Read and validate an artifact and its resource section: a bare Wasm
+    /// with its sidecar manifest and optional sidecar `*.resources`, or a
+    /// container of format 1 (no resources) or 2 (with resources). Unknown
+    /// container and section versions are refused.
+    pub fn read_packaged(path: &Path) -> Result<PackagedArtifact> {
         let mut file = File::open(path)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() {
@@ -76,7 +109,20 @@ impl Artifact {
             };
             let artifact = Self { wasm, manifest };
             artifact.validate_abi()?;
-            return Ok(artifact);
+            let resources = match read_bounded(
+                &path.with_extension(RESOURCE_SIDECAR_EXTENSION),
+                MAX_RESOURCE_SECTION_BYTES,
+            ) {
+                Ok(bytes) => Resources::decode(&bytes, &artifact.wasm)?,
+                Err(VartaError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                    Resources::default()
+                }
+                Err(error) => return Err(error),
+            };
+            return Ok(PackagedArtifact {
+                artifact,
+                resources,
+            });
         }
         Self::container(&mut file, size)
     }
@@ -99,17 +145,18 @@ impl Artifact {
         if &magic != MAGIC {
             return Ok(None);
         }
-        Self::container(&mut file, size).map(Some)
+        Self::container(&mut file, size).map(|packaged| Some(packaged.artifact))
     }
-    fn container(file: &mut File, size: u64) -> Result<Self> {
+    fn container(file: &mut File, size: u64) -> Result<PackagedArtifact> {
         let footer_start = size
             .checked_sub(FOOTER_BYTES as u64)
             .ok_or_else(|| invalid("missing container footer"))?;
         file.seek(SeekFrom::Start(footer_start))?;
         let mut footer = [0u8; FOOTER_BYTES];
         file.read_exact(&mut footer)?;
+        let version = read_u32(&footer[VERSION_AT..RESERVED_AT])?;
         if &footer[MAGIC_AT..] != MAGIC
-            || footer[VERSION_AT..RESERVED_AT] != FORMAT_VERSION.to_le_bytes()
+            || !varta_common::launcher::CONTAINER_FORMATS.contains(&version)
             || footer[RESERVED_AT..MAGIC_AT] != RESERVED.to_le_bytes()
         {
             return Err(invalid(
@@ -125,8 +172,24 @@ impl Artifact {
         {
             return Err(invalid("invalid container lengths"));
         }
-        let start = footer_start
-            .checked_sub(manifest_len)
+        let (payload_end, resources_len) = if version == RESOURCE_FORMAT_VERSION {
+            let length_start = footer_start
+                .checked_sub(LENGTH_BYTES as u64)
+                .ok_or_else(|| invalid("container lengths exceed file size"))?;
+            file.seek(SeekFrom::Start(length_start))?;
+            let mut length = [0u8; LENGTH_BYTES];
+            file.read_exact(&mut length)?;
+            let resources_len = read_u64(&length)?;
+            if resources_len == 0 || resources_len > MAX_RESOURCE_SECTION_BYTES as u64 {
+                return Err(invalid("invalid container lengths"));
+            }
+            (length_start, resources_len)
+        } else {
+            (footer_start, 0)
+        };
+        let start = payload_end
+            .checked_sub(resources_len)
+            .and_then(|v| v.checked_sub(manifest_len))
             .and_then(|v| v.checked_sub(wasm_len))
             .ok_or_else(|| invalid("container lengths exceed file size"))?;
         file.seek(SeekFrom::Start(start))?;
@@ -135,6 +198,9 @@ impl Artifact {
         file.read_exact(&mut wasm)?;
         let mut manifest = vec![0u8; manifest_len as usize];
         file.read_exact(&mut manifest)?;
+        // Capped above by the section limit.
+        let mut section = vec![0u8; resources_len as usize];
+        file.read_exact(&mut section)?;
         if !wasm.starts_with(abi::WASM_HEADER) {
             return Err(invalid("container must contain portable Wasm"));
         }
@@ -143,7 +209,15 @@ impl Artifact {
             manifest: Manifest::parse(&manifest)?,
         };
         artifact.validate_abi()?;
-        Ok(artifact)
+        let resources = if section.is_empty() {
+            Resources::default()
+        } else {
+            Resources::decode(&section, &artifact.wasm)?
+        };
+        Ok(PackagedArtifact {
+            artifact,
+            resources,
+        })
     }
 
     fn validate_payload(&self) -> Result<()> {
@@ -166,9 +240,22 @@ impl Artifact {
         frames::validate(&self.wasm)
     }
 
+    /// Write the bare form without resources (removing a stale
+    /// `*.resources` sidecar), as [`Self::write_wasm_with`].
     pub fn write_wasm(&self, path: &Path) -> Result<()> {
+        self.write_wasm_with(path, &Resources::default())
+    }
+
+    /// Write the bare form: the Wasm, its sidecar manifest and, when the
+    /// artifact ships resources, the sidecar resource section bound to this
+    /// Wasm; otherwise an existing sidecar section is removed, so no stale
+    /// section survives a rebuild. Each file is replaced atomically; an
+    /// interrupted write can leave a section bound to another payload, which
+    /// readers refuse.
+    pub fn write_wasm_with(&self, path: &Path, resources: &Resources) -> Result<()> {
         self.validate_payload()?;
         let manifest = self.manifest.to_bytes()?;
+        let section = resources.encode(&self.wasm);
         atomic_write(path, |file| {
             file.write_all(&self.wasm)?;
             Ok(())
@@ -176,23 +263,54 @@ impl Artifact {
         atomic_write(&path.with_extension("manifest.json"), |file| {
             file.write_all(&manifest)?;
             Ok(())
-        })
+        })?;
+        let sidecar = path.with_extension(RESOURCE_SIDECAR_EXTENSION);
+        match section {
+            Some(section) => atomic_write(&sidecar, |file| {
+                file.write_all(&section)?;
+                Ok(())
+            }),
+            None => match fs::remove_file(&sidecar) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(()),
+            },
+        }
     }
 
     /// Serialize the container around a trusted native prefix. This format-level
     /// API does not execute/verify the prefix; project builds verify a dedicated
     /// runtime companion before calling it.
     pub fn write_executable(&self, path: &Path, launcher: &Path) -> Result<()> {
+        self.write_executable_with(path, launcher, &Resources::default())
+    }
+
+    /// Serialize the container with a resource section: format 2 when the
+    /// artifact ships resources, otherwise the unchanged format 1 bytes.
+    pub fn write_executable_with(
+        &self,
+        path: &Path,
+        launcher: &Path,
+        resources: &Resources,
+    ) -> Result<()> {
         self.validate_payload()?;
         let manifest = self.manifest.to_bytes()?;
+        let section = resources.encode(&self.wasm);
         atomic_write(path, |file| {
             let mut source = File::open(launcher)?;
             std::io::copy(&mut source, file)?;
             file.write_all(&self.wasm)?;
             file.write_all(&manifest)?;
+            let version = match &section {
+                Some(section) => {
+                    file.write_all(section)?;
+                    file.write_all(&(section.len() as u64).to_le_bytes())?;
+                    RESOURCE_FORMAT_VERSION
+                }
+                None => FORMAT_VERSION,
+            };
             file.write_all(&(self.wasm.len() as u64).to_le_bytes())?;
             file.write_all(&(manifest.len() as u64).to_le_bytes())?;
-            file.write_all(&FORMAT_VERSION.to_le_bytes())?;
+            file.write_all(&version.to_le_bytes())?;
             file.write_all(&RESERVED.to_le_bytes())?;
             file.write_all(MAGIC)?;
             #[cfg(unix)]
@@ -224,6 +342,12 @@ fn host_abi(wasm: &[u8]) -> Result<u32> {
 
 fn invalid(message: &str) -> VartaError {
     VartaError::InvalidArtifact(message.into())
+}
+fn read_u32(bytes: &[u8]) -> Result<u32> {
+    let bytes = bytes
+        .try_into()
+        .map_err(|_| invalid("invalid version field"))?;
+    Ok(u32::from_le_bytes(bytes))
 }
 fn read_u64(bytes: &[u8]) -> Result<u64> {
     let bytes = bytes
@@ -366,6 +490,7 @@ mod tests {
         for (offset, value) in [
             (0, u64::MAX.to_le_bytes().to_vec()),
             (16, 2u32.to_le_bytes().to_vec()),
+            (16, 3u32.to_le_bytes().to_vec()),
             (20, 1u32.to_le_bytes().to_vec()),
         ] {
             let mut invalid = bytes.clone();
@@ -396,5 +521,119 @@ mod tests {
         assert!(Artifact::read(&path).is_err());
         assert!(read_bounded(&path, empty().wasm.len() - 1).is_err());
         assert!(read_bounded(&temp.0, MAX_MANIFEST_BYTES).is_err());
+    }
+
+    fn fonts() -> Resources {
+        Resources::new(vec![
+            FontFace {
+                family: "Varta Fixture 400".into(),
+                weight: NORMAL_FONT_WEIGHT,
+                style: FontStyle::Normal,
+                generics: vec![GenericFamily::SansSerif],
+                data: include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf").to_vec(),
+            },
+            FontFace {
+                family: "Varta Fixture 400".into(),
+                weight: NORMAL_FONT_WEIGHT,
+                style: FontStyle::Italic,
+                generics: vec![GenericFamily::SansSerif],
+                data: include_bytes!("../../varta-view/tests/fixtures/italic-900.ttf").to_vec(),
+            },
+        ])
+        .unwrap()
+    }
+
+    #[test]
+    fn containers_carry_a_resource_section_and_keep_format_one_without_one() {
+        let temp = Temp::new();
+        let prefix = temp.0.join("prefix");
+        fs::write(&prefix, b"native prefix").unwrap();
+        let plain = temp.0.join("plain");
+        empty().write_executable(&plain, &prefix).unwrap();
+        let with_fonts = temp.0.join("fonts");
+        empty()
+            .write_executable_with(&with_fonts, &prefix, &fonts())
+            .unwrap();
+        // Without resources the bytes stay format 1.
+        let bytes = fs::read(&plain).unwrap();
+        assert_eq!(
+            bytes[bytes.len() - FOOTER_BYTES + VERSION_AT..][..WORD_BYTES],
+            FORMAT_VERSION.to_le_bytes()
+        );
+        assert!(
+            Artifact::read_packaged(&plain)
+                .unwrap()
+                .resources
+                .is_empty()
+        );
+        let packaged = Artifact::read_packaged(&with_fonts).unwrap();
+        assert_eq!(packaged.resources, fonts());
+        assert_eq!(packaged.artifact.wasm, empty().wasm);
+        assert_eq!(
+            Artifact::embedded(&with_fonts).unwrap().unwrap().wasm,
+            empty().wasm
+        );
+        let bytes = fs::read(&with_fonts).unwrap();
+        let section = fonts().encode(&empty().wasm).unwrap();
+        assert_eq!(
+            bytes.len(),
+            fs::metadata(&prefix).unwrap().len() as usize
+                + empty().wasm.len()
+                + empty().manifest.to_bytes().unwrap().len()
+                + section.len()
+                + LENGTH_BYTES
+                + FOOTER_BYTES
+        );
+        // A tampered section, an unknown version and a bad section length
+        // are refused by both readers before anything runs.
+        let footer = bytes.len() - FOOTER_BYTES;
+        let length_at = footer - LENGTH_BYTES;
+        for (at, value) in [
+            (length_at - 1, vec![bytes[length_at - 1] ^ 1]),
+            (footer + VERSION_AT, 3u32.to_le_bytes().to_vec()),
+            (footer + VERSION_AT, FORMAT_VERSION.to_le_bytes().to_vec()),
+            (length_at, 0u64.to_le_bytes().to_vec()),
+            (
+                length_at,
+                (MAX_RESOURCE_SECTION_BYTES as u64 + 1)
+                    .to_le_bytes()
+                    .to_vec(),
+            ),
+            (length_at, u64::MAX.to_le_bytes().to_vec()),
+        ] {
+            let mut invalid = bytes.clone();
+            invalid[at..at + value.len()].copy_from_slice(&value);
+            fs::write(&with_fonts, invalid).unwrap();
+            assert!(Artifact::read(&with_fonts).is_err(), "{at}");
+            assert!(Artifact::embedded(&with_fonts).is_err(), "{at}");
+        }
+    }
+
+    #[test]
+    fn bare_artifacts_carry_a_bound_sidecar_section_and_drop_stale_ones() {
+        let temp = Temp::new();
+        let path = temp.0.join("app.wasm");
+        let sidecar = path.with_extension(RESOURCE_SIDECAR_EXTENSION);
+        empty().write_wasm_with(&path, &fonts()).unwrap();
+        assert_eq!(Artifact::read_packaged(&path).unwrap().resources, fonts());
+        // A section packaged with another payload never travels to this one.
+        let mut other = empty();
+        other.wasm.extend([0, 1, 0]);
+        let foreign = fonts().encode(&other.wasm).unwrap();
+        fs::write(&sidecar, &foreign).unwrap();
+        assert!(Artifact::read_packaged(&path).is_err());
+        assert!(Artifact::read(&path).is_err());
+        let mut tampered = fonts().encode(&empty().wasm).unwrap();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 1;
+        fs::write(&sidecar, &tampered).unwrap();
+        assert!(Artifact::read(&path).is_err());
+        // Rebuilding without resources removes the sidecar.
+        empty().write_wasm(&path).unwrap();
+        assert!(!sidecar.exists());
+        assert!(Artifact::read_packaged(&path).unwrap().resources.is_empty());
+        // A missing sidecar is no resources; an unreadable one is an error.
+        fs::create_dir(&sidecar).unwrap();
+        assert!(Artifact::read(&path).is_err());
     }
 }

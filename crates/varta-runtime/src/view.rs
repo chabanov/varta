@@ -51,9 +51,14 @@ impl Session {
         }
     }
     /// The view of an application instance on a host with its own prompt
-    /// seam (or none).
-    pub(crate) fn hosted() -> Self {
+    /// seam (or none) and, when given, its real clipboard and system
+    /// browser for granted guest effects.
+    pub(crate) fn hosted(effects: Option<std::sync::Arc<dyn varta_view::PlatformEffects>>) -> Self {
         Self {
+            view: match effects {
+                Some(effects) => View::default().with_platform_effects(effects),
+                None => View::default(),
+            },
             hosted: true,
             ..Self::default()
         }
