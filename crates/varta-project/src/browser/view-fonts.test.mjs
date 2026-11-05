@@ -42,3 +42,18 @@ test('generic aliases and face descriptors are refused unless exact',()=>{
   assert.throws(()=>createFontNamespace('bad',['A'],{defaultFamily:'B'}));
   for(const face of [{weight:0,style:'normal'},{weight:1001,style:'normal'},{weight:400.5,style:'normal'},{weight:400,style:'oblique'}])assert.throws(()=>faceDescriptors(face),JSON.stringify(face));
 });
+test('packaged base rules map user-agent monospace elements, make controls inherit and turn synthesis off',async()=>{
+  const {registry}=await import('../../../varta-common/browser/registry.mjs');
+  const D=registry.view.defaults;
+  assert.deepEqual(D.monospaceTags,['pre','code']);assert.deepEqual(D.controlFontTags,['button','input','textarea','select']);
+  const faces=[{key:'Sans',weight:400,style:'normal',generics:[]},{key:'Mono',weight:400,style:'normal',generics:['monospace']}];
+  const n=createFontNamespace('rules',...packagedFamilies(faces));
+  assert.equal(n.rules(D),`${D.rootSelector} { font-family: ${n.family('Sans')}; font-synthesis: none; } :where(pre, code) { font-family: ${n.family('Mono')}; } :where(button, input, textarea, select) { font-family: inherit; font-synthesis: inherit; }`);
+  // Without a monospace alias the user-agent monospace elements keep the
+  // browser's generic (the documented undeclared-generic divergence).
+  const plain=createFontNamespace('rules',...packagedFamilies([faces[0]]));
+  assert.equal(plain.rules(D),`${D.rootSelector} { font-family: ${plain.family('Sans')}; font-synthesis: none; } :where(button, input, textarea, select) { font-family: inherit; font-synthesis: inherit; }`);
+  // browser.fonts faces and the empty namespace add no rule.
+  assert.equal(createFontNamespace('rules',...packagedFamilies([{key:'Brand'}])).rules(D),'');
+  assert.equal(createFontNamespace('rules').rules(D),'');
+});

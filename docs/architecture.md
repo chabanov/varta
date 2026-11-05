@@ -14901,14 +14901,34 @@ families, in canonical order. The loader verifies every face's bytes and
 registers each as a `FontFace` with its declared `weight` and `style` before
 the view renderer is created, so before the first view commit. The applier's
 private font namespace maps a face's declared generic families (an unquoted
-`monospace`, say) to that family's private name, and the view root's base
-style names the first family, so text without a `font-family` uses the
-default family as in the native shell. A configuration may not declare both
-`fonts` and `browser.fonts` (refused when the configuration is validated);
-`browser.fonts` keeps its meaning (one normal face per family, generic
-families passed to the browser, no default family). A generic family that no
-face declares still resolves to the browser's own fonts in the browser and is
-refused by the native shaper; that divergence predates the section.
+`monospace`, say) to that family's private name, and the applier's base sheet
+(`createFontNamespace(...).rules`) gives the view root the first family and
+`font-synthesis: none`, gives the user-agent monospace elements
+(`varta_common::view::fonts::UA_MONOSPACE_TAGS`, `pre` and `code`) the family
+that declares `monospace`, and makes form controls
+(`CONTROL_FONT_TAGS`) inherit their family instead of Chrome's control font.
+These rules have zero specificity (or are the root's own) and come first, so
+every guest rule and inline style wins as over the user-agent sheet. Text
+without a `font-family` therefore uses the default family as in the native
+shell. Once the browser sees the private family instead of the generic
+`monospace`, Chrome no longer applies its fixed-font size (13/16 of a
+non-absolute size); the shell loads a resource section through
+`TextMeasurer::new_with_packaged_fonts`, which sizes a mapped `monospace` as
+that named family too, so `pre`, `code` and a guest-set `monospace` have the
+same geometry with absolute, medium and inherited relative sizes.
+`new_with_fonts` keeps the ratio for a host that maps `monospace` as a
+stand-in for the browser's own generic font. A configuration may not declare
+both `fonts` and `browser.fonts` (refused when the configuration is
+validated); `browser.fonts` keeps its meaning (one normal face per family,
+generic families passed to the browser, no default family, no base rules).
+Remaining differences: a generic family that no face declares (including the
+user-agent `monospace` without a `monospace` face) still resolves to the
+browser's own fonts in the browser and is refused by the native shaper, a
+divergence that predates the section; a run whose weight or style has no
+face (a bold run in a family without a bold face) is refused at native paint,
+while the browser, with synthesis off, draws the nearest face unemboldened and
+upright; and a control's font size stays Chrome's control size in the
+browser and the inherited size natively unless the guest sets one.
 
 Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserialization
 are removed. Rebuild existing native artifacts. Native launchers currently compile
@@ -15043,9 +15063,11 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   process group, with null standard streams) and the opening succeeds once it
   is spawned: view input handling never waits for it, because some launchers
   (`xdg-open` on some Linux desktops) stay in the foreground until the browser
-  exits. A reaper thread collects its exit status, which is not observed. A
-  clipboard error or a launcher that cannot be started reports
-  `refused_by_platform`. With a sink the snapshot records no clipboard text or
+  exits. No thread waits for a launcher: the shell keeps at most
+  `MAX_RUNNING_LAUNCHERS` started launchers, collects the exit of finished ones
+  (not observed) before each opening, and refuses an opening while that many
+  still run. A clipboard error, a launcher that cannot be started or that
+  bound reports `refused_by_platform`. With a sink the snapshot records no clipboard text or
   opened URL. The Linux launcher and clipboard paths are not exercised by the
   tests or acceptance runs.
 - **Storage.** A root is pinned (`FileRoots::open`) to the host-owned directory

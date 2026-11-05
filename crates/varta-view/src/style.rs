@@ -175,6 +175,17 @@ pub(crate) fn sole_monospace(family: &str) -> bool {
     family.trim().eq_ignore_ascii_case(UA_MONOSPACE_FAMILY)
 }
 
+/// The host's medium font size and whether the generic `monospace` keeps
+/// Chrome's fixed-font size where the family switches to or from it
+/// ([`FontSize::switch_family`]). A generic `monospace` that a packaged face
+/// names is an ordinary family in the official browser host, so it does not.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct FontBase {
+    /// The host's medium size in CSS pixels.
+    pub px: f32,
+    pub fixed_monospace: bool,
+}
+
 /// Blink's computed font-size state along an element path, which decides how
 /// the size changes where the generic family switches to or from monospace.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -436,6 +447,22 @@ impl CascadeIndex {
 mod ua_tests {
     use super::*;
     use varta_common::view::Tag;
+    /// The browser host maps exactly the native monospace rows to the
+    /// packaged monospace family and makes exactly the native control rows
+    /// inherit their family, from these shared lists.
+    #[test]
+    fn monospace_and_control_rows_are_the_shared_browser_lists() {
+        use varta_common::view::fonts::{CONTROL_FONT_TAGS, UA_MONOSPACE_TAGS};
+        let rows = |keep: fn(&UaDefaults) -> bool| {
+            NATIVE_UA_DEFAULTS
+                .iter()
+                .filter(|row| keep(row))
+                .map(|row| row.tag)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rows(|row| row.monospace), UA_MONOSPACE_TAGS);
+        assert_eq!(rows(|row| row.text_align.is_some()), CONTROL_FONT_TAGS);
+    }
     #[test]
     fn native_ua_table_has_one_row_per_tag_and_browser_values() {
         let mut tags: Vec<_> = NATIVE_UA_DEFAULTS.iter().map(|row| row.tag).collect();

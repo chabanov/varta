@@ -3230,3 +3230,21 @@ The shell's browser launcher is detached and succeeds on spawn. The font
 limits moved to `varta_common::view::fonts`, a repeated generic family in one
 face is `ResourceError::DuplicateGeneric`, and a leftover debug print in a
 runtime view test was removed.
+
+Second review fixes (same wave): the applier's base sheet, from
+`createFontNamespace(...).rules`, maps the user-agent `monospace` of `pre`
+and `code` to the declaring packaged family, makes form controls inherit
+their family and sets `font-synthesis: none`; the shell loads a resource
+section through `TextMeasurer::new_with_packaged_fonts`, which sizes a mapped
+`monospace` as that family (Chrome drops its 13/16 fixed-font ratio once the
+family is rewritten). The registry exports `UA_MONOSPACE_TAGS` and
+`CONTROL_FONT_TAGS`, which a view test ties to the native user-agent rows.
+`test-browser-fonts.mjs` adds `code`/`pre`/guest-set `monospace` at absolute,
+medium and inherited sizes, control families and synthesis (a mutation without
+the rules fails at `ua-code`, 48.17 against 72), and `native_font_probe` adds
+five such cases that pass `test-native-inline.mjs` at 1, 1.25 and 2 (2356
+checks each); without the packaged measurer `ua-medium` fails. The shell keeps
+at most `MAX_RUNNING_LAUNCHERS` launchers instead of a reaper thread per
+opening, the prototype `varta-web-host` refuses artifacts with a resource
+section, and the sfnt record offsets and the renderer's family/alias limits
+are named. The manual trusted-gesture run is still open.

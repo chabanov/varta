@@ -10994,6 +10994,12 @@ export const registry = freeze({
       "<track>": "<length-percentage> | <flex> | auto | minmax(<track>, <track>) | repeat(<integer>, <track>+)"
     },
     "defaults": {
+      "controlFontTags": [
+        "button",
+        "input",
+        "textarea",
+        "select"
+      ],
       "dialogBackdrop": [
         "rgba(0, 0, 0, 0.4)",
         "rgba(0, 0, 0, 0.6)"
@@ -11005,6 +11011,10 @@ export const registry = freeze({
       "dialogText": [
         "#111111",
         "#eeeeee"
+      ],
+      "monospaceTags": [
+        "pre",
+        "code"
       ],
       "rootSelector": "[data-l0-root]",
       "rootStyle": "display: block; height: 100%"

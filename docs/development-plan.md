@@ -4344,12 +4344,22 @@ first family as the default), `fonts` and `browser.fonts` are mutually
 exclusive, the oracle adds the `monospace` alias and default-family cases
 through the applier's own font namespace, `varta build --single` with fonts
 refuses a companion without container format 2 (launcher protocol 3), and the
-browser launcher is started detached (Linux not exercised). Still open: the
-first-run grant list and prompts with stored decisions (so `https://*` links
-are denied), font loading in the prototype `varta-web-host`, real-font
-typography acceptance beyond the synthetic fixtures, manifest `app` metadata,
-OS bundles, prebuilt per-target shells, the code cache and UARP console
-acceptance in the shell.
+browser launcher is started detached (Linux not exercised). After the second
+review the two renderers agree on every admitted way to reach a packaged
+generic: the browser base sheet maps the user-agent `monospace` of `pre` and
+`code` to the declaring family, controls inherit their family and synthesis
+is off, and the shell's packaged measurer
+(`TextMeasurer::new_with_packaged_fonts`) sizes a mapped `monospace` as that
+named family, without the 13/16 fixed-font ratio Chrome no longer applies;
+the bundle and native oracles add `code`/`pre` at absolute, medium and
+inherited sizes, and the shell keeps at most `MAX_RUNNING_LAUNCHERS` browser
+launchers instead of one reaper thread per opening. The prototype
+`varta-web-host` refuses artifacts with a resource section (sidecar or
+container format 2) instead of loading fonts. Still open: the manual
+trusted-gesture run above, the first-run grant list and prompts with stored
+decisions (so `https://*` links are denied), real-font typography acceptance
+beyond the synthetic fixtures, manifest `app` metadata, OS bundles, prebuilt
+per-target shells, the code cache and UARP console acceptance in the shell.
 
 #### Browser security model and honest guarantees
 

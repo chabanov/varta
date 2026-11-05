@@ -14,7 +14,9 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
-use varta_common::view::fonts::{MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES};
+use varta_common::view::fonts::{
+    MAX_FONT_ALIASES, MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES, MAX_FONT_FAMILY_BYTES,
+};
 
 // Native shaping requests: completed output, intermediate scratch, charged
 // operations and reusable scratch. Independent from source/paint allowances.
@@ -72,6 +74,8 @@ pub struct TextMeasurer {
     fonts: FontContext,
     layout: LayoutContext<u32>,
     entries: Vec<FontEntry>,
+    /// Generic aliases name packaged families ([`Self::new_with_packaged_fonts`]).
+    packaged: bool,
     view_shaping: Arc<ViewShapingState>,
     #[cfg(test)]
     shaping_builds: usize,
@@ -290,6 +294,16 @@ impl TextMeasurer {
         (!resolved.is_empty()).then_some(resolved)
     }
 
+    /// Whether the generic `monospace` keeps the browser's fixed-font size
+    /// where text switches to or from it ([`crate::style::FontBase`]). It does
+    /// not once a packaged face maps it: the generic then names that family.
+    pub(crate) fn fixed_monospace(&self) -> bool {
+        !(self.packaged
+            && self
+                .resolve_families(Some(crate::style::UA_MONOSPACE_FAMILY))
+                .is_some())
+    }
+
     /// Load one font family from bytes. No OS font lookup is enabled.
     pub fn new(font: Vec<u8>, family: &str) -> Result<Self, TextMeasureError> {
         Self::new_with_aliases(font, family, &[])
@@ -306,6 +320,20 @@ impl TextMeasurer {
             family: family.into(),
             aliases: aliases.iter().map(|value| (*value).into()).collect(),
         }])
+    }
+
+    /// Load an application's packaged faces (its artifact resource section)
+    /// as [`Self::new_with_fonts`] does. A generic family a face declares
+    /// names that face's family, exactly as the official browser host
+    /// rewrites the generic to the packaged family before the browser sees
+    /// it: the generic `monospace` (guest-set or the user-agent family of
+    /// `pre` and `code`) is then sized as that named family, without the
+    /// browser's fixed-font size ratio. With [`Self::new_with_fonts`] a mapped
+    /// generic stands in for the browser's own generic font and keeps it.
+    pub fn new_with_packaged_fonts(fonts: Vec<TextFont>) -> Result<Self, TextMeasureError> {
+        let mut measurer = Self::new_with_fonts(fonts)?;
+        measurer.packaged = true;
+        Ok(measurer)
     }
 
     /// Load a bounded collection of explicit fonts. Alias collisions are rejected.
@@ -328,8 +356,8 @@ impl TextMeasurer {
                 || font.data.len() > MAX_FONT_FACE_BYTES
                 || bytes > MAX_FONT_BYTES
                 || font.family.is_empty()
-                || font.family.len() > 256
-                || font.aliases.len() > 16
+                || font.family.len() > MAX_FONT_FAMILY_BYTES
+                || font.aliases.len() > MAX_FONT_ALIASES
             {
                 return Err(TextMeasureError::Font);
             }
@@ -337,7 +365,10 @@ impl TextMeasurer {
                 .aliases
                 .iter()
                 .map(|alias| {
-                    if alias.is_empty() || alias.len() > 256 || alias.trim_end().ends_with(',') {
+                    if alias.is_empty()
+                        || alias.len() > MAX_FONT_FAMILY_BYTES
+                        || alias.trim_end().ends_with(',')
+                    {
                         return Err(TextMeasureError::Font);
                     }
                     let mut parsed = FontFamilyName::parse_css_list(alias);
@@ -408,6 +439,7 @@ impl TextMeasurer {
                 layout
             },
             entries,
+            packaged: false,
             view_shaping: Arc::new(ViewShapingState {
                 remaining: AtomicUsize::new(NO_VIEW_REQUEST),
                 inline_remaining: AtomicUsize::new(NO_VIEW_REQUEST),

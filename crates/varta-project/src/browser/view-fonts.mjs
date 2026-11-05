@@ -1,6 +1,7 @@
 import { tokenizeValue } from './view-css.mjs';
 
-const generic = new Set(['serif', 'sans-serif', 'monospace', 'system-ui']);
+const monospaceFamily = 'monospace';
+const generic = new Set(['serif', 'sans-serif', monospaceFamily, 'system-ui']);
 const wide = new Set(['inherit', 'initial', 'unset', 'revert', 'revert-layer']);
 const faceStyles = new Set(['normal', 'italic']);
 // The CSS font-weight number range a FontFace descriptor admits.
@@ -65,7 +66,26 @@ export function createFontNamespace(prefix, families = [], { aliases = new Map()
     }
   };
   const fallback = defaultFamily === undefined ? undefined : family(defaultFamily);
-  return { family, variable, value, sheet, defaultFamily: fallback };
+  /** Base-sheet font rules for the registry's view `defaults`, so every way
+   * text reaches a family resolves as in the native shell. Only packaged
+   * faces (a default family) add rules: the view root names the default
+   * family and turns synthesized bold and italic off (the native renderer
+   * never synthesizes); the user-agent monospace elements take the family
+   * that declares `monospace` (Chrome's UA sheet would give them its own
+   * generic font), and form controls inherit their family instead of
+   * Chrome's control font. A mapped generic is an ordinary family name in
+   * Chrome, so its fixed-font size ratio no longer applies, which the
+   * native packaged measurer models too. Every rule is zero-specificity or
+   * the root's own and comes first, so any guest rule or inline style wins
+   * as it wins over the user-agent sheet. */
+  const rules = ({ rootSelector, monospaceTags, controlFontTags }) => {
+    if (fallback === undefined) return '';
+    const mono = generics.get(monospaceFamily);
+    return `${rootSelector} { font-family: ${fallback}; font-synthesis: none; }`
+      + (mono === undefined ? '' : ` :where(${monospaceTags.join(', ')}) { font-family: ${mono}; }`)
+      + ` :where(${controlFontTags.join(', ')}) { font-family: inherit; font-synthesis: inherit; }`;
+  };
+  return { family, variable, value, sheet, rules, defaultFamily: fallback };
 }
 
 /** Namespace arguments for font descriptors in the resource section's

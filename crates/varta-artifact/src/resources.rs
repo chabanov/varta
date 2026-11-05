@@ -33,6 +33,12 @@ pub const RESOURCE_VERSION: u32 = 1;
 pub use varta_common::view::fonts::{MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES};
 /// The longest family name, as for browser package fonts.
 pub const MAX_FAMILY_BYTES: usize = 64;
+// Every admitted face registers in the native shaper: its family name and
+// its generic families stay within the renderer's name and alias bounds.
+const _: () = assert!(
+    MAX_FAMILY_BYTES <= varta_common::view::fonts::MAX_FONT_FAMILY_BYTES
+        && GenericFamily::ALL.len() <= varta_common::view::fonts::MAX_FONT_ALIASES
+);
 /// Lightest and heaviest admitted weights, and their step.
 pub const MIN_FONT_WEIGHT: u16 = 100;
 pub const MAX_FONT_WEIGHT: u16 = 900;

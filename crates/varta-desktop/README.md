@@ -53,9 +53,11 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
 - **Fonts.** The faces of the artifact's resource section (the
   configuration's `fonts` list, packaged by `varta build`; see the
   [resource section](../../docs/architecture.md#resource-section-artifact-fonts)),
-  loaded through `shell::FontSet` and `TextMeasurer::new_with_fonts` in the
-  section's canonical order, with each family's declared generic families as
-  aliases. They are parsed before storage is created. Bold and italic text
+  loaded through `shell::FontSet` and `TextMeasurer::new_with_packaged_fonts`
+  in the section's canonical order, with each family's declared generic
+  families as aliases that name the family (a mapped `monospace`, including
+  the user-agent family of `pre` and `code`, is sized as that family, as in
+  the browser build). They are parsed before storage is created. Bold and italic text
   selects the packaged faces by the weight and style their own tables state;
   synthesis stays refused at paint. `--font PATH FAMILY` (nonempty, at most
   `shell::MAX_FONT_BYTES`) is one explicit face for an artifact without
@@ -64,7 +66,8 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
   the system clipboard, and a trusted activation of a granted external link
   hands the URL to the system browser (`/usr/bin/open -u` on macOS,
   `/usr/bin/xdg-open` on other Unix hosts, started detached; the opening
-  succeeds once the launcher is spawned and is never awaited), through
+  succeeds once the launcher is spawned and is never awaited, and at most
+  `MAX_RUNNING_LAUNCHERS` launchers may still run), through
   `shell::NativeEffects`. The Linux launcher is not exercised by the tests.
   Denials (`not_allowed`) and non-gesture copies (`invalid_context`) happen
   before any effect; platform failures report `refused_by_platform`. Tests
@@ -99,10 +102,12 @@ The packaged-font Chrome oracle loads the faces of a packaged artifact
 (by default the fixture faces packaged beside an empty module in a
 temporary directory; or the `ARTIFACT` argument, such as the view probe
 built by `varta build`) through `FontSet`, renders bold, italic, monospace,
-generic `monospace`, default-family and mixed lines with the shell's macOS
-glyph rasterizer, and gives Chrome the same face bytes with their weights,
-styles and generic families, which the oracle registers and resolves through
-the browser applier's own font namespace (`view-fonts.mjs`):
+generic `monospace`, default-family and mixed lines, and `code`/`pre` and a
+guest-set `monospace` at absolute, medium and inherited relative sizes, with
+the shell's macOS glyph rasterizer, and gives Chrome the same face bytes with
+their weights, styles and generic families, which the oracle registers and
+resolves through the browser applier's own font namespace and base font
+rules (`view-fonts.mjs`):
 
 ```sh
 cargo run -p varta-desktop --example native_font_probe -- 1.25 [ARTIFACT] > fonts.json

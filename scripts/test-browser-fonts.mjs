@@ -52,21 +52,40 @@ try{
   // with its weight and style, maps the monospace alias and makes the first
   // family the default, as varta-shell does. A synthesized bold or italic of
   // the regular face, or the browser's own monospace, would be 32px wide.
+  // The monospace family is reached by a guest-set family and by the
+  // user-agent family of code and pre, at an absolute, the medium keyword
+  // and an inherited relative size: the native packaged measurer sizes it
+  // as a named family (no 13/16 fixed-font ratio), and so must Chrome.
+  // Controls inherit the family instead of Chrome's control font, and no
+  // run is synthesized (the mono family has no bold face).
   await withBrowserPage(`${base}/view-font-packaged/index.html`,async(call)=>{
     let result;const end=Date.now()+10000;
     do{const r=await call('Runtime.evaluate',{expression:`(()=>{const e=document.querySelector('#varta-output');return{status:e.dataset.status,text:e.textContent,faces:document.fonts.size};})()`,returnByValue:true});result=r.result.value;if(result.status!=='ready')await new Promise(done=>setTimeout(done,20));}while(result.status!=='ready'&&Date.now()<end);
     assert.equal(result.status,'ready',JSON.stringify(result));assert.equal(result.faces,4);
     const golden=JSON.parse(await readFile(join(root,'view-font-packaged.golden.json'),'utf8'));assert.equal(result.text,golden.logs.join('\n'));
-    const {root:document}=await call('DOM.getDocument',{depth:-1,pierce:true}),widths={};
+    const ids=['regular','bold','italic','generic','ua-code','ua-pre','ua-code-medium','generic-medium','pre-inherited','control','field','synthesis'];
+    const {root:document}=await call('DOM.getDocument',{depth:-1,pierce:true}),measured={};
     const visit=async(node)=>{
-      for(let i=0;i<(node.attributes?.length??0);i+=2)if(node.attributes[i]==='id'&&['regular','bold','italic','generic'].includes(node.attributes[i+1])){
+      for(let i=0;i<(node.attributes?.length??0);i+=2)if(node.attributes[i]==='id'&&ids.includes(node.attributes[i+1])){
         const remote=await call('DOM.resolveNode',{nodeId:node.nodeId});
-        const measured=await call('Runtime.callFunctionOn',{objectId:remote.object.objectId,functionDeclaration:`function(){const range=document.createRange();range.selectNodeContents(this);return range.getBoundingClientRect().width;}`,returnByValue:true});
-        widths[node.attributes[i+1]]=measured.result.value;
+        const value=await call('Runtime.callFunctionOn',{objectId:remote.object.objectId,functionDeclaration:`function(){const range=document.createRange(),style=getComputedStyle(this);range.selectNodeContents(this);return{width:range.getBoundingClientRect().width,family:style.fontFamily,size:style.fontSize,synthesis:[style.fontSynthesisWeight,style.fontSynthesisStyle]};}`,returnByValue:true});
+        measured[node.attributes[i+1]]=value.result.value;
       }
       for(const child of [...(node.children??[]),...(node.shadowRoots??[])])await visit(child);
     };await visit(document);
-    assert.deepEqual(widths,{regular:32,bold:72,italic:72,generic:72});
+    assert.deepEqual(Object.keys(measured).sort(),[...ids].sort());
+    // Fixture advances: 0.4em per A in the regular face, 0.9em in the bold,
+    // italic and monospace faces; four As per line; Chrome's medium is 16px
+    // and pre > span { font-size: 150% } inherits it.
+    const A=4,REGULAR=0.4,WIDE=0.9,SIZE=20,MEDIUM=16,INHERITED=1.5,UNIT=1/64;
+    const expected={regular:A*REGULAR*SIZE,bold:A*WIDE*SIZE,italic:A*WIDE*SIZE,generic:A*WIDE*SIZE,'ua-code':A*WIDE*SIZE,'ua-pre':A*WIDE*SIZE,'ua-code-medium':A*WIDE*MEDIUM,'generic-medium':A*WIDE*MEDIUM,'pre-inherited':A*WIDE*MEDIUM*INHERITED,control:A*REGULAR*SIZE,synthesis:A*WIDE*SIZE};
+    for(const [id,width] of Object.entries(expected))assert(Math.abs(measured[id].width-width)<=UNIT,`${id}: ${measured[id].width} != ${width}`);
+    assert.equal(measured['ua-code-medium'].size,`${MEDIUM}px`);assert.equal(measured['pre-inherited'].size,`${MEDIUM*INHERITED}px`);
+    const mono=measured.generic.family,sans=measured.regular.family;
+    assert.match(mono,/^varta_font_/);assert.match(sans,/^varta_font_/);assert.notEqual(mono,sans);
+    for(const id of ['ua-code','ua-pre','ua-code-medium','generic-medium','pre-inherited','synthesis'])assert.equal(measured[id].family,mono,id);
+    for(const id of ['control','field'])assert.equal(measured[id].family,sans,id);
+    for(const id of ids)assert.deepEqual(measured[id].synthesis,['none','none'],id);
   });
   await withBrowserPage(`${base}/__embed`,async(call)=>{
     const result=await call('Runtime.evaluate',{expression:`(async()=>{globalThis.fontApps=[];const bytes=await(await fetch(${JSON.stringify(base+'/view-font-wide/varta-resource-0.ttf')})).arrayBuffer();const ambient=new FontFace('Brand',bytes);await ambient.load();document.fonts.add(ambient);globalThis.ambientFace=ambient;for(const name of ['view-font-ttf','view-font-wide']){const{mount}=await import(${JSON.stringify(base+'/')}+name+'/varta-host.js');const container=document.createElement('div');document.body.append(container);const app=mount({container});fontApps.push(app);await app.ready;}return document.fonts.size;})()`,awaitPromise:true,returnByValue:true});
@@ -96,5 +115,5 @@ try{
     });
   }
   assert(!requests.some(path=>/Brand|woff.*\?/.test(path)),'font-family values must never become fetch URLs');
-  console.log('Packaged fonts passed: TTF/OTF/WOFF/WOFF2 decoding, native usage, direct/quoted/variable families, resource-section faces with weight, style, generic alias and default family, actual text metrics, simultaneous session and ambient-name isolation, cleanup and pre-guest failures');
+  console.log('Packaged fonts passed: TTF/OTF/WOFF/WOFF2 decoding, native usage, direct/quoted/variable families, resource-section faces with weight, style, generic alias (guest-set and user-agent code/pre at absolute, medium and inherited sizes), default family, inherited control family and no synthesis, actual text metrics, simultaneous session and ambient-name isolation, cleanup and pre-guest failures');
 }finally{await new Promise(done=>server.close(done));}

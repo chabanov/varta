@@ -56,7 +56,9 @@ pub(super) fn registry() -> Value {
         "options":v::ListenOption::ALL.iter().map(|option|(option.name(),*option as u32)).collect::<std::collections::BTreeMap<_,_>>(),
         "flags":v::EventFlag::ALL.iter().map(|flag|(flag.name(),*flag as u32)).collect::<std::collections::BTreeMap<_,_>>()});
     let defaults = json!({"rootSelector":v::ROOT_SELECTOR_IN_BROWSER,"rootStyle":v::ROOT_BASE_STYLE,
-        "dialogBackdrop":v::DIALOG_BACKDROP,"dialogBackground":v::DIALOG_BACKGROUND,"dialogText":v::DIALOG_TEXT});
+        "dialogBackdrop":v::DIALOG_BACKDROP,"dialogBackground":v::DIALOG_BACKGROUND,"dialogText":v::DIALOG_TEXT,
+        "monospaceTags":v::fonts::UA_MONOSPACE_TAGS.iter().map(|tag|tag.name()).collect::<Vec<_>>(),
+        "controlFontTags":v::fonts::CONTROL_FONT_TAGS.iter().map(|tag|tag.name()).collect::<Vec<_>>()});
     json!({
         "limits":limits,"wire":wire,"filters":filters,"defaults":defaults,
         "accessibility":{"implicitRoles":v::Tag::ALL.iter().filter_map(|tag|v::accessibility::implicit_role(*tag,"text",false).map(|role|(tag.name(),role))).collect::<std::collections::BTreeMap<_,_>>(),"inputRoles":v::INPUT_TYPES.iter().map(|kind|(*kind,v::accessibility::implicit_role(v::Tag::Input,kind,false).unwrap())).collect::<std::collections::BTreeMap<_,_>>(),"labelable":v::accessibility::LABELABLE.iter().map(|tag|tag.name()).collect::<Vec<_>>(),"nameFromContent":v::accessibility::NAME_FROM_CONTENT},

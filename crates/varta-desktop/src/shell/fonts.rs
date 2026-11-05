@@ -20,6 +20,9 @@ struct Face {
 #[derive(Debug, Clone)]
 pub struct FontSet {
     faces: Vec<Face>,
+    /// The faces come from a resource section, so their generic families
+    /// name packaged families (`TextMeasurer::new_with_packaged_fonts`).
+    packaged: bool,
 }
 
 impl FontSet {
@@ -42,6 +45,7 @@ impl FontSet {
                         .collect(),
                 })
                 .collect(),
+            packaged: true,
         })
     }
 
@@ -54,6 +58,7 @@ impl FontSet {
                 family,
                 aliases: Vec::new(),
             }],
+            packaged: false,
         }
     }
 
@@ -76,19 +81,24 @@ impl FontSet {
             .map(|face| (face.family.as_str(), face.aliases.as_slice()))
     }
 
-    /// A text measurer over every face (`TextMeasurer::new_with_fonts`):
-    /// the shaper parses each face and refuses one that is malformed or
-    /// whose tables do not name its family.
+    /// A text measurer over every face (`TextMeasurer::new_with_packaged_fonts`
+    /// for a resource section, otherwise `new_with_fonts`): the shaper parses
+    /// each face and refuses one that is malformed or whose tables do not
+    /// name its family.
     pub fn measurer(&self) -> Result<TextMeasurer, TextMeasureError> {
-        TextMeasurer::new_with_fonts(
-            self.faces
-                .iter()
-                .map(|face| TextFont {
-                    data: face.data.to_vec(),
-                    family: face.family.clone(),
-                    aliases: face.aliases.clone(),
-                })
-                .collect(),
-        )
+        let fonts = self
+            .faces
+            .iter()
+            .map(|face| TextFont {
+                data: face.data.to_vec(),
+                family: face.family.clone(),
+                aliases: face.aliases.clone(),
+            })
+            .collect();
+        if self.packaged {
+            TextMeasurer::new_with_packaged_fonts(fonts)
+        } else {
+            TextMeasurer::new_with_fonts(fonts)
+        }
     }
 }

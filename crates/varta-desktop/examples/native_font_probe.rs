@@ -7,11 +7,13 @@
 //! faces of one family and a second, monospace family) beside a minimal
 //! portable Wasm in a temporary directory and reads that artifact back. The
 //! faces are loaded through `FontSet::from_resources` and
-//! `TextMeasurer::new_with_fonts`, and painted with the macOS glyph
+//! `TextMeasurer::new_with_packaged_fonts`, and painted with the macOS glyph
 //! rasterizer of the shell; the JSON carries the same face bytes, weights,
 //! styles and generic families, which the oracle registers through the
-//! browser applier's own font namespace (`view-fonts.mjs`), so the generic
-//! `monospace` alias and the default family are compared as well.
+//! browser applier's own font namespace and base font rules
+//! (`view-fonts.mjs`), so the generic `monospace` alias (guest-set and the
+//! user-agent family of `code` and `pre`, at an absolute and at the medium
+//! size) and the default family are compared as well.
 #[cfg(target_os = "macos")]
 mod probe {
     use std::path::{Path, PathBuf};
@@ -33,9 +35,13 @@ mod probe {
     const NORMAL_WEIGHT: u16 = 400;
     /// A minimal portable module: the artifact only carries the fonts.
     const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
-    /// The CSS viewport side and the text size, in CSS pixels.
+    /// The CSS viewport side in CSS pixels.
     const VIEWPORT: f32 = 100.0;
-    const TEXT_SIZE: f32 = 20.0;
+    /// The host's medium font size: Chrome's default proportional size, so
+    /// lines without an absolute font-size compare with the browser.
+    const MEDIUM_SIZE: f32 = 16.0;
+    /// The line's absolute font-size in the cases that set one.
+    const LINE_SIZE: &str = "20px";
     const MIN_SCALE: f32 = 0.25;
     const MAX_SCALE: f32 = 8.0;
     /// The hit-test sample grid, in CSS pixels.
@@ -48,6 +54,7 @@ mod probe {
     const LINE: u32 = 2;
     const FIRST_SPAN: u32 = 10;
     const FIRST_TEXT: u32 = 30;
+    const FIRST_NESTED: u32 = 50;
 
     struct Denied;
     impl Broker for Denied {
@@ -112,56 +119,147 @@ mod probe {
     }
 
     /// The oracle cases, in output order.
-    const CASES: [&str; 6] = ["bold", "italic", "mono", "generic", "default", "mixed"];
+    const CASES: [&str; 11] = [
+        "bold",
+        "italic",
+        "mono",
+        "generic",
+        "default",
+        "mixed",
+        "ua-code",
+        "ua-pre",
+        "ua-medium",
+        "generic-medium",
+        "pre-inherited",
+    ];
     /// The line's family: the regular family, named explicitly.
     const LINE_FAMILY: &str = "\"Varta Fixture 400\"";
     const MONO_FAMILY: &str = "\"Varta Fixture 900\"";
     /// The generic family the monospace face declares.
     const GENERIC_MONO: &str = "monospace";
+    /// A relative size inherited from a `pre` at the medium keyword.
+    const INHERITED_SIZE: &str = "150%";
 
-    /// One line of `A`s in the case's faces. `generic` reaches the
-    /// monospace family only through its declared generic alias, and
+    /// One run of a line: an element with an optional author declaration,
+    /// holding its text directly or in one nested `span` with its own.
+    struct Run {
+        tag: Tag,
+        style: Option<(P, &'static str)>,
+        nested: Option<(P, &'static str)>,
+        text: &'static str,
+    }
+    const fn styled(text: &'static str, style: Option<(P, &'static str)>) -> Run {
+        Run {
+            tag: Tag::Span,
+            style,
+            nested: None,
+            text,
+        }
+    }
+    const fn element(tag: Tag, text: &'static str) -> Run {
+        Run {
+            tag,
+            style: None,
+            nested: None,
+            text,
+        }
+    }
+
+    /// One line of `A`s in the case's faces and its absolute font-size, if
+    /// any. `generic` reaches the monospace family only through its declared
+    /// generic alias, the `ua-` cases through the user-agent family of `code`
+    /// and `pre` (at an absolute size and at the medium keyword), and
     /// `default` sets no family at all (the first family is the default).
+    fn case_runs(name: &str) -> Result<(Option<&'static str>, Vec<Run>), String> {
+        Ok(match name {
+            "bold" => (
+                Some(LINE_SIZE),
+                vec![styled("A A", Some((P::FontWeight, "700")))],
+            ),
+            "italic" => (
+                Some(LINE_SIZE),
+                vec![styled("A A", Some((P::FontStyle, "italic")))],
+            ),
+            "mono" => (
+                Some(LINE_SIZE),
+                vec![styled("A A", Some((P::FontFamily, MONO_FAMILY)))],
+            ),
+            "generic" => (
+                Some(LINE_SIZE),
+                vec![styled("A A", Some((P::FontFamily, GENERIC_MONO)))],
+            ),
+            "default" => (
+                Some(LINE_SIZE),
+                vec![styled("A", None), styled("A", Some((P::FontWeight, "700")))],
+            ),
+            "mixed" => (
+                Some(LINE_SIZE),
+                vec![
+                    styled("A", None),
+                    styled("A", Some((P::FontWeight, "700"))),
+                    styled("A", Some((P::FontStyle, "italic"))),
+                    styled("A", Some((P::FontFamily, MONO_FAMILY))),
+                    styled("A", Some((P::FontFamily, GENERIC_MONO))),
+                ],
+            ),
+            "ua-code" => (
+                Some(LINE_SIZE),
+                vec![styled("A", None), element(Tag::Code, "A A")],
+            ),
+            "ua-pre" => (Some(LINE_SIZE), vec![element(Tag::Pre, "A A")]),
+            "ua-medium" => (None, vec![styled("A", None), element(Tag::Code, "A A")]),
+            "generic-medium" => (
+                None,
+                vec![
+                    styled("A", None),
+                    styled("A A", Some((P::FontFamily, GENERIC_MONO))),
+                ],
+            ),
+            "pre-inherited" => (
+                None,
+                vec![Run {
+                    nested: Some((P::FontSize, INHERITED_SIZE)),
+                    ..element(Tag::Pre, "A A")
+                }],
+            ),
+            _ => return Err(format!("unknown case {name}")),
+        })
+    }
+
     fn case_view(name: &str) -> Result<View, Box<dyn std::error::Error>> {
-        let spans: &[(&str, Option<(P, &str)>)] = match name {
-            "bold" => &[("A A", Some((P::FontWeight, "700")))],
-            "italic" => &[("A A", Some((P::FontStyle, "italic")))],
-            "mono" => &[("A A", Some((P::FontFamily, MONO_FAMILY)))],
-            "generic" => &[("A A", Some((P::FontFamily, GENERIC_MONO)))],
-            "default" => &[("A", None), ("A", Some((P::FontWeight, "700")))],
-            "mixed" => &[
-                ("A", None),
-                ("A", Some((P::FontWeight, "700"))),
-                ("A", Some((P::FontStyle, "italic"))),
-                ("A", Some((P::FontFamily, MONO_FAMILY))),
-                ("A", Some((P::FontFamily, GENERIC_MONO))),
-            ],
-            _ => return Err(format!("unknown case {name}").into()),
-        };
+        let (size, runs) = case_runs(name)?;
         let mut batch = BatchWriter::new();
         batch.create_element(LINE, Tag::Div).insert(1, LINE, 0);
         let family = (name != "default").then_some((P::FontFamily, LINE_FAMILY));
         for (property, value) in [
             (P::Width, "100px"),
-            (P::FontSize, "20px"),
             (P::LineHeight, "20px"),
             (P::Color, "#000"),
         ]
         .into_iter()
+        .chain(size.map(|size| (P::FontSize, size)))
         .chain(family)
         {
             batch.set_style(LINE, property, value);
         }
-        for (index, (text, style)) in (0u32..).zip(spans) {
+        for (index, run) in (0u32..).zip(&runs) {
             let (span, node) = (FIRST_SPAN + index, FIRST_TEXT + index);
-            batch
-                .create_element(span, Tag::Span)
-                .insert(LINE, span, 0)
-                .create_text(node, text)
-                .insert(span, node, 0);
-            if let Some((property, value)) = style {
-                batch.set_style(span, *property, value);
+            batch.create_element(span, run.tag).insert(LINE, span, 0);
+            if let Some((property, value)) = run.style {
+                batch.set_style(span, property, value);
             }
+            let holder = match run.nested {
+                Some((property, value)) => {
+                    let nested = FIRST_NESTED + index;
+                    batch
+                        .create_element(nested, Tag::Span)
+                        .insert(span, nested, 0)
+                        .set_style(nested, property, value);
+                    nested
+                }
+                None => span,
+            };
+            batch.create_text(node, run.text).insert(holder, node, 0);
         }
         let mut view = View::default();
         view.commit(&batch.finish(), false, &mut Denied)?;
@@ -174,7 +272,7 @@ mod probe {
         side: u32,
         scale: f32,
     ) -> Result<RasterImage, Box<dyn std::error::Error>> {
-        let mut renderer = Renderer::new(Some(fonts.measurer()?), TEXT_SIZE)?;
+        let mut renderer = Renderer::new(Some(fonts.measurer()?), MEDIUM_SIZE)?;
         renderer.set_glyph_rasterizer(Some(Box::new(
             varta_desktop::text_raster::CoreTextRasterizer::default(),
         )));
@@ -205,7 +303,7 @@ mod probe {
         for name in CASES {
             let view = case_view(name)?;
             let geometry =
-                view.layout_boxes_with_text(VIEWPORT, VIEWPORT, &mut measurer, TEXT_SIZE)?;
+                view.layout_boxes_with_text(VIEWPORT, VIEWPORT, &mut measurer, MEDIUM_SIZE)?;
             let image = render(&view, &fonts, side, scale)?;
             let boxes = geometry
                 .iter()
