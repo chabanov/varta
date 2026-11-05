@@ -7,6 +7,21 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-04 — Native preserved white space (wave 2, scoped)
+
+The wave-2 package `w2-native-whitespace` made `white-space: pre-wrap` and `pre`
+native in full: preserved tabs advance to tab stops at `tab-size: 8` from their
+line start (Blink's half-space rule included), a run of preserved spaces or tabs
+at a soft wrap hangs as a whole, preserved spaces before a forced break or the
+end conditionally hang (they count in max-content, not in min-content, and in
+center/right alignment while they fit) and `pre` spaces always count. Text nodes
+with different `white-space` modes now share one inline flow. The model drives
+Parley's public line breaker and checks every realized line against it, refusing
+any disagreement. Chrome observations fixed the details, including a collapsible
+space after preserved spaces staying uncollapsed and a hanging tab run keeping
+both tabs on its line. Scoped evidence and open items are in the
+[development plan](development-plan.md#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04).
+
 ## 2026-11-04 — Browser pilot effects and idle collection (wave 1, scoped)
 
 The official browser host admitted `date_now`, `number_random`, `env_snapshot`
