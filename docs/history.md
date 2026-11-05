@@ -9,14 +9,18 @@ statements in them are historical. Current status is in the
 
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
-Pilot finding F2 fixed in `06d1594`. An abort while the head was pending only
+Pilot finding F2 fixed. An abort while the head was pending only
 marked the transfer task cancelled; the request runtime dropped it, and the
 connection task owning the socket, when the event loop next drove that
 runtime, so a guest waiting on timers kept the connection open until it woke.
 `net_request_abort` now cancels both tasks and runs the runtime until they are
 dropped. A v2 HTTP server whose client left kept its one worker permit until
 the cancelled worker stopped and refused a request arriving meanwhile with
-503; its accept loop now waits for the permit first (v1 unchanged).
+503; its accept loop now waits for the permit first (v1 frozen with its
+immediate 503). After review, a transfer that ends on its own also closes its
+connection before its terminal completion is delivered, the abort tests order
+their abort by a loopback gate instead of a timer, and the v2 disconnect tests
+reject any 503.
 
 Scoped evidence on `wave2/w2-net-abort`: two new `net_tests` regressions, each
 failing before its half of the fix (close 602 ms after the abort; `hello: 503`)

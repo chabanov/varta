@@ -8861,7 +8861,9 @@ as unknown names and keep their bytes and diagnostics.
   before the call returns, even when the guest then waits only for timers
   (and so does not drive the request runtime). Other transfers may make
   progress during that call; their completions are queued like any that
-  arrive during a turn.
+  arrive during a turn. A transfer that ends on its own (the end of its body,
+  or a failure such as a body limit or an inactivity timeout) closes its
+  connection the same way before its terminal completion is delivered.
 - **Redirects** default to `"error"`, as the accepted platform design
   requires (WHATWG and Node default to `"follow"`): a 3xx response with a
   `Location` rejects with `TypeError: fetch failed` (cause `unexpected
@@ -15322,8 +15324,9 @@ accepts the next connection only once that permit is free, so a request sent
 right after a client disconnected waits in the listener's backlog instead of
 being refused with the transport's `503 request failed`; the wait is bounded by
 the worker's cancellation checks and its own request deadline, and shutdown
-ends it. V1 workers are not cancelled and keep the earlier immediate 503 while
-busy.
+ends it. HTTP contract v1 is frozen: its workers are not cancelled, and its
+transport keeps the immediate 503 while the worker is busy; only v2 waits for
+the worker permit.
 Shutdown stops acceptance, immediately closes idle/partial-header connections and
 drains the active response under its original connection and request deadlines.
 These paths have real loopback/disconnect, guest-loop and timer verification.

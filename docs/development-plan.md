@@ -502,7 +502,8 @@ timers never does. Now the transfer shares its connection task with its owner
 both are dropped before the call returns. Server: a client disconnect cancels
 the v2 worker, but it holds the single worker permit until it stops, and the
 transport accepted the next connection at once and refused it with 503. The v2
-accept loop now waits for the permit first (v1 unchanged). Contract text:
+accept loop now waits for the permit first; HTTP contract v1 stays frozen
+with its immediate 503 while busy (owner decision). Contract text:
 [net_request cancellation](architecture.md#network-requests-net_request) and
 the HTTP v2 native server section.
 
@@ -521,6 +522,19 @@ reproducer, run with a debug `varta` against a scratch copy of the mock's
 `/slow/health` and `/unary/health` routes, now reports the cancelled request
 after about 200 ms of wall time and `200` for the next request, with no wait
 and with a 1 s wait. The full gate is the wave lead's.
+
+Review follow-up (same branch): a transfer that ends on its own (end of body,
+body limit, inactivity timeout) now closes its connection before its terminal
+completion is delivered, the same way as an abort. The new regression
+`transfers_that_fail_on_their_own_close_their_connection_before_the_guest_wakes`
+(v38 head and body timeouts) passes with or without that change on macOS:
+Tokio's current-thread scheduler already dropped the cancelled connection
+task in the same tick, so the change makes the guarantee explicit rather than
+fixing an observed leak. The abort regressions no longer abort on a timer:
+the loopback `/gate` route answers once the server holds `/held`, and the
+checks read the order of the server's trace, keeping only the close-to-wake
+margin as wall time. The `server_tests::cancellation` disconnect checks
+(all v2) now require the next request to be served, with no 503.
 
 ### Native structure, alignment and ellipsis — wave-1 package `w1-native-structure-text`, scoped 2026-11-04
 
