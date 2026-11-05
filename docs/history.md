@@ -3447,7 +3447,12 @@ injected failing assertion failed it one step earlier. The report's
 `devtoolsChrome` replaces `chrome`. With the waiver removed, whole gate runs
 on `56bd6bd` and `f407d64` failed at the Firefox variables selection (`too much
 recursion` in `rewriteRootSelector`) after the 31 earlier commands passed; that
-command and its standalone form failed 45 of 51 runs at load averages between
-about 34 and 81, after 19 earlier standalone passes, and is recorded as an open
-intermittent defect. Chrome and WebKit selections and the compiled variable
-bundle passed 3 of 3 each. No CI run has been observed.
+command and its standalone form failed 45 of 51 runs, after 19 earlier
+standalone passes, and is recorded as an open intermittent defect. A third gate
+run on `b583e01` passed all 34 commands (no skips, no known gaps): the Node
+oracle suite 7 then 11 tests, execution matrix 75/0, integrity 15/0, dev matrix
+9/0, the variables driver in Chrome, Firefox and WebKit and the variable bundle
+in all three, with Playwright 1.62.1, Chrome 156.0.8078.80, Firefox 153.0 and
+WebKit 26.5; it started at a load average above 100, so load does not explain
+the failures. Chrome and WebKit selections and the compiled variable bundle
+passed 3 of 3 standalone runs each. No CI run has been observed.
