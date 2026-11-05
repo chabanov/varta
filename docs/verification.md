@@ -553,8 +553,10 @@ Open intermittent defect: in Firefox 153 the first `page.evaluate` of
 `test-browser-variables.mjs` can throw `too much recursion` from
 `rewriteRootSelector` in `view-css.mjs` (its outer `text.replace` over
 `"[^"]*"|[^{}"]+(?=\{)`). On one macOS host the same command, oracle and
-sources passed every run at a lower system load and failed most runs at a load
-average near 75; Chrome and WebKit did not fail. The browser host really throws
+sources first passed 19 consecutive runs and later failed 45 of 51, including
+two whole gate runs, while the host's load average stayed between about 34 and
+81 (it was not recorded for the passing runs); the cause of the variation is not
+established, and Chrome and WebKit did not fail. The browser host really throws
 there, so the gate fails on such a run rather than waiving the selection, until
 `rewriteRootSelector` is fixed.
 
