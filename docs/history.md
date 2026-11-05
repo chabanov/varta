@@ -3283,3 +3283,63 @@ own-key enumerations of views of wider objects (`Object.keys`/`values`/
 `entries`, `Object.assign` sources, `for...in`) are refused like spreads;
 the v38 error-constructor refusal names `(message?, options?)`. Each fix has
 a regression against Node 24.20.0 output or its named diagnostic.
+
+### Browser KV imports (wave 2) — 2026-11-04
+
+The official browser host admits the nine v38 `kv_*` imports and implements
+the embedding contract's host without KV storage
+([mapping](embedding.md#browser-effect-mapping-official-host)): every
+`kv_open` reads its path with the native checks, the broker audits a denied
+`kv.read` operation, the denial is logged and the open rejects with
+`NotAllowedError`, whatever the grants and the ceiling. Nothing is stored in
+the browser. The Worker module is `kv-store.mjs`; the browser registry gains a
+`kv` section (operation names, capabilities, the failure code, descriptor
+separator and limit, error name and denial template) and the per-operation `kvBookkeeping`
+flag for `kv_entry`, `kv_text` and `kv_close`, which the native runtime does not
+charge to the host-call budget. The planned IndexedDB backend was not built:
+the KV imports are synchronous host calls and a commit is reported only once
+durable, which needs an owner decision on a synchronous bridge
+(cross-origin-isolated `SharedArrayBuffer` and `Atomics.wait`, or JSPI) and a
+browser form of the value staging, V8 codec and checked decoding
+([open items](development-plan.md#batch-v38-in-development)). The docs state
+that `environmentInputs` are a per-run snapshot, not a credential store.
+
+Scoped verification: `cargo test -p varta-project --lib browser::` (45),
+`cargo test -p varta-common --lib browser::` (7), the documentation drift
+tests (`--test documentation`, `--test embedding_documentation`), registry
+regeneration without a diff, `node --test
+crates/varta-common/browser/fuel.test.mjs
+crates/varta-project/src/browser/*.test.mjs` (188), strict Clippy of
+`varta-common` and `varta-project` and formatting. `node
+scripts/test-browser-kv.mjs target/debug/varta` passes in local Chrome: a
+program without a grant and one granted under an empty host ceiling run with
+native logs and exact fuel, host calls, microtasks, output bytes and turns,
+and a granted, mapped program, which opens and commits natively, runs in the
+browser exactly as the native program without a grant. The new `--kv` option
+of `scripts/test-browser-matrix.mjs` ran the same cases (and `--effects`) in
+Firefox 153, WebKit 26.5 and Chrome 156 through Playwright 1.62.1, the
+version installed locally; Playwright 1.64.1 was not available. No full gate
+was run for this package.
+
+Review fixes (2026-11-05). The browser build and dev server refuse a manifest
+that grants `kv.read` or `kv.write` before any output (`browser KV storage is
+not implemented; the manifest grants …`, generated as
+`browser::kv_storage_refusal` and the registry's `storageRefusal`); before,
+such a manifest built and every open failed at run time naming a granted
+capability. KV programs without a grant still build. The granted cases of
+`scripts/test-browser-kv.mjs` became refusal assertions for both entry
+points. The equivalence claim is narrowed to compiler-produced programs (a
+hand-crafted `kv_stage`, `kv_read` or `kv_commit` without an open database is
+fatal at once in the browser); the linked-intrinsics text now names the KV
+imports as the ones that read and build whole value layouts; the matrix
+report records the version of the Playwright package actually loaded. The
+owner chose the backend: OPFS sync access handles in the Worker and the
+shared Rust value layer compiled to wasm32
+([agreed design](development-plan.md#browser-kv-storage-agreed-design-wave-3)),
+a separate wave-3 package. Scoped verification: `cargo test -p varta-project
+--lib browser::` (46), `cargo test -p varta-common --lib browser::` (7), `cargo
+test -p varta --test smoke browser_build` (14), registry regeneration
+idempotent, the 188 Node tests, the documentation drift tests, formatting and
+strict Clippy of the three crates; the KV cases pass in local Chrome and,
+through Playwright 1.62.1, in WebKit 26.5 and Chrome 156 (Firefox did not
+launch in this environment).

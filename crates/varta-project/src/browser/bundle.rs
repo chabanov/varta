@@ -40,6 +40,7 @@ const PERMISSION_PROMPT: &str = include_str!("permission-prompt.mjs");
 const EVENT_SOURCES: &str = include_str!("event-sources.mjs");
 const ENVIRONMENT: &str = include_str!("environment.mjs");
 const ENVIRONMENT_ABI: &str = include_str!("environment-abi.mjs");
+const KV_STORE: &str = include_str!("kv-store.mjs");
 const FUEL: &str = include_str!("../../../varta-common/browser/fuel.mjs");
 const ORIGINAL: &str = "app.wasm";
 const IMAGE: &str = "app.private.wasm";
@@ -92,6 +93,17 @@ const EFFECTS: &[H] = &[
     H::MathRandom,
     H::EnvSnapshot,
     H::ExitFloat,
+    // V38 KV storage: the contract of a host without KV storage (every
+    // `kv_open` is denied like an open no grant covers; `kv-store.mjs`).
+    H::KvOpen,
+    H::KvRead,
+    H::KvCommit,
+    H::KvStage,
+    H::KvEntry,
+    H::KvKey,
+    H::KvValue,
+    H::KvText,
+    H::KvClose,
 ];
 
 /// Whether the browser host implements `name` for a `profile` module: an
@@ -233,6 +245,9 @@ fn embedded_sources(dom: bool) -> String {
         ));
         source.push_str(&module("viewCustomProperties", "const {CssError}=viewCss;const {compileVariableValue,createVariableScope}=viewVariables;", VIEW_CUSTOM_PROPERTIES, "createCustomPropertyStyles"));
         source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;const {createCustomPropertyStyles}=viewCustomProperties;", VIEW_DOM, "createViewDom,encodeViewEvent"));
+    } else {
+        // The Worker's KV imports; the parent page never handles KV.
+        source.push_str(&module("kvStore", "", KV_STORE, "createKvHost"));
     }
     source
 }
@@ -310,6 +325,26 @@ impl BrowserArtifact {
                 "browser host effects not implemented: {}",
                 gaps.join(", ")
             )));
+        }
+        // This host offers no KV storage (`kv-store.mjs`): a KV grant could
+        // never be honoured, so it is refused here rather than at every open.
+        let mut kv_grants = self
+            .original
+            .manifest
+            .capabilities
+            .iter()
+            .filter(|grant| {
+                matches!(
+                    grant.id.as_str(),
+                    varta_common::kv::READ_CAPABILITY | varta_common::kv::WRITE_CAPABILITY
+                )
+            })
+            .map(|grant| grant.id.as_str())
+            .peekable();
+        if kv_grants.peek().is_some() {
+            return Err(ProjectError::Usage(
+                varta_common::browser::kv_storage_refusal(kv_grants),
+            ));
         }
         if self.inspection.imports.iter().any(|import| {
             [H::PermissionQuery, H::PermissionRequest]

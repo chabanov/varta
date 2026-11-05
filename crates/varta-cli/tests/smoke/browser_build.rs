@@ -332,3 +332,44 @@ fn browser_permission_sources_build_without_embedding_host_decisions() {
     assert!(!built.status.success());
     assert!(!flag.0.join("dist").exists());
 }
+
+/// The browser host offers no KV storage: a manifest that grants `kv.read`
+/// or `kv.write` is refused by name before any output, while the same KV
+/// program without a grant builds and is denied at `kv_open`, as natively.
+#[test]
+fn browser_build_refuses_kv_grants_and_admits_ungranted_kv_programs() {
+    let source = "export async function main():Promise<void>{try{const kv=await varta.kv.open(\"/data/app.kv\");kv.close();}catch(error){if(error instanceof Error){console.log(error.name);}}}";
+    let pattern = serde_json::json!(["/data/*.kv"]);
+    for (capabilities, named) in [
+        (
+            serde_json::json!({"kv":{"read":pattern,"write":pattern}}),
+            "kv.read, kv.write",
+        ),
+        (serde_json::json!({"kv":{"read":pattern}}), "kv.read"),
+    ] {
+        let granted = project(source);
+        granted.configure("fs", serde_json::json!({"roots":{"data":"data"}}));
+        granted.configure("capabilities", capabilities);
+        let built = granted.command(&["build", "--target", "browser"]);
+        assert!(!built.status.success());
+        assert!(
+            combined(&built).contains(&format!(
+                "browser KV storage is not implemented; the manifest grants {named}"
+            )),
+            "{}",
+            combined(&built)
+        );
+        assert!(!granted.0.join("dist").exists());
+    }
+    let ungranted = project(source);
+    let built = ungranted.command(&["build", "--target", "browser"]);
+    assert!(built.status.success(), "{}", combined(&built));
+    assert!(ungranted.0.join("dist/web/varta-worker.js").is_file());
+    let native = ungranted.command(&["run", "dist/web/app.wasm"]);
+    assert!(native.status.success(), "{}", combined(&native));
+    assert!(
+        combined(&native).contains("varta log: NotAllowedError"),
+        "{}",
+        combined(&native)
+    );
+}

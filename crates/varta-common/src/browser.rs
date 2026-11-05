@@ -4,10 +4,12 @@ use crate::{HostOperation, HostScalar, abi, fuel, function, http, language, valu
 use language::LanguageProfile;
 use serde_json::{Value, json};
 mod effects;
+mod kv;
 mod layout;
 mod network;
 mod permissions;
 mod view;
+pub use kv::storage_refusal as kv_storage_refusal;
 
 /// CSP origin ceiling derived only from validated package requests. Runtime
 /// URL/method checks still enforce the narrower package and host scopes.
@@ -119,7 +121,7 @@ pub fn registry() -> Value {
         "schemaVersion":SCHEMA_VERSION,
         "maxTurnFuel":crate::budget::MAX_FUEL_PER_TURN,
         "scheduler":layout::scheduler(),"values":layout::values(),"network":network::registry(),"view":view::registry(),
-        "permissions":permissions::registry(),"effects":effects::registry(),
+        "permissions":permissions::registry(),"effects":effects::registry(),"kv":kv::registry(),
         "environment":{
             "maxNameBytes":crate::MAX_ENV_NAME_BYTES,
             "maxInputBytes":abi::MAX_INPUT_BYTES,
@@ -143,6 +145,7 @@ pub fn registry() -> Value {
                 "networkBookkeeping":op.net() && !matches!(op,HostOperation::NetRequestStart|HostOperation::NetRequestStartV2),
                 "timerBookkeeping":matches!(op,HostOperation::TimerClear|HostOperation::TimerTake|HostOperation::TimerUncaught),
                 "instanceBookkeeping":op.instance_events(),
+                "kvBookkeeping":kv::bookkeeping(op),
                 "stringResult":op.returns_string(),
                 "admittedUnder":language::SUPPORTED_PROFILES.iter().copied()
                     .filter(|&p|admits(p,op)).collect::<Vec<_>>()})

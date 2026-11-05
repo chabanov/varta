@@ -501,9 +501,13 @@ and `json_stringify_owned` (the shared value18 encoder
 `log_string16`, and no profile admits the earlier renderer `value_log_v12`
 ([linked serialization](architecture.md#linked-serialization-and-logging-v38)).
 Every text result of linked code is an owned guest string, so results
-larger than the 1 MiB result buffer need nothing from a host. No v38 import
-reads value layouts beyond primitive and BigInt cells: a host that
-implements only the documented effects runs every v38 module. Under v38,
+larger than the 1 MiB result buffer need nothing from a host. Apart from
+the [KV imports](#kv-storage-v38), no v38 import reads value layouts beyond
+primitive and BigInt cells: `kv_stage` reads a whole value18 guest value
+(records, arrays, dictionaries, unions) and `kv_key` and `kv_value` build
+guest values of a JSON schema 18 target like `json_parse_v19`. A host that
+implements only the documented effects, and either offers no KV storage or
+implements that contract, runs every v38 module. Under v38,
 `log_string16` reads its argument within the profile's string limit (the
 [data limits](architecture.md#data-limits-data_limits)); earlier profiles
 keep the 1 MiB limit.
@@ -686,6 +690,36 @@ Browser capability mappings remain [unstable](#what-is-unstable).
 | `number_random` | `crypto.getRandomValues`, one fresh 64-bit word per call | None (ungated entropy, never a seed) | The word's top 53 bits times 2^-53, exactly the reference conversion |
 | `env_snapshot` | The embedder's `environmentInputs` snapshot, never page state | `env.get` request and ceiling scopes and the broker's current state; not an audited operation | Empty name: a JSON object of the set variables whose names both scopes list exactly, in the reference (Unicode scalar) order. Another name: one `env.get` lookup, `{}` when unset, status 1 when denied. Status 2 for invalid input, 4 above `abi::MAX_RESULT_BYTES` |
 | `process_exit_f64` | Ends the Worker's instance | Enabled `process.exit` request and the ceiling's own `true`; not an audited operation | Authorized: the run or `mount` session ends with status `ok` and the exit code (`exitCode`, 0 for a normal end); no later turn runs. Denied (status 1) or a non-integral or out-of-range code (status 2): the guest continues |
+| `kv_open`, `kv_read`, `kv_commit`, `kv_stage`, `kv_entry`, `kv_key`, `kv_value`, `kv_text`, `kv_close` (v38) | None: no KV storage, no browser storage touched | `kv_open`: the path is read as the reference host reads it (an invalid range, an odd length, a lone surrogate, a NUL or a path above `kv::MAX_DESCRIPTOR_BYTES` is fatal), then the broker audits a denied `kv.read` operation, whatever the ceiling. A bundle never carries a KV grant: the build refuses one | `kv_open`: `kv::FAILED`, the denial logged and `NotAllowedError\n<capability denied: kv.read> (<path>)` in `kv_text`. No database id, staged value or entry exists, so `kv_read`, `kv_commit`, `kv_stage`, `kv_entry`, `kv_key` and `kv_value` are fatal; `kv_text` returns the last text; `kv_close` does nothing. Every import pays the call fuel, `kv_open` also its path bytes and `kv_text` its result bytes; all but `kv_entry`, `kv_text` and `kv_close` are charged to the host-call budget |
+
+The browser host links the KV imports but offers no KV storage, the case the
+[KV storage](#kv-storage-v38) contract provides for: the imports are
+synchronous host calls and a commit may be reported only once it is durable,
+which IndexedDB, the browser's asynchronous store, cannot give a running
+guest call. Since such a grant could never be honoured, `varta build --target
+browser` and `varta dev --target browser` refuse a manifest that grants
+`kv.read` or `kv.write` before any output
+(`browser KV storage is not implemented; the manifest grants …`,
+`browser::kv_storage_refusal`); a program that links the KV imports without a
+grant still builds. Every open is denied like an open no grant covers, so for
+a program the compiler produces a run equals the reference host's run of the
+same program without a `kv.read` grant (logs, fuel, host calls, microtasks,
+output bytes and turns; checked in Chrome by `scripts/test-browser-kv.mjs`
+and in every engine by `scripts/test-browser-matrix.mjs --kv`). A
+hand-crafted module that calls `kv_stage`, `kv_read` or `kv_commit` without
+an open database is the exception: these are fatal here at once, while the
+reference host stages the value, or reads and charges the descriptor (and
+may return a recoverable descriptor failure) before it fails on the unknown
+id. The engine prelude never makes those calls. The KV
+wire facts, the build refusal and the bookkeeping flag (`kvBookkeeping`) are
+generated registry data (`browser::registry().kv`).
+
+The `environmentInputs` an embedder passes to `run` or `mount` are the
+per-run snapshot behind `env.get`, `env.has` and `env_snapshot`, not a
+credential store: the host only reads them, never writes or persists them, and
+the embedder supplies them again for every run. An application that must keep
+a secret across runs (the UARP console's API key) needs KV storage, which the
+browser host does not offer yet.
 
 ### Logging
 

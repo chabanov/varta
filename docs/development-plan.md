@@ -2687,13 +2687,81 @@ synchronous wait within the turn; `Date`, `Map`, `Set`, BigInt and nested
 `Uint8Array` values (not in production; the codec reads and writes them, the
 guest mappings are missing); key parts other than strings and numbers;
 keeping a stored record's property order and aliasing on read; reading a
-property holding `undefined` as present for optional fields; a browser
-backend; Deno in CI to read Varta-written files automatically. The
+property holding `undefined` as present for optional fields; browser KV
+storage (wave 2 admits the imports in the official browser host as a host
+without KV storage that denies every open, and the browser build refuses a
+manifest that grants KV, [mapping](embedding.md#browser-effect-mapping-official-host);
+the backend is the [agreed design](#browser-kv-storage-agreed-design-wave-3)
+below); Deno in CI to read Varta-written files automatically. The
 `if (res.ok)` narrowing and the other API-shape deviations are wave-3
 language items. The fixtures are synthetic: Deno
 2.9.4 (x86_64-linux, the owner's API developer) and Deno 2.9.7
 (aarch64-darwin) write byte-identical `v` and `v_encoding` for all 48 rows;
 versionstamps differ by design (random steps).
+
+#### Browser KV storage (agreed design, wave 3)
+
+Owner decision, 2026-11-05. The browser KV backend is a separate wave-3
+package; until it lands the official browser host stays the host without KV
+storage and `varta build`/`varta dev --target browser` refuse a manifest that
+grants `kv.read` or `kv.write` (`browser::kv_storage_refusal`).
+
+- **Storage bridge: OPFS `FileSystemSyncAccessHandle` in the dedicated
+  Worker.** The guest already runs in a dedicated module Worker. A sync access
+  handle's `read`, `write`, `truncate`, `getSize` and `flush` are synchronous,
+  so the `kv_*` imports stay synchronous host calls, every guest entry stays
+  synchronous, and a commit can be reported only after `flush` returns, as
+  [KV storage point 4](embedding.md#kv-storage-v38) requires. It needs no
+  COOP/COEP and no cross-origin isolation. Only acquiring the handle
+  (`navigator.storage.getDirectory`, the file handle and
+  `createSyncAccessHandle`) is asynchronous, so it happens before
+  instantiation. Rejected: `SharedArrayBuffer` and `Atomics.wait` against a
+  page-side IndexedDB (every deployment and `varta dev` would need
+  cross-origin isolation); JSPI (every guest entry becomes asynchronous); a
+  preloaded mirror with write-behind (reports `COMMITTED` before the write is
+  durable).
+- **Value layer: shared Rust compiled to wasm32.** Staging (the value18
+  layout walk of `kv/stage.rs`), the V8 serializer subset (`kv/v8.rs`), the
+  Deno KV key codec, the decode classifier (`kv/decode.rs`) and the checked
+  construction of guest values are the same Rust code the native runtime
+  runs, built for wasm32 in the style of `varta-intrinsics`
+  (`varta-intrinsics-wasm`, a checked-in build with a fingerprint), not a
+  JavaScript port. Fair-fuel parity with native depends on byte-identical V8
+  encoding lengths and the same guest allocation order, which shared code
+  gives by construction.
+
+Open questions for the package:
+
+1. **Per-artifact directory.** The OPFS directory of an artifact must be named
+   from the artifact identity so that two artifacts on one origin never share
+   databases; how a virtual path (`/<root>/<name>.kv`) maps to a file in it,
+   and whether a new artifact version (a new identity) keeps or loses its
+   predecessor's data, is undecided.
+2. **Which handles to acquire.** `kv.open` paths are dynamic while acquiring
+   a handle is asynchronous and must happen before instantiation: either one
+   container file per artifact holding every database, or handles only for
+   the paths a grant names exactly (a wildcard grant would then need the
+   container).
+3. **Atomic commit and durability.** A commit of several mutations must be
+   all or nothing across a crash or a closed tab, so it needs a journal or
+   write-ahead record with a defined `flush` order, and `COMMITTED` only after
+   the last `flush`. A sync access handle is exclusive per file: a second tab
+   or Worker that cannot acquire it maps to the native "locked by another
+   writer" failure.
+4. **Failure mapping.** `QuotaExceededError`, a corrupt file and OPFS being
+   unavailable (an insecure context, a private window in some engines, an
+   engine without sync access handles) map to the recoverable statuses
+   (`kv::FAILED` with a named error in `kv_text`), never to `COMMITTED` and
+   never to a guest trap.
+5. **Ceiling validation.** The loader's `resolvePermissions` accepts only
+   `env`, `net.request`, `ui.open_url` and boolean ceilings; KV path-pattern
+   ceilings must be validated there before the build refusal is lifted.
+6. **On-disk format.** Whether the browser keeps Deno KV's SQLite file
+   (SQLite on wasm32 over the access handle) or a Varta-defined file with the
+   same observable semantics is undecided.
+7. **Goldens.** Native versionstamps come from `denokv_sqlite`'s random
+   version steps, so browser runs are compared with native goldens on the
+   versionstamp format and order only, never on the values.
 
 #### Code generation v2 measurements
 
@@ -4507,7 +4575,8 @@ Later increments, each its own capability or capability-free contract:
 
 - KV storage: implemented natively under v38 as Deno KV file compatibility
   (owner decision, wave 3; [contract](architecture.md#kv-storage-kv)); a
-  browser backend (IndexedDB) with the same guest API remains open.
+  browser backend with the same guest API is the
+  [agreed OPFS design](#browser-kv-storage-agreed-design-wave-3), not yet built.
 - `Uint8Array`/`ArrayBuffer`/`DataView` (CORE-05), `TextEncoder`/`TextDecoder`,
   base64: guest code, no host imports.
 - Crypto random: `crypto.getRandomValues`/`randomUUID` as an ungated,
