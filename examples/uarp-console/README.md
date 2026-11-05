@@ -51,7 +51,8 @@ Administration (creating or suspending agents) is not designed yet.
 | `design/agent-studio.md` | Draft of Agent Studio (building a personal agent with Varta tools); built after the rest of the console works |
 | `design/chat-timeline.md` | Draft model of the chat timeline: sources, entries, reducer, transport, session stitching |
 | `scripts/test.sh` | Runs the Varta-executed tests group by group |
-| `scripts/check-sdk.sh` | `varta check` of every pinned SDK source file, one file at a time |
+| `scripts/check-sdk.sh` | `varta check` of every pinned SDK source file, one file at a time, then of the instantiated SDK generics |
+| `scripts/check-sdk-generics.ts` | The entry that instantiates every generic function and method of the pinned SDK, used by `check-sdk.sh` |
 | `scripts/sdk-loopback.sh` | Runs the loopback mock and the SDK client tests as two `varta dev` processes |
 | `mockups/` | Static Single Chat screens in plain HTML/CSS restricted to the L0 v1 subset. `console.css` is the guest stylesheet, `frame.css` the embedding page, `lint.html` checks every screen against the common registry and official host model |
 | `mockups/conformance/` | Renders every screen through the official browser host and compares structure, live control state and boxes with the mockup |
@@ -105,7 +106,7 @@ performance limits or production capacity.
 | L1 reactive core and keyed lists | Compiled and tested by Varta (v38); a 1M-fuel turn fits 28 rows mounted, 16 updated | Final target performance measurements |
 | Chat model | Every frame of the session stream dispatched and parsed strictly into the closed v1 types; the nine recorded scenarios replayed from their files match an independently derived timeline; resume and end rules, history and its merge with the live stream, the store, intents and the request layer | — |
 | Single Chat screen | Live timeline over the store with the stylesheet, checked headlessly and deterministically (tree with cascaded styles, accessibility snapshot): thinking toggle, tool lines, approval, question and failure cards with their actions, streaming Markdown, the composer | Full cross-target acceptance beyond the focused official-browser interaction probes |
-| SDK source admission | `scripts/check-sdk.sh` checks 65/65 pinned 0.13.2 files unmodified under v38 (2026-11-04, debug build of `cc3a94d`) | SDK-own tests (M7) |
+| SDK source admission | `scripts/check-sdk.sh` checks 65/65 pinned 0.13.2 files unmodified under v38, plus the bodies of all six generic functions and methods through an instantiation probe (2026-11-04, debug build of `978b793`) | SDK-own tests (M7); generic bodies only for the probed type arguments |
 | Real requests to UARP | The real `UarpClient` runs natively under Varta against the loopback mock: unary JSON, problem documents and bare error bodies, retry after a 503 with `Retry-After` (and none with `x-should-retry: false`), `AbortSignal`, timeout, and `sessions.streamSessionEvents` to `[DONE]`; 43 cases in 6 groups pass (2026-11-04) | Live-service validation, long-lived or large streams, reconnect paths, cross-target acceptance; findings below |
 
 ## Running the checks
@@ -117,19 +118,63 @@ VARTA_BIN=/path/to/varta scripts/sdk-loopback.sh [group…]
 node scripts/serve-mockups.mjs 8766
 ```
 
+Then open `http://127.0.0.1:8766/uarp-console/mockups/lint.html` and
+`http://127.0.0.1:8766/uarp-console/mockups/conformance/conformance.html`.
+
+From the repository root, check the server allowlist and run the mockup browser
+matrix with a local Playwright installation (Chrome, Firefox and WebKit binaries
+must be installed):
+
+```sh
+node --test examples/uarp-console/scripts/serve-mockups.test.mjs
+node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs
+```
+
+Append `chrome`, `firefox` or `webkit` to select one engine. Each engine checks five
+screens at three sizes, lint rejection cases, live control state, disabled select
+selection and work-budget rollback. Dialog and fixed-position subtrees have
+structure/state checks but no box-parity claim. These static projections do not
+prove compiled application execution or cross-renderer acceptance.
+
 `check-sdk.sh` copies `node_modules/uarp-sdk/src` (it refuses any version but the
 pinned one) unmodified into a temporary project. For each of its files it writes a
 probe entry that re-exports the file with `export *`, and default-imports it when it
 has a default export. It runs `varta check` under `checked-f64-utf16-v38`, prints
 one line per file and `N/N passed`, and exits nonzero on any failure.
 
+The per-file pass alone does not cover generic bodies: `varta check` compiles the
+body of a generic function or method only where it is instantiated, so an exported
+`f<U>` or a method of `Box<T>` whose body holds a refused construct still gives
+`ok`. The script therefore also checks `scripts/check-sdk-generics.ts` as the entry.
+It instantiates `autoPaginate<T>` and `collect<T>` (`core/pagination.ts`),
+`Transport.request<T>` (`core/transport.ts`), `UarpClient.request<T = unknown>`
+(`index.ts`), `UarpEvent.json<T = JsonValue>` as `makeEvent` implements it
+(`core/sse.ts`) and `pick<T, K>` (`core/util.ts`) with concrete SDK types, and with
+the declared default where there is one. Two guards keep that probe honest:
+
+- **Inventory.** A lexical scan of the SDK's declaration lines must find exactly the
+  generic sites the script lists; a new or moved generic fails until the probe and
+  the list are updated.
+- **Control.** For each listed body, a separate copy of the SDK gets `eval("0");`
+  (never admitted) as the body's first statement, and the probe must be refused at
+  that line. The script prints `generic bodies reached: N/N`.
+
+Remaining caveat: the inventory is a scan of declaration lines, not a parse, so a
+generic written in a form it does not recognise (for example a line break before
+the type parameters) would be neither listed nor probed. Each generic is checked for
+one concrete type argument and its default, so a construct refused only for another
+type argument is not covered.
+
 `sdk-loopback.sh` starts the mock with `varta dev --config varta.sdk-server.json`.
 The mock's only grants are the exact `net.listen` grant `127.0.0.1:0` and
 `time.timer`, used by the slow route. The script reads the bound origin from
 `varta listening: …`. `net.request` ports are never wildcards, so the committed
 `varta.sdk-test.json` names the placeholder origin `http://127.0.0.1:1`. The
-script writes a copy with the bound origin next to it and removes the copy on
-exit. The client's grants are `GET` on that origin only, with the declared response
+script writes a copy with the bound origin next to it,
+`varta.sdk-test.loopback-<pid>.json` (git-ignored), and removes the copy on exit. A
+run killed without its exit trap (`SIGKILL`, a crashed shell) leaves that file and
+possibly the mock's `varta dev` behind; delete the file and stop the process by
+hand. The client's grants are `GET` on that origin only, with the declared response
 headers `content-type`, `retry-after`, `x-correlation-id`, `x-request-id` and
 `x-should-retry`. It also needs `time.now`, which the SDK's `EventStream` and the
 retry timing read, `time.timer`, and `env.get` of `TEST_GROUP` and `SDK_BASE_URL`.
@@ -145,8 +190,10 @@ or `FAIL` per group and exits nonzero on any failure.
 | `sdk-timeout` | `timeout: 200` turns into `APITimeoutError` (`Request timed out after 200 ms`). This group runs as its own execution because of finding F2 |
 | `sdk-sse` | `sessions.streamSessionEvents(…, { event_schema: 1 })` parses a finite stream of recorded v1 frames. It checks names, ids and data byte for byte. A keep-alive comment and a `retry:`-only frame deliver nothing, `json()` decodes a frame, and `[DONE]` ends the stream without a reconnect (`connecting connected disconnected`) |
 
-Checkpoint 2026-11-04 (debug `varta` of `cc3a94d`): `check-sdk.sh` printed
-`65/65 passed`. `sdk-loopback.sh` passed all six groups with 43 cases.
+Checkpoint 2026-11-04 (debug `varta` of `978b793`): `check-sdk.sh` printed
+`65/65 passed`, the generic inventory (7 declaration sites), the instantiation probe
+and `generic bodies reached: 6/6`. `sdk-loopback.sh` passed all six groups with 43
+cases.
 
 ## Pilot findings
 
@@ -204,21 +251,3 @@ code, never by changing the SDK.
   cause })` is refused as well (`unsupported error constructor accepts zero or one
   string/undefined argument`), while `super(message, options)` in an `Error`
   subclass is admitted. `sdk-unary` narrows to `APIConnectionError`.
-
-Then open `http://127.0.0.1:8766/uarp-console/mockups/lint.html` and
-`http://127.0.0.1:8766/uarp-console/mockups/conformance/conformance.html`.
-
-From the repository root, check the server allowlist and run the mockup browser
-matrix with a local Playwright installation (Chrome, Firefox and WebKit binaries
-must be installed):
-
-```sh
-node --test examples/uarp-console/scripts/serve-mockups.test.mjs
-node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs
-```
-
-Append `chrome`, `firefox` or `webkit` to select one engine. Each engine checks five
-screens at three sizes, lint rejection cases, live control state, disabled select
-selection and work-budget rollback. Dialog and fixed-position subtrees have
-structure/state checks but no box-parity claim. These static projections do not
-prove compiled application execution or cross-renderer acceptance.

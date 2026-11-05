@@ -6,7 +6,10 @@
 #    OS-assigned port (exact grant 127.0.0.1:0) and reports `varta listening: <url>`.
 # 2. The client config `varta.sdk-test.json` grants `net.request` on a placeholder
 #    origin; the run writes a copy with the bound origin (an exact grant: ports are
-#    never wildcards) next to it, removed on exit.
+#    never wildcards) next to it as `varta.sdk-test.loopback-<pid>.json`, removed on
+#    exit. The name is git-ignored (.gitignore). A run killed without its exit trap
+#    (SIGKILL, a crashed shell) leaves that file and possibly the mock process
+#    behind; delete the file and stop the stale `varta dev` by hand.
 # 3. Each group (src/tests/sdk/main.ts) is one execution with production budgets and
 #    must end with `SUMMARY N passed, 0 failed`.
 # Prints PASS or FAIL per scenario and exits nonzero on any failure.
@@ -30,6 +33,7 @@ if [ ! -d node_modules/uarp-sdk/src ]; then
 fi
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/varta-sdk-loopback.XXXXXX")
+# Matches the ignore rule `varta.sdk-test.loopback-*.json` in .gitignore.
 config="varta.sdk-test.loopback-$$.json"
 server=""
 cleanup() {
