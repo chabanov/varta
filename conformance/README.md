@@ -350,9 +350,10 @@ cases cover the v38 paths the pinned SDK and the console use:
   templates, private fields and getters, optional chains with `??`, BigInt
   and union values, multi-line text and dictionary keys.
 
-The outputs of the eight supported cases other than `fetch-denied` and
-`kv-denied-open` match Node.js v24.20.0 type stripping (with `await main();`
-appended). Those two are Varta contracts: the runner grants nothing, so an
+Seven of the nine new supported cases, all but `fetch-denied` and
+`kv-denied-open`, print what Node.js v24.20.0 type stripping prints (with
+`await main();` appended); the stored output of the known gap
+`union-record-argument` is also Node's. Those two are Varta contracts: the runner grants nothing, so an
 ungranted `fetch` rejects with a logged, recoverable `NotAllowedError` before
 any socket, where Node attempts the connection, and `varta.kv.open` (which
 Node lacks) rejects the same way before any file is touched. Both fetch cases
@@ -360,7 +361,9 @@ also run with the same output under v37; the v37 compiler rejects the other
 new cases. The reviewed per-case `grants` still admit only `time.timer`: a
 granted `fetch` needs a loopback server and a KV database a virtual file root
 with a host directory, which this executor does not provide, so those paths
-stay covered by the runtime's loopback and Deno-fixture KV tests. A runner
+stay covered by the runtime's loopback and Deno-fixture KV tests. Running
+granted KV and `fetch` cases inside the runner would change its security model
+and remains an open owner decision. A runner
 test pins that `net.request`, `kv.read`, `kv.write` and `env.get` grants fail
 inventory loading and that the v38 `process.env` and KV globals disclose
 nothing of the parent environment.
@@ -371,6 +374,8 @@ nothing of the parent environment.
 record. Writing the cases also met forms v38 rejects that are not inventory
 cases yet: a `this` return type, `Array.prototype.shift`, a union of `Map` and
 `Set`, template-literal computed keys in object literals, `await` inside a
-property access, `===` between two `Uint8Array` values, `Request` body
+template literal or inside a call argument such as `String((await g()).n)`
+(an awaited property base in a declaration, `const n = (await g()).n`, is
+admitted), `===` between two `Uint8Array` values, `Request` body
 readers such as `arrayBuffer()`, a local binding
 named `log`, and function members read through `globalThis.globalThis`.
