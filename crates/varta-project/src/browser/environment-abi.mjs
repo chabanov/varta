@@ -37,5 +37,5 @@ export function createEnvironmentAbi({memory, resultLength, resultStatus, maxInp
     if (encoder.encode(result.text).length>maxResultBytes || result.text.length*2>maxResultBytes) return fail(statuses.tooLarge,registry.effects.failures.tooLarge);
     return writeResult(result.text,grow);
   };
-  return Object.freeze({env_get16:(ptr,len)=>perform('env.get',ptr,len),env_has16:(ptr,len)=>perform('env.has',ptr,len),env_snapshot:environmentSnapshot});
+  return Object.freeze({env_get16:(ptr,len)=>perform('env.get',ptr,len),env_has16:(ptr,len)=>perform('env.has',ptr,len),[registry.effects.environment.operation]:environmentSnapshot});
 }

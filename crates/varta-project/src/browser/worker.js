@@ -141,7 +141,8 @@ self.onmessage = async ({ data }) => {
     };
     implementations.env_get16=(ptr,len)=>environmentImport('env_get16',ptr,len);
     implementations.env_has16=(ptr,len)=>environmentImport('env_has16',ptr,len);
-    implementations[registry.effects.environment.operation]=(ptr,len)=>environmentImport('env_snapshot',ptr,len);
+    const snapshotOperation=registry.effects.environment.operation;
+    implementations[snapshotOperation]=(ptr,len)=>environmentImport(snapshotOperation,ptr,len);
     // Pilot effects, each equal to its native handler after the shared call
     // charge. The clock is an audited `time.now` operation (exact package
     // request and the ceiling's own `true`, decided before the clock is read);
