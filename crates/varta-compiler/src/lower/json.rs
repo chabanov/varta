@@ -6,6 +6,10 @@ use varta_common::value::ErrorClass;
 /// target type; the host raises it for schema mismatches and the guest for
 /// the declared fields of a mixed record (v35).
 const SCHEMA_MISMATCH: &str = "JSON value does not match the checked schema";
+/// Why a checked decode target may not reach a `Uint8Array` under v38
+/// (`byte_values`): JSON has no byte arrays, so a decoder would tag a JSON
+/// number array (any numbers) as a `Uint8Array`.
+const BYTES_TARGET: &str = "reaching a Uint8Array (JSON never produces a Uint8Array; decode a number[] and construct the Uint8Array from it)";
 
 /// Whether checked parsing can build values of `ty` (`optional`: the position
 /// may be missing, so `undefined` is admitted). Recursive types (v34) make the
@@ -218,6 +222,8 @@ impl Lower<'_> {
                 target.span(),
             ));
         }
+        let name = self.quoted(target.span(), ty);
+        self.refuse_byte_target("varta.json.parse", &name, ty, target.span())?;
         if !json_type(ty, self.types, false, false) {
             return Err(self
                 .source
@@ -260,6 +266,7 @@ impl Lower<'_> {
         {
             return Ok(None);
         }
+        self.refuse_byte_target("JSON.parse(text) as", name, target, span)?;
         if self.types.profile.json_decoders()
             && literals::contains(target, self.types)
             // Only the original checked graph conversion may be accelerated.
@@ -381,6 +388,7 @@ impl Lower<'_> {
                 span,
             ));
         }
+        self.refuse_byte_target("KV decode at", &ty.to_string(), ty, span)?;
         if !json_type(ty, self.types, false, false)
             || reaches_type(ty, Type::BigInt, self.types, &mut BTreeSet::new())
         {
@@ -403,6 +411,27 @@ impl Lower<'_> {
             Some(members) => self.validate_declared(decoded, &members.fields, span),
             None => Ok(decoded),
         }
+    }
+    /// Refuse a checked decode target `ty` (`name`, decoded by `what`) that
+    /// reaches a `Uint8Array` under v38 (`byte_values`), where a
+    /// `Uint8Array` carries its own value tag. Earlier profiles keep their
+    /// targets.
+    fn refuse_byte_target(
+        &self,
+        what: &str,
+        name: &str,
+        ty: Type,
+        span: swc_common::Span,
+    ) -> Result<()> {
+        if self.types.profile.byte_values() && collections::reaches_bytes(ty, self.types) {
+            return Err(self.source.locate(
+                unsupported(&format!(
+                    "checked JSON decode target: {what} {name} {BYTES_TARGET}"
+                )),
+                span,
+            ));
+        }
+        Ok(())
     }
     fn parse_json_at(
         &mut self,

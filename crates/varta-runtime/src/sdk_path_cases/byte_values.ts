@@ -1,8 +1,11 @@
-// A `Uint8Array` held by `unknown` (v38 `byte_values`): it keeps its
-// identity, `typeof`, `instanceof`, `ArrayBuffer.isView`, `Array.isArray`,
-// truthiness, `String` and `JSON.stringify` answer as in Node, and it
-// narrows back to the same bytes. Records, arrays, dictionaries and unions
-// that reach one serialize its index keys.
+// A `Uint8Array` held by `unknown` (v38 `byte_values`): it stays the same
+// object (writes through either reference are seen by both), `typeof`,
+// `instanceof`, `ArrayBuffer.isView`, `Array.isArray`, truthiness, `String`
+// and `JSON.stringify` answer as in Node, and it narrows back to the same
+// bytes. Records, arrays, dictionaries and unions that reach one serialize
+// its index keys. Comparisons with values that cannot hold a `Uint8Array`
+// (primitives, records) answer as in Node; two values that may both hold
+// one are not compared (a compile error, `sdk_path_tests`).
 interface Upload {
   data: Uint8Array;
   size: number;
@@ -41,7 +44,7 @@ export function main(): void {
   console.log(String(held) + ' ' + String(new Uint8Array(0) as unknown) + '|');
   console.log(JSON.stringify(held));
   console.log(JSON.stringify(new Uint8Array(0) as unknown));
-  console.log(String(held === bytes) + ' ' + String(held === (new Uint8Array([1, 2, 255]) as unknown)));
+  console.log([held === undefined, held === null, held !== 'x', held === 1].map((b) => String(b)).join(' '));
   console.log(bytesOf(held) + ' ' + bytesOf([1, 2]) + ' ' + bytesOf('x'));
   if (held instanceof Uint8Array) {
     held[0] = 9;
@@ -53,6 +56,8 @@ export function main(): void {
 
   const upload: Upload = { data: bytes, size: 3 };
   const boxed: unknown = upload;
+  const other: Upload = { data: bytes, size: 3 };
+  console.log(String(boxed === upload) + ' ' + String(boxed === other));
   console.log(JSON.stringify(boxed));
   console.log(JSON.stringify(upload));
   console.log(JSON.stringify([bytes, new ArrayBuffer(2), new Uint8Array([0])]));

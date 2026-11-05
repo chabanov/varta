@@ -5827,19 +5827,25 @@ interface One { item: string | null; note?: string }
 const answer = JSON.parse(text) as List | One; // {"item":null} is a One
 ```
 
-`unknown` holds bytes. A `Uint8Array` keeps its identity there, `instanceof
-Uint8Array` and `ArrayBuffer.isView` find it again, and `JSON.stringify`
-writes it as Node does (`{"0":104,"1":105}`), so an SDK that takes file
-parts as `unknown` sends them unchanged:
+`unknown` holds bytes. A `Uint8Array` held there is the same object (writes
+through either reference are seen by both), `instanceof Uint8Array` and
+`ArrayBuffer.isView` find it again, and `JSON.stringify` writes it as Node
+does (`{"0":104,"1":105}`), so an SDK that takes file parts as `unknown`
+sends them unchanged:
 
 ```ts
+interface FilePart {
+  data: Blob | ArrayBuffer | Uint8Array | string;
+  filename?: string;
+}
+
 function appendPart(form: FormData, key: string, value: unknown): void {
   if (value instanceof Blob) {
     form.append(key, value);
     return;
   }
   if (typeof value === 'object' && value !== null && 'data' in (value as Record<string, unknown>)) {
-    const part = value as { data: Blob | ArrayBuffer | Uint8Array | string; filename?: string };
+    const part = value as FilePart;
     form.append(key, new Blob([part.data]), part.filename ?? 'file');
     return;
   }
@@ -5849,13 +5855,33 @@ function appendPart(form: FormData, key: string, value: unknown): void {
   }
   form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
 }
+
+const form = new FormData();
+const part: FilePart = { data: new Uint8Array([104, 105]), filename: 'hi.bin' };
+appendPart(form, 'file', part); // file "hi.bin", 2 bytes
+appendPart(form, 'raw', new Uint8Array([1, 2])); // file "file", 2 bytes
 ```
+
+The checked `value as FilePart` matches the record's exact shape, so the
+caller passes a value whose static type is `FilePart`, as above. An object
+literal of another shape passed straight as `unknown`, such as
+`appendPart(form, 'b', { data: new Uint8Array([1]), filename: 'x.bin' })`,
+throws `TypeError: type assertion to FilePart failed` where Node appends
+the part.
 
 `'data' in` answers as Node does for a `Uint8Array`, `ArrayBuffer`, `Blob`
 or `File` (their prototype members, a `Uint8Array`'s indexes) and for plain
 objects; an array, or a key that is not a string literal, is still a
 `TypeError` there. Reading such a value as `Record<string, unknown>`
 otherwise (for example `Object.keys`) is a `TypeError` too.
+
+Two views of one `ArrayBuffer` (`new Uint8Array(buffer)` twice) share their
+bytes and, in Varta, their identity, so comparing two values that may both
+hold a `Uint8Array` (`===`, `!==`, `Object.is`, `includes`/`indexOf` of an
+`unknown[]`) is a compile error; compare with a primitive or a record, or
+compare the bytes. JSON never produces a `Uint8Array`: `JSON.parse(text) as
+T` and `varta.json.parse<T>` refuse a `T` that reaches one; parse a
+`number[]` and build the `Uint8Array` from it.
 
 #### View protocol and TSX (opt-in v38)
 

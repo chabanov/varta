@@ -170,66 +170,57 @@ fn store(types: &mut ir::ValueTypes, name: &str, args: &[Type]) -> Result<Type> 
     result
 }
 
-/// Whether a value of `ty` may reach collection storage, which no host reader
-/// may see (logging, JSON, `unknown`).
-pub(super) fn reaches(ty: Type, types: &ir::ValueTypes) -> bool {
-    fn visit(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool {
+/// Whether a value of `ty` may reach a collection of a kind `leaf` selects
+/// (or, with `opaque`, an opaque builtin class instance) through classes,
+/// fields, elements, values, union members and promises.
+fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: bool) -> bool {
+    fn visit(
+        ty: Type,
+        types: &ir::ValueTypes,
+        leaf: fn(K) -> bool,
+        opaque: bool,
+        seen: &mut BTreeSet<Type>,
+    ) -> bool {
         if !seen.insert(ty) {
             return false;
         }
+        let mut child = |ty| visit(ty, types, leaf, opaque, seen);
         match ty {
-            Type::Collection(..) => true,
-            Type::Class(id) if types.classes.get(id).opaque => true,
-            Type::Class(id) => visit(Type::Record(types.classes.shape(id)), types, seen),
+            Type::Collection(kind, _) => leaf(kind),
+            Type::Class(id) if types.classes.get(id).opaque => opaque,
+            Type::Class(id) => child(Type::Record(types.classes.shape(id))),
             Type::Record(id) => types.records[id as usize]
                 .fields
                 .iter()
-                .any(|f| visit(f.ty, types, seen)),
-            Type::Array(id) => visit(types.arrays[id as usize], types, seen),
+                .any(|f| child(f.ty)),
+            Type::Array(id) => child(types.arrays[id as usize]),
             Type::Tuple(id) => types.tuples[id as usize]
                 .elements
                 .iter()
-                .any(|ty| visit(*ty, types, seen)),
-            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, types, seen),
-            Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
-                .iter()
-                .any(|t| visit(*t, types, seen)),
-            Type::Promise(id) => visit(types.promises[id as usize].value, types, seen),
+                .any(|ty| child(*ty)),
+            Type::Dictionary(id) => child(types.dictionaries[id as usize].value),
+            Type::Union(id) | Type::ReferenceUnion(id) => {
+                types.unions[id as usize].iter().any(|t| child(*t))
+            }
+            Type::Promise(id) => child(types.promises[id as usize].value),
             _ => false,
         }
     }
-    types.profile.collections() && visit(ty, types, &mut BTreeSet::new())
+    visit(ty, types, leaf, opaque, &mut BTreeSet::new())
+}
+/// Whether a value of `ty` may reach collection storage, which no host reader
+/// may see (logging, JSON, `unknown`).
+pub(super) fn reaches(ty: Type, types: &ir::ValueTypes) -> bool {
+    types.profile.collections() && reaches_where(ty, types, |_| true, true)
 }
 /// Whether a value of `ty` may reach collection storage other than a
 /// `Uint8Array`'s (Map and Set storage, opaque builtin classes).
 pub(super) fn reaches_private(ty: Type, types: &ir::ValueTypes) -> bool {
-    fn visit(ty: Type, types: &ir::ValueTypes, seen: &mut BTreeSet<Type>) -> bool {
-        if !seen.insert(ty) {
-            return false;
-        }
-        match ty {
-            Type::Collection(K::Uint8Array, _) => false,
-            Type::Collection(..) => true,
-            Type::Class(id) if types.classes.get(id).opaque => true,
-            Type::Class(id) => visit(Type::Record(types.classes.shape(id)), types, seen),
-            Type::Record(id) => types.records[id as usize]
-                .fields
-                .iter()
-                .any(|f| visit(f.ty, types, seen)),
-            Type::Array(id) => visit(types.arrays[id as usize], types, seen),
-            Type::Tuple(id) => types.tuples[id as usize]
-                .elements
-                .iter()
-                .any(|ty| visit(*ty, types, seen)),
-            Type::Dictionary(id) => visit(types.dictionaries[id as usize].value, types, seen),
-            Type::Union(id) | Type::ReferenceUnion(id) => types.unions[id as usize]
-                .iter()
-                .any(|t| visit(*t, types, seen)),
-            Type::Promise(id) => visit(types.promises[id as usize].value, types, seen),
-            _ => false,
-        }
-    }
-    visit(ty, types, &mut BTreeSet::new())
+    reaches_where(ty, types, |kind| kind != K::Uint8Array, true)
+}
+/// Whether a value of `ty` may reach a `Uint8Array`.
+pub(super) fn reaches_bytes(ty: Type, types: &ir::ValueTypes) -> bool {
+    reaches_where(ty, types, |kind| kind == K::Uint8Array, false)
 }
 /// Whether a value of `ty` may reach collection storage that a host value
 /// reader (logging, JSON, `unknown`) must not see: any collection, or under

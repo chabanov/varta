@@ -388,6 +388,8 @@ fn sdk_path_record_views_of_bytes_and_instances_throw_named_type_errors() {
 fn sdk_path_corrupt_byte_arrays_are_rejected_by_value_readers() {
     use varta_common::value::{self, ARRAY_META_BYTES, ARRAY_SLOT_BYTES, ValueKind};
     const MARKER: [f64; 3] = [7.0, 77.0, 177.0];
+    // Test-only work bound of the diagnostic rendering below.
+    const DIAGNOSTIC_WORK: u64 = 1 << 20;
     let source = "const kept: Uint8Array[] = [];
          export function main(): void { kept.push(new Uint8Array([7, 77, 177])); console.log(String(kept.length)); }";
     let runtime = VartaRuntime::new();
@@ -427,6 +429,12 @@ fn sdk_path_corrupt_byte_arrays_are_rejected_by_value_readers() {
     };
     assert_eq!(host(&data).unwrap(), br#"{"0":7,"1":77,"2":177}"#);
     assert_eq!(linked(&data).unwrap(), r#"{"0":7,"1":77,"2":177}"#);
+    // The host log handler of value18 (`value_log_v12`) renders through the
+    // diagnostic encoder.
+    let mut budget = varta_bigint::Budget::new(DIAGNOSTIC_WORK, DIAGNOSTIC_WORK);
+    let (text, _) =
+        json::render_diagnostic(&data, kind, handle, version, bounds, &mut budget).unwrap();
+    assert_eq!(text, br#"{"0":7,"1":77,"2":177}"#);
     assert!(
         json::render_reference_in(
             &data,
@@ -465,6 +473,159 @@ fn sdk_path_corrupt_byte_arrays_are_rejected_by_value_readers() {
     }
 }
 
+/// JSON never produces a `Uint8Array`: under v38 every checked JSON decode
+/// target that reaches one is a compile error, so a JSON number array is
+/// never tagged as bytes. Node 24.20.0 leaves both reproductions plain
+/// arrays (`false {"data":[1,2]}` and `true {"data":[300,1.5]}`). A
+/// `Response.json()` graph never holds bytes, so a checked `as` to such a
+/// type throws its `TypeError`; targets without bytes stay admitted, and v37
+/// keeps its targets.
+#[test]
+fn sdk_path_json_decode_targets_reaching_bytes_are_refused() {
+    let decode = "unsupported checked JSON decode target";
+    let reaching = "reaching a Uint8Array (JSON never produces a Uint8Array";
+    let program =
+        |types: &str, body: &str| format!("{types}\nexport function main(): void {{ {body} }}");
+    let a = "interface A { data: Uint8Array }";
+    for (types, body, target) in [
+        (
+            a,
+            "const a = JSON.parse('{\"data\":[1,2]}') as A;
+             console.log(String((a.data as unknown) instanceof Uint8Array) + ' ' + JSON.stringify(a));",
+            "JSON.parse(text) as A",
+        ),
+        (
+            a,
+            "const a = JSON.parse('{\"data\":[300,1.5]}') as A;
+             console.log(String(a.data[0] === 300) + ' ' + JSON.stringify(a));",
+            "JSON.parse(text) as A",
+        ),
+        (
+            a,
+            "const a = varta.json.parse<A>('{\"data\":[1,2]}'); console.log(String(a.data.length));",
+            "varta.json.parse A",
+        ),
+        (
+            "",
+            "const a = JSON.parse('[1]') as Uint8Array; console.log(String(a.length));",
+            "JSON.parse(text) as Uint8Array",
+        ),
+        (
+            "interface B { items: { data: Uint8Array | string }[]; extra?: Record<string, Uint8Array> }",
+            "const b = JSON.parse('{\"items\":[]}') as B; console.log(String(b.items.length));",
+            "JSON.parse(text) as B",
+        ),
+    ] {
+        refused(V38, &program(types, body), decode);
+        refused(V38, &program(types, body), &format!("{target} {reaching}"));
+    }
+    // V37 keeps the targets (value layout 17 has no byte-array tag).
+    assert_eq!(
+        logs_in(
+            V37,
+            &program(
+                a,
+                "const a = JSON.parse('{\"data\":[1,2]}') as A; console.log(String(a.data.length));"
+            )
+        ),
+        ["2"]
+    );
+    compile_in(
+        V37,
+        &program(
+            a,
+            "const a = varta.json.parse<A>('{\"data\":[1,2]}'); console.log(String(a.data.length));",
+        ),
+    );
+    // A JSON graph never holds bytes: the checked assertion throws.
+    assert_eq!(
+        logs(&format!(
+            "{a}
+             export async function main(): Promise<void> {{
+               const v = await new Response('{{\"data\":[1,2]}}').json();
+               try {{ console.log(String((v as A).data.length)); }} catch (error) {{
+                 console.log(error instanceof TypeError ? error.message : 'other');
+               }}
+             }}"
+        )),
+        ["type assertion to A failed"]
+    );
+    // Decode a number[] and build the bytes from it.
+    assert_eq!(
+        logs(&program(
+            "interface N { data: number[] }",
+            "const n = JSON.parse('{\"data\":[104,105]}') as N;
+             const bytes = new Uint8Array(n.data);
+             console.log(JSON.stringify({ data: bytes }) + ' ' + JSON.stringify(n));",
+        )),
+        [r#"{"data":{"0":104,"1":105}} {"data":[104,105]}"#]
+    );
+}
+
+/// Two views of one `ArrayBuffer` share their byte storage, which is a
+/// `Uint8Array`'s identity in value layout 18, so they would compare equal
+/// where Node 24.20.0 answers `false true false false -1` for `x === y`,
+/// `x !== y`, `Object.is(x, y)`, `[x].includes(y)` and `[x].indexOf(y)`.
+/// Every identity comparison of two values that may both hold a
+/// `Uint8Array` is refused by name; comparisons with values that cannot
+/// hold one, and programs without the binary prelude, stay admitted.
+#[test]
+fn sdk_path_identity_of_values_that_may_hold_bytes_is_refused() {
+    let views = |body: &str| {
+        format!(
+            "function same(x: unknown, y: unknown): boolean {{ {body} }}
+             export function main(): void {{
+               const buf = new ArrayBuffer(2);
+               const x: unknown = new Uint8Array(buf);
+               const y: unknown = new Uint8Array(buf);
+               console.log(String(same(x, y)));
+             }}"
+        )
+    };
+    let refusal = "of two values that may both hold a Uint8Array";
+    for (body, operation) in [
+        ("return x === y;", "==="),
+        ("return x !== y;", "!=="),
+        ("return Object.is(x, y);", "Object.is"),
+        ("return [x].includes(y);", "array.includes"),
+        ("return [x].indexOf(y) >= 0;", "array.indexOf"),
+        ("return [x].lastIndexOf(y) >= 0;", "array.lastIndexOf"),
+        (
+            "switch (x) { case y: return true; default: return false; }",
+            "===",
+        ),
+        ("const o: object = x as object; return o === y;", "==="),
+        ("return (x as Uint8Array) === y;", "==="),
+        (
+            "const p = x as BlobPart; const q = y as BlobPart; return p === q;",
+            "===",
+        ),
+    ] {
+        refused(V38, &views(body), &format!("{operation} {refusal}"));
+    }
+    // One operand that cannot hold a Uint8Array compares by tag and identity.
+    assert_eq!(
+        logs(&views(
+            "const r = { a: 1 }; const held: unknown = r;
+             return x !== undefined && x !== null && x !== 'x' && held === r && x !== r;"
+        )),
+        ["true"]
+    );
+    // Without the binary prelude no Uint8Array value exists.
+    assert_eq!(
+        logs(
+            "export function main(): void {
+               const r = { a: 1 };
+               const x: unknown = r;
+               const y: unknown = r;
+               const z: unknown = 'z';
+               console.log([x === y, x !== z, [x].includes(y)].map((b) => String(b)).join(' '));
+             }"
+        ),
+        ["true true true"]
+    );
+}
+
 /// The forms of the pending lists that stay outside the subset fail with
 /// their named diagnostics.
 #[test]
@@ -488,7 +649,8 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
          export function main(): void { console.log(String(k({}))); }",
         "instanceof Set of an unknown or object value",
     );
-    // A Uint8Array and another array share the array tag: no such union.
+    // Union formation counts a Uint8Array as an array member (the wave-2
+    // rule), although its cell carries the byte-array tag: no such union.
     refused(
         V38,
         "function k(v: Uint8Array | string[]): boolean { return v instanceof Uint8Array; }

@@ -3469,3 +3469,20 @@ Clippy of the four changed crates, formatting, the browser registry's Node
 tests, the conformance baseline (matches), `check-sdk.sh` (65/65) and
 `sdk-loopback.sh` (6 groups pass). The full gate is left to the wave
 integration.
+
+Review follow-up (2026-11-05). Owner decision: the value ABI number stays
+18 and `ValueKind::Bytes` (tag 15) is an additive tag of the in-development
+value layout 18. Checked JSON decode targets that reach a `Uint8Array`
+(`JSON.parse(text) as T`, `varta.json.parse<T>`, the KV key decoder) are
+compile errors under v38: the decoder tagged any JSON number array as bytes
+(`[300,1.5]` reached a fatal trap in `JSON.stringify`); v37 keeps its
+targets. Two views of one `ArrayBuffer` share their storage, the identity
+of a `Uint8Array`, and compared `===` true through `unknown` where Node
+answers false, so identity comparisons of two values that may both hold a
+`Uint8Array` (`===`, `!==`, `switch` cases, `Object.is`, array
+`includes`/`indexOf`/`lastIndexOf`) are refused by name; the contract's
+identity claim was corrected. The host `value_log_v12` handler renders a
+Bytes cell, `byte_in.ts` tests all 77 keys in one function (the earlier
+grouping was not needed by the compiler), and the language guide's
+`appendPart` example shows a typed caller and the exact-shape requirement
+of its checked `as`.

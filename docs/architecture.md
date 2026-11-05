@@ -11247,11 +11247,14 @@ import, value layout or ABI changes; v1–v37 keep rejecting every form below.
   no value tag of its own (it shares the record tag), so `instanceof Map`
   and `instanceof Set` are refused for an `unknown` or `object` operand,
   which never holds one, and for a union whose other members share the
-  selected member's tag; in a closed union a `Uint8Array` shares the array
-  tag. `instanceof Uint8Array` of an `unknown` or `object` operand tests the
-  byte-array tag of the wave-3 [bytes stream](#bytes-held-by-unknown-byte_values). Union formation already refuses
-  two members with one tag: a `Map` or `Set` with another map, set, record
-  or class instance, and a `Uint8Array` with another array type. A
+  selected member's tag. `instanceof Uint8Array` of an `unknown` or
+  `object` operand, and of a closed union, tests the byte-array tag of the
+  wave-3 [bytes stream](#bytes-held-by-unknown-byte_values). Union formation
+  refuses two members with one tag (a `Map` or `Set` with another map, set,
+  record or class instance) and keeps the wave-2 rule that counts a
+  `Uint8Array` as an array member, so `Uint8Array | T[]` stays refused even
+  though the cells carry different tags: telling the two apart in a closed
+  union is not implemented. A
   `Uint8Array` with records or class instances (`Blob | ArrayBuffer |
   Uint8Array | string`) and a `Map` or `Set` with primitives or arrays are
   admitted.
@@ -11294,7 +11297,9 @@ Wave 3 of v38, selector `LanguageProfile::byte_values()` (owner decision of
 tag of its own, so `unknown` holds one and every value reader serializes
 or refuses it by name. No host import or budget changes; v37 and earlier
 keep value layout 17, which has no byte-array tag, and their diagnostics
-(`sdk_path_forms_stay_refused_by_v37`).
+(`sdk_path_forms_stay_refused_by_v37`). Owner decision (2026-11-05): the
+value ABI number stays 18, and `ValueKind::Bytes` (tag 15) is an additive
+tag of the in-development value layout 18, not a step to a new value ABI.
 
 - **Tag and layout.** `value::ValueKind::Bytes` is an additive tag of the
   in-development value layout 18 (`value::bytes_layout`): only value18
@@ -11318,8 +11323,19 @@ keep value layout 17, which has no byte-array tag, and their diagnostics
   wave-2 rule: a `Uint8Array` shares no union with another array type.
 - **`unknown` and `object`.** Both hold a `Uint8Array` and every value that
   reaches one without a `Map`, `Set` or opaque builtin, without copying:
-  identity, writes through either reference and `===` behave as in
-  JavaScript. `typeof` is `"object"`, the value is truthy and
+  writes through either reference are seen through the other. The identity
+  of a `Uint8Array` is its byte storage, which every view of one
+  `ArrayBuffer` shares (`new Uint8Array(buffer)` twice), so two such views
+  would compare equal where JavaScript tells them apart. Identity
+  comparisons of two values that may both hold a `Uint8Array` (a
+  `Uint8Array`, `unknown`, `object` or a union with such a member, in a
+  program with the binary prelude) are refused at compile time with
+  `unsupported <operation> of two values that may both hold a Uint8Array`:
+  `===`, `!==` (also as `switch` case tests), `Object.is` and the
+  `includes`/`indexOf`/`lastIndexOf` searches of an array whose elements may
+  hold one (`lower::byte_values::refuse_view_identity`). A comparison with a
+  value that cannot hold one (a primitive, a record) is admitted and
+  answers as Node does. `typeof` is `"object"`, the value is truthy and
   `Array.isArray` is false. `x instanceof Uint8Array` and
   `ArrayBuffer.isView(x)` test the tag, and the positive branch narrows
   `x` to `Uint8Array`; a checked `x as Uint8Array`, and `x as` a union with a
@@ -11340,6 +11356,18 @@ keep value layout 17, which has no byte-array tag, and their diagnostics
   holding one fails the v34 thrown-value check; a thrown Error instance with
   a field holding one is read as before (the exception channel copies only
   its `name` and `message`).
+- **Checked JSON decoding.** JSON never produces a `Uint8Array`, and a
+  decoder would tag a JSON number array (of any numbers) as one, so a
+  checked decode target that reaches a `Uint8Array` (through fields,
+  elements, dictionary values or union members) is refused at compile time
+  with `unsupported checked JSON decode target: … reaching a Uint8Array`:
+  `JSON.parse(text) as T` (the checked and the direct decoder),
+  `varta.json.parse<T>` and the KV key decoder (KV values keep their own
+  rule: a top-level `Uint8Array` is stored as raw bytes and a nested one is
+  refused by `kv_checked`). `Response.json()` returns
+  `Promise<unknown>`, a JSON graph that never holds a `Uint8Array`, so a
+  later checked `as T` reaching one throws its `type assertion to T failed`
+  `TypeError` unless the bytes field is absent. V37 keeps its targets.
 - **JSON-object view.** A closed record held by `unknown`, read as
   `Record<string, unknown>` (`as`, `Object.keys`/`values`/`entries`,
   checked conversions), lists its present fields in its own-key order
@@ -11377,7 +11405,9 @@ keep value layout 17, which has no byte-array tag, and their diagnostics
   literal on one (the JSON-object view's `TypeError`; Node enumerates and
   answers); `'data' in` an array part of `appendPart` (a `TypeError`, where
   Node answers false); a `Uint8Array` with another array type in one union;
-  logging a typed `Uint8Array`; a tagged `Uint8Array` in a KV value.
+  logging a typed `Uint8Array`; a tagged `Uint8Array` in a KV value;
+  identity comparisons of two values that may both hold a `Uint8Array`;
+  checked JSON decode targets that reach a `Uint8Array`.
 
 #### Virtual file roots (`file_roots`)
 

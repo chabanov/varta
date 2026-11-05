@@ -11,6 +11,12 @@
 //! program's subclass of such a class is not matched); every other value
 //! keeps the JSON-object view, which throws its named `TypeError` for class
 //! instances, arrays and Error objects.
+//!
+//! The identity of a `Uint8Array` is its byte storage, which every view of
+//! one `ArrayBuffer` shares (`new Uint8Array(buffer)` twice), so two such
+//! views would compare equal where JavaScript tells them apart. Identity
+//! comparisons of two values that may both hold a `Uint8Array` are refused
+//! ([`Lower::refuse_view_identity`]).
 use super::*;
 use crate::modules::engine::{ARRAY_BUFFER_CLASS, BINARY, BLOB_CLASS, FILE_CLASS};
 use swc_common::Span;
@@ -115,6 +121,27 @@ fn local(span: Span, slot: u32, ty: Type) -> Expr {
     }
 }
 
+/// Why an identity comparison of two values that may hold a `Uint8Array` is
+/// refused under v38 (`byte_values`).
+const VIEW_IDENTITY: &str = "of two values that may both hold a Uint8Array (views of one ArrayBuffer share their byte storage, so their identity is not observable; compare one reference with itself or compare contents)";
+
+/// Whether a value of `ty` may be a `Uint8Array` under v38 (`byte_values`):
+/// a `Uint8Array`, `unknown`, `object` or a union with such a member, in a
+/// program that has the binary prelude (otherwise no `Uint8Array` value
+/// exists).
+fn may_hold_bytes(ty: Type, types: &ir::ValueTypes) -> bool {
+    types.profile.byte_values()
+        && engine::module(&BINARY, types).is_some()
+        && unions::members(ty, types).into_iter().any(|member| {
+            matches!(
+                member,
+                Type::Unknown
+                    | Type::Object(_)
+                    | Type::Collection(ir::CollectionKind::Uint8Array, _)
+            )
+        })
+}
+
 /// How the right operand of an admitted `in` reaches its cell.
 struct Operand<'a> {
     /// The expression whose value is the `unknown` or `object` cell.
@@ -125,6 +152,24 @@ struct Operand<'a> {
 }
 
 impl Lower<'_> {
+    /// Refuse the identity comparison `operation` (`===`, `!==`, `Object.is`,
+    /// an array search) of values of types `left` and `right` that may both
+    /// hold a `Uint8Array` (v38 `byte_values`). One operand that cannot hold
+    /// one (a primitive, a record) compares correctly by tag and identity.
+    pub(super) fn refuse_view_identity(
+        &self,
+        operation: &str,
+        left: Type,
+        right: Type,
+        span: Span,
+    ) -> Result<()> {
+        if may_hold_bytes(left, self.types) && may_hold_bytes(right, self.types) {
+            return Err(self
+                .source
+                .locate(unsupported(&format!("{operation} {VIEW_IDENTITY}")), span));
+        }
+        Ok(())
+    }
     /// `"key" in value` (an `object` fact) or `"key" in (value as
     /// Record<string, unknown>)` (`value` an `unknown` or `object` value)
     /// with a string literal key under v38 (`byte_values`); `None` for any

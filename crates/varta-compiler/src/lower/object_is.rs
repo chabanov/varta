@@ -46,6 +46,16 @@ impl Lower<'_> {
             return Err(invalid("Object.is has no type arguments"));
         }
         let span = call.span;
+        // V38 (`byte_values`): name the view-identity refusal before the
+        // language-value check below rejects such operands generically.
+        if let [left, right, ..] = call.args.as_slice()
+            && let (Some(left), Some(right)) = (
+                self.peek_type(&left.expr, 0),
+                self.peek_type(&right.expr, 0),
+            )
+        {
+            self.refuse_view_identity("Object.is", left, right, span)?;
+        }
         let mut inputs = Vec::new();
         let mut roots = Vec::new();
         let mut body = Vec::new();

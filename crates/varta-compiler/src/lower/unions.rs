@@ -163,7 +163,9 @@ pub(super) fn intern(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result<Ty
         )
     });
     // Records and class instances share the record union tag; so do map and
-    // set storage (v37). Tuples and byte arrays share the array tag. V37
+    // set storage (v37). Tuples and byte arrays share the array tag (under
+    // v38 `byte_values` a byte array's cell carries the byte-array tag, but
+    // union formation keeps counting it as an array member). V37
     // (`language_core`) tells several records and classes apart by their
     // layout descriptors, and several arrays by distinct element kinds;
     // collections and tuples take part only as the single member of their
@@ -447,6 +449,8 @@ impl Lower<'_> {
                 "union operator; narrow the value before arithmetic or coercive comparison",
             ));
         }
+        let operator = if op == EqEqEq { "===" } else { "!==" };
+        self.refuse_view_identity(operator, a.ty, b.ty, span)?;
         let (_, a, b) = self.join(a, b)?;
         let value = Expr {
             span,

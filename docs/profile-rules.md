@@ -3932,6 +3932,16 @@ Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).
   the pinned Node changes. Every other value keeps the JSON-object view and
   its `TypeError`; never answer from a snapshot dictionary of an instance.
 - `ArrayBuffer.isView` is `value instanceof Uint8Array` in the blob prelude.
+- A `Uint8Array`'s identity is its byte storage, shared by every view of
+  one `ArrayBuffer`. Every identity comparison of two values that may both
+  hold one goes through `Lower::refuse_view_identity` (`===`/`!==` in
+  `union_binary`, which `switch` cases reach, `Object.is`, array
+  `includes`/`indexOf`/`lastIndexOf`); a new identity-comparing form must
+  call it too. Do not compare storage handles as view identity.
+- Checked JSON decoding never builds a `Uint8Array`: `Lower::refuse_byte_target`
+  refuses every decode target reaching one (`collections::reaches_bytes`)
+  in `varta.json.parse<T>`, `JSON.parse(text) as T` (before the direct
+  decoder) and the KV key decoder. A new checked decode entry must call it.
 - Tests: `varta-runtime` `sdk_path_tests` (`byte_parts`, `byte_values` and
   `byte_in` cases with Node 24.20.0 expected files, the named `TypeError`s,
   the corrupt-storage rejections of the host and linked encoders, v37

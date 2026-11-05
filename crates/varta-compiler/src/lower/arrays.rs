@@ -192,6 +192,7 @@ impl Lower<'_> {
                     needle.span,
                 ));
             }
+            self.refuse_view_identity(&format!("array.{method}"), element, needle.ty, needle.span)?;
             // Omission starts a reverse search at the last element, while an
             // explicitly supplied Undefined still normalizes to zero.
             let from = if method == "lastIndexOf" && call.args.len() < 2 {

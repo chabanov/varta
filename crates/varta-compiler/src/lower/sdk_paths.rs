@@ -35,9 +35,11 @@ impl Lower<'_> {
     /// A map or set carries no value tag of its own (it shares the record
     /// tag), so a union whose other members share the selected member's
     /// tag, or an `unknown`/`object` value that never holds a map or set, is
-    /// refused rather than guessed. A `Uint8Array` shares the array tag in
-    /// closed unions; under v38 (`byte_values`) an `unknown`/`object` cell
-    /// tells it by its own byte-array tag.
+    /// refused rather than guessed. A `Uint8Array` carries its own
+    /// byte-array tag under v38 (`byte_values`), in closed unions and in
+    /// `unknown`/`object` cells; union formation still counts it as an
+    /// array member (`unions::intern`), so no union pairs it with another
+    /// array type.
     fn instance_of_member(&mut self, ty: Type, kind: K) -> Result<Option<Type>> {
         if matches!(ty, Type::Unknown | Type::Object(_)) {
             if kind == K::Uint8Array && self.types.profile.byte_values() {

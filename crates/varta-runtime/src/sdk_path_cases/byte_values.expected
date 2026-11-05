@@ -6,10 +6,11 @@ object false false false false false true
 1,2,255 |
 {"0":1,"1":2,"2":255}
 {}
-true false
+false false true false
 3:1.2.255 not bytes not bytes
 9
 9,8,255
+true false
 {"data":{"0":9,"1":8,"2":255},"size":3}
 {"data":{"0":9,"1":8,"2":255},"size":3}
 [{"0":9,"1":8,"2":255},{},{"0":0}]
