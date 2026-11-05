@@ -30,7 +30,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last committed full gate | Post-wave-3 debt batch on `f8028d3` (2026-11-05, macOS arm64): **3822 Rust tests passed, 0 failures, 17 ignored; 216 browser Node tests passed**; conformance on `checked-f64-utf16-v38` 132/5 of 137, baseline matched; all ten commands with unchanged inputs. Report: `target/verification/20261105-135516-mgodnc32/report.json`. Linux CI and other platforms not run |
+| Last committed full gate | Console browser leg on `defa8f2` (2026-11-05, macOS arm64): **3824 Rust tests passed, 0 failures, 17 ignored; 216 browser Node tests passed**; conformance on `checked-f64-utf16-v38` 132/5 of 137, baseline matched; all ten commands with unchanged inputs. Report: `target/verification/20261105-154346-tqsgwsbb/report.json`. Linux CI and other platforms not run |
 | Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **249 tests in 36 groups and 10 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -639,6 +639,35 @@ targets were not compiled here (their dependency sources are not in the
 offline cache and no Windows target is installed); the cross-platform reach of
 the consumer patch rests on the shared lock entry until CI or a Pi 5 builds
 it.
+
+### Console browser leg — 2026-11-05
+
+The backlog package `w4-console-browser-leg`, done in this session without
+subagents. The real uarp-sdk client and the console's settings run in the
+official browser host with native-equal results:
+
+- `varta dev --app` now takes `--network-record` and `--network-replay`
+  (before: only with `--view-script`), so an application instance without a
+  scripted session records and replays its network log; refused without
+  `--app` or a script and for the browser target (CLI smoke test). The
+  native budget report prints the maintenance total whenever maintenance
+  fuel was spent, also when no idle period ran a step.
+- `examples/uarp-console/scripts/test-browser-sdk.mjs`: every SDK group is
+  recorded natively against the loopback mock, replayed natively with the
+  mock stopped and replayed in local Chrome from the program's own bundle;
+  all six groups (43 cases) print the native replay's lines with exactly
+  its fuel, host calls, microtasks, output, turns and idle maintenance.
+- `examples/uarp-console/scripts/test-browser-settings.mjs`: the product with
+  the network closed by the host ceiling; the key saved in the settings is
+  stored in KV (OPFS in Chrome) and read back after a page reload, in the
+  native sessions' three states and with their log lines; the key appears
+  in no snapshot or page. Whole accessibility trees are not compared (Chrome
+  hides content under a modal dialog; `w4-native-dialog`).
+- Pilot finding F10: the SDK retries a request the host denied as a
+  connection error, delaying the console's `unavailable` state on both
+  hosts.
+
+Not run: Firefox and WebKit (no Playwright module set up here), Linux, CI.
 
 ### Post-wave-3 debt batch — 2026-11-05
 
