@@ -282,6 +282,20 @@ fn derived_limits() -> String {
             "`MAX_MANIFEST_BYTES`",
         ),
         (
+            "Recorded network log (v38 replay)",
+            {
+                use varta_common::net::replay as r;
+                format!(
+                    "{} of JSON text, {} requests, {} events; a failure text at most {} bytes",
+                    mib(r::MAX_LOG_BYTES),
+                    r::MAX_LOG_REQUESTS,
+                    r::MAX_LOG_EVENTS,
+                    r::MAX_FAILURE_TEXT_BYTES
+                )
+            },
+            "`net::replay::MAX_LOG_*`, `net::replay::MAX_FAILURE_TEXT_BYTES`",
+        ),
+        (
             "Function parameters",
             "Each captured `VartaResult` uses two physical parameters".to_owned(),
             "`abi::MAX_WASM_PARAMETERS`",

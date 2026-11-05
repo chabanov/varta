@@ -11796,8 +11796,9 @@ trusted platform inputs above, and `prompts`) or a wait,
   after timers, otherwise it runs at a later settling or not at all. Its
   arrival follows the wall clock, so only a script without network requests
   in flight is deterministic. `wait_network` explicitly permits bounded real I/O;
-  it is not replay. A recorded or simulated transport remains necessary for
-  reproducible network completion order, response bytes and errors.
+  it is not replay. A [recorded network log](#recorded-network-replay-v38)
+  replaces the transport when completion order, response bytes and errors
+  must be reproducible.
 - `Date.now()` and `performance.now()` keep reading the clock their
   `time.now` grant authorizes; virtual time governs timers only.
 
@@ -11825,6 +11826,103 @@ completions and timers, and the number of interval firings before an input
 are inherently racy and are not guaranteed. What every host guarantees is
 the turn model itself: one task per turn, microtasks drained in the turn,
 timers in (due time, sequence) order, host tasks in arrival order.
+
+#### Recorded network replay (v38)
+
+A native application instance can record its real transfers into a
+versioned, bounded log, and every host can replay such a log in place of its
+transport (`varta_common::net::replay`, runtime `NetworkMode`). Recording and
+replay serve `net_request_start_v2` requests of application instances only; a
+v37 descriptor fails with `ReplayError::Descriptor`.
+
+- **Log.** One JSON object: `format` (`net::replay::LOG_FORMAT`), `version`
+  (`LOG_VERSION`), `requests` and `events`, with no other member. A request is
+  `{method, url}`: the descriptor's method and the URL as the host parsed it
+  (WHATWG serialization), in the order requests reached the transport. An
+  event names its request by index and the scripted-session `step` during
+  which the guest received it (1-based, the settling after the last step is
+  one more, `UNSCRIPTED_STEP` outside a scripted session). Its `kind` is
+  `head` (`status`, `statusText`, `location` resolved against the request
+  URL, and `headers`: the canonical names and values the recording grant
+  showed), `chunk` (`read`: `text` or `bytes`, the mode of the read that armed
+  it, and `text`: the completion text, at most one read's delivery), `end`,
+  `failed` (`text`: the failure text) or `abort` (the guest aborted the open
+  transfer). A request's events are a head or a failure, then chunks, then
+  an end or a failure; an abort may close it at any point; nothing follows.
+  Steps never decrease. A reader refuses any other shape, a head that is no
+  canonical visible set within the response head limits, a chunk that is
+  empty or beyond one read, a byte chunk with a unit above 0xFF, a request
+  that is no `fetch` method or no URL in its own serialization, and the
+  [resource limits](#resource-limits) (`NetworkLogError`).
+- **Recording** (`varta dev --view-script S --network-record LOG`) keeps the
+  real transfers. It logs a request when it reaches the transport, every
+  completion when the guest receives it (`Net::deliver`, so a completion
+  discarded after an abort is not logged), and every abort of a transfer
+  that is still open. Immediate completions (denials, invalid URLs, methods,
+  headers or bodies) are produced by the host and never logged. A recording
+  that would exceed the log limits, or a completion the log cannot hold,
+  fails the instance (`ReplayError::RecordingLimit`, `Unrecordable`). The CLI
+  writes the log to a new file, also when the session failed, and never
+  overwrites one.
+- **Authorization.** Before the instance starts, every logged request must
+  be admitted by the package's `net.request` grants and the host ceiling;
+  otherwise the session fails with `ReplayError::Ungranted` before any guest
+  code runs. Each replayed request is then planned exactly as a real one:
+  descriptor checks, the pending-request limit, the permission broker's
+  decision and audit entry, the body and header checks. A denied or invalid
+  request completes immediately as without replay and claims no logged
+  request. A granted request claims the next logged request, which must
+  have the same method and URL (`ReplayError::Request`, `Unlogged`). A
+  replayed head shows only the logged names the replay grant also shows,
+  with the replaying request's own URL: a replay never reveals a header its
+  grant hides.
+- **Release and arrival.** Logged events are released strictly in log order:
+  each once its request has the matching operation armed (the head after the
+  start; a chunk, end or failure after a body read, whose mode must match a
+  logged chunk's, `ReplayError::Read`) and, in a scripted session, once the
+  session reached the event's step. A logged abort is released by the
+  guest's own abort of that request; any other abort of an open replayed
+  transfer fails with `ReplayError::Abort`. A released completion arrives as
+  a transfer's does: when the instance next waits for network, after its idle
+  period's maintenance, every completion released by then arrives at once,
+  in log order, and each is one network turn. Nothing waits for the wall
+  clock and no socket opens.
+- **Failures.** A `wait_network` step that ends with a watched request armed,
+  or an unscripted application that ends so, fails with
+  `ReplayError::Stalled` naming the next log event. A session that ends without
+  another failure while logged events are undelivered fails with
+  `ReplayError::Unconsumed`. Every replay failure is fatal for the instance.
+- **Usage.** The guest uses the same imports and receives the same completion
+  texts as from a real transfer, so each turn's fuel, host calls, microtasks
+  and memory are those of the corresponding real transfer turn (checked
+  against the recording by `replay_tests`).
+- **What replay reproduces.** Which requests reach the transport and in which
+  order; each completion's kind and text; their delivery order among network
+  completions; the script step in which each was received; aborts at their
+  place.
+- **What it does not reproduce.** Wall-clock latency and arrival times within
+  a step (a replayed completion arrives at the first idle period after its
+  operation is armed); request headers and bodies (only the method and URL
+  are compared); response headers the recording grant hid; transport
+  behavior the log does not hold (connections, TLS, DNS, retries the guest
+  did not make); `Date.now()`, `Math.random()` and other inputs that are not
+  network completions. A replayed session whose guest behaves differently
+  from the recording (another order of requests or reads) fails as a
+  divergence instead of reaching an unrecorded state.
+- **Browser host.** The generated loader accepts the log's JSON text as the
+  embedder option `networkReplay` of `run` and `mount`, validates it with the
+  same rules before anything loads, and the Worker refuses an ungranted logged
+  request before instantiation. The replay transport replaces Fetch behind the
+  same request planning and grant checks, releases events by the same rules
+  and settles each completion as Fetch does, so it reaches the event loop
+  after the turn and its idle period. The browser host has no scripted
+  session and does not interpret steps. An armed request the log cannot
+  complete stays pending, as with a silent server (a bounded run then ends
+  at its deadline); an instance that ends with logged events undelivered
+  fails with the `Unconsumed` text. Its divergence texts are the native ones
+  (`registry.network.replay.errors`).
+  The [embedding contract](embedding.md#recorded-network-replay-v38) states
+  the wire rules for third-party hosts.
 
 **Capabilities.** `ui.open_url` (`GrantKind::OpenUrls`: URL patterns under
 the network URL rules over `https://` and `http://`, plus the exact
@@ -14355,6 +14453,7 @@ enforces are in the [embedding contract](embedding.md#manifest-limits)):
 | Checked JSON parsing | 64 KiB encoded input, depth 64, 4096 values; schemas at most 64 KiB in the shared static pool (type counts above) | `abi::MAX_INPUT_BYTES`, `value::MAX_JSON_*`, `json::MAX_SCHEMA_BYTES` |
 | `net_get`/`net_fetch` response head | 64 KiB | `net::MAX_FETCH_HEADER_BYTES` |
 | Manifest, host policy, decision file or project configuration | 256 KiB | `MAX_MANIFEST_BYTES` |
+| Recorded network log (v38 replay) | 16 MiB of JSON text, 4096 requests, 65536 events; a failure text at most 8192 bytes | `net::replay::MAX_LOG_*`, `net::replay::MAX_FAILURE_TEXT_BYTES` |
 | Function parameters | Each captured `VartaResult` uses two physical parameters | `abi::MAX_WASM_PARAMETERS` |
 <!-- generated:derived-limits:end -->
 

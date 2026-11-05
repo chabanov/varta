@@ -3429,3 +3429,34 @@ at most `MAX_RUNNING_LAUNCHERS` launchers instead of a reaper thread per
 opening, the prototype `varta-web-host` refuses artifacts with a resource
 section, and the sfnt record offsets and the renderer's family/alias limits
 are named. The manual trusted-gesture run is still open.
+
+### Recorded network replay (`w3-network-replay`) — wave 3, scoped 2026-11-05
+
+`varta_common::net::replay` defines the versioned recorded-completion log
+(requests in start order; heads with the recording grant's visible headers,
+chunks with their read mode, ends, failures and aborts in delivery order,
+each with its script step), its bounded reader and the shared `ReplayError`
+texts, which the browser registry exports. The native runtime records real
+transfers (`NetworkMode::Record`, logged at delivery) and replays a log in
+place of the transport (`NetworkMode::Replay`): every request is planned and
+authorized as a real one, an ungranted logged request fails before the
+instance starts, logged events are released in log order once their
+operation is armed and their step is reached, and a released completion
+arrives at the instance's next wait, after its idle maintenance. `varta dev
+--view-script` gains `--network-record` and `--network-replay`. The browser
+loader accepts the log as `networkReplay` and the Worker serves it through a
+replay transport behind the same planning and grant checks.
+
+Verification (scoped): `replay_tests` record SSE, a 404 and a refused
+connection, an abort of an open stream, a Retry-After backoff on virtual time
+and a stream longer than a test per-turn deadline from real loopback runs and
+replay each with identical lines, snapshot and per-turn usage; they also
+cover the pre-start grant refusal, request and abort divergences, a hidden
+`retry-after` stalling the replay, undelivered events and the recording
+limit. A CLI smoke test records and replays a session against a loopback
+server and checks `--help`, refusals and flag rules. Node tests cover the
+browser reader, transport and `createNetwork` paths.
+`scripts/test-browser-replay.mjs` records a session against a Varta HTTP
+service and replays it natively and in local Chrome with the same lines,
+view text and usage. Firefox and WebKit were not run: no Playwright module is
+installed here.

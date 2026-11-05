@@ -1,5 +1,9 @@
 // A bounded slot/operation broker. Transport completions never run guest code;
 // the event loop must explicitly deliver one event and drain its checkpoint.
+// `transport` is Fetch's browserTransport or a recorded log's replay
+// (replayTransport): a replay is also told of a request aborted before its
+// transfer was created (`abandon`), and an ended instance closes its open
+// transfers instead of aborting them.
 function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, transport) {
   const N = registry.network, C = N.completion, encoder = new TextEncoder();
   const requests = new Map(), events = new Map(), deferred = new Map();
@@ -60,7 +64,7 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
       const outcome = plan(value);
       if (!Number.isSafeInteger(nextId + 1)) fail();
       const id = ++nextId;
-      const item = { phase: outcome.kind ? "ready" : "armed", completion: outcome.kind ? outcome : undefined, watcher: undefined, cancelled: false, transfer: undefined };
+      const item = { phase: outcome.kind ? "ready" : "armed", completion: outcome.kind ? outcome : undefined, watcher: undefined, cancelled: false, transfer: undefined, plan: outcome.kind ? undefined : outcome };
       requests.set(id, item);
       if (!outcome.kind) deferred.set(id, () => {
         if (requests.get(id) !== item || item.cancelled) return;
@@ -90,7 +94,8 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
     net_body_read_bytes(id) { read(id, true); },
     net_request_abort(id) {
       const item = requests.get(id); if (!item) return;
-      cancel(item); events.delete(id); deferred.delete(id);
+      cancel(item); events.delete(id);
+      if (deferred.delete(id) && !item.transfer && item.plan) transport.abandon?.(item.plan);
       if (item.phase === "idle") { requests.delete(id); return; }
       item.phase = "ready"; item.completion = { kind: C.aborted, text: "" };
       if (item.watcher !== undefined) { scheduler.wake(item.watcher); item.watcher = undefined; }
@@ -125,6 +130,6 @@ function createNetwork(scheduler, policy, emit, readDescriptor, writeResult, tra
         notify = () => { clearTimeout(timer); notify = undefined; resolve(); };
       });
     },
-    close() { for (const item of requests.values()) cancel(item); requests.clear(); events.clear(); deferred.clear(); notify?.(); },
+    close() { for (const item of requests.values()) { item.cancelled = true; if (item.transfer?.close) item.transfer.close(); else item.transfer?.cancel(); } requests.clear(); events.clear(); deferred.clear(); notify?.(); },
   };
 }

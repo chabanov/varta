@@ -21,6 +21,8 @@
 //! [`HOST_REQUEST_HEADERS`].
 use std::collections::{BTreeMap, BTreeSet, btree_map};
 
+pub mod replay;
+
 /// The exact capability every request requires (URL scopes plus an optional
 /// method list), distinct from `net.fetch`, `net.get` and `net.listen`.
 pub const REQUEST_CAPABILITY: &str = "net.request";

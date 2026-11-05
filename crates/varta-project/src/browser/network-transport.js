@@ -121,3 +121,148 @@ function browserTransport(plan, fetcher = fetch) {
   };
   return { head, pull, cancel };
 }
+// Recorded network replay (net::replay): an embedder-supplied log replaces
+// Fetch. snapshotNetworkLog validates the log's bounded JSON text exactly as
+// the native reader does; replayTransport serves it. createNetwork plans and
+// authorizes every request first, as for Fetch, so a replay never bypasses
+// net.request; the Worker also refuses a log naming an ungranted request
+// before the instance starts. Requests claim the logged requests in start
+// order (same method and URL); logged events are released strictly in log
+// order, each once its request's operation is armed (its head, or a pull in
+// the logged read mode). An abort must meet the log's abort of the same
+// request. A released completion settles a promise, so it reaches the event
+// loop as a Fetch completion does: after the turn and its idle period. Steps
+// are not interpreted: the browser host has no scripted session.
+function snapshotNetworkLog(input) {
+  const R = registry.network.replay, N = registry.network;
+  const fail = (reason) => { throw new TypeError(`invalid network log: ${reason}`); };
+  let bytes;
+  if (typeof input === "string") bytes = new TextEncoder().encode(input);
+  else if (input instanceof Uint8Array) bytes = input;
+  else fail("expected its JSON text");
+  if (bytes.byteLength > R.maxLogBytes) fail("too large");
+  let log;
+  try { log = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { fail("no JSON"); }
+  const exact = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  const count = (value) => Number.isSafeInteger(value) && value >= 0;
+  const token = (value) => typeof value === "string" && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value);
+  const fieldText = (value) => typeof value === "string" && /^[\t -~\u0080-ÿ]*$/.test(value);
+  const canonicalUrl = (value) => { try { return typeof value === "string" && new TextEncoder().encode(value).length <= N.maxUrlBytes && new URL(value).href === value; } catch { return false; } };
+  if (!exact(log, ["format", "version", "requests", "events"]) || log.format !== R.format || log.version !== R.version) fail("format");
+  if (!Array.isArray(log.requests) || log.requests.length > R.maxRequests) fail("requests");
+  if (!Array.isArray(log.events) || log.events.length > R.maxEvents) fail("events");
+  const requests = log.requests.map((request) => {
+    if (!exact(request, ["method", "url"]) || !token(request.method)
+      || N.forbiddenMethods.some((name) => name.toLowerCase() === request.method.toLowerCase()) || !canonicalUrl(request.url)) fail("request");
+    return { method: request.method, url: request.url };
+  });
+  const fields = { head: ["status", "statusText", "location", "headers"], chunk: ["read", "text"], end: [], failed: ["text"], abort: [] };
+  const [head, chunk, end, failed, abort] = R.kinds;
+  const lives = requests.map(() => "started");
+  let step = R.unscriptedStep;
+  const events = log.events.map((event) => {
+    const kind = event?.kind;
+    if (!Object.hasOwn(fields, kind) || !exact(event, ["kind", "step", "request", ...fields[kind]]) || !count(event.step) || !count(event.request) || event.request >= requests.length) fail("event");
+    if (event.step < step) fail("step"); step = event.step;
+    const life = lives[event.request];
+    const next = kind === head && life === "started" ? "open" : kind === chunk && life === "open" ? "open"
+      : kind === end && life === "open" || (kind === failed || kind === abort) && life !== "closed" ? "closed" : fail("order");
+    lives[event.request] = next;
+    if (kind === head) {
+      if (!Number.isInteger(event.status) || event.status < R.minStatus || event.status > R.maxStatus || !fieldText(event.statusText)) fail("head");
+      if (typeof event.location !== "string" || event.location !== "" && (new TextEncoder().encode(event.location).length > N.maxUrlBytes || !URL.canParse(event.location))) fail("location");
+      if (!Array.isArray(event.headers) || event.headers.length % 2 || event.headers.length / 2 > N.maxResponseHeaders) fail("headers");
+      let size = 0, previous;
+      for (let i = 0; i < event.headers.length; i += 2) {
+        const name = event.headers[i], value = event.headers[i + 1];
+        if (!token(name) || name !== name.toLowerCase() || name.length > N.maxHeaderNameBytes || N.forbiddenResponseHeaders.includes(name)
+          || previous !== undefined && previous >= name || !fieldText(value)) fail("headers");
+        size += name.length + value.length; previous = name;
+        if (size > N.maxResponseHeaderBytes) fail("headers");
+      }
+      return { kind, step: event.step, request: event.request, status: event.status, statusText: event.statusText, location: event.location, headers: Array.from(event.headers) };
+    }
+    if (kind === chunk) {
+      if (!R.reads.includes(event.read) || typeof event.text !== "string" || !event.text.length || event.text.length > N.maxReadBytes
+        || event.read === R.reads[1] && !/^[\u0000-ÿ]*$/.test(event.text) || !event.text.isWellFormed()) fail("chunk");
+      return { kind, step: event.step, request: event.request, read: event.read, text: event.text };
+    }
+    if (kind === failed) {
+      if (typeof event.text !== "string" || !event.text.length || new TextEncoder().encode(event.text).length > R.maxFailureBytes) fail("failure");
+      return { kind, step: event.step, request: event.request, text: event.text };
+    }
+    return { kind, step: event.step, request: event.request };
+  });
+  return { format: log.format, version: log.version, requests, events };
+}
+function replayTransport(log) {
+  const R = registry.network.replay, N = registry.network, C = N.completion;
+  const [head, chunk, end, failed, abort] = R.kinds, [textRead, bytesRead] = R.reads;
+  // A function replacement: a URL's `$` is never a replacement pattern.
+  const fill = (template, values) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, () => String(value)), template);
+  const open = new Map();
+  let claimed = 0, cursor = 0;
+  const record = (event, plan) => {
+    const [status, statusText, url, location, fields] = N.headFields, visible = [];
+    for (let i = 0; i < event.headers.length; i += 2) {
+      const name = event.headers[i];
+      if (plan.visible.has(name) && !N.forbiddenResponseHeaders.includes(name)) visible.push(name, event.headers[i + 1]);
+    }
+    const value = { [status]: event.status, [statusText]: event.statusText, [url]: plan.url, [location]: event.location, [fields]: visible };
+    return JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)));
+  };
+  // Release logged events in order until one cannot be released yet.
+  const release = () => {
+    while (cursor < log.events.length) {
+      const event = log.events[cursor], transfer = open.get(event.request);
+      if (event.kind === abort || !transfer?.waiting) break;
+      const { resolve, read } = transfer.waiting;
+      let completion;
+      if (event.kind === head) completion = { kind: C.head, text: record(event, transfer.plan) };
+      else if (event.kind === chunk) {
+        if (read === undefined) break;
+        if (read !== event.read) throw new Error(fill(R.errors.read, { request: event.request, actual: read, logged: event.read }));
+        completion = { kind: C.chunk, text: event.text };
+      } else completion = event.kind === end ? { kind: C.end, text: "" } : { kind: C.failed, text: event.text };
+      transfer.waiting = undefined; cursor++;
+      if (event.kind !== head && event.kind !== chunk) { transfer.closed = true; open.delete(event.request); }
+      resolve(completion);
+    }
+  };
+  const claim = (plan) => {
+    const logged = log.requests[claimed];
+    if (!logged) throw new Error(fill(R.errors.unlogged, { method: plan.method, url: plan.url }));
+    if (logged.method !== plan.method || logged.url !== plan.url) throw new Error(fill(R.errors.request, { request: claimed, method: plan.method, url: plan.url, loggedMethod: logged.method, loggedUrl: logged.url }));
+    return claimed++;
+  };
+  const aborted = (index) => {
+    const event = log.events[cursor];
+    if (event?.kind !== abort || event.request !== index) throw new Error(fill(R.errors.abort, { request: index }));
+    cursor++; release();
+  };
+  const transport = (plan) => {
+    const index = claim(plan), transfer = { plan, waiting: undefined, closed: false };
+    const wait = (read) => new Promise((resolve) => { transfer.waiting = { resolve, read }; });
+    open.set(index, transfer);
+    const pending = wait(undefined);
+    release();
+    return {
+      head: pending,
+      pull(bytes) { const pulled = wait(bytes ? bytesRead : textRead); release(); return pulled; },
+      // The guest aborted the open transfer; after its terminal event this is
+      // the release that taking the event performs.
+      cancel() { if (transfer.closed) return; transfer.closed = true; open.delete(index); aborted(index); },
+      // The instance ended: no abort.
+      close() { transfer.closed = true; open.delete(index); },
+    };
+  };
+  return {
+    transport,
+    // A request aborted before its transport was created still claimed its
+    // logged request, as natively, and its abort is the log's next event.
+    abandon(plan) { aborted(claim(plan)); },
+    finish() { if (cursor < log.events.length) throw new Error(fill(R.errors.unconsumed, { remaining: log.events.length - cursor })); },
+    position() { return { event: cursor, remaining: log.events.length - cursor }; },
+  };
+}

@@ -17175,6 +17175,137 @@ fn a_view_script_waits_for_network_explicitly_and_rejects_invalid_wall_bounds() 
     }
 }
 
+/// `varta dev --network-record` writes the log of a real session against a
+/// loopback server; `--network-replay` serves it with the server gone and
+/// prints the same output and snapshot. An ungranted logged request fails
+/// before the program starts, and invalid flag combinations and logs fail.
+#[test]
+fn a_view_script_records_and_replays_its_network_log() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+    };
+    let help = varta().args(["dev", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        help.contains("--network-record") && help.contains("--network-replay"),
+        "{help}"
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        loop {
+            let mut line = String::new();
+            assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let body = "data: Привіт\n\ndata: 🦀\n\n".as_bytes();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nx-hidden: secret\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+    });
+    let source = r#"
+      async function load(label:number):Promise<void>{
+        const response=await fetch("__BASE__/events");
+        const text=await response.text();
+        const hidden=response.headers.get("x-hidden");
+        View.setText(label,text.trim().split("\n\n").join("|"));View.commit();
+        console.log(`${response.status} ${hidden===null?"hidden":hidden}`);
+      }
+      export function main():void{
+        console.log("started");
+        const root=View.node();View.createElement(root,1);View.setAttribute(root,1,"app");
+        const label=View.node();View.createText(label,"pending");View.insert(root,label,0);
+        View.mount(root);load(label);
+      }
+    "#
+    .replace("__BASE__", &base);
+    let project = RegressionProject::new(
+        &source,
+        serde_json::json!({"net":{"request":{"urls":[format!("{base}/**")],"methods":["GET"]}}}),
+    );
+    project.language_profile(V38_PROFILE);
+    fs::write(
+        project.0.join("script.json"),
+        r#"{"inputs":[{"input":"wait_network","ms":2000}]}"#,
+    )
+    .unwrap();
+    let dev = |extra: &[&str]| {
+        let mut args = vec!["dev", "--view-script", "script.json"];
+        args.extend_from_slice(extra);
+        project.command(&args)
+    };
+    let recorded = dev(&["--network-record", "log.json"]);
+    assert!(recorded.status.success(), "{}", combined(&recorded));
+    server.join().unwrap();
+    let text = "data: Привіт|data: 🦀";
+    assert_eq!(view_text(view_node(&view_snapshot(&recorded), "app")), text);
+    let log: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.0.join("log.json")).unwrap()).unwrap();
+    assert_eq!(log["format"], "varta-network-log");
+    assert_eq!(log["requests"][0]["url"], format!("{base}/events"));
+    assert_eq!(log["events"][0]["kind"], "head");
+    // The grant showed no `x-hidden`: neither does the log.
+    assert!(!log.to_string().contains("secret"));
+    // An existing log is never overwritten.
+    let again = dev(&["--network-record", "log.json"]);
+    assert!(!again.status.success());
+    assert!(
+        combined(&again).contains("already exists"),
+        "{}",
+        combined(&again)
+    );
+    // The server is gone: the replay prints the recorded session.
+    let replayed = dev(&["--network-replay", "log.json"]);
+    assert!(replayed.status.success(), "{}", combined(&replayed));
+    assert_eq!(replayed.stdout, recorded.stdout);
+    // A host ceiling without the URL refuses the log before the program
+    // starts: no guest output.
+    fs::write(
+        project.0.join("host.json"),
+        r#"{"schemaVersion":1,"abiVersion":34,"capabilities":[]}"#,
+    )
+    .unwrap();
+    let refused = dev(&["--network-replay", "log.json", "--policy", "host.json"]);
+    assert!(!refused.status.success());
+    assert!(
+        combined(&refused).contains("network replay refused: logged request 0"),
+        "{}",
+        combined(&refused)
+    );
+    assert!(!combined(&refused).contains("started"));
+    // A log that is no log, and flags without a script or together.
+    fs::write(project.0.join("bad.json"), r#"{"format":"other"}"#).unwrap();
+    let bad = dev(&["--network-replay", "bad.json"]);
+    assert!(!bad.status.success());
+    assert!(combined(&bad).contains("network log"), "{}", combined(&bad));
+    for args in [
+        &["dev", "--network-replay", "log.json"][..],
+        &["dev", "--network-record", "other.json"][..],
+        &[
+            "dev",
+            "--view-script",
+            "script.json",
+            "--network-record",
+            "other.json",
+            "--network-replay",
+            "log.json",
+        ][..],
+    ] {
+        let invalid = project.command(args);
+        assert!(!invalid.status.success(), "{args:?}");
+        assert!(!project.0.join("other.json").exists());
+    }
+}
+
 fn view_node<'a>(node: &'a serde_json::Value, ident: &str) -> &'a serde_json::Value {
     fn find<'a>(node: &'a serde_json::Value, ident: &str) -> Option<&'a serde_json::Value> {
         if node["attributes"]["id"] == ident {

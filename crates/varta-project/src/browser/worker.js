@@ -14,7 +14,7 @@ self.onmessage = async ({ data }) => {
   const application = data.mode === "application";
   const prompting=application&&descriptor.turnBudgets&&data.prompting===true,prompts=new Map();
   const logs = [];
-  let tank, scheduler, network, view, events, calls = 0, totalCalls = 0, outputBytes = 0, instance, closedFuel = 0, turns = 1;
+  let tank, scheduler, network, replay, view, events, calls = 0, totalCalls = 0, outputBytes = 0, instance, closedFuel = 0, turns = 1;
   const maintenance = [];
   let maintenanceFuel = 0, maintenancePeriods = 0;
   try {
@@ -202,7 +202,19 @@ self.onmessage = async ({ data }) => {
         return events.answer(Object.keys(registry.permissions.states).find(name=>registry.permissions.states[name]===code));
       },
     });
-    network = createNetwork(scheduler, policy, emit, readDescriptor, writeResult, (plan) => browserTransport({...plan,timeoutMs:descriptor.budgets.deadlinePerTurnMs}));
+    // An embedder-supplied recorded log (loader-validated) replaces Fetch.
+    // Every logged request must be admitted by the grants and the ceiling
+    // before the instance starts; each replayed request is checked again.
+    if (data.networkReplay !== undefined) {
+      const R = registry.network.replay;
+      data.networkReplay.requests.forEach(({ method, url }, request) => {
+        if (!rawPolicy.allows(url, method)) throw new Error(R.errors.ungranted.replace("{request}", () => String(request)).replace("{method}", () => method).replace("{url}", () => url));
+      });
+      replay = replayTransport(data.networkReplay);
+    }
+    network = createNetwork(scheduler, policy, emit, readDescriptor, writeResult, replay
+      ? Object.assign((plan) => replay.transport(plan), { abandon: (plan) => replay.abandon(plan) })
+      : (plan) => browserTransport({...plan,timeoutMs:descriptor.budgets.deadlinePerTurnMs}));
     Object.assign(implementations, network.implementations);
     const uiPolicy = viewPolicy.createViewPolicy(manifest, permissions,broker.granted);
     const assetNames=new Set(descriptor.resources.filter((resource)=>!resource.font).map((resource)=>resource.key));
@@ -371,6 +383,8 @@ self.onmessage = async ({ data }) => {
     view.close();
     network.close();
     events.close();
+    // A replay that ends with logged events undelivered diverged.
+    replay?.finish();
     self.postMessage({ type: "result", status: "ok", logs, exitCode: 0, fuelRemaining: tank.remaining, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns, maintenance, maintenanceFuel, maintenancePeriods });
   } catch (error) {
     view?.close();

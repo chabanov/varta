@@ -186,6 +186,38 @@ export const registry = freeze({
       "POST",
       "PUT"
     ],
+    "replay": {
+      "errors": {
+        "abort": "network replay diverged: request {request} was aborted where the log continues",
+        "descriptor": "network recording and replay serve net_request_start_v2 requests only",
+        "read": "network replay diverged: request {request} read {actual}, the log recorded {logged}",
+        "request": "network replay diverged: request {request} is {method} {url}, the log recorded {loggedMethod} {loggedUrl}",
+        "stalled": "network replay stalled at log event {event}: no logged completion can reach an armed request",
+        "unconsumed": "network replay ended with {remaining} logged events undelivered",
+        "ungranted": "network replay refused: logged request {request} ({method} {url}) is not granted",
+        "unlogged": "network replay diverged: request {method} {url} is not in the log"
+      },
+      "format": "varta-network-log",
+      "kinds": [
+        "head",
+        "chunk",
+        "end",
+        "failed",
+        "abort"
+      ],
+      "maxEvents": 65536,
+      "maxFailureBytes": 8192,
+      "maxLogBytes": 16777216,
+      "maxRequests": 4096,
+      "maxStatus": 999,
+      "minStatus": 100,
+      "reads": [
+        "text",
+        "bytes"
+      ],
+      "unscriptedStep": 0,
+      "version": 1
+    },
     "result": {
       "base": 65536,
       "length": "env_result_len",

@@ -30,6 +30,7 @@ use crate::{
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
+use varta_common::net::replay::ReplayError;
 use varta_common::permission::{AuditEntry, StoredDecision};
 use wasmtime::Instance;
 
@@ -53,6 +54,9 @@ pub struct ApplicationOptions {
     /// and external link effects are performed there instead of being
     /// simulated. Ignored with a simulated [`Self::view`].
     pub platform_effects: Option<std::sync::Arc<dyn varta_view::PlatformEffects>>,
+    /// Real transfers (the default), recorded ones, or a recorded log
+    /// replayed in place of the transport ([`crate::NetworkMode`]).
+    pub network: crate::NetworkMode,
 }
 
 /// Explicit host geometry and optional font for layout-dependent view commands.
@@ -331,12 +335,24 @@ impl VartaRuntime {
             mut execution,
             ..
         } = prepared;
+        let scripted = options.view.is_some();
         execution.store.data_mut().view = match options.view {
             Some(view) => crate::view::Session::simulated(view.environment, view.platform),
             None => crate::view::Session::hosted(options.platform_effects),
         };
         if let Some(layout) = options.view_layout {
             execution.store.data_mut().view.set_layout(layout)?;
+        }
+        // A replayed log must name only granted requests, before any guest
+        // code runs.
+        if let crate::NetworkMode::Replay(log) = &options.network {
+            crate::replay::check_grants(log, &execution.store.data().policy)?;
+        }
+        let net = &mut execution.store.data_mut().net;
+        net.configure(options.network);
+        if scripted {
+            // A scripted session's main turn precedes its first step.
+            net.set_step(varta_common::net::replay::UNSCRIPTED_STEP)?;
         }
         let instance = execution.instantiate_prepared(&module)?;
         let mut application = Application {
@@ -391,6 +407,7 @@ impl VartaRuntime {
             stream(&mut application);
         }
         stream(&mut application);
+        application.finish_replay(true);
         application.report_into(&mut report);
         report
     }
@@ -475,6 +492,9 @@ impl VartaRuntime {
         application.horizon = Some(Horizon::Input);
         for (index, step) in script.inputs.iter().enumerate() {
             let number = index + 1;
+            if !application.network_step(number) {
+                break;
+            }
             match *step {
                 varta_view::ScriptStep::Input(ref input) => {
                     if !application.settle_step(number, Horizon::Input)
@@ -499,7 +519,11 @@ impl VartaRuntime {
         }
         // After the last step the session settles once more and ends; a
         // timer no wait reached never fires.
-        application.settle_step(script.inputs.len() + 1, Horizon::Input);
+        let last = script.inputs.len() + 1;
+        if application.network_step(last) {
+            application.settle_step(last, Horizon::Input);
+        }
+        application.finish_replay(false);
         let snapshot = Some(match geometry {
             Some(request) if application.failure.is_none() => {
                 match application.view_snapshot_with_geometry(request) {
@@ -711,8 +735,15 @@ impl Application {
                     }
                 }
                 Step::Idle => {
-                    if self.execution.store.data().net.alive() {
-                        self.fail(wait.error().into());
+                    let net = &self.execution.store.data().net;
+                    if net.alive() {
+                        // A replay waits for nothing: an armed request the
+                        // log cannot reach now never completes.
+                        let error = match net.replay_position() {
+                            Some((event, _)) => ReplayError::Stalled { event }.into(),
+                            None => wait.error().into(),
+                        };
+                        self.fail(error);
                         break false;
                     }
                     break true;
@@ -722,6 +753,41 @@ impl Application {
         };
         self.network_wait = None;
         running
+    }
+
+    /// A scripted session begins step `step` (the settling after the last
+    /// step is one more): a recording logs later completions with it, a
+    /// replay releases the events logged up to it. Returns whether the
+    /// instance is still running.
+    fn network_step(&mut self, step: usize) -> bool {
+        if self.state != InstanceState::Running {
+            return false;
+        }
+        let step = u32::try_from(step).unwrap_or(u32::MAX);
+        if let Err(error) = self.execution.store.data_mut().net.set_step(step) {
+            self.fail(error.into());
+            return false;
+        }
+        true
+    }
+
+    /// At the end of a session that did not fail, a replay must have
+    /// delivered every logged event, and (`settled`: a session that waits
+    /// for its network, as an unscripted one does) no request may still
+    /// wait for a completion the log does not hold.
+    fn finish_replay(&mut self, settled: bool) {
+        if self.failure.is_some() {
+            return;
+        }
+        let net = &self.execution.store.data().net;
+        let Some((event, remaining)) = net.replay_position() else {
+            return;
+        };
+        if settled && net.alive() {
+            self.fail(ReplayError::Stalled { event }.into());
+        } else if remaining > 0 {
+            self.fail(ReplayError::Unconsumed { remaining }.into());
+        }
     }
 
     /// The view's tree and accessibility snapshot.
@@ -1094,7 +1160,8 @@ impl Application {
                 .next_due(true)
                 .map(|due| scheduler::target(context, due)),
         };
-        let busy = context.net.alive();
+        // A replay's released completions arrive here; nothing else does.
+        let busy = context.net.busy();
         if timer.is_none() && !busy {
             return Ok(false);
         }
@@ -1211,6 +1278,7 @@ impl Application {
         let instance = &self.instance;
         let result = result
             .map_err(scheduler::typed)
+            .map_err(crate::replay::typed)
             .map_err(|error| resources::classify(instance, store, error))
             .map_err(|error| turns::classify(error, store.data()));
         turns::close(Some(instance), store);
@@ -1254,6 +1322,7 @@ impl Application {
         report.failure = self.failure.take();
         report.collect_profile(&mut self.execution.store);
         report.collect(self.execution.store.data_mut());
+        report.network_log = self.execution.store.data_mut().net.take_log();
         if let InstanceState::Finished { exit_code } = self.state {
             report.output.exit_code = exit_code;
         }

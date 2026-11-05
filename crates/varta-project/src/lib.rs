@@ -21,9 +21,9 @@ pub use varta_common::permission::DecisionFile;
 pub use varta_common::profile::{FuelProfile, FunctionFuel};
 use varta_runtime::{ApplicationOptions, RunOptions, VartaRuntime};
 pub use varta_runtime::{
-    FileRoots, HttpReport, HttpRequestOutcome, HttpRequestReport, RunOutput, RunReport,
-    RuntimeEvent, RuntimeObserver, ViewGeometryRequest, ViewReport, ViewScript, ViewSnapshotError,
-    ViewSnapshotFormat, encode_view_snapshot,
+    FileRoots, HttpReport, HttpRequestOutcome, HttpRequestReport, NetworkLog, NetworkLogError,
+    NetworkMode, RunOutput, RunReport, RuntimeEvent, RuntimeObserver, ViewGeometryRequest,
+    ViewReport, ViewScript, ViewSnapshotError, ViewSnapshotFormat, encode_view_snapshot,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -49,6 +49,9 @@ pub enum ProjectError {
     /// An explicit `--view-font` face the text shaper refuses.
     #[error("view font: {0}")]
     ViewFont(#[from] varta_runtime::ViewFontError),
+    /// A recorded network log that is not one (`varta dev --network-replay`).
+    #[error(transparent)]
+    NetworkLog(#[from] varta_runtime::NetworkLogError),
     /// The `--view-font` files together exceed the browser resource total.
     #[error("view fonts exceed their {limit}-byte total")]
     ViewFontsTooLarge { limit: usize },
@@ -290,6 +293,10 @@ pub struct RunSettings {
     /// for a v38 module; a host policy that maps `fsRoots` replaces them.
     /// Without them, only the host policy maps roots.
     pub file_roots: Option<FileRoots>,
+    /// How an application instance's requests reach a transport: real
+    /// transfers, recorded ones, or a recorded log replayed instead.
+    /// Recording and replay run application instances only.
+    pub network: NetworkMode,
 }
 
 /// Read a bounded headless decision file.
@@ -340,11 +347,17 @@ fn execute_report(
     options.observer = settings.observer;
     options.fuel_profile = fuel_profile;
     let runtime = VartaRuntime::new();
+    if !settings.application && !matches!(settings.network, NetworkMode::Live) {
+        return Err(ProjectError::Usage(
+            "network recording and replay run application instances".into(),
+        ));
+    }
     Ok(if settings.application {
         runtime.run_application(
             wasm,
             ApplicationOptions {
                 run: options,
+                network: settings.network,
                 ..ApplicationOptions::default()
             },
         )
@@ -384,11 +397,31 @@ pub fn run_view_with_geometry(
         &artifact.wasm,
         ApplicationOptions {
             run: options,
+            network: settings.network,
             ..ApplicationOptions::default()
         },
         script,
         geometry,
     ))
+}
+
+/// Read and validate a bounded recorded network log
+/// (`varta dev --network-replay`).
+pub fn read_network_log(path: &Path) -> Result<std::sync::Arc<NetworkLog>> {
+    let bytes = artifact::read_bounded(path, varta_common::net::replay::MAX_LOG_BYTES)?;
+    Ok(std::sync::Arc::new(NetworkLog::parse(&bytes)?))
+}
+
+/// Write a recorded network log (`varta dev --network-record`) to a new
+/// file; an existing file is never overwritten.
+pub fn write_network_log(path: &Path, log: &NetworkLog) -> Result<()> {
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(&log.to_json())?;
+    Ok(())
 }
 
 /// Read and parse a bounded headless view script.
