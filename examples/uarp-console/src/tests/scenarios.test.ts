@@ -3,7 +3,7 @@
 // dispatcher, as the wire delivers it, and the resulting timeline is compared
 // with the reviewed compact form. Frames are applied a few per turn, as the
 // stream would deliver them.
-import type { JsonObject, JsonValue } from "../../node_modules/uarp-sdk/src/core/json.js";
+import type { JsonObject, JsonValue } from "uarp-sdk";
 import { Runtime } from "../l1/reactive.js";
 import { ChatStore } from "../chat/store.js";
 import { applyFrame, type FrameOutcome } from "../chat/dispatch.js";
@@ -69,7 +69,7 @@ async function scenario(r: Report, name: string, expected: string): Promise<void
  * Expected timelines, derived independently of the console's code from the
  * recordings by the reviewer's reference script, then checked by hand.
  */
-const EXPECTED: { [scenario: string]: string } = {
+export const EXPECTED: { [scenario: string]: string } = {
   plain: "(timeline (context 42343/524288) (segment live (turn completed (thinking 200) (answer \"ok\")))) applied",
   reasoning: "(timeline (context 50968/524288) (segment live (turn completed (thinking 635) (answer \"391\")))) applied",
   tool_call: "(timeline (context 29812/524288) (segment live (turn completed (thinking 298) (answer \"2026-01-01T00:00:02.838Z UTC\") (tool now done {} 5ms \"2026-01-01T00:00:03.537Z\")))) applied",

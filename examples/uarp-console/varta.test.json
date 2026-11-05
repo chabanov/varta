@@ -6,21 +6,54 @@
   "languageProfile": "checked-f64-utf16-v38",
   "fs": {
     "roots": {
-      "project": "."
+      "project": ".",
+      "data": "data"
     }
   },
   "capabilities": {
     "env": {
       "get": [
+        "SDK_BASE_URL",
         "TEST_GROUP"
       ]
     },
     "fs": {
       "read": [
+        "/project/dist/app.manifest.json",
         "/project/fixtures/**"
       ]
     },
+    "kv": {
+      "read": [
+        "/data/e2e-empty.kv",
+        "/data/e2e-malformed.kv",
+        "/data/e2e.kv"
+      ],
+      "write": [
+        "/data/e2e-empty.kv",
+        "/data/e2e-malformed.kv",
+        "/data/e2e.kv"
+      ]
+    },
+    "net": {
+      "request": {
+        "urls": [
+          "http://127.0.0.1:1/**"
+        ],
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "responseHeaders": [
+          "retry-after",
+          "x-correlation-id",
+          "x-request-id",
+          "x-should-retry"
+        ]
+      }
+    },
     "time": {
+      "now": true,
       "timer": true
     }
   }

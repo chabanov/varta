@@ -12,7 +12,7 @@ import type {
   RunEventV1RunStarted,
   RunEventV1ToolCall,
   RunEventV1ToolResult,
-} from "../../../node_modules/uarp-sdk/src/generated/models.js";
+} from "uarp-sdk";
 import { Runtime, effect } from "../../l1/reactive.js";
 import {
   ask,

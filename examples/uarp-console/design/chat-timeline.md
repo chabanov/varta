@@ -228,10 +228,21 @@ and the code only refines it. The model follows this rule already now.
 - The store's `afterChange` commits the view after changes that do not happen in
   a view event turn (timers, request completions).
 
-Next: the real client and stream (after the SDK upload fix and `ReadableStream`),
-the stylesheet through the CSS text import (`mockups/console.css` stays the one
-source), scripted clicks and typing on timer-delivered content once
-`--view-script` orders inputs after due timers deterministically.
+- The product entry (`src/app/`, `varta.json`) runs this model on the real
+  client: it reads the API key from KV, creates a session with the tenant's Head
+  Agent, performs the store's intents through the SDK and follows the session's
+  `event_schema=1` stream (`src/chat/follow.ts`), one frame per turn, resuming
+  with the model's `Last-Event-ID` and ending with a note that names the real
+  reason (a refused open, giving up after connections without progress, a frame
+  strict parsing refuses). The console README describes it and its end-to-end
+  tests against the loopback mock.
+
+Next: the settings screen that writes the API key (nothing writes it yet); the
+session list and history stitching (the product starts one new session per
+launch); a new session after `session_closed`; the stylesheet through the CSS
+text import (`mockups/console.css` stays the one source); scripted clicks and
+typing on timer-delivered content once `--view-script` orders inputs after due
+timers deterministically.
 
 ## Dispatch and scenarios
 

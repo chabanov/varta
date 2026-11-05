@@ -11,7 +11,7 @@ import type {
   SessionStreamFrameV1RunAdded,
   SessionStreamFrameV1RunDone,
   SessionStreamFrameV1SessionClosed,
-} from "../../node_modules/uarp-sdk/src/generated/models.js";
+} from "uarp-sdk";
 import {
   onRunAdded,
   onRunDone,

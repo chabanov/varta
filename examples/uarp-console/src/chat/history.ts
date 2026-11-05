@@ -7,7 +7,7 @@
 // one per answer (`{run_id}-reply`), with the run's tool calls and thinking on
 // the answer. A run that ended without an answer (rejected, cancelled) leaves
 // only its human turn.
-import type { ConversationEntry, ConversationEntryToolCall } from "../../node_modules/uarp-sdk/src/generated/models.js";
+import type { ConversationEntry, ConversationEntryToolCall } from "uarp-sdk";
 import { addNote, type Segment, type Turn, type ToolCard } from "./timeline.js";
 
 const REPLY_SEPARATOR = "\n\n";

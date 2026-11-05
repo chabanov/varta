@@ -4865,6 +4865,24 @@ depends on, and that takes the pinned uarp-sdk as an npm dependency installed un
   (`desktop-linux-aarch64`) and the headless conformance run. The console then runs
   visibly on all three display targets.
 
+**Status: product entry (wave 2, `w2-console-real-client`, 2026-11-04).** The
+console has its product entry: `examples/uarp-console/varta.json` builds
+`src/app/main.tsx` into one `app.wasm` and manifest that reads the API key from
+KV, constructs the real `UarpClient`, creates a session with the tenant's Head
+Agent and follows its `event_schema=1` stream through the chat model, reconnecting
+with the model's `Last-Event-ID` by the console's stream rules. Its manifest
+requests `net.request` on the API base URL (`GET`, `POST`, four declared response
+headers), `kv.read`/`kv.write` on the key database and, beyond the manifest
+described above, `time.timer` and `time.now`, which the unmodified SDK needs on
+every request and stream connection (console README). Owner decision
+(2026-11-05): these two `time` grants are accepted for the product manifest, with
+every grant kept exact (no wildcard beyond the API base URL). `scripts/test.sh` runs the
+product's start, send, approve, answer, drop and reconnect end to end against the
+loopback mock replaying the recorded scenarios, including a stream that outlives
+one per-turn deadline; the settings screen, session stitching, live-service and
+cross-target acceptance remain open, and the new pilot findings F4–F7 are in the
+console README.
+
 **Risks.** The layout-bound intrinsics (P2) are the largest hidden dependency of
 every non-Wasmtime host; HTTPS adds a TLS dependency (`rustls`); owning a native
 renderer (text input,

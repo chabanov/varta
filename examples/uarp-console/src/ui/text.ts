@@ -35,3 +35,15 @@ export const COMPOSER_LABEL = "Повідомлення";
 export const COMPOSER_HINT = "Enter — надіслати · Shift+Enter — новий рядок";
 export const SEND = "Надіслати";
 export const PLACEHOLDER_PREFIX = "Напишіть ";
+
+// The console's start and the live stream (src/app/console.ts).
+export const HEAD_AGENT = "Головний агент";
+export const STARTING = "Підключення…";
+export const NO_KEY = "Ключ API не збережено.";
+export const NO_AGENT = "У просторі немає головного агента.";
+export const UNAVAILABLE = "API недоступний: ";
+export const STREAM_FAILED = "Сесію не знайдено: ";
+export const STREAM_AUTHENTICATE = "Ключ API більше не дійсний.";
+export const STREAM_GAVE_UP = "З'єднання втрачено: ";
+export const STREAM_REFUSED = "Потік не відкрився: ";
+export const STREAM_INVALID = "Недійсний кадр потоку: ";

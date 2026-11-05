@@ -3,3 +3,5 @@ dist/
 node_modules/
 # Per-run client config written by scripts/sdk-loopback.sh with the bound origin.
 varta.sdk-test.loopback-*.json
+# Per-run test config written by scripts/test.sh with the bound origin.
+varta.test.loopback-*.json
