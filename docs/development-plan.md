@@ -2885,6 +2885,35 @@ Not answered by the design and left as recorded differences: expired entries
 are collected at a writable open only (the native worker also collects later
 in the instance), and a commit never waits for a lock.
 
+Review fixes (2026-11-05, lead and owner decisions):
+
+- **Whole-artifact lock: accepted** (owner). A second tab cannot open even a
+  read-only database while another holds the container; documented as a
+  deviation ([embedding](embedding.md#browser-effect-mapping-official-host),
+  [architecture](architecture.md#kv-storage-kv)). Coordination between tabs
+  may come later. The handle is acquired once per Worker, so a locked-out
+  tab stays locked out until it reloads.
+- **Nested database paths: refused** (lead). The container has no
+  directories, so `/data/sub/app.kv` is a recoverable `TypeError` naming
+  `registry.kv.noDirectories` (fail closed), where native opens it only
+  inside a host-created directory; the Chrome/WebKit acceptance and a Node
+  test cover it.
+- **Value depth: one shared limit** (lead). `varta_kv_codec::MAX_VALUE_DEPTH`
+  (the legacy checked-JSON depth, 64) bounds the stage walk, the V8 encoder
+  and decoder and the classifier identically on both hosts with a named
+  recoverable `TypeError`; the construction was already iterative. Measured
+  before the limit: Chrome trapped the guest with "Maximum call stack size
+  exceeded" from about 750 levels, WebKit from about 170, and a native debug
+  build aborted its process with a host stack overflow at 1500. Native,
+  Chrome and WebKit now agree at 63, 64, 65 and 2000 levels.
+- **Writability as native**: a database opens writable when the request and
+  the ceiling cover `kv.write`, whatever the broker's state; an uncertain
+  container refuses reads too.
+- **Atomicity of a failing `sum`/`min`/`max`**: still `denokv_sqlite`
+  0.14.0's partial commit, now pinned by a native regression test
+  (`a_failing_sum_keeps_the_earlier_mutations_of_its_commit`); whether
+  Varta should keep it is an open owner question.
+
 #### Code generation v2 measurements
 
 Fuel of the measured web workloads (`codegen_v2_fuel_ceilings_hold`,

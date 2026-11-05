@@ -737,10 +737,30 @@ the reference host's where it has one (`locked` for a container another tab or
 Worker holds), and the browser host's own for a container that is not format
 version 1 (`corrupt`), an exhausted quota (`full`) and a header write whose
 outcome is unknown (`uncertain`; the container then refuses every operation
-until the application reloads). Known differences: the container is locked
-per artifact, so a second tab cannot open even a read-only database;
-expired entries are collected at a writable open only; a commit never waits
-for a lock. The KV wire facts and the bookkeeping flag (`kvBookkeeping`) are
+until the application reloads, reads included). As the reference host, a
+database opens writable when the request and the ceiling cover `kv.write`,
+whatever the broker's state; the broker decides each commit. Known
+differences:
+
+- The container is locked per artifact, so a second tab cannot open even a
+  read-only database; the owner accepted this (2026-11-05), and coordination
+  between tabs may come later. The Worker acquires the container once, at
+  start, whenever the package's `kv.read` is covered (a later prompt or
+  decision may still grant it) and holds it until the run or the
+  application ends, so a tab that found it locked fails every open until it
+  reloads; the reference host probes the lock at every open.
+- A database path with a directory below its root (`/data/sub/app.kv`) is
+  refused with a recoverable `TypeError` (`unavailable` with
+  `registry.kv.noDirectories`), since the container has no directories; the
+  reference host opens it only inside a directory the host created and
+  fails otherwise.
+- Expired entries are collected at a writable open only; a commit never
+  waits for a lock.
+
+Values nest at most `varta_kv_codec::MAX_VALUE_DEPTH` levels on every host
+(`registry.kv.maxValueDepth`, [contract](architecture.md#kv-storage-kv)); the
+limit keeps the shared codec's recursion within the engine's native stack,
+where the codec's wasm frames live. The KV wire facts and the bookkeeping flag (`kvBookkeeping`) are
 generated registry data (`browser::registry().kv`); `scripts/test-browser-kv.mjs`
 compares browser and reference runs in Chrome and, through Playwright, in
 WebKit.
@@ -879,7 +899,9 @@ host without a grant. A host that does MUST:
 5. Encode and decode values only in the subset of the contract, failing with a
    typed error and no partial value, and decode into the module's schema with
    checked-JSON strictness (a mismatch is a recoverable `TypeError` through the
-   exception channel, as for `json_parse_v19`).
+   exception channel, as for `json_parse_v19`). A value nesting deeper than
+   the shared KV depth limit fails with its named recoverable `TypeError`,
+   staged or stored ([contract](architecture.md#kv-storage-kv)).
 
 A host without file roots may keep its databases in a store of its own with
 the same observable semantics instead of Deno KV files: the official browser
@@ -887,7 +909,8 @@ host keeps one Varta KV container per artifact in OPFS
 ([mapping](#browser-effect-mapping-official-host)). Points 2 and 3 then
 apply to that store: no database outside the artifact's own container, a
 container of another format version fails before any write, and a holder in
-another tab or Worker fails clearly.
+another tab or Worker fails clearly. A store without directories refuses a
+path with a directory below its root by name instead of creating one.
 
 The host enforces the limits below (the key, value, read and commit limits
 are Deno KV's defaults). Exceeding one is a recoverable failure except where the

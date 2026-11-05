@@ -11527,6 +11527,19 @@ into the static type the program names. V37 and earlier profiles reject
   `unknown` holding an Error, a function, a promise, a BigInt, an array with
   holes or a cyclic graph rejects at run time with a `TypeError` before
   anything is stored.
+- **Depth.** A value nests at most `varta_kv_codec::MAX_VALUE_DEPTH` levels
+  below its root (the legacy checked-JSON depth `value::MAX_JSON_DEPTH`;
+  every element, property or entry is one level below its aggregate). The
+  stage walk and the V8 writer refuse a deeper value before anything is
+  stored, and the V8 reader and the classifier refuse a deeper stored value
+  (one Deno wrote), each with the recoverable `TypeError` `a KV value cannot
+  nest deeper than <limit> levels` (on a read prefixed by `KV value does not
+  match the checked type: `), on every host; the construction of a result is
+  iterative. The limit is derived from measured engine stacks (the crate
+  documentation records the derivation): each walk recurses once per level,
+  and a browser's wasm frames live on the engine's native stack, which
+  Chrome and WebKit exhaust at a few hundred levels and a native debug build
+  at about 1500.
 - **V8 codec** (`varta-runtime` `kv::v8`, owned code, no V8). The writer emits
   the header `0xFF 0x10` (serializer version 16, what V8 15.0 in Deno 2.9.x
   writes) and one value: an integral number in the 32-bit Smi range other than
@@ -11653,8 +11666,10 @@ into the static type the program names. V37 and earlier profiles reject
     OPFS sync access handles …`), never as a silent denial;
   - `kv.read` and `kv.write` are decided like native virtual file roots
     (declared root, request and ceiling patterns, the broker's state) before
-    any storage is touched; `resolvePermissions` validates a KV path-pattern
-    ceiling like a native host ceiling's grant;
+    any storage is touched; as natively, a database opens writable when the
+    request and the ceiling cover `kv.write`, whatever the broker's state,
+    and the broker decides each commit; `resolvePermissions` validates a KV
+    path-pattern ceiling like a native host ceiling's grant;
   - the container (format version 1) is a write-ahead log behind two
     checksummed header slots: a commit appends one record, flushes, then
     writes the other header slot and flushes again, and reports `COMMITTED`
@@ -11674,12 +11689,27 @@ into the static type the program names. V37 and earlier profiles reject
     container, an exhausted quota (nothing applied), storage the origin
     cannot provide, and a header write whose outcome is unknown (the
     container then refuses every operation until the application reloads).
-  Deviations: the lock is per artifact, so a second tab cannot open even a
-  read-only database; expired entries are collected at a writable open only,
-  never later in the instance; a commit never waits for a lock. For the
-  programs `scripts/test-browser-kv.mjs` compares with native (commits,
-  checks, sums, lists, a strict decode mismatch, a reload over stored data,
-  another artifact, a missing grant and a narrower ceiling) a browser run
+  Deviations:
+  - the lock is per artifact, so a second tab cannot open even a read-only
+    database (accepted by the owner, 2026-11-05; coordination between tabs
+    may come later); the Worker acquires the container once, at start,
+    whenever the package's `kv.read` is covered (a later prompt or decision
+    may still grant it) and holds it until the run or application ends, so a
+    tab that found it locked stays locked out until it reloads, where native
+    probes the lock at every open;
+  - a database path with a directory below its root (`/data/sub/app.kv`) is
+    refused by name (`cannot open the KV database <path>: the browser host
+    keeps KV databases only directly in a file root, with no directories`,
+    `registry.kv.noDirectories`), since the container has no directories;
+    native opens it only inside a directory the host created, and fails
+    otherwise;
+  - expired entries are collected at a writable open only, never later in
+    the instance; a commit never waits for a lock.
+
+  For the programs `scripts/test-browser-kv.mjs` compares with native
+  (commits, checks, sums, lists, a strict decode mismatch, a reload over
+  stored data, another artifact, a missing grant, a narrower ceiling and
+  values at, below and above the depth limit) a browser run
   equals the native run, logs and exact fair fuel, host calls, microtasks,
   output bytes and turns included.
 - **Tests** never use production data: the Deno 2.9.4 fixture

@@ -41,6 +41,25 @@ cases; two tabs, corrupt, full and aborted storage) and in Playwright WebKit
 (all but the quota case, which needs Chrome's DevTools quota override);
 Playwright Firefox did not launch here. The full gate is the wave lead's.
 
+### Review fixes (2026-11-05)
+
+A shared KV value depth limit (`varta_kv_codec::MAX_VALUE_DEPTH`, 64) now
+bounds the stage walk, the V8 encoder and decoder and the classifier on both
+hosts with one recoverable `TypeError`; before it Chrome trapped from about
+750 levels, WebKit from about 170, and a native debug `varta dev` aborted at
+1500. The browser refuses database paths below a directory of their root by
+name, opens databases writable as native does, and refuses reads from an
+uncertain container; the whole-artifact lock is an accepted deviation. A
+native test pins `denokv_sqlite`'s partial commit; a project test runs the
+checked-in wasm32 codec beside the native build over every Deno fixture and
+probe value; `test-browser-matrix.mjs --kv` runs through a persistent
+Playwright context; `verify.py` knows `varta-kv-codec` and checks the codec
+fingerprint. Scoped evidence: `verify.py local varta-runtime --filter kv`
+(27), `varta-kv-codec` (20), common `browser::` (7), project `browser::`
+(51), 204 Node tests, a clean-room codec build byte-identical to the
+checked-in module, and `scripts/test-browser-kv.mjs` in Chrome 156 (11
+cases) and Playwright WebKit 26.5 (10, no quota override).
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only
