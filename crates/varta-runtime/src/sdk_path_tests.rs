@@ -7,7 +7,9 @@
 //! boundary, random in Node and deterministic in Varta, replaced by `<b>`).
 //! Every program runs under the production budgets. The refused forms fail
 //! with their named diagnostics, and earlier profiles keep rejecting the new
-//! forms.
+//! forms. The byte cases (`byte_*.ts`, v38 `byte_values`) hold `Uint8Array`,
+//! `ArrayBuffer`, `Blob` and `File` values in `unknown`; `byte_in.ts` was
+//! generated from Node's own prototype chains.
 use super::*;
 use varta_common::language::LanguageProfile;
 
@@ -272,55 +274,195 @@ fn sdk_path_enumerations_of_wider_views_are_refused() {
     );
 }
 
-/// The SDK's `appendPart(form, key, value: unknown)` with a byte part: the
-/// part reaches `unknown` inside the multipart record, and reading it there
-/// throws a named `TypeError` instead of guessing (Node appends the bytes).
-/// A `Uint8Array` has no `unknown` cell in value layout 18, and the record
-/// view of an `ArrayBuffer` instance held by `unknown` is not modelled.
+/// The SDK's real `appendPart(form, key, value: unknown)` with byte parts
+/// (v38 `byte_values`): a `Uint8Array`, an `ArrayBuffer` and `{ data,
+/// filename, contentType }` parts reach `unknown` inside the multipart
+/// record, and the wire bytes, part order included, are Node's.
 #[test]
-fn sdk_path_byte_parts_through_unknown_throw_named_type_errors() {
-    let program = |field: &str, value: &str| {
+fn sdk_path_byte_parts_through_unknown_match_node() {
+    matches_node(
+        include_str!("sdk_path_cases/byte_parts.ts"),
+        include_str!("sdk_path_cases/byte_parts.expected"),
+    );
+}
+
+/// A `Uint8Array` held by `unknown` keeps its identity and answers
+/// `typeof`, `instanceof`, `ArrayBuffer.isView`, `String` and
+/// `JSON.stringify` as in Node, also inside records, arrays, dictionaries
+/// and unions.
+#[test]
+fn sdk_path_bytes_held_by_unknown_match_node() {
+    matches_node(
+        include_str!("sdk_path_cases/byte_values.ts"),
+        include_str!("sdk_path_cases/byte_values.expected"),
+    );
+}
+
+/// `"key" in` a `Uint8Array`, `ArrayBuffer`, `Blob` or `File` held by
+/// `unknown` answers every member of their Node 24 prototype chains and the
+/// index, numeric and own keys as Node does; records and JSON objects keep
+/// their own keys.
+#[test]
+fn sdk_path_in_of_bytes_and_prelude_instances_matches_node() {
+    matches_node(
+        include_str!("sdk_path_cases/byte_in.ts"),
+        include_str!("sdk_path_cases/byte_in.expected"),
+    );
+}
+
+/// What the JSON-object view of a value held by `unknown` still refuses,
+/// with named `TypeError`s: a `Uint8Array`, an array or an engine instance
+/// read as `Record<string, unknown>` (own keys, values, a dynamic `in` key)
+/// and an instance of a program's subclass of `Blob`. A logged `Uint8Array`
+/// cell uses the diagnostic notation of its JSON object; a typed one is not
+/// logged, like any typed record or array.
+#[test]
+fn sdk_path_record_views_of_bytes_and_instances_throw_named_type_errors() {
+    let program = |value: &str, body: &str| {
         format!(
-            "interface Upload {{ file: {field} }}
-             function appendPart(form: FormData, key: string, value: unknown): void {{
-               if (value instanceof Blob) {{ form.append(key, value); return; }}
-               if (typeof value === 'object' && value !== null && 'data' in (value as Record<string, unknown>)) {{
-                 form.append(key, 'file part');
-                 return;
-               }}
-               form.append(key, String(value));
-             }}
+            "class Tagged extends Blob {{ tag = 1; }}
+             function read(v: unknown, key: string): string {{ {body} }}
              export function main(): void {{
-               const upload: Upload = {{ file: {value} }};
-               const spec: {{ multipart?: object }} = {{ multipart: upload }};
-               const form = new FormData();
-               try {{
-                 for (const [key, value] of Object.entries(spec.multipart as Record<string, unknown>)) {{
-                   appendPart(form, key, value);
-                 }}
-                 console.log('appended');
-               }} catch (error) {{
+               const v: unknown = {value};
+               try {{ console.log(read(v, 'data')); }} catch (error) {{
                  console.log(error instanceof TypeError ? error.message : 'other');
                }}
              }}"
         )
     };
+    let failed = "type assertion to Record<string, unknown> failed";
+    let instance = "a class instance held by unknown cannot be read as a JSON object";
+    for (value, body, expected) in [
+        (
+            "new Uint8Array([1])",
+            "return Object.keys(v as Record<string, unknown>).join(',');",
+            failed,
+        ),
+        (
+            "new Uint8Array([1])",
+            "return String(key in (v as Record<string, unknown>));",
+            failed,
+        ),
+        (
+            "['x']",
+            "return String('data' in (v as Record<string, unknown>));",
+            failed,
+        ),
+        (
+            "new ArrayBuffer(1)",
+            "return Object.keys(v as Record<string, unknown>).join(',');",
+            instance,
+        ),
+        (
+            "new Tagged(['x'])",
+            "return String('size' in (v as Record<string, unknown>));",
+            instance,
+        ),
+    ] {
+        assert_eq!(logs(&program(value, body)), [expected], "{value}: {body}");
+    }
     assert_eq!(
-        logs(&program("Uint8Array", "new Uint8Array([1, 2])")),
-        ["a Uint8Array held by unknown cannot be read as a JSON value"]
+        logs(
+            "function either(flag: boolean): Uint8Array | string { return flag ? new Uint8Array(0) : 'x'; }
+             export function main(): void {
+               const held: unknown = new Uint8Array([1, 255]);
+               console.log(held);
+               console.log(either(true));
+               console.log(either(false));
+             }"
+        ),
+        [r#"{"0":1,"1":255}"#, "{}", "x"]
     );
-    assert_eq!(
-        logs(&program(
-            "{ data: Uint8Array; filename?: string }",
-            "{ data: new Uint8Array([1]), filename: 'a.bin' }"
-        )),
-        ["a Uint8Array held by unknown cannot be read as a JSON value"]
+    refused(
+        V38,
+        "export function main(): void { console.log(new Uint8Array([1])); }",
+        "cannot log Uint8Array",
     );
-    assert_eq!(
-        logs(&program("ArrayBuffer", "new ArrayBuffer(2)")),
-        ["a class instance held by unknown cannot be read as a JSON object"]
+}
+
+/// The value readers check every byte of a `Uint8Array` they serialize:
+/// an element that is no integer from 0 to 255 (a fraction, 256, -0, NaN)
+/// or a hole is a fatal layout error in the host and the linked encoder,
+/// and value layout 17 rejects the byte-array tag.
+#[test]
+fn sdk_path_corrupt_byte_arrays_are_rejected_by_value_readers() {
+    use varta_common::value::{self, ARRAY_META_BYTES, ARRAY_SLOT_BYTES, ValueKind};
+    const MARKER: [f64; 3] = [7.0, 77.0, 177.0];
+    let source = "const kept: Uint8Array[] = [];
+         export function main(): void { kept.push(new Uint8Array([7, 77, 177])); console.log(String(kept.length)); }";
+    let runtime = VartaRuntime::new();
+    let module = runtime.prepare_module(&compile(source)).unwrap();
+    let mut execution = crate::execution::Execution::new(&runtime.engine, &[], None).unwrap();
+    let instance = execution.instantiate_prepared(&module).unwrap();
+    let store = &mut execution.store;
+    instance
+        .get_func(&mut *store, "_start")
+        .unwrap()
+        .call(&mut *store, &[], &mut [])
+        .unwrap();
+    let bounds = store.data().module;
+    let memory = instance.get_memory(&mut *store, "memory").unwrap();
+    let data = memory.data(&*store).to_vec();
+    let version = value::HASHED_DICTIONARY_VALUE_VERSION;
+    // The vector whose storage holds the marker bytes.
+    let handle = (varta_common::abi::OWNED_STRING_BASE..data.len() - 8)
+        .step_by(value::HEAP_ALIGNMENT)
+        .map(|ptr| ptr as u64 | ((value::VECTOR_BYTES as u64) << i32::BITS))
+        .find(|handle| {
+            value::Vector::read_in(&data, *handle, version, bounds).is_ok_and(|vector| {
+                vector.length == MARKER.len()
+                    && (0..MARKER.len()).all(|index| {
+                        let at = vector.storage + ARRAY_META_BYTES + index * ARRAY_SLOT_BYTES;
+                        data[at..at + 8] == MARKER[index].to_le_bytes()
+                    })
+            })
+        })
+        .expect("the byte storage in guest memory");
+    let kind = ValueKind::Bytes as u32;
+    let host = |data: &[u8]| json::render_reference_in(data, kind, handle, version, bounds);
+    let linked = |data: &[u8]| {
+        let mut out: Vec<u16> = Vec::new();
+        varta_intrinsics::json::stringify(data, kind, handle, bounds, &mut out)
+            .map(|_| String::from_utf16(&out).unwrap())
+    };
+    assert_eq!(host(&data).unwrap(), br#"{"0":7,"1":77,"2":177}"#);
+    assert_eq!(linked(&data).unwrap(), r#"{"0":7,"1":77,"2":177}"#);
+    assert!(
+        json::render_reference_in(
+            &data,
+            kind,
+            handle,
+            value::FUNCTION_FIELD_VALUE_VERSION,
+            bounds
+        )
+        .is_err()
     );
-    assert_eq!(logs(&program("Blob", "new Blob(['x'])")), ["appended"]);
+    let vector = value::Vector::read_in(&data, handle, version, bounds).unwrap();
+    let element = |index: usize| vector.storage + ARRAY_META_BYTES + index * ARRAY_SLOT_BYTES;
+    let bitmap = element(vector.capacity);
+    let mut corruptions: Vec<(&str, Vec<u8>)> = Vec::new();
+    for (name, bad) in [
+        ("fraction", 1.5f64),
+        ("above a byte", 256.0),
+        ("negative zero", -0.0),
+        ("NaN", f64::NAN),
+    ] {
+        let mut corrupt = data.clone();
+        corrupt[element(1)..element(1) + 8].copy_from_slice(&bad.to_le_bytes());
+        corruptions.push((name, corrupt));
+    }
+    let mut hole = data.clone();
+    hole[bitmap] &= !1;
+    hole[element(0)..element(0) + 8].copy_from_slice(&0u64.to_le_bytes());
+    corruptions.push(("hole", hole));
+    for (name, corrupt) in corruptions {
+        assert!(
+            value::byte_vector(&corrupt, handle, version, bounds).is_err(),
+            "{name}"
+        );
+        assert!(host(&corrupt).is_err(), "{name}");
+        assert!(linked(&corrupt).is_err(), "{name}");
+    }
 }
 
 /// The forms of the pending lists that stay outside the subset fail with
@@ -328,10 +470,10 @@ fn sdk_path_byte_parts_through_unknown_throw_named_type_errors() {
 #[test]
 fn sdk_path_refused_forms_name_their_diagnostics() {
     let main = |body: &str| format!("export function main(): void {{ {body} }}");
-    // A Map, Set or Uint8Array never enters `unknown` (value layout 18).
+    // A Map or Set never enters `unknown` (value layout 18).
     refused(
         V38,
-        &main("const u: unknown = new Uint8Array([1]); console.log(String(u));"),
+        &main("const u: unknown = new Map<string, number>(); console.log(String(u));"),
         "conversion to unknown of a value holding a Map, Set, Uint8Array",
     );
     refused(
@@ -342,9 +484,9 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
     );
     refused(
         V38,
-        "function k(v: object): boolean { return v instanceof Uint8Array; }
+        "function k(v: object): boolean { return v instanceof Set; }
          export function main(): void { console.log(String(k({}))); }",
-        "instanceof Uint8Array of an unknown or object value",
+        "instanceof Set of an unknown or object value",
     );
     // A Uint8Array and another array share the array tag: no such union.
     refused(
@@ -469,6 +611,30 @@ fn sdk_path_forms_stay_refused_by_v37() {
         V37,
         &main("const f = new File(['a'], 'a.txt'); console.log(f.name);"),
         "unsupported constructor",
+    );
+    // A `Uint8Array` never enters `unknown` and is never serialized in v37
+    // (value layout 17 has no byte-array tag).
+    let opaque = "of a value holding a Map, Set, Uint8Array";
+    refused(
+        V37,
+        &main("const u: unknown = new Uint8Array([1]); console.log(String(u));"),
+        &format!("conversion to unknown {opaque}"),
+    );
+    refused(
+        V37,
+        &main("console.log(JSON.stringify(new Uint8Array([1])));"),
+        &format!("JSON.stringify {opaque}"),
+    );
+    refused(
+        V37,
+        &main("console.log(new Uint8Array([1]));"),
+        &format!("logging {opaque}"),
+    );
+    refused(
+        V37,
+        "function k(v: unknown): boolean { return v instanceof Uint8Array; }
+         export function main(): void { console.log(String(k(1))); }",
+        "instanceof requires an unshadowed supported error class",
     );
 }
 

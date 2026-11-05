@@ -3429,3 +3429,43 @@ at most `MAX_RUNNING_LAUNCHERS` launchers instead of a reaper thread per
 opening, the prototype `varta-web-host` refuses artifacts with a resource
 section, and the sfnt record offsets and the renderer's family/alias limits
 are named. The manual trusted-gesture run is still open.
+
+### V38 bytes held by `unknown` (`byte_values`) — wave 3, scoped 2026-11-05
+
+`byte_values()` (v38, owner decision of 2026-11-05) opens bytes held by
+`unknown` ([contract](architecture.md#bytes-held-by-unknown-byte_values)),
+replacing the earlier compile error and the `TypeError`s that the SDK's own
+`appendPart(form, key, value: unknown)` threw for `Uint8Array`,
+`ArrayBuffer` and `{ data: Uint8Array }` parts. A `Uint8Array` carries the
+byte-array tag `ValueKind::Bytes`, an additive tag of the in-development
+value layout 18 (the value ABI number is unchanged; value 17 and earlier
+reject the tag): the compiler erases the type to an array type of its own
+and writes the tag in cells, descriptors, vector element kinds and the JSON
+and KV kind words. `unknown` and `object` hold one; `instanceof Uint8Array`,
+`ArrayBuffer.isView`, `typeof`, truthiness, `String` and `JSON.stringify`
+answer as Node 24.20.0, also for bytes inside records, arrays, dictionaries
+and unions (before, `JSON.stringify` of an `unknown` holding a record with a
+`Uint8Array` field printed a number array where Node prints `{"0":…}`). The
+JSON-object view of a record held by `unknown` now lists its fields in
+own-key order (it used the canonical field order, which changed the SDK's
+multipart part order) and its bytes fields as cells. `"key" in` a
+`Uint8Array`, `ArrayBuffer`, `Blob` or `File` held by `unknown` answers from
+Node 24.20.0's prototype member lists for a string literal key. The linked
+encoder, the runtime's value18 encoder and `ReferenceBox::read_in` check
+every byte; `kv_stage` refuses a tagged `Uint8Array` by name. The linked
+intrinsic library was rebuilt; the v38 `json` golden fuel of
+`fuel_determinism_tests` moved from 33,674 to 33,705 with it. No host import,
+capability or production budget changed.
+
+Scoped verification only: `verify.py local varta-compiler` (164 unit tests),
+`verify.py local varta-runtime --filter sdk_path` (21 tests, the byte cases
+equal to the checked-in Node 24.20.0 output), `cargo test -p varta-common`
+(documentation tests included), `cargo test -p varta-intrinsics`, `cargo test
+-p varta-runtime --lib` (2056 passed, 3 failed under parallel load: the
+golden-fuel test, fixed by the new golden value, and
+`case_corpus_behaves_identically_under_v38` and an HTTP readiness test, both
+passing alone), `cargo test -p varta-runtime --test public_api`, strict
+Clippy of the four changed crates, formatting, the browser registry's Node
+tests, the conformance baseline (matches), `check-sdk.sh` (65/65) and
+`sdk-loopback.sh` (6 groups pass). The full gate is left to the wave
+integration.

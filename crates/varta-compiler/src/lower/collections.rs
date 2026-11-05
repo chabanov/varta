@@ -231,12 +231,16 @@ pub(super) fn reaches_private(ty: Type, types: &ir::ValueTypes) -> bool {
     }
     visit(ty, types, &mut BTreeSet::new())
 }
-/// Whether `ty` is a `Uint8Array` or a union with a `Uint8Array` member: a
-/// value whose own cell would hold the byte storage.
-pub(super) fn holds_bytes(ty: Type, types: &ir::ValueTypes) -> bool {
-    unions::members(ty, types)
-        .into_iter()
-        .any(|member| matches!(member, Type::Collection(K::Uint8Array, _)))
+/// Whether a value of `ty` may reach collection storage that a host value
+/// reader (logging, JSON, `unknown`) must not see: any collection, or under
+/// v38 (`byte_values`), where a `Uint8Array` carries its own value tag, only
+/// Map and Set storage and opaque builtin classes.
+pub(super) fn reaches_hidden(ty: Type, types: &ir::ValueTypes) -> bool {
+    if types.profile.byte_values() {
+        reaches_private(ty, types)
+    } else {
+        reaches(ty, types)
+    }
 }
 /// The diagnostic for a collection reaching a host value reader.
 pub(super) fn opaque(what: &str) -> CompilerError {

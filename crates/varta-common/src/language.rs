@@ -768,6 +768,18 @@ impl LanguageProfile {
     pub fn sdk_paths(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
+    /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
+    /// in-development value layout 18) in record fields, array elements,
+    /// dictionary values, union cells and `unknown` cells, so `unknown` holds
+    /// one and every value reader serializes or refuses it by name;
+    /// `instanceof Uint8Array` and `ArrayBuffer.isView` test an `unknown`
+    /// cell, and `"key" in` an `unknown` cell holding a `Uint8Array`,
+    /// `ArrayBuffer`, `Blob` or `File` answers as Node 24 does.
+    #[must_use]
+    pub fn byte_values(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, virtual-roots stream: `fs.*` paths and grants are virtual
     /// paths `/<root>/...` under named roots that the host maps to pinned
     /// directories ([`crate::files`]); an absolute host path is denied.
@@ -3217,6 +3229,7 @@ mod tests {
                 profile.strict_members(),
                 profile.web_bytes(),
                 profile.sdk_paths(),
+                profile.byte_values(),
                 profile.file_roots(),
                 profile.json_decoders(),
             ] {
@@ -3257,6 +3270,31 @@ mod tests {
                 "{profile:?}"
             );
         }
+        // The wave-3 bytes stream adds the byte-array tag to value layout 18
+        // only: value17 and every earlier layout keep rejecting it, and every
+        // other tag keeps its value17 meaning.
+        use crate::value::ValueKind;
+        for tag in 0..=ValueKind::LAST as u32 {
+            let kind = ValueKind::from_tag(tag).unwrap();
+            let value18 = kind.supported_by(crate::value::HASHED_DICTIONARY_VALUE_VERSION);
+            if kind == ValueKind::Bytes {
+                assert!(value18 && kind.is_reference());
+                assert!(
+                    SUPPORTED_PROFILES
+                        .iter()
+                        .filter(|p| **p != new)
+                        .all(|p| !kind.supported_by(p.value_layout()))
+                );
+            } else {
+                assert_eq!(
+                    value18,
+                    kind.supported_by(crate::value::FUNCTION_FIELD_VALUE_VERSION),
+                    "{kind:?}"
+                );
+            }
+        }
+        assert_eq!(ValueKind::from_tag(ValueKind::LAST as u32 + 1), None);
+        assert!(new.byte_values() && !old.byte_values());
         assert_eq!(
             new.exception_channel(),
             (

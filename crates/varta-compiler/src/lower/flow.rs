@@ -372,7 +372,7 @@ impl Lower<'_> {
             // `unknown` has no member list: any narrower admitted type that a
             // path proved (a guard or a join of guarded paths) refines it.
             self.refinements.remove(&slot);
-            if observed != Type::Unknown && unknown::admissible(observed) {
+            if observed != Type::Unknown && unknown::admissible(observed, self.types) {
                 self.refinements.insert(slot, observed);
             }
             return Ok(());

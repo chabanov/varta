@@ -3802,8 +3802,9 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
   is typed with the merged interface (declared under the unspellable
   `merged_type_name`), so missing or incompatible members fail the ordinary
   structural check. Keep the discipline unchanged; one call only.
-- A `Uint8Array` held by `unknown` stays a compile error (owner decision);
-  do not box it until the planned increment.
+- A `Uint8Array` held by `unknown` is the wave-3 bytes stream (owner
+  decision of 2026-11-05, replacing the earlier compile error); see
+  [Bytes held by unknown](#bytes-held-by-unknown-byte_values).
 - `typeof NAME` of an engine global folds in `Lower::global_typeof`; the set
   is `modules::engine_globals::kind`, derived from the admitted preludes'
   `Class`/`Value` exports, `GLOBAL_OBJECT_MEMBERS` (the getters of
@@ -3828,10 +3829,9 @@ Contract: [architecture.md](architecture.md#web-bytes-web_bytes).
 - A mixed `Promise.race` is lowered element by element (`race_items`); the
   homogeneous literal keeps one array. A literal-erased element value fulfills
   through `assert_value`, never a retag.
-- `unknown` never holds a `Uint8Array`: `collections::holds_bytes` values stay
-  rejected by `unknown::widen`; records reaching bytes are admitted only
-  without other private builtins (`reaches_private`) and their JSON-object
-  view throws for the bytes (`Views::bytes_error`).
+- Records reaching bytes enter `unknown` only without other private
+  builtins (`collections::reaches_hidden`, which is `reaches_private` under
+  `byte_values()`).
 - Tests: `varta-runtime` `web_bytes_tests` (Node 24 logs of
   `web_bytes_cases`, including `typeof_globals.ts`, the folded-bytes and
   rejection tests), the compiler's `engine_globals` tests (the set against
@@ -3868,9 +3868,10 @@ Contract: [architecture.md](architecture.md#sdk-paths-sdk_paths).
   `switch` exhaustiveness, so a wider arm miscompiles (`xs['length']`).
 - `instanceof Map`/`Set`/`Uint8Array` (`sdk_paths::collection_instance_of`)
   is a tag test only where the selected member is the only member with its
-  tag; keep refusing `unknown`/`object` operands while those collections
-  have no cell of their own, and never test a collection by element kind or
-  record shape.
+  tag; keep refusing `unknown`/`object` operands of `Map` and `Set` while
+  they have no tag of their own (`instanceof Uint8Array` of a cell is the
+  byte-array tag test of `byte_values()`), and never test a collection by
+  element kind or record shape.
 - Spreads and own-key enumerations of record shapes are noted
   (`Views::note_key_copy` with `KeyCopy::Spread` from the spread lowerings,
   `KeyCopy::Enumeration` from `enumerate_value`, which serves
@@ -3887,12 +3888,55 @@ Contract: [architecture.md](architecture.md#sdk-paths-sdk_paths).
   in `classes::layout::method`. Do not declare `lastModified` without a
   clock grant. `for...of` over `FormData` calls the prelude's `entries`
   like `Headers`.
-- Still refused, by owner decision or until a value-layout change: a
-  `Uint8Array` held by `unknown`, the record view of a class instance held by
-  `unknown`, `A[] | B[]` of records, `Blob.stream()`, `formData()`.
+- Still refused, by owner decision or until a value-layout change: the
+  record view of a class instance held by `unknown` (except the literal-key
+  `in` of `byte_values()`), `A[] | B[]` of records, `Blob.stream()`,
+  `formData()`.
 - Tests: `varta-runtime` `sdk_path_tests` (the `sdk_path_cases/*.expected`
   files are Node 24.20.0 output, including the multipart and query wire
   bytes and the `FormData` entries; refusals and v37 denials).
+
+### Bytes held by unknown (`byte_values`)
+
+Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).
+
+- Gate every admission on `byte_values()`; v37 keeps value layout 17, its
+  diagnostics and its bytes (`sdk_path_forms_stay_refused_by_v37`).
+- `value::ValueKind::Bytes` belongs to value layout 18 only
+  (`value::bytes_layout`). Every reader of value18 kinds handles it or
+  refuses it by name: `ReferenceBox::read_in` and every serializer read the
+  storage through `value::byte_vector`/`byte_at` (every element checked),
+  the linked readers (`varta_intrinsics::value`, `json`) and the fast paths
+  (`emit::strings::readers`) treat it as an always-truthy object, and
+  `kv_stage` refuses it with a recoverable `TypeError`. A new reader of
+  value18 kinds must do the same; a `_` arm that turns it into a fatal
+  layout error is a bug. Rebuild `intrinsics.wasm` with every change of the
+  value core.
+- A `Uint8Array` type erases to `ValueTypes::bytes`, an array type appended
+  by `literal_erasure` after lowering (so no `arrays::intern` of `number[]`
+  can return it). Emission writes every tag through `Emitter::tag`
+  (`ir::tag_of`) and every descriptor kind through `records::descriptor`'s
+  `byte_array`; never call `Type::profile_kind` directly on a value that may
+  be a `Uint8Array`. Lowering keeps reaching the storage through
+  `Lower::storage` (a `Reinterpret`), never through the erased type.
+- `unknown::admissible`/`unknown::bytes` admit `Type::Collection(Uint8Array)`
+  into `unknown`; `cell_test` tests its tag. Map and Set storage stays
+  hidden (`collections::reaches_hidden`).
+- The JSON-object view (`subtyping::graph_branches`) builds the dictionary
+  in own-key order with `S::RecordEnumerate` over rooted field caches;
+  never push entries in canonical field order.
+- `"key" in` a cell (`lower::byte_values::cell_in`) answers only for a
+  string literal key and only for a `Uint8Array` and exact `ArrayBuffer`,
+  `Blob` and `File` instances, from Node 24.20.0's prototype member lists;
+  regenerate those lists (and `sdk_path_cases/byte_in.ts`) from Node when
+  the pinned Node changes. Every other value keeps the JSON-object view and
+  its `TypeError`; never answer from a snapshot dictionary of an instance.
+- `ArrayBuffer.isView` is `value instanceof Uint8Array` in the blob prelude.
+- Tests: `varta-runtime` `sdk_path_tests` (`byte_parts`, `byte_values` and
+  `byte_in` cases with Node 24.20.0 expected files, the named `TypeError`s,
+  the corrupt-storage rejections of the host and linked encoders, v37
+  denials), `kv_tests` (the KV refusal), `web_bytes_tests` and the
+  `language` test of the tag.
 
 ### V38 linked intrinsics
 

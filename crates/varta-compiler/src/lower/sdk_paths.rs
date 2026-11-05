@@ -1,7 +1,8 @@
 //! The language items of the v38 SDK-path stream (`sdk_paths`): forms that
 //! the pinned pilot SDK and its applications reach on their multipart, query
 //! and error paths. `instanceof Map`/`Set`/`Uint8Array` of closed unions is
-//! here; error `cause` reads, `new Error(message, options)` and the refused
+//! here, with `instanceof Uint8Array` of an `unknown` or `object` cell (v38
+//! `byte_values`); error `cause` reads, `new Error(message, options)` and the refused
 //! `"cause" in` an Error instance are in `errors` and
 //! `classes::error_classes`, `xs[i].m<T>()` in `function_fields`,
 //! `for...of` over `FormData` in `for_of`, the view checks of spreads and
@@ -31,15 +32,20 @@ impl Lower<'_> {
     }
     /// The member of a value of type `ty` that `instanceof` of collection
     /// `kind` selects: `Ok(None)` when no member is such a collection.
-    /// Collections carry no value tag of their own (a map or set shares the
-    /// record tag, a `Uint8Array` the array tag), so a union whose other
-    /// members share the selected member's tag, or an `unknown`/`object`
-    /// value that never holds a collection, is refused rather than guessed.
-    fn instance_of_member(&self, ty: Type, kind: K) -> Result<Option<Type>> {
+    /// A map or set carries no value tag of its own (it shares the record
+    /// tag), so a union whose other members share the selected member's
+    /// tag, or an `unknown`/`object` value that never holds a map or set, is
+    /// refused rather than guessed. A `Uint8Array` shares the array tag in
+    /// closed unions; under v38 (`byte_values`) an `unknown`/`object` cell
+    /// tells it by its own byte-array tag.
+    fn instance_of_member(&mut self, ty: Type, kind: K) -> Result<Option<Type>> {
         if matches!(ty, Type::Unknown | Type::Object(_)) {
+            if kind == K::Uint8Array && self.types.profile.byte_values() {
+                return collections::bytes(self.types).map(Some);
+            }
             return Err(unsupported(&format!(
-                "instanceof {} of an unknown or object value (a Map, Set or Uint8Array never \
-                 enters unknown in value layout 18; test a closed union instead)",
+                "instanceof {} of an unknown or object value (a Map or Set never enters \
+                 unknown in value layout 18; test a closed union instead)",
                 kind.name()
             )));
         }
@@ -87,7 +93,7 @@ impl Lower<'_> {
             .map_err(|e| self.source.locate(e, binary.span))?;
         let span = binary.span;
         let kind = match member {
-            Some(member) if value.ty.is_union() => E::IsUnionMember(Box::new(value), member),
+            Some(member) if value.ty.is_cell() => E::IsUnionMember(Box::new(value), member),
             matched => E::Sequence(
                 Box::new(value),
                 Box::new(Expr {
@@ -128,7 +134,7 @@ impl Lower<'_> {
         };
         // An inadmissible operand fails when the test itself is lowered.
         if let Ok(Some(member)) = self.instance_of_member(ty, kind)
-            && ty.is_union()
+            && ty.is_cell()
         {
             self.refine(name, Guard::Exact(member), yes)?;
         }

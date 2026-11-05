@@ -6,7 +6,8 @@
 //! and JSON drops: present fields and dictionary entries holding `undefined`,
 //! `-0`, NaN and the infinities. A record reached twice is one object written
 //! once (V8's back-reference); a cycle, a function, a promise, an Error, a
-//! BigInt, an array hole and a record with private state (an engine class or
+//! BigInt, an array hole, a `Uint8Array` held by `unknown` or nested in
+//! another value and a record with private state (an engine class or
 //! `#private` fields) fail with a `TypeError`, before anything is stored.
 use super::v8::{Key, Object, Value};
 use std::{
@@ -40,6 +41,8 @@ fn unsupported(kind: &str) -> StageError {
 
 /// The layout every v38 module uses.
 const VERSION: u32 = HASHED_DICTIONARY_VALUE_VERSION;
+/// What a tagged `Uint8Array` (v38 `byte_values`) is to the stager.
+const BYTES_INSIDE: &str = "a Uint8Array held by unknown or nested in another value";
 
 pub(crate) struct Stager<'a> {
     data: &'a [u8],
@@ -154,6 +157,12 @@ impl<'a> Stager<'a> {
             ValueKind::Error => return Err(unsupported("an Error")),
             ValueKind::Function => return Err(unsupported("a function")),
             ValueKind::Promise => return Err(unsupported("a Promise")),
+            // Only a top-level `Uint8Array` stores raw bytes (by its static
+            // type, `StageMode::Bytes`); a tagged one is checked and refused.
+            ValueKind::Bytes => {
+                byte_vector(self.data, packed, VERSION, self.module).map_err(abi)?;
+                return Err(unsupported(BYTES_INSIDE));
+            }
             _ => return Err(fatal("noncanonical scalar")),
         })
     }

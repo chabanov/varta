@@ -17,7 +17,7 @@ use varta_common::value::ErrorClass;
 /// Whether a value of `actual` may be stored where `expected` is declared.
 pub(super) fn assignable(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
     if expected == Type::Unknown {
-        return unknown::admissible(actual);
+        return unknown::admissible(actual, types);
     }
     arguments::accepts(expected, actual, types)
 }

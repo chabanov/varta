@@ -42,6 +42,13 @@ pub const FUNCTION_FIELD_VALUE_VERSION: u32 = 17;
 /// (deleted entries) while the dictionary is indexed. Only value18 readers
 /// accept it.
 pub const HASHED_DICTIONARY_VALUE_VERSION: u32 = 18;
+/// Whether `version` tags a `Uint8Array` with [`ValueKind::Bytes`] (value18,
+/// v38 `byte_values`): an additive tag of the in-development value18 layout,
+/// which no earlier layout admits.
+#[must_use]
+pub fn bytes_layout(version: u32) -> bool {
+    version == HASHED_DICTIONARY_VALUE_VERSION
+}
 /// Whether `version` is a layout of the dynamic-value family (value15 and its
 /// value16, value17 and value18 extensions), which share the dictionary tag
 /// and the wide-record layout (value18 adds the dictionary hash table).
@@ -192,6 +199,54 @@ pub const VECTOR_BYTES: usize = 16;
 pub const VECTOR_STORAGE_OFFSET: u64 = 8;
 mod vector;
 pub use vector::Vector;
+/// The largest element of a value18 byte array (`Uint8Array`).
+pub const MAX_BYTE: u8 = u8::MAX;
+fn noncanonical_bytes() -> ValueAbiError {
+    ValueAbiError("noncanonical byte array".into())
+}
+/// The byte storage `handle` of a [`ValueKind::Bytes`] value of layout
+/// `version` (v38 `byte_values`): a canonical vector of Numbers whose every
+/// element is present and an integer from 0 to [`MAX_BYTE`] (`-0` is not).
+/// Every element is checked.
+pub fn byte_vector<M: crate::memory::Memory + ?Sized>(
+    data: &M,
+    handle: u64,
+    version: u32,
+    module: ModuleBounds,
+) -> Result<Vector, ValueAbiError> {
+    if !bytes_layout(version) {
+        return Err(noncanonical_bytes());
+    }
+    let vector = Vector::read_in(data, handle, version, module)?;
+    if vector.kind != ValueKind::Float64 {
+        return Err(noncanonical_bytes());
+    }
+    for index in 0..vector.length {
+        byte_at(data, &vector, index)?;
+    }
+    Ok(vector)
+}
+/// Element `index` of a byte storage `vector` read by [`byte_vector`].
+pub fn byte_at<M: crate::memory::Memory + ?Sized>(
+    data: &M,
+    vector: &Vector,
+    index: usize,
+) -> Result<u8, ValueAbiError> {
+    if !vector.is_present(data, index)? {
+        return Err(noncanonical_bytes());
+    }
+    let at = index
+        .checked_mul(ARRAY_SLOT_BYTES)
+        .and_then(|offset| offset.checked_add(vector.storage + ARRAY_META_BYTES))
+        .ok_or_else(noncanonical_bytes)?;
+    let bits = data.u64_at(at).ok_or_else(noncanonical_bytes)?;
+    let byte = f64::from_bits(bits) as u8;
+    // Exactly the bits of the integer: no fraction, NaN, -0 or saturation.
+    if f64::from(byte).to_bits() != bits {
+        return Err(noncanonical_bytes());
+    }
+    Ok(byte)
+}
 #[must_use]
 pub fn array_capacity(length: usize) -> usize {
     if length == 0 {
@@ -474,13 +529,21 @@ pub enum ValueKind {
     /// Value16 promise (v35 `promise_values`): the payload is the handle of
     /// the promise's private record block.
     Promise = 14,
+    /// Value18 `Uint8Array` (v38 `byte_values`): the payload is the handle of
+    /// its byte storage, a dense vector of Numbers whose elements are the
+    /// integers 0 to 255 (see [`byte_vector`]). Earlier layouts tag no byte
+    /// array.
+    Bytes = 15,
 }
 impl ValueKind {
+    /// The kind with the largest tag (every tag from 0 to it is a kind).
+    pub const LAST: Self = Self::Bytes;
     #[must_use]
     pub fn is_reference(self) -> bool {
         matches!(
             self,
-            Self::Dictionary
+            Self::Bytes
+                | Self::Dictionary
                 | Self::Promise
                 | Self::Function
                 | Self::BigInt
@@ -510,6 +573,7 @@ impl ValueKind {
             12 => Self::Function,
             13 => Self::Dictionary,
             14 => Self::Promise,
+            15 => Self::Bytes,
             _ => return None,
         })
     }
@@ -520,6 +584,7 @@ impl ValueKind {
                 Self::Function => function_layout(version),
                 Self::Dictionary => dynamic_layout(version),
                 Self::Promise => promise_layout(version),
+                Self::Bytes => bytes_layout(version),
                 Self::BigInt => matches!(
                     version,
                     BIGINT_VALUE_VERSION

@@ -24,12 +24,12 @@ pub(super) fn scheduler() -> Value {
 }
 
 pub(super) fn values() -> Value {
-    let tags: std::collections::BTreeMap<_, _> = (0..=v::ValueKind::Promise as u32)
+    let tags: std::collections::BTreeMap<_, _> = (0..=v::ValueKind::LAST as u32)
         .filter_map(v::ValueKind::from_tag)
         .map(|kind| (format!("{kind:?}"), kind as u32))
         .collect();
     json!({
-        "tags":tags,"references":(0..=v::ValueKind::Promise as u32).filter_map(v::ValueKind::from_tag).filter(|k|k.is_reference()).map(|k|k as u32).collect::<Vec<_>>(),
+        "tags":tags,"references":(0..=v::ValueKind::LAST as u32).filter_map(v::ValueKind::from_tag).filter(|k|k.is_reference()).map(|k|k as u32).collect::<Vec<_>>(),
         "ownedBase":abi::OWNED_STRING_BASE,"headerBytes":abi::STRING_HEADER_BYTES,
         "alignment":v::HEAP_ALIGNMENT,"flagsOffset":v::HEAP_FLAGS_OFFSET,"linkOffset":v::HEAP_LINK_OFFSET,
         "allocated":v::HEAP_ALLOCATED_FLAG,"unionFlag":v::HEAP_UNION_FLAG,"cellBytes":v::UNION_BYTES,"cellPayload":v::UNION_META_BYTES,

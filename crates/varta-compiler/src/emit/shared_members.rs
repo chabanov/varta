@@ -7,7 +7,8 @@
 //! subclasses), an array by its element kind, which lowering requires to
 //! differ between the array members of such a union. Unions with at most one
 //! member per tag keep the tag-only test, so earlier profiles (which never
-//! build such unions) emit the same code.
+//! build such unions) emit the same code. A `Uint8Array` (v38
+//! `byte_values`) has the byte-array tag of its own and shares none.
 use super::*;
 
 #[derive(Default)]
@@ -30,7 +31,7 @@ pub(super) fn shared_members(types: &ir::ValueTypes) -> SharedMembers {
             .count();
         let arrays = members
             .iter()
-            .filter(|ty| matches!(ty, Type::Array(_)))
+            .filter(|ty| matches!(ty, Type::Array(id) if types.bytes != Some(*id)))
             .count();
         if records < 2 && arrays < 2 {
             continue;
@@ -99,9 +100,10 @@ impl Emitter<'_> {
                 }
                 test
             }
+            Type::Array(_) if self.is_bytes(member) => return Ok(()),
             Type::Array(id) => {
-                let kind = self.arrays[id as usize]
-                    .profile_kind(self.profile)
+                let kind = self
+                    .tag(self.arrays[id as usize])
                     .ok_or_else(|| CompilerError::Internal("missing array element kind".into()))?;
                 vec![
                     I::LocalGet(self.temporary),

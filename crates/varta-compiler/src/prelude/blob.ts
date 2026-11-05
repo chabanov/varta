@@ -128,9 +128,10 @@ export class ArrayBuffer {
     return bufferOf(this.storage.slice(from, Math.max(from, to)));
   }
 
-  // `Uint8Array` is the only `ArrayBufferView` of the profile.
+  // `Uint8Array` is the only `ArrayBufferView` of the profile; an `unknown`
+  // cell holds one under its own byte-array tag (`byte_values`).
   static isView(value: unknown): boolean {
-    return false;
+    return value instanceof Uint8Array;
   }
 
   // Engine-internal: the storage a `Uint8Array` view shares.

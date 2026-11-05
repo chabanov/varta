@@ -5827,6 +5827,36 @@ interface One { item: string | null; note?: string }
 const answer = JSON.parse(text) as List | One; // {"item":null} is a One
 ```
 
+`unknown` holds bytes. A `Uint8Array` keeps its identity there, `instanceof
+Uint8Array` and `ArrayBuffer.isView` find it again, and `JSON.stringify`
+writes it as Node does (`{"0":104,"1":105}`), so an SDK that takes file
+parts as `unknown` sends them unchanged:
+
+```ts
+function appendPart(form: FormData, key: string, value: unknown): void {
+  if (value instanceof Blob) {
+    form.append(key, value);
+    return;
+  }
+  if (typeof value === 'object' && value !== null && 'data' in (value as Record<string, unknown>)) {
+    const part = value as { data: Blob | ArrayBuffer | Uint8Array | string; filename?: string };
+    form.append(key, new Blob([part.data]), part.filename ?? 'file');
+    return;
+  }
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    form.append(key, new Blob([value as BlobPart]), 'file');
+    return;
+  }
+  form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+}
+```
+
+`'data' in` answers as Node does for a `Uint8Array`, `ArrayBuffer`, `Blob`
+or `File` (their prototype members, a `Uint8Array`'s indexes) and for plain
+objects; an array, or a key that is not a string literal, is still a
+`TypeError` there. Reading such a value as `Record<string, unknown>`
+otherwise (for example `Object.keys`) is a `TypeError` too.
+
 #### View protocol and TSX (opt-in v38)
 
 A `.tsx` module renders an L0 view: an intrinsic

@@ -336,6 +336,13 @@ pub(crate) struct ValueTypes {
     pub erased: crate::lower::erased_methods::ErasedMethods,
     /// The `unknown[]` view function of `Array.isArray` narrowing (v38).
     pub unknown_array: Option<usize>,
+    /// V38 (`byte_values`): the array type id that every `Uint8Array` value
+    /// erases to (`literal_erasure`). It is a `number[]` of its own, distinct
+    /// from the byte storage `number[]` that the prelude operates on, so the
+    /// value of a `Uint8Array` type carries the byte-array tag
+    /// ([`varta_common::value::ValueKind::Bytes`]) wherever a tag is written
+    /// ([`tag_of`]). Set only after erasure.
+    pub bytes: Option<u32>,
 }
 /// `{ [key: string]: T }` / `Record<string, T>` with its storage record shape
 /// `{ keys: string[]; values: T[] }` (canonical slots 0 and 1), or under value
@@ -639,6 +646,21 @@ impl Type {
             Self::Collection(..) => V::Record,
             _ => return None,
         })
+    }
+}
+/// The value tag of an erased type under `profile`: the byte-array tag for
+/// the `Uint8Array` array type `bytes` (v38 `byte_values`), otherwise
+/// [`Type::profile_kind`].
+pub(crate) fn tag_of(
+    ty: Type,
+    bytes: Option<u32>,
+    profile: varta_common::language::LanguageProfile,
+) -> Option<varta_common::value::ValueKind> {
+    match ty {
+        Type::Array(id) if bytes == Some(id) && profile.byte_values() => {
+            Some(varta_common::value::ValueKind::Bytes)
+        }
+        _ => ty.profile_kind(profile),
     }
 }
 impl Type {

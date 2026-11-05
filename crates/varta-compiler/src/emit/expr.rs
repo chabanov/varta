@@ -427,9 +427,8 @@ impl Emitter<'_> {
             }
             E::ArraySearch(mode, base, needle, from) => {
                 self.expr(base)?;
-                let kind = needle
-                    .ty
-                    .profile_kind(self.profile)
+                let kind = self
+                    .tag(needle.ty)
                     .ok_or_else(|| CompilerError::Internal("missing search value kind".into()))?;
                 self.code.push(I::I32Const(kind as i32));
                 self.expr(needle)?;

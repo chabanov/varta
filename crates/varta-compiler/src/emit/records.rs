@@ -29,11 +29,15 @@ pub(super) fn canonical_layout(id: u32, shapes: &[ir::RecordShape]) -> LayoutKey
     (id, order)
 }
 
+/// The static descriptor of layout `key` under value layout `version`;
+/// `byte_array` is the `Uint8Array` array type id (v38 `byte_values`),
+/// whose fields carry the byte-array tag.
 pub(super) fn descriptor(
     key: &LayoutKey,
     shapes: &[ir::RecordShape],
     strings: &BTreeMap<Vec<u8>, u32>,
     version: u32,
+    byte_array: Option<u32>,
 ) -> Result<Vec<u8>> {
     let shape = &shapes[key.0 as usize];
     let mut bytes = Vec::new();
@@ -42,10 +46,14 @@ pub(super) fn descriptor(
     }
     for index in &key.1 {
         let field = &shape.fields[*index as usize];
-        let kind = field
-            .ty
-            .layout_kind(version)
-            .ok_or_else(|| CompilerError::Internal("missing object field kind".into()))?;
+        let kind = match field.ty {
+            Type::Array(id) if byte_array == Some(id) && abi::bytes_layout(version) => {
+                abi::ValueKind::Bytes
+            }
+            ty => ty
+                .layout_kind(version)
+                .ok_or_else(|| CompilerError::Internal("missing object field kind".into()))?,
+        };
         for value in [
             strings[field.name.as_bytes()],
             field.name.len() as u32,
@@ -225,9 +233,8 @@ impl Emitter<'_> {
         ]);
     }
     pub(super) fn json(&mut self, value: &Expr, result: Type, status: Option<u32>) -> Result<()> {
-        let kind = value
-            .ty
-            .profile_kind(self.profile)
+        let kind = self
+            .tag(value.ty)
             .ok_or_else(|| CompilerError::Internal("missing JSON value kind".into()))?;
         self.code.push(I::I32Const(kind as i32));
         self.expr(value)?;
@@ -273,9 +280,8 @@ impl Emitter<'_> {
     /// V38 (`kv`): `kv_stage(mode, kind, lo, hi) -> f64`, the value passed as
     /// `json_stringify` passes it (its kind word and packed slot halves).
     pub(super) fn kv_stage(&mut self, mode: i32, value: &Expr) -> Result<()> {
-        let kind = value
-            .ty
-            .profile_kind(self.profile)
+        let kind = self
+            .tag(value.ty)
             .ok_or_else(|| CompilerError::Internal("missing KV value kind".into()))?;
         self.code
             .extend([I::I32Const(mode), I::I32Const(kind as i32)]);

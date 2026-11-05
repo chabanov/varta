@@ -1,0 +1,21 @@
+object true true false false false true
+object true true false false false true
+object false false true false false true
+object false false false false true true
+object false false false false false true
+1,2,255 |
+{"0":1,"1":2,"2":255}
+{}
+true false
+3:1.2.255 not bytes not bytes
+9
+9,8,255
+{"data":{"0":9,"1":8,"2":255},"size":3}
+{"data":{"0":9,"1":8,"2":255},"size":3}
+[{"0":9,"1":8,"2":255},{},{"0":0}]
+{"a":{"0":9,"1":8,"2":255},"b":"x"}
+[{"0":9,"1":8,"2":255},"x"]
+data=3:9.8.255 size=not bytes
+object true true false false false true {"0":5,"1":6} "text"
+object:true string:false number:false
+[{"0":9,"1":8,"2":255},"x",1]

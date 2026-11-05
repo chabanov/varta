@@ -1307,7 +1307,7 @@ fn values_outside_the_subset_are_rejected() {
     // At run time: what an `unknown` holds.
     let source = guarded(
         "/data/a.kv",
-        "    const values: unknown[] = [new Error('x')];\n\
+        "    const values: unknown[] = [new Error('x'), new Uint8Array([1]), { data: new Uint8Array([2]) }];\n\
          for (const value of values) {\n\
            try { await kv.set(['v'], value); } catch (e) { if (e instanceof Error) { console.log(e.message); } }\n\
          }\n\
@@ -1320,6 +1320,8 @@ fn values_outside_the_subset_are_rejected() {
         run(&source, read_write(), tree.roots()),
         [
             "an Error cannot be stored in a KV value",
+            "a Uint8Array held by unknown or nested in another value cannot be stored in a KV value",
+            "a Uint8Array held by unknown or nested in another value cannot be stored in a KV value",
             "a cyclic value cannot be stored in a KV value",
             "done"
         ]

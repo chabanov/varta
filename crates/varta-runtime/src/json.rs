@@ -636,6 +636,7 @@ impl<'a, 'b> Encoder<'a, 'b> {
             ValueKind::Array => self.array(packed, depth),
             ValueKind::Dictionary => self.dictionary(packed, depth),
             ValueKind::Promise => self.promise(packed, depth),
+            ValueKind::Bytes => self.byte_array(packed, depth),
             ValueKind::Function if self.diagnostic_budget.is_some() => {
                 self.write(FUNCTION_DISPLAY.as_bytes())
             }
@@ -766,6 +767,29 @@ impl<'a, 'b> Encoder<'a, 'b> {
             self.value(kind, ((hi as u64) << i32::BITS) | lo as u64, depth + 1)?;
         }
         self.write(b"]")?;
+        self.path.pop();
+        Ok(())
+    }
+    /// A value18 `Uint8Array` (v38 `byte_values`): an object of its elements
+    /// under their index keys (`{"0":1,"1":2}`), as `JSON.stringify` writes
+    /// one; the diagnostic text uses the same notation.
+    fn byte_array(&mut self, packed: u64, depth: usize) -> Result<(), wasmtime::Error> {
+        let vector = byte_vector(self.data, packed, self.version, self.module)
+            .map_err(wasmtime::Error::new)?;
+        if self.path.contains(&vector.ptr) {
+            return Err(error("cyclic object"));
+        }
+        self.path.push(vector.ptr);
+        self.write(b"{")?;
+        for index in 0..vector.length {
+            if index != 0 {
+                self.write(b",")?;
+            }
+            let byte = byte_at(self.data, &vector, index).map_err(wasmtime::Error::new)?;
+            self.visit(depth + 1)?;
+            self.write(format!("\"{index}\":{byte}").as_bytes())?;
+        }
+        self.write(b"}")?;
         self.path.pop();
         Ok(())
     }
