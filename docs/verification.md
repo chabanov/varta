@@ -859,7 +859,17 @@ running (the destination is a new directory):
 ```bash
 node --test crates/varta-project/src/browser/network.test.mjs crates/varta-project/src/browser/network-transport.test.mjs
 node scripts/test-browser-bundle.mjs target/browser-network-probe --generate-network
+cargo build -p varta --locked
+node scripts/test-browser-streaming.mjs [varta-executable]
 ```
+
+`test-browser-streaming.mjs` (default executable `target/debug/varta`) runs the
+v38 long-lived-transfer programs as application instances with `varta dev --app`
+and in local Chrome (its own bundle, a temporary profile and a random debugging
+port) against one loopback server, and requires the same log lines: a server-sent
+event stream longer than several test-only inactivity windows, a stalled read,
+host-owned `User-Agent`, a decoded compressed body, and a burst of events larger
+than the per-read delivery cap under the production budgets.
 
 The latter generates native golden observations first, then runs the same bundles
 in Chrome against a different loopback origin with CORS/preflight. GET, POST, byte
