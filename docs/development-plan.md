@@ -464,11 +464,14 @@ real-font/window/platform acceptance remain open.
 Branch `wave3/w3-native-macos-adapters` (on `49186cf`).
 
 - **Accessibility geometry.** Native bounds now cover offscreen (scrolled-out
-  or clipped) elements, text nodes and the options of an open select list,
-  including rows scrolled out of the list, all from the presented frame; see
-  the native accessibility text on `FrameMetadata::accessibility_bounds_map` in
-  [the architecture contract](architecture.md). Options of a closed select
-  stay unbounded (no box).
+  or clipped) elements, text nodes and the presented rows of an open select
+  list, all from the presented frame; see the native accessibility text on
+  `FrameMetadata::accessibility_geometry` in
+  [the architecture contract](architecture.md). A hidden box is published only
+  where clipping containers (`clips_children`) and the frame keep the pinned
+  clip-aware hit test away from it; other hidden nodes (under a scroll border,
+  rows scrolled out of the open list) and closed-select options stay
+  unbounded.
 - **macOS assistive scrolling.** The pinned adapter routes AppKit's scroll-area
   page actions, and the increment/decrement and settable value of a published
   vertical scroll-bar child, to the existing page/item/absolute typed actions
@@ -478,15 +481,22 @@ Branch `wave3/w3-native-macos-adapters` (on `49186cf`).
   probing process is not trusted for the accessibility API here).
 - **CoreText face variants.** Collection members and variation instances are
   instantiated from the artifact bytes; color/bitmap tables, `opsz` and `avar`
-  v2 keep declining with explicit counters. The native text probe's faces mode
-  reports zero outline glyphs for the new variable and collection fixtures and
-  the Chrome oracle stays under 2/255 at 1×/1.25×/2× (maximum mean 0.446).
+  v2 keep declining with explicit counters. Variation keys come from
+  CoreGraphics's own axis records by `fvar` index and every instance is read
+  back; duplicate axis names or a mismatch decline (`declined_variation`). The
+  native text probe's faces mode reports zero outline glyphs for the variable,
+  differing-axis-name and collection fixtures and the Chrome oracle stays under
+  2/255 at 1×/1.25×/2× (maximum mean 0.446).
 
 Scoped results: `python3 scripts/verify.py local varta-desktop` (99 library,
 7 binary, 18 shell tests) and `local varta-view` (149 library, 349
 integration) pass; strict all-target Clippy for both crates (and the desktop
 `gpu` feature) and `cargo fmt --all -- --check` pass. The full gate is the
-wave lead's.
+wave lead's. After review (fix round): hit tests over visible content no
+longer return scrolled-out or clipped-away nodes, and a face whose Mac and
+Windows axis names differ draws its requested instance; `local varta-desktop`
+(104 library, 7 binary, 18 shell) and `local varta-view` (151 library, 349
+integration) pass again.
 
 ### Wave 2 integration — 2026-11-05
 

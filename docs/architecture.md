@@ -12733,16 +12733,27 @@ collection member is rebuilt as a standalone face from that member's own
 tables (CoreText's `head` table and glyph count must then match the member),
 and a variation instance is a CoreGraphics copy of the face with every `fvar`
 axis set to the user value whose default normalization followed by the `avar`
-(version 1) map yields the shaper's normalized coordinate; nothing is looked up
-by name. Faces with bitmap or color glyph tables (`COLR`, `CBDT`, `EBDT`,
-`sbix`, `SVG `), an `opsz` axis (CoreText would size it from the point size
-while the shaper keeps its default) or `avar` version 2 are declined, and
-their glyphs keep portable outlines. At most 16 variation instances are kept
-per face, each charged to the shared glyph-cache allowance; a variable face is
-charged twice its bytes, for the copy CoreGraphics retains. Declined glyph
-requests are counted by reason (`CoreTextRasterizer::statistics`).
+(version 1) map yields the shaper's normalized coordinate. No font is looked up
+by name. CoreGraphics keys variation values by axis names of its own choosing
+(its Mac name record wins over the Windows one) and silently ignores an unknown
+key, so the adapter takes each key from CoreGraphics's own axis records by
+`fvar` index, after their count and every minimum/default/maximum match `fvar`;
+two axes with one name, mismatched records, or an instance whose read-back
+values differ from the requested ones are declined (`declined_variation`), never
+drawn at the default instance. Faces with bitmap or color glyph tables (`COLR`,
+`CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText would size it from the
+point size while the shaper keeps its default) or `avar` version 2 are
+declined, and their glyphs keep portable outlines. A face is charged its
+standalone bytes (a collection member's own tables, not the whole file), twice
+for a variable face whose copy CoreGraphics retains. At most 16 variation
+instances are kept per face; each is charged a fixed 32 KiB native estimate
+(a measured 6 to 20 KiB process footprint per instance on macOS 27), since
+CoreGraphics's per-instance memory is not observable. Declined glyph requests
+are counted by reason (`CoreTextRasterizer::statistics`).
 The safe pinned `core-text=21.0.0` wrapper reuses the locked CoreGraphics0.24 and
-CoreFoundation0.10 stack; only the desktop host depends on it. This implements
+CoreFoundation0.10 stack; only the desktop host depends on it, and it names that
+stack's CoreFoundation types through the same locked `core-foundation=0.10.1`
+to read CoreGraphics's axis records. This implements
 the platform raster distinction visible in
 [Skia's CoreText scaler](https://raw.githubusercontent.com/google/skia/main/src/ports/SkScalerContext_mac_ct.cpp).
 The same optional interface can serve other platform adapters; they are not
@@ -13156,18 +13167,31 @@ numbers, history, select-option identity, event budgets and permission checks;
 guest listeners run on later application turns. Input records retain their
 ordinary gesture classification.
 
-Native bounds come from the presented frame alone
-(`FrameMetadata::accessibility_bounds_map`, physical pixels): the union of a
-node's visible element fragments when it has any; for an option of the open
-select list, its list row, including the position the list's scroll offset gives
-a row scrolled out of the list; otherwise the node's unclipped layout box at the
-presented scroll offsets, so scrolled-out and clipped elements and text nodes
-(anonymous block or inline fragment box) are bounded too. Options of a closed
-select have no box and stay unbounded.
+Native bounds and clipping come from the presented frame alone
+(`FrameMetadata::accessibility_geometry`, physical pixels): the union of a
+node's visible element fragments when it has any; for a presented row of the
+open select list, that row; for another laid-out node that is partly presented
+(such as a text node, whose box is its anonymous block or inline fragment box),
+the presented part of its layout box. A node that is not presented at all
+(scrolled out, clipped away, or a row scrolled out of the open list) gets its
+unclipped layout box at the presented scroll offsets only where a hit test
+cannot reach it: outside the frame or outside one of its clipping ancestors.
+An `overflow` hidden or scroll container clips (AccessKit `clips_children`) when
+it has bounds and every presented descendant lies inside them; a descendant
+that escapes it (an absolute box whose containing block is outside, or an open
+list drawn over it) keeps it from clipping. Other hidden nodes, such as a box
+under a scroll container's border or a row scrolled out of the open list over
+the page, and options of a closed select stay unbounded. The pinned macOS
+adapter's hit test searches a clipping node's descendants only inside its
+bounds (`accesskit_consumer`'s own search ignores clipping), so a point returns
+only a node presented there. AccessKit's unchanged filter omits a clipping
+scroll area's children beyond the nearest one past each edge from the platform
+tree until scrolling brings them next to the area.
 
-On macOS a node with a vertical scroll range also publishes a geometry-free
-vertical `ScrollBar` child at its 0..1 scroll position, with a native ID kept
-while the owner's identity and scroll range remain. The pinned adapter maps
+A node with a vertical scroll range also publishes a geometry-free vertical
+`ScrollBar` child at its 0..1 scroll position, on every platform the AccessKit
+adapter serves; its native ID is kept while the owner keeps its identity and a
+scroll range (a changed range keeps it). The pinned macOS adapter maps
 AppKit's scroll-area `AXScrollUpByPage`/`AXScrollDownByPage` to page scrolls,
 exposes that child as `AXVerticalScrollBar`, and maps the bar's
 increment/decrement to item scrolls and its settable value (finite, clamped to

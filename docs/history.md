@@ -47,6 +47,20 @@ Scoped: `verify.py local varta-desktop` and `local varta-view` pass; strict
 Clippy (including the desktop `gpu` feature) and formatting pass. The full gate
 is the wave lead's.
 
+Review fixes. Unclipped boxes of scrolled-out items had made AccessKit's hit
+test (which ignores clipping) return them over visible content, such as a
+heading above a scrolled pane. `FrameMetadata::accessibility_geometry` now
+marks clipping containers (`clips_children`) whose presented descendants stay
+inside them, publishes a hidden box only where the frame and those containers
+keep the hit test away, and the pinned macOS adapter searches a clipping
+node's descendants only inside its bounds. Separately, CoreGraphics names
+variation axes by its own name record (Mac first) and ignored the
+Windows-record name the adapter used, drawing the default instance; keys now
+come from CoreGraphics's axis records by index, every instance is read back,
+and duplicate names decline. The face generator no longer stamps the current
+time into the collection's `head`, and adds `variable-names.ttf` and
+`variable-axes.ttf`.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only
