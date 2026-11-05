@@ -14,6 +14,49 @@ export const registry = freeze({
     "time.now",
     "time.timer"
   ],
+  "effects": {
+    "clock": {
+      "capability": "time.now",
+      "denialText": "<capability denied: time.now> (Date.now)",
+      "operation": "date_now"
+    },
+    "collector": {
+      "deadlineBudget": "maintenanceDeadlineMs",
+      "deadlineExhausted": "turn {turn} (maintenance) exhausted its maintenance deadline budget ({limit} ms per idle period); the instance was terminated",
+      "done": 2,
+      "fuelBudget": "maintenanceFuel",
+      "fuelExhausted": "turn {turn} (maintenance) exhausted its maintenance fuel budget ({limit} instructions per idle period); the instance was terminated",
+      "idleExport": "varta.collector.idle",
+      "invalidStatus": "invalid idle collection status",
+      "limitPlaceholder": "{limit}",
+      "more": 1,
+      "none": 0,
+      "reportedPeriods": 256,
+      "stepFuel": 1000000,
+      "stepUnits": 2048,
+      "turnPlaceholder": "{turn}"
+    },
+    "environment": {
+      "capability": "env.get",
+      "operation": "env_snapshot"
+    },
+    "exit": {
+      "capability": "process.exit",
+      "denialText": "<capability denied: process.exit> (process)",
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "operation": "process_exit_f64"
+    },
+    "failures": {
+      "invalid": "<invalid host input>",
+      "tooLarge": "<result too large>"
+    },
+    "random": {
+      "operation": "number_random",
+      "sampleBits": 53,
+      "wordBits": 64
+    }
+  },
   "environment": {
     "maxInputBytes": 65536,
     "maxMatchWork": 65536,

@@ -372,3 +372,98 @@ fn packaged_resources_have_generated_names_and_pinned_bytes_without_changing_por
     assert!(loader.contains(&varta_runtime::artifact_identity(&png)));
     assert!(!bundle.files().contains_key("icons/red.png"));
 }
+
+fn v38_source(source: &str) -> Artifact {
+    let profile = LanguageProfile::CheckedF64Utf16V38;
+    let mut artifact = artifact(profile);
+    artifact.wasm = varta_compiler::compile_typescript_with_profile(source, profile)
+        .unwrap_or_else(|error| panic!("{error}\n{source}"));
+    artifact
+}
+
+/// The pilot's clock, entropy, environment snapshot and exit are admitted:
+/// the bundle is produced and its Worker carries their handlers.
+#[test]
+fn bundle_admits_the_pilot_clock_entropy_environment_and_exit_effects() {
+    use varta_common::HostOperation as H;
+    let source = v38_source(
+        "export function main():void{console.log(Date.now()>0);console.log(Math.random()<1);\
+         console.log(Object.keys(globalThis.process.env).length);varta.process.exit(3);}",
+    );
+    let prepared = BrowserArtifact::prepare(&source, None).unwrap();
+    for operation in [H::DateNow, H::MathRandom, H::EnvSnapshot, H::ExitFloat] {
+        assert!(
+            prepared
+                .inspection()
+                .imports
+                .iter()
+                .any(|import| import.name == operation.name()),
+            "{} not imported",
+            operation.name()
+        );
+    }
+    let bundle = prepared.bundle().unwrap();
+    let worker = std::str::from_utf8(&bundle.files()["varta-worker.js"]).unwrap();
+    assert!(worker.contains("createEnvironmentSnapshot"));
+    assert!(worker.contains("crypto.getRandomValues(entropy)"));
+    assert!(worker.contains("class GuestExit"));
+    let loader = std::str::from_utf8(&bundle.files()["varta-host.js"]).unwrap();
+    assert!(loader.contains("maintenance_begin"));
+}
+
+/// Every other unimplemented effect is still refused before any bundle
+/// exists, and the refusal names only the missing effect.
+#[test]
+fn other_unimplemented_effects_are_refused_before_a_bundle_exists() {
+    let source = v38_source(
+        "export function main():void{console.log(Date.now());console.log(varta.fs.read(\"/project/a.txt\"));}",
+    );
+    let prepared = BrowserArtifact::prepare(&source, None).unwrap();
+    let error = match prepared.bundle() {
+        Ok(_) => panic!("an unimplemented effect produced a bundle"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.contains("browser host effects not implemented: fs_read16"),
+        "{error}"
+    );
+    assert!(!error.contains("date_now"), "{error}");
+}
+
+/// The browser's maintenance diagnostics are the native runtime's typed
+/// budget errors, with the turn and the limit substituted.
+#[test]
+fn maintenance_exhaustion_texts_equal_the_native_runtime_errors() {
+    use varta_runtime::{BudgetExhausted, TurnKind};
+    let collector = &varta_common::browser::registry()["effects"]["collector"];
+    for (template, wire, budget) in [
+        ("fuelExhausted", "fuelBudget", BudgetKind::MaintenanceFuel),
+        (
+            "deadlineExhausted",
+            "deadlineBudget",
+            BudgetKind::MaintenanceDeadline,
+        ),
+    ] {
+        let (turn, limit) = (7_u64, budget.production());
+        let native = BudgetExhausted {
+            turn,
+            kind: TurnKind::Maintenance,
+            budget,
+            limit,
+        }
+        .to_string();
+        let browser = collector[template]
+            .as_str()
+            .unwrap()
+            .replace(
+                collector["turnPlaceholder"].as_str().unwrap(),
+                &turn.to_string(),
+            )
+            .replace(
+                collector["limitPlaceholder"].as_str().unwrap(),
+                &limit.to_string(),
+            );
+        assert_eq!(browser, native);
+        assert_eq!(collector[wire], budget.wire_name());
+    }
+}

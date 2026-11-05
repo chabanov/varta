@@ -7,6 +7,27 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-04 — Browser pilot effects and idle collection (wave 1, scoped)
+
+The official browser host admitted `date_now`, `number_random`, `env_snapshot`
+and `process_exit_f64`, with Worker handlers equal to the native ones: an
+audited `time.now` decision before `Date.now` (denial logs the native text and
+returns NaN), ungated `crypto.getRandomValues` entropy converted like native,
+an `env.get`-filtered snapshot of the embedder's environment inputs in native
+member order, and an exit that ends the run or `mount` session with its code.
+`mount` sessions run `varta.collector.idle` once per idle period under the
+maintenance budget, restore the closed turn's fuel and report listed periods
+with native rules; the parent watchdog bounds the maintenance deadline. A new
+`effects` section of the generated browser registry carries the operation
+names, capability ids, entropy widths, failure texts and collector constants.
+
+Scoped evidence on `wave1/w1-browser-pilot-effects`: `varta-common` and
+`varta-project` browser unit tests, the boundaries test, regeneration without a
+diff, 177 Node tests, `scripts/test-browser-effects.mjs` in Chrome (six native
+comparisons, including a 13-turn session with idle collection) and Firefox 157
+through the matrix (six effect cases and 13 generated fixtures). WebKit was not
+run. The full gate is the wave lead's.
+
 ## 2026-11-03 — Painted field geometry and visual native text ranges
 
 UI-2.3 exposes borrowed cluster/line geometry from the exact painted frame,

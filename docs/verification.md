@@ -744,6 +744,31 @@ each engine using isolated temporary projects and browser contexts.
 Source/config/resource edits now rebuild automatically after a
 successful initial startup; policy/decision-file edits still require restart.
 
+Browser pilot effects (clock, entropy, environment snapshot, exit) and idle
+collection between turns:
+
+```sh
+cargo test -p varta-common --lib browser::
+cargo test -p varta-project --lib browser::
+node --test crates/varta-common/browser/fuel.test.mjs crates/varta-project/src/browser/*.test.mjs
+cargo build -p varta --bin varta --locked
+node scripts/test-browser-effects.mjs target/debug/varta
+node scripts/test-browser-matrix.mjs - <playwright-module-path> --effects target/debug/varta
+```
+
+`worker-effects.test.mjs` covers the Worker handlers and their denials
+(missing `time.now` grant, empty host ceiling, `env.get` filtering, exit
+denial and invalid codes) and the maintenance loop, including fuel, deadline
+and invalid-status failures. `test-browser-effects.mjs` builds temporary
+projects and compares native `varta dev --budget-report` (`--app` for the
+long session) with the browser dev host in local Chrome: logs, exit codes,
+exact host calls, microtasks, output and fuel, and the listed idle periods.
+Random values are checked by range and shape only; the `randomUUID` case
+compares everything except fuel, because the guest prelude's cost depends on
+the drawn bytes natively too. The matrix's `--effects` option runs the same
+cases in Firefox, WebKit and Chrome (`-` skips the generated fixtures); an
+engine that cannot launch is reported as failed, never as a pass.
+
 The official registry has a Rust regeneration drift test; it does not yet include
 all memory/view tables. Regenerate it explicitly after a registry change:
 

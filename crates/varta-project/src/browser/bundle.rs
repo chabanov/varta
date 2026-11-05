@@ -84,6 +84,12 @@ const EFFECTS: &[H] = &[
     H::EventText,
     H::EventSourceOpen,
     H::EventSourceClose,
+    // Pilot effects: the clock behind `time.now`, ungated entropy,
+    // the `env.get` snapshot and the `process.exit` exit.
+    H::DateNow,
+    H::MathRandom,
+    H::EnvSnapshot,
+    H::ExitFloat,
 ];
 
 /// Engine-owned ESM sources become isolated lexical modules in the verified
@@ -94,7 +100,7 @@ fn embedded_sources(dom: bool) -> String {
             "environment",
             "",
             ENVIRONMENT,
-            "snapshotEnvironment,createEnvironmentPolicy,createEnvironmentAccess",
+            "snapshotEnvironment,createEnvironmentPolicy,createEnvironmentAccess,createEnvironmentSnapshot",
         ),
         (
             "environmentAbi",
@@ -364,7 +370,7 @@ impl BrowserArtifact {
             "manifest":file(MANIFEST,&manifest),"worker":file(WORKER_FILE,&worker),
             "booleanCapabilities":registry_data["booleanCapabilities"],"network":registry_data["network"],
             "view":registry_data["view"],"hasView":self.inspection.imports.iter().any(|import|import.name==H::ViewCommit.name()),
-            "permissions":registry_data["permissions"],"environment":registry_data["environment"],
+            "permissions":registry_data["permissions"],"environment":registry_data["environment"],"effects":registry_data["effects"],
             "hasPermissions":!self.original.manifest.capabilities.is_empty(),
             "budgets":budgets,"budgetRules":rules,"requestedBudgets":wanted,"turnBudgets":profile.turn_budgets(),"imports":self.inspection.imports,
             "memoryExport":varta_common::abi::MEMORY_EXPORT,

@@ -3,6 +3,7 @@
 use crate::{HostOperation, HostScalar, abi, fuel, function, http, language, value};
 use language::LanguageProfile;
 use serde_json::{Value, json};
+mod effects;
 mod layout;
 mod network;
 mod permissions;
@@ -118,7 +119,7 @@ pub fn registry() -> Value {
         "schemaVersion":SCHEMA_VERSION,
         "maxTurnFuel":crate::budget::MAX_FUEL_PER_TURN,
         "scheduler":layout::scheduler(),"values":layout::values(),"network":network::registry(),"view":view::registry(),
-        "permissions":permissions::registry(),
+        "permissions":permissions::registry(),"effects":effects::registry(),
         "environment":{
             "maxNameBytes":crate::MAX_ENV_NAME_BYTES,
             "maxInputBytes":abi::MAX_INPUT_BYTES,

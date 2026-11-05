@@ -115,3 +115,50 @@ fn scheduled_profile_layouts_and_limits_match_the_native_readers() {
         }
     }
 }
+
+#[test]
+fn pilot_effect_facts_name_registered_operations_capabilities_and_collector_constants() {
+    use crate::{budget, collector as c};
+    let data = registry();
+    let effects = &data["effects"];
+    for (key, operation) in [
+        ("clock", HostOperation::DateNow),
+        ("random", HostOperation::MathRandom),
+        ("environment", HostOperation::EnvSnapshot),
+        ("exit", HostOperation::ExitFloat),
+    ] {
+        assert_eq!(effects[key]["operation"], json!(operation.name()));
+        if key != "random" {
+            assert_eq!(effects[key]["capability"], json!(operation.capability()));
+        }
+        assert!(admits(LanguageProfile::CheckedF64Utf16V38, operation));
+    }
+    // Entropy is ungated (accepted decision 9); the clock and the exit are
+    // boolean capabilities the generated ceiling validation accepts.
+    assert_eq!(HostOperation::MathRandom.capability(), None);
+    let booleans = data["booleanCapabilities"].as_array().unwrap();
+    assert!(booleans.contains(&effects["clock"]["capability"]));
+    assert!(booleans.contains(&effects["exit"]["capability"]));
+    assert_eq!(effects["random"]["sampleBits"], json!(f64::MANTISSA_DIGITS));
+    assert_eq!(effects["exit"]["minimum"], json!(i32::MIN));
+    let collector = &effects["collector"];
+    assert_eq!(collector["idleExport"], json!(c::IDLE_EXPORT));
+    assert_eq!(collector["stepUnits"], json!(c::IDLE_STEP_UNITS));
+    assert_eq!(
+        [&collector["none"], &collector["more"], &collector["done"]],
+        [
+            &json!(c::IDLE_NONE),
+            &json!(c::IDLE_MORE),
+            &json!(c::IDLE_DONE)
+        ]
+    );
+    assert_eq!(collector["stepFuel"], json!(budget::MAINTENANCE_STEP_FUEL));
+    // A maintenance allowance always fits the browser tank's turn ceiling.
+    assert_eq!(data["maxTurnFuel"], json!(budget::MAX_FUEL_PER_TURN));
+    const { assert!(budget::MAX_MAINTENANCE_FUEL <= budget::MAX_FUEL_PER_TURN) };
+    for template in ["fuelExhausted", "deadlineExhausted"] {
+        let text = collector[template].as_str().unwrap();
+        assert!(text.contains(collector["turnPlaceholder"].as_str().unwrap()));
+        assert!(text.contains(collector["limitPlaceholder"].as_str().unwrap()));
+    }
+}

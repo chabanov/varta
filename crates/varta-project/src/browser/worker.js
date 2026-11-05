@@ -1,5 +1,7 @@
 // One message, one instance. This Worker has no ambient effect adapters.
 let started = false, incoming, earlyPlatform, startupFailure;
+// An authorized `process.exit`: unwinds guest code and ends the instance.
+class GuestExit { constructor(code) { this.code = code; } }
 self.onmessage = async ({ data }) => {
   if (started) {
     if(incoming)incoming(data);
@@ -13,6 +15,8 @@ self.onmessage = async ({ data }) => {
   const prompting=application&&descriptor.turnBudgets&&data.prompting===true,prompts=new Map();
   const logs = [];
   let tank, scheduler, network, view, events, calls = 0, totalCalls = 0, outputBytes = 0, instance, closedFuel = 0, turns = 1;
+  const maintenance = [];
+  let maintenanceFuel = 0, maintenancePeriods = 0;
   try {
     const profile = registry.profiles.find((profile) => profile.name === descriptor.profile);
     if (!profile || descriptor.schemaVersion !== bundleSchemaVersion || descriptor.fairFuel !== profile.fairFuel) throw new Error("invalid prepared descriptor");
@@ -129,12 +133,48 @@ self.onmessage = async ({ data }) => {
       if(!environmentImports){
         const E=registry.environment, exports=instance.exports;
         const access=Object.fromEntries(Object.entries(environmentScopes).map(([name,scope])=>[name,environment.createEnvironmentAccess(environmentValues,scope,broker,name)]));
-        environmentImports=environmentAbi.createEnvironmentAbi({memory:()=>exports[descriptor.memoryExport],resultLength:exports[E.resultLength],resultStatus:exports[E.resultStatus],access,chargeBytes:n=>{if(profile.fairFuel)tank.charge('byte',n);},writeResult,emit});
+        const snapshotId=registry.effects.environment.capability;
+        const snapshot=environment.createEnvironmentSnapshot(environmentValues,environmentScopes[snapshotId],()=>broker.granted(snapshotId));
+        environmentImports=environmentAbi.createEnvironmentAbi({memory:()=>exports[descriptor.memoryExport],resultLength:exports[E.resultLength],resultStatus:exports[E.resultStatus],access,snapshot,chargeBytes:n=>{if(profile.fairFuel)tank.charge('byte',n);},writeResult,emit});
       }
       return environmentImports[id](ptr,len);
     };
     implementations.env_get16=(ptr,len)=>environmentImport('env_get16',ptr,len);
     implementations.env_has16=(ptr,len)=>environmentImport('env_has16',ptr,len);
+    implementations[registry.effects.environment.operation]=(ptr,len)=>environmentImport('env_snapshot',ptr,len);
+    // Pilot effects, each equal to its native handler after the shared call
+    // charge. The clock is an audited `time.now` operation (exact package
+    // request and the ceiling's own `true`, decided before the clock is read);
+    // a denial is recoverable: logged, and NaN, which no clock reading gives.
+    const {clock,random,exit}=registry.effects;
+    implementations[clock.operation]=()=>{
+      if(!broker.operation(clock.capability,'',broker.coveredGrant(clock.capability))){emit(clock.denialText);return NaN;}
+      return Date.now();
+    };
+    // Ungated entropy: one fresh 64-bit word per sample, never a seeded
+    // generator. Its top sampleBits bits scaled by 2^-sampleBits, exactly as
+    // native: every sample is in [0, 1) and zero has a positive sign.
+    const entropyUnitBits=Uint32Array.BYTES_PER_ELEMENT*8,entropy=new Uint32Array(random.wordBits/entropyUnitBits);
+    const discardedBits=random.wordBits-random.sampleBits;
+    implementations[random.operation]=()=>{
+      crypto.getRandomValues(entropy);
+      const [high,low]=entropy;
+      return (high*2**(entropyUnitBits-discardedBits)+(low>>>discardedBits))*2**-random.sampleBits;
+    };
+    // `process.exit`: reset the shared result, then the unaudited boolean
+    // check native makes (request, ceiling and broker state). A denied or
+    // non-integer code is a recoverable failure; an authorized exit ends the
+    // instance with its code and no later turn runs.
+    implementations[exit.operation]=(value)=>{
+      const E=registry.environment,result=(status)=>{
+        if(instance.exports[E.resultLength])instance.exports[E.resultLength].value=0;
+        if(instance.exports[E.resultStatus])instance.exports[E.resultStatus].value=status;
+      };
+      result(E.statuses.ok);
+      if(!(broker.coveredGrant(exit.capability)&&broker.granted(exit.capability))){result(E.statuses.denied);emit(exit.denialText);return;}
+      if(!Number.isInteger(value)||value<exit.minimum||value>exit.maximum){result(E.statuses.invalid);emit(registry.effects.failures.invalid);return;}
+      throw new GuestExit(value|0);
+    };
     const readEventText=(ptr,length)=>{
       const memory=instance.exports[descriptor.memoryExport],P=registry.permissions;
       if(ptr<0||length<0||length>P.descriptor.maxBytes)throw new Error(P.events.stateError);
@@ -202,9 +242,12 @@ self.onmessage = async ({ data }) => {
     implementations[registry.view.wire.commitImport] = (ptr,length) => view.commit(ptr,length,gesture);
     let gesture = false;
     const varta = Object.create(null);
+    // Capabilities whose checks this Worker implements; any other gated
+    // import is refused before instantiation.
+    const checkedCapabilities = new Set([registry.scheduler.timer.capability, registry.network.capability, 'env.get', 'env.has', clock.capability, exit.capability]);
     for (const item of descriptor.imports) {
       const operation = registry.operations.find((operation) => operation.name === item.name);
-      if (!operation || !operation.admittedUnder.includes(profile.name) || operation.capability !== null && operation.capability !== registry.scheduler.timer.capability && operation.capability !== registry.network.capability && !['env.get','env.has'].includes(operation.capability) || !Object.hasOwn(implementations, item.name)) throw new Error(`unsupported browser effect: ${item.name}`);
+      if (!operation || !operation.admittedUnder.includes(profile.name) || operation.capability !== null && !checkedCapabilities.has(operation.capability) || !Object.hasOwn(implementations, item.name)) throw new Error(`unsupported browser effect: ${item.name}`);
       varta[item.name] = (...args) => {
         if (operation.scheduler || operation.timerBookkeeping || operation.networkBookkeeping || operation.instanceBookkeeping) { if (profile.fairFuel) tank.charge("call"); }
         else tick();
@@ -225,13 +268,50 @@ self.onmessage = async ({ data }) => {
     checkException();
     let turnOpen = true, activeEvent;
     const usage = () => ({fuelRemaining:tank.remaining,hostCalls:totalCalls,outputBytes,microtasks:scheduler.totalJobs,fuelUsed:closedFuel+descriptor.budgets.fuelPerTurn-tank.remaining,turns});
+    let maintained = false;
     const renew = () => {
       if (descriptor.turnBudgets) {
         closedFuel += descriptor.budgets.fuelPerTurn - tank.remaining;
         tank.beginTurn(descriptor.budgets.fuelPerTurn); calls = 0; scheduler.renew(); turns++;
       }
-      view.begin(); gesture = false; turnOpen = true;
+      view.begin(); gesture = false; turnOpen = true; maintained = false;
       if (application) self.postMessage({type:"turn_begin"});
+    };
+    // Idle collection (v38), as the native runtime's maintenance: once per
+    // idle period of a long-lived instance, when no task is runnable, the
+    // host-free idle export runs in steps under a fresh maintenance allowance,
+    // never a turn's fuel, while a whole step's fuel remains. The closed
+    // turn's remaining fuel is restored afterwards. The loader's watchdog
+    // bounds the period's wall time; between steps the Worker checks it too.
+    const C = registry.effects.collector, idle = instance.exports[C.idleExport];
+    const maintain = () => {
+      maintained = true;
+      const fuelBudget = descriptor.budgets[C.fuelBudget], deadline = descriptor.budgets[C.deadlineBudget];
+      if (!application || !descriptor.turnBudgets || !fuelBudget || typeof idle !== "function") return;
+      const exhausted = (template, limit) => new Error(template.replace(C.turnPlaceholder, String(turns)).replace(C.limitPlaceholder, String(limit)));
+      const turnLeft = tank.remaining, started = performance.now();
+      self.postMessage({ type: "maintenance_begin", turn: turns });
+      tank.beginTurn(fuelBudget);
+      let steps = 0, completed = false, failure;
+      try {
+        while (tank.remaining >= C.stepFuel) {
+          let status;
+          try { status = idle(C.stepUnits); }
+          catch (error) { steps++; throw tank.remaining === 0 ? exhausted(C.fuelExhausted, fuelBudget) : error; }
+          if (performance.now() - started >= deadline) { steps++; throw exhausted(C.deadlineExhausted, deadline); }
+          if (status === C.none) break;
+          if (status === C.more) steps++;
+          else if (status === C.done) { steps++; completed = true; break; }
+          else throw new Error(C.invalidStatus);
+        }
+      } catch (error) { failure = error; }
+      const fuel = fuelBudget - tank.remaining;
+      tank.beginTurn(turnLeft);
+      // Like native: the fuel always counts; a period that did work is listed.
+      maintenanceFuel += fuel;
+      if (steps > 0 && maintenancePeriods++ < C.reportedPeriods) maintenance.push({ afterTurn: turns, fuel, steps, completed, memoryBytes: instance.exports[descriptor.memoryExport].buffer.byteLength });
+      if (failure) throw failure;
+      self.postMessage({ type: "maintenance_end", turn: turns });
     };
     while (true) {
       if(protocolFailure)throw protocolFailure;
@@ -265,6 +345,7 @@ self.onmessage = async ({ data }) => {
         }
         if(networkAt!==Infinity&&networkAt<=hostAt&&network.deliver()){timers.observe(elapsed());renew();continue;}
         if(hostAt!==Infinity&&events.deliver()){const trusted=events.gesture;timers.observe(elapsed());renew();gesture=trusted;continue;}
+        if(!maintained){maintain();continue;}
         await view.wait(due===undefined?Infinity:due-elapsed());continue;
       }
       if (due === undefined && !busy) break;
@@ -284,11 +365,13 @@ self.onmessage = async ({ data }) => {
     view.close();
     network.close();
     events.close();
-    self.postMessage({ type: "result", status: "ok", logs, fuelRemaining: tank.remaining, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns });
+    self.postMessage({ type: "result", status: "ok", logs, exitCode: 0, fuelRemaining: tank.remaining, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns, maintenance, maintenanceFuel, maintenancePeriods });
   } catch (error) {
     view?.close();
     network?.close();
     events?.close();
-    self.postMessage({ type: "result", status: "failed", logs, error: String(error?.message ?? error), fuelRemaining: tank?.remaining ?? 0, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns });
+    // An authorized exit is not a failure: the instance ends with its code.
+    const exited = error instanceof GuestExit;
+    self.postMessage({ type: "result", status: exited ? "ok" : "failed", logs, ...(exited ? { exitCode: error.code } : { error: String(error?.message ?? error) }), fuelRemaining: tank?.remaining ?? 0, hostCalls: totalCalls, outputBytes, microtasks: scheduler?.totalJobs ?? 0, fuelUsed: closedFuel + descriptor.budgets.fuelPerTurn - (tank?.remaining ?? descriptor.budgets.fuelPerTurn), turns, maintenance, maintenanceFuel, maintenancePeriods });
   }
 };

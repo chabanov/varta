@@ -6567,6 +6567,45 @@ checkpoint documentation changed afterward; no code/build input changed. Remaini
 browser dev/controls/effects, cross-engine acceptance, native targets and release
 acceptance under the original goal.
 
+### Browser pilot effects and idle collection — wave 1, 2026-11-04
+
+Status: implemented on branch `wave1/w1-browser-pilot-effects`, scoped
+verification only (the lead's full gate runs after the wave merge). The
+official browser host now admits and implements `date_now`, `number_random`,
+`env_snapshot` and `process_exit_f64` with native results, statuses, output,
+fuel and host-call charges ([mapping](embedding.md#browser-effect-mapping-official-host),
+[contract](architecture.md#browser-fuel-transform-foundation-in-development)),
+and runs `varta.collector.idle` between the turns of `mount` sessions under the
+maintenance budget. This removes the uarp-sdk blockers for `Date.now`/
+`Math.random` backoff, `crypto.getRandomValues`/`randomUUID` and
+`globalThis.process?.env` in the browser. Other unimplemented effects are still
+refused before any bundle file exists.
+
+Evidence: Rust registry/admission/template tests; 11 Worker handler tests in
+`worker-effects.test.mjs` (denials: missing `time.now`, empty or disabling
+ceiling, `env.get` filtering, exit denial and invalid codes; maintenance fuel,
+deadline and invalid-status failures); `scripts/test-browser-effects.mjs` in
+local Chrome against native `varta dev` for six cases (granted effects with
+exit code 3, empty ceiling, no grant, `randomUUID`, a 13-turn timer session
+with idle collection, and the same session under a maintenance ceiling below
+one step). Logs, exit codes, host calls, microtasks, output, per-turn fuel and
+the listed idle periods are equal. Firefox 157 also passes the six cases and
+the 13 generated fixtures through the Playwright 1.64.1 matrix; WebKit was not
+run (its 1.64.1 build is not installed).
+
+Open:
+
+- The maintenance-exhaustion failure is covered by Worker tests with the
+  native text, not by a cross-host golden: with production step units a
+  well-formed module cannot exhaust `maintenanceFuel` (`maintenance.rs`), and
+  the native exhaustion test needs a test-only step size.
+- `crypto.randomUUID` fuel is value-dependent in the guest prelude natively
+  (25 native runs of one program: 24 × 22441, 1 × 22421), so its case compares
+  everything except fuel. Making the prelude's cost value-independent is an
+  owner decision.
+- The browser maintenance deadline cannot interrupt a step inside guest code;
+  it is checked between steps and enforced by terminating the Worker.
+
 ### Local browser dev — immutable snapshot host 2026-11-02
 
 `varta dev --target browser` now prepares the normal checked artifact/resources,
