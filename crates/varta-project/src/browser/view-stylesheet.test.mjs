@@ -11,6 +11,46 @@ test('root rewriting preserves quoted custom text and changes only selector head
  assert.equal(rewriteRootSelector(css,'[data-root]'),'[data-root]{--font:":root"}.a{font-family:var(--font)}@media (min-width:0px){[data-root]{--other:":root"}}');
  assert.equal(rewriteRootSelector(':root{--font:":root{"}','[data-root]'),'[data-root]{--font:":root{"}');
 });
+// The backtracking regex the linear scanner replaced; it is the reference for
+// short inputs only, since its cost is quadratic in a run without braces/quotes.
+const regexRootRewrite=(text,selector)=>text.replace(/"[^"]*"|[^{}"]+(?=\{)/g,header=>header.startsWith('"')?header:header.replace(/:root(?![A-Za-z0-9_-])/g,selector));
+const ROOT_PIECES=['{','}','"',':root',':rootx','a',' '],ROOT_PIECE_COUNT=6,ROOT_TARGET='[data-root]';
+test('linear root rewriting matches the regex rewrite on every short piece sequence',()=>{
+ let inputs=[''];
+ for(let length=1;length<=ROOT_PIECE_COUNT;length++){
+  inputs=inputs.flatMap(prefix=>ROOT_PIECES.map(piece=>prefix+piece));
+  for(const text of inputs)assert.equal(rewriteRootSelector(text,ROOT_TARGET),regexRootRewrite(text,ROOT_TARGET),JSON.stringify(text));
+ }
+});
+// Generous wall bound for one linear pass over a maximal stylesheet; the replaced
+// regex needed seconds for a 32 KiB run and minutes at the stylesheet byte limit.
+const LINEAR_REWRITE_WALL_MS=2000;
+function timedRewrite(text){
+ const start=performance.now(),out=rewriteRootSelector(text,ROOT_TARGET),elapsed=performance.now()-start;
+ assert.ok(elapsed<LINEAR_REWRITE_WALL_MS,`rewriteRootSelector took ${elapsed} ms for ${text.length} code units`);
+ return out;
+}
+test('root rewriting stays linear on the oversized custom-property oracle input',()=>{
+ // Same shape as browser_contract_probe's variableCases "oversized-custom".
+ const run='x'.repeat(V.limits.valueBytes/2+1),css=`:root{--large:${run}}.target{color:var(--large,#abc)}`;
+ assert.equal(timedRewrite(css),`${ROOT_TARGET}{--large:${run}}.target{color:var(--large,#abc)}`);
+});
+test('root rewriting stays linear on an accepted stylesheet of the maximal byte size',()=>{
+ const open=':root{',close='}',declarations=[];
+ let length=open.length+close.length;
+ for(let index=0;;index++){const declaration=`--v${index}:x;`;if(length+declaration.length>V.limits.stylesheetBytes)break;declarations.push(declaration);length+=declaration.length;}
+ const body=declarations.join('')+' '.repeat(V.limits.stylesheetBytes-length),css=open+body+close;
+ assert.equal(css.length,V.limits.stylesheetBytes);
+ assert.deepEqual(checkStylesheet(css,V).errors,[]);
+ assert.equal(timedRewrite(css),`${ROOT_TARGET}{${body}}`);
+ // A brace- and quote-free run of the whole limit, then one after an unclosed quote.
+ const head=':root ',fill=count=>'x'.repeat(V.limits.stylesheetBytes-head.length-count);
+ const bare=head+fill(0);
+ assert.equal(timedRewrite(bare),bare);
+ const unclosed=`"${head}${fill(2)}{`;
+ assert.equal(unclosed.length,V.limits.stylesheetBytes);
+ assert.equal(timedRewrite(unclosed),`"${ROOT_TARGET} ${fill(2)}{`);
+});
 const source=(conditions,rules)=>`@media ${Array(conditions).fill('(min-width:0px)').join(' and ')}{${'.a{}'.repeat(rules)}}`;
 const sheet=(sheet,text)=>({name:'stylesheet',sheet,text});
 const commit=(m,...ops)=>m.commit(encodeViewBatch(ops));
