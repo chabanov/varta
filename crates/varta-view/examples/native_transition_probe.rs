@@ -1,6 +1,6 @@
 //! CSS transitions on the animation clock: easing, delays, lists, initial
-//! values, premultiplied colors, reversing, retargeting, cancelling and an
-//! inherited color, for the real-Chrome oracle in
+//! values, premultiplied colors, reversing, retargeting, cancelling, an
+//! inherited color and a translation, for the real-Chrome oracle in
 //! `scripts/test-native-transitions.mjs`. Each case commits its first style
 //! at time zero, applies its style changes at their times and samples the
 //! painted pixel of each probe at each sample time.
@@ -173,6 +173,22 @@ const CASES: &[Case] = &[
         ],
         samples: &[25.0, 50.0, 75.0, 100.0],
     },
+    // A translation moves the box on the clock: pixels and box positions,
+    // from `none`, then back with the reversing shortening.
+    Case {
+        name: "translate",
+        first: &[
+            (BOX, P::TransitionProperty, "transform"),
+            (BOX, P::TransitionDuration, "100ms"),
+            (BOX, P::TransitionTimingFunction, "ease-out"),
+            (BOX, P::BackgroundColor, "#0000e0"),
+        ],
+        steps: &[
+            (0.0, &[(BOX, P::Transform, Some("translate(40%, -8px)"))]),
+            (60.0, &[(BOX, P::Transform, None)]),
+        ],
+        samples: &[0.0, 30.0, 60.0, 80.0, 100.0, 140.0],
+    },
     // A child without its own color paints its parent's animated color.
     Case {
         name: "inherited",
@@ -233,6 +249,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             view.set_animation_time(at);
             let image = view.rasterize_boxes(WIDTH, HEIGHT)?;
+            let geometry = view.layout_boxes(WIDTH as f32, HEIGHT as f32)?;
+            let boxes: serde_json::Map<_, _> = [BOX, BORDER]
+                .into_iter()
+                .map(|node| {
+                    let rect = geometry[&node];
+                    (node.to_string(), serde_json::json!([rect.x, rect.y]))
+                })
+                .collect();
             let pixels: serde_json::Map<_, _> = PROBES
                 .iter()
                 .map(|&(node, _, x, y)| {
@@ -243,9 +267,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                 })
                 .collect();
-            samples.push(
-                serde_json::json!({"at": at, "pixels": pixels, "animating": view.animating()}),
-            );
+            samples.push(serde_json::json!({
+                "at": at, "pixels": pixels, "boxes": boxes, "animating": view.animating(),
+            }));
         }
         let steps: Vec<_> = case
             .steps
@@ -256,8 +280,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }).collect::<Vec<_>>()})
             })
             .collect();
+        // A case that moves boxes is compared by position: the oracle's
+        // pixel model has no geometry.
+        let moves = case
+            .steps
+            .iter()
+            .any(|(_, changes)| changes.iter().any(|(_, p, _)| *p == P::Transform));
         cases.push(serde_json::json!({
-            "name": case.name, "tree": initial, "steps": steps, "samples": samples,
+            "name": case.name, "tree": initial, "steps": steps, "samples": samples, "moves": moves,
         }));
     }
     let probes: Vec<_> = PROBES

@@ -1,6 +1,7 @@
 //! CSS transitions of the native view (CSS Transitions 1, as Chrome 156 runs
 //! them): `transition-property`, `-duration`, `-timing-function` and `-delay`
-//! over the view subset's paint-only animatable properties.
+//! over the view subset's animatable properties: the paint-only `color`,
+//! `background-color` and `opacity`, and `transform` translations.
 //!
 //! The view keeps an animation clock the host sets ([`crate::View::set_animation_time`]),
 //! in milliseconds and never moving back. After every style change (a commit,
@@ -13,17 +14,17 @@
 //! ([`Animations::overlay`]); snapshots keep the static values. No transition
 //! starts for an element's first style or across `display: none`, and a
 //! finished transition leaves the static value.
-use crate::{style::Environment, tree::Tree};
+use crate::{style::Environment, tree::Tree, units::Units};
 use std::collections::BTreeMap;
 use varta_common::view::{CssProperty, ROOT_NODE};
 
 /// The animatable properties the native view transitions, which `all`
-/// covers. `transform`, also admitted in `transition-property`, has no
-/// native value to animate.
-const PROPERTIES: [CssProperty; 3] = [
+/// covers.
+const PROPERTIES: [CssProperty; 4] = [
     CssProperty::Color,
     CssProperty::BackgroundColor,
     CssProperty::Opacity,
+    CssProperty::Transform,
 ];
 const ALL: &str = "all";
 const NONE: &str = "none";
@@ -33,8 +34,11 @@ const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 /// `background-color`'s initial value and `opacity`'s.
 const INITIAL_BACKGROUND: Value = Value::Color([0.0; 4]);
 const INITIAL_OPACITY: Value = Value::Number(1.0);
+/// `transform: none`.
+const INITIAL_TRANSFORM: Value = Value::Translate([0.0; 4]);
 const CURRENT_COLOR: &str = "currentcolor";
 const CHANNEL_MAX: f64 = 255.0;
+const PERCENT: f64 = 100.0;
 /// Chrome's cubic Bézier solver tolerance (`gfx::CubicBezier`).
 const BEZIER_EPSILON: f64 = 1e-7;
 const NEWTON_ITERATIONS: usize = 8;
@@ -43,16 +47,20 @@ const BISECTION_ITERATIONS: usize = 64;
 const FRACTION_DIGITS: usize = 6;
 
 /// An animatable value: straight sRGB color channels and alpha in `0..=1`,
-/// or a number.
+/// a number, or a translation's pixel and box-fraction parts
+/// ([`crate::transform::translation_parts`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Value {
     Color([f64; 4]),
     Number(f64),
+    Translate([f64; 4]),
 }
 
 impl Value {
-    fn parse(property: CssProperty, value: &str) -> Option<Self> {
+    fn parse(property: CssProperty, value: &str, units: Units) -> Option<Self> {
         match property {
+            CssProperty::Transform => crate::transform::translation_parts(value, units)
+                .map(|parts| Self::Translate(parts.map(f64::from))),
             CssProperty::Opacity => value
                 .parse::<f64>()
                 .ok()
@@ -76,6 +84,11 @@ impl Value {
         let mix = |a: f64, b: f64| a + (b - a) * progress;
         match (self, end) {
             (Self::Number(a), Self::Number(b)) => Self::Number(mix(a, b)),
+            // Translations interpolate linearly in each part, as both CSS
+            // list and matrix interpolation do for pure translations.
+            (Self::Translate(a), Self::Translate(b)) => {
+                Self::Translate(std::array::from_fn(|i| mix(a[i], b[i])))
+            }
             (Self::Color(a), Self::Color(b)) => {
                 let alpha = mix(a[3], b[3]).clamp(0.0, 1.0);
                 let channel = |i: usize| {
@@ -95,6 +108,11 @@ impl Value {
     fn css(self) -> String {
         match self {
             Self::Number(number) => format!("{number:.FRACTION_DIGITS$}"),
+            Self::Translate([x, y, fx, fy]) => format!(
+                "translate({x:.FRACTION_DIGITS$}px, {y:.FRACTION_DIGITS$}px) translate({:.FRACTION_DIGITS$}%, {:.FRACTION_DIGITS$}%)",
+                fx * PERCENT,
+                fy * PERCENT
+            ),
             Self::Color([r, g, b, a]) => {
                 let channel = |value: f64| (value * CHANNEL_MAX).round() as u8;
                 format!(
@@ -110,7 +128,9 @@ impl Value {
     fn same_kind(self, other: Self) -> bool {
         matches!(
             (self, other),
-            (Self::Number(_), Self::Number(_)) | (Self::Color(_), Self::Color(_))
+            (Self::Number(_), Self::Number(_))
+                | (Self::Color(_), Self::Color(_))
+                | (Self::Translate(_), Self::Translate(_))
         )
     }
 }
@@ -381,28 +401,27 @@ fn after_value(
     property: CssProperty,
     values: &BTreeMap<CssProperty, String>,
 ) -> Option<Value> {
-    match property {
-        CssProperty::Color => {
+    let units = Units::new(env)?;
+    let parse = |value: &String| Value::parse(property, value, units);
+    let initial = match property {
+        CssProperty::BackgroundColor => INITIAL_BACKGROUND,
+        CssProperty::Opacity => INITIAL_OPACITY,
+        CssProperty::Transform => INITIAL_TRANSFORM,
+        _ => {
+            // `color` inherits.
             let own = values.get(&property).filter(|v| *v != CURRENT_COLOR);
-            match own {
-                Some(value) => Value::parse(property, value),
+            return match own {
+                Some(value) => parse(value),
                 None => tree.path(id).into_iter().skip(1).find_map(|ancestor| {
                     tree.computed_static(ancestor, env)
                         .get(&property)
                         .filter(|v| *v != CURRENT_COLOR)
-                        .and_then(|value| Value::parse(property, value))
+                        .and_then(&parse)
                 }),
-            }
+            };
         }
-        CssProperty::BackgroundColor => values
-            .get(&property)
-            .map_or(Some(INITIAL_BACKGROUND), |value| {
-                Value::parse(property, value)
-            }),
-        _ => values
-            .get(&property)
-            .map_or(Some(INITIAL_OPACITY), |value| Value::parse(property, value)),
-    }
+    };
+    values.get(&property).map_or(Some(initial), parse)
 }
 
 /// CSS Transitions 1 §3 for one property: the transition that runs after the

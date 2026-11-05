@@ -52,7 +52,8 @@ await withBrowserPage('about:blank',async call=>{
           const ink=over(own,base);out[probe.node]=ink.map((v,i)=>v*opacity+255*(1-opacity));}
         return {pixels:out,running:document.getAnimations().filter(a=>a.currentTime<a.effect.getComputedTiming().endTime).length>0};
       })()`);
-      for(const probe of oracle.probes) {
+      // A moving case compares positions only (see the probe).
+      for(const probe of fixture.moves?[]:oracle.probes) {
         const raster=sample.pixels[probe.node],white=255-raster[3];
         const native=raster.slice(0,3).map(v=>Math.min(255,v+white));
         const chrome=expected.pixels[probe.node];

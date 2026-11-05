@@ -1,5 +1,5 @@
-//! Positioned boxes, z-index stacking, opacity contexts, clips and scrolled
-//! ancestors, plus Chrome's minimum logical font size, for the real-Chrome
+//! Positioned boxes, z-index stacking, opacity contexts, translations, clips
+//! and scrolled ancestors, plus Chrome's minimum logical font size, for the real-Chrome
 //! geometry, hit, scroll-into-view and pixel oracle in
 //! `scripts/test-native-positioned.mjs`.
 //! Usage: native_positioned_probe [SCALE]
@@ -545,6 +545,142 @@ fn build(name: &str, b: &mut B) {
         // with a system face, so the code element is a flex container whose
         // line-height records its computed size, and its only item returns to
         // the fixture font.
+        // A translated static box is a stacking context at level zero: it
+        // paints above a later in-flow sibling it overlaps, with its
+        // z-indexed child inside it, and both are hit there.
+        "transform-stacking" => {
+            div(
+                b,
+                2,
+                1,
+                &[
+                    (P::Transform, "translate(10px, 5px)"),
+                    (P::Width, "40px"),
+                    (P::Height, "30px"),
+                    (P::BackgroundColor, RED),
+                ],
+            );
+            div(
+                b,
+                3,
+                2,
+                &[
+                    (P::Position, "relative"),
+                    (P::ZIndex, "-1"),
+                    (P::Left, "20px"),
+                    (P::Width, "30px"),
+                    (P::Height, "20px"),
+                    (P::BackgroundColor, BLUE),
+                ],
+            );
+            div(
+                b,
+                4,
+                1,
+                &[
+                    (P::MarginTop, "-15px"),
+                    (P::Width, "60px"),
+                    (P::Height, "30px"),
+                    (P::BackgroundColor, GREEN),
+                ],
+            );
+        }
+        // Percentages of the box's own size, composed functions, and an
+        // absolute child of a positioned translated box.
+        "transform-percent" => {
+            div(
+                b,
+                2,
+                1,
+                &[
+                    (P::Position, "relative"),
+                    (
+                        P::Transform,
+                        "translate(50%, -25%) translateX(-4px) translateY(3px)",
+                    ),
+                    (P::MarginTop, "20px"),
+                    (P::Width, "40px"),
+                    (P::Height, "40px"),
+                    (P::BackgroundColor, YELLOW),
+                ],
+            );
+            square(b, 3, 2, ("10px", "-10px"), "16px", MAGENTA);
+            div(
+                b,
+                4,
+                1,
+                &[
+                    (P::Width, "30px"),
+                    (P::Height, "10px"),
+                    (P::BackgroundColor, CYAN),
+                ],
+            );
+        }
+        // A pressed author-styled button: text and border move one pixel.
+        "transform-button" => {
+            b.create_element(2, Tag::Button).insert(1, 2, 0);
+            for (property, value) in [
+                (P::Display, "block"),
+                // Chrome's control font is its own; the fixture's is explicit.
+                (P::FontFamily, "\"Varta Inline Fixture\""),
+                (P::FontSize, "20px"),
+                (P::LineHeight, "20px"),
+                (P::Border, "1px solid #000000"),
+                (P::BackgroundColor, GRAY),
+                (P::Color, DARK),
+                (P::Padding, "4px 6px"),
+                (P::Transform, "translateY(1px)"),
+            ] {
+                b.set_style(2, property, value);
+            }
+            b.create_text(3, "AAA").insert(2, 3, 0);
+            div(
+                b,
+                4,
+                1,
+                &[
+                    (P::Width, "20px"),
+                    (P::Height, "20px"),
+                    (P::BackgroundColor, BLUE),
+                ],
+            );
+        }
+        // A translated box inside a scrolled clipping container stays clipped
+        // by it (`hidden`: Chrome's scrollbar is no part of the comparison).
+        "transform-scroll" => {
+            div(
+                b,
+                2,
+                1,
+                &[
+                    (P::Overflow, "hidden"),
+                    (P::Width, "60px"),
+                    (P::Height, "50px"),
+                    (P::BackgroundColor, GRAY),
+                ],
+            );
+            div(
+                b,
+                3,
+                2,
+                &[
+                    (P::Transform, "translate(10px, -6px)"),
+                    (P::Width, "30px"),
+                    (P::Height, "40px"),
+                    (P::BackgroundColor, RED),
+                ],
+            );
+            div(
+                b,
+                4,
+                2,
+                &[
+                    (P::Width, "40px"),
+                    (P::Height, "40px"),
+                    (P::BackgroundColor, BLUE),
+                ],
+            );
+        }
         "minimum-font-mono" => {
             b.create_element(2, Tag::P).insert(1, 2, 0);
             b.set_style(2, P::FontSize, "50%")
@@ -637,6 +773,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             scrolls: &[],
             reveal: None,
         },
+        Case {
+            name: "transform-stacking",
+            scrolls: &[],
+            reveal: None,
+        },
+        Case {
+            name: "transform-percent",
+            scrolls: &[],
+            reveal: None,
+        },
+        Case {
+            name: "transform-button",
+            scrolls: &[],
+            reveal: None,
+        },
+        Case {
+            name: "transform-scroll",
+            scrolls: &[(2, 10.0)],
+            reveal: Some(3),
+        },
     ] {
         let mut b = B::new();
         b.set_style(1, P::FontFamily, "\"Varta Inline Fixture\"");
@@ -657,8 +813,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             SIDE as f32,
             Some((&mut font, MEDIUM)),
         )?;
-        let geometry = view.layout_boxes_with_text(SIDE as f32, SIDE as f32, &mut font, MEDIUM)?;
-        let image = view.rasterize_scaled(side, side, scale, Some((&mut font, MEDIUM)))?;
+        let named = |error: &dyn std::fmt::Display| format!("{}: {error}", case.name);
+        let geometry = view
+            .layout_boxes_with_text(SIDE as f32, SIDE as f32, &mut font, MEDIUM)
+            .map_err(|e| named(&e))?;
+        let image = view
+            .rasterize_scaled(side, side, scale, Some((&mut font, MEDIUM)))
+            .map_err(|e| named(&e))?;
         let boxes = geometry
             .iter()
             .filter(|(id, _)| **id != 1)

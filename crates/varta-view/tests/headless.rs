@@ -3426,7 +3426,7 @@ fn semantic_block_containers_participate_in_text_layout() {
 }
 
 #[test]
-fn paint_only_css_keeps_geometry_and_transforms_remain_unsupported() {
+fn paint_only_css_keeps_geometry_translations_move_and_scales_remain_unsupported() {
     let mut view = view();
     let mut batch = BatchWriter::new();
     batch
@@ -3462,6 +3462,11 @@ fn paint_only_css_keeps_geometry_and_transforms_remain_unsupported() {
     );
     let mut transform = BatchWriter::new();
     transform.set_style(2, CssProperty::Transform, "translateX(5px)");
+    commit(&mut view, &transform).unwrap();
+    let moved = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!((moved[&2].x, moved[&3].x), (5.0, 5.0));
+    let mut transform = BatchWriter::new();
+    transform.set_style(2, CssProperty::Transform, "scale(2)");
     commit(&mut view, &transform).unwrap();
     assert!(matches!(
         view.layout_boxes(200.0, 100.0),

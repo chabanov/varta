@@ -1284,6 +1284,22 @@ fn build_one(
                             .get(&id)
                             .is_some_and(|shape| shape.rich.is_some()) => {}
                 property if paint_only(property) => {}
+                // A translation moves the box after layout (`boxes_inner`);
+                // a scaling transform is refused (`crate::transform`).
+                CssProperty::Transform => {
+                    let zero = BoxRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 0.0,
+                        height: 0.0,
+                    };
+                    if crate::transform::resolve(&value, units, zero)
+                        .map_err(|()| LayoutError::Unsupported(id))?
+                        .is_some_and(|affine| affine.translation().is_none())
+                    {
+                        return Err(LayoutError::Unsupported(id));
+                    }
+                }
                 CssProperty::Width => {
                     style.size.width = if value == "auto" {
                         auto()
@@ -1821,6 +1837,13 @@ fn flow_node(tree: &Tree, id: u32) -> u32 {
     }
 }
 
+/// What a box's ancestors' transforms mean for it (see `boxes_inner`).
+#[derive(Debug, Clone, Copy, Default)]
+struct Transformed {
+    ancestor: bool,
+    static_containing_block: bool,
+}
+
 fn boxes_inner(
     tree: &Tree,
     env: &Environment,
@@ -1982,6 +2005,12 @@ fn boxes_inner(
     };
     // Absolute descendants use the containing block's scroll offset, skipping
     // intermediate scrollers that do not establish a containing block.
+    // `Transformed`: whether an ancestor has a transform, and whether the
+    // containing block of absolute descendants would be a transformed box
+    // that is not positioned. A transformed box is the containing block of
+    // fixed descendants and of absolute ones; neither is laid out against
+    // it yet, so both are refused.
+    let units = Units::new(&layout_env).ok_or(LayoutError::RootFont)?;
     let mut pending = vec![(
         ROOT_NODE,
         (0.0, 0.0),
@@ -1989,8 +2018,12 @@ fn boxes_inner(
         (0.0, 0.0, 0.0, viewport),
         false,
         0usize,
+        Transformed::default(),
     )];
-    while let Some((id, parent, parent_clip, containing, parent_hidden, depth)) = pending.pop() {
+    while let Some((id, parent, parent_clip, containing, parent_hidden, depth, transformed)) =
+        pending.pop()
+    {
+        let mut child_transformed = transformed;
         if depth > MAX_LAYOUT_DEPTH || result.len() >= MAX_LAYOUT_NODES {
             return Err(LayoutError::Limit);
         }
@@ -2046,12 +2079,41 @@ fn boxes_inner(
                 }
                 _ => parent,
             };
-            let rect = BoxRect {
+            if (position == Position::Fixed && transformed.ancestor)
+                || (position == Position::Absolute && transformed.static_containing_block)
+            {
+                return Err(LayoutError::Unsupported(id));
+            }
+            let mut rect = BoxRect {
                 x: origin_x + layout.location.x,
                 y: origin_y + layout.location.y,
                 width: layout.size.width,
                 height: layout.size.height,
             };
+            // A translation moves the border box, and with it everything the
+            // box contains, without moving any other box.
+            let transform = tree
+                .computed_read(id, &layout_env)
+                .get(&CssProperty::Transform)
+                .map(|value| crate::transform::resolve(value, units, rect))
+                .transpose()
+                .map_err(|()| LayoutError::Unsupported(id))?
+                .flatten();
+            if let Some(affine) = transform {
+                let (x, y) = affine.translation().ok_or(LayoutError::Unsupported(id))?;
+                rect.x += x;
+                rect.y += y;
+                child_transformed.ancestor = true;
+            }
+            let positioned = matches!(
+                position,
+                Position::Relative | Position::Absolute | Position::Fixed
+            );
+            if positioned {
+                child_transformed.static_containing_block = false;
+            } else if transform.is_some() {
+                child_transformed.static_containing_block = true;
+            }
             content = BoxRect {
                 x: rect.x + layout.border.left + layout.padding.left,
                 y: rect.y + layout.border.top + layout.padding.top,
@@ -2092,10 +2154,7 @@ fn boxes_inner(
             } else {
                 child_clip = clip;
             }
-            if matches!(
-                position,
-                Position::Relative | Position::Absolute | Position::Fixed
-            ) {
+            if positioned {
                 next_containing = (rect.x, rect.y, own_scroll, child_clip);
             }
             rect
@@ -2152,6 +2211,7 @@ fn boxes_inner(
                 next_containing,
                 hidden,
                 depth + 1,
+                child_transformed,
             ));
         }
     }

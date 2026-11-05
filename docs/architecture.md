@@ -12309,7 +12309,7 @@ removals. Border width and style are likewise resolved per side through styleshe
 and inline cascade. Unsupported content and computed CSS fail explicitly.
 Paint-only color, opacity, outline, border radius, text decoration, cursor and
 stacking-order properties do not affect these rectangles; this does not implement
-their rendering. Transforms and other unsupported geometry effects still fail.
+their rendering. Translations move boxes ([native transforms](#native-css-transforms)); scaling transforms and other unsupported geometry effects still fail.
 `TextMeasurer` separately shapes bounded text using explicitly supplied fonts
 and Parley; its font collection disables system-font discovery. It reports
 advance, height and line count. The separate experimental `layout_boxes_with_text`
@@ -13979,9 +13979,11 @@ those bounds and drops the inert page.
 #### Native CSS transitions
 
 The native view runs CSS Transitions 1 as Chrome 156 does for the subset's
-animatable paint properties: `color`, `background-color` and `opacity`
-(`transform` may be named in `transition-property` but has no native value
-to animate). `transition-property` (initially `all`; `none` matches
+animatable properties: the paint-only `color`, `background-color` and
+`opacity`, and `transform` translations ([native transforms](#native-css-transforms)),
+whose pixel and box-fraction parts interpolate linearly (as both CSS list and
+matrix interpolation do for pure translations; a scaling list is refused by
+layout). `transition-property` (initially `all`; `none` matches
 nothing), `-duration`, `-timing-function` (`linear`, `ease`, `ease-in`,
 `ease-out`, `ease-in-out` as their cubic Béziers) and `-delay` are
 paint-only: layout admits them and they change no box. A property's
@@ -14002,11 +14004,33 @@ matches or the current value already equals the new one. Removing
 `transition-property` leaves its initial `all`, so the transition runs on.
 No transition starts for an element's first style or across `display: none`.
 Colours interpolate in sRGB with premultiplied alpha, `opacity` linearly; an
-undeclared `background-color` is transparent and `opacity` 1, and `color`
-inherits. Layout and paint read the current values; snapshots keep the
+undeclared `background-color` is transparent, `opacity` 1 and `transform`
+`none`, and `color` inherits. Layout and paint read the current values; snapshots keep the
 static cascade. Pixels match Chrome with every transition paused at the same
-time since its style change (`native_transition_probe` with
+time since its style change, and box positions with Chrome's
+`getBoundingClientRect` during a translation (`native_transition_probe` with
 `scripts/test-native-transitions.mjs`).
+
+#### Native CSS transforms
+
+`transform` takes a list of `translate()`, `translateX()`, `translateY()` and
+`scale()` with the initial `transform-origin` (the border box's centre). A
+translation, a percentage of the element's own border box on its axis,
+moves the element's box and everything in it for paint, hits, geometry,
+accessibility bounds and scroll-into-view; no other box moves, as in
+layout. Any transform makes the element a stacking context painted at level
+zero (CSS2 Appendix E with CSS Transforms 1 §3), so it paints over later
+in-flow siblings it overlaps. Refused with `LayoutError::Unsupported`: a list
+that scales (a factor other than one), and a fixed descendant of a
+transformed box or an absolute one whose containing block would be a
+transformed box that is not positioned (the transformed box contains them,
+which native layout does not model yet); a transform on an inline box has no
+effect, as in CSS. Geometry, hits and pixels match Chrome at 1x, 1.25x and 2x
+for whole-pixel and percentage translations (the `transform-*` cases of
+`native_positioned_probe`). A translation that is not a whole CSS pixel
+moves the box exactly but its edges are snapped with it, while Chrome draws
+the snapped box at the fraction; its edges then differ by under one pixel.
+Native scrollable overflow does not include translated boxes.
 
 `varta-runtime` sets the clock before each view commit, input, pointer and
 environment change: a scripted headless session uses its virtual loop time

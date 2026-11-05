@@ -1,10 +1,12 @@
 //! Bounded CSS paint phases after [CSS2 Appendix E](https://www.w3.org/TR/CSS2/zindex.html)
 //! for the admitted subset. A real stacking context (the root, opacity below 1,
-//! `position: fixed`, or a z-index on a positioned box or flex/grid item) paints
+//! a transform, `position: fixed`, or a z-index on a positioned box or
+//! flex/grid item) paints
 //! its own background, then negative layers, ordinary block backgrounds,
 //! atomic/inline content, zero and positive layers, then outlines. Layers are
 //! ordered by z-index and then tree order; z-index applies only to positioned
-//! boxes and flex/grid items, so any other context (opacity) takes level zero.
+//! boxes and flex/grid items, so any other context (opacity, a transform)
+//! takes level zero.
 //! Positioned boxes with `z-index: auto` paint atomically in the zero layer,
 //! like flex/grid items in the content phase: these pseudo contexts let
 //! descendant layers join the nearest real context.
@@ -213,7 +215,11 @@ impl Order {
                 // opacity makes a stacking context: that box paints at level
                 // zero in tree order.
                 let z = if scheme.positioned() || item { z } else { None };
-                let real = translucent || scheme == Scheme::Fixed || z.is_some();
+                // Any transform makes a stacking context (CSS Transforms 1 §3).
+                let transformed = properties
+                    .get(&CssProperty::Transform)
+                    .is_some_and(|value| value.trim() != "none");
+                let real = translucent || transformed || scheme == Scheme::Fixed || z.is_some();
                 self.placements.insert(
                     id,
                     Placement {
