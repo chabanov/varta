@@ -461,7 +461,7 @@ the final frozen-source gate; further outline implementation is kept separately.
 | Dependency/build changes | Relevant isolated builds and engine dependency-boundary test | Full; verify lockfile and runtime distribution boundaries |
 | Conformance inventory/runner | Local `varta-conformance` tests and reviewed case changes | Baseline JSON, strict JSON with expected exit status and explicit gap review; full for code/inventory changes |
 | Documentation only | Diff, links, documented commands and consistency | No repeated engine suite if engine/build inputs are unchanged |
-| Browser host modules, registry output, bundle generation or browser drivers | The affected `node --test` files and the named driver | `python3 scripts/verify.py browser`; full for changed Rust inputs |
+| Browser host modules, registry output, bundle generation or browser drivers | The affected `node --test` files and the named driver | `python3 scripts/verify.py browser` and the Node suites (unfiltered `local varta-common`/`varta-project`, or full); full for changed Rust inputs |
 | Verification script or CI orchestration only | Syntax, command plans, real focused runs, unmatched filters and failure propagation | Check CI command parity and logs/fingerprints; unchanged engine suites need no full repeat |
 
 The boundary column describes required coverage, not a requirement to rerun every
@@ -512,9 +512,12 @@ order and stopping on the first failure:
 1. Registry drift: `generate_browser_registry` writes into the run directory and
    `git diff --no-index --exit-code` compares it with the checked-in
    `crates/varta-common/browser/registry.mjs`.
-2. `browser_contract_probe` writes the native view oracle, and the same Node
-   suites as the full gate run with `VARTA_VIEW_ORACLE` set, which adds the
-   oracle comparisons to the standalone cases.
+2. `browser_contract_probe` writes the native view oracle. The one Node suite
+   that reads it, `view-model.test.mjs`, runs first without and then with
+   `VARTA_VIEW_ORACLE` set; the oracle run must pass more tests than the run
+   without it, so a suite that stopped reading the oracle fails the scope. The
+   other Node suites belong to the full gate (and to unfiltered `local
+   varta-common`/`varta-project` runs), not to this scope.
 3. Builds `varta` and the companion, then generates the `browser_bundle_probe`
    fixtures.
 4. Real Chrome over the DevTools protocol: the view DOM oracle, the bundle,
@@ -529,8 +532,11 @@ order and stopping on the first failure:
 Each run writes the regenerated registry, the oracle, both fixture directories
 and isolated Firefox `MOZ_APP_DATA`/`MOZ_LOCAL_APP_DATA` directories into its
 own `target/verification/<run>/`, next to the logs and `report.json`. The report
-also records the Chrome executable and the version of the Playwright package that
-owns the supplied module.
+also records the DevTools drivers' Chrome executable (`devtoolsChrome`) and the
+version of the Playwright package that owns the supplied module. The Playwright
+drivers do not use `VARTA_CHROME_BIN`: they launch Playwright's own `chrome`
+channel lookup, so with that variable set the two Chromes can differ. Each
+Playwright driver's log prints the browser version it launched.
 
 When Chrome is not found, the Chrome and Playwright commands are not run; without
 a Playwright module, the Playwright commands are not run. Each such command is
@@ -538,9 +544,10 @@ printed and recorded as skipped with its reason, and a run without failures then
 ends `INCOMPLETE` with exit status 3, never `PASS`. An engine that Playwright
 cannot launch fails its driver and so the scope. Known gaps are engine
 selections named in the helper's `KNOWN_GAPS` table: they are never run or
-counted as passed, and the final line states how many were left out. The table
-currently holds the Firefox selection of `test-browser-variables.mjs`, which
-throws `too much recursion` from `rewriteRootSelector` in `view-css.mjs`.
+counted as passed, and the final line states how many were left out. An entry
+needs a reproducible failure; a selection that fails only on some runs is not
+waived, so a failing run fails the scope. The table is currently empty, and all
+three engine selections of `test-browser-variables.mjs` run.
 
 The gate does not cover `test-browser-select-bundle.mjs` (its `examples/select`
 fixture is not in the repository), the native oracles (`test-native-*.mjs`,
@@ -550,13 +557,8 @@ page or the `examples/uarp-console` drivers.
 The CI `browser` job runs this scope on Linux and macOS with Node.js 24, Playwright
 1.64.1 and its Firefox/WebKit builds installed outside the repository, and the
 runner's installed Google Chrome. It keeps `target/verification/` as a workflow
-artifact.
-
-The first local pass ran on macOS with Playwright 1.62.1 (not the pinned CI
-version), Chrome 156.0.8078.80, Firefox 153.0 and WebKit 26.5: all 32 executed
-commands passed and the one known gap was not run
-(`target/verification/20261105-075707-ox8q6k34/report.json`; only this
-documentation changed afterward). No Linux or CI run has been observed yet.
+artifact. Local runs are logged in
+[history](history.md#browser-oracle-gate-wave-3--2026-11-05).
 
 ## Optional desktop GPU backend
 

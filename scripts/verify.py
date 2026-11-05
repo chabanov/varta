@@ -40,6 +40,9 @@ PLAYWRIGHT_ENV = "VARTA_PLAYWRIGHT_MODULE"
 # its own directory (on macOS a shared user directory can stop the launch).
 FIREFOX_DATA_ENV = ("MOZ_APP_DATA", "MOZ_LOCAL_APP_DATA")
 VIEW_ORACLE_ENV = "VARTA_VIEW_ORACLE"
+# The one Node suite that reads the oracle. The full gate runs every suite
+# without it; the browser scope runs only this file, without and with it.
+VIEW_ORACLE_TESTS = "crates/varta-project/src/browser/view-model.test.mjs"
 REGISTRY_MODULE = "crates/varta-common/browser/registry.mjs"
 # Drivers over the browser_bundle_probe fixture directory.
 BUNDLE_DRIVERS = (
@@ -52,11 +55,10 @@ STYLE_WORK_MODES = ((), ("--tree-depth",), ("--cascade-work",), ("--expanded-val
 # The direct-DOM variables driver runs once per engine selection.
 VARIABLES_DRIVER = "scripts/test-browser-variables.mjs"
 PLAYWRIGHT_ENGINES = ("chrome", "firefox", "webkit")
-# Engine selections with a recorded defect: never run by the gate and never
-# counted as passed; the run's verdict lists them.
-KNOWN_GAPS = {
-    (VARIABLES_DRIVER, "firefox"): "Firefox throws 'too much recursion' in view-css.mjs rewriteRootSelector",
-}
+# Engine selections with a recorded, reproducible defect: never run by the gate
+# and never counted as passed; the run's verdict lists them. A selection that
+# passes on some runs is not waived here: it runs, and a failing run fails.
+KNOWN_GAPS: dict[tuple[str, str], str] = {}
 # A run whose commands all passed but which skipped some is not a pass.
 INCOMPLETE_EXIT = 3
 PLAN_RUN = Path("<run>")
@@ -70,6 +72,18 @@ class NotRun:
     argv: list[str]
     reason: str
     kind: str = SKIPPED
+
+
+@dataclasses.dataclass(frozen=True)
+class MoreTestsThan:
+    """A Node test command that must pass more tests than `baseline`, an earlier command.
+
+    The oracle run of a suite passes the suite's own cases plus the oracle
+    comparisons; an equal count means the suite never read the oracle.
+    """
+
+    argv: list[str]
+    baseline: list[str]
 
 
 def cargo(*args: str) -> list[str]:
@@ -118,8 +132,8 @@ def playwright_version(module: Path) -> str:
     raise SystemExit(f"no package.json above {module}")
 
 
-def browser(run: Path, playwright: Path | None) -> list[list[str] | NotRun]:
-    """Registry drift, oracle-enabled Node suites, then Chrome and Playwright drivers.
+def browser(run: Path, playwright: Path | None) -> list[list[str] | NotRun | MoreTestsThan]:
+    """Registry drift, the oracle-reading Node suite, then Chrome and Playwright drivers.
 
     Fixture and oracle products go to the run directory, which is new for each
     run; the bundle builders refuse an existing directory.
@@ -128,12 +142,14 @@ def browser(run: Path, playwright: Path | None) -> list[list[str] | NotRun]:
     bundles, network = run / "bundles", run / "network-bundles"
     varta = str(Path(os.environ.get("CARGO_TARGET_DIR", "target")) / "debug" / "varta")
     with_oracle = ["env", f"{VIEW_ORACLE_ENV}={oracle}"]
-    result: list[list[str] | NotRun] = [
+    oracle_baseline = ["node", "--test", VIEW_ORACLE_TESTS]
+    result: list[list[str] | NotRun | MoreTestsThan] = [
         cargo("run", "-p", "varta-common", "--example", "generate_browser_registry", "--locked", "--",
               str(registry)),
         ["git", "diff", "--no-index", "--exit-code", REGISTRY_MODULE, str(registry)],
         cargo("run", "-p", "varta-view", "--example", "browser_contract_probe", "--locked", "--", str(oracle)),
-        with_oracle + browser_node_tests(),
+        oracle_baseline,
+        MoreTestsThan(with_oracle + oracle_baseline, oracle_baseline),
         cargo("build", "-p", "varta", "-p", "varta-launcher", "--locked"),
         cargo("run", "-p", "varta-project", "--example", "browser_bundle_probe", "--locked", "--", str(bundles)),
     ]
@@ -172,7 +188,7 @@ def browser(run: Path, playwright: Path | None) -> list[list[str] | NotRun]:
     return result
 
 
-def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun]:
+def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | MoreTestsThan]:
     if args.scope == "browser":
         return browser(run, args.playwright)
     if args.scope == "local":
@@ -269,6 +285,8 @@ def main() -> int:
         for command in commands(args, output / PLAN_RUN):
             if isinstance(command, NotRun):
                 print(f"NOT RUN, {command.kind} ({command.reason}): {shlex.join(command.argv)}")
+            elif isinstance(command, MoreTestsThan):
+                print(f"{shlex.join(command.argv)}  # must pass more tests than: {shlex.join(command.baseline)}")
             else:
                 print(shlex.join(command))
         return 0
@@ -284,12 +302,18 @@ def main() -> int:
     report = {"scope": args.scope, "before": before, "testThreads": env["RUST_TEST_THREADS"], "commands": []}
     if args.scope == "browser":
         report["browser"] = {
-            "chrome": shutil.which(chrome_executable()),
+            # The DevTools drivers' Chrome. The Playwright drivers launch Playwright's
+            # own `chrome` channel lookup instead; their logs print its version.
+            "devtoolsChrome": shutil.which(chrome_executable()),
             "playwrightModule": str(args.playwright) if args.playwright else None,
             "playwrightVersion": playwright_version(args.playwright) if args.playwright else None,
         }
     exit_code = 0
-    for index, command in enumerate(plan, start=1):
+    passed_tests: dict[tuple[str, ...], int | None] = {}
+    for index, planned in enumerate(plan, start=1):
+        command, baseline = planned, None
+        if isinstance(planned, MoreTestsThan):
+            command, baseline = planned.argv, passed_tests.get(tuple(planned.baseline))
         if isinstance(command, NotRun):
             print(f"\n[{args.scope} {index}/{len(plan)}] NOT RUN, {command.kind} ({command.reason}): "
                   f"{shlex.join(command.argv)}", flush=True)
@@ -313,7 +337,15 @@ def main() -> int:
         if code == 0 and tests == 0:
             print("FAILED: test selection ran zero passing tests; choose a matching filter.", flush=True)
             code = 1
-        report["commands"].append({"argv": command, "exitCode": code, "passedTests": tests, "seconds": round(time.monotonic()-started, 3), "log": log.name})
+        if code == 0 and isinstance(planned, MoreTestsThan) and (baseline is None or tests is None or tests <= baseline):
+            print(f"FAILED: {tests} passing tests, not more than the baseline's {baseline}; "
+                  "the added comparisons did not run.", flush=True)
+            code = 1
+        passed_tests[tuple(command)] = tests
+        entry = {"argv": command, "exitCode": code, "passedTests": tests, "seconds": round(time.monotonic()-started, 3), "log": log.name}
+        if isinstance(planned, MoreTestsThan):
+            entry["baselinePassedTests"] = baseline
+        report["commands"].append(entry)
         if code:
             exit_code = code
             break
