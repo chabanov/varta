@@ -37,6 +37,11 @@ export function main():void{
 }
 "#;
 
+/// How long the held transfer's server waits for the client before it gives
+/// up: a safety net only, far above any scripted wait, so a run that ends
+/// before it ended on its own wait bound however loaded the host is.
+const SERVER_HOLD: Duration = Duration::from_secs(30);
+
 /// A real transfer that either holds the head until EOF or supplies the body
 /// later than the first scripted wait's bound. EOF proves request cleanup.
 fn held_transfer(
@@ -51,9 +56,7 @@ fn held_transfer(
     let (closed, eof) = mpsc::channel();
     let task = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
+        stream.set_read_timeout(Some(SERVER_HOLD)).unwrap();
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         loop {
             let mut line = String::new();
@@ -141,15 +144,10 @@ fn a_network_wait_times_out_without_running_later_inputs() {
         "{:?}",
         result.report.failure
     );
-    assert!(at.elapsed() < Duration::from_secs(2));
+    // Ended by the 100 ms wait bound, not by the server giving up.
+    assert!(at.elapsed() < SERVER_HOLD);
     assert!(result.report.output.lines.is_empty());
-    assert_eq!(
-        closed
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap(),
-        0
-    );
+    assert_eq!(closed.recv_timeout(SERVER_HOLD).unwrap().unwrap(), 0);
     worker.join().unwrap();
 }
 
@@ -186,13 +184,7 @@ fn a_completed_wait_does_not_shorten_a_response_used_by_a_later_input() {
         ["varta log: headers", "varta log: body network!"]
     );
     assert!(result.snapshot.to_string().contains("network!"));
-    assert_eq!(
-        closed
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap(),
-        0
-    );
+    assert_eq!(closed.recv_timeout(SERVER_HOLD).unwrap().unwrap(), 0);
     worker.join().unwrap();
 }
 
@@ -211,7 +203,6 @@ fn network_wait_caps_a_running_continuation_without_raising_its_fuel_allowance()
         fuel_per_turn: Some(varta_common::budget::MAX_FUEL_PER_TURN),
         ..Default::default()
     };
-    let at = Instant::now();
     let result = VartaRuntime::new().run_view(
         &bytes,
         ApplicationOptions {
@@ -238,7 +229,14 @@ fn network_wait_caps_a_running_continuation_without_raising_its_fuel_allowance()
         result.report.failure
     );
     assert_eq!(result.report.output.lines, ["varta log: loop"]);
-    assert!(at.elapsed() < Duration::from_secs(2));
+    // The wait capped the loop long before its raised fuel ran out: the
+    // allowance was not consumed, whatever the host's speed or load.
+    let report = result.report.budget.as_ref().unwrap();
+    assert!(
+        report.total_fuel < varta_common::budget::MAX_FUEL_PER_TURN,
+        "{}",
+        report.total_fuel
+    );
 }
 
 #[test]

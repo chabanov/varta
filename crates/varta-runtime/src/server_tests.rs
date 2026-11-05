@@ -8,6 +8,10 @@ use std::{
 };
 use varta_common::{CapabilityGrant, CapabilityValue, http::HttpError};
 
+/// How long a test waits for a started service to listen: a safety net far
+/// above a normal start, so only a hung start reaches it.
+const LISTENER_READINESS: Duration = Duration::from_secs(15);
+
 const HANDLER: &str = r#"
 function handle(request:VartaHttpRequest):VartaHttpResponse{
  console.log("handled");
@@ -96,9 +100,16 @@ impl Server {
                 None => Ok(report.output),
             }
         });
-        let (addr, stop) = receiver
-            .recv_timeout(Duration::from_secs(15))
-            .expect("listener readiness");
+        // A service that fails before it listens drops the observer: report
+        // its own failure rather than a bare readiness timeout.
+        let (addr, stop) = match receiver.recv_timeout(LISTENER_READINESS) {
+            Ok(ready) => ready,
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!(
+                "the service ended before it listened: {:?}",
+                task.join().map(|result| result.err())
+            ),
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("listener readiness timed out"),
+        };
         Self {
             addr,
             stop,

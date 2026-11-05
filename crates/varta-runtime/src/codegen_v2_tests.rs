@@ -73,6 +73,10 @@ pub(crate) fn instantiation_fuel(bytes: &[u8]) -> u64 {
     CEILING - execution.store.get_fuel().unwrap()
 }
 
+/// Wall-clock allowance of a fuel-bounded test run (test-only, CLAUDE.md
+/// §11): far above what any budget here takes, so only fuel ends a run.
+const TEST_WALL_CLOCK: std::time::Duration = std::time::Duration::from_secs(120);
+
 fn execute(
     runtime: &VartaRuntime,
     mut execution: execution::Execution,
@@ -82,9 +86,11 @@ fn execute(
     let module = runtime.prepare_module(bytes).unwrap();
     let budget = budgets * abi::FUEL;
     execution.store.set_fuel(budget).unwrap();
-    if budgets > 1 {
-        execution.allow_test_wall_clock(std::time::Duration::from_secs(120));
-    }
+    // These runs compare fuel and output, which are deterministic; the
+    // production wall-clock deadline is not, so under a loaded host a run
+    // could end at the deadline instead of where its fuel ends it. Every run
+    // here is bounded by its fuel and a test-only wall clock.
+    execution.allow_test_wall_clock(TEST_WALL_CLOCK);
     let result = (|| {
         let instance = execution.instantiate_prepared(&module)?;
         let store = &mut execution.store;
