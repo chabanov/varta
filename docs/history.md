@@ -3218,3 +3218,26 @@ of `scripts/test-browser-matrix.mjs` ran the same cases (and `--effects`) in
 Firefox 153, WebKit 26.5 and Chrome 156 through Playwright 1.62.1, the
 version installed locally; Playwright 1.64.1 was not available. No full gate
 was run for this package.
+
+Review fixes (2026-11-05). The browser build and dev server refuse a manifest
+that grants `kv.read` or `kv.write` before any output (`browser KV storage is
+not implemented; the manifest grants …`, generated as
+`browser::kv_storage_refusal` and the registry's `storageRefusal`); before,
+such a manifest built and every open failed at run time naming a granted
+capability. KV programs without a grant still build. The granted cases of
+`scripts/test-browser-kv.mjs` became refusal assertions for both entry
+points. The equivalence claim is narrowed to compiler-produced programs (a
+hand-crafted `kv_stage`, `kv_read` or `kv_commit` without an open database is
+fatal at once in the browser); the linked-intrinsics text now names the KV
+imports as the ones that read and build whole value layouts; the matrix
+report records the version of the Playwright package actually loaded. The
+owner chose the backend: OPFS sync access handles in the Worker and the
+shared Rust value layer compiled to wasm32
+([agreed design](development-plan.md#browser-kv-storage-agreed-design-wave-3)),
+a separate wave-3 package. Scoped verification: `cargo test -p varta-project
+--lib browser::` (46), `cargo test -p varta-common --lib browser::` (7), `cargo
+test -p varta --test smoke browser_build` (14), registry regeneration
+idempotent, the 188 Node tests, the documentation drift tests, formatting and
+strict Clippy of the three crates; the KV cases pass in local Chrome and,
+through Playwright 1.62.1, in WebKit 26.5 and Chrome 156 (Firefox did not
+launch in this environment).

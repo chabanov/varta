@@ -11539,12 +11539,20 @@ into the static type the program names. V37 and earlier profiles reject
   ([mapping](embedding.md#browser-effect-mapping-official-host)): every
   `kv_open` reads its path as the native host does, the broker audits a denied
   `kv.read` operation, the denial is logged and the open rejects with
-  `NotAllowedError: <capability denied: kv.read> (<path>)`, whatever the grants
-  and the host ceiling. No database is ever open, so the other id, stage and
-  entry imports are fatal; the engine prelude reaches none of them. A browser
-  run equals the native run of the same program without a grant, including
-  exact fair fuel and host calls (`scripts/test-browser-kv.mjs`). Browser KV
-  storage is an open item of the
+  `NotAllowedError: <capability denied: kv.read> (<path>)`, whatever the host
+  ceiling. A grant could never be honoured, so `varta build --target browser`
+  and `varta dev --target browser` refuse a manifest that grants `kv.read` or
+  `kv.write` before any output (`browser KV storage is not implemented; the
+  manifest grants …`); a program that links the imports without a grant still
+  builds. No database is ever open, so the other id, stage and entry imports
+  are fatal; the engine prelude reaches none of them. For a program the
+  compiler produces, a browser run equals the native run of the same program
+  without a grant, including exact fair fuel and host calls
+  (`scripts/test-browser-kv.mjs`). A hand-crafted module that calls
+  `kv_stage`, `kv_read` or `kv_commit` without an open database is the
+  exception: the browser host fails fatally at once, while the native host
+  stages the value, or reads its descriptor first. Browser KV storage is an
+  open item of the
   [development plan](development-plan.md#batch-v38-in-development).
 - **Tests** never use production data: the Deno 2.9.4 fixture
   (`kv_cases/deno-2.9.4`, written in a throwaway container by its generator,
