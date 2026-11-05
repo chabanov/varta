@@ -206,9 +206,11 @@ function snapshotNetworkLog(input) {
 // text JSON.parse already accepted: a duplicate member name, a number that
 // is no unsigned integer literal (every number of a log is one; a fraction,
 // exponent or sign makes it a float or a negative value natively) and a
-// string escaping a lone surrogate.
+// string escaping a lone surrogate. The literals true, false and null pass
+// the scan whole (their `e` is no exponent); the log schema then refuses
+// them where a field needs another type, as serde does.
 function strictLogJson(text) {
-  const integer = /^(?:0|[1-9][0-9]*)$/, numeric = /[-+.eE0-9]/, quote = '"', escape = "\\";
+  const integer = /^(?:0|[1-9][0-9]*)$/, numeric = /[-+.eE0-9]/, literal = /[a-z]/, quote = '"', escape = "\\";
   // Per open container: its member names (an object) or null (an array).
   const open = [];
   let name = false;
@@ -225,6 +227,10 @@ function strictLogJson(text) {
       if (!value.isWellFormed()) return false;
       if (name) { const names = open.at(-1); if (names.has(value)) return false; names.add(value); name = false; }
       i = end;
+    } else if (literal.test(unit)) {
+      // JSON.parse accepted the text, so a lowercase run outside strings is
+      // one of the three literals.
+      while (i + 1 < text.length && literal.test(text[i + 1])) i++;
     } else if (numeric.test(unit)) {
       let end = i;
       while (end < text.length && numeric.test(text[end])) end++;

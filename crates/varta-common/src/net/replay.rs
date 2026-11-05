@@ -38,11 +38,15 @@ pub const MAX_LOG_REQUESTS: usize = 4096;
 pub const MAX_LOG_EVENTS: usize = 65_536;
 /// Bytes of the text of one logged failure.
 pub const MAX_FAILURE_TEXT_BYTES: usize = 8 * 1024;
+/// The type of an event's `step` and `request`. The reader bounds both
+/// through this type, so [`MAX_LOG_INDEX`] (exported to other hosts) is
+/// derived from it and cannot drift from what the reader admits.
+pub type LogIndex = u32;
 /// The step of an event recorded outside a scripted session.
-pub const UNSCRIPTED_STEP: u32 = 0;
-/// The largest `step` and `request` an event carries: both are unsigned
-/// 32-bit integers, and a reader refuses a larger number.
-pub const MAX_LOG_INDEX: u32 = u32::MAX;
+pub const UNSCRIPTED_STEP: LogIndex = 0;
+/// The largest `step` and `request` an event carries: a reader refuses a
+/// larger number, since it does not fit [`LogIndex`].
+pub const MAX_LOG_INDEX: LogIndex = LogIndex::MAX;
 /// The lowest and highest status a logged head may carry: the three-digit
 /// codes an HTTP/1.1 status line has.
 pub const MIN_STATUS: u16 = 100;
@@ -96,8 +100,8 @@ impl std::fmt::Display for LoggedRead {
 pub enum LoggedEvent {
     /// The response head.
     Head {
-        step: u32,
-        request: u32,
+        step: LogIndex,
+        request: LogIndex,
         status: u16,
         status_text: String,
         /// The `Location` header resolved against the request URL, or the
@@ -108,21 +112,21 @@ pub enum LoggedEvent {
     },
     /// One body chunk, as the read delivered it.
     Chunk {
-        step: u32,
-        request: u32,
+        step: LogIndex,
+        request: LogIndex,
         read: LoggedRead,
         text: String,
     },
     /// The end of the body.
-    End { step: u32, request: u32 },
+    End { step: LogIndex, request: LogIndex },
     /// The transfer failed; `text` is the completion text.
     Failed {
-        step: u32,
-        request: u32,
+        step: LogIndex,
+        request: LogIndex,
         text: String,
     },
     /// The guest aborted the open transfer.
-    Abort { step: u32, request: u32 },
+    Abort { step: LogIndex, request: LogIndex },
 }
 impl LoggedEvent {
     /// The wire names of the event kinds, in declaration order.
@@ -652,13 +656,19 @@ mod tests {
         assert!(NetworkLog::parse(&vec![b' '; MAX_LOG_BYTES + 1]).is_err());
         // The browser reader refuses these as well (network-replay.test.mjs):
         // an index beyond 32 bits, a float, a duplicate member, an escaped
-        // lone surrogate and a byte order mark.
+        // lone surrogate, a literal where a field needs another type (no log
+        // field is boolean or null) and a byte order mark.
         let prefix = r#"{"format":"varta-network-log","version":1,"requests":[{"method":"GET","url":"http://127.0.0.1:8080/items"}],"events":["#;
+        let beyond = u64::from(MAX_LOG_INDEX) + 1;
+        let beyond = format!(r#"{{"kind":"abort","step":{beyond},"request":0}}"#);
         for event in [
-            r#"{"kind":"abort","step":4294967296,"request":0}"#,
+            beyond.as_str(),
             r#"{"kind":"head","step":1,"request":0,"status":200.0,"statusText":"OK","location":"","headers":[]}"#,
             r#"{"kind":"abort","step":1,"step":1,"request":0}"#,
             r#"{"kind":"failed","step":1,"request":0,"text":"\ud800"}"#,
+            r#"{"kind":"head","step":1,"request":0,"status":200,"statusText":"OK","location":true,"headers":[]}"#,
+            r#"{"kind":"head","step":1,"request":0,"status":200,"statusText":"OK","location":false,"headers":[]}"#,
+            r#"{"kind":"head","step":1,"request":0,"status":200,"statusText":"OK","location":null,"headers":[]}"#,
         ] {
             let text = format!("{prefix}{event}]}}");
             assert!(
@@ -672,6 +682,9 @@ mod tests {
         let bom = format!("\u{feff}{prefix}]}}");
         assert!(NetworkLog::parse(bom.as_bytes()).is_err());
         NetworkLog::parse(format!("{prefix}]}}").as_bytes()).unwrap();
+        // The exported bound itself is admitted.
+        let last = format!(r#"{prefix}{{"kind":"abort","step":{MAX_LOG_INDEX},"request":0}}]}}"#);
+        NetworkLog::parse(last.as_bytes()).unwrap();
     }
 
     /// The response head limit counts field text as wire bytes, one per

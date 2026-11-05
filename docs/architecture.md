@@ -11854,14 +11854,15 @@ prompt, guest code or socket) with `ReplayError::Unserved`.
   `failed` (`text`: the failure text) or `abort` (the guest aborted the open
   transfer). A request's events are a head or a failure, then chunks, then
   an end or a failure; an abort may close it at any point; nothing follows.
-  Steps never decrease. A reader refuses any other shape (a duplicate
-  member, a number that is no unsigned integer literal, a `step` or
-  `request` above `MAX_LOG_INDEX`, a string escaping a lone surrogate), a
-  head that is no canonical visible set within the response head limits
-  (field text counts one byte per code unit, as on the wire), a chunk that is
-  empty or beyond one read, a byte chunk with a unit above 0xFF, a request
-  that is no `fetch` method or no URL in its own serialization, and the
-  [resource limits](#resource-limits) (`NetworkLogError`).
+  Steps never decrease. A reader refuses any other shape (a leading byte
+  order mark, a duplicate member, a number that is no unsigned integer
+  literal, a `step` or `request` above `MAX_LOG_INDEX`, a string escaping a
+  lone surrogate), a head that is no canonical visible set within the
+  response head limits (field text counts one byte per code unit, as on the
+  wire), a chunk that is empty or beyond one read, a byte chunk with a unit
+  above 0xFF, a request that is no `fetch` method or no URL in its own
+  serialization, and the [resource limits](#resource-limits)
+  (`NetworkLogError`).
 - **Recording** (`varta dev --view-script S --network-record LOG`) keeps the
   real transfers. It logs a request when it reaches the transport, every
   completion when the guest receives it (`Net::deliver`, so a completion
@@ -11924,9 +11925,10 @@ prompt, guest code or socket) with `ReplayError::Unserved`.
   divergence instead of reaching an unrecorded state.
 - **Browser host.** The generated loader accepts the log's JSON text as the
   embedder option `networkReplay` of `run` and `mount`, validates it with the
-  same rules before anything loads (`JSON.parse` plus a scan refusing the
-  duplicate members, non-integer numbers and escaped lone surrogates that
-  serde refuses), and the Worker refuses an ungranted logged request before
+  same rules before anything loads (a decoder keeping the byte order mark,
+  which `JSON.parse` then refuses, plus a scan refusing the duplicate
+  members, non-integer numbers and escaped lone surrogates that serde
+  refuses), and the Worker refuses an ungranted logged request before
   instantiation. The replay transport replaces Fetch behind the same request
   planning and grant checks; a request claims its logged request in
   `net_request_start_v2`, in start order as natively, although its transfer
@@ -11937,8 +11939,8 @@ prompt, guest code or socket) with `ReplayError::Unserved`.
   complete stays pending, as with a silent server (a bounded run then ends
   at its deadline); an instance that ends, by settling or by an authorized
   exit, with logged events undelivered fails with the `Unconsumed` text,
-  while a `mount` closed by its embedder ends without that check. Its divergence texts are the native ones
-  (`registry.network.replay.errors`).
+  while a `mount` closed by its embedder ends without that check. Its
+  divergence texts are the native ones (`registry.network.replay.errors`).
   The [embedding contract](embedding.md#recorded-network-replay-v38) states
   the wire rules for third-party hosts.
 

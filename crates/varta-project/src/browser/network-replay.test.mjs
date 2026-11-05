@@ -50,6 +50,11 @@ test("the log reader refuses what the native reader refuses", () => {
     [log([{ kind: "abort", step: 1, request: 0 }]).replace('"step":1', '"step":1,"step":1'), /no log JSON/],
     [log([{ kind: "failed", step: 1, request: 0, text: "x" }]).replace('"text":"x"', '"text":"\\ud800"'), /no log JSON/],
     ["﻿" + log([]), /no JSON/],
+    // A literal passes the strict scan whole and meets the log schema, which
+    // has no boolean or null field.
+    [log([head(0)]).replace('"location":""', '"location":true'), /location/],
+    [log([head(0)]).replace('"location":""', '"location":false'), /location/],
+    [log([head(0)]).replace('"location":""', '"location":null'), /location/],
   ]) assert.throws(() => context.snapshot(bad), reason);
   // Escaped pairs, names repeated in other objects and the largest index pass.
   assert.equal(context.snapshot(log([{ kind: "failed", step: R.maxIndex, request: 0, text: "x" }]).replace('"text":"x"', '"text":"\\ud83d\\ude00"')).events[0].text, "\u{1f600}");

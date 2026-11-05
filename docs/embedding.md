@@ -1445,10 +1445,11 @@ the format and what a replay does and does not reproduce. A replaying host
 must:
 
 1. Validate the whole log before the instance starts, with the reader's
-   rules: a strict JSON reader that refuses duplicate members, numbers that
-   are no unsigned integer literals, a `step` or `request` above `maxIndex`
-   and escaped lone surrogates, and response head limits that count field
-   text as one byte per code unit. Refuse a log that names a request the
+   rules: a strict JSON reader that refuses a leading byte order mark
+   (although RFC 8259 lets a parser ignore one), duplicate members, numbers
+   that are no unsigned integer literals, a `step` or `request` above
+   `maxIndex` and escaped lone surrogates, and response head limits that
+   count field text as one byte per code unit. Refuse a log that names a request the
    package grants or the host ceiling do not admit (the `ungranted` text)
    before any guest code runs.
    A host that implements the direct network reads `net_get*` and
@@ -1477,9 +1478,10 @@ must:
    waits, after its idle-period maintenance. Completions released by then
    arrive in log order.
 6. Fail the instance on any divergence, and when it ends (also by an
-   authorized exit) with logged events undelivered (`unconsumed`). A host with scripted sessions also releases
-   an event only once the session reached its `step`, and fails a network
-   wait that ends with a watched request armed (`stalled`).
+   authorized exit) with logged events undelivered (`unconsumed`). A host
+   with scripted sessions also releases an event only once the session
+   reached its `step`, and fails a network wait that ends with a watched
+   request armed (`stalled`).
 
 The official browser host accepts the log's JSON text as the loader option
 `networkReplay` of `run` and `mount` and does not interpret steps.

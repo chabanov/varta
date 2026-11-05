@@ -3466,11 +3466,14 @@ Review fixes: the browser replay now claims a logged request in
 so a later request aborted before the pump no longer takes an earlier
 request's slot; recording and replay refuse a module importing
 `varta.net.get` or `varta.net.fetch` before setup (`ReplayError::Unserved`),
-since those reads bypass the transport; the browser log reader refuses
-duplicate members, non-integer numbers, indices beyond 32 bits and escaped
-lone surrogates as serde does, and both readers count head field text as one
-byte per code unit; an authorized exit in the browser checks the replay was
-consumed. Tests: Node and native two-request early-abort cases, native and
+since those reads bypass the transport; the browser log reader refuses a
+leading byte order mark, duplicate members, non-integer numbers, indices
+beyond 32 bits and escaped lone surrogates as serde does, and both readers
+count head field text as one byte per code unit; an authorized exit in the
+browser checks the replay was consumed. The exported index bound is derived
+from the event index type (`LogIndex`), and the browser's strict scan
+passes the literals `true`, `false` and `null` whole, so the log schema
+refuses them where a field needs another type, as natively. Tests: Node and native two-request early-abort cases, native and
 CLI refusal of `net.get`/`net.fetch` with no socket opened, a broker-denied
 request that claims nothing, reader parity cases on both sides; the Chrome
 acceptance now records the early abort, ends with an exit, compares the
