@@ -46,3 +46,68 @@ jobs:
         run: node --test crates/varta-common/browser/fuel.test.mjs crates/varta-project/src/browser/*.test.mjs
       - name: Checked core compatibility baseline (known gaps remain separate)
         run: cargo run -p varta-conformance --locked -- --json
+
+  browser:
+    # The browser oracle gate: `python3 scripts/verify.py browser`. Skipped
+    # engines make the helper exit nonzero, so a missing engine fails the job.
+    name: Browser oracle gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            chrome: /usr/bin/google-chrome
+          - os: macos-latest
+            chrome: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+    runs-on: ${{ matrix.os }}
+    env:
+      PLAYWRIGHT_VERSION: 1.64.1
+      VARTA_CHROME_BIN: ${{ matrix.chrome }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pinned Playwright and its Firefox/WebKit builds (outside the repository)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/playwright" --no-save --no-audit --no-fund --ignore-scripts "playwright@$PLAYWRIGHT_VERSION"
+          "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps firefox webkit
+      - name: Installed Chrome used by the DevTools drivers and the Playwright Chrome channel
+        run: '"$VARTA_CHROME_BIN" --version'
+      - name: Browser oracle gate
+        run: python3 scripts/verify.py browser --playwright "$RUNNER_TEMP/playwright/node_modules/playwright/index.mjs"
+      - name: Keep verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-verification-${{ matrix.os }}
+          path: target/verification/
+          if-no-files-found: ignore
+
+  gpu:
+    # The optional varta-desktop GPU backend is not part of the default
+    # workspace graph; build and lint it separately.
+    name: Desktop GPU feature build and Clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy with the GPU feature
+        run: cargo clippy -p varta-view -p varta-runtime -p varta-project -p varta-desktop --all-targets --features varta-desktop/gpu --locked -- -D warnings
+      - name: Build with the GPU feature
+        run: cargo build -p varta-desktop --features gpu --all-targets --locked
