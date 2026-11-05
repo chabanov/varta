@@ -758,10 +758,12 @@ impl LanguageProfile {
     }
     /// Batch v38, wave-2 SDK-path stream: `cause` reads of native errors
     /// and Error-instance unions, `new Error(message, options)` as an
-    /// instance of the family's Error root, `instanceof Map`/`Set`/
-    /// `Uint8Array` of closed unions, `"k" in` an `unknown` value read as a
-    /// record that holds a class instance, `for...of` over `FormData`,
-    /// `File`, `Blob.stream()` and `formData()` of bodies.
+    /// instance of the family's Error root, `xs[i].m<T>()` on element
+    /// receivers, `instanceof Map`/`Set`/`Uint8Array` of closed unions,
+    /// `File` with WHATWG `FormData` entries and `for...of` over `FormData`.
+    /// It also refuses forms that would diverge from JavaScript: spreads and
+    /// own-key enumerations of views of wider objects, `"cause" in` an Error
+    /// instance and overrides of engine-internal prelude members.
     #[must_use]
     pub fn sdk_paths(self) -> bool {
         self == Self::CheckedF64Utf16V38

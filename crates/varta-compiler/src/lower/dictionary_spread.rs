@@ -339,7 +339,12 @@ impl Lower<'_> {
                 // V38 (`sdk_paths`): a view of wider objects is refused by
                 // `subtyping::resolve` (its keys are the view's, not the object's).
                 if self.types.profile.sdk_paths() {
-                    self.types.subtyping.note_spread(shape, self.source, span);
+                    self.types.subtyping.note_key_copy(
+                        shape,
+                        subtyping::KeyCopy::Spread,
+                        self.source,
+                        span,
+                    );
                 }
                 let fields = self.types.records[shape as usize].fields.clone();
                 for field in &fields {

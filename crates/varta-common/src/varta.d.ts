@@ -374,11 +374,22 @@ declare class Blob {
   bytes(): Promise<Uint8Array>;
   text(): Promise<string>;
 }
-type FormDataEntryValue = string | Blob;
+// checked-f64-utf16-v38 SDK paths: a `File` is a `Blob` with a name
+// (`lastModified` is undeclared: its default is the wall clock). A `FormData`
+// entry holds a string or a `File`: a `Blob` value becomes a `File` named
+// `blob`, and a given file name makes a new `File` of that name.
+interface FilePropertyBag {
+  type?: string;
+}
+declare class File extends Blob {
+  constructor(fileBits: BlobPart[], fileName: string, options?: FilePropertyBag);
+  readonly name: string;
+}
+type FormDataEntryValue = string | File;
 declare class FormData {
   constructor();
-  append(name: string, value: FormDataEntryValue, filename?: string): void;
-  set(name: string, value: FormDataEntryValue, filename?: string): void;
+  append(name: string, value: string | Blob, filename?: string): void;
+  set(name: string, value: string | Blob, filename?: string): void;
   delete(name: string): void;
   get(name: string): FormDataEntryValue | null;
   getAll(name: string): FormDataEntryValue[];

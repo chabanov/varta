@@ -57,25 +57,46 @@ pub(crate) struct Views {
     /// `Reinterpret` of the value that `resolve` replaces by a call of the
     /// pair's synthesized wrapper (`Rewriter::adapter`).
     adapters: RefCell<BTreeSet<(u32, u32)>>,
-    /// V38 (`sdk_paths`): the closed record shapes spread into a record or
-    /// dictionary literal, with the spread's source and span. `resolve`
+    /// V38 (`sdk_paths`): the closed record shapes whose own keys a program
+    /// copies or enumerates, with the form, source and span. `resolve`
     /// refuses a shape that is a view of an object type with other fields or
-    /// another field order (`spread_views`): JavaScript copies every own
-    /// property of the object in its own key order.
-    spreads: RefCell<Vec<(u32, crate::source::Source, swc_common::Span)>>,
+    /// another field order (`spread_views`): JavaScript copies and
+    /// enumerates every own property of the object in its own key order.
+    spreads: RefCell<Vec<(u32, KeyCopy, crate::source::Source, swc_common::Span)>>,
+}
+/// A form that copies or enumerates the own keys of a closed record (v38
+/// `sdk_paths`), checked against the view sources in `resolve`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum KeyCopy {
+    /// `{ ...value }` into a record or dictionary literal.
+    Spread,
+    /// `Object.keys`/`values`/`entries`, an `Object.assign` source or
+    /// `for...in`.
+    Enumeration,
+}
+impl KeyCopy {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Spread => "object spread",
+            Self::Enumeration => {
+                "own-key enumeration (Object.keys, values, entries, an Object.assign source or for...in)"
+            }
+        }
+    }
 }
 impl Views {
-    /// Note a closed record shape spread into a record or dictionary literal
+    /// Note a closed record shape whose own keys `form` copies or enumerates
     /// (v38 `sdk_paths`), checked against the view sources in `resolve`.
-    pub(crate) fn note_spread(
+    pub(crate) fn note_key_copy(
         &self,
         shape: u32,
+        form: KeyCopy,
         source: &crate::source::Source,
         span: swc_common::Span,
     ) {
         self.spreads
             .borrow_mut()
-            .push((shape, source.clone(), span));
+            .push((shape, form, source.clone(), span));
     }
     /// Note the closed record shapes a value of `ty` entering an `unknown`
     /// cell may hold (v38 JSON-object reads of records).
@@ -798,12 +819,13 @@ enum Access {
     Call(Type),
 }
 
-/// Refuse a record spread whose source shape may hold a wider object
-/// through a view (v38 `sdk_paths`): the spread copies the view's declared
-/// fields in the view's order, where JavaScript copies every own property in
-/// the object's own key order. A source object type with exactly the view's
-/// field names, in the same order, copies the same keys and is admitted
-/// (optional fields keep the documented member order either way).
+/// Refuse a record spread or own-key enumeration ([`KeyCopy`]) whose source
+/// shape may hold a wider object through a view (v38 `sdk_paths`): the
+/// lowering copies or lists the view's declared fields in the view's order,
+/// where JavaScript takes every own property in the object's own key order.
+/// A source object type with exactly the view's field names, in the same
+/// order, gives the same keys and is admitted (optional fields keep the
+/// documented member order either way).
 fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result<()> {
     if !types.profile.sdk_paths() {
         return Ok(());
@@ -822,7 +844,7 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
                 .collect(),
         )
     };
-    for (shape, source, span) in types.subtyping.spreads.borrow().iter() {
+    for (shape, form, source, span) in types.subtyping.spreads.borrow().iter() {
         let declared = names(Type::Record(*shape)).unwrap_or_default();
         let mut visited = BTreeSet::from([Type::Record(*shape)]);
         let mut stack = vec![*shape];
@@ -839,9 +861,10 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
                 }
                 return Err(source.locate(
                     unsupported(&format!(
-                        "object spread of a {} that may hold a wider {} (a view); JavaScript \
-                         copies every own property in the object's own key order, which the \
+                        "{} of a {} that may hold a wider {} (a view); JavaScript copies and \
+                         enumerates every own property in the object's own key order, which the \
                          view's declared fields do not give, so copy the fields by name",
+                        form.name(),
                         describe(Type::Record(*shape), types),
                         describe(*wider, types)
                     )),
@@ -2240,6 +2263,8 @@ impl Lower<'_> {
                 })
             }
             Type::Class(class) => {
+                self.refuse_cause_in(class, name)
+                    .map_err(|e| self.source.locate(e, span))?;
                 let declared = self.types.classes.field(class, name).is_some()
                     || self.types.classes.get(class).methods.contains_key(name)
                     || records::inherited(name);

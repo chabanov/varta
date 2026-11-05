@@ -151,6 +151,8 @@ impl Lower<'_> {
                     }
                 }
                 Type::Class(class) => {
+                    this.refuse_cause_in(class, name)
+                        .map_err(|e| this.source.locate(e, span))?;
                     let declared = this.types.classes.field(class, name).is_some()
                         || this.types.classes.get(class).methods.contains_key(name)
                         || records::inherited(name);

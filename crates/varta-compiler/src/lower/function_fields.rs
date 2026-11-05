@@ -158,11 +158,13 @@ impl Lower<'_> {
                     let value = self.types.dictionaries[id as usize].value;
                     return matches!(value, Type::Function(_)).then_some(value);
                 }
-                // V38 (`structural_subtyping`): an element read `xs[i]` is
-                // the element type, so `xs[i].m<T>()` reaches a function
-                // field like a member path of a binding does.
-                if let (Type::Array(id), ast::MemberProp::Computed(_)) = (base, &member.prop)
-                    && self.types.profile.structural_subtyping()
+                // V38 (`sdk_paths`): an element read `xs[i]` is the element
+                // type, so `xs[i].m<T>()` reaches a function field like a
+                // member path of a binding does. A string literal key
+                // (`xs['length']`) is no element read.
+                if let (Type::Array(id), ast::MemberProp::Computed(key)) = (base, &member.prop)
+                    && self.types.profile.sdk_paths()
+                    && Self::element_key(&key.expr)
                 {
                     return Some(self.types.arrays[id as usize]);
                 }
@@ -189,6 +191,13 @@ impl Lower<'_> {
             }
             _ => None,
         }
+    }
+    /// Whether the computed key `key` of an array makes an element read, as
+    /// `arrays::array_member` resolves it: a string literal key is `length`
+    /// (or refused), and every other key is an element read whose lowering
+    /// requires a number.
+    fn element_key(key: &ast::Expr) -> bool {
+        !matches!(stmt::unparen(key), ast::Expr::Lit(ast::Lit::Str(_)))
     }
     fn field_type(&self, base: Type, name: &str) -> Option<Type> {
         match base {

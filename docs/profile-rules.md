@@ -3858,25 +3858,41 @@ Contract: [architecture.md](architecture.md#sdk-paths-sdk_paths).
 - `error.cause` of a native error is `undefined` because no native error is
   ever built with a cause. If a later change lets a native error own one,
   `error_cause_read` must read it instead of folding.
+- `"cause" in` an Error-class instance stays refused
+  (`refuse_cause_in`, called by `object_in` and `shared_in`) until the
+  instance records whether its options object had a `cause`; never answer
+  it from the slot's declaration.
+- The element-receiver arm of `function_fields::peek_type` applies only to a
+  computed key that is not a string literal, exactly the keys
+  `arrays::array_member` lowers as element reads; `peek_type` also feeds
+  `switch` exhaustiveness, so a wider arm miscompiles (`xs['length']`).
 - `instanceof Map`/`Set`/`Uint8Array` (`sdk_paths::collection_instance_of`)
   is a tag test only where the selected member is the only member with its
   tag; keep refusing `unknown`/`object` operands while those collections
   have no cell of their own, and never test a collection by element kind or
   record shape.
-- Spreads of record shapes are noted (`Views::note_spread`) and checked by
-  `subtyping::spread_views` before `resolve` rewrites views. Admit only
-  sources with exactly the view's field names in its order; any other source
-  fails naming both types.
-- `File` lives in the blob prelude; `entryName` is engine-internal
-  (`INTERNAL_MEMBERS`). Do not declare `lastModified` without a clock
-  grant. `for...of` over `FormData` calls the prelude's `entries` like
-  `Headers`.
+- Spreads and own-key enumerations of record shapes are noted
+  (`Views::note_key_copy` with `KeyCopy::Spread` from the spread lowerings,
+  `KeyCopy::Enumeration` from `enumerate_value`, which serves
+  `Object.keys`/`values`/`entries`, `Object.assign` sources and `for...in`)
+  and checked by `subtyping::spread_views` before `resolve` rewrites views.
+  Admit only sources with exactly the view's field names in its order; any
+  other source fails naming both types. A new key-copying form must route
+  through `enumerate_value` or note its shape.
+- `File` lives in the blob prelude. `FormData` "create an entry" decides by
+  `instanceof File` (through an `unknown` cell, since a `Blob` binding does
+  not narrow to its subclass) and reads the `File` name field; never
+  dispatch a prelude decision through a method a program's subclass could
+  override. Overrides of `INTERNAL_MEMBERS` by program classes are refused
+  in `classes::layout::method`. Do not declare `lastModified` without a
+  clock grant. `for...of` over `FormData` calls the prelude's `entries`
+  like `Headers`.
 - Still refused, by owner decision or until a value-layout change: a
   `Uint8Array` held by `unknown`, the record view of a class instance held by
   `unknown`, `A[] | B[]` of records, `Blob.stream()`, `formData()`.
 - Tests: `varta-runtime` `sdk_path_tests` (the `sdk_path_cases/*.expected`
   files are Node 24.20.0 output, including the multipart and query wire
-  bytes; refusals and v37 denials).
+  bytes and the `FormData` entries; refusals and v37 denials).
 
 ### V38 linked intrinsics
 

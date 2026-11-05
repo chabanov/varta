@@ -95,9 +95,13 @@ impl Lower<'_> {
             return self.error_root_new(class, args, span);
         }
         if generic || args.len() > 1 || args.iter().any(|a| a.spread.is_some()) {
-            return Err(unsupported(
-                "error constructor accepts zero or one string/undefined argument",
-            ));
+            return Err(unsupported(if self.types.profile.sdk_paths() {
+                "error constructor arguments other than (message?, options?): a string or \
+                 undefined message and one options object, with no argument spread and no \
+                 type arguments"
+            } else {
+                "error constructor accepts zero or one string/undefined argument"
+            }));
         }
         let value = if let Some(arg) = args.first() {
             self.expr(&arg.expr)?

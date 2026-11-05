@@ -1,10 +1,12 @@
 //! The language items of the v38 SDK-path stream (`sdk_paths`): forms that
 //! the pinned pilot SDK and its applications reach on their multipart, query
-//! and error paths. `instanceof Map`/`Set`/`Uint8Array` of closed unions and
-//! the `in` test of an `unknown` value read as a record are here; error
-//! `cause` reads and `new Error(message, options)` are in `errors` and
-//! `classes::error_classes`, `for...of` over `FormData` in `for_of` and the
-//! Web types (`File`, `Blob.stream()`, `formData()`) in the engine preludes.
+//! and error paths. `instanceof Map`/`Set`/`Uint8Array` of closed unions is
+//! here; error `cause` reads, `new Error(message, options)` and the refused
+//! `"cause" in` an Error instance are in `errors` and
+//! `classes::error_classes`, `xs[i].m<T>()` in `function_fields`,
+//! `for...of` over `FormData` in `for_of`, the view checks of spreads and
+//! enumerations in `subtyping`, and `File` with the `FormData` entries in
+//! the blob prelude.
 use super::*;
 use ir::CollectionKind as K;
 use references::Guard;

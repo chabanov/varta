@@ -828,6 +828,21 @@ impl Lower<'_> {
             },
         })
     }
+    /// Refuse `"cause" in value` of an Error-class instance (v38 `sdk_paths`).
+    /// JavaScript defines the own `cause` only when the options object had
+    /// one (`new Error('m', {})` has none), while every Error-root instance
+    /// carries a `cause` slot and records no presence, so the answer would be
+    /// a guess.
+    pub(in crate::lower) fn refuse_cause_in(&self, class: u32, name: &str) -> Result<()> {
+        if self.types.profile.sdk_paths() && name == CAUSE && self.types.classes.is_error(class) {
+            return Err(unsupported(
+                "\"cause\" in an Error instance (JavaScript defines an own cause only when the \
+                 options object has one, which the instance does not record); read error.cause \
+                 instead",
+            ));
+        }
+        Ok(())
+    }
     /// Whether some member of `ty` is an Error-instance class.
     pub(in crate::lower) fn has_error_instances(&self, ty: Type) -> bool {
         unions::members(ty, self.types)

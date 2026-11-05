@@ -716,8 +716,6 @@ pub(crate) const INTERNAL_MEMBERS: &[(&str, &str)] = &[
     ("Blob", "byteString"),
     ("Blob", "adopt"),
     ("Blob", "encode"),
-    ("Blob", "entryName"),
-    ("File", "entryName"),
     ("FormData", "multipart"),
     ("URLSearchParams", "parse"),
     ("URLSearchParams", "attach"),

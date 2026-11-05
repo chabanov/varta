@@ -11223,31 +11223,54 @@ import, value layout or ABI changes; v1–v37 keep rejecting every form below.
   never own a `cause`, so the `undefined` read is exact. Before any body is
   lowered, `link` creates the root of every family that some module
   constructs with two arguments, so catch unions and `unknown` analyses see
-  the class from the start.
+  the class from the start. Any other argument list (more than two
+  arguments, an argument spread, type arguments) fails with `error
+  constructor arguments other than (message?, options?)`. `"cause" in` an
+  Error-class instance (an Error root or subclass instance) is refused:
+  JavaScript defines the own `cause` only when the options object has one
+  (`'cause' in new Error('m', {})` is false), and the instance's `cause`
+  slot records no presence. `"message" in` and `"name" in` stay true, as
+  the prototype provides both.
 - **Generic method calls on element receivers.** `xs[i].m<T>()` reaches a
   function field of the element type like `x.m<T>()` of a binding does: the
   element is read once (an absent element fails with `TypeError` when the
-  field is read) and the erased generic call checks its result.
+  field is read) and the erased generic call checks its result. Only a
+  computed key other than a string literal is an element read, as in member
+  lowering: `xs['length']` stays the length, so a `switch` over it is never
+  exhaustive over the element type.
 - **`instanceof Map`, `Set` and `Uint8Array`.** Of a closed union, the test
   is a member tag test and narrows the union both ways; of any other closed
   type it is a constant (the operand is still evaluated). These collections
   have no value tag of their own (a map or set shares the record tag, a
   `Uint8Array` the array tag), so the test is refused for an `unknown` or
   `object` operand, which never holds one, and for a union whose other
-  members share the selected member's tag. Unions of two collections or of
-  a collection and a record or class instance stay refused when the union
-  is formed.
-- **`File` and `FormData` iteration.** The blob prelude's `File` is a `Blob`
-  with a `name` (a USVString); a `FormData` entry appended from a `File`
-  without a file name takes the file's name. `lastModified` is not declared:
-  its default is the wall-clock time, which needs a clock grant, so reading
-  it is a compile error. `for (const [name, value] of form)` iterates the
-  snapshot `FormData.prototype.entries()` returns.
-- **Spreads through views.** A record spread (into a record or a dictionary
-  context) whose source type is a view of a wider object type, one with
-  other field names or another field order, fails when `resolve` sees the
-  view: the spread would copy the view's declared fields in the view's
-  order, where JavaScript copies every own property in the object's own key
+  members share the selected member's tag. Union formation already refuses
+  two members with one tag: a `Map` or `Set` with another map, set, record
+  or class instance, and a `Uint8Array` with another array type. A
+  `Uint8Array` with records or class instances (`Blob | ArrayBuffer |
+  Uint8Array | string`) and a `Map` or `Set` with primitives or arrays are
+  admitted.
+- **`File` and `FormData` entries.** The blob prelude's `File` is a `Blob`
+  with a `name` (a USVString). `FormData.append`/`set` take `string | Blob`
+  and follow WHATWG "create an entry": a `Blob` that is no `File` becomes a
+  `File` named `blob` with the same bytes and type, a given file name makes
+  a new `File` of that name, and a `File` without one stays the same object.
+  `FormDataEntryValue` is `string | File`, so `get`, `getAll`, iteration and
+  the multipart `filename` (the entry's `File` name) agree with Node. The
+  entry test is `instanceof File` and the name the `File` field; a
+  program's subclass cannot override an engine-internal member of a prelude
+  class (`override of the engine-internal member byteString of Blob`).
+  `lastModified` is not declared: its default is the wall-clock time, which
+  needs a clock grant, so reading it is a compile error. `for (const [name,
+  value] of form)` iterates the snapshot `FormData.prototype.entries()`
+  returns.
+- **Spreads and enumeration through views.** A record spread (into a record
+  or a dictionary context) and an own-key enumeration (`Object.keys`,
+  `Object.values`, `Object.entries`, an `Object.assign` source, `for...in`)
+  whose source type is a view of a wider object type, one with other field
+  names or another field order, fail when `resolve` sees the view: the
+  lowering would copy or list the view's declared fields in the view's
+  order, where JavaScript takes every own property in the object's own key
   order. A view whose sources declare exactly its fields in its order (the
   SDK's `{ ...spec, headers, query }` passed back as a `RequestSpec`) is
   admitted, as are dictionary spreads (`{ ...spec.query, ...options.query }`

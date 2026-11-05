@@ -3212,3 +3212,15 @@ the three crates, formatting, and the conformance baseline (`cargo run -p
 varta-conformance --locked -- --json`, baseline matches). `varta check` of
 every `examples/uarp-console` configuration passes with the pinned SDK. The
 full gate is left to the wave integration.
+
+Review fixes (2026-11-05): the element-receiver arm of `peek_type` is gated
+on `sdk_paths()` and limited to keys other than string literals (a `switch`
+over `xs['length']` trapped at `unreachable`); `FormData` entries follow
+WHATWG "create an entry" (every `Blob` entry is a `File`, `FormDataEntryValue`
+is `string | File`) without dispatching through an overridable method, and
+program overrides of engine-internal prelude members are refused; `"cause"
+in` an Error instance is refused (Node is false for `new Error('m', {})`);
+own-key enumerations of views of wider objects (`Object.keys`/`values`/
+`entries`, `Object.assign` sources, `for...in`) are refused like spreads;
+the v38 error-constructor refusal names `(message?, options?)`. Each fix has
+a regression against Node 24.20.0 output or its named diagnostic.
