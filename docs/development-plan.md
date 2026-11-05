@@ -325,7 +325,8 @@ probe covers24 scenes with72 actual GPU and24 explicit CPU-fallback observations
 including required native coverage in clipped dense text and a native field;
 maximum mean GPU/CPU RGB delta0.1472. Only result annotations follow the gate.
 
-Collection members beyond index0, variable/color font instances and unsupported
+Collection members beyond index0 and variable font instances now use native
+coverage (wave 3, below); color/bitmap fonts, `opsz` axes and unsupported
 native cases retain portable outlines. Other platform glyph rasterizers, full
 font/IME/window/accessibility acceptance, remaining inline borders,
 direct GPU groups/color fields and the full core/pilot/platform/release plan
@@ -457,6 +458,35 @@ result/status documentation annotations follow it. Distinct border
 side colors and other border styles, device-pixel border-width snapping (open for
 all boxes), bidi edge reordering, horizontal percentages and
 real-font/window/platform acceptance remain open.
+
+### Native accessibility geometry, macOS scroll routes and CoreText face variants — wave-3 package `w3-native-macos-adapters`, scoped 2026-11-05
+
+Branch `wave3/w3-native-macos-adapters` (on `49186cf`).
+
+- **Accessibility geometry.** Native bounds now cover offscreen (scrolled-out
+  or clipped) elements, text nodes and the options of an open select list,
+  including rows scrolled out of the list, all from the presented frame; see
+  the native accessibility text on `FrameMetadata::accessibility_bounds_map` in
+  [the architecture contract](architecture.md). Options of a closed select
+  stay unbounded (no box).
+- **macOS assistive scrolling.** The pinned adapter routes AppKit's scroll-area
+  page actions, and the increment/decrement and settable value of a published
+  vertical scroll-bar child, to the existing page/item/absolute typed actions
+  ([patch record](../vendor/accesskit_macos/VARTA-PATCH.md)). Native names and
+  semantics come from an in-process observation of AppKit's `NSScrollView` on
+  macOS 27.0.1. Not done: no assistive client drove Varta's own window (the
+  probing process is not trusted for the accessibility API here).
+- **CoreText face variants.** Collection members and variation instances are
+  instantiated from the artifact bytes; color/bitmap tables, `opsz` and `avar`
+  v2 keep declining with explicit counters. The native text probe's faces mode
+  reports zero outline glyphs for the new variable and collection fixtures and
+  the Chrome oracle stays under 2/255 at 1×/1.25×/2× (maximum mean 0.446).
+
+Scoped results: `python3 scripts/verify.py local varta-desktop` (99 library,
+7 binary, 18 shell tests) and `local varta-view` (149 library, 349
+integration) pass; strict all-target Clippy for both crates (and the desktop
+`gpu` feature) and `cargo fmt --all -- --check` pass. The full gate is the
+wave lead's.
 
 ### Wave 2 integration — 2026-11-05
 
@@ -957,7 +987,9 @@ DPI refinement. Logs: `target/a11y5-final-view-tests.log`,
 `target/a11y5-final-scroll-tests.log`. Strict/final broad verification remains at
 the coherent batch boundary. This vertical checkpoint precedes the text-range
 implementation below. The previous UI-2.3 report applies to its recorded earlier
-inputs.
+inputs. Wave 3 (`w3-native-macos-adapters`) adds the macOS route for these page,
+item and absolute actions through the pinned adapter; acceptance through a real
+assistive client remains open.
 
 Text-range reveal and single-line horizontal display panning now use acknowledged
 shaped source ranges, opaque content revisions and per-axis edge hints. Own field

@@ -12727,8 +12727,20 @@ neither counts actual GPU presentation.
 The macOS preview installs the host-only CoreText adapter. It creates faces from
 the supplied bytes without system discovery or process-wide registration, keeps
 bounded face data, renders monochrome glyph coverage with platform smoothing,
-and preserves the existing outline fallback for nonzero collection members,
-variable and color fonts, resource refusal or unsupported platform instances.
+and preserves the existing outline fallback for color fonts, resource refusal
+or unsupported platform instances. It instantiates the exact selected face: a
+collection member is rebuilt as a standalone face from that member's own
+tables (CoreText's `head` table and glyph count must then match the member),
+and a variation instance is a CoreGraphics copy of the face with every `fvar`
+axis set to the user value whose default normalization followed by the `avar`
+(version 1) map yields the shaper's normalized coordinate; nothing is looked up
+by name. Faces with bitmap or color glyph tables (`COLR`, `CBDT`, `EBDT`,
+`sbix`, `SVG `), an `opsz` axis (CoreText would size it from the point size
+while the shaper keeps its default) or `avar` version 2 are declined, and
+their glyphs keep portable outlines. At most 16 variation instances are kept
+per face, each charged to the shared glyph-cache allowance; a variable face is
+charged twice its bytes, for the copy CoreGraphics retains. Declined glyph
+requests are counted by reason (`CoreTextRasterizer::statistics`).
 The safe pinned `core-text=21.0.0` wrapper reuses the locked CoreGraphics0.24 and
 CoreFoundation0.10 stack; only the desktop host depends on it. This implements
 the platform raster distinction visible in
@@ -13144,11 +13156,30 @@ numbers, history, select-option identity, event budgets and permission checks;
 guest listeners run on later application turns. Input records retain their
 ordinary gesture classification.
 
+Native bounds come from the presented frame alone
+(`FrameMetadata::accessibility_bounds_map`, physical pixels): the union of a
+node's visible element fragments when it has any; for an option of the open
+select list, its list row, including the position the list's scroll offset gives
+a row scrolled out of the list; otherwise the node's unclipped layout box at the
+presented scroll offsets, so scrolled-out and clipped elements and text nodes
+(anonymous block or inline fragment box) are bounded too. Options of a closed
+select have no box and stay unbounded.
+
+On macOS a node with a vertical scroll range also publishes a geometry-free
+vertical `ScrollBar` child at its 0..1 scroll position, with a native ID kept
+while the owner's identity and scroll range remain. The pinned adapter maps
+AppKit's scroll-area `AXScrollUpByPage`/`AXScrollDownByPage` to page scrolls,
+exposes that child as `AXVerticalScrollBar`, and maps the bar's
+increment/decrement to item scrolls and its settable value (finite, clamped to
+0..1) to an absolute offset. These are the existing typed actions, so the host
+queue, frame guards and core validation above apply unchanged; no new action or
+unsafe host code is added.
+
 This is not complete platform accessibility: platform acceptance of visual text
-ranges, assistive scrolling/announcements and screen-reader/target
-acceptance remain open. Offscreen, text-only and select-popup option bounds can
-be absent. Native API exposure and performance require direct platform evidence;
-headless projection tests alone do not establish it.
+ranges, assistive scrolling through a real assistive client, announcements and
+screen-reader/target acceptance remain open. Native API exposure and
+performance require direct platform evidence; headless projection tests alone
+do not establish it.
 
 Explicitly sized text inputs and buttons with explicit display, minimum sizes,
 padding and border can participate in this experimental geometry. A button with
