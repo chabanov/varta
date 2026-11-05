@@ -369,3 +369,84 @@ fn idle_collection_measurement() {
         );
     }
 }
+
+/// An idle step that answers with a status other than none, more or done
+/// terminates the instance with the error text the browser host's generated
+/// registry repeats (`effects.collector.invalidStatus`). A compiled idle
+/// export cannot do this, so the fixture replaces its body with a constant.
+#[test]
+fn an_invalid_idle_status_terminates_the_instance_with_the_browser_registry_text() {
+    use crate::contract_tests::rewrite;
+    use varta_common::collector::IDLE_DONE;
+    use wasmparser::{BinaryReader, CodeSectionReader, Parser, Payload, TypeRef};
+    const CODE_SECTION: u8 = 10;
+    const NO_LOCALS: u8 = 0;
+    const I32_CONST: u8 = 0x41;
+    const END: u8 = 0x0b;
+    // One past the last valid status; a one-byte signed LEB128 immediate.
+    let invalid = u8::try_from(IDLE_DONE + 1).unwrap();
+    assert!(invalid < 0x40);
+    fn leb(out: &mut Vec<u8>, mut value: u32) {
+        loop {
+            let byte = (value & 0x7f) as u8;
+            value >>= 7;
+            out.push(byte | if value == 0 { 0 } else { 0x80 });
+            if value == 0 {
+                break;
+            }
+        }
+    }
+    let bytes = churn(50);
+    let (mut imported, mut idle) = (0, None);
+    for payload in Parser::new(0).parse_all(&bytes) {
+        match payload.unwrap() {
+            Payload::ImportSection(reader) => {
+                for import in reader {
+                    if matches!(import.unwrap().ty, TypeRef::Func(_)) {
+                        imported += 1;
+                    }
+                }
+            }
+            Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.unwrap();
+                    if export.name == IDLE_EXPORT {
+                        idle = Some(export.index);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let position = (idle.expect("v38 modules export the idle collection") - imported) as usize;
+    let bytes = rewrite(&bytes, |id, section| {
+        if id != CODE_SECTION {
+            return vec![section.to_vec()];
+        }
+        let reader = CodeSectionReader::new(BinaryReader::new(section, 0)).unwrap();
+        let mut content = Vec::new();
+        leb(&mut content, reader.count());
+        for (index, body) in reader.into_iter().enumerate() {
+            let body = body.unwrap();
+            let replaced = [NO_LOCALS, I32_CONST, invalid, END];
+            let body = if index == position {
+                &replaced[..]
+            } else {
+                &section[body.range()]
+            };
+            leb(&mut content, u32::try_from(body.len()).unwrap());
+            content.extend_from_slice(body);
+        }
+        vec![content]
+    });
+    VartaRuntime::new().validate_module(&bytes).unwrap();
+    let (lines, report, failure) = session(&bytes, RunOptions::default(), 3);
+    let expected = varta_common::browser::registry()["effects"]["collector"]["invalidStatus"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(failure, Some(expected));
+    // The first idle period follows the first event's turn; no later turn runs.
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(report.maintenance.is_empty());
+}

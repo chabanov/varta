@@ -6,8 +6,9 @@ gate once on the completed code batch before committing. A full pass does not ne
 to be repeated after a documentation-only edit. New code/build inputs invalidate
 any previous check whose scope includes those inputs.
 
-Python 3 and the pinned Rust toolchain are required. The helper resolves the
-workspace from its own location; these examples start at the workspace root:
+Python 3, the pinned Rust toolchain and Node.js 24 (only its built-in test
+runner; no npm packages) are required. The helper resolves the workspace from
+its own location; these examples start at the workspace root:
 
 ```sh
 python3 scripts/verify.py local varta-bigint
@@ -20,10 +21,13 @@ python3 scripts/verify.py --plan full
 `--plan` prints commands without running or verifying anything. Local checks run
 Cargo check for all targets of one crate, then that crate's tests, optionally
 filtered. Project, CLI (package `varta`) and launcher checks build the companion after
-the Cargo check and before their tests. Feature checks
+the Cargo check and before their tests. Unfiltered `varta-common` and
+`varta-project` checks then run the browser host's Node module tests (the same
+`node --test` step as the full gate); a Cargo filter does not select Node tests,
+so a filtered check omits them. Feature checks
 build the companion, then select matching runtime unit tests, public engine API
-tests and CLI smoke tests. Each selected suite must execute passing tests; a typo
-that matches zero tests fails. Where names differ, run explicit Cargo commands
+tests and CLI smoke tests. Each selected suite, Cargo or Node, must execute
+passing tests; a typo that matches zero tests fails. Where names differ, run explicit Cargo commands
 with the appropriate filters instead of widening a filter until it happens to pass.
 
 ## View integration cases
@@ -476,9 +480,13 @@ cargo build -p varta-launcher --bin varta-runtime --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --workspace --all-targets --locked
 cargo test --workspace --locked
+node --test crates/varta-common/browser/fuel.test.mjs crates/varta-project/src/browser/*.test.mjs
 cargo run -p varta-conformance --locked -- --json
 ```
 
+The helper expands the Node test pattern itself into sorted explicit paths
+(`--plan` prints them) and fails if a pattern matches nothing; CI uses the
+shell's expansion of the same pattern after installing Node.js 24.
 Workspace tests already include `varta`'s `smoke` integration suite. A separate
 repeat is reserved for launcher/packaging changes or a named flakiness investigation.
 CI retains complete Linux/macOS coverage. A local full pass proves only that host.
@@ -743,6 +751,49 @@ the dev driver checks rebuild recovery, live Worker replacement and shutdown on
 each engine using isolated temporary projects and browser contexts.
 Source/config/resource edits now rebuild automatically after a
 successful initial startup; policy/decision-file edits still require restart.
+
+Browser pilot effects (clock, entropy, environment snapshot, exit) and idle
+collection between turns:
+
+```sh
+cargo test -p varta-common --lib browser::
+cargo test -p varta-project --lib browser::
+node --test crates/varta-common/browser/fuel.test.mjs crates/varta-project/src/browser/*.test.mjs
+cargo build -p varta --bin varta --locked
+node scripts/test-browser-effects.mjs target/debug/varta
+node scripts/test-browser-matrix.mjs - <playwright-module-path> --effects target/debug/varta
+```
+
+`worker-effects.test.mjs` covers the Worker handlers and their denials
+(missing `time.now` grant, empty host ceiling, `env.get` filtering, exit
+denial and invalid codes) and the maintenance loop, including fuel, deadline
+and invalid-status failures. `loader.test.mjs` drives the loader with a fake
+Worker: `maintenance_begin` arms the `maintenanceDeadlineMs` watchdog with the
+native exhaustion text and terminates the Worker, `maintenance_end` clears it,
+a malformed or bounded-run maintenance message is a protocol failure, and an
+exit before main's checkpoint rejects `mount().ready` with its code. The Node
+suites run in the full gate and CI. Native comparisons of the registry's
+diagnostic texts: `maintenance_exhaustion_texts_equal_the_native_runtime_errors`
+and `invalid_input_failure_text_equals_the_native_runtime_diagnostic`
+(varta-project), `env_snapshot_too_large_text_equals_the_browser_registry`
+(CLI smoke) and
+`an_invalid_idle_status_terminates_the_instance_with_the_browser_registry_text`
+(varta-runtime, with a rewritten idle export, since compiled modules only
+return valid statuses). `effect_admission_follows_the_native_profile_imports`
+checks that each pilot effect is admitted exactly under the profiles whose
+native host imports it. `test-browser-effects.mjs` builds temporary
+projects and compares native `varta dev --budget-report` (`--app` for the
+long session) with the browser dev host in local Chrome: logs, exit codes,
+exact host calls, microtasks, output and fuel, and the listed idle periods.
+Its cases include the recoverable failures (a too-large snapshot and an
+invalid exit code, whose native diagnostics are the registry's texts) and the
+older profiles that import a pilot effect natively (v37 clock, entropy and
+exit; v20 entropy and exit).
+Random values are checked by range and shape only; the `randomUUID` case
+compares everything except fuel, because the guest prelude's cost depends on
+the drawn bytes natively too. The matrix's `--effects` option runs the same
+cases in Firefox, WebKit and Chrome (`-` skips the generated fixtures); an
+engine that cannot launch is reported as failed, never as a pass.
 
 The official registry has a Rust regeneration drift test; it does not yet include
 all memory/view tables. Regenerate it explicitly after a registry change:

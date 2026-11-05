@@ -662,6 +662,24 @@ host-independent today; see [Proposed changes](#proposed-changes).
 | Scheduler | `promise_*`, `scheduler_enqueue` | See [Microtask checkpoint](#microtask-checkpoint) |
 | Pure intrinsics | `number_*`, `string_char_*16`, `string_to_*_case16`, `primitive_*`, `json_*`, `value_*`, `union_*`, `bigint_*` | Capability-free; semantics are the profile contracts in [architecture.md](architecture.md); numeric exactness in [Numeric intrinsics](#numeric-intrinsics); layout-bound ones are [unstable](#what-is-unstable). Under v38 the [linked](#linked-intrinsics-v38) ones are guest code, not imports |
 
+### Browser effect mapping (official host)
+
+The official browser host (the generated Worker of `varta build --target
+browser` and `varta dev --target browser`) implements these pilot effects with
+the reference host's results, statuses, output, fuel and host-call charges. Each
+import pays the shared call charge first; the other columns are the handler.
+Each is admitted exactly under the profiles that admit the import in the
+[host operation table](#host-operation-table), as for the reference host; a
+module of any other profile that imports it gets no bundle.
+Browser capability mappings remain [unstable](#what-is-unstable).
+
+| Import | Browser source | Decision before the effect | Result |
+| --- | --- | --- | --- |
+| `date_now` | `Date.now()` in the Worker | Audited `time.now` broker operation: the exact enabled package request, and the ceiling's own `true` when the embedder passes a `permissionCeiling` (an empty ceiling denies) | Whole milliseconds. Denied: the clock is not read, `varta log: <capability denied: time.now> (Date.now)` and NaN (the prelude throws `NotAllowedError`) |
+| `number_random` | `crypto.getRandomValues`, one fresh 64-bit word per call | None (ungated entropy, never a seed) | The word's top 53 bits times 2^-53, exactly the reference conversion |
+| `env_snapshot` | The embedder's `environmentInputs` snapshot, never page state | `env.get` request and ceiling scopes and the broker's current state; not an audited operation | Empty name: a JSON object of the set variables whose names both scopes list exactly, in the reference (Unicode scalar) order. Another name: one `env.get` lookup, `{}` when unset, status 1 when denied. Status 2 for invalid input, 4 above `abi::MAX_RESULT_BYTES` |
+| `process_exit_f64` | Ends the Worker's instance | Enabled `process.exit` request and the ceiling's own `true`; not an audited operation | Authorized: the run or `mount` session ends with status `ok` and the exit code (`exitCode`, 0 for a normal end); no later turn runs. Denied (status 1) or a non-integral or out-of-range code (status 2): the guest continues |
+
 ### Logging
 
 | Import | Argument | Logged text |
@@ -1766,7 +1784,17 @@ One **execution** owns one fresh store and instance and is never reused:
    state alone, so the same turns give the same maintenance. An exhausted
    maintenance budget terminates the instance like an exhausted turn budget.
    A bounded run, a tool or HTTP invocation and a host that never calls the
-   export are conforming: collection then happens inside turns.
+   export are conforming: collection then happens inside turns. Like the
+   reference host, a period that ran no step is not listed in a report, but
+   its fuel counts toward the maintenance total. The official browser host
+   follows the same loop in its long-lived `mount` sessions (never in bounded
+   `run` executions): the generated Worker swaps a fresh maintenance
+   allowance into its fuel tank for the idle period and restores the closed
+   turn's remaining fuel afterwards, so turn usage is unchanged; it checks
+   the maintenance deadline after every step, and the parent's watchdog
+   terminates the Worker at the deadline as a hard bound (a step is not
+   interrupted inside guest code, see [Budget guarantees](#budget-guarantees)).
+   Its exhaustion diagnostics are the reference host's texts.
 3. Instantiate exactly once, linking only the imports the module declares. A
    failed instantiation ends the execution; never instantiate the same execution
    twice.

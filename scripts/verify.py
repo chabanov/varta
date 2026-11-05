@@ -22,10 +22,27 @@ PACKAGES = (
     "varta-runtime", "varta-view",
 )
 CORE = ["varta-common", "varta-compiler", "varta-runtime", "varta-artifact"]
+# The browser host's engine modules (registry, fuel, Worker, loader) run in
+# Node's built-in test runner; no npm dependency is installed.
+BROWSER_NODE_TESTS = ("crates/varta-common/browser/fuel.test.mjs", "crates/varta-project/src/browser/*.test.mjs")
+BROWSER_NODE_PACKAGES = ("varta-common", "varta-project")
+NODE_PASSED = re.compile(r"^(?:#|\u2139) pass (\d+)$", re.MULTILINE)
 
 
 def cargo(*args: str) -> list[str]:
     return ["cargo", *args]
+
+
+def browser_node_tests() -> list[str]:
+    """The Node suites as explicit sorted paths (no shell glob expansion)."""
+    paths = []
+    for pattern in BROWSER_NODE_TESTS:
+        matched = sorted(ROOT.glob(pattern))
+        # `node --test` without paths would discover tests in the whole tree.
+        if not matched:
+            raise SystemExit(f"no browser Node tests match {pattern}")
+        paths += matched
+    return ["node", "--test", *(str(path.relative_to(ROOT)) for path in paths)]
 
 
 def companion() -> list[str]:
@@ -40,7 +57,12 @@ def commands(args: argparse.Namespace) -> list[list[str]]:
         test = cargo("test", "-p", args.package, "--locked")
         if args.filter:
             test.append(args.filter)
-        return result + [test]
+        result.append(test)
+        # A cargo test-name filter does not select Node tests; run them only
+        # for an unfiltered check of a crate that owns browser modules.
+        if args.package in BROWSER_NODE_PACKAGES and not args.filter:
+            result.append(browser_node_tests())
+        return result
     if args.scope == "feature":
         return [
             companion(),
@@ -61,6 +83,7 @@ def commands(args: argparse.Namespace) -> list[list[str]]:
         cargo("clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"),
         cargo("build", "--workspace", "--all-targets", "--locked"),
         cargo("test", "--workspace", "--locked"),
+        browser_node_tests(),
         cargo("run", "-p", "varta-conformance", "--locked", "--", "--json"),
     ]
 
@@ -136,9 +159,11 @@ def main() -> int:
         tests = None
         if command[:2] == ["cargo", "test"]:
             tests = sum(int(n) for n in re.findall(r"test result: ok\. (\d+) passed", log.read_text()))
-            if code == 0 and tests == 0:
-                print("FAILED: test selection ran zero passing tests; choose a matching filter.", flush=True)
-                code = 1
+        elif command[:2] == ["node", "--test"]:
+            tests = sum(int(n) for n in NODE_PASSED.findall(log.read_text()))
+        if code == 0 and tests == 0:
+            print("FAILED: test selection ran zero passing tests; choose a matching filter.", flush=True)
+            code = 1
         report["commands"].append({"argv": command, "exitCode": code, "passedTests": tests, "seconds": round(time.monotonic()-started, 3), "log": log.name})
         if code:
             exit_code = code

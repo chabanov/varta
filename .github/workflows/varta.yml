@@ -24,6 +24,10 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Node.js (built-in test runner only; no npm packages)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Core libraries without project tooling or CLI
@@ -38,5 +42,7 @@ jobs:
         run: cargo build --workspace --all-targets --locked
       - name: Workspace tests (includes CLI security and packaging regressions)
         run: cargo test --workspace --locked
+      - name: Browser host module tests (registry, fuel, Worker, loader)
+        run: node --test crates/varta-common/browser/fuel.test.mjs crates/varta-project/src/browser/*.test.mjs
       - name: Checked core compatibility baseline (known gaps remain separate)
         run: cargo run -p varta-conformance --locked -- --json

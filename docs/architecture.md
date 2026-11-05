@@ -14136,7 +14136,9 @@ general artifact loading and permission/effect enforcement remain open.
 `BrowserArtifact::bundle` builds a checked console/view bundle:
 `app.wasm`, `app.private.wasm`, `app.manifest.json`, `varta-worker.js`,
 `varta-host.js` and `index.html`. It currently accepts only the implemented
-logging, Promise scheduler, timer, v38 asynchronous network and view imports. Other missing effects
+logging, Promise scheduler, timer, v38 asynchronous network, view, environment,
+clock (`date_now`), entropy (`number_random`), environment snapshot
+(`env_snapshot`) and exit (`process_exit_f64`) imports. Other missing effects
 fail before output files are produced; jobs are never silently
 skipped. `varta build --target browser` exposes this library path,
 writing `web` beside the configured output prefix (normally `dist/web`). It uses
@@ -14210,6 +14212,43 @@ request origins in addition to bundle fetching. URL-valid origins that cannot
 be represented safely as CSP host tokens (punctuation, underscore or IPv6 literal)
 fail before output, preventing attribute/directive injection; runtime URL/method checks remain
 narrower and host ceilings are never embedded.
+
+**Pilot effects and idle collection.** The official browser host implements the
+clock, entropy, environment snapshot and exit with native results, statuses,
+output and fair fuel; the mapping is in
+[Browser effect mapping](embedding.md#browser-effect-mapping-official-host).
+`date_now` is an audited `time.now` broker operation decided before `Date.now`
+is read: the exact enabled package request and, when the embedder supplies a
+`permissionCeiling`, its own `"time.now": true` (an empty ceiling denies, and
+`time.timer` never authorizes it). A denial logs the native text and returns
+NaN. `number_random` is ungated (accepted decision 9) and converts one fresh
+`crypto.getRandomValues` 64-bit word exactly as native (top 53 bits times
+2^-53); `crypto.getRandomValues`/`randomUUID` reach it through the guest
+prelude. `env_snapshot` reads only the embedder's `environmentInputs` snapshot:
+the empty name lists the set variables whose exact names both the package and
+the ceiling `env.get` scopes list (wildcards name nothing), serialized in native
+member order; a named lookup is one `env.get` scope check. Like native, neither
+the snapshot nor `process_exit_f64` is an audited broker operation; both observe
+the broker's current state. An authorized exit ends the run or `mount` session
+with status `ok` and its `exitCode`; a denied or invalid code is a recoverable
+status. The effect registry (`browser::registry().effects`) carries the
+operation names, capability ids, the entropy conversion widths, the failure
+texts and the collector constants; a `varta-project` test compares the
+maintenance-exhaustion templates with the runtime's `BudgetExhausted`.
+
+In `mount` sessions of v38 modules with `varta.collector.idle`, the Worker runs
+idle collection once per idle period exactly like the native application
+instance: after a closed turn, when the instance is alive and no task is
+runnable, steps of `collector::IDLE_STEP_UNITS` run under a fresh
+`maintenanceFuel` allowance while `budget::MAINTENANCE_STEP_FUEL` remains,
+until `IDLE_NONE` or `IDLE_DONE`; any other status is fatal. The turn's
+remaining fuel is restored afterwards. A metered trap with an empty tank is the
+native maintenance-fuel exhaustion; the maintenance deadline is checked after
+every step and is a hard bound through the parent watchdog, which terminates
+the Worker (a step is never interrupted inside guest code). Results report the
+listed periods (`maintenance`: after-turn, fuel, steps, completion, memory),
+`maintenancePeriods` and `maintenanceFuel` with native listing rules. Bounded
+`run` executions run no maintenance, like native bounded runs.
 
 The browser transport uses Fetch with omitted credentials, no referrer, no cache,
 CORS and manual redirects. Browser-owned request headers fail before Fetch instead

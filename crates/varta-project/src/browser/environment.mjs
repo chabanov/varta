@@ -84,3 +84,22 @@ export function createEnvironmentAccess(snapshot, policy, broker, id) {
     },
   });
 }
+
+/** `env_snapshot`: the native JSON text of granted, set variables. The empty
+ * name lists the exact `env.get` names of the request (and of the ceiling,
+ * when one exists); a wildcard names nothing. Another name is one `env.get`
+ * lookup, and an unset one gives an empty object. Like native, neither form is
+ * an audited broker operation: `open()` is the broker's current state. Members
+ * keep the native order (Unicode scalar order of the names). */
+export function createEnvironmentSnapshot(snapshot, policy, open) {
+  const text = names => '{' + names.filter(name => snapshot.has(name))
+    .map(name => JSON.stringify(name) + ':' + JSON.stringify(snapshot.get(name))).join(',') + '}';
+  return Object.freeze({
+    read(name) {
+      if (typeof name !== 'string') throw new TypeError('invalid environment snapshot name');
+      if (name === '') return {status:'ok', text:text(open() ? policy.exactNames() : [])};
+      if (!open() || !policy.allows(name)) return {status:'denied'};
+      return {status:'ok', text:text([name])};
+    },
+  });
+}

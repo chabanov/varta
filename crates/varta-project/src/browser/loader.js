@@ -141,7 +141,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
     const platform={},permissionListeners=[];
     const queue=viewQueue.createViewQueue();
     let timer,deadlineAt,startupRemaining;
-    const arm=(delay=budgets.deadlinePerTurnMs)=>{clearTimeout(timer);deadlineAt=performance.now()+delay;timer=setTimeout(()=>finish(new Error("browser execution deadline exceeded")),delay);};
+    const arm=(delay=budgets.deadlinePerTurnMs,message="browser execution deadline exceeded")=>{clearTimeout(timer);deadlineAt=performance.now()+delay;timer=setTimeout(()=>finish(new Error(message)),delay);};
     const ask=permissionPrompt.createPromptDriver({ask:onPrompt,signal:controller.signal,waiting:(value)=>{
       if(value){if(!ready)startupRemaining=Math.max(0,deadlineAt-performance.now());clearTimeout(timer);}
       else if(!ready&&!settled)arm(startupRemaining);
@@ -290,6 +290,14 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
           }catch(error){finish(error);}return;
         }
         if(data?.type==="turn_begin"&&mode==="application"){arm();return;}
+        // Idle collection between turns: a hard wall-clock bound per idle
+        // period (the Worker is terminated), with the native diagnostic.
+        if((data?.type==="maintenance_begin"||data?.type==="maintenance_end")&&mode==="application"&&descriptor.turnBudgets&&Number.isSafeInteger(data.turn)&&data.turn>0){
+          const C=descriptor.effects.collector;
+          if(data.type==="maintenance_begin")arm(budgets[C.deadlineBudget],C.deadlineExhausted.replace(C.turnPlaceholder,String(data.turn)).replace(C.limitPlaceholder,String(budgets[C.deadlineBudget])));
+          else clearTimeout(timer);
+          return;
+        }
         if(data?.type==="turn_end"){
           if(consenting){finish(new Error('unexpected browser checkpoint during consent'));return;}
           if(!Number.isSafeInteger(data.id)||data.id!==lastCheckpoint+1){finish(new Error('invalid browser turn checkpoint'));return;}lastCheckpoint=data.id;
@@ -375,7 +383,9 @@ export function mount(options={}) {
   const aborted=()=>controller.abort();options.signal?.addEventListener("abort",aborted,{once:true});
   if(options.signal?.aborted)controller.abort();
   const finished=execute({...options,signal:controller.signal,mode:"application",onControl:(value)=>{control=value;},onReady:(usage)=>{lastUsage=usage;resolveReady({usage});options.onReady?.({usage});},onTurn:(usage)=>{lastUsage=usage;options.onTurn?.(usage);}})
-    .then((result)=>{if(result.status!=="ok")rejectReady(new Error(result.error));return result;},(error)=>{rejectReady(error);if(closed)return{status:"closed",logs:error.logs??[],usage:lastUsage,permissions:error.permissions};throw error;})
+    // An instance that ends before its first checkpoint (an exit in main)
+    // was never ready; a later end leaves the resolved readiness unchanged.
+    .then((result)=>{rejectReady(new Error(result.status!=="ok"?result.error:`browser application exited with code ${result.exitCode}`));return result;},(error)=>{rejectReady(error);if(closed)return{status:"closed",logs:error.logs??[],usage:lastUsage,permissions:error.permissions};throw error;})
     .finally(()=>options.signal?.removeEventListener("abort",aborted));
   finished.catch(()=>{});
   return {ready,finished,deliver(event){let snapshot;try{snapshot=eventSources.snapshotHostEvent(event);}catch(error){return Promise.reject(error);}return ready.then(()=>control.deliver(snapshot));},async revoke(capability){await ready;return control.revoke(capability);},close(){closed=true;controller.abort();}};
@@ -389,7 +399,7 @@ function bootstrap(runtime={}){
       output.dataset.usage=JSON.stringify(usage);
       if(runtime.reportBudgets){let budget=document.querySelector('#varta-budgets');if(!budget){budget=document.createElement('pre');budget.id='varta-budgets';output.after(budget);}budget.textContent=Object.entries(usage).map(([name,value])=>`${name}: ${value}`).join('\n');}
     };
-    const done=(result)=>{output.textContent=result.logs.join("\n")+(result.status==="failed"?`\n${result.error}`:"");output.dataset.status=result.status;show({fuelRemaining:result.fuelRemaining,hostCalls:result.hostCalls,microtasks:result.microtasks,outputBytes:result.outputBytes,fuelUsed:result.fuelUsed,turns:result.turns});};
+    const done=(result)=>{output.textContent=result.logs.join("\n")+(result.status==="failed"?`\n${result.error}`:"");output.dataset.status=result.status;if(result.status==="ok")output.dataset.exitCode=String(result.exitCode);show({fuelRemaining:result.fuelRemaining,hostCalls:result.hostCalls,microtasks:result.microtasks,outputBytes:result.outputBytes,fuelUsed:result.fuelUsed,turns:result.turns});};
     const failed=(error)=>{output.textContent=[...(error.logs??[]),error.message].join("\n");output.dataset.status="failed";output.dataset.guestStarted=String(error.guestStarted);};
     if(descriptor.hasView||runtime.application){
       try{
