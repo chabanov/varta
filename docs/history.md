@@ -92,6 +92,38 @@ Chrome process tree's memory growing by about 37 MB) agree.
 `build-kv-codec.py` takes Cargo's target directory from `cargo metadata`, so
 a clean-room build with `CARGO_TARGET_DIR` completes.
 
+### Extent bounds from the value size (2026-11-05)
+
+Lead decision: the fuel-derived value bound refused unshared values Deno
+and the earlier v38 build store and read (arrays of 2048 or 3000 numbers,
+about 500 records of three fields), so the extent bounds now only stop
+sharing-driven blow-up. `kv::MAX_VALUE_NODES` is `kv::MAX_VALUE_BYTES`
+over the fewest bytes of one encoded value, `kv::MAX_VALUE_UNITS` the
+value size at the densest text rate (a nine-digit index key, nine units in
+six bytes); both derivations are compile-time assertions in
+`varta_common::kv`. Absent optional fields no longer count (they still pay
+fuel), so the stage walk and the classifier no longer count extents: the
+V8 writer and reader keep the bounds, and a `get` never refuses by extent
+what a `set` stored. A staged value keeps its refusal (`Value too large`,
+depth, extent) in its staged record and a commit reports it where Deno
+checks value sizes, so keys and range selectors keep Deno's own key-size
+messages for any number of parts (before, 2048 or more numeric parts gave
+the extent error). The largest unshared values (an array of one-byte
+values filling the value size, an object of nine-digit index keys) set
+and get natively under the engine's largest fuel; arrays of 2048 and 3000
+numbers and 500 records do so under production budgets natively and in
+Chrome (`unshared`). A diamond one level below the bound reads back whole
+with the largest fuel (`diamond-built`); the worst accepted value, the
+diamond at the bound, decodes whole and builds past a v38 guest's memory,
+a fatal memory exhaustion (`diamond-bound`), and under production fuel ends
+with the fatal fuel exhaustion while it is classified (`diamond-fuel`), as
+does a `getMany` of three arrays of 3000 numbers in one turn
+(`decode-fuel`), with logs and usage equal to native in Chrome. Measured:
+reading the worst accepted value grows a native debug process from about
+76 MB to 101 MB and the codec module's memory by 5 MiB; Chrome's process
+tree grows by at most about 120 MB over any diamond case; refusals grow
+neither.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only

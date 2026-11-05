@@ -2917,12 +2917,19 @@ Review fixes (2026-11-05, lead and owner decisions):
   of a few dozen stored bytes exhausted the turn's fuel on `get`, and a
   slightly larger one ran a native decode past the deadline at about 1 GB
   of host memory. `kv::MAX_VALUE_NODES` and `kv::MAX_VALUE_UNITS` now bound
-  the values and text a value decodes to, a shared part counted at every
-  reach, in the stage walk, the V8 writer and reader and the classifier on
-  both hosts with one named recoverable `TypeError`; the classifier also
-  pays fuel as it goes. The value bound is derived from the production
-  turn's fuel, so it also refuses unshared values with more values than it
-  (Deno stores them): a deliberate deviation for the owner to review.
+  the values and text a value expands to, a shared part counted at every
+  reach, in the V8 writer and reader on both hosts with one named
+  recoverable `TypeError`; the classifier pays fuel as it goes. Lead
+  decision (2026-11-05): the bounds only stop sharing-driven blow-up. They
+  are derived from `kv::MAX_VALUE_BYTES` (one value per encoded byte at
+  least; text at the densest rate, a nine-digit index key), so every value
+  Deno stores without sharing sets and gets, as in Deno and the earlier v38
+  build; the earlier fuel-derived value bound refused arrays of 2048
+  numbers. A large value whose decoding is past its turn's fuel (alone, or
+  with the others of one `getMany` or `list` batch) or whose result is past
+  the guest's memory ends the run with the ordinary fatal exhaustion, as
+  any too expensive work does, on both hosts. Keys and range selectors
+  never meet a value's bounds and keep Deno's key-size messages.
 - **Writability as native**: a database opens writable when the request and
   the ceiling cover `kv.write`, whatever the broker's state; an uncertain
   container refuses reads too.
