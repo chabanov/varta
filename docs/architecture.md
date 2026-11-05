@@ -12328,7 +12328,11 @@ unmapped generic family before a match is rejected. The embedding host may
 explicitly map aliases, including generic families, to a supplied font and must ensure
 the same fonts and glyph coverage on comparison targets. Glyph fallback is limited
 to the explicit collection; missing glyphs use its `.notdef`, with no ambient
-system-font discovery. A text node's rectangle
+system-font discovery. A face with an `opsz` variation axis is shaped and drawn at
+an optical size equal to the used font size in CSS pixels, clamped by the axis
+range: CSS `font-optical-sizing: auto`, the initial value (the property itself is
+outside the view subset), as Chrome 156 sets it for web fonts and the macOS system
+UI font alike (`text_takes_the_optical_size_of_its_font_size`). A text node's rectangle
 is its anonymous layout box, not a glyph-ink bound, on the single-text-child
 path. Inline-only formatting contexts instead expose unions of their font-box
 fragments for descendants; those unions are not themselves hit regions.
@@ -12352,7 +12356,9 @@ are specified in the [embedding contract](embedding.md#headless-geometry-output)
 
 The text-aware native path admits adjacent text and nested `span`, `strong`,
 `em`, `code`, `label`, explicitly styled links and `br` inside supported block containers.
-Inline flex/grid items are blockified by their parent; ordinary inline nodes
+Inline flex/grid items are blockified by their parent, including an element
+with an explicit `display: inline` whose only child is text (a `div` or an
+author-styled `button` lays out as with `display: block`); ordinary inline nodes
 share one shaped paragraph with style ranges. Whitespace collapses across node
 boundaries, line breaks preserve source order, and hanging break spaces do not
 extend normal-whitespace fragments. Parent and inline-ancestor line struts share
@@ -12607,7 +12613,7 @@ child of a 26px `code` returns to 32px. A percentage `line-height` resolves
 against the element's size after that step (`pre { line-height: 150% }` is
 19.5px). The user-agent family must resolve through the host's explicit
 aliases; an unmapped `monospace` is refused, and bold without a bold face stays
-a refused synthesized face. Em margins need the host text size, so the
+a refused synthesized face (see the weight rule below). Em margins need the host text size, so the
 geometry-only path refuses them. A size that is not fixed by an absolute
 length (the initial `medium` keyword, user-agent scales and percentages of
 them) computes to at least Chrome's minimum logical font size,
@@ -15878,9 +15884,10 @@ Remaining differences: a generic family that no face declares (including the
 user-agent `monospace` without a `monospace` face) still resolves to the
 browser's own fonts in the browser and is refused by the native shaper, a
 divergence that predates the section; a run whose weight or style has no
-face (a bold run in a family without a bold face) is refused at native paint,
-while the browser, with synthesis off, draws the nearest face unemboldened and
-upright; and a control's font size stays Chrome's control size in the
+face and would need synthesis (a run of weight 600 or more whose nearest face
+is lighter than 600, or an italic run without an italic face) is refused at
+native paint, while the browser, with synthesis off, draws the nearest face
+unemboldened and upright; and a control's font size stays Chrome's control size in the
 browser and the inherited size natively unless the guest sets one.
 
 Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserialization
@@ -16062,10 +16069,35 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   directories are created; a refused face is `ShellError::Fonts`, a refused
   section `ShellError::Artifact`, both before any guest code. Weight and style
   select the face whose own tables state them, so bold and italic text uses
-  the packaged faces; a weight or style without a face would need synthesis,
-  which stays refused at paint. `--font PATH FAMILY` (nonempty, at most
+  the packaged faces. Chrome 156 emboldens only a requested weight of 600 or
+  more on a face lighter than 600, and draws a lighter request (500 on a
+  regular face) or a face of 600 or more as it is; native paint follows it,
+  so only the synthesis Chrome would apply (and any synthetic italic) stays
+  refused at paint (`only_a_bold_request_on_a_lighter_face_needs_synthesized_bold`).
+  `--font PATH FAMILY` (nonempty, at most
   `shell::MAX_FONT_BYTES`) supplies one explicit face for an artifact without
   fonts and is refused (`ShellError::FontConflict`) for one that ships fonts.
+- **System fonts.** `--system-fonts`, also only for an artifact without fonts
+  (`ShellError::FontConflict` otherwise) and exclusive with `--font`, maps the
+  CSS generic families to this computer's fonts as the platform's browser
+  does: on macOS, as probed with Chrome 156, Times for `serif` (first, so the
+  family of text without `font-family`), the system UI font (its regular and
+  italic files, named by CoreText's UI font) for `system-ui`, Helvetica for
+  `sans-serif` and Menlo for `monospace`. The host names each file through the
+  platform's font APIs (a named family must be installed under that exact
+  family, `ShellError::SystemFontMissing` otherwise), reads it bounded by
+  `MAX_SYSTEM_FONT_FILE_BYTES` (a variable UI font exceeds the packaged-face
+  limit; the collection keeps `MAX_FONT_FACES` and `MAX_FONT_BYTES`), checks
+  that the file registers the family (`TextMeasurer::system_font_families`;
+  `ShellError::SystemFontFamily`) and loads the set with
+  `TextMeasurer::new_with_system_fonts`, before storage directories are
+  created. The application never names a file, and nothing else of the
+  system's fonts is reachable: a character outside these faces gets only the
+  next family of its CSS list, never an OS fallback. Text then depends on the
+  machine and its OS version, so pixel and geometry oracles do not apply to a
+  run with system fonts; packaged fonts remain the deterministic path. Other
+  platforms refuse the option (`ShellError::SystemFontsUnsupported`) until
+  their font lookup is added.
   `--renderer cpu|gpu|auto` selects
   presentation (default `cpu`). An explicit `gpu` is refused before anything
   else in a build without the `gpu` feature, and is an error

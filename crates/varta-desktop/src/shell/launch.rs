@@ -32,8 +32,9 @@ pub struct Package<'a> {
     /// own storage directory, which also holds its permission decisions and
     /// audit log.
     pub storage: &'a Path,
-    /// An explicit font (`--font`) for an artifact that ships no fonts; an
-    /// artifact that ships fonts refuses it.
+    /// An explicit font (`--font`) or the host's system fonts
+    /// (`--system-fonts`) for an artifact that ships no fonts; an artifact
+    /// that ships fonts refuses it.
     pub font: Option<&'a FontSet>,
 }
 
@@ -283,6 +284,17 @@ pub fn read_font(path: &Path) -> Result<Vec<u8>, ShellError> {
     read_input(path, MAX_FONT_BYTES).map_err(|source| ShellError::Font {
         path: PathBuf::from(path),
         source,
+    })
+}
+
+/// Read a system font file the platform named (`--system-fonts`): nonempty
+/// and at most `varta_common::view::fonts::MAX_SYSTEM_FONT_FILE_BYTES`.
+pub(super) fn read_system_font(path: &Path) -> Result<Vec<u8>, ShellError> {
+    read_input(path, varta_common::view::fonts::MAX_SYSTEM_FONT_FILE_BYTES).map_err(|source| {
+        ShellError::Font {
+            path: PathBuf::from(path),
+            source,
+        }
     })
 }
 

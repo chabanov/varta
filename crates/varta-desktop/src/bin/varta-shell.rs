@@ -28,10 +28,11 @@ fn run(arguments: args::ShellArgs, started: Instant) -> Result<(), Box<dyn std::
     // preparing it creates the artifact's storage directories (after its
     // fonts are parsed).
     window::check_renderer(arguments.renderer)?;
-    let font = arguments
-        .font
-        .map(|(path, family)| read_font(&path).map(|bytes| FontSet::single(bytes, family)))
-        .transpose()?;
+    let font = match arguments.font {
+        Some((path, family)) => Some(FontSet::single(read_font(&path)?, family)),
+        None if arguments.system_fonts => Some(FontSet::system()?),
+        None => None,
+    };
     let storage = storage_base(arguments.data_dir)?;
     let launch = Launch::packaged(&Package {
         artifact: &arguments.artifact,

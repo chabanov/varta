@@ -37,6 +37,7 @@ fn shell_arguments_are_checked_without_a_cli_framework() {
     assert!(help.contains("varta-shell ARTIFACT"), "{help}");
     assert!(help.contains("--policy PATH"), "{help}");
     assert!(help.contains("--revoke CAPABILITY"), "{help}");
+    assert!(help.contains("--system-fonts"), "{help}");
     assert!(help.contains("asked once"), "{help}");
     let output = shell().arg("--version").output().unwrap();
     assert!(output.status.success());
@@ -46,6 +47,13 @@ fn shell_arguments_are_checked_without_a_cli_framework() {
         vec!["--policy", "policy.json"],
         vec!["app.wasm", "--policy"],
         vec!["app.wasm", "--font", "font.ttf"],
+        vec![
+            "app.wasm",
+            "--font",
+            "font.ttf",
+            "Fixture",
+            "--system-fonts",
+        ],
         vec!["app.wasm", "--decisions", "decisions.json"],
         vec!["app.wasm", "second.wasm"],
         vec!["app.wasm", "--renderer", "metal"],
@@ -205,6 +213,23 @@ fn fonts_are_parsed_and_conflicts_refused_before_any_storage_is_created() {
         stderr(&output).contains("ships its own fonts"),
         "{output:?}"
     );
+    assert!(!storage.exists());
+    // And `--system-fonts`: on macOS after the system faces parse, elsewhere
+    // because the platform has no lookup; neither creates storage.
+    let output = shell()
+        .arg(&fonts)
+        .arg("--system-fonts")
+        .arg("--data-dir")
+        .arg(&storage)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let expected = if cfg!(target_os = "macos") {
+        "ships its own fonts"
+    } else {
+        "supported on macOS only"
+    };
+    assert!(stderr(&output).contains(expected), "{output:?}");
     assert!(!storage.exists());
 }
 

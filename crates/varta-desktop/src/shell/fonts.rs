@@ -1,5 +1,6 @@
 //! The explicit faces the shell lays out and renders with: an artifact's
-//! resource section or, for an artifact without one, the `--font` argument.
+//! resource section or, for an artifact without one, the `--font` argument
+//! or the host's system fonts (`--system-fonts`).
 use std::sync::Arc;
 use varta_artifact::Resources;
 use varta_view::{TextFont, TextMeasureError, TextMeasurer};
@@ -20,9 +21,19 @@ struct Face {
 #[derive(Debug, Clone)]
 pub struct FontSet {
     faces: Vec<Face>,
-    /// The faces come from a resource section, so their generic families
-    /// name packaged families (`TextMeasurer::new_with_packaged_fonts`).
-    packaged: bool,
+    origin: Origin,
+}
+
+/// Where a set's faces come from, which selects how the shaper loads them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// A resource section: generic families name packaged families
+    /// (`TextMeasurer::new_with_packaged_fonts`).
+    Packaged,
+    /// `--font PATH FAMILY` (`TextMeasurer::new_with_fonts`).
+    Explicit,
+    /// The host's system font files (`TextMeasurer::new_with_system_fonts`).
+    System,
 }
 
 impl FontSet {
@@ -45,7 +56,7 @@ impl FontSet {
                         .collect(),
                 })
                 .collect(),
-            packaged: true,
+            origin: Origin::Packaged,
         })
     }
 
@@ -58,7 +69,23 @@ impl FontSet {
                 family,
                 aliases: Vec::new(),
             }],
-            packaged: false,
+            origin: Origin::Explicit,
+        }
+    }
+
+    /// System font files with their registered families and the generic
+    /// family each stands for, in mapping order.
+    pub(super) fn from_system_faces(faces: Vec<(Vec<u8>, String, Option<&str>)>) -> Self {
+        Self {
+            faces: faces
+                .into_iter()
+                .map(|(data, family, alias)| Face {
+                    data: data.into(),
+                    family,
+                    aliases: alias.into_iter().map(Into::into).collect(),
+                })
+                .collect(),
+            origin: Origin::System,
         }
     }
 
@@ -82,9 +109,9 @@ impl FontSet {
     }
 
     /// A text measurer over every face (`TextMeasurer::new_with_packaged_fonts`
-    /// for a resource section, otherwise `new_with_fonts`): the shaper parses
-    /// each face and refuses one that is malformed or whose tables do not
-    /// name its family.
+    /// for a resource section, `new_with_system_fonts` for system fonts,
+    /// otherwise `new_with_fonts`): the shaper parses each face and refuses
+    /// one that is malformed or whose tables do not name its family.
     pub fn measurer(&self) -> Result<TextMeasurer, TextMeasureError> {
         let fonts = self
             .faces
@@ -95,10 +122,10 @@ impl FontSet {
                 aliases: face.aliases.clone(),
             })
             .collect();
-        if self.packaged {
-            TextMeasurer::new_with_packaged_fonts(fonts)
-        } else {
-            TextMeasurer::new_with_fonts(fonts)
+        match self.origin {
+            Origin::Packaged => TextMeasurer::new_with_packaged_fonts(fonts),
+            Origin::Explicit => TextMeasurer::new_with_fonts(fonts),
+            Origin::System => TextMeasurer::new_with_system_fonts(fonts),
         }
     }
 }

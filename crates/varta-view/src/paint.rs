@@ -1383,6 +1383,26 @@ fn paint_shaped(
     )
 }
 
+/// Blink's bold threshold: a requested weight from which a face lighter than
+/// it is drawn with synthetic bold (probed with Chrome 156). Below it, and
+/// for a face at or above it, the selected face is drawn as is.
+const SYNTHETIC_BOLD_THRESHOLD: f32 = 600.0;
+/// The weight of a face whose tables cannot be read (CSS `normal`).
+const DEFAULT_WEIGHT_CLASS: f32 = 400.0;
+
+/// Whether Chrome would embolden this run, which the native painter refuses.
+/// The shaper flags emboldening for any request heavier than a face without
+/// a weight axis, so its flag alone is not Chrome's rule.
+fn synthetic_bold(run: &parley::Run<'_, u32>) -> bool {
+    if !run.synthesis().embolden() || run.font_attrs().weight.value() < SYNTHETIC_BOLD_THRESHOLD {
+        return false;
+    }
+    let font = run.font();
+    FontRef::from_index(font.data.as_ref(), font.index).map_or(DEFAULT_WEIGHT_CLASS, |face| {
+        face.attributes().weight.value()
+    }) < SYNTHETIC_BOLD_THRESHOLD
+}
+
 #[derive(Default)]
 struct TextInk<'a> {
     flow: Option<&'a crate::inline::Frame>,
@@ -1445,7 +1465,7 @@ fn paint_shaped_with(
             let base_color = color(glyph_run.style().brush)?;
             paint.set_color(base_color);
             let run = glyph_run.run();
-            if run.synthesis().embolden() || run.synthesis().skew().is_some() {
+            if synthetic_bold(run) || run.synthesis().skew().is_some() {
                 return Err(PaintError::Unsupported(id));
             }
             let font_data = run.font();

@@ -150,6 +150,30 @@ fn bold_headings_without_a_bold_face_refuse_synthesized_bold() {
 }
 
 #[test]
+fn only_a_bold_request_on_a_lighter_face_needs_synthesized_bold() {
+    // Chrome 156 emboldens a face lighter than 600 only for a requested
+    // weight of 600 or more; otherwise it draws the selected face as is.
+    let pixels = |faces: &[&[u8]], weight: &str| {
+        let mut b = base("200px");
+        add(&mut b, 2, 3, Tag::Div, "A");
+        b.set_style(3, P::FontWeight, weight);
+        view(&b)
+            .rasterize_with_text(SIDE, SIDE, &mut fonts(faces, &[]), HOST_SIZE)
+            .map(|image| image.pixels)
+    };
+    let regular = pixels(&[REGULAR], "400").unwrap();
+    assert_eq!(pixels(&[REGULAR], "500").unwrap(), regular);
+    assert!(matches!(
+        pixels(&[REGULAR], "600"),
+        Err(PaintError::Unsupported(_))
+    ));
+    // With a bold face, 600 selects it and needs no synthesis.
+    let bold = pixels(&[REGULAR, BOLD], "600").unwrap();
+    assert_ne!(bold, regular);
+    assert_eq!(pixels(&[REGULAR, BOLD], "700").unwrap(), bold);
+}
+
+#[test]
 fn lists_indent_items_paint_markers_and_markers_hit_their_item() {
     let mut b = base("200px");
     b.create_element(3, Tag::Ul).insert(2, 3, 0);

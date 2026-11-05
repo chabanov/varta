@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// The `--help` text.
-pub const USAGE: &str = "Varta native shell\n\nUsage:\n  varta-shell ARTIFACT [--policy PATH] [--data-dir DIR] [--font PATH FAMILY] [--renderer cpu|gpu|auto]\n  varta-shell ARTIFACT --revoke CAPABILITY [--data-dir DIR]\n  varta-shell --help | --version\n\nARTIFACT is a packaged checked-f64-utf16-v38 view application written by\n'varta build': app.wasm beside app.manifest.json (and app.resources when it\nships fonts), or a fixed-footer container. Its manifest is the package\nrequest; nothing is ambient. Text uses the artifact's fonts.\n\nOptions:\n  --policy PATH      host ceiling (the varta-runtime host policy format); a\n                     resource must satisfy the request and the ceiling, and an\n                     empty ceiling denies everything\n  --data-dir DIR     host directory for application storage; each artifact\n                     hash gets its own directory (default: the platform's\n                     per-user application data directory)\n  --font PATH FAMILY explicit layout and render font for an artifact that\n                     ships no fonts (refused for one that does)\n  --renderer MODE    cpu (default), gpu or auto. gpu needs a build with the\n                     gpu feature and fails when the GPU does not initialize\n                     (a GPU lost later falls back to the CPU); auto uses the\n                     GPU when it initializes, otherwise the CPU\n  --revoke CAPABILITY store a denial of CAPABILITY for ARTIFACT and exit; a\n                     running shell of that artifact denies new operations of\n                     it, and later starts keep it denied\n\nPermissions: a required permission without a stored decision is asked once,\nin a separate host window, before the application starts; refusing it stops\nthe start. An optional permission is asked only when the application\nrequests it during a user gesture. Allow and Deny are stored per artifact\nhash under the storage directory, with an audit log of every decision.\nGranted copy_text and external links of a user gesture use the system\nclipboard and browser.\n";
+pub const USAGE: &str = "Varta native shell\n\nUsage:\n  varta-shell ARTIFACT [--policy PATH] [--data-dir DIR] [--font PATH FAMILY | --system-fonts]\n              [--renderer cpu|gpu|auto]\n  varta-shell ARTIFACT --revoke CAPABILITY [--data-dir DIR]\n  varta-shell --help | --version\n\nARTIFACT is a packaged checked-f64-utf16-v38 view application written by\n'varta build': app.wasm beside app.manifest.json (and app.resources when it\nships fonts), or a fixed-footer container. Its manifest is the package\nrequest; nothing is ambient. Text uses the artifact's fonts.\n\nOptions:\n  --policy PATH      host ceiling (the varta-runtime host policy format); a\n                     resource must satisfy the request and the ceiling, and an\n                     empty ceiling denies everything\n  --data-dir DIR     host directory for application storage; each artifact\n                     hash gets its own directory (default: the platform's\n                     per-user application data directory)\n  --font PATH FAMILY explicit layout and render font for an artifact that\n                     ships no fonts (refused for one that does)\n  --system-fonts     for an artifact that ships no fonts: this computer's\n                     fonts for the generic families, as the platform's\n                     browser maps them (macOS: Times for serif and unstyled\n                     text, the system UI font for system-ui, Helvetica for\n                     sans-serif, Menlo for monospace); text then depends on\n                     the machine and its OS version\n  --renderer MODE    cpu (default), gpu or auto. gpu needs a build with the\n                     gpu feature and fails when the GPU does not initialize\n                     (a GPU lost later falls back to the CPU); auto uses the\n                     GPU when it initializes, otherwise the CPU\n  --revoke CAPABILITY store a denial of CAPABILITY for ARTIFACT and exit; a\n                     running shell of that artifact denies new operations of\n                     it, and later starts keep it denied\n\nPermissions: a required permission without a stored decision is asked once,\nin a separate host window, before the application starts; refusing it stops\nthe start. An optional permission is asked only when the application\nrequests it during a user gesture. Allow and Deny are stored per artifact\nhash under the storage directory, with an audit log of every decision.\nGranted copy_text and external links of a user gesture use the system\nclipboard and browser.\n";
 
 /// One `varta-shell` invocation.
 #[derive(Debug, PartialEq, Eq)]
@@ -31,6 +31,8 @@ pub struct ShellArgs {
     pub policy: Option<PathBuf>,
     pub data_dir: Option<PathBuf>,
     pub font: Option<(PathBuf, String)>,
+    /// `--system-fonts`: the host's fonts for the generic families.
+    pub system_fonts: bool,
     pub renderer: Renderer,
 }
 
@@ -82,11 +84,14 @@ pub enum ArgsError {
     Renderer(String),
     #[error("{0} takes only ARTIFACT and --data-dir; use --help")]
     Exclusive(&'static str),
+    #[error("{0} and {1} cannot be combined; use --help")]
+    Conflict(&'static str, &'static str),
 }
 
 const POLICY: &str = "--policy";
 const DATA_DIR: &str = "--data-dir";
 const FONT: &str = "--font";
+const SYSTEM_FONTS: &str = "--system-fonts";
 const RENDERER: &str = "--renderer";
 const REVOKE: &str = "--revoke";
 const HELP: [&str; 2] = ["--help", "-h"];
@@ -107,6 +112,7 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
     let mut policy = None;
     let mut data_dir = None;
     let mut font = None;
+    let mut system_fonts = None;
     let mut renderer = None;
     let mut revoke = None;
     while let Some(value) = values.next() {
@@ -122,6 +128,7 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
                     .map_err(|_| ArgsError::NotUtf8("the font family"))?;
                 set(&mut font, FONT, (file, family))?;
             }
+            Some(SYSTEM_FONTS) => set(&mut system_fonts, SYSTEM_FONTS, ())?,
             Some(RENDERER) => {
                 let mode = values
                     .next()
@@ -148,7 +155,7 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
     }
     let artifact = artifact.ok_or(ArgsError::MissingArtifact)?;
     if let Some(capability) = revoke {
-        if policy.is_some() || font.is_some() || renderer.is_some() {
+        if policy.is_some() || font.is_some() || system_fonts.is_some() || renderer.is_some() {
             return Err(ArgsError::Exclusive(REVOKE));
         }
         return Ok(Command::Revoke(RevokeArgs {
@@ -157,11 +164,15 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
             data_dir,
         }));
     }
+    if font.is_some() && system_fonts.is_some() {
+        return Err(ArgsError::Conflict(FONT, SYSTEM_FONTS));
+    }
     Ok(Command::Run(ShellArgs {
         artifact,
         policy,
         data_dir,
         font,
+        system_fonts: system_fonts.is_some(),
         renderer: renderer.unwrap_or_default(),
     }))
 }
@@ -211,6 +222,7 @@ mod tests {
                 policy: Some("ceiling.json".into()),
                 data_dir: Some("/data".into()),
                 font: Some(("font.ttf".into(), "Fixture Sans".into())),
+                system_fonts: false,
                 renderer: Renderer::Auto,
             }))
         );
@@ -221,6 +233,18 @@ mod tests {
                 policy: None,
                 data_dir: None,
                 font: None,
+                system_fonts: false,
+                renderer: Renderer::Cpu,
+            }))
+        );
+        assert_eq!(
+            parse_all(&["app.wasm", "--system-fonts"]),
+            Ok(Command::Run(ShellArgs {
+                artifact: "app.wasm".into(),
+                policy: None,
+                data_dir: None,
+                font: None,
+                system_fonts: true,
                 renderer: Renderer::Cpu,
             }))
         );
@@ -286,6 +310,24 @@ mod tests {
         assert_eq!(
             parse_all(&["app.wasm", "--revoke", "net.request", "--policy", "p.json"]),
             Err(ArgsError::Exclusive(REVOKE))
+        );
+        assert_eq!(
+            parse_all(&["app.wasm", "--revoke", "net.request", "--system-fonts"]),
+            Err(ArgsError::Exclusive(REVOKE))
+        );
+        assert_eq!(
+            parse_all(&["app.wasm", "--system-fonts", "--system-fonts"]),
+            Err(ArgsError::Repeated(SYSTEM_FONTS))
+        );
+        assert_eq!(
+            parse_all(&[
+                "app.wasm",
+                "--system-fonts",
+                "--font",
+                "font.ttf",
+                "Fixture Sans"
+            ]),
+            Err(ArgsError::Conflict(FONT, SYSTEM_FONTS))
         );
     }
 }

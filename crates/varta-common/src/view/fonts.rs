@@ -7,6 +7,11 @@
 pub const MAX_FONT_FACES: usize = 16;
 /// The largest single face.
 pub const MAX_FONT_FACE_BYTES: usize = 4 * 1024 * 1024;
+/// The largest single font file a native host reads from its own system
+/// fonts (a host option, never package input): a platform's variable UI font
+/// is larger than a packaged face may be. A collection of such files still
+/// stays within [`MAX_FONT_BYTES`] and [`MAX_FONT_FACES`].
+pub const MAX_SYSTEM_FONT_FILE_BYTES: usize = MAX_FONT_BYTES;
 /// The largest total of font bytes in one collection.
 pub const MAX_FONT_BYTES: usize = 16 * 1024 * 1024;
 /// The longest family name, or generic/named alias, a renderer registers

@@ -1724,11 +1724,15 @@ fn geometry_and_text_inner(
             let is_flex_or_grid = parent_style
                 .get(&CssProperty::Display)
                 .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"));
+            // A flex or grid item's cascaded `inline` is blockified to
+            // `block` (CSS Display 3 §2.7), as its box already is.
             let is_simple_block = parent != ROOT_NODE
                 && parent_node.children.len() == 1
-                && parent_style
-                    .get(&CssProperty::Display)
-                    .is_none_or(|value| value == "block");
+                && parent_style.get(&CssProperty::Display).is_none_or(|value| {
+                    value == "block"
+                        || (value == "inline"
+                            && crate::inline::blockified(tree, &layout_env, parent))
+                });
             let adjacent_text = parent_node.children.windows(2).any(|pair| {
                 pair.contains(&id)
                     && pair.iter().all(|child| {

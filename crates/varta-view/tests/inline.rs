@@ -207,6 +207,36 @@ fn inline_breaks_and_flex_item_blockification_keep_css_flow() {
     );
 }
 
+#[test]
+fn an_explicitly_inline_block_element_flex_item_lays_out_its_text_as_a_block() {
+    // A flex item's cascaded `inline` is blockified to `block`: a div or an
+    // author-styled button with one text child gets the block's boxes and
+    // pixels, as in Chrome.
+    let item = |tag: Tag, display: &str| {
+        let mut b = base("100px");
+        b.set_style(2, P::Display, "flex")
+            .create_element(3, tag)
+            .set_style(3, P::Display, display)
+            .set_style(3, P::Border, "1px solid #000000")
+            .create_text(4, "AA")
+            .insert(2, 3, 0)
+            .insert(3, 4, 0);
+        let v = view(b);
+        let mut f = font();
+        let boxes = v
+            .layout_boxes_with_text(100.0, 100.0, &mut f, 20.0)
+            .unwrap();
+        let pixels = v
+            .rasterize_with_text(100, 100, &mut f, 20.0)
+            .unwrap()
+            .pixels;
+        ((boxes[&3], boxes[&4]), pixels)
+    };
+    for tag in [Tag::Div, Tag::Button] {
+        assert_eq!(item(tag, "inline"), item(tag, "block"), "{tag:?}");
+    }
+}
+
 fn joined(left: &str, right: &str, different_color: bool) -> View {
     let mut b = base("100px");
     b.set_style(2, P::FontFamily, "\"Varta Inline Fixture\"")

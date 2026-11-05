@@ -5,8 +5,8 @@ pub(crate) mod field_display;
 pub(crate) mod whitespace;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::{
-    FontContext, FontFamilyName, FontStyle, FontWeight, Layout, LayoutContext, LineHeight,
-    OverflowWrap, StyleProperty, TextWrapMode,
+    FontContext, FontFamilyName, FontStyle, FontVariation, FontVariations, FontWeight, Layout,
+    LayoutContext, LineHeight, OverflowWrap, StyleProperty, TextWrapMode, setting::Tag,
 };
 use std::{
     borrow::Cow,
@@ -17,10 +17,25 @@ use std::{
 };
 use varta_common::view::fonts::{
     MAX_FONT_ALIASES, MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES, MAX_FONT_FAMILY_BYTES,
+    MAX_SYSTEM_FONT_FILE_BYTES,
 };
 
 // Native shaping requests: completed output, intermediate scratch, charged
 // operations and reusable scratch. Independent from source/paint allowances.
+/// The `opsz` variation axis. CSS `font-optical-sizing: auto` (the initial
+/// value; the property is outside the view subset) sets it to the used font
+/// size in CSS pixels, as Chrome does, and the face's axis range clamps it; a
+/// face without the axis ignores it.
+const OPTICAL_SIZE_AXIS: Tag = Tag::new(b"opsz");
+
+/// The automatic optical size of text at `size` CSS pixels.
+fn optical_size<'a>(size: f32) -> StyleProperty<'a, u32> {
+    StyleProperty::FontVariations(FontVariations::List(Cow::Owned(vec![FontVariation::new(
+        OPTICAL_SIZE_AXIS,
+        size,
+    )])))
+}
+
 const MAX_SHAPED_GLYPHS: usize = 65_536;
 const MAX_SHAPING_BUFFER_SLOTS: usize = 262_144;
 const MAX_SHAPING_OPERATIONS: u32 = 1_000_000;
@@ -343,6 +358,45 @@ impl TextMeasurer {
     /// Load a bounded collection of explicit fonts. Alias collisions are rejected.
     /// The first family is the default when CSS does not specify a family list.
     pub fn new_with_fonts(fonts: Vec<TextFont>) -> Result<Self, TextMeasureError> {
+        Self::load(fonts, MAX_FONT_FACE_BYTES)
+    }
+
+    /// Load font files a native host read from its own system fonts, as
+    /// [`Self::new_with_fonts`] does, with each file bounded by
+    /// [`MAX_SYSTEM_FONT_FILE_BYTES`] instead of the packaged-face limit (a
+    /// platform's variable UI font is larger). Nothing is looked up here: the
+    /// host names every file, family and generic alias.
+    pub fn new_with_system_fonts(fonts: Vec<TextFont>) -> Result<Self, TextMeasureError> {
+        Self::load(fonts, MAX_SYSTEM_FONT_FILE_BYTES)
+    }
+
+    /// The family names a system font file registers, in file order and
+    /// without repeats: the names [`Self::new_with_system_fonts`] accepts for
+    /// it. A host reads them from the file because a platform may know its
+    /// UI font under another name than the file's own.
+    pub fn system_font_families(data: Vec<u8>) -> Result<Vec<String>, TextMeasureError> {
+        if data.is_empty() || data.len() > MAX_SYSTEM_FONT_FILE_BYTES {
+            return Err(TextMeasureError::Font);
+        }
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        });
+        let registered = collection.register_fonts(Blob::new(Arc::new(data)), None);
+        let mut families: Vec<String> = Vec::new();
+        for (id, _) in registered {
+            let name = collection.family_name(id).ok_or(TextMeasureError::Font)?;
+            if !families.iter().any(|family| family == name) {
+                families.push(name.into());
+            }
+        }
+        if families.is_empty() {
+            return Err(TextMeasureError::Font);
+        }
+        Ok(families)
+    }
+
+    fn load(fonts: Vec<TextFont>, face_limit: usize) -> Result<Self, TextMeasureError> {
         if fonts.is_empty() || fonts.len() > MAX_FONT_FACES {
             return Err(TextMeasureError::Font);
         }
@@ -357,7 +411,7 @@ impl TextMeasurer {
                 .checked_add(font.data.len())
                 .ok_or(TextMeasureError::Font)?;
             if font.data.is_empty()
-                || font.data.len() > MAX_FONT_FACE_BYTES
+                || font.data.len() > face_limit
                 || bytes > MAX_FONT_BYTES
                 || font.family.is_empty()
                 || font.family.len() > MAX_FONT_FAMILY_BYTES
@@ -674,6 +728,7 @@ impl TextMeasurer {
         }
         builder.push_default(StyleProperty::FontFamily(family_names.as_slice().into()));
         builder.push_default(StyleProperty::FontSize(options.size));
+        builder.push_default(optical_size(options.size));
         builder.push_default(StyleProperty::FontWeight(FontWeight::new(options.weight)));
         builder.push_default(StyleProperty::FontStyle(if options.italic {
             FontStyle::Italic
@@ -709,6 +764,7 @@ impl TextMeasurer {
                 range.clone(),
             );
             builder.push(StyleProperty::FontSize(style.size), range.clone());
+            builder.push(optical_size(style.size), range.clone());
             builder.push(
                 StyleProperty::FontWeight(FontWeight::new(style.weight)),
                 range.clone(),

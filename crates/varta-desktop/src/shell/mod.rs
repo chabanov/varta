@@ -23,6 +23,7 @@ mod effects;
 mod fonts;
 mod launch;
 mod storage;
+mod system_fonts;
 pub mod window;
 
 pub use effects::NativeEffects;
@@ -63,9 +64,22 @@ pub enum ShellError {
     /// of `--font`.
     #[error("fonts: {0}")]
     Fonts(#[source] varta_view::TextMeasureError),
-    /// `--font` was given for an artifact that ships its own fonts.
-    #[error("the artifact ships its own fonts; --font applies only to artifacts without fonts")]
+    /// `--font` or `--system-fonts` was given for an artifact that ships its
+    /// own fonts.
+    #[error(
+        "the artifact ships its own fonts; --font and --system-fonts apply only to artifacts without fonts"
+    )]
     FontConflict,
+    /// `--system-fonts` on a platform whose font lookup this build lacks.
+    #[error("--system-fonts is supported on macOS only; use --font")]
+    SystemFontsUnsupported,
+    /// The platform has no font for a generic family `--system-fonts` maps.
+    #[error("the system has no font for the generic family {0}")]
+    SystemFontMissing(&'static str),
+    /// A system font file does not register the installed family that
+    /// named it.
+    #[error("system font {path} does not register the family {family}")]
+    SystemFontFamily { path: PathBuf, family: &'static str },
     /// A bare module given to the preview is unreadable, empty or too large.
     #[error("module {path}: {source}")]
     Module {
