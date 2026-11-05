@@ -13,16 +13,18 @@ const OPENTYPE_CFF: Tag = *b"OTTO";
 /// The offset table: sfnt version, table count and three search fields.
 const OFFSET_TABLE_BYTES: usize = 12;
 const TABLE_COUNT_AT: usize = 4;
-/// One table record: tag, checksum, offset and length.
-const TABLE_RECORD_BYTES: usize = 16;
 /// A table tag: four bytes at the start of its record.
 const TAG_BYTES: usize = 4;
 type Tag = [u8; TAG_BYTES];
-const RECORD_OFFSET_AT: usize = 8;
-const RECORD_LENGTH_AT: usize = 12;
+/// One table record: tag, `u32` checksum, `u32` offset and `u32` length.
+const RECORD_FIELD_BYTES: usize = size_of::<u32>();
+const RECORD_CHECKSUM_AT: usize = TAG_BYTES;
+const RECORD_OFFSET_AT: usize = RECORD_CHECKSUM_AT + RECORD_FIELD_BYTES;
+const RECORD_LENGTH_AT: usize = RECORD_OFFSET_AT + RECORD_FIELD_BYTES;
+const TABLE_RECORD_BYTES: usize = RECORD_LENGTH_AT + RECORD_FIELD_BYTES;
 const MAX_TABLES: usize = 256;
-/// Tables are 4-byte aligned in the file.
-const TABLE_ALIGNMENT: usize = 4;
+/// Tables are aligned in the file to the `u32` unit their checksum sums.
+const TABLE_ALIGNMENT: usize = size_of::<u32>();
 /// Tables every admitted face must contain.
 const REQUIRED_TABLES: [&Tag; 4] = [b"cmap", b"head", b"name", b"OS/2"];
 const OS2: &Tag = b"OS/2";
