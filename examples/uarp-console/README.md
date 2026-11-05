@@ -272,12 +272,14 @@ before any socket on both hosts. The three states must match: a fresh store
 (`Налаштування збережено.`, `Підключення…`) and after a later start
 (`Підключення…`: the key was read back from KV, OPFS in Chrome). The log lines
 are equal (the denial of `GET https://api.snaga.ai/api/v1/tenants/me`), and
-the key appears in no snapshot or page. Whole accessibility trees are not
-compared: Chrome hides what a modal dialog covers, which the headless model
-does not yet (package `w4-native-dialog`).
+the key appears in no snapshot or page. Markers count as visible when they
+are in the host's accessibility tree: an open modal dialog hides the banner
+behind it on both hosts (the fresh store shows only the dialog).
 
 Checkpoint 2026-11-05 (debug `varta`, local Chrome 156): all three states and
-their logs match. The console stays at `Підключення…` after the denial on both
+their logs match. The confirm dialog focuses Cancel when it opens
+(`autofocus`), so Enter right after it opens never confirms a destructive
+action. The console stays at `Підключення…` after the denial on both
 hosts because the SDK retries a denied request as a connection error (pilot
 finding F10).
 

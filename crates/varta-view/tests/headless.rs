@@ -4334,15 +4334,16 @@ fn checkboxes_dialogs_and_focus_follow_the_platform() {
     let mut view = view();
     let mut broker = Fixed::default();
     let mut batch = BatchWriter::new();
+    // The checkbox is inside the modal dialog: everything outside it is inert.
     batch
-        .create_element(2, Tag::Input)
-        .set_attribute(2, Attribute::Type, "checkbox")
-        .insert(1, 2, 0)
-        .listen(2, EventKind::Change, 1, ANY)
         .create_element(3, Tag::Dialog)
         .insert(1, 3, 0)
         .listen(3, EventKind::Cancel, 2, ANY)
         .listen(3, EventKind::Close, 3, ANY)
+        .create_element(2, Tag::Input)
+        .set_attribute(2, Attribute::Type, "checkbox")
+        .insert(3, 2, 0)
+        .listen(2, EventKind::Change, 1, ANY)
         .command(3, Command::ShowModal, 0.0)
         .command(2, Command::Focus, 0.0);
     view.commit(&batch.finish(), false, &mut broker).unwrap();
@@ -4354,9 +4355,12 @@ fn checkboxes_dialogs_and_focus_follow_the_platform() {
     )
     .unwrap();
     let snapshot = view.snapshot();
-    assert_eq!(snapshot["tree"]["children"][0]["checked"], true);
+    assert_eq!(
+        snapshot["tree"]["children"][0]["children"][0]["checked"],
+        true
+    );
     assert_eq!(snapshot["focus"], 2);
-    assert_eq!(snapshot["accessibility"]["children"][1]["modal"], true);
+    assert_eq!(snapshot["accessibility"]["children"][0]["modal"], true);
     view.input(
         &Input::Key {
             target: Target::Node(2),
@@ -4377,7 +4381,157 @@ fn checkboxes_dialogs_and_focus_follow_the_platform() {
     let cancel = kinds.iter().position(|k| *k == EventKind::Cancel).unwrap();
     let close = kinds.iter().position(|k| *k == EventKind::Close).unwrap();
     assert!(cancel < close);
-    assert_eq!(view.snapshot()["tree"]["children"][1]["open"], false);
+    let snapshot = view.snapshot();
+    assert_eq!(snapshot["tree"]["children"][0]["open"], false);
+    // Nothing was focused before the dialog: focus inside it is dropped.
+    assert_eq!(snapshot["focus"], serde_json::Value::Null);
+}
+
+/// Modal dialogs follow Chrome 156 (probed): `show_modal` focuses the first
+/// focusable descendant (an `autofocus` one first, else the dialog), Tab
+/// stays inside the topmost dialog, everything outside it is inert (scripted
+/// inputs naming it are refused, `focus` ignores it, the accessibility tree
+/// drops it), Esc cancels and closes the topmost dialog only and focus
+/// returns to the element focused before it was shown. A closed dialog's
+/// contents take no focus.
+#[test]
+fn modal_dialogs_trap_focus_and_make_the_rest_inert() {
+    let mut view = view();
+    let mut broker = Fixed::default();
+    let mut batch = BatchWriter::new();
+    // 2 before (button), 3 outside (input); 4 dialog d: 5 first (input),
+    // 6 second (button); 7 dialog e: 8 inner (button).
+    batch
+        .create_element(2, Tag::Button)
+        .set_attribute(2, Attribute::Id, "before")
+        .insert(1, 2, 0)
+        .create_element(3, Tag::Input)
+        .set_attribute(3, Attribute::Id, "outside")
+        .insert(1, 3, 0)
+        .create_element(4, Tag::Dialog)
+        .insert(1, 4, 0)
+        .create_element(5, Tag::Input)
+        .insert(4, 5, 0)
+        .create_element(6, Tag::Button)
+        .insert(4, 6, 0)
+        .create_element(7, Tag::Dialog)
+        .insert(1, 7, 0)
+        .create_element(8, Tag::Button)
+        .insert(7, 8, 0)
+        .command(2, Command::Focus, 0.0);
+    view.commit(&batch.finish(), false, &mut broker).unwrap();
+    let focus = |view: &View| view.snapshot()["focus"].clone();
+    let press = |view: &mut View, broker: &mut Fixed, key: &str, shift: bool| {
+        let target = view.snapshot()["focus"].as_u64().unwrap() as u32;
+        view.input(
+            &Input::Key {
+                target: Target::Node(target),
+                key: key.into(),
+                shift,
+                ctrl: false,
+                alt: false,
+                meta: false,
+                composing: false,
+            },
+            broker,
+        )
+        .unwrap();
+    };
+    // A closed dialog's contents take no focus: Tab goes before -> outside -> before.
+    press(&mut view, &mut broker, "Tab", false);
+    assert_eq!(focus(&view), 3);
+    press(&mut view, &mut broker, "Tab", false);
+    assert_eq!(focus(&view), 2);
+    let mut batch = BatchWriter::new();
+    batch.command(4, Command::ShowModal, 0.0);
+    view.commit(&batch.finish(), false, &mut broker).unwrap();
+    assert_eq!(
+        focus(&view),
+        5,
+        "show_modal focuses the first focusable descendant"
+    );
+    for expected in [6, 5, 6] {
+        press(&mut view, &mut broker, "Tab", false);
+        assert_eq!(focus(&view), expected, "Tab stays inside the dialog");
+    }
+    press(&mut view, &mut broker, "Tab", true);
+    assert_eq!(focus(&view), 5);
+    // Outside is inert: a scripted click naming it is refused, focus ignores it.
+    assert!(matches!(
+        view.input(
+            &Input::Click {
+                target: Target::Node(3)
+            },
+            &mut broker
+        ),
+        Err(varta_view::InputError::Inert(_))
+    ));
+    let mut batch = BatchWriter::new();
+    batch.command(2, Command::Focus, 0.0);
+    view.commit(&batch.finish(), false, &mut broker).unwrap();
+    assert_eq!(focus(&view), 5, "focus ignores an inert element");
+    // The accessibility tree keeps the dialog and drops the inert rest.
+    let roles: Vec<_> = view.snapshot()["accessibility"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| (node["role"].clone(), node["modal"].clone()))
+        .collect();
+    assert_eq!(
+        roles,
+        [(serde_json::json!("dialog"), serde_json::json!(true))]
+    );
+    // A second modal dialog on top: only it is reachable; Esc closes it alone
+    // and focus returns to where it was before.
+    let mut batch = BatchWriter::new();
+    batch.command(7, Command::ShowModal, 0.0);
+    view.commit(&batch.finish(), false, &mut broker).unwrap();
+    assert_eq!(focus(&view), 8);
+    assert!(matches!(
+        view.input(
+            &Input::Click {
+                target: Target::Node(6)
+            },
+            &mut broker
+        ),
+        Err(varta_view::InputError::Inert(_))
+    ));
+    press(&mut view, &mut broker, "Escape", false);
+    let snapshot = view.snapshot();
+    assert_eq!(snapshot["tree"]["children"][3]["open"], false);
+    assert_eq!(snapshot["tree"]["children"][2]["open"], true);
+    assert_eq!(focus(&view), 5);
+    press(&mut view, &mut broker, "Escape", false);
+    assert_eq!(view.snapshot()["tree"]["children"][2]["open"], false);
+    assert_eq!(
+        focus(&view),
+        2,
+        "focus returns to the element focused before"
+    );
+    // The background is live again.
+    view.input(
+        &Input::Click {
+            target: Target::Node(3),
+        },
+        &mut broker,
+    )
+    .unwrap();
+    assert_eq!(focus(&view), 3);
+    // autofocus wins; a dialog with nothing focusable takes focus itself.
+    let mut batch = BatchWriter::new();
+    batch
+        .set_attribute(6, Attribute::Autofocus, "")
+        .command(4, Command::ShowModal, 0.0);
+    view.commit(&batch.finish(), false, &mut broker).unwrap();
+    assert_eq!(focus(&view), 6);
+    let mut batch = BatchWriter::new();
+    batch
+        .command(4, Command::Close, 0.0)
+        .create_element(9, Tag::Dialog)
+        .insert(1, 9, 0)
+        .command(9, Command::ShowModal, 0.0);
+    view.commit(&batch.finish(), false, &mut broker).unwrap();
+    assert_eq!(focus(&view), 9);
 }
 
 /// Commits `build` into a fresh view and returns the top-level accessible

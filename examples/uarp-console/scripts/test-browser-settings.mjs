@@ -11,11 +11,10 @@
 // The network stays closed on both hosts: the host ceiling grants KV and the
 // clock but not `net.request`, so the console's first request is denied
 // before any socket, with the same diagnostic. In each state the same
-// markers must be visible on both hosts (no key stored, settings saved,
-// connecting) and the settings dialog open or closed alike; the log lines
-// must be equal, and the key must appear in no snapshot or page. (The whole
-// accessibility trees are not compared: Chrome hides what a modal dialog
-// covers, which the headless model does not; package w4-native-dialog.)
+// markers must be in both hosts' accessibility trees (no key stored, settings
+// saved, connecting; a modal dialog hides what it covers on both) and the
+// settings dialog open or closed alike; the log lines must be equal, and the
+// key must appear in no snapshot or page.
 //
 //   node scripts/test-browser-settings.mjs <varta-executable>
 import { createServer } from "node:http";
@@ -38,7 +37,6 @@ const SETTINGS_DIALOG = "settings";
 const KEY_FIELD = "api-key";
 const STATE_TIMEOUT_MS = 60_000;
 const POLL_MS = 50;
-const TEXT_NODE = 3;
 
 const executableArgument = process.argv[2];
 if (!executableArgument) throw new Error("Usage: node scripts/test-browser-settings.mjs <varta-executable>");
@@ -95,8 +93,9 @@ try {
   }
   // Natively: no key and the dialog open; saved and connecting; after a
   // later start connecting with the stored key.
+  // (The open modal dialog hides the banner behind it.)
   assert.deepEqual(native.map(state), [
-    { visible: [NO_KEY], dialog: true },
+    { visible: [], dialog: true },
     { visible: [SAVED, CONNECTING], dialog: false },
     { visible: [CONNECTING], dialog: false },
   ], JSON.stringify(native));
@@ -130,27 +129,16 @@ try {
       return true;})()`);
     const attributes = (node) => Object.fromEntries((node.attributes ?? []).flatMap((value, index, all) => index % 2 ? [] : [[value, all[index + 1]]]));
     const find = (node, wanted) => attributes(node).id === wanted ? node : [...(node.children ?? []), ...(node.shadowRoots ?? [])].map((child) => find(child, wanted)).find(Boolean);
-    // Which markers Chrome renders visibly (the CSS visibility of the text's
-    // element, reached through the closed shadow root by node id), and
-    // whether the settings dialog is open.
+    // Which markers Chrome's accessibility tree holds (content a modal
+    // dialog makes inert is ignored there, as the headless model drops it),
+    // and whether the settings dialog is open.
     const current = async () => {
+      await call("Accessibility.enable", {});
+      const { nodes } = await call("Accessibility.getFullAXTree", {});
+      const texts = new Set(nodes.filter((node) => !node.ignored && node.role?.value === "StaticText").map((node) => node.name?.value));
       const { root } = await call("DOM.getDocument", { depth: -1, pierce: true });
-      const visible = new Set();
-      let dialog = false;
-      const visit = async (node, parent) => {
-        const text = node.nodeType === TEXT_NODE ? node.nodeValue.trim() : undefined;
-        if (text !== undefined && MARKERS.includes(text) && parent) {
-          const { object } = await call("DOM.resolveNode", { nodeId: parent.nodeId });
-          const shown = await call("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){return this.checkVisibility({visibilityProperty:true,opacityProperty:true});}", returnByValue: true });
-          if (shown.result.value) visible.add(text);
-        }
-        if (attributes(node).id === SETTINGS_DIALOG && Object.hasOwn(attributes(node), "open")) dialog = true;
-        const element = node.nodeType === TEXT_NODE ? parent : node;
-        for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) await visit(child, element);
-      };
-      const container = find(root, "console");
-      if (container) await visit(container, undefined);
-      return { visible: MARKERS.filter((marker) => visible.has(marker)), dialog };
+      const dialog = find(root, SETTINGS_DIALOG);
+      return { visible: MARKERS.filter((marker) => texts.has(marker)), dialog: Boolean(dialog && Object.hasOwn(attributes(dialog), "open")) };
     };
     const until = async (label, expected) => {
       const deadline = Date.now() + STATE_TIMEOUT_MS;

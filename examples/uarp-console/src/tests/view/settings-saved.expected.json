@@ -97,7 +97,7 @@
     "role": "application"
   },
   "clipboard": null,
-  "focus": 15,
+  "focus": null,
   "opened": [],
   "prompts": 0,
   "stylesheets": [
@@ -1243,8 +1243,6 @@
                           "color": "#16181d",
                           "font-family": "system-ui, sans-serif",
                           "font-size": "14px",
-                          "outline": "2px solid #3b5bdb",
-                          "outline-offset": "1px",
                           "padding": "8px 10px"
                         },
                         "tag": "input",
@@ -1519,6 +1517,7 @@
                       },
                       {
                         "attributes": {
+                          "autofocus": "",
                           "id": "confirm-no",
                           "type": "button"
                         },

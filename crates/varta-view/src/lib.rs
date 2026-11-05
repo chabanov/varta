@@ -241,6 +241,11 @@ pub enum ViewError {
 pub enum InputError {
     #[error("view input target {0} is not an attached element")]
     Target(String),
+    /// A modal dialog blocks the target: a platform input cannot reach it
+    /// (a pointer lands on the dialog's backdrop, focus stays in the
+    /// dialog), so a scripted input naming it is refused.
+    #[error("view input target {0} is inert under a modal dialog")]
+    Inert(String),
     #[error("view input key {0} is not in the key table")]
     Key(String),
     #[error("view text selection is invalid for the current field value")]
@@ -828,8 +833,13 @@ impl View {
                 .and_then(|node| node.parent)
                 .unwrap_or(id),
         });
-        id.filter(|id| self.tree.element(*id).is_some() && self.tree.attached(*id))
-            .ok_or_else(|| InputError::Target(target.to_string()))
+        let id = id
+            .filter(|id| self.tree.element(*id).is_some() && self.tree.attached(*id))
+            .ok_or_else(|| InputError::Target(target.to_string()))?;
+        if self.tree.inert(id) {
+            return Err(InputError::Inert(target.to_string()));
+        }
+        Ok(id)
     }
 
     /// The root id (the host-created container).

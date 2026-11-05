@@ -12276,7 +12276,26 @@ excess rejects the copied transaction before effects. See the embedding contract
 for graph, fallback, alias and reclamation rules. Serialized output, retained
 frames, backend overhead, repeated getter work, process RSS and cross-engine
 late-value subset parity remain open. Other
-properties report their cascaded value. Ordinary snapshots do not include layout
+properties report their cascaded value.
+
+*Modal dialogs (top layer).* `show_modal` puts a closed `dialog` on top of the
+headless top layer (an open one stays where it is) and runs Chrome's dialog
+focusing steps: the first displayed, enabled, focusable descendant with
+`autofocus`, else the first such descendant in tree order, else the dialog
+itself. While a modal dialog is open everything outside the topmost one is
+inert: a scripted input naming an inert element fails with
+`InputError::Inert` (a platform pointer lands on the dialog's backdrop
+instead), `focus`/`select` ignore it, Tab and Shift+Tab cycle over the
+topmost dialog's focusable descendants only, and the accessibility tree drops
+it except the dialog's ancestors (Chrome ignores inert content). Esc cancels
+the topmost dialog only: `cancel`, then, unless prevented, it closes. Closing
+(Esc or `close`) removes the dialog from the top layer and focuses again the
+element focused before it was shown when that element can still take focus;
+otherwise focus inside the closed dialog is dropped; then `close` fires. A
+dialog removed from the document or moved leaves the top layer. A closed
+dialog renders nothing, so its contents take no focus. These rules follow
+Chrome 156 as probed (`modal_dialogs_trap_focus_and_make_the_rest_inert`).
+Ordinary snapshots do not include layout
 rectangles; the opt-in geometry section below adds them on request. An experimental separate `layout_boxes` API uses pinned Taffy to
 compute a bounded subset of div and semantic block/flex/grid geometry and
 single-text-child paragraphs with pixel and percentage dimensions,

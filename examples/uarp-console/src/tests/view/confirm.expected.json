@@ -4,88 +4,6 @@
       {
         "children": [
           {
-            "children": [
-              {
-                "level": 1,
-                "name": "Головний агент",
-                "role": "heading"
-              },
-              {
-                "name": "Простір Loopback",
-                "role": "text"
-              },
-              {
-                "expanded": "false",
-                "name": "Контекст",
-                "role": "button"
-              },
-              {
-                "name": "Налаштування",
-                "role": "button"
-              }
-            ],
-            "role": "banner"
-          },
-          {
-            "busy": "false",
-            "children": [
-              {
-                "level": 2,
-                "name": "Чим допомогти сьогодні?",
-                "role": "heading"
-              },
-              {
-                "children": [
-                  {
-                    "name": "Головний агент керує всіма агентами простору: делегує задачі, стежить за запусками і питає вашого дозволу на важливі дії.",
-                    "role": "text"
-                  }
-                ],
-                "role": "paragraph"
-              },
-              {
-                "name": "Що зараз відбувається?",
-                "role": "button"
-              },
-              {
-                "name": "Підсумок за тиждень",
-                "role": "button"
-              },
-              {
-                "name": "Створи агента для підтримки",
-                "role": "button"
-              }
-            ],
-            "live": "polite",
-            "name": "Розмова",
-            "role": "region"
-          },
-          {
-            "children": [
-              {
-                "multiline": true,
-                "name": "Повідомлення",
-                "role": "textbox",
-                "value": ""
-              },
-              {
-                "name": "Enter — надіслати · Shift+Enter — новий рядок",
-                "role": "text"
-              },
-              {
-                "disabled": true,
-                "name": "Надіслати",
-                "role": "button"
-              }
-            ],
-            "role": "form"
-          }
-        ],
-        "role": "main"
-      },
-      {
-        "children": [
-          {
             "level": 2,
             "name": "Забути ключ API?",
             "role": "heading"
@@ -104,6 +22,7 @@
             "role": "button"
           },
           {
+            "focused": true,
             "name": "Скасувати",
             "role": "button"
           }
@@ -111,16 +30,12 @@
         "modal": true,
         "name": "Забути ключ API?",
         "role": "dialog"
-      },
-      {
-        "live": "polite",
-        "role": "status"
       }
     ],
     "role": "application"
   },
   "clipboard": null,
-  "focus": 25,
+  "focus": 118,
   "opened": [],
   "prompts": 0,
   "stylesheets": [
@@ -1409,8 +1324,6 @@
                           "font-size": "14px",
                           "font-weight": "500",
                           "line-height": "1.4",
-                          "outline": "2px solid #3b5bdb",
-                          "outline-offset": "2px",
                           "padding": "6px 12px",
                           "transition-duration": "120ms",
                           "transition-property": "background-color, color"
@@ -1542,6 +1455,7 @@
                       },
                       {
                         "attributes": {
+                          "autofocus": "",
                           "id": "confirm-no",
                           "type": "button"
                         },
@@ -1566,6 +1480,8 @@
                           "font-size": "14px",
                           "font-weight": "500",
                           "line-height": "1.4",
+                          "outline": "2px solid #3b5bdb",
+                          "outline-offset": "2px",
                           "padding": "6px 12px",
                           "transition-duration": "120ms",
                           "transition-property": "background-color, color"

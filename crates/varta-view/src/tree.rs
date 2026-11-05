@@ -253,7 +253,19 @@ pub(crate) struct Tree {
     pub active: Option<crate::NodeIdentity>,
     /// `copy_text` requests whose `command_result` is not yet delivered.
     pub pending_requests: BTreeSet<u32>,
+    /// The top layer: modal dialogs in the order they were shown, the
+    /// topmost last.
+    pub modals: Vec<Modal>,
 }
+
+/// A modal dialog in the top layer and the element focused before it was
+/// shown, which closing it focuses again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Modal {
+    pub dialog: u32,
+    pub restore: Option<u32>,
+}
+
 impl Default for Tree {
     fn default() -> Self {
         let root = Node {
@@ -275,6 +287,7 @@ impl Default for Tree {
             hovered: None,
             active: None,
             pending_requests: BTreeSet::new(),
+            modals: Vec::new(),
         }
     }
 }
@@ -549,9 +562,108 @@ impl Tree {
     pub(crate) fn displayed(&self, id: u32, environment: &Environment) -> bool {
         self.attached(id)
             && !self.path(id).into_iter().any(|ancestor| {
-                self.computed_property(ancestor, environment, CssProperty::Display)
-                    .is_some_and(|value| value.eq_ignore_ascii_case("none"))
+                self.closed_dialog(ancestor)
+                    || self
+                        .computed_property(ancestor, environment, CssProperty::Display)
+                        .is_some_and(|value| value.eq_ignore_ascii_case("none"))
             })
+    }
+    /// A `dialog` that is not open renders nothing (the user agent's
+    /// `dialog:not([open]) { display: none }`).
+    pub(crate) fn closed_dialog(&self, id: u32) -> bool {
+        self.element(id)
+            .is_some_and(|element| element.tag == Tag::Dialog && !element.open)
+    }
+    /// The topmost modal dialog still in the document, if any.
+    pub(crate) fn top_modal(&self) -> Option<u32> {
+        self.modals
+            .iter()
+            .rev()
+            .map(|modal| modal.dialog)
+            .find(|dialog| self.attached(*dialog) && self.element(*dialog).is_some_and(|e| e.open))
+    }
+    /// Whether a modal dialog blocks `id`: everything outside the topmost
+    /// modal dialog is inert (no hits, focus or accessibility).
+    pub(crate) fn inert(&self, id: u32) -> bool {
+        self.top_modal()
+            .is_some_and(|dialog| !self.path(id).contains(&dialog))
+    }
+    /// Whether a modal dialog removes `id` from the accessibility tree: it is
+    /// inert and not an ancestor of the topmost modal dialog (which keeps its
+    /// ancestors as the path to it).
+    pub(crate) fn blocked(&self, id: u32) -> bool {
+        self.top_modal().is_some_and(|dialog| {
+            !self.path(id).contains(&dialog) && !self.path(dialog).contains(&id)
+        })
+    }
+    /// The dialog focusing steps: the first displayed, enabled, focusable
+    /// descendant with `autofocus`, else the first displayed, enabled,
+    /// focusable descendant in tree order, else the dialog itself.
+    pub(crate) fn focus_delegate(&self, dialog: u32, environment: &Environment) -> u32 {
+        let mut candidates = Vec::new();
+        let mut stack: Vec<u32> = self.nodes[&dialog].children.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            if self.closed_dialog(id)
+                || self
+                    .computed_property(id, environment, CssProperty::Display)
+                    .is_some_and(|display| display.eq_ignore_ascii_case("none"))
+            {
+                continue;
+            }
+            if self
+                .element(id)
+                .is_some_and(|element| element.focusable() && !element.disabled())
+            {
+                candidates.push(id);
+            }
+            stack.extend(self.nodes[&id].children.iter().rev());
+        }
+        candidates
+            .iter()
+            .copied()
+            .find(|id| {
+                self.element(*id)
+                    .is_some_and(|element| element.attributes.contains_key(&Attribute::Autofocus))
+            })
+            .or_else(|| candidates.first().copied())
+            .unwrap_or(dialog)
+    }
+    /// Close an open dialog: it leaves the top layer, and focus returns to
+    /// the element focused before it was shown when that element can take
+    /// focus again; focus inside the closed dialog is otherwise dropped.
+    /// Returns the focus records; the caller fires `close` after them.
+    pub(crate) fn close_dialog(
+        &mut self,
+        dialog: u32,
+        environment: &Environment,
+    ) -> Vec<crate::EventRecord> {
+        let Some(element) = self.element_mut(dialog) else {
+            return Vec::new();
+        };
+        element.open = false;
+        let restore = self
+            .modals
+            .iter()
+            .position(|modal| modal.dialog == dialog)
+            .map(|at| self.modals.remove(at))
+            .and_then(|modal| modal.restore);
+        let restorable = restore.filter(|id| {
+            self.displayed(*id, environment)
+                && !self.inert(*id)
+                && self
+                    .element(*id)
+                    .is_some_and(|element| element.focusable() && !element.disabled())
+        });
+        match restorable {
+            Some(id) => focus_records(self, Some(id)),
+            None if self
+                .focus
+                .is_some_and(|focus| self.path(focus).contains(&dialog)) =>
+            {
+                focus_records(self, None)
+            }
+            None => Vec::new(),
+        }
     }
     /// The node and its ancestors, target first.
     pub(crate) fn path(&self, id: u32) -> Vec<u32> {
@@ -810,9 +922,10 @@ impl Tree {
         let mut out = Vec::new();
         let mut stack = vec![ROOT_NODE];
         while let Some(id) = stack.pop() {
-            if self
-                .computed_property(id, environment, CssProperty::Display)
-                .is_some_and(|display| display.eq_ignore_ascii_case("none"))
+            if self.closed_dialog(id)
+                || self
+                    .computed_property(id, environment, CssProperty::Display)
+                    .is_some_and(|display| display.eq_ignore_ascii_case("none"))
             {
                 continue;
             }
@@ -1320,6 +1433,18 @@ impl Apply<'_, '_, '_> {
         let Some(parent) = self.tree.nodes.get(&node).and_then(|n| n.parent) else {
             return;
         };
+        // A dialog removed from the document, or moved, leaves the top layer
+        // (the HTML removing steps); it stays open but is no longer modal.
+        let tree = &*self.tree;
+        let leaving: Vec<u32> = tree
+            .modals
+            .iter()
+            .map(|modal| modal.dialog)
+            .filter(|dialog| tree.path(*dialog).contains(&node))
+            .collect();
+        self.tree
+            .modals
+            .retain(|modal| !leaving.contains(&modal.dialog));
         if let Some(parent) = self.tree.nodes.get_mut(&parent) {
             parent.children.retain(|child| *child != node);
         }
@@ -1509,7 +1634,10 @@ impl Apply<'_, '_, '_> {
         match command {
             Command::Focus => {
                 let element = self.element(node)?;
-                if !element.disabled() && self.tree.displayed(node, &self.context.environment) {
+                if !element.disabled()
+                    && self.tree.displayed(node, &self.context.environment)
+                    && !self.tree.inert(node)
+                {
                     let records = focus_records(self.tree, Some(node));
                     self.effects.extend(records.into_iter().map(Effect::Record));
                 }
@@ -1522,7 +1650,8 @@ impl Apply<'_, '_, '_> {
             }
             Command::Select => {
                 let focus = !self.element(node)?.disabled()
-                    && self.tree.displayed(node, &self.context.environment);
+                    && self.tree.displayed(node, &self.context.environment)
+                    && !self.tree.inert(node);
                 if focus {
                     let records = focus_records(self.tree, Some(node));
                     self.effects.extend(records.into_iter().map(Effect::Record));
@@ -1640,12 +1769,24 @@ impl Apply<'_, '_, '_> {
                 if !self.tree.attached(node) {
                     return Err(self.fail(Violation::Detached(node)));
                 }
-                self.element(node)?.open = true;
+                let element = self.element(node)?;
+                // An open dialog stays where it is in the top layer.
+                if !element.open {
+                    element.open = true;
+                    let restore = self.tree.focus;
+                    self.tree.modals.push(Modal {
+                        dialog: node,
+                        restore,
+                    });
+                    let delegate = self.tree.focus_delegate(node, &self.context.environment);
+                    let records = focus_records(self.tree, Some(delegate));
+                    self.effects.extend(records.into_iter().map(Effect::Record));
+                }
             }
             Command::Close => {
-                let element = self.element(node)?;
-                if element.open {
-                    element.open = false;
+                if self.element(node)?.open {
+                    let records = self.tree.close_dialog(node, &self.context.environment);
+                    self.effects.extend(records.into_iter().map(Effect::Record));
                     self.effects
                         .push(Effect::Record(crate::EventRecord::occurrence(
                             EventKind::Close,

@@ -1494,6 +1494,7 @@
                       },
                       {
                         "attributes": {
+                          "autofocus": "",
                           "id": "confirm-no",
                           "type": "button"
                         },

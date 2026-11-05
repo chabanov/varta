@@ -354,7 +354,7 @@ fn visible_order(tree: &Tree, names: &Names<'_>) -> Vec<u32> {
     let mut order = Vec::new();
     let mut pending = vec![ROOT_NODE];
     while let Some(id) = pending.pop() {
-        if id != ROOT_NODE && names.hidden(id) {
+        if id != ROOT_NODE && (names.hidden(id) || tree.blocked(id)) {
             continue;
         }
         order.push(id);
@@ -606,7 +606,7 @@ impl View {
             return Ok(false);
         };
         let names = Names::new(&self.tree, &self.environment);
-        if self.tree.path(id).into_iter().any(|id| names.hidden(id)) {
+        if self.tree.inert(id) || self.tree.path(id).into_iter().any(|id| names.hidden(id)) {
             return Ok(false);
         }
         let Some(element) = self.tree.element(id) else {

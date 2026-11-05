@@ -446,7 +446,9 @@ function confirmDialog(rt: Runtime, confirmation: Confirmation): number {
           >
             {part((r: ConfirmRequest): string => r.action)}
           </button>
-          <button id="confirm-no" class="button" type="button" onClick={() => close()}>
+          {/* Opening the dialog focuses Cancel, not the destructive action: Enter
+              right after it opens never confirms by accident. */}
+          <button id="confirm-no" class="button" type="button" autofocus={true} onClick={() => close()}>
             {CANCEL}
           </button>
         </div>

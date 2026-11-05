@@ -1046,7 +1046,8 @@ impl View {
             .tree
             .element(node)
             .is_some_and(|element| element.focusable() && !element.disabled())
-            && self.tree.displayed(node, &self.environment);
+            && self.tree.displayed(node, &self.environment)
+            && !self.tree.inert(node);
         if focusable {
             for record in focus_records(&mut self.tree, Some(node)) {
                 self.dispatch(record, true)?;
@@ -1531,7 +1532,7 @@ impl View {
                 }
                 Ok(())
             }
-            Key::Escape => self.escape(node),
+            Key::Escape => self.escape(),
             Key::Tab => self.tab(node, modifiers.flags & EventFlag::Shift as u32 != 0),
             _ => Ok(()),
         };
@@ -1578,26 +1579,19 @@ impl View {
         Ok(())
     }
 
-    /// Esc in an open modal dialog: `cancel`, then close unless prevented.
-    fn escape(&mut self, node: u32) -> Result<(), ViewError> {
-        let Some(dialog) = self.ancestor(node, Tag::Dialog).or_else(|| {
-            self.tree.document_order().into_iter().find(|id| {
-                self.tree
-                    .element(*id)
-                    .is_some_and(|e| e.tag == Tag::Dialog && e.open)
-            })
-        }) else {
+    /// Esc while a modal dialog is open: the topmost one gets `cancel`, then
+    /// closes unless prevented; focus returns to the element focused before
+    /// it was shown, then `close` fires.
+    fn escape(&mut self) -> Result<(), ViewError> {
+        let Some(dialog) = self.tree.top_modal() else {
             return Ok(());
         };
-        if !self.tree.element(dialog).is_some_and(|e| e.open) {
-            return Ok(());
-        }
         let prevented = self.dispatch(EventRecord::occurrence(EventKind::Cancel, dialog), true)?;
         if prevented {
             return Ok(());
         }
-        if let Some(element) = self.tree.element_mut(dialog) {
-            element.open = false;
+        for record in self.tree.close_dialog(dialog, &self.environment) {
+            self.dispatch(record, true)?;
         }
         self.fire(dialog, EventKind::Close, true)
     }
@@ -1609,11 +1603,13 @@ impl View {
             .displayed_order(&self.environment)
             .into_iter()
             .filter(|id| {
-                self.tree.element(*id).is_some_and(|e| {
-                    e.focusable()
-                        && !e.disabled()
-                        && e.attributes.get(&Attribute::Tabindex).map(String::as_str) != Some("-1")
-                })
+                !self.tree.inert(*id)
+                    && self.tree.element(*id).is_some_and(|e| {
+                        e.focusable()
+                            && !e.disabled()
+                            && e.attributes.get(&Attribute::Tabindex).map(String::as_str)
+                                != Some("-1")
+                    })
             })
             .collect();
         if backwards {

@@ -6,74 +6,6 @@
           {
             "children": [
               {
-                "level": 1,
-                "name": "Головний агент",
-                "role": "heading"
-              },
-              {
-                "name": "Не підключено",
-                "role": "text"
-              },
-              {
-                "expanded": "false",
-                "name": "Контекст",
-                "role": "button"
-              },
-              {
-                "name": "Налаштування",
-                "role": "button"
-              }
-            ],
-            "role": "banner"
-          },
-          {
-            "children": [
-              {
-                "name": "Ключ API не збережено.",
-                "role": "text"
-              },
-              {
-                "name": "Налаштування",
-                "role": "button"
-              }
-            ],
-            "role": "status"
-          },
-          {
-            "busy": "false",
-            "live": "polite",
-            "name": "Розмова",
-            "role": "region"
-          },
-          {
-            "children": [
-              {
-                "disabled": true,
-                "multiline": true,
-                "name": "Повідомлення",
-                "role": "textbox",
-                "value": ""
-              },
-              {
-                "name": "Enter — надіслати · Shift+Enter — новий рядок",
-                "role": "text"
-              },
-              {
-                "disabled": true,
-                "name": "Надіслати",
-                "role": "button"
-              }
-            ],
-            "role": "form"
-          }
-        ],
-        "role": "main"
-      },
-      {
-        "children": [
-          {
-            "children": [
-              {
                 "level": 2,
                 "name": "Підключення до UARP",
                 "role": "heading"
@@ -135,10 +67,6 @@
         "modal": true,
         "name": "Підключення до UARP",
         "role": "dialog"
-      },
-      {
-        "live": "polite",
-        "role": "status"
       }
     ],
     "role": "application"
@@ -1567,6 +1495,7 @@
                       },
                       {
                         "attributes": {
+                          "autofocus": "",
                           "id": "confirm-no",
                           "type": "button"
                         },
