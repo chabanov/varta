@@ -30,7 +30,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last committed full gate | Wave 1 integration on `aefe649` (2026-11-04, macOS arm64): **3577 Rust tests passed, 0 failures, 16 ignored; 185 browser Node tests passed**; conformance 123/4 of 127, baseline matched; all nine commands with unchanged inputs. Report: `target/verification/20261104-205555-ajrb8twm/report.json`. Linux CI and other platforms not run |
+| Last committed full gate | Wave 2 integration on `a842166` (2026-11-05, macOS arm64): **3670 Rust tests passed, 0 failures, 16 ignored; 191 browser Node tests passed**; conformance 123/4 of 127, baseline matched; all nine commands with unchanged inputs. Report: `target/verification/20261105-060144-9tz0wsxo/report.json`. Linux CI and other platforms not run |
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
@@ -457,6 +457,51 @@ result/status documentation annotations follow it. Distinct border
 side colors and other border styles, device-pixel border-width snapping (open for
 all boxes), bidi edge reordering, horizontal percentages and
 real-font/window/platform acceptance remain open.
+
+### Wave 2 integration — 2026-11-05
+
+Nine wave-2 packages are merged on `main` after review, two fix rounds and
+independent re-checks: `w2-v38-sdk-path-gaps`, `w2-net-abort`,
+`w2-native-positioned-zindex`, `w2-native-whitespace`,
+`w2-shell-fonts-effects`, `w2-headless-geometry`, `w2-browser-kv`,
+`w2-console-real-client` and `w2-browser-docs-drift`. Pilot findings F1–F3
+are closed. On the merged tree the pilot passes `check-sdk.sh` (65/65 files,
+6/6 generic bodies), the console's `test.sh` (179 tests in 32 groups and both
+view checks) and `sdk-loopback.sh` (43 cases in 6 groups). Integration fixed
+one semantic merge conflict (a font-size test written against the old
+`resolve_text` signature) and made every white-space refusal of a plain text
+flow name the parent element.
+
+Owner decisions (2026-11-05):
+
+- The console manifest requests `time.timer` and `time.now` besides
+  `net.request` and KV; the unmodified SDK needs both.
+- Browser KV storage will use OPFS `FileSystemSyncAccessHandle` in the
+  dedicated Worker, with the value layer shared as Rust compiled to wasm32
+  ([agreed design](#browser-kv-storage-agreed-design-wave-3)); until then
+  browser builds refuse KV grants.
+- v38 opens bytes (`Uint8Array`/`ArrayBuffer`) held by `unknown`, replacing
+  the earlier compile-error decision; this needs a value-layout tag and is a
+  wave-3 package.
+- The uarp-sdk 0.13.2 own tests may be fetched from GitHub into an ignored
+  directory with the commit pinned (wave-3 package).
+- HTTP contract v1 stays frozen with its immediate 503 while busy; only v2
+  waits for the worker permit.
+
+Open after integration:
+
+- `font-family` with a CSS-wide keyword (`revert`, `initial`, …) rolls back to
+  Chrome's own font in the browser while native refuses it.
+- Unsized controls: Chrome computes 13.33px, native inherits the parent size.
+- The manual trusted-gesture run (copy target and link in a live
+  `varta-shell` window) needs a human.
+- The Taffy-measurement mapping of a refused text node to its flow has no
+  input that exercises it; paint-time reshaping refusals still carry no node.
+- The console view itself renders no fixed or z-index node yet, so its
+  `headless_frame` acceptance for positioned content stays open; the browser
+  applier's view root must become a stacking context.
+- Not run: Linux/Windows, CI with the merged tree, Firefox for the KV and
+  font cases, live `api.snaga.ai` sessions.
 
 ### Wave 1 integration — 2026-11-04
 
