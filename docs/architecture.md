@@ -14649,9 +14649,11 @@ scopes, enablement, versions, imports and exports.
 
 `varta-shell` (crate `varta-desktop`) runs a packaged application with a view
 in a native window, with the same capability-checked runtime host as the
-companion. It is distribution code: its production and test dependencies exclude
-the compiler, SWC, project tooling, the CLI and `clap`, directly and
-transitively (`crates/varta-project/tests/boundaries.rs`). The experimental
+companion. It is distribution code: neither its production dependencies nor its
+dev-dependencies reach the compiler, SWC, project tooling, the CLI or `clap`,
+directly or transitively (`crates/varta-project/tests/boundaries.rs`). Its tests
+obtain a compiled guest by building and running the workspace's `varta` binary as
+an external process, not by linking it. The experimental
 `varta-preview` shares its window, input and render core but runs a bare module
 unprivileged: no manifest, grants, host ceiling, file roots or storage.
 
@@ -14666,7 +14668,8 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   contracts, budgets and required grants when the instance starts, before
   instantiation. Native payloads are never deserialized and payload bytes are
   never scanned for markers. A refused artifact has no guest effect: no guest
-  output, socket, file or database.
+  output, socket, file or database. The only host effect that can precede the
+  runtime's validation is the creation of empty storage directories (below).
 - **Grants.** The manifest is the package request. `--policy PATH` names an
   optional host ceiling in the companion's host policy format, read bounded and
   checked by `Manifest::validate_ceiling` (no consent metadata; `fsRoots` only as
@@ -14680,26 +14683,41 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   prompt yet and reads no stored decisions. A `ui.open_url` that needs a prompt
   is therefore denied; one granted by explicit patterns is recorded by the view
   session but not yet handed to the system browser (a later package).
-- **Storage.** Each root that a package `kv.read`/`kv.write` pattern names and
-  that the ceiling does not map is pinned (`FileRoots::open`) to the host-owned
-  directory `<base>/sha256-<digest>/<root>`, where the digest is the lowercase
-  hex SHA-256 of the portable Wasm, the application identity
-  (`varta_runtime::artifact_identity`). The shell creates it private to the user
-  (mode 0700 on Unix). `--data-dir DIR` selects the base; by default it is the
-  per-user data directory (`~/Library/Application Support/Varta/storage` on
+- **Storage.** A root is pinned (`FileRoots::open`) to the host-owned directory
+  `<base>/sha256-<digest>/<root>`, where the digest is the lowercase hex SHA-256
+  of the portable Wasm, the application identity
+  (`varta_runtime::artifact_identity`), when all of these hold: a package
+  `kv.read` pattern names the root; without a ceiling, or with a ceiling that
+  has a `kv.read` pattern whose first component is that root or contains a glob
+  (`*`, `?`; conservatively counted for every root); and the ceiling does not
+  map the root itself. Opening a database needs `kv.read` on its path in the
+  request and the ceiling, so no other root could hold one: a root reached only
+  by `kv.write`, or a ceiling `kv.read` for other roots, creates nothing. A
+  ceiling's own `fsRoots` mapping of the root wins, and then no per-artifact
+  directory is created for it. The shell creates the directory private to the
+  user (mode 0700 on Unix). `--data-dir DIR` selects the base; by default it is
+  the per-user data directory (`~/Library/Application Support/Varta/storage` on
   macOS, `$XDG_DATA_HOME/varta/storage` or `~/.local/share/varta/storage` on
-  other Unix hosts). Nothing is created when the package requests no `kv.*` or a
-  ceiling has no `kv.read`. A ceiling's own mapping of the root wins. The mapping
-  grants nothing: KV opens, reads and commits still need the exact `kv.read` and
-  `kv.write` grants in the request and the ceiling, through the permission
-  broker ([KV storage](#kv-storage-kv)). An artifact whose Wasm differs in any
-  byte has another directory. Other declared roots stay unmapped, and so denied,
+  other Unix hosts). The directories are created by `Launch::packaged`, after
+  the artifact checks above and the ceiling's validation and, in the binary,
+  after the renderer and `--font` are checked, but before the runtime validates
+  code and language profile in `Launch::start` (which compiles the module once,
+  with the roots already pinned): an artifact the runtime then refuses leaves
+  its directories behind, empty. The mapping grants nothing: KV opens, reads
+  and commits still need the exact `kv.read` and `kv.write` grants in the
+  request and the ceiling, through the permission broker
+  ([KV storage](#kv-storage-kv)). An artifact whose Wasm differs in any byte
+  has another directory. Other declared roots stay unmapped, and so denied,
   unless the ceiling maps them.
 - **Fonts and presentation.** `--font PATH FAMILY` supplies the explicit layout
-  and render font, bounded by `shell::MAX_FONT_BYTES`; artifact-declared fonts
-  are not read. `--renderer cpu|gpu|auto` selects presentation (GPU only in a
-  build with the `gpu` feature). Guest output goes to stdout and host
-  diagnostics to stderr.
+  and render font, nonempty and bounded by `shell::MAX_FONT_BYTES`;
+  artifact-declared fonts are not read. `--renderer cpu|gpu|auto` selects
+  presentation (default `cpu`). An explicit `gpu` is refused before anything
+  else in a build without the `gpu` feature, and is an error
+  (`ShellError::GpuUnavailable`) when the GPU does not initialize; `auto` then
+  presents with the CPU. A GPU lost after initialization falls back to the CPU
+  in both modes. Guest output goes to stdout and host diagnostics, prefixed with
+  the binary's name, to stderr.
 - **Embedding.** `varta_desktop::shell::Launch::packaged(&Package { artifact,
   policy, storage })` prepares an application without a window and
   `Launch::start(ViewLayout)` starts it; failures are the typed `ShellError`.

@@ -5,16 +5,18 @@
 //! bare Wasm with its manifest, matching host ABI, package manifest rules),
 //! takes its manifest as the package request, narrows it with an optional
 //! host ceiling (the launcher's `--policy` file) and pins host-owned KV
-//! storage per artifact hash. [`Launch::start`] starts the application
-//! instance; the runtime validates the code before any guest effect. No
-//! window is needed for any of this, so the core is testable headlessly;
+//! storage per artifact hash, creating its directories (`storage.rs` says
+//! exactly which and when).
+//! [`Launch::start`] starts the application instance; the runtime validates
+//! the code and its language profile before any guest effect. No window is
+//! needed for any of this, so the core is testable headlessly;
 //! [`window::run`] presents the instance in a native window.
 pub mod args;
 mod launch;
 mod storage;
 pub mod window;
 
-pub use launch::{Launch, MAX_FONT_BYTES, Package, read_font};
+pub use launch::{Launch, MAX_FONT_BYTES, Package, read_font, read_module};
 pub use storage::{STORAGE_DIRECTORY_PREFIX, default_storage_base, storage_directory};
 
 use std::path::PathBuf;
@@ -38,13 +40,27 @@ pub enum ShellError {
         #[source]
         source: VartaError,
     },
-    /// A font file given on the command line is unreadable or too large.
+    /// A font file given on the command line is unreadable, empty or too
+    /// large.
     #[error("font {path}: {source}")]
     Font {
         path: PathBuf,
         #[source]
         source: VartaError,
     },
+    /// A bare module given to the preview is unreadable, empty or too large.
+    #[error("module {path}: {source}")]
+    Module {
+        path: PathBuf,
+        #[source]
+        source: VartaError,
+    },
+    /// `--renderer gpu` in a build without the `gpu` feature.
+    #[error("the gpu renderer needs a build with the gpu feature; use --renderer cpu or auto")]
+    GpuNotCompiled,
+    /// `--renderer gpu` and the GPU backend did not initialize.
+    #[error("the gpu renderer did not initialize: {0}")]
+    GpuUnavailable(String),
     /// The runtime refused the module, its grants or its budgets.
     #[error(transparent)]
     Runtime(#[from] RuntimeError),

@@ -26,6 +26,9 @@ const MAX_PENDING_SCROLL: f32 = 4096.0;
 /// How soon the loop polls a GPU backend that still has queued work.
 #[cfg(feature = "gpu")]
 const GPU_POLL_INTERVAL: Duration = Duration::from_millis(4);
+/// The reason reported when GPU initialization panics.
+#[cfg(feature = "gpu")]
+const GPU_INITIALIZATION_PANIC: &str = "GPU initialization panicked";
 
 fn supported_key(key: &WinitKey) -> Option<&'static str> {
     let WinitKey::Named(key) = key else {
@@ -103,17 +106,12 @@ impl ApplicationHandler<GuiEvent> for Host {
             #[cfg(feature = "gpu")]
             if self.gpu_active.load(Ordering::Acquire) {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    gpu::Backend::new(window.clone(), self.gpu_events.clone())
+                    gpu::Backend::new(window.clone(), self.gpu_events.clone(), self.console)
                 }));
                 match result {
                     Ok(Ok(gpu)) => self.gpu = Some(gpu),
-                    _ => {
-                        (self.console.diagnostic)(&format!(
-                            "{}: GPU unavailable, using CPU",
-                            self.label
-                        ));
-                        self.gpu_active.store(false, Ordering::Release);
-                    }
+                    Ok(Err(reason)) => self.gpu_unavailable(reason)?,
+                    Err(_) => self.gpu_unavailable(GPU_INITIALIZATION_PANIC.into())?,
                 }
             }
             if !self.gpu_active.load(Ordering::Acquire) {

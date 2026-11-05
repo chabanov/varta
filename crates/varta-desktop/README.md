@@ -10,7 +10,8 @@ This crate builds two binaries over one window, input and render core
 
 The crate is distribution code: it depends on common, artifact, runtime and
 view plus the window/renderer stack, never on the compiler, SWC, project
-tooling, the CLI or `clap`, not even for tests
+tooling, the CLI or `clap`, neither in production nor through a
+dev-dependency, directly or transitively
 (`crates/varta-project/tests/boundaries.rs`). The normative contract is the
 [native shell section](../../docs/architecture.md#native-shell-varta-shell).
 
@@ -33,31 +34,40 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
   exact `namespace.operation` grant in both. An empty ceiling denies
   everything. Optional grants are denied: there is no prompt yet and no
   stored decisions are read.
-- **Storage.** Each root that a package `kv.*` pattern names (and the ceiling
-  does not map) is pinned to `<data-dir>/sha256-<wasm digest>/<root>`,
-  created private to the user. The default base is the per-user data
-  directory (`~/Library/Application Support/Varta/storage` on macOS,
+- **Storage.** A root gets a host-owned directory
+  `<data-dir>/sha256-<wasm digest>/<root>`, created private to the user,
+  when a package `kv.read` pattern names it, the ceiling (if any) has a
+  `kv.read` pattern whose first component is that root or a glob, and the
+  ceiling does not map the root itself (its mapping wins). Opening a
+  database needs `kv.read` in both, so no other root gets a directory. The
+  default base is the per-user data directory
+  (`~/Library/Application Support/Varta/storage` on macOS,
   `$XDG_DATA_HOME/varta/storage` or `~/.local/share/varta/storage` on other
-  Unix). The mapping grants nothing by itself.
-- **Fonts.** Only explicit `--font` arguments; artifact-declared fonts are a
-  later step, as are permission prompts, `ui.open_url`/guest clipboard
-  effects, manifest `app` metadata and OS bundles.
-- **Output.** Guest `console.log` lines go to stdout, host diagnostics to
-  stderr.
+  Unix). The mapping grants nothing by itself. The directories are created
+  when the artifact is prepared: after the renderer, the font and the
+  `--data-dir` are checked and the artifact and ceiling are validated, but
+  before the runtime validates the code and its profile at start, so a
+  module the runtime then refuses leaves them behind, empty.
+- **Fonts.** Only explicit `--font` arguments (nonempty, at most
+  `shell::MAX_FONT_BYTES`); artifact-declared fonts are a later step, as are
+  permission prompts, `ui.open_url`/guest clipboard effects, manifest `app`
+  metadata and OS bundles.
+- **Renderer.** `--renderer cpu` (default), `gpu` or `auto`. Without the
+  `gpu` feature an explicit `gpu` is refused before anything else; with it,
+  a GPU that does not initialize is an error, while `auto` falls back to the
+  CPU. A GPU lost after initialization falls back to the CPU in both.
+- **Output.** Guest `console.log` lines go to stdout, host diagnostics
+  (prefixed `varta-shell:`) to stderr.
 
 The headless core is `varta_desktop::shell::Launch`: `Launch::packaged`
 prepares an application without a window and `Launch::start` starts it with
 a view layout; `tests/shell.rs` drives it with a loopback HTTP server and a
-temporary storage base. Its guest is the checked-in portable artifact
-`tests/fixtures/shell-probe/probe.wasm` (with `probe.manifest.json`), built
-from the `main.ts` beside it. After a v38 ABI change, rebuild it with:
-
-```sh
-cargo run -p varta --bin varta -- build --config crates/varta-desktop/tests/fixtures/shell-probe/varta.config.json
-```
-
-Tests write their own manifests around that Wasm, so the built manifest only
-records what the probe uses.
+temporary storage base. Its guest is compiled at test time from
+`tests/fixtures/shell-probe/` (`main.ts` and `varta.config.json`): the tests
+build the workspace's `varta` binary with Cargo (offline, locked) and run
+`varta build` on a copy in a temporary directory, as an external process,
+so no Wasm is checked in and no source tooling becomes a dependency. Tests
+write their own manifests around that Wasm.
 
 ## Host-owned copy, cut and paste
 
@@ -172,8 +182,11 @@ cargo build -p varta-desktop --features gpu --bin varta-preview --locked
 VARTA_PREVIEW_RENDERER=gpu VARTA_PREVIEW_TIMING=1 target/debug/varta-preview app.wasm font.ttf Arial
 ```
 
-`gpu` or `auto` requests GPU rendering in a GPU-enabled build; the default is CPU.
-The host logs the selected adapter or a CPU fallback. wgpu 30.0.0 and Vello GPU
+`gpu` or `auto` requests GPU rendering; the default is CPU. As with
+`varta-shell --renderer`, `gpu` is refused before the window opens in a build
+without the `gpu` feature and is an error when the GPU does not initialize;
+`auto` falls back to the CPU. The host logs the selected adapter or a CPU
+fallback. wgpu 30.0.0 and Vello GPU
 0.3.0 are pinned optional dependencies (MIT OR Apache-2.0); pollster 0.4.0
 (MIT OR Apache-2.0) drives host device initialization. They are desktop-only,
 not runtime/compiler dependencies. Their native implementations contain unsafe
@@ -328,7 +341,8 @@ Report: `target/verification/20261104-131013-v4eh1yvu/report.json`.
 module with no grants (packaged applications run in `varta-shell`). Its
 Wasmtime application runs on a worker thread; the main thread owns
 the window and presents bounded frames. Pass a TrueType/OpenType file and its
-family name for the currently supported explicit-font text subset:
+family name for the currently supported explicit-font text subset. An empty or
+oversized module or font file is refused before the window opens:
 
 ```sh
 cargo run -p varta-desktop --bin varta-preview -- app.wasm font.ttf 'Font Family'

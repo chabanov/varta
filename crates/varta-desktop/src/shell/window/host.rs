@@ -72,9 +72,24 @@ impl Host {
         }
         Ok(())
     }
+    /// The GPU backend did not initialize. With an explicit `gpu` renderer
+    /// that is an error (the window closes and [`super::run`] returns
+    /// `ShellError::GpuUnavailable`); with `auto` the CPU presents instead.
+    #[cfg(feature = "gpu")]
+    pub(super) fn gpu_unavailable(&mut self, reason: String) -> Result<(), String> {
+        if self.gpu_required {
+            let error = format!("GPU renderer unavailable: {reason}");
+            self.gpu_failure = Some(reason);
+            return Err(error);
+        }
+        self.console
+            .report(format_args!("GPU unavailable ({reason}), using CPU"));
+        self.gpu_active.store(false, Ordering::Release);
+        Ok(())
+    }
     #[cfg(feature = "gpu")]
     pub(super) fn switch_to_cpu(&mut self) -> Result<(), String> {
-        (self.console.diagnostic)(&format!("{}: switching GPU to CPU fallback", self.label));
+        self.console.report("switching GPU to CPU fallback");
         self.gpu.take();
         self.gpu_active.store(false, Ordering::Release);
         let window = self.window.as_ref().ok_or("window unavailable")?.clone();
@@ -197,12 +212,12 @@ impl Host {
             buffer.present().map_err(|e| e.to_string())?;
         }
         if first_present && let Some(timing) = frame.timing {
-            timing.report(
+            (self.console.diagnostic)(&timing.report(
                 frame.sequence,
                 if frame.scene.is_some() { "gpu" } else { "cpu" },
                 copy_started,
                 Instant::now(),
-            );
+            ));
         }
         let title = if frame.title.is_empty() {
             self.default_title
@@ -239,7 +254,7 @@ impl Host {
         }
         if !self.presented {
             self.presented = true;
-            (self.console.diagnostic)(&format!("{}: first frame presented", self.label));
+            self.console.report("first frame presented");
             if timing::InputStamp::now("startup").is_some() {
                 (self.console.diagnostic)(&format!(
                     "varta-ui-startup: {{\"boundary\":\"host-entry-to-first-present-return\",\"backend\":\"{}\",\"total_ms\":{:.3}}}",

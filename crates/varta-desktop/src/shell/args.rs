@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// The `--help` text.
-pub const USAGE: &str = "Varta native shell\n\nUsage:\n  varta-shell ARTIFACT [--policy PATH] [--data-dir DIR] [--font PATH FAMILY] [--renderer cpu|gpu|auto]\n  varta-shell --help | --version\n\nARTIFACT is a packaged checked-f64-utf16-v38 view application written by\n'varta build': app.wasm beside app.manifest.json, or a fixed-footer\ncontainer. Its manifest is the package request; nothing is ambient.\n\nOptions:\n  --policy PATH      host ceiling (the varta-runtime host policy format); a\n                     resource must satisfy the request and the ceiling, and an\n                     empty ceiling denies everything\n  --data-dir DIR     host directory for application storage; each artifact\n                     hash gets its own directory (default: the platform's\n                     per-user application data directory)\n  --font PATH FAMILY explicit layout and render font\n  --renderer MODE    cpu (default), gpu or auto; gpu and auto need a build\n                     with the gpu feature\n\nOptional permissions are denied: this shell has no permission prompt yet.\n";
+pub const USAGE: &str = "Varta native shell\n\nUsage:\n  varta-shell ARTIFACT [--policy PATH] [--data-dir DIR] [--font PATH FAMILY] [--renderer cpu|gpu|auto]\n  varta-shell --help | --version\n\nARTIFACT is a packaged checked-f64-utf16-v38 view application written by\n'varta build': app.wasm beside app.manifest.json, or a fixed-footer\ncontainer. Its manifest is the package request; nothing is ambient.\n\nOptions:\n  --policy PATH      host ceiling (the varta-runtime host policy format); a\n                     resource must satisfy the request and the ceiling, and an\n                     empty ceiling denies everything\n  --data-dir DIR     host directory for application storage; each artifact\n                     hash gets its own directory (default: the platform's\n                     per-user application data directory)\n  --font PATH FAMILY explicit layout and render font\n  --renderer MODE    cpu (default), gpu or auto. gpu needs a build with the\n                     gpu feature and fails when the GPU does not initialize\n                     (a GPU lost later falls back to the CPU); auto uses the\n                     GPU when it initializes, otherwise the CPU\n\nOptional permissions are denied: this shell has no permission prompt yet.\n";
 
 /// One `varta-shell` invocation.
 #[derive(Debug, PartialEq, Eq)]
@@ -35,6 +35,19 @@ pub enum Renderer {
 }
 
 impl Renderer {
+    /// Every renderer with its `--renderer` name.
+    const NAMES: [(&'static str, Self); 3] =
+        [("cpu", Self::Cpu), ("gpu", Self::Gpu), ("auto", Self::Auto)];
+
+    /// The renderer a `--renderer` value names.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::NAMES
+            .iter()
+            .find(|(known, _)| *known == name)
+            .map(|(_, renderer)| *renderer)
+    }
+
     /// Whether the window should try the GPU backend first.
     #[must_use]
     pub fn prefers_gpu(self) -> bool {
@@ -101,13 +114,8 @@ pub fn parse(values: Vec<OsString>) -> Result<Command, ArgsError> {
                     .ok_or(ArgsError::MissingValue(RENDERER))?
                     .into_string()
                     .map_err(|_| ArgsError::NotUtf8(RENDERER))?;
-                let mode = match mode.as_str() {
-                    "cpu" => Renderer::Cpu,
-                    "gpu" => Renderer::Gpu,
-                    "auto" => Renderer::Auto,
-                    _ => return Err(ArgsError::Renderer(mode)),
-                };
-                set(&mut renderer, RENDERER, mode)?;
+                let selected = Renderer::from_name(&mode).ok_or(ArgsError::Renderer(mode))?;
+                set(&mut renderer, RENDERER, selected)?;
             }
             Some(other) if other.starts_with(OPTION_PREFIX) => {
                 return Err(ArgsError::Unknown(value));

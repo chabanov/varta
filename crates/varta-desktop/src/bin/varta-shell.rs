@@ -13,6 +13,13 @@ use varta_desktop::shell::{
 const LABEL: &str = "varta-shell";
 
 fn run(arguments: args::ShellArgs, started: Instant) -> Result<(), Box<dyn std::error::Error>> {
+    // Every cheap input is checked before the artifact is prepared, because
+    // preparing it creates the artifact's storage directories.
+    window::check_renderer(arguments.renderer)?;
+    let font = arguments
+        .font
+        .map(|(path, family)| read_font(&path).map(|bytes| (bytes, family)))
+        .transpose()?;
     let storage = match arguments.data_dir {
         Some(directory) => std::path::absolute(directory)?,
         None => default_storage_base()?,
@@ -22,18 +29,14 @@ fn run(arguments: args::ShellArgs, started: Instant) -> Result<(), Box<dyn std::
         policy: arguments.policy.as_deref(),
         storage: &storage,
     })?;
-    let font = arguments
-        .font
-        .map(|(path, family)| read_font(&path).map(|bytes| (bytes, family)))
-        .transpose()?;
     window::run(
         launch,
         WindowConfig {
             title: "Varta",
-            label: LABEL,
             font,
-            gpu: arguments.renderer.prefers_gpu(),
+            renderer: arguments.renderer,
             console: Console {
+                label: LABEL,
                 output: |line| println!("{line}"),
                 diagnostic: |line| eprintln!("{line}"),
             },

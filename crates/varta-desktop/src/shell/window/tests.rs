@@ -43,11 +43,11 @@ fn headless_preview() -> (super::Host, std::sync::mpsc::Receiver<super::WorkerMe
             ime_composing: false,
             title: String::new(),
             default_title: "Varta test",
-            label: "varta-test",
-            console: super::Console {
-                output: |_| {},
-                diagnostic: |_| {},
-            },
+            #[cfg(feature = "gpu")]
+            gpu_required: false,
+            #[cfg(feature = "gpu")]
+            gpu_failure: None,
+            console: super::Console::SILENT,
         },
         receiver,
     )
@@ -351,4 +351,37 @@ fn invalid_ime_input_cancels_composition_and_releases_keyboard() {
         Some(PendingKey::ImePreedit { text, cursor: None, .. }) if text.is_empty()
     ));
     assert!(!composing);
+}
+
+#[test]
+fn an_explicit_gpu_renderer_needs_a_gpu_build() {
+    use crate::shell::{ShellError, args::Renderer};
+    assert!(super::check_renderer(Renderer::Cpu).is_ok());
+    // `auto` presents with the CPU when there is no GPU backend.
+    assert!(super::check_renderer(Renderer::Auto).is_ok());
+    let gpu = super::check_renderer(Renderer::Gpu);
+    if cfg!(feature = "gpu") {
+        assert!(gpu.is_ok());
+    } else {
+        assert!(matches!(gpu, Err(ShellError::GpuNotCompiled)));
+    }
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn a_required_gpu_that_fails_to_initialize_is_an_error_and_auto_falls_back() {
+    use std::sync::atomic::Ordering;
+    const REASON: &str = "no adapter";
+    let (mut host, _receiver) = headless_preview();
+    host.gpu_active.store(true, Ordering::Release);
+    host.gpu_unavailable(REASON.into()).unwrap();
+    assert!(!host.gpu_active.load(Ordering::Acquire));
+    assert_eq!(host.gpu_failure, None);
+
+    let (mut host, _receiver) = headless_preview();
+    host.gpu_required = true;
+    host.gpu_active.store(true, Ordering::Release);
+    let error = host.gpu_unavailable(REASON.into()).unwrap_err();
+    assert!(error.contains(REASON), "{error}");
+    assert_eq!(host.gpu_failure.as_deref(), Some(REASON));
 }

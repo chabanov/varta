@@ -3,25 +3,28 @@
 //! loopback `net.request`, a KV round-trip in host-owned storage and a
 //! rendered first frame.
 //!
-//! The guest is `fixtures/shell-probe`, a portable v38 artifact built by
-//! `varta build --config crates/varta-desktop/tests/fixtures/shell-probe/varta.config.json`
-//! (this crate never depends on the compiler, not even for tests). As in the
+//! The guest is `fixtures/shell-probe`, compiled at test time by the
+//! workspace's `varta` binary into a portable v38 artifact ([`support`]):
+//! this crate never depends on the compiler, not even for tests. As in the
 //! `varta-launcher` tests, each test writes its own packaged artifact with
 //! `varta_artifact::Artifact` into a temporary directory, here with the
 //! manifest (the package request) the test needs.
+mod support;
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+use support::probe;
 use varta_artifact::Artifact;
 use varta_common::Manifest;
-use varta_desktop::shell::{Launch, Package, ShellError, storage_directory};
+use varta_desktop::shell::{
+    Launch, Package, STORAGE_DIRECTORY_PREFIX, ShellError, storage_directory,
+};
 use varta_runtime::{Application, Step, ViewLayout};
 
-const PROBE_WASM: &[u8] = include_bytes!("fixtures/shell-probe/probe.wasm");
-const PROBE_MANIFEST: &str = include_str!("fixtures/shell-probe/probe.manifest.json");
 /// The guest log prefix of `console.log` lines.
 const LOG: &str = "varta log: ";
 /// The probe's last line.
@@ -49,29 +52,17 @@ const ROOT_FONT_SIZE: f32 = 16.0;
 const PANEL: (u32, u32) = (64, 32);
 const GREEN: [u8; 4] = [0, 255, 0, 255];
 
-struct Temp(PathBuf);
+/// A temporary directory of one test.
+struct Temp(support::Temp);
 impl Temp {
     fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "varta-shell-test-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-    fn path(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-    /// The host-owned storage base of this test.
-    fn storage(&self) -> PathBuf {
-        self.path("storage")
+        Self(support::Temp::new("varta-shell-test"))
     }
 }
-impl Drop for Temp {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+impl std::ops::Deref for Temp {
+    type Target = support::Temp;
+    fn deref(&self) -> &support::Temp {
+        &self.0
     }
 }
 
@@ -137,9 +128,14 @@ fn answer(stream: TcpStream) {
     );
 }
 
+/// The probe's built package manifest as JSON.
+fn probe_manifest() -> serde_json::Value {
+    serde_json::from_slice(&probe().manifest.to_bytes().unwrap()).unwrap()
+}
+
 /// The probe's package manifest with `capabilities` as its request.
 fn manifest(capabilities: serde_json::Value) -> Manifest {
-    let mut manifest: serde_json::Value = serde_json::from_str(PROBE_MANIFEST).unwrap();
+    let mut manifest = probe_manifest();
     manifest["capabilities"] = capabilities;
     Manifest::parse(&serde_json::to_vec(&manifest).unwrap()).unwrap()
 }
@@ -148,7 +144,7 @@ fn manifest(capabilities: serde_json::Value) -> Manifest {
 fn package(temp: &Temp, capabilities: serde_json::Value) -> PathBuf {
     let path = temp.path("app.wasm");
     Artifact {
-        wasm: PROBE_WASM.to_vec(),
+        wasm: probe().wasm.clone(),
         manifest: manifest(capabilities),
     }
     .write_wasm(&path)
@@ -393,6 +389,84 @@ fn a_narrower_ceiling_bounds_the_package_request() {
 }
 
 #[test]
+fn a_ceiling_mapping_of_a_kv_root_wins_over_host_owned_storage() {
+    let temp = Temp::new();
+    let artifact = package(&temp, serde_json::json!(kv_grants()));
+    let data = temp.path("ceiling-data");
+    std::fs::create_dir(&data).unwrap();
+    let ceiling = policy(
+        &temp,
+        &serde_json::json!({
+            "abiVersion": 34,
+            "fsRoots": {"data": data},
+            "capabilities": kv_grants(),
+        }),
+    );
+    let launch = prepare(&temp, &artifact, Some(&ceiling)).unwrap();
+    assert_eq!(launch.file_roots().collect::<Vec<_>>(), ["data"]);
+    let (_, lines) = run(launch);
+    assert_eq!(
+        lines,
+        [
+            URL_DENIED,
+            "net no-url",
+            "kv before missing",
+            "kv after stored",
+            DONE
+        ]
+    );
+    // The database is in the directory the ceiling names, and the shell
+    // created no per-artifact directory (here, not even the base).
+    assert!(data.join(DATABASE).is_file());
+    assert!(!storage_of(&temp, &artifact).exists());
+    let artifact_directories = std::fs::read_dir(temp.storage())
+        .into_iter()
+        .flatten()
+        .filter(|entry| {
+            entry.as_ref().is_ok_and(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(STORAGE_DIRECTORY_PREFIX)
+            })
+        })
+        .count();
+    assert_eq!(artifact_directories, 0);
+    assert!(!temp.storage().exists());
+}
+
+#[test]
+fn storage_is_created_only_for_roots_the_ceiling_can_open() {
+    let temp = Temp::new();
+    let artifact = package(&temp, serde_json::json!(kv_grants()));
+    // A `kv.read` anywhere is not enough: this one names another root.
+    let ceiling = policy(
+        &temp,
+        &serde_json::json!({
+            "abiVersion": 34,
+            "capabilities": [
+                {"id": "kv.read", "patterns": ["/config/app.kv"]},
+                {"id": "kv.write", "patterns": ["/data/app.kv"]},
+            ],
+        }),
+    );
+    let launch = prepare(&temp, &artifact, Some(&ceiling)).unwrap();
+    assert_eq!(launch.file_roots().count(), 0);
+    let (_, lines) = run(launch);
+    assert_eq!(
+        lines,
+        [
+            URL_DENIED,
+            "net no-url",
+            KV_DENIED,
+            "kv NotAllowedError",
+            DONE
+        ]
+    );
+    assert!(!temp.storage().exists());
+}
+
+#[test]
 fn an_empty_ceiling_denies_everything_and_never_falls_back() {
     let temp = Temp::new();
     let server = Loopback::start();
@@ -558,8 +632,9 @@ fn tampered_truncated_and_foreign_artifacts_are_refused_before_any_guest_effect(
     let server = Loopback::start();
     let mut request = url_grants(&server.url(ROUTE)).to_vec();
     request.extend(kv_grants());
+    let wasm = &probe().wasm;
     let valid = Artifact {
-        wasm: PROBE_WASM.to_vec(),
+        wasm: wasm.clone(),
         manifest: manifest(serde_json::json!(request)),
     };
     // The fixed-footer container behind an arbitrary native prefix is read
@@ -588,8 +663,8 @@ fn tampered_truncated_and_foreign_artifacts_are_refused_before_any_guest_effect(
 
     // A bare module whose manifest claims another host ABI.
     let abi = temp.path("abi.wasm");
-    std::fs::write(&abi, PROBE_WASM).unwrap();
-    let mut wrong: serde_json::Value = serde_json::from_str(PROBE_MANIFEST).unwrap();
+    std::fs::write(&abi, wasm).unwrap();
+    let mut wrong = probe_manifest();
     wrong["abiVersion"] = serde_json::json!(1);
     std::fs::write(
         abi.with_extension("manifest.json"),
@@ -600,10 +675,10 @@ fn tampered_truncated_and_foreign_artifacts_are_refused_before_any_guest_effect(
     // A bare module cut short, and one with a damaged code body.
     let truncated_wasm = temp.path("truncated.wasm");
     valid.write_wasm(&truncated_wasm).unwrap();
-    std::fs::write(&truncated_wasm, &PROBE_WASM[..PROBE_WASM.len() / 2]).unwrap();
+    std::fs::write(&truncated_wasm, &wasm[..wasm.len() / 2]).unwrap();
     let damaged = temp.path("damaged.wasm");
     valid.write_wasm(&damaged).unwrap();
-    std::fs::write(&damaged, damage_first_function(PROBE_WASM)).unwrap();
+    std::fs::write(&damaged, damage_first_function(wasm)).unwrap();
 
     // Foreign payloads: arbitrary bytes, and a valid Wasm module that is not
     // a v38 application.
@@ -630,7 +705,10 @@ fn tampered_truncated_and_foreign_artifacts_are_refused_before_any_guest_effect(
     ] {
         assert_refused_before_any_guest_effect(&temp, &artifact, &server, refusal);
     }
-    // Only preparation created (empty) storage directories; no guest wrote.
+    // Preparing the valid container without a ceiling created its storage
+    // directories (they precede the runtime's code validation); every
+    // refused artifact had an empty ceiling, so it created none, and no
+    // guest wrote anything.
     assert_eq!(files_under(&temp.storage()), Vec::<PathBuf>::new());
 }
 

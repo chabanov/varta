@@ -3,11 +3,16 @@
 use super::{ShellError, storage};
 use std::path::{Path, PathBuf};
 use varta_artifact::{Artifact, MAX_MANIFEST_BYTES, read_bounded};
-use varta_common::{CapabilityGrant, Manifest};
+use varta_common::{CapabilityGrant, Manifest, VartaError};
 use varta_runtime::{Application, ApplicationOptions, RunOptions, VartaRuntime, ViewLayout};
 
 /// The largest font file the shell reads from the command line.
 pub const MAX_FONT_BYTES: usize = 4 * 1024 * 1024;
+/// The largest bare module the preview reads (unchanged from the preview's
+/// own reader); the runtime then applies the module's profile limit.
+const MAX_WASM_BYTES: usize = varta_common::abi::MAX_WASM_BYTES;
+/// Why an empty font or module file is refused.
+const EMPTY_FILE: &str = "empty file";
 
 /// Where a packaged application comes from and what bounds it.
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +56,15 @@ impl Launch {
     /// the package request. Optional grants stay denied, because this host
     /// has no prompt and reads no stored decisions. Nothing here runs guest
     /// code.
+    ///
+    /// This is where the per-artifact KV storage directories are created:
+    /// after the artifact (payload bounds, host ABI, package manifest) and
+    /// the ceiling are validated, but before the runtime validates the code
+    /// and its language profile, which happens in [`Launch::start`] together
+    /// with instantiation (the runtime compiles the module once, from the
+    /// options that already carry the pinned roots). A module the runtime
+    /// then refuses leaves those directories behind, empty. A caller should
+    /// therefore read its cheaper inputs (fonts and other arguments) first.
     pub fn packaged(package: &Package<'_>) -> Result<Self, ShellError> {
         let artifact_error = |source| ShellError::Artifact {
             path: package.artifact.to_path_buf(),
@@ -126,10 +140,29 @@ fn read_policy(path: &Path) -> Result<Manifest, ShellError> {
     Ok(manifest)
 }
 
-/// Read a font file named on the command line.
+/// Read a font file named on the command line: nonempty and at most
+/// [`MAX_FONT_BYTES`].
 pub fn read_font(path: &Path) -> Result<Vec<u8>, ShellError> {
-    read_bounded(path, MAX_FONT_BYTES).map_err(|source| ShellError::Font {
+    read_input(path, MAX_FONT_BYTES).map_err(|source| ShellError::Font {
         path: PathBuf::from(path),
         source,
     })
+}
+
+/// Read a bare module for `varta-preview`: nonempty and at most
+/// `varta_common::abi::MAX_WASM_BYTES`.
+pub fn read_module(path: &Path) -> Result<Vec<u8>, ShellError> {
+    read_input(path, MAX_WASM_BYTES).map_err(|source| ShellError::Module {
+        path: PathBuf::from(path),
+        source,
+    })
+}
+
+/// A bounded regular file that is not empty.
+fn read_input(path: &Path, limit: usize) -> Result<Vec<u8>, VartaError> {
+    let bytes = read_bounded(path, limit)?;
+    if bytes.is_empty() {
+        return Err(VartaError::InvalidArtifact(EMPTY_FILE.into()));
+    }
+    Ok(bytes)
 }

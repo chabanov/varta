@@ -10,7 +10,7 @@ mod ime;
 mod tests;
 mod worker;
 
-use super::{Launch, ShellError};
+use super::{Launch, ShellError, args::Renderer};
 #[cfg(feature = "gpu")]
 use crate::gpu;
 use crate::input_queue::{PendingKeys, WORKER_QUEUE_CAPACITY};
@@ -35,26 +35,53 @@ use worker::WorkerState;
 const ROOT_FONT_SIZE: f32 = 16.0;
 
 /// Where the window writes guest output and host diagnostics. The binaries
-/// choose the process streams; the library itself never prints.
+/// choose the process streams and the label; the library itself never
+/// prints.
 #[derive(Clone, Copy)]
 pub struct Console {
+    /// The prefix of host diagnostic lines (the running binary's name).
+    pub label: &'static str,
     /// One line of guest output (`console.log`).
     pub output: fn(&str),
     /// One complete host diagnostic line.
     pub diagnostic: fn(&str),
 }
 
+impl Console {
+    /// A console that discards everything (headless tests).
+    #[cfg(test)]
+    pub(crate) const SILENT: Self = Self {
+        label: "varta-test",
+        output: |_| {},
+        diagnostic: |_| {},
+    };
+
+    /// Write one host diagnostic line, prefixed with the binary's label.
+    pub(crate) fn report(&self, message: impl std::fmt::Display) {
+        (self.diagnostic)(&format!("{}: {message}", self.label));
+    }
+}
+
 /// How one window host presents its application.
 pub struct WindowConfig {
     /// The window title until the guest sets one.
     pub title: &'static str,
-    /// The prefix of host diagnostic lines (the binary name).
-    pub label: &'static str,
     /// An explicit layout and render font: its bytes and family name.
     pub font: Option<(Vec<u8>, String)>,
-    /// Try the GPU renderer first (only with the `gpu` feature).
-    pub gpu: bool,
+    /// The presentation backend ([`check_renderer`]).
+    pub renderer: Renderer,
     pub console: Console,
+}
+
+/// Whether this build can present with `renderer`. An explicit `gpu` needs
+/// a build with the `gpu` feature (and, at window start, a GPU that
+/// initializes); `auto` uses the CPU when the GPU is unavailable; `cpu`
+/// never uses the GPU.
+pub fn check_renderer(renderer: Renderer) -> Result<(), ShellError> {
+    if renderer == Renderer::Gpu && !cfg!(feature = "gpu") {
+        return Err(ShellError::GpuNotCompiled);
+    }
+    Ok(())
 }
 
 pub(crate) enum GuiEvent {
@@ -138,7 +165,13 @@ struct Host {
     ime_composing: bool,
     title: String,
     default_title: &'static str,
-    label: &'static str,
+    /// An explicit `gpu` renderer: a GPU that fails to initialize is an
+    /// error, not a CPU fallback.
+    #[cfg(feature = "gpu")]
+    gpu_required: bool,
+    /// Why a required GPU failed to initialize; the window then closes.
+    #[cfg(feature = "gpu")]
+    gpu_failure: Option<String>,
     console: Console,
 }
 struct Pressed {
@@ -153,8 +186,10 @@ struct Pressed {
 
 /// Open the window and run `launch` until the window closes or the
 /// application fails. `started` is the host entry time of the startup
-/// measurement.
+/// measurement. A renderer this build cannot provide ([`check_renderer`])
+/// is refused before the window opens.
 pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(), ShellError> {
+    check_renderer(config.renderer)?;
     let window_error = |error: &dyn std::fmt::Display| ShellError::Window(error.to_string());
     let event_loop = EventLoop::<GuiEvent>::with_user_event()
         .build()
@@ -166,7 +201,9 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
     let frame_ack = Arc::new(AtomicU64::new(0));
     let pointer = Arc::new(Mutex::new(PointerState::default()));
     let wake = Arc::new(wake::Wake::default());
-    let gpu_active = Arc::new(AtomicBool::new(cfg!(feature = "gpu") && config.gpu));
+    let gpu_active = Arc::new(AtomicBool::new(
+        cfg!(feature = "gpu") && config.renderer.prefers_gpu(),
+    ));
     let (sender, receiver) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
     let proxy = event_loop.create_proxy();
     let accessibility_active = Arc::new(AtomicBool::new(false));
@@ -174,6 +211,7 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         Some(proxy.clone()),
         wake.clone(),
         accessibility_active.clone(),
+        config.console,
     );
     #[cfg(feature = "gpu")]
     let gpu_events = Some(proxy.clone());
@@ -224,12 +262,19 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         ime_composing: false,
         title: config.title.into(),
         default_title: config.title,
-        label: config.label,
+        #[cfg(feature = "gpu")]
+        gpu_required: config.renderer == Renderer::Gpu,
+        #[cfg(feature = "gpu")]
+        gpu_failure: None,
         console: config.console,
     };
     event_loop
         .run_app(&mut host)
         .map_err(|e| window_error(&e))?;
+    #[cfg(feature = "gpu")]
+    if let Some(reason) = host.gpu_failure {
+        return Err(ShellError::GpuUnavailable(reason));
+    }
     match host.error {
         Some(error) => Err(ShellError::Application(error)),
         None => Ok(()),

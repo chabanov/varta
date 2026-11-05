@@ -169,7 +169,9 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 );
             }
             // The native shell is distribution code: no source tooling, not
-            // even for its tests (they use prebuilt portable artifacts).
+            // even for its tests, which run the `varta` binary as a separate
+            // process to compile their probe. Transitive paths are checked in
+            // `only_the_runtime_reaches_the_kv_storage_engine`.
             if name == "varta-desktop" {
                 assert!(
                     !is_source_tooling(target),
@@ -288,12 +290,15 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
             (node["id"].as_str().unwrap(), normal)
         })
         .collect();
-    let reaches = |root: &str, target: &str| {
-        let start = names
+    let id_of = |root: &str| {
+        names
             .iter()
             .find(|(_, name)| **name == root)
             .map(|(id, _)| *id)
-            .unwrap();
+            .unwrap()
+    };
+    // Whether package `start` reaches `target` through normal and build edges.
+    let reaches_from = |start: &str, target: &str| {
         let mut pending = vec![start];
         let mut seen = std::collections::BTreeSet::new();
         while let Some(id) = pending.pop() {
@@ -307,6 +312,7 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
         }
         false
     };
+    let reaches = |root: &str, target: &str| reaches_from(id_of(root), target);
     for engine in [
         "varta-common",
         "varta-bigint",
@@ -331,7 +337,31 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
             assert!(!reaches(name, "arboard"), "{name} reaches OS clipboard I/O");
         }
     }
-    // Nor does any production path of the native shell reach source tooling.
+    // Nor does any production path of the native shell, or any path through
+    // one of its dev-dependencies, reach source tooling.
+    let desktop = id_of("varta-desktop");
+    let desktop_dev: Vec<&str> = metadata["resolve"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == desktop)
+        .unwrap()["deps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|dep| {
+            dep["dep_kinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|kind| kind["kind"] == "dev")
+        })
+        .map(|dep| dep["pkg"].as_str().unwrap())
+        .collect();
+    assert!(
+        !desktop_dev.is_empty(),
+        "varta-desktop has dev-dependencies to check"
+    );
     for name in names
         .values()
         .copied()
@@ -341,6 +371,13 @@ fn only_the_runtime_reaches_the_kv_storage_engine() {
             !reaches("varta-desktop", name),
             "varta-desktop reaches {name}"
         );
+        for dev in &desktop_dev {
+            assert!(
+                !reaches_from(dev, name),
+                "varta-desktop's dev-dependency {} reaches {name}",
+                names[dev]
+            );
+        }
     }
     assert!(reaches("varta-desktop", "varta-artifact"));
     assert!(reaches("varta-desktop", "accesskit"));

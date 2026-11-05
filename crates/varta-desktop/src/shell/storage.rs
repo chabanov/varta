@@ -2,12 +2,19 @@
 //!
 //! A v38 package names its file roots and requests `kv.read`/`kv.write` on
 //! virtual paths under them; it never chooses a host directory. The shell
-//! maps every root that a package `kv.*` pattern names, and that the host
-//! ceiling does not map itself, to `<base>/sha256-<digest>/<root>`, a
-//! directory the shell creates for that artifact hash only. A different
-//! artifact (any changed byte of its Wasm) gets a different directory. The
-//! mapping grants nothing: every operation still needs the exact grant in
-//! the package request and in the ceiling.
+//! maps every root that could hold a database (a package `kv.read` pattern
+//! names it and, when a ceiling is given, a ceiling `kv.read` pattern can
+//! cover it) and that the ceiling does not map itself to
+//! `<base>/sha256-<digest>/<root>`, a directory the shell creates for that
+//! artifact hash only. A different artifact (any changed byte of its Wasm)
+//! gets a different directory. The mapping grants nothing: every operation
+//! still needs the exact grant in the package request and in the ceiling.
+//!
+//! The directories are created by `Launch::packaged`, after the artifact
+//! and the ceiling are validated and before the runtime validates the code
+//! and its language profile at start (which compiles the module once, with
+//! the roots already pinned). A module the runtime then refuses leaves them
+//! behind, empty; no guest code ever ran.
 use super::ShellError;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -63,33 +70,58 @@ pub fn default_storage_base() -> Result<PathBuf, ShellError> {
         .ok_or(ShellError::NoStorageBase)
 }
 
-/// The roots that a package `kv.*` pattern names.
-fn kv_roots(package: &Manifest) -> Result<BTreeSet<String>, ShellError> {
-    let grants = package.grants().map_err(RuntimeError::from)?;
-    let mut roots = BTreeSet::new();
+/// Characters that make a path pattern component a glob.
+const WILDCARDS: [char; 2] = ['*', '?'];
+
+/// The first component (the root) of each `kv.read` pattern of `manifest`.
+fn kv_read_roots(manifest: &Manifest) -> Result<Vec<String>, ShellError> {
+    let grants = manifest.grants().map_err(RuntimeError::from)?;
+    let mut roots = Vec::new();
     for grant in grants {
-        if grant.id != kv::READ_CAPABILITY && grant.id != kv::WRITE_CAPABILITY {
+        if grant.id != kv::READ_CAPABILITY {
             continue;
         }
         if let CapabilityValue::PathGlobs(patterns) = grant.value {
-            for pattern in patterns {
-                // Package validation already requires a literal declared root.
-                if let Some(root) = pattern
+            roots.extend(patterns.iter().filter_map(|pattern| {
+                pattern
                     .strip_prefix(files::SEPARATOR)
                     .and_then(|rest| rest.split(files::SEPARATOR).next())
-                    .filter(|root| files::valid_root_name(root))
-                {
-                    roots.insert(root.to_owned());
-                }
-            }
+                    .map(str::to_owned)
+            }));
         }
     }
     Ok(roots)
 }
 
-/// Pin the KV storage roots of `package` under `base`. A root the ceiling
-/// maps keeps that explicit mapping. Nothing is created when the ceiling
-/// leaves no `kv.read` (no database could ever be opened).
+/// The roots that need KV storage: every root that a package `kv.read`
+/// pattern names (package validation requires a literal declared root)
+/// and, when a ceiling is given, that a ceiling `kv.read` pattern can cover:
+/// its first component is that root, or a glob (conservatively counted for
+/// every root). Opening a database needs `kv.read` on its path in both, so
+/// no other root could ever hold one; a root reached only by `kv.write`
+/// grants is not created.
+fn kv_roots(
+    package: &Manifest,
+    ceiling: Option<&Manifest>,
+) -> Result<BTreeSet<String>, ShellError> {
+    let mut roots: BTreeSet<String> = kv_read_roots(package)?
+        .into_iter()
+        .filter(|root| files::valid_root_name(root))
+        .collect();
+    if let Some(ceiling) = ceiling {
+        let covered = kv_read_roots(ceiling)?;
+        roots.retain(|root| {
+            covered
+                .iter()
+                .any(|first| first == root || first.contains(WILDCARDS))
+        });
+    }
+    Ok(roots)
+}
+
+/// Pin the KV storage roots of `package` ([`kv_roots`]) under `base`,
+/// creating `<base>/sha256-<digest>/<root>` for each. A root the ceiling
+/// maps keeps that explicit mapping and gets no directory here.
 pub(super) fn pin(
     roots: &mut FileRoots,
     package: &Manifest,
@@ -97,15 +129,12 @@ pub(super) fn pin(
     base: &Path,
     identity: &str,
 ) -> Result<(), ShellError> {
-    let wanted = kv_roots(package)?;
+    let mut wanted = kv_roots(package, ceiling)?;
+    for mapped in roots.names() {
+        wanted.remove(mapped);
+    }
     if wanted.is_empty() {
         return Ok(());
-    }
-    if let Some(ceiling) = ceiling {
-        let grants = ceiling.grants().map_err(RuntimeError::from)?;
-        if !grants.iter().any(|grant| grant.id == kv::READ_CAPABILITY) {
-            return Ok(());
-        }
     }
     if !base.is_absolute() {
         return Err(ShellError::StorageNotAbsolute(base.to_path_buf()));
@@ -117,8 +146,7 @@ pub(super) fn pin(
             format!("malformed application identity {identity}"),
         ),
     })?;
-    let mapped: BTreeSet<String> = roots.names().map(str::to_owned).collect();
-    for root in wanted.difference(&mapped) {
+    for root in &wanted {
         let path = directory.join(root);
         create_private(&path)?;
         roots.open(root, &path)?;
@@ -168,17 +196,70 @@ mod tests {
         }
     }
 
+    fn roots(package: &Manifest, ceiling: Option<&str>) -> Vec<String> {
+        let ceiling = ceiling.map(|text| Manifest::parse(text.as_bytes()).unwrap());
+        kv_roots(package, ceiling.as_ref())
+            .unwrap()
+            .into_iter()
+            .collect()
+    }
+
     #[test]
-    fn only_kv_patterns_name_storage_roots() {
-        let manifest = Manifest::parse(
-            br#"{"abiVersion":34,"fsRoots":["config","data","logs"],"capabilities":[
+    fn only_package_kv_read_patterns_name_storage_roots() {
+        let package = Manifest::parse(
+            br#"{"abiVersion":34,"fsRoots":["config","data","logs","outbox"],"capabilities":[
                 {"id":"fs.read","patterns":["/config/**"]},
                 {"id":"kv.read","patterns":["/data/app.kv","/logs/*.kv"]},
-                {"id":"kv.write","patterns":["/data/app.kv"]}]}"#,
+                {"id":"kv.write","patterns":["/data/app.kv","/outbox/app.kv"]}]}"#,
         )
         .unwrap();
+        // `outbox` has only `kv.write`, which never opens a database.
+        assert_eq!(roots(&package, None), ["data", "logs"]);
+    }
+
+    #[test]
+    fn the_ceiling_gates_each_root_by_its_own_kv_read_patterns() {
+        let package = Manifest::parse(
+            br#"{"abiVersion":34,"fsRoots":["data","logs"],"capabilities":[
+                {"id":"kv.read","patterns":["/data/app.kv","/logs/app.kv"]},
+                {"id":"kv.write","patterns":["/data/app.kv","/logs/app.kv"]}]}"#,
+        )
+        .unwrap();
+        let ceiling =
+            |capabilities: &str| format!(r#"{{"abiVersion":34,"capabilities":{capabilities}}}"#);
+        // A `kv.read` for another root creates nothing for `data`.
         assert_eq!(
-            kv_roots(&manifest).unwrap().into_iter().collect::<Vec<_>>(),
+            roots(
+                &package,
+                Some(&ceiling(r#"[{"id":"kv.read","patterns":["/logs/**"]}]"#))
+            ),
+            ["logs"]
+        );
+        // `kv.write` alone, or any other operation, never opens a database.
+        assert!(
+            roots(
+                &package,
+                Some(&ceiling(
+                    r#"[{"id":"kv.write","patterns":["/data/**","/logs/**"]},
+                        {"id":"fs.read","patterns":["/data/**"]}]"#
+                ))
+            )
+            .is_empty()
+        );
+        assert!(roots(&package, Some(&ceiling("[]"))).is_empty());
+        // A glob in the root component conservatively counts for every root.
+        assert_eq!(
+            roots(
+                &package,
+                Some(&ceiling(r#"[{"id":"kv.read","patterns":["/**"]}]"#))
+            ),
+            ["data", "logs"]
+        );
+        assert_eq!(
+            roots(
+                &package,
+                Some(&ceiling(r#"[{"id":"kv.read","patterns":["/d*/app.kv"]}]"#))
+            ),
             ["data", "logs"]
         );
     }

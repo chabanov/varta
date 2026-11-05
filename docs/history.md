@@ -3090,8 +3090,8 @@ ceiling, denies optional grants (no prompt yet) and pins KV roots to a private
 host-owned directory per artifact hash
 ([contract](architecture.md#native-shell-varta-shell)). Fonts stay explicit
 arguments. The boundary test now forbids compiler, SWC, project, CLI and `clap`
-dependencies of `varta-desktop`, including dev and transitive ones; shell tests
-use a checked-in portable probe artifact built by `varta build`.
+dependencies of `varta-desktop`, production and dev, direct and transitive
+(the transitive dev-dependency check came with the review fixes below).
 
 Scoped checks: `verify.py local varta-desktop` passes (96 tests: 82 library,
 3 binary, 11 shell-core), as do the GPU-feature build and tests, strict
@@ -3100,3 +3100,17 @@ launcher tests and formatting. A manual run on macOS opened the window and
 presented the first frame of a packaged view example and of the probe (KV
 round-trip in its per-hash directory); the agent environment could not capture
 the screen. No full gate was run for this package.
+
+Review fixes (same wave). The checked-in probe Wasm and manifest are gone:
+the tests build the workspace's `varta` binary with Cargo (offline, locked)
+and run `varta build` on `tests/fixtures/shell-probe` as an external process.
+`varta-shell` checks the renderer and reads the font before preparing the
+artifact, so a bad `--font` creates no storage; empty font and module files
+are refused again, as the preview's old reader did. Library diagnostics (GPU
+adapter and loss, accessibility observer warnings, frame timing) go through
+the binary's console and label instead of `eprintln!`. `--renderer gpu` is
+refused without the `gpu` feature and is an error when the GPU does not
+initialize; `auto` keeps the CPU fallback. KV directories are gated per root
+by the ceiling's `kv.read` patterns, a ceiling mapping of a KV root is tested
+to win, and the contract states that the directories precede the runtime's
+code validation (which runs once, at start).
