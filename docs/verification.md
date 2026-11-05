@@ -695,6 +695,16 @@ cargo run -p varta-view --example native_fields_probe --locked -- target/native-
 node scripts/test-native-fields.mjs target/native-fields-oracle.json
 ```
 
+Native modal dialogs (top layer, backdrop, centring and the viewport reserve)
+against local Chrome, at each compared scale:
+
+```sh
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_dialog_probe --locked -- "$scale" > "target/native-dialog-$scale.json"
+  node scripts/test-native-dialog.mjs "target/native-dialog-$scale.json"
+done
+```
+
 The oracle carries its original font bytes and compares fixed control boxes and
 UTF-8 caret offsets for password graphemes, emoji and search text. It suppresses
 Chrome's search-clear affordance to compare the admitted plain-field surface.
