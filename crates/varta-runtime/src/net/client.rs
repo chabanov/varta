@@ -1,7 +1,11 @@
 //! The HTTP/1.1 client of one request: a task on the execution's
-//! current-thread Tokio runtime. It runs only while the event loop waits, so
-//! no network effect happens while guest code runs, and dropping the task
-//! (abort or the end of the execution) closes its connection at once.
+//! current-thread Tokio runtime. The runtime runs only on the guest's thread
+//! while the event loop waits or a host call closes a transfer, so no network
+//! effect happens while guest code runs. The connection is a second task,
+//! published through a [`ConnectionSlot`]: an abort cancels both tasks and
+//! runs the runtime until both are dropped before the abort returns, so the
+//! connection closes at once rather than when the event loop next waits; the
+//! end of the execution drops the runtime with every task.
 //!
 //! V37: name resolution, connect, TLS, the request and every body read share
 //! the request's deadline (the remaining execution deadline). V38: the head
@@ -13,7 +17,7 @@ use super::{Completion, Event};
 use crate::turns::Inactivity;
 use hyper::body::{Body, Bytes, Incoming};
 use hyper::header::{HeaderName, HeaderValue};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -96,12 +100,14 @@ pub(super) fn tls_config() -> Result<Arc<rustls::ClientConfig>, String> {
     Ok(Arc::new(config))
 }
 
-/// Run one request to completion, reporting through `events`.
+/// Run one request to completion, reporting through `events`; its
+/// connection task is published in `connection`.
 pub(super) async fn run(
     id: u64,
     plan: Plan,
     events: mpsc::UnboundedSender<Event>,
     mut pull: mpsc::Receiver<ReadMode>,
+    connection: ConnectionSlot,
 ) {
     let deadline = tokio::time::Instant::from_std(plan.deadline);
     let send = |kind: CompletionKind, text: String| {
@@ -114,11 +120,12 @@ pub(super) async fn run(
         });
     };
     let fail = |failure: RequestFailure| send(CompletionKind::Failed, failure.to_string());
-    let response = match tokio::time::timeout_at(deadline, connect_and_send(&plan)).await {
-        Ok(Ok(response)) => response,
-        Ok(Err(failure)) => return fail(failure),
-        Err(_) => return fail(RequestFailure::Timeout),
-    };
+    let response =
+        match tokio::time::timeout_at(deadline, connect_and_send(&plan, &connection)).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(failure)) => return fail(failure),
+            Err(_) => return fail(RequestFailure::Timeout),
+        };
     let (parts, body, _connection) = response;
     if plan.identity {
         let codings: Vec<String> = parts
@@ -147,8 +154,35 @@ pub(super) async fn run(
     }
 }
 
-/// Aborts the connection task when the request task ends or is dropped.
-struct Connection(tokio::task::JoinHandle<()>);
+/// The connection task of one request, once its HTTP handshake is done. The
+/// request task and the request's owner share it: the request task cancels
+/// it when it ends, and the owner takes it to wait until the cancelled task,
+/// and with it the socket, is gone (`Transfer::close` in the parent module).
+#[derive(Clone, Default)]
+pub(super) struct ConnectionSlot(Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>);
+impl ConnectionSlot {
+    /// The connection task, if one was published and not taken yet.
+    pub(super) fn take(&self) -> Option<tokio::task::JoinHandle<()>> {
+        self.lock().take()
+    }
+    fn publish(&self, task: tokio::task::JoinHandle<()>) {
+        *self.lock() = Some(task);
+    }
+    /// Cancel the connection task, leaving it for the owner to wait for.
+    fn abort(&self) {
+        if let Some(task) = self.lock().as_ref() {
+            task.abort();
+        }
+    }
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<tokio::task::JoinHandle<()>>> {
+        // No code panics while holding the lock, and the slot holds a
+        // complete `Option` at every point, so a poisoned lock is still sound.
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Cancels the connection task when the request task ends or is dropped.
+struct Connection(ConnectionSlot);
 impl Drop for Connection {
     fn drop(&mut self) {
         self.0.abort();
@@ -191,10 +225,14 @@ pub(crate) fn fetch_cancellable(
         .build()
         .map_err(HostFailure::io)?;
     let request = async {
-        let (parts, mut incoming, _connection) =
-            connect_and_send_with_limit(&plan, varta_common::net::MAX_FETCH_HEADER_BYTES)
-                .await
-                .map_err(HostFailure::io)?;
+        // This runtime ends with the call, closing every socket it owns.
+        let (parts, mut incoming, _connection) = connect_and_send_with_limit(
+            &plan,
+            varta_common::net::MAX_FETCH_HEADER_BYTES,
+            &ConnectionSlot::default(),
+        )
+        .await
+        .map_err(HostFailure::io)?;
         let status = i32::from(parts.status.as_u16());
         let mut bytes = Vec::new();
         if read_body {
@@ -236,13 +274,17 @@ pub(crate) fn fetch_cancellable(
     })
 }
 
-async fn connect_and_send(plan: &Plan) -> Result<Response, RequestFailure> {
-    connect_and_send_with_limit(plan, MAX_RESPONSE_HEADER_BYTES).await
+async fn connect_and_send(
+    plan: &Plan,
+    connection: &ConnectionSlot,
+) -> Result<Response, RequestFailure> {
+    connect_and_send_with_limit(plan, MAX_RESPONSE_HEADER_BYTES, connection).await
 }
 
 async fn connect_and_send_with_limit(
     plan: &Plan,
     header_bytes: usize,
+    connection: &ConnectionSlot,
 ) -> Result<Response, RequestFailure> {
     let host = plan.url.host_str().ok_or(RequestFailure::NoHost)?;
     let port = plan
@@ -276,13 +318,30 @@ async fn connect_and_send_with_limit(
             .connect(name, tcp)
             .await
             .map_err(|error| RequestFailure::TlsHandshake(error.to_string()))?;
-        exchange(plan, hyper_util::rt::TokioIo::new(tls), header_bytes).await
+        exchange(
+            plan,
+            hyper_util::rt::TokioIo::new(tls),
+            header_bytes,
+            connection,
+        )
+        .await
     } else {
-        exchange(plan, hyper_util::rt::TokioIo::new(tcp), header_bytes).await
+        exchange(
+            plan,
+            hyper_util::rt::TokioIo::new(tcp),
+            header_bytes,
+            connection,
+        )
+        .await
     }
 }
 
-async fn exchange<T>(plan: &Plan, io: T, header_bytes: usize) -> Result<Response, RequestFailure>
+async fn exchange<T>(
+    plan: &Plan,
+    io: T,
+    header_bytes: usize,
+    slot: &ConnectionSlot,
+) -> Result<Response, RequestFailure>
 where
     T: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
 {
@@ -294,10 +353,11 @@ where
         .handshake::<_, http_body_util::Full<Bytes>>(io)
         .await
         .map_err(|error| RequestFailure::HttpHandshake(error.to_string()))?;
-    let connection = Connection(tokio::spawn(async move {
+    slot.publish(tokio::spawn(async move {
         // The outcome reaches the request through its response or body.
         let _ = connection.await;
     }));
+    let connection = Connection(slot.clone());
     let mut request = hyper::Request::builder()
         .method(plan.method.clone())
         .uri(&plan.url[url::Position::BeforePath..url::Position::AfterQuery]);

@@ -960,3 +960,205 @@ fn v38_bursts_split_reads_within_the_turn_fuel() {
     let share = TURN_FUEL / READ_FUEL_SHARE;
     assert!(network.iter().all(|fuel| *fuel <= share), "{network:?}");
 }
+
+/// The program's pause after the abort or failure, with no request in flight.
+const PAUSE_MS: u64 = 600;
+/// How much of the pause may pass before the server sees the connection
+/// close: half of it, so a close deferred to the guest's next wake (pilot
+/// finding F2) fails by the other half.
+const CLOSE_BOUND: std::time::Duration = std::time::Duration::from_millis(PAUSE_MS / 2);
+/// The path of the client's request after its pause: its wake.
+const WAKE: &str = "/hello";
+/// How long a test waits for a Varta HTTP service to listen.
+const LISTEN_READINESS: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// `net_cases/v38/abort_close.ts` against `base`, aborting once `loopback`
+/// holds a request for `/held` (its gate answers) and pausing `pause_ms`
+/// after the abort.
+fn abort_close(base: &str, loopback: &Loopback, pause_ms: u64) -> String {
+    use crate::net_loopback::GATE;
+    include_str!("net_cases/v38/abort_close.ts")
+        .replace(BASE, base)
+        .replace("__GATE__", &format!("{}{GATE}", loopback.base))
+        .replace("__PAUSE__", &pause_ms.to_string())
+}
+
+/// The loopback trace shows that the client closed its `path` connection
+/// after the request arrived and before its [`WAKE`] request, sent when its
+/// [`PAUSE_MS`] timer fired, with at most [`CLOSE_BOUND`] of the pause passed.
+/// The order comes from the trace itself; only the margin is wall time, and
+/// load can only widen it (a late wake), except for the server thread's own
+/// delay in seeing the end of stream. Returns when the close was seen.
+fn assert_closed_before_wake(server: &Loopback, path: &str, label: &str) -> std::time::Instant {
+    use crate::net_loopback::Seen;
+    let trace = server.trace();
+    let position = |seen: Seen| {
+        trace
+            .iter()
+            .position(|(observed, _)| *observed == seen)
+            .unwrap_or_else(|| panic!("{label}: no {seen:?} in {trace:?}"))
+    };
+    let arrived = position(Seen::Arrived(path.into()));
+    let closed = position(Seen::Closed(path.into()));
+    let woke = position(Seen::Arrived(WAKE.into()));
+    assert!(arrived < closed && closed < woke, "{label}: {trace:?}");
+    let (closed, woke) = (trace[closed].1, trace[woke].1);
+    let before_wake = woke.saturating_duration_since(closed);
+    assert!(
+        before_wake >= std::time::Duration::from_millis(PAUSE_MS) - CLOSE_BOUND,
+        "{label}: closed {before_wake:?} before the guest woke"
+    );
+    closed
+}
+
+/// Pilot finding F2: aborting a request whose head is pending closes its
+/// connection at once (the documented cancellation rule), observed as the
+/// server's end of stream, long before the guest's next wake, which used to
+/// be the first moment the runtime dropped the cancelled transfer. The abort
+/// follows the loopback gate's answer, so the server holds the request when
+/// it comes (an ordering, not a timer); the close then comes within
+/// [`CLOSE_BOUND`] of that answer. Both profiles with `fetch` share the
+/// transfer.
+#[test]
+fn aborted_requests_close_their_connection_before_the_guest_wakes() {
+    use crate::net_loopback::{GATE, HELD, Seen};
+    for profile in [V37, V38] {
+        let server = Loopback::start();
+        let source = abort_close(&server.base, &server, PAUSE_MS);
+        let output = VartaRuntime::new()
+            .run_wasm_bytes(&compile_with(&source, profile), &grants(&server))
+            .unwrap_or_else(|e| panic!("{profile:?}: {e:?}"));
+        assert_eq!(
+            output.lines,
+            lines(&["gate: 200 open", "held: AbortError", "hello: 200"])
+        );
+        let label = format!("{profile:?}");
+        let closed = assert_closed_before_wake(&server, HELD, &label);
+        let trace = server.trace();
+        let (_, opened) = trace
+            .iter()
+            .find(|(seen, _)| *seen == Seen::Answered(GATE.into()))
+            .unwrap_or_else(|| panic!("{label}: the gate never answered: {trace:?}"));
+        let after_gate = closed.saturating_duration_since(*opened);
+        assert!(after_gate < CLOSE_BOUND, "{label}: {after_gate:?}");
+    }
+}
+
+/// The inactivity window of [`application`] ends a transfer on its own: a
+/// head that never comes (`/held`) or a body that stops after one event
+/// (`/trickle`). The failed transfer closes its connection before the
+/// failure reaches the guest, so a guest that then waits on a timer alone no
+/// longer keeps the socket until it wakes (the terminal-transfer case of
+/// pilot finding F2).
+#[test]
+fn transfers_that_fail_on_their_own_close_their_connection_before_the_guest_wakes() {
+    use crate::net_loopback::{HELD, TRICKLE};
+    for (path, failure) in [(HELD, "fetch failed"), (TRICKLE, "terminated")] {
+        let server = Loopback::start();
+        let source = program(include_str!("net_cases/v38/timeout_close.ts"), &server)
+            .replace("__PATH__", path)
+            .replace("__PAUSE__", &PAUSE_MS.to_string());
+        let report = application(&compile_with(&source, V38), grants(&server), None);
+        assert!(report.failure.is_none(), "{path}: {:?}", report.failure);
+        assert_eq!(
+            report.output.lines,
+            lines(&[&format!("held: {failure}"), "hello: 200"]),
+            "{path}"
+        );
+        assert_closed_before_wake(&server, path, path);
+    }
+}
+
+/// How long the test's observer keeps a cancelled worker, and so the one
+/// worker permit, before the worker ends: a worker that takes a while to
+/// stop after its client left.
+const DRAIN: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Pilot finding F2, server side: a v2 HTTP service whose client aborted
+/// (closing the connection, so the worker is cancelled) serves the client's
+/// next request, sent at once, after the cancelled worker released the
+/// permit, instead of refusing it with the runtime's own 503. The service's
+/// `/held` holds a request to the loopback server, whose gate lets the client
+/// abort only once the worker is busy with it; the cancelled worker then
+/// closes that upstream connection as well.
+#[test]
+fn aborted_requests_leave_the_server_worker_free_for_the_next_request() {
+    use crate::net_loopback::HELD;
+    use std::sync::{Arc, Mutex, mpsc};
+    let upstream = Loopback::start();
+    let service = compile_with(
+        &include_str!("net_cases/v38/held_service.ts")
+            .replace("__HELD__", &format!("{}{HELD}", upstream.base)),
+        V38,
+    );
+    let runtime = VartaRuntime::new();
+    let endpoint = runtime
+        .inspect_module(&service)
+        .unwrap()
+        .http_service
+        .unwrap()
+        .bind;
+    let (listening, ready) = mpsc::channel();
+    let outcomes = Arc::new(Mutex::new(Vec::new()));
+    let recorded = outcomes.clone();
+    let observer: RuntimeObserver = Arc::new(move |event| match event {
+        RuntimeEvent::Listening { address, shutdown } => {
+            let _ = listening.send((address, shutdown));
+        }
+        RuntimeEvent::HttpRequest(report) => {
+            if report.outcome == HttpRequestOutcome::Cancelled {
+                std::thread::sleep(DRAIN);
+            }
+            recorded.lock().unwrap().push(report.outcome);
+        }
+        RuntimeEvent::Output(_) | RuntimeEvent::Diagnostic(_) => {}
+    });
+    let options = RunOptions {
+        requested: vec![
+            CapabilityGrant {
+                id: varta_common::http::LISTEN_CAPABILITY.into(),
+                value: CapabilityValue::ListenEndpoints(vec![endpoint]),
+            },
+            requests(&[format!("{}/**", upstream.base)], None),
+        ],
+        observer: Some(observer),
+        ..RunOptions::default()
+    };
+    let server = std::thread::spawn(move || runtime.run_with(&service, options));
+    let (address, shutdown) = ready
+        .recv_timeout(LISTEN_READINESS)
+        .expect("listener readiness");
+    let base = format!("http://{address}");
+    let client = compile_with(&abort_close(&base, &upstream, 0), V38);
+    let grants = [
+        requests(
+            &[format!("{base}/**"), format!("{}/**", upstream.base)],
+            None,
+        ),
+        boolean(TIMER_CAPABILITY),
+    ];
+    let output = VartaRuntime::new().run_wasm_bytes(&client, &grants);
+    shutdown.shutdown();
+    let report = server.join().unwrap();
+    assert!(report.failure.is_none(), "{:?}", report.failure);
+    let output = output.unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(
+        output.lines,
+        lines(&["gate: 200 open", "held: AbortError", "hello: 200"])
+    );
+    assert!(
+        upstream
+            .trace()
+            .iter()
+            .any(|(seen, _)| *seen == crate::net_loopback::Seen::Closed(HELD.into())),
+        "{:?}",
+        upstream.trace()
+    );
+    assert_eq!(
+        *outcomes.lock().unwrap(),
+        [
+            HttpRequestOutcome::Cancelled,
+            HttpRequestOutcome::Returned { status: 200 }
+        ]
+    );
+}

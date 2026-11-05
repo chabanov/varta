@@ -61,11 +61,46 @@ struct Request {
     transfer: Option<Transfer>,
 }
 
-/// A running transfer: its task and the channel that asks for the next chunk
-/// (as text or as bytes).
+/// A running transfer: its task, the channel that asks for the next chunk
+/// (as text or as bytes), and its connection task once there is one.
 struct Transfer {
     task: tokio::task::JoinHandle<()>,
     pull: mpsc::Sender<ReadMode>,
+    connection: client::ConnectionSlot,
+}
+impl Transfer {
+    /// Cancel the transfer and run `runtime` until its request and connection
+    /// tasks are dropped, so its socket is closed when this returns instead
+    /// of when the event loop next drives the runtime (which a guest waiting
+    /// only for timers never does). Cancelling a task needs no network
+    /// progress: an aborted task is dropped at its next poll, which this
+    /// `block_on` performs. Other transfers may make progress meanwhile; their
+    /// completions wait in the event queue like any that arrive during a turn.
+    ///
+    /// A transfer that ended on its own (its end of body or a failure) is
+    /// closed the same way before its terminal completion is delivered: its
+    /// request task has finished, and its cancelled connection task would
+    /// otherwise wait for the next drive as well. Without a runtime there is
+    /// no task to wait for: a transfer exists only on the runtime that
+    /// spawned it.
+    fn close(mut self, runtime: Option<&tokio::runtime::Runtime>) {
+        let Some(runtime) = runtime else {
+            return;
+        };
+        self.task.abort();
+        let connection = self.connection.take();
+        if let Some(connection) = &connection {
+            connection.abort();
+        }
+        runtime.block_on(async {
+            // Both end as cancelled (or already finished): the outcome is
+            // irrelevant, only that each future has been dropped.
+            let _ = (&mut self.task).await;
+            if let Some(connection) = connection {
+                let _ = connection.await;
+            }
+        });
+    }
 }
 impl Drop for Transfer {
     fn drop(&mut self) {
@@ -165,8 +200,13 @@ impl Net {
         let Some(runtime) = &self.runtime else {
             return Err(wasmtime::Error::new(NetError::State));
         };
-        let task = runtime.spawn(client::run(id, plan, events, pulls));
-        Ok(Transfer { task, pull })
+        let connection = client::ConnectionSlot::default();
+        let task = runtime.spawn(client::run(id, plan, events, pulls, connection.clone()));
+        Ok(Transfer {
+            task,
+            pull,
+            connection,
+        })
     }
     fn tls(&mut self) -> Result<Arc<rustls::ClientConfig>, String> {
         if let Some(config) = &self.tls {
@@ -197,7 +237,9 @@ impl Net {
         Ok(())
     }
     /// A transfer completed its armed operation. Completions of requests that
-    /// were aborted or released are discarded.
+    /// were aborted or released are discarded. A terminal completion first
+    /// closes the transfer's connection, so its socket is gone before the
+    /// guest can observe the end, as after an abort.
     pub(crate) fn deliver(
         &mut self,
         scheduler: &mut Scheduler,
@@ -206,11 +248,13 @@ impl Net {
         let Some(request) = self.requests.get_mut(&event.id) else {
             return Ok(());
         };
+        if event.completion.kind.terminal()
+            && let Some(transfer) = request.transfer.take()
+        {
+            transfer.close(self.runtime.as_ref());
+        }
         if !matches!(request.phase, Phase::Armed) {
             return Ok(());
-        }
-        if event.completion.kind.terminal() {
-            request.transfer = None;
         }
         request.phase = Phase::Ready(event.completion);
         if let Some(serial) = request.watcher.take() {
@@ -252,8 +296,9 @@ impl Net {
         request.phase = Phase::Armed;
         Ok(())
     }
-    /// Cancel the transfer. An armed (or completed but untaken) operation
-    /// completes as aborted and wakes its waiter; an idle request is released.
+    /// Cancel the transfer, closing its connection before this returns. An
+    /// armed (or completed but untaken) operation completes as aborted and
+    /// wakes its waiter; an idle request is released.
     fn abort(&mut self, scheduler: &mut Scheduler, id: f64) -> Result<(), wasmtime::Error> {
         let Some(id) = request_id(id) else {
             return Ok(());
@@ -261,7 +306,9 @@ impl Net {
         let Some(request) = self.requests.get_mut(&id) else {
             return Ok(());
         };
-        request.transfer = None;
+        if let Some(transfer) = request.transfer.take() {
+            transfer.close(self.runtime.as_ref());
+        }
         if matches!(request.phase, Phase::Idle) {
             self.requests.remove(&id);
             return Ok(());
@@ -629,7 +676,13 @@ mod tests {
             identity,
             tls: None,
         };
-        runtime.block_on(client::run(1, plan, events, pulls));
+        runtime.block_on(client::run(
+            1,
+            plan,
+            events,
+            pulls,
+            client::ConnectionSlot::default(),
+        ));
         received.try_recv().unwrap().completion
     }
 
