@@ -86,6 +86,26 @@ impl Upstream {
     }
 }
 
+/// How soon a cancelled worker must release the one worker permit after its
+/// client disconnected.
+const WORKER_RELEASE: Duration = Duration::from_secs(1);
+
+/// Request `target` right after a client disconnected. Every service here
+/// runs HTTP contract v2 (`v38`), whose transport accepts the next connection
+/// only once the cancelled worker released the one worker permit, so the
+/// request is served and never refused with 503 (contract v1 is frozen with
+/// its immediate 503 while busy, and its workers are not cancellable). The
+/// answer still comes within [`WORKER_RELEASE`]: the worker stops promptly.
+fn request_after_disconnect(server: &Server, target: &str) {
+    let started = std::time::Instant::now();
+    assert_eq!(server.request("GET", target, b"").0, 200);
+    let waited = started.elapsed();
+    assert!(
+        waited < WORKER_RELEASE,
+        "worker kept the permit for {waited:?}"
+    );
+}
+
 fn synchronous_source(base: &str, operation: &str) -> String {
     r#"
         function handle(r:VartaHttpRequest):VartaHttpResponse{
@@ -127,19 +147,7 @@ fn http_v2_disconnect_cancels_synchronous_head_and_body_waits_without_catch_or_c
         client.shutdown(std::net::Shutdown::Both).unwrap();
         drop(client);
         upstream.finish();
-        let until = std::time::Instant::now() + Duration::from_secs(1);
-        loop {
-            let status = server.request("GET", "/after", b"").0;
-            if status == 200 {
-                break;
-            }
-            assert_eq!(status, 503);
-            assert!(
-                std::time::Instant::now() < until,
-                "synchronous worker stayed alive"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
+        request_after_disconnect(&server, "/after");
         assert!(
             server.lines.lock().unwrap().is_empty(),
             "guest continued after cancelled {operation}"
@@ -323,19 +331,7 @@ fn http_v2_disconnect_cancels_outbound_work_and_releases_the_worker() {
     client.shutdown(std::net::Shutdown::Both).unwrap();
     drop(client);
     upstream.finish();
-    let until = std::time::Instant::now() + Duration::from_secs(1);
-    loop {
-        let status = server.request("GET", "/after", b"").0;
-        if status == 200 {
-            break;
-        }
-        assert_eq!(status, 503);
-        assert!(
-            std::time::Instant::now() < until,
-            "request worker not released"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
+    request_after_disconnect(&server, "/after");
     assert!(
         server
             .diagnostics
@@ -433,18 +429,7 @@ fn sustained_disconnects_release_sockets_and_keep_request_memory_bounded() {
             }),
         }],
     );
-    let health = || {
-        let until = std::time::Instant::now() + Duration::from_secs(1);
-        loop {
-            let status = server.request("GET", "/health", b"").0;
-            if status == 200 {
-                break;
-            }
-            assert_eq!(status, 503);
-            assert!(std::time::Instant::now() < until);
-            thread::sleep(Duration::from_millis(1));
-        }
-    };
+    let health = || request_after_disconnect(&server, "/health");
     let descriptors = || std::fs::read_dir("/dev/fd").unwrap().count();
     let mut baseline = 0;
     for index in 0..WARMUP + SAMPLES {
@@ -479,8 +464,9 @@ fn sustained_disconnects_release_sockets_and_keep_request_memory_bounded() {
         }
         // A request report proves that the Store was dropped, but the blocking
         // worker still holds its admission permit until the observer returns.
-        // A completed health response crosses that boundary before the next
-        // slow request. Otherwise it can receive 503 and never reach upstream.
+        // The v2 transport accepts the health request only after that, so a
+        // completed health response crosses the boundary before the next slow
+        // request.
         health();
         if index + 1 == WARMUP {
             baseline = descriptors();

@@ -76,7 +76,17 @@ impl Transfer {
     /// progress: an aborted task is dropped at its next poll, which this
     /// `block_on` performs. Other transfers may make progress meanwhile; their
     /// completions wait in the event queue like any that arrive during a turn.
-    fn close(mut self, runtime: &tokio::runtime::Runtime) {
+    ///
+    /// A transfer that ended on its own (its end of body or a failure) is
+    /// closed the same way before its terminal completion is delivered: its
+    /// request task has finished, and its cancelled connection task would
+    /// otherwise wait for the next drive as well. Without a runtime there is
+    /// no task to wait for: a transfer exists only on the runtime that
+    /// spawned it.
+    fn close(mut self, runtime: Option<&tokio::runtime::Runtime>) {
+        let Some(runtime) = runtime else {
+            return;
+        };
         self.task.abort();
         let connection = self.connection.take();
         if let Some(connection) = &connection {
@@ -227,7 +237,9 @@ impl Net {
         Ok(())
     }
     /// A transfer completed its armed operation. Completions of requests that
-    /// were aborted or released are discarded.
+    /// were aborted or released are discarded. A terminal completion first
+    /// closes the transfer's connection, so its socket is gone before the
+    /// guest can observe the end, as after an abort.
     pub(crate) fn deliver(
         &mut self,
         scheduler: &mut Scheduler,
@@ -236,11 +248,13 @@ impl Net {
         let Some(request) = self.requests.get_mut(&event.id) else {
             return Ok(());
         };
+        if event.completion.kind.terminal()
+            && let Some(transfer) = request.transfer.take()
+        {
+            transfer.close(self.runtime.as_ref());
+        }
         if !matches!(request.phase, Phase::Armed) {
             return Ok(());
-        }
-        if event.completion.kind.terminal() {
-            request.transfer = None;
         }
         request.phase = Phase::Ready(event.completion);
         if let Some(serial) = request.watcher.take() {
@@ -293,11 +307,7 @@ impl Net {
             return Ok(());
         };
         if let Some(transfer) = request.transfer.take() {
-            match &self.runtime {
-                Some(runtime) => transfer.close(runtime),
-                // A transfer exists only on the runtime that spawned it.
-                None => drop(transfer),
-            }
+            transfer.close(self.runtime.as_ref());
         }
         if matches!(request.phase, Phase::Idle) {
             self.requests.remove(&id);

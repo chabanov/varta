@@ -3,13 +3,14 @@
 //! binds 127.0.0.1 on an ephemeral port, never reaches another host, and
 //! counts accepted connections so denial tests can prove that no socket was
 //! opened. Routes mirror `net_cases/server.mjs`, which serves the same
-//! responses to Node 24 for the pinned expectations; `/held` exists only
-//! here, for the connection-close tests, and its trace ([`Seen`]) records
-//! when each request arrived and when the client closed a held connection.
-use std::io::{BufRead, BufReader, Read, Write};
+//! responses to Node 24 for the pinned expectations; `/held`, `/trickle` and
+//! `/gate` exist only here, for the connection-close tests, and its trace
+//! ([`Seen`]) records when each request arrived and when the client closed a
+//! held connection.
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 /// Bytes of the oversized body route, beyond the response body limit.
@@ -35,10 +36,32 @@ pub(crate) fn event(id: u64, size: usize) -> Vec<u8> {
 pub(crate) enum Seen {
     /// A request for this path (without its query) was read.
     Arrived(String),
-    /// The client ended the held connection of this path.
+    /// The client ended the held connection of this path (its end of
+    /// stream or a reset; a read timeout records nothing).
     Closed(String),
+    /// The server answered this path (only [`GATE`] records it).
+    Answered(String),
 }
-type Trace = Arc<Mutex<Vec<(Seen, Instant)>>>;
+/// The path of the route that never answers.
+pub(crate) const HELD: &str = "/held";
+/// The path of the route that sends one event and then keeps silent.
+pub(crate) const TRICKLE: &str = "/trickle";
+/// The path of the route that answers once a request for [`HELD`] arrived.
+pub(crate) const GATE: &str = "/gate";
+/// The trace, and the signal of each new observation (`/gate` waits on it).
+#[derive(Default)]
+struct TraceLog {
+    seen: Mutex<Vec<(Seen, Instant)>>,
+    changed: Condvar,
+}
+impl TraceLog {
+    fn lock(&self) -> MutexGuard<'_, Vec<(Seen, Instant)>> {
+        // Recording only pushes a complete entry, so a poisoned lock still
+        // holds a sound trace.
+        self.seen.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+type Trace = Arc<TraceLog>;
 
 pub(crate) struct Loopback {
     pub base: String,
@@ -116,18 +139,44 @@ impl Loopback {
     }
     /// Everything seen so far, in the order it was recorded.
     pub(crate) fn trace(&self) -> Vec<(Seen, Instant)> {
-        self.trace
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        self.trace.lock().clone()
     }
 }
 
 fn record(trace: &Trace, seen: Seen) {
-    trace
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push((seen, Instant::now()));
+    trace.lock().push((seen, Instant::now()));
+    trace.changed.notify_all();
+}
+
+/// Keep the connection until the client ends it, then record that; a client
+/// that keeps it for [`SILENCE`] (the read timeout) is not recorded.
+fn hold<S: Read>(stream: &mut S, trace: &Trace, path: String) {
+    let mut byte = [0];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                return;
+            }
+            // A reset ends the connection as well.
+            Err(_) => break,
+        }
+    }
+    record(trace, Seen::Closed(path));
+}
+
+/// Whether a request for [`HELD`] arrived, waiting up to [`SILENCE`].
+fn held_arrived(trace: &Trace) -> bool {
+    let arrived = Seen::Arrived(HELD.to_owned());
+    let (seen, _) = trace
+        .changed
+        .wait_timeout_while(trace.lock(), SILENCE, |seen| {
+            !seen.iter().any(|(observed, _)| *observed == arrived)
+        })
+        .unwrap_or_else(PoisonError::into_inner);
+    seen.iter().any(|(observed, _)| *observed == arrived)
 }
 
 impl Drop for Loopback {
@@ -343,12 +392,34 @@ fn answer<S: Read + Write>(mut stream: S, trace: &Trace) {
             );
         }
         "/slow" => std::thread::sleep(SILENCE),
-        // Never answers; records when the client ends the connection (the
-        // end of the stream, a reset, or the read timeout at the latest).
-        "/held" => {
-            let mut byte = [0];
-            while let Ok(1..) = stream.read(&mut byte) {}
-            record(trace, Seen::Closed(path));
+        // Never answers; records when the client ends the connection.
+        HELD => hold(&mut stream, trace, path),
+        // Sends a head and one event, then keeps silent until the client
+        // ends the connection, which it records.
+        TRICKLE => {
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n";
+            let chunk = event(1, 1);
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(format!("{:x}\r\n", chunk.len()).as_bytes());
+            let _ = stream.write_all(&chunk);
+            let _ = stream.write_all(b"\r\n");
+            let _ = stream.flush();
+            hold(&mut stream, trace, path);
+        }
+        // Answers once a request for `/held` arrived, so a client can act on
+        // a held request the server has certainly seen.
+        GATE => {
+            if held_arrived(trace) {
+                record(trace, Seen::Answered(path));
+                fixed(
+                    &mut stream,
+                    "200 OK",
+                    "content-type: text/plain\r\n",
+                    b"open",
+                );
+            } else {
+                fixed(&mut stream, "504 Gateway Timeout", "", b"");
+            }
         }
         // V38 long-lived streams: `count` events of `size` data bytes, one
         // every `pause` ms; `/stall` sends one event, keeps silent for `gap`
