@@ -8,6 +8,10 @@
 //! Positioned boxes with `z-index: auto` paint atomically in the zero layer,
 //! like flex/grid items in the content phase: these pseudo contexts let
 //! descendant layers join the nearest real context.
+//!
+//! Modal dialogs form the top layer: after the root context has painted
+//! everything else, each one paints its backdrop over the viewport and then
+//! itself as a real context, in the order the dialogs were shown.
 use super::*;
 use crate::layout::Scheme;
 use std::collections::BTreeSet;
@@ -22,6 +26,8 @@ pub(super) enum Phase {
     InlineContext,
     InlineOutline,
     InlineEnd,
+    /// A modal dialog's backdrop, over the whole viewport.
+    Backdrop,
 }
 /// A stacking layer position: z-index level, then tree order.
 type LayerKey = (i32, usize);
@@ -95,8 +101,27 @@ impl Order {
                 visit.extend(tree.nodes[&id].children.iter().rev().map(|&id| (id, false)));
             }
         }
+        // The top layer paints after the root: each modal dialog's backdrop,
+        // then the dialog (the pending steps are a stack: last pops first).
+        let top_layer: Vec<u32> = tree
+            .modals
+            .iter()
+            .map(|modal| modal.dialog)
+            .filter(|dialog| geometry.contains_key(dialog) && layout::modal_dialog(tree, *dialog))
+            .collect();
+        let mut pending: Vec<Step> = top_layer
+            .iter()
+            .rev()
+            .flat_map(|&dialog| {
+                [
+                    Step::Visit(dialog, Phase::Context),
+                    Step::Visit(dialog, Phase::Backdrop),
+                ]
+            })
+            .collect();
+        pending.push(Step::Visit(ROOT_NODE, Phase::Context));
         let mut order = Self {
-            pending: vec![Step::Visit(ROOT_NODE, Phase::Context)],
+            pending,
             contexts: Vec::new(),
             outline_order,
             tree_order,
@@ -149,6 +174,21 @@ impl Order {
                     .get(&CssProperty::Display)
                     .is_some_and(|value| value.eq_ignore_ascii_case("none"))
                 {
+                    continue;
+                }
+                // A modal dialog is in the top layer: fixed, and painted
+                // after the root context instead of in any layer of it.
+                if layout::modal_dialog(tree, id) {
+                    self.placements.insert(
+                        id,
+                        Placement {
+                            scope: None,
+                            out_of_flow: true,
+                        },
+                    );
+                    self.elements.push(id);
+                    self.layered.insert(id);
+                    pending.push((id, id, Some(id)));
                     continue;
                 }
                 let scheme = Scheme::parse(properties.get(&CssProperty::Position))

@@ -738,6 +738,63 @@ type TextGeometry = (
 
 /// User-agent margins and list padding of a block row; author declarations
 /// replace them afterwards. Em margins use the element's own font size.
+/// Chrome's `dialog:modal` reserves `2em + 6px` of the viewport in each
+/// axis: its `max-width`/`max-height` are `calc(100% - 6px - 2em)`.
+const DIALOG_VIEWPORT_RESERVE_EM: f32 = 2.0;
+const DIALOG_VIEWPORT_RESERVE_PX: f32 = 6.0;
+
+/// An open dialog in the top layer. A dialog that is open but no longer
+/// modal (moved after `show_modal`) is not on the native layout path.
+pub(crate) fn modal_dialog(tree: &Tree, id: u32) -> bool {
+    tree.element(id)
+        .is_some_and(|element| element.tag == Tag::Dialog && element.open)
+        && tree.modals.iter().any(|modal| modal.dialog == id)
+}
+
+/// The box of a modal dialog, before author styles: Chrome's `dialog:modal`
+/// with the L0 base sheet's `border: none; padding: 0` — fixed in the
+/// viewport, centred by auto margins over zero insets, sized to fit its
+/// content, at most the viewport minus `2em + 6px` (its own computed font
+/// size) in each axis, its overflow scrolling.
+fn dialog_box(
+    tree: &Tree,
+    env: &Environment,
+    location: (u32, (f32, f32)),
+    base_size: Option<style::FontBase>,
+    style: &mut Style,
+) -> Result<(), LayoutError> {
+    let (id, viewport) = location;
+    let base = base_size.ok_or(LayoutError::Unsupported(id))?;
+    let em = resolve_text(tree, env, id, base)?.options.size;
+    let reserve = DIALOG_VIEWPORT_RESERVE_EM * em + DIALOG_VIEWPORT_RESERVE_PX;
+    style.position = Position::Fixed;
+    style.inset = Rect {
+        left: LengthPercentageAuto::length(0.0),
+        right: LengthPercentageAuto::length(0.0),
+        top: LengthPercentageAuto::length(0.0),
+        bottom: LengthPercentageAuto::length(0.0),
+    };
+    style.margin = Rect {
+        left: LengthPercentageAuto::auto(),
+        right: LengthPercentageAuto::auto(),
+        top: LengthPercentageAuto::auto(),
+        bottom: LengthPercentageAuto::auto(),
+    };
+    style.size = Size {
+        width: Dimension::fit_content(),
+        height: Dimension::fit_content(),
+    };
+    style.max_size = Size {
+        width: length((viewport.0 - reserve).max(0.0)),
+        height: length((viewport.1 - reserve).max(0.0)),
+    };
+    style.overflow = taffy::geometry::Point {
+        x: Overflow::Scroll,
+        y: Overflow::Scroll,
+    };
+    Ok(())
+}
+
 fn ua_box(
     tree: &Tree,
     env: &Environment,
@@ -1092,12 +1149,14 @@ fn build_one(
         return Ok((node_id, false));
     };
     // Hidden elements and their descendants contribute no layout, even if
-    // their tag or CSS is not supported by the visible layout path.
+    // their tag or CSS is not supported by the visible layout path. A closed
+    // dialog renders nothing.
     if id != ROOT_NODE
-        && tree
-            .computed_read(id, env)
-            .get(&CssProperty::Display)
-            .is_some_and(|value| value.eq_ignore_ascii_case("none"))
+        && (tree.closed_dialog(id)
+            || tree
+                .computed_read(id, env)
+                .get(&CssProperty::Display)
+                .is_some_and(|value| value.eq_ignore_ascii_case("none")))
     {
         let hidden = engine
             .new_leaf(Style {
@@ -1124,7 +1183,8 @@ fn build_one(
                 | Tag::Input
                 | Tag::Textarea
                 | Tag::Select
-        ) || style::ua_defaults(element.tag).is_some_and(|ua| ua.block)
+        ) || modal_dialog(tree, id)
+            || style::ua_defaults(element.tag).is_some_and(|ua| ua.block)
             || (crate::inline::inline_tag(element.tag)
                 && element.tag != Tag::Br
                 && (crate::inline::blockified(tree, env, id)
@@ -1168,6 +1228,9 @@ fn build_one(
         }
         if let Some(ua) = style::ua_defaults(element.tag).filter(|ua| ua.block) {
             ua_box(tree, env, (id, ua), base_size, &mut style)?;
+        }
+        if modal_dialog(tree, id) {
+            dialog_box(tree, env, (id, viewport), base_size, &mut style)?;
         }
         let computed = layout_properties(tree, env, id)?;
         let widths = border_widths(tree, env, id)?;
@@ -1329,6 +1392,9 @@ fn build_one(
                 CssProperty::GridRow => {
                     style.grid_row = grid_placement(&value).ok_or(LayoutError::Unsupported(id))?
                 }
+                // A modal dialog is in the top layer, fixed whatever its
+                // author position (CSS Position 4).
+                CssProperty::Position if modal_dialog(tree, id) => {}
                 CssProperty::Position => {
                     style.position = match value.as_str() {
                         "static" => Position::Static,

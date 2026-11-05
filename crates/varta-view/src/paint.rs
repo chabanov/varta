@@ -69,6 +69,9 @@ pub struct FrameMetadata {
     pub height: u32,
     scale: f32,
     hit_regions: Vec<(u32, BoxRect)>,
+    /// Hit regions of modal dialogs' backdrops: they take pointers for the
+    /// dialog but are not part of its box (no accessibility bounds).
+    backdrops: std::collections::BTreeSet<usize>,
     // Only the element's own border-box hit is rounded. Visible overflowing
     // descendant/text fragments retain their independent hit rectangles.
     rounded_regions: BTreeMap<usize, inline_decor::Region>,
@@ -148,6 +151,7 @@ impl FrameMetadata {
             && self.height == other.height
             && self.scale == other.scale
             && self.hit_regions == other.hit_regions
+            && self.backdrops == other.backdrops
             && self.rounded_regions == other.rounded_regions
             && self.hit_clips == other.hit_clips
             && self.ancestors == other.ancestors
@@ -191,7 +195,10 @@ impl FrameMetadata {
     #[must_use]
     pub fn node_bounds_map(&self) -> BTreeMap<u32, BoxRect> {
         let mut bounds = BTreeMap::<u32, BoxRect>::new();
-        for &(id, rect) in &self.hit_regions {
+        for (index, &(id, rect)) in self.hit_regions.iter().enumerate() {
+            if self.backdrops.contains(&index) {
+                continue;
+            }
             bounds
                 .entry(id)
                 .and_modify(|previous| {
@@ -820,6 +827,10 @@ fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
             && let Some(kind) = style::ControlKind::of(element)
         {
             return Some(theme::text_color(kind, element.disabled()));
+        }
+        // A modal dialog's user-agent text color stops inheritance too.
+        if layout::modal_dialog(tree, ancestor) {
+            return color(varta_common::view::DIALOG_TEXT[usize::from(env.dark)]);
         }
     }
     Some(Color::BLACK)
@@ -2481,6 +2492,7 @@ fn rasterize_inner_scoped(
     let mut text_work = 0usize;
     let mut inline_programs = inline_groups::Programs::default();
     let mut hit_regions = Vec::new();
+    let mut backdrops = std::collections::BTreeSet::new();
     let mut rounded_regions = BTreeMap::new();
     let mut hit_clips = BTreeMap::new();
     let mut inherited_clips = BTreeMap::<u32, std::sync::Arc<Clip>>::new();
@@ -2496,6 +2508,25 @@ fn rasterize_inner_scoped(
         }
         if phase == order::Phase::InlineEnd {
             pixmap.end_group(id)?;
+            continue;
+        }
+        if phase == order::Phase::Backdrop {
+            // A modal dialog's backdrop covers the viewport behind it and
+            // takes every pointer that does not land on the dialog itself.
+            pixmap.active_clip = None;
+            let viewport = geometry[&ROOT_NODE].rect;
+            let backdrop = color(varta_common::view::DIALOG_BACKDROP[usize::from(env.dark)])
+                .ok_or(PaintError::Unsupported(id))?;
+            if let Some(rect) =
+                Rect::from_xywh(viewport.x, viewport.y, viewport.width, viewport.height)
+            {
+                let mut paint = Paint::default();
+                paint.set_color(backdrop);
+                pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+            ancestors.insert(id, None);
+            backdrops.insert(hit_regions.len());
+            hit_regions.push((id, viewport));
             continue;
         }
         if phase == order::Phase::InlineContext {
@@ -2912,6 +2943,11 @@ fn rasterize_inner_scoped(
             })
             .transpose()?
             .or_else(|| control.and_then(theme::background))
+            .or_else(|| {
+                layout::modal_dialog(tree, id)
+                    .then(|| color(varta_common::view::DIALOG_BACKGROUND[usize::from(env.dark)]))
+                    .flatten()
+            })
         {
             let bounds = geometry[&id];
             if let Some(rect) = clipped(paint_rect, pixmap.local_clip(bounds.clip)) {
@@ -3020,6 +3056,7 @@ fn rasterize_inner_scoped(
             height,
             scale,
             hit_regions,
+            backdrops,
             rounded_regions,
             hit_clips,
             ancestors,

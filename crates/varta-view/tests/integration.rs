@@ -7,6 +7,7 @@ mod border_colors;
 mod cascade_work;
 mod checkables;
 mod clipboard;
+mod dialog;
 mod expansion_work;
 mod fields;
 mod glyph_raster;

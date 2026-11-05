@@ -13947,6 +13947,29 @@ DOM boundary reports it as an indexed `ViewProtocolError` (`font-family
 keyword` for `set_style`, `stylesheet value` for a stylesheet). Custom
 property values keep such keywords. A quoted name is an ordinary family.
 
+#### Native modal dialogs (top layer)
+
+A closed `dialog` renders nothing. A modal one (`show_modal`) lays out as
+Chrome's `dialog:modal` with the L0 base sheet's `border: none; padding: 0`:
+fixed in the viewport whatever its author `position`, centred by auto
+margins over zero insets, sized to fit its content, at most the viewport
+minus `2em + 6px` of its computed font size in each axis, its overflow
+scrolling; author styles then apply to its own box. It paints in the top
+layer: after the root stacking context has painted everything else (every
+z-index layer included), each modal dialog in the order it was shown paints
+its backdrop over the viewport in the
+[defaults table](embedding.md#view-draft-v0-round-4-subset-fixes)
+colour of the scheme, then itself as a stacking context with the default
+background and text colours unless the author sets them. A backdrop's hit
+region takes every pointer for its dialog (as Chrome's `::backdrop` does),
+so the inert page below never receives one; it is not part of the dialog's
+accessibility bounds, which are the dialog's own box. A dialog that is open
+but no longer modal (moved after `show_modal`) is refused with
+`LayoutError::Unsupported`. Geometry, hits and pixels match Chrome 156 at
+1x, 1.25x and 2x within the 2/255 mean bound (`native_dialog_probe` with
+`scripts/test-native-dialog.mjs`); AccessKit publishes a modal `Dialog` with
+those bounds and drops the inert page.
+
 #### Native positioned painting and stacking
 
 Native paint, hit testing and scrolling admit `position: static | relative |

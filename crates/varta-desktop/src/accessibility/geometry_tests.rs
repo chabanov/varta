@@ -1019,3 +1019,58 @@ fn hidden_boxes_under_a_scroll_border_stay_unbounded() {
     // "Four" (120..160) lies wholly below the border (50..90).
     assert_eq!(bounds_of(&update, "Four").y0, 120.0 * f64::from(SCALE));
 }
+
+/// A modal dialog publishes as a modal `Dialog` with its painted top-layer
+/// bounds; the inert page behind it leaves the native tree.
+#[test]
+fn a_modal_dialog_is_a_modal_dialog_with_its_top_layer_bounds() {
+    use varta_common::view::Command;
+    let mut view = View::default();
+    let mut b = B::new();
+    b.create_element(2, Tag::Section)
+        .set_attribute(2, A::AriaLabel, "Behind")
+        .set_style(2, P::Height, "20px")
+        .insert(1, 2, 0)
+        .create_element(4, Tag::Dialog)
+        .set_attribute(4, A::AriaLabel, "Confirm")
+        .insert(1, 4, 0)
+        .create_element(5, Tag::Div)
+        .set_style(5, P::Width, "60px")
+        .set_style(5, P::Height, "40px")
+        .insert(4, 5, 0)
+        .command(4, Command::ShowModal, 0.0);
+    commit(&mut view, &b);
+    let metadata = render(&view);
+    let bridge = Bridge::new(
+        None,
+        Arc::default(),
+        Arc::new(AtomicBool::new(false)),
+        crate::shell::window::Console::SILENT,
+    );
+    assert!(bridge.activate().is_none());
+    let version = Version {
+        revision: 1,
+        dimensions: 200u64 << 32 | 160,
+        dark: false,
+        scale: 1.0f64.to_bits(),
+    };
+    let update = bridge
+        .publish(1, &view.accessibility_tree(), &metadata, version, "dialog")
+        .unwrap();
+    let dialog = named(&update, "Confirm");
+    assert_eq!(dialog.role(), Role::Dialog);
+    assert!(dialog.is_modal());
+    // Centred in the 200x160 frame: fit-content 60x40.
+    let bounds = dialog.bounds().unwrap();
+    assert_eq!(
+        (bounds.x0, bounds.y0, bounds.x1, bounds.y1),
+        (70.0, 60.0, 130.0, 100.0)
+    );
+    assert!(
+        update
+            .nodes
+            .iter()
+            .all(|(_, node)| node.label() != Some("Behind")),
+        "the inert page leaves the native tree"
+    );
+}
