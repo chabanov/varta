@@ -34,7 +34,7 @@ ECMAScript, Node or npm compatibility.
 | Compatibility inventory | ECMAScript 2025, checked profile v37: **123 passed, 4 known unsupported out of 127**, baseline matched, 8 feature rows without executable cases. This is a partial inventory, not a core-completion percentage |
 | Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **107 tests in 28 groups and 2 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
 | JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. Wave-3 package `w3-native-controls` (scoped, not merged) gives unstyled and partially styled controls Chrome's user-agent defaults, theme, disabled colors and focus ring, and admits `input type=number`; the console's controls no longer stop at a control-box rule, and its frames stop only at non-control refusals ([record](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05)). Its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
+| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. Wave-3 package `w3-native-controls` (scoped, not merged) gives unstyled and partially styled controls Chrome's user-agent defaults, theme, disabled colors and focus ring, and admits `input type=number` with Chrome's Up/Down stepping; whether the console view renders without a control refusal is unverified, because `headless_frame` cannot load the 4273111-byte console module ([record](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05)). Its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
 | Native white space | Wave-2 package `w2-native-whitespace` (scoped, not merged): native `pre-wrap`/`pre` tab stops at `tab-size: 8`, preserved, hanging and conditionally hanging spaces, and mixed `white-space` modes in one inline flow, checked against Chrome at 1×, 1.25× and 2× ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). Bidi text on that path, `text-overflow: ellipsis` with it and a `tab-size` property remain open |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
@@ -471,38 +471,69 @@ textarea columns/rows, 13px checkables), Chrome's native theme for controls
 without author background, border or radius, default disabled colors and
 placeholder gray, and the default focus ring. Author-styled controls need the
 `border` shorthand and take user-agent values for the rest. `input
-type=number` edits and undoes its string value as text. Closed from the
+type=number` edits and undoes its string value as text, and Up/Down step it as
+Chrome does with the default step (owner decision, 2026-11-05). Closed from the
 [wave-2 integration](#wave-2-integration--2026-11-05) list: unsized controls
 now use Chrome's control size, a CSS-wide keyword in `font-family` is refused by
 the shared L0 validator and by the browser host's font namespace, and a
 paint-time reshaping refusal names its flow node.
 
 Evidence, macOS arm64, headless Chrome 156. `native_controls_probe` with the new
-original `controls.ttf` fixture (14 cases: themed, disabled, seven focus rings,
-author-styled, control font, block placement, flex buttons, placeholders)
-passes `scripts/test-native-controls.mjs` with **61657 checks** (boxes within
-0.02px, hit targets and whole-viewport RGB means) at each of 1×, 1.25× and 2×;
-the largest mean is 0.81/255 (a focused textarea at 1.25×, whose native caret
-Chrome's hidden caret does not show) under the unchanged 2/255 bound.
-`verify.py local varta-view` passes (163 library and 349 integration tests);
-`test-native-fields.mjs` passes 28 checks; the inline oracle still stops only at
-`paint-overlap-hits` with the recorded mean 5.39. `headless_frame` renders the
-showcase. It cannot load the console view: the view module built from this tree
-is 4273111 bytes, above the frozen 4 MiB Wasm limit, which `headless_frame`
-enforces. A scratch replay of the `chat` and `stream` view-script trees
-(stylesheets, classes, attributes and values; not committed) refuses no
-control by a control rule: the send button stops at its `transition-*`
-properties, and with those and the unavailable weights 500/600 neutralized for
-diagnosis every control renders, leaving only the empty-text-node refusals.
+original `controls.ttf` fixture passes `scripts/test-native-controls.mjs` at
+each of 1×, 1.25× and 2× with **110460 checks** (boxes within 0.02px, hit
+targets, whole-viewport RGB means and number stepping) under the unchanged 2/255
+bound; the largest means are 0.98, 1.09 and 1.07/255 in the author-styled select
+case (select painter differences, below) and otherwise 0.29, 0.81 and 0.21/255.
+Its 25 rendering cases are themed, disabled, seven default focus rings, five
+author outline longhands (color, offset with a width, checkbox, author radius,
+shorthand without `solid`), author-styled, control font, block placement, flex
+buttons, placeholders, author-styled selects, rich button labels, checkables
+stretched in a flex row and a grid, and focused stretched checkables; 32
+stepping cases replay Up/Down (and Alt+Down) on guest-set values in real Chrome.
+`verify.py local varta-view` passes; `test-native-fields.mjs` passes 28 checks;
+the structure and white-space oracles pass at the three scales; the inline
+oracle still stops only at `paint-overlap-hits` with the recorded means (5.39,
+3.94, 5.37). `headless_frame` rendered the showcase in the first round (not
+rerun after the review fixes). It cannot load the console
+view: the view module built from this tree is 4273111 bytes, above the frozen 4
+MiB Wasm limit, which `headless_frame` enforces. An uncommitted scratch replay
+of the `chat` and `stream` view-script trees found no control refused by a
+control rule (the send button stops at its `transition-*` properties, and the
+weights 500/600 have no face), but no reviewer can reproduce it, so the
+console's control rendering is **unverified** until the module fits or the
+replay becomes a test.
+
+Review fixes (same branch). A checkable square is an intrinsic size, so the
+default flex stretch and grid stretch grow it (13×62 and 150×34, as Chrome),
+with the theme square centered; before, a definite 13px size kept it 13×13. A
+focused control with only author `outline-color`/`outline-offset`/
+`outline-width` now draws Chrome's auto ring in the author color and offset
+(width ignored, as Chrome) instead of no focus indicator, and a radio's ring
+follows Chrome's stadium when stretched. Rich control labels (text plus inline
+elements) use the whole-pixel control line spacing; a rich flow now measures
+each run with its own span's line height, because the shaper's run metrics
+take the next span's style when a font-size change splits the run. CSS-wide
+`font-family` keywords are named by native (`Violation::FontFamilyKeyword`),
+the stylesheet checker, the compiler and the browser DOM boundary (an indexed
+`ViewProtocolError`), and the three keyword lists share
+`css::CSS_WIDE_KEYWORDS`.
 
 Open: `select` keeps its explicit-style requirement (its arrow and popup belong
-to another package); Chrome's hover/active theme colors, the number spin button
-and stepping (L0 decides no stepping), author-styled checkable themes (native
-paints the author box), unsized text fields whose primary font has no `x`,
-and inline-block controls in a line box are not implemented. Theme constants
-and the text-field width formula follow Chrome on macOS; other platforms'
-Chrome may differ. Desktop accessibility should expose a number field as a
-spin button with its value (`crates/varta-desktop`, another package).
+to another package); the select case shows Chrome's chevron arrow, wider text
+inset and faded disabled select against the native triangle and full author
+colors (mean about 1/255). Chrome's hover/active theme colors, the number spin
+button, author-styled checkable themes (native paints the author box), unsized
+text fields whose primary font has no `x`, and inline-block controls in a line
+box are not implemented. Number stepping has no `step`/`min`/`max` (not L0
+attributes; an open L0 item), refuses values Chrome steps with 18-digit
+precision loss, reads locale forms typed in Chrome (`5.`, `+5`, `1,000`) as
+invalid, and makes each step an Undo entry where Chrome 156 does not; the
+browser host keeps Chrome's stepping. The auto focus ring's corner radius for
+author-styled controls without a radius follows the author radius rather than
+Chrome's default ring radius. Theme constants and the text-field width
+formula follow Chrome on macOS; other platforms' Chrome may differ. Desktop
+accessibility should expose a number field as a spin button with its value
+(`crates/varta-desktop`, another package).
 
 ### Wave 2 integration — 2026-11-05
 

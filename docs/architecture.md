@@ -13318,10 +13318,13 @@ Chrome.
 Chrome's `font: -webkit-small-control`: a 13.333px (10pt) absolute size,
 `normal` weight and style and `line-height: normal`; the family stays
 inherited. `line-height: normal` of control text (field values, placeholders
-and button labels) is the primary font's ascent, descent and line gap each
-rounded to whole pixels, as Chrome's line spacing; other text keeps the
-shaper's `normal`. Label and field glyphs put their first baseline on a whole
-device pixel.
+and button labels, including every text node and inline element of a rich
+label) is the primary font's ascent, descent and line gap of that text's own
+font each rounded to whole pixels, as Chrome's line spacing; other text keeps
+the shaper's `normal`. A rich flow measures each text run with the line height
+of the span that owns it (the shaper's run metrics would take the following
+span's). Label and field glyphs put their first baseline on a whole device
+pixel.
 
 *Themed and author-styled controls.* A control without an author
 `background-color`, border or `border-radius` declaration keeps Chrome's
@@ -13338,13 +13341,17 @@ keep its theme), and a select keeps its explicit-style requirement.
 | `button` | 1 6 | 2 | its children |
 | `input` text, search, password, number | 1 2 | 2 | ⌈(20 − 1)·round(a) + max(a, ascent)⌉ wide, one line high |
 | `textarea` | 2 | 1 | 20·round(a) + 16 wide, `rows` (default 2) lines high |
-| `input` checkbox, radio | 0 | 0 | a 13px border-box square |
+| `input` checkbox, radio | 0 | 0 | a 13px square, intrinsic |
 
 `a` is the advance of the primary font's `x` (Chrome on macOS); a field whose
 primary font has no `x` is refused, since Chrome would use a platform x-height.
 The 16px textarea term is Chrome's scrollbar gutter; an author-styled textarea
 needs an explicit width. The text-field size needs the host text measurer, so
-the geometry-only path refuses an unsized field. A checkable square is also its
+the geometry-only path refuses an unsized field. A checkable square is an
+intrinsic size, not a specified one: stretch alignment grows an automatic axis
+(beside a 4-row textarea in a flex row with the default `align-items` a
+checkbox is 13×62, and in a 150×34 stretch grid area 150×34, as in Chrome),
+and the theme paints the largest centered square. The square is also the
 automatic minimum, while a textarea flex item can shrink to its padding and
 borders. Themed controls paint a fill and a one-pixel frame with a 2px radius
 (the fill inset by half the frame): buttons `#efefef`, fields and unchecked
@@ -13359,30 +13366,62 @@ text is `rgba(16, 16, 16, 0.3)` in buttons and `rgb(84, 84, 84)` in fields. A
 control's user-agent color stops `color` inheritance at the control.
 Placeholders are `#757575`. Hover and active theme colors are not applied.
 
-*Focus ring.* A focused control without author outline declarations draws
-Chrome's `:focus-visible { outline: auto }` ring: two pixels of `#005fcc`
-centered on the border box outset by the user-agent `outline-offset` (2px for
-checkboxes and radios, otherwise 0), less one pixel when every border is at
-least one pixel wide, with the control's own corner radius (theme part or
-author) at its center. Native `:focus-visible` matches any focus, so the ring
-follows the same rule. Any author outline declaration replaces it, so
-`outline: none` removes it and a declaration without a solid style draws
-nothing. The ring paints after the contents and does not change layout or hit
-regions.
+*Focus ring.* A focused control whose `outline-style` stays the user agent's
+`auto` (no author `outline` shorthand and no `outline-style`) draws Chrome's
+`:focus-visible { outline: auto }` ring: two pixels centered on the border box
+outset by the `outline-offset`, less one pixel when every border is at least
+one pixel wide. An author `outline-color` replaces the ring color `#005fcc`
+(`currentcolor` is the control's color) and an author `outline-offset`
+replaces the user-agent offset (2px for checkboxes and radios, otherwise 0);
+an author `outline-width` does not change the ring, which stays two pixels as
+in Chrome. A themed control keeps its theme part radius at the ring's center
+(a radio's is half its longer side, limited to the ring, so a stretched radio's
+ring is a stadium); an author radius is outset by half the ring. Native
+`:focus-visible` matches any focus, so the ring follows the same rule. An
+author `outline` shorthand or `outline-style` ends `auto`: `solid` draws the
+author outline, while `none`, or a shorthand without `solid`, draws nothing.
+The ring paints after the contents and does not change layout or hit regions.
 
 *Number fields.* `input type=number` edits its value with the shared field
 editor and Undo, and its value stays the string L0 decides; there is no
-sanitization, no stepping and no spin button (Chrome shows one on hover or
-focus). Up/Down keep text-field behavior until L0 decides stepping.
+sanitization and no spin button (Chrome shows one on hover or focus). Up and
+Down step the value as Chrome does (owner decision of 2026-11-05). L0 admits
+no `step`, `min` or `max` on inputs, so the step is Chrome's default 1 with
+step base 0 and no bounds; the attributes are an open L0 item. The value is
+read with Chrome's number sanitization (an optional `-`, digits with an
+optional fraction or a fraction alone, an optional exponent, no trailing `.`;
+beyond `f64::MAX` it is invalid), and an invalid or empty value counts as 0.
+A value within 2⁻²⁴ of an integer (Blink's acceptable step error) becomes that
+integer ± 1; any other value rounds to the next integer above (Up) or below
+(Down). The result is written as a plain integer string (`0`, never `-0`)
+with the caret at its end, as one Undo entry, and fires `input` and then
+`change`. Up steps with any modifier, Down unless Alt is held; a disabled or
+read-only field does not step, and `Input::TextNavigate` refuses Up/Down on a
+number field. Chrome computes the step in Blink's 18-digit decimal, which
+truncates long values and prints large results in exponent form; native
+stepping is exact and admits only values whose first 18 typed digits hold all
+their nonzero digits, below 10¹⁵ in magnitude with at most 18 fraction
+digits, and results up to 10¹⁵. Any other valid value is refused
+(`number_step::StepRefusal::OutsideExactRange`): the key changes nothing.
+Two differences from Chrome remain: Chrome converts typed text through the
+platform locale before sanitizing it (so typed `5.`, `+5` or `1,000` step from
+5 or 1000 there), whereas L0 keeps the typed string and native reads it as
+invalid; and Chrome 156's Undo does not revert a step, whereas the owner's
+decision makes each step an Undo entry. The browser host keeps Chrome's own
+stepping.
 
 *Font families.* A `font-family` value naming a CSS-wide keyword (`inherit`,
-`initial`, `unset`, `revert`, `revert-layer`) unquoted is outside the L0
-grammar note and refused by the shared validator
-(`css::font_family_css_wide_keyword` names it). The browser host's font
-namespace (`view-fonts.mjs`) throws for it while preparing a batch's
-`set_style` or stylesheet, before the batch commits, instead of letting Chrome
-roll back to its own font; custom property values keep such keywords. A quoted
-name is an ordinary family.
+`initial`, `unset`, `revert`, `revert-layer`; the shared
+`css::CSS_WIDE_KEYWORDS`) unquoted is outside the L0 grammar note and refused
+by the shared validator. The refusal names the keyword: native `set_style`
+fails with `Violation::FontFamilyKeyword`, the stylesheet checker with
+`stylesheet::Violation::FontFamilyKeyword` and the TSX compiler with a
+diagnostic naming it (`css::font_family_css_wide_keyword`). The browser host's
+font namespace (`view-fonts.mjs`) refuses it while preparing a batch, before
+the batch commits, instead of letting Chrome roll back to its own font; the
+DOM boundary reports it as an indexed `ViewProtocolError` (`font-family
+keyword` for `set_style`, `stylesheet value` for a stylesheet). Custom
+property values keep such keywords. A quoted name is an ordinary family.
 
 #### Native positioned painting and stacking
 

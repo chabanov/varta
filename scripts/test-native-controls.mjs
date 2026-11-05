@@ -87,5 +87,22 @@ await withBrowserPage('about:blank',async call=>{
     console.log(JSON.stringify({case:fixture.name,rgbMeanDelta:mean,rgbMaxDelta:maximum,pixelCount:count/3,strongDeltaBounds:strong}));
     assert(mean<=MAX_MEAN_RGB_DELTA,`${fixture.name}: RGB mean ${mean}, max ${maximum}`);checks++;
   }
+  // input type=number stepping: the guest sets the value, the field is
+  // focused with the caret at the end, and real key presses step it.
+  assert(Array.isArray(oracle.steps)&&oracle.steps.length,'number stepping cases missing');
+  const ARROW_KEY_CODES={ArrowUp:38,ArrowDown:40};
+  const ALT_MODIFIER=1;
+  const stepMismatches=[];
+  for(const step of oracle.steps){
+    await evaluate(`(()=>{document.body.replaceChildren();const field=document.createElement('input');field.type='number';field.id='step';document.body.append(field);field.value=${JSON.stringify(step.value)};field.focus();return true;})()`);
+    for(const pressed of step.keys){
+      const alt=pressed.startsWith('Alt+'),key=alt?pressed.slice('Alt+'.length):pressed;
+      assert(ARROW_KEY_CODES[key],`unknown step key ${pressed}`);
+      for(const type of ['rawKeyDown','keyUp'])await call('Input.dispatchKeyEvent',{type,key,code:key,windowsVirtualKeyCode:ARROW_KEY_CODES[key],modifiers:alt?ALT_MODIFIER:0});
+    }
+    const chrome=await evaluate(`document.getElementById('step').value`);
+    if(chrome!==step.native)stepMismatches.push(`${JSON.stringify(step.value)} ${step.keys.join(',')}: chrome ${JSON.stringify(chrome)}, native ${JSON.stringify(step.native)}`);else checks++;
+  }
+  assert.deepEqual(stepMismatches,[],'number stepping');
 });
 console.log(`Native/Chrome controls (UA table ${oracle.ua_version}, scale ${scale}): ${checks} checks passed`);

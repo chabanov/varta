@@ -1,9 +1,9 @@
 //! Native form-control defaults (user-agent box, control font, Chrome's
 //! native theme, disabled colors, placeholder and default focus ring) and
-//! `input type=number`, for `scripts/test-native-controls.mjs`.
+//! `input type=number` stepping, for `scripts/test-native-controls.mjs`.
 //! Usage: native_controls_probe [SCALE]
 use varta_common::view::{Attribute, Command, CssProperty as P, Tag};
-use varta_view::{Access, BatchWriter as B, Broker, TextFont, TextMeasurer, View};
+use varta_view::{Access, BatchWriter as B, Broker, Input, Target, TextFont, TextMeasurer, View};
 
 struct Denied;
 impl Broker for Denied {
@@ -235,6 +235,161 @@ fn case(name: &str) -> (B, Option<u32>) {
                 .set_attribute(15, Attribute::Disabled, "");
             None
         }
+        // Author outline longhands without an outline style keep Chrome's
+        // auto ring: its color and offset follow the author, its width stays
+        // two pixels; the `outline` shorthand without `solid` removes it.
+        "focus-outline-color"
+        | "focus-outline-offset"
+        | "focus-outline-checkbox"
+        | "focus-outline-styled"
+        | "focus-outline-shorthand" => {
+            let (tag, kind) = match name {
+                "focus-outline-color" | "focus-outline-shorthand" => (Tag::Input, Some("text")),
+                "focus-outline-checkbox" => (Tag::Input, Some("checkbox")),
+                _ => (Tag::Button, None),
+            };
+            control(&mut b, 10, tag);
+            if let Some(kind) = kind {
+                b.set_attribute(10, Attribute::Type, kind);
+            }
+            if tag == Tag::Button {
+                label(&mut b, 10, "AB");
+            }
+            let declarations: &[(P, &str)] = match name {
+                "focus-outline-color" => &[(P::OutlineColor, "#ff0000")],
+                "focus-outline-offset" => &[
+                    (P::OutlineOffset, "3px"),
+                    (P::OutlineWidth, "5px"),
+                    (P::OutlineColor, "#00aa00"),
+                ],
+                "focus-outline-checkbox" => {
+                    &[(P::OutlineOffset, "0"), (P::OutlineColor, "#cc00cc")]
+                }
+                "focus-outline-styled" => &[
+                    (P::Border, "1px solid #000000"),
+                    (P::BorderRadius, "6px"),
+                    (P::OutlineOffset, "2px"),
+                    (P::OutlineColor, "#ff0000"),
+                ],
+                _ => &[(P::Outline, "2px #ff0000")],
+            };
+            for (property, value) in declarations {
+                b.set_style(10, *property, value);
+            }
+            b.command(10, Command::Focus, 0.0);
+            Some(10)
+        }
+        // A select keeps its explicit-style requirement (its theme, arrow
+        // and popup belong to the select painter): author-styled selects,
+        // enabled and disabled, beside themed controls whose user-agent
+        // colors do not reach them.
+        "select" => {
+            for (id, disabled) in [(10, false), (14, true)] {
+                control(&mut b, id, Tag::Select);
+                for (property, value) in [
+                    (P::Display, "block"),
+                    (P::Width, "80px"),
+                    (P::Height, "24px"),
+                    (P::MinWidth, "0"),
+                    (P::MinHeight, "0"),
+                    (P::Padding, "2px 4px"),
+                    (P::Border, "1px solid #888888"),
+                    (P::BorderRadius, "3px"),
+                    (P::Outline, "none"),
+                    (P::BackgroundColor, "#ffffff"),
+                    (P::Color, "#0000cc"),
+                    (P::FontFamily, "\"Varta Controls Fixture\""),
+                    (P::FontSize, "13px"),
+                    (P::FontWeight, "normal"),
+                    (P::FontStyle, "normal"),
+                    (P::LineHeight, "16px"),
+                ] {
+                    b.set_style(id, property, value);
+                }
+                for (offset, text) in [(1, "AB"), (2, "x")] {
+                    let option = id + offset;
+                    b.create_element(option, Tag::Option)
+                        .insert(id, option, 0)
+                        .create_text(option + 10, text)
+                        .insert(option, option + 10, 0);
+                }
+                if disabled {
+                    b.set_attribute(id, Attribute::Disabled, "");
+                }
+            }
+            control(&mut b, 30, Tag::Button);
+            label(&mut b, 30, "AB");
+            None
+        }
+        // A rich label (text and an inline element) keeps the control's
+        // whole-pixel line spacing, also in an element with its own size.
+        // The buttons are sized: Chrome snaps each inline item's advance to
+        // its 1/64px layout unit, which native text does not model.
+        "mixed-label" => {
+            b.set_style(2, P::Display, "block");
+            control(&mut b, 10, Tag::Button);
+            b.set_style(10, P::Display, "block")
+                .set_style(10, P::Width, "60px")
+                .create_text(11, "A ")
+                .insert(10, 11, 0)
+                .create_element(12, Tag::Span)
+                .insert(10, 12, 0)
+                .create_text(13, "B")
+                .insert(12, 13, 0);
+            control(&mut b, 14, Tag::Button);
+            b.set_style(14, P::Display, "block")
+                .set_style(14, P::Width, "60px")
+                .create_text(15, "x ")
+                .insert(14, 15, 0)
+                .create_element(16, Tag::Span)
+                .set_style(16, P::FontSize, "17px")
+                .insert(14, 16, 0)
+                .create_text(17, "AB")
+                .insert(16, 17, 0);
+            None
+        }
+        // Checkables take their 13px square as an intrinsic size: the
+        // default `align-items: stretch` grows them beside a 4-row textarea,
+        // and a stretch grid area grows both axes; the theme paints the
+        // largest centered square.
+        "stretch-flex" | "focus-stretch-checkbox" | "focus-stretch-radio" => {
+            b.remove_style(2, P::AlignItems);
+            control(&mut b, 10, Tag::Textarea);
+            b.set_attribute(10, Attribute::Rows, "4");
+            match name {
+                "stretch-flex" => {
+                    input(&mut b, 12, "checkbox");
+                    input(&mut b, 13, "checkbox");
+                    b.set_checked(13, 1, 0);
+                    input(&mut b, 14, "radio");
+                    input(&mut b, 15, "radio");
+                    b.set_checked(15, 1, 0);
+                    None
+                }
+                _ => {
+                    let kind = if name == "focus-stretch-radio" {
+                        "radio"
+                    } else {
+                        "checkbox"
+                    };
+                    input(&mut b, 12, kind);
+                    b.set_checked(12, 1, 0).command(12, Command::Focus, 0.0);
+                    Some(12)
+                }
+            }
+        }
+        "stretch-grid" => {
+            b.set_style(2, P::Display, "grid")
+                .set_style(2, P::GridTemplateColumns, "150px 150px")
+                .set_style(2, P::GridTemplateRows, "34px 20px");
+            input(&mut b, 10, "checkbox");
+            b.set_checked(10, 1, 0);
+            input(&mut b, 12, "radio");
+            b.set_checked(12, 1, 0);
+            input(&mut b, 13, "checkbox");
+            input(&mut b, 14, "radio");
+            None
+        }
         _ => unreachable!("listed case"),
     };
     (b, focus)
@@ -255,7 +410,101 @@ const CASES: &[&str] = &[
     "block",
     "flex-button",
     "placeholder",
+    "focus-outline-color",
+    "focus-outline-offset",
+    "focus-outline-checkbox",
+    "focus-outline-styled",
+    "focus-outline-shorthand",
+    "select",
+    "mixed-label",
+    "stretch-flex",
+    "stretch-grid",
+    "focus-stretch-checkbox",
+    "focus-stretch-radio",
 ];
+
+/// `input type=number` values set by the guest and the Up/Down presses
+/// (`Alt+` holds Alt) replayed on a focused field, with the caret at the end.
+/// Values Chrome steps in its 18-digit decimal with precision loss are
+/// refused natively and are not listed (see `number_step`'s unit tests).
+const STEPS: &[(&str, &[&str])] = &[
+    ("", &["ArrowUp"]),
+    ("", &["ArrowDown", "ArrowDown"]),
+    ("1.5", &["ArrowUp"]),
+    ("1.5", &["ArrowDown"]),
+    ("-1.5", &["ArrowUp"]),
+    ("-0.5", &["ArrowUp"]),
+    ("0.5", &["ArrowDown"]),
+    ("2.0", &["ArrowUp", "ArrowUp", "ArrowDown"]),
+    (".5", &["ArrowUp"]),
+    ("-.5", &["ArrowUp"]),
+    ("00012", &["ArrowUp"]),
+    ("1e3", &["ArrowUp"]),
+    ("1.e5", &["ArrowDown"]),
+    ("5E-1", &["ArrowUp"]),
+    ("-0", &["ArrowDown"]),
+    ("12e", &["ArrowUp"]),
+    ("5.", &["ArrowUp"]),
+    ("+5", &["ArrowUp"]),
+    (" 5", &["ArrowDown"]),
+    ("1,000", &["ArrowUp"]),
+    ("1e309", &["ArrowUp"]),
+    ("6e-8", &["ArrowDown"]),
+    ("5e-8", &["ArrowDown"]),
+    ("0.99999999", &["ArrowDown"]),
+    ("1.00000001", &["ArrowUp"]),
+    ("1e-18", &["ArrowDown"]),
+    ("0.30000000000000004", &["ArrowDown"]),
+    ("123456789.123456789", &["ArrowUp"]),
+    ("-123456789012344.9", &["ArrowDown"]),
+    ("999999999999999.0", &["ArrowUp"]),
+    ("41", &["Alt+ArrowDown"]),
+    ("41", &["Alt+ArrowUp"]),
+];
+
+const NUMBER_FIELD: u32 = 2;
+
+/// The native value after replaying `keys` on a number field holding `value`.
+fn stepped(value: &str, keys: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+    let mut b = B::new();
+    b.create_element(NUMBER_FIELD, Tag::Input)
+        .set_attribute(NUMBER_FIELD, Attribute::Type, "number")
+        .set_value(NUMBER_FIELD, value, 0)
+        .insert(1, NUMBER_FIELD, 0);
+    let mut view = View::default();
+    view.commit(&b.finish(), false, &mut Denied)?;
+    let target = Target::Node(NUMBER_FIELD);
+    view.input(
+        &Input::TextSelect {
+            target: target.clone(),
+            anchor: value.len(),
+            focus: value.len(),
+            activate: true,
+        },
+        &mut Denied,
+    )?;
+    for key in keys {
+        let (alt, key) = key
+            .strip_prefix("Alt+")
+            .map_or((false, *key), |key| (true, key));
+        view.input(
+            &Input::Key {
+                target: target.clone(),
+                key: key.into(),
+                shift: false,
+                ctrl: false,
+                alt,
+                meta: false,
+                composing: false,
+            },
+            &mut Denied,
+        )?;
+    }
+    Ok(view.snapshot()["tree"]["children"][0]["value"]
+        .as_str()
+        .ok_or("number field value")?
+        .to_owned())
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -325,6 +574,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "raster_size": [image.width, image.height],
         }));
     }
+    let steps = STEPS
+        .iter()
+        .map(|(value, keys)| {
+            Ok(serde_json::json!({"value": value, "keys": keys, "native": stepped(value, keys)?}))
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
     let output = serde_json::to_string(&serde_json::json!({
         "family": FAMILY,
         "font": FONT,
@@ -332,6 +587,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "scale": scale,
         "viewport": {"width": width, "height": height},
         "cases": cases,
+        "steps": steps,
     }))?;
     use std::io::Write;
     std::io::stdout().lock().write_all(output.as_bytes())?;
