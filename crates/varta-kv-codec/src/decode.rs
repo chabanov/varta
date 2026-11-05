@@ -476,4 +476,41 @@ mod tests {
         ));
         assert_eq!(refused.values(), crate::DEADLINE_STRIDE);
     }
+
+    /// What a read builds on the host is bounded by the fuel it can pay, not
+    /// by the extent: absent optional fields store nothing, so the extent
+    /// does not count them, but the classifier pays for each one it builds
+    /// and stops at the first stride it cannot pay. Whatever the budget, it
+    /// visits at most the values the budget pays for plus one stride.
+    #[test]
+    fn host_work_of_a_read_is_bounded_by_its_fuel() {
+        let schema = diamond_schema();
+        let levels = 12;
+        assert!(visited(levels) > 4 * crate::DEADLINE_STRIDE);
+        for budget in [
+            0,
+            crate::DEADLINE_STRIDE - 1,
+            crate::DEADLINE_STRIDE,
+            3 * crate::DEADLINE_STRIDE + 1,
+        ] {
+            let mut left = budget;
+            let mut pay = |values: usize| match left.checked_sub(values) {
+                Some(rest) => {
+                    left = rest;
+                    true
+                }
+                None => false,
+            };
+            let mut classifier = Classifier::new(&schema, DataLimits::V38, &Never, &mut pay);
+            assert!(
+                matches!(classifier.root(&diamond(levels)), Err(DecodeError::Fuel)),
+                "{budget}"
+            );
+            assert!(
+                classifier.values() <= budget + crate::DEADLINE_STRIDE,
+                "{budget}: {}",
+                classifier.values()
+            );
+        }
+    }
 }

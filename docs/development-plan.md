@@ -669,10 +669,10 @@ database paths.
 
 Open after integration:
 
-- KV reads: absent optional fields are not counted in the extent, so a read
-  can build up to a turn's fuel worth of nodes (measured +43 MB host RSS
-  natively); the browser reports a fatal fuel or memory exhaustion only as
-  `unreachable` or `fuel exhausted`, not with the native reason.
+- KV reads: the browser reports a fatal fuel or memory exhaustion only as
+  `unreachable` or `fuel exhausted`, not with the native reason. (Host work
+  of a read for absent optional fields is bounded by the turn's fuel and
+  pinned by a codec test; closed after integration.)
 - Native consent: a request whose patterns do not fit the prompt is denied
   without a prompt natively but shown in the browser; 'allow for this
   session', a refusal cool-down and refused-required presentation remain

@@ -11731,6 +11731,17 @@ into the static type the program names. V37 and earlier profiles reject
 
   A program spreads the decoding of large values over turns by reading
   them one per task or with a smaller `batchSize`.
+
+  What a read builds on the host is bounded by the fuel it can pay, not by
+  the extent: the `undefined` of an absent optional field stores nothing,
+  so the extent does not count it, but the classifier pays for every one it
+  builds and stops at the first stride it cannot pay. A read therefore holds
+  at most the values its remaining fuel pays for plus one stride
+  (`varta_kv_codec::DEADLINE_STRIDE`) on the host, whatever the type it is
+  read as (pinned by `host_work_of_a_read_is_bounded_by_its_fuel`). A host
+  that raises the turn fuel raises this bound with it: about 43 MB of host
+  memory was measured natively for a read of 21000 stored `{}` as a record
+  of 128 optional fields under the largest admitted turn fuel.
 - **V8 codec** (`varta-runtime` `kv::v8`, owned code, no V8). The writer emits
   the header `0xFF 0x10` (serializer version 16, what V8 15.0 in Deno 2.9.x
   writes) and one value: an integral number in the 32-bit Smi range other than
