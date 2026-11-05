@@ -3490,5 +3490,6 @@ void: a documentation edit changed the source during it, and at a load average
 above 100 one WebKit execution-matrix case hit the browser execution deadline.
 The probe's exit wait now clears its timer and listener and returns at once for
 a Chrome that has already exited, so a prompt exit no longer keeps a driver's
-event loop open for the rest of the grace period.
+event loop open for the rest of the grace period. A whole gate run on `e88e011`
+(starting load average about 5) passed all 34 commands with the same counts.
 No CI run has been observed.
