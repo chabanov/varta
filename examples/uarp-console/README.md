@@ -59,6 +59,7 @@ Administration (creating or suspending agents) is not designed yet.
 | `scripts/check-sdk-generics.ts` | The entry that instantiates every generic function and method of the pinned SDK, used by `check-sdk.sh` |
 | `scripts/sdk-loopback.sh` | Runs the loopback mock and the SDK client tests as two `varta dev` processes |
 | `scripts/test-browser-sdk.mjs` | Records every SDK group natively against the loopback mock, replays it natively and in local Chrome from the program's own browser bundle, and requires identical lines and usage |
+| `scripts/test-browser-settings.mjs` | Runs the product natively and in local Chrome with the network closed: the key saved in the settings is kept in KV (OPFS in Chrome) and read back after a reload, in the same states and with the same log lines |
 | `mockups/` | Static Single Chat screens in plain HTML/CSS restricted to the L0 v1 subset. `console.css` is the guest stylesheet, `frame.css` the embedding page, `lint.html` checks every screen against the common registry and official host model |
 | `mockups/conformance/` | Renders every screen through the official browser host and compares structure, live control state and boxes with the mockup |
 
@@ -159,6 +160,7 @@ VARTA_BIN=/path/to/varta scripts/test.sh [group…]
 VARTA_BIN=/path/to/varta scripts/check-sdk.sh
 VARTA_BIN=/path/to/varta scripts/sdk-loopback.sh [group…]
 node scripts/test-browser-sdk.mjs /path/to/varta [group…]
+node scripts/test-browser-settings.mjs /path/to/varta
 node scripts/serve-mockups.mjs 8766
 ```
 
@@ -257,6 +259,27 @@ Checkpoint 2026-11-05 (debug `varta`, local Chrome 156): all six groups pass
 every turn; their idle-maintenance fuel can differ (the recording idles while
 the network answers), so Chrome is compared with the native replay. Firefox
 and WebKit were not run.
+
+### The settings in the browser host
+
+`scripts/test-browser-settings.mjs` runs the product (`varta.json`) natively
+(`varta dev --view-script`, three sessions over one KV directory) and in local
+Chrome from its own browser bundle (a temporary profile, the key typed with
+trusted input and Enter, then a page reload). The host ceiling grants KV and
+the clock but not `net.request`, so the console's first request is denied
+before any socket on both hosts. The three states must match: a fresh store
+(`Ключ API не збережено.`, the settings dialog open), saved
+(`Налаштування збережено.`, `Підключення…`) and after a later start
+(`Підключення…`: the key was read back from KV, OPFS in Chrome). The log lines
+are equal (the denial of `GET https://api.snaga.ai/api/v1/tenants/me`), and
+the key appears in no snapshot or page. Whole accessibility trees are not
+compared: Chrome hides what a modal dialog covers, which the headless model
+does not yet (package `w4-native-dialog`).
+
+Checkpoint 2026-11-05 (debug `varta`, local Chrome 156): all three states and
+their logs match. The console stays at `Підключення…` after the denial on both
+hosts because the SDK retries a denied request as a connection error (pilot
+finding F10).
 
 ## SDK own test sources
 
@@ -588,3 +611,12 @@ code, never by changing the SDK.
   a defect, but it made the console's old microtask `commitSoon` unsafe once a
   click awaits an in-process promise (a history load in the view tests).
   `src/ui/commit.ts` now commits in a zero-delay timer turn of its own.
+- **F10. The SDK retries a request the host denied.** `Transport.request`
+  (`core/transport.ts:145-155`) wraps every `fetch` rejection in
+  `APIConnectionError('Connection error', { cause })` and retries it within
+  `maxRetries` with backoff, whatever the cause. A capability denial
+  (`NotAllowedError: <capability denied: net.request> …`) is permanent, so
+  the retries only delay the console's `unavailable` state: a start without
+  the grant shows `Підключення…` for the whole backoff, natively and in the
+  browser (`scripts/test-browser-settings.mjs`). This is SDK behaviour, not an
+  engine defect; the console leaves the SDK unchanged.

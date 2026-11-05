@@ -1214,6 +1214,7 @@ cargo build -p varta -p varta-launcher --locked
 cargo build -p varta-view --example project_flex_snapshot --locked
 VARTA_BIN="$PWD/target/debug/varta" examples/uarp-console/scripts/test.sh
 node examples/uarp-console/scripts/test-browser-sdk.mjs target/debug/varta
+node examples/uarp-console/scripts/test-browser-settings.mjs target/debug/varta
 node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs chrome
 node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs webkit
 ```
