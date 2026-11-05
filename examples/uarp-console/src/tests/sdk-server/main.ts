@@ -10,7 +10,8 @@
 // the retry scenario reads the attempt number the client test's counting `fetch`
 // sends in `x-loopback-attempt`. The console's end-to-end routes (`/e2e/…`, the
 // recorded scenarios) are in e2e.ts.
-import { e2e, type Responder } from "./e2e.js";
+import { e2e } from "./e2e.js";
+import type { Responder } from "./responder.js";
 import {
   PLAIN_RUN_ADDED,
   PLAIN_STARTED,

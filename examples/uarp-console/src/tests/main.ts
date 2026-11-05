@@ -10,14 +10,17 @@ import { chatTurnTests, chatWaitTests, chatStrictTests, chatStreamTests, chatDis
 import { historyTests, historyMergeTests } from "./history.test.js";
 import { storeTests } from "./store.test.js";
 import { requestTests } from "./requests.test.js";
+import { stitchTests } from "./stitch.test.js";
+import { noticeTests } from "./notices.test.js";
 import { scenarioTests } from "./scenarios.test.js";
-import { appManifestTests, appStartTests, appStreamTests, appLongTests } from "./app.test.js";
+import { appManifestTests, appStartTests, appStreamTests, appLongTests, appStitchTests, appSettingsTests, appReconnectTests } from "./app.test.js";
 
 const SCENARIO_PREFIX = "scenario-";
 /** The console end to end against the loopback mock at SDK_BASE_URL (scripts/test.sh starts it). */
 const APP_PREFIX = "app-";
-const APP_GROUPS: string[] = ["app-manifest", "app-start", "app-e2e", "app-e2e-long"];
-const GROUPS: string[] = ["markdown-inline", "markdown-blocks", "markdown-code", "markdown-stream-early", "markdown-stream-late", "reactive", "list-mapping", "list-update", "list-move", "list-remove", "chat-turns", "chat-waits", "chat-strict", "chat-stream", "chat-dispatch", "chat-history", "chat-history-merge", "chat-store", "chat-requests"];
+/** `app-reconnects` is a measurement, run by hand with `--budget-report` (README), not by scripts/test.sh. */
+const APP_GROUPS: string[] = ["app-manifest", "app-start", "app-e2e", "app-e2e-long", "app-stitch", "app-settings", "app-reconnects"];
+const GROUPS: string[] = ["markdown-inline", "markdown-blocks", "markdown-code", "markdown-stream-early", "markdown-stream-late", "reactive", "list-mapping", "list-update", "list-move", "list-remove", "chat-turns", "chat-waits", "chat-strict", "chat-stream", "chat-dispatch", "chat-history", "chat-history-merge", "chat-store", "chat-requests", "chat-stitch", "ui-notices"];
 
 function run(group: string, r: Report): boolean {
   if (group === "markdown-inline") markdownInlineTests(r);
@@ -50,6 +53,16 @@ export async function main(): Promise<void> {
     summary(r);
     return;
   }
+  if (group === "chat-stitch") {
+    await stitchTests(r);
+    summary(r);
+    return;
+  }
+  if (group === "ui-notices") {
+    await noticeTests(r);
+    summary(r);
+    return;
+  }
   if (group === "app-manifest") {
     appManifestTests(r);
     summary(r);
@@ -60,6 +73,9 @@ export async function main(): Promise<void> {
     if (group === "app-start") await appStartTests(r, base);
     else if (group === "app-e2e") await appStreamTests(r, base);
     else if (group === "app-e2e-long") await appLongTests(r, base);
+    else if (group === "app-stitch") await appStitchTests(r, base);
+    else if (group === "app-settings") await appSettingsTests(r, base);
+    else if (group === "app-reconnects") await appReconnectTests(r, base);
     else {
       console.log(`UNKNOWN GROUP ${group}; app groups: ${APP_GROUPS.join(" ")}`);
       return;

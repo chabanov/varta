@@ -1,15 +1,16 @@
-// The UARP console's product entry (`varta.json`): the Single Chat screen over
-// the chat store, started with the real UarpClient against the configured API
-// and following the new session's live stream.
+// The UARP console's product entry (`varta.json`): the console screen over the
+// chat store, started with the settings from the KV database and the real
+// UarpClient against the configured API.
 import { Runtime, effect } from "../l1/reactive.js";
 import { ChatStore } from "../chat/store.js";
 import { FOLLOW_DEFAULTS } from "../chat/follow.js";
-import { ChatView } from "../ui/timeline.js";
-import { Composer } from "../ui/composer.js";
+import { ConsoleView } from "../ui/console.js";
+import { Confirmation, TOAST_MS, Toasts } from "../ui/notices.js";
 import { commitSoon } from "../ui/commit.js";
 import { installStyles } from "../ui/styles.js";
-import { HEAD_AGENT } from "../ui/text.js";
-import { ConsoleApp, startText } from "./console.js";
+import { ConsoleApp } from "./console.js";
+import { clientApi } from "./api.js";
+import { KvSettings } from "./key.js";
 import { API_BASE_URL, KEY_DATABASE } from "./config.js";
 
 export function main(): void {
@@ -20,16 +21,16 @@ export function main(): void {
   installStyles();
   const store = new ChatStore(rt);
   store.afterChange = commitSoon;
-  const app = new ConsoleApp(store, { baseURL: API_BASE_URL, keyDatabase: KEY_DATABASE, fetcher: null, follow: FOLLOW_DEFAULTS });
-  View.mount(
-    <main id="app" class="main">
-      <div class={startText(app.state.get()) === "" ? "banner hidden" : "banner"} role="status">
-        <span>{startText(app.state.get())}</span>
-      </div>
-      <ChatView store={store} agentName={HEAD_AGENT} />
-      <Composer store={store} agentName={HEAD_AGENT} />
-    </main>,
-  );
+  const toasts = new Toasts(rt, TOAST_MS, commitSoon);
+  const confirmation = new Confirmation(rt);
+  const app = new ConsoleApp(store, {
+    defaultBaseURL: API_BASE_URL,
+    settings: new KvSettings(KEY_DATABASE),
+    connect: clientApi(null),
+    follow: FOLLOW_DEFAULTS,
+    toasts: toasts,
+  });
+  View.mount(<ConsoleView store={store} app={app} toasts={toasts} confirmation={confirmation} />);
   // Started in a turn of its own: the mount turn commits by itself, and the
   // start can finish in it (KV operations complete within their call), which
   // would commit that turn twice.

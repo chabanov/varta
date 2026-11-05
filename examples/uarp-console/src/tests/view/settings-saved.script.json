@@ -1,0 +1,4 @@
+{"inputs":[
+  {"input":"type","target":"#api-key","text":"uarp_view_typed-only"},
+  {"input":"key","target":"#api-key","key":"Enter"}
+]}

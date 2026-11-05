@@ -1,0 +1,4 @@
+{"inputs":[
+  {"input":"type","target":"#base-url","text":"/v2"},
+  {"input":"click","target":"#settings-save"}
+]}

@@ -1,0 +1,4 @@
+{"inputs":[
+  {"input":"click","target":"#settings-open"},
+  {"input":"click","target":"#settings-forget"}
+]}

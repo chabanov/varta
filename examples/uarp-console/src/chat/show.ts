@@ -62,7 +62,7 @@ function entry(e: Entry): string {
 }
 
 export function showSegment(s: Segment): string {
-  return "(segment " + s.state + s.entries.map((e: Entry): string => " " + entry(e)).join("") + ")";
+  return "(segment " + s.state + (s.date === "" ? "" : " " + s.date) + s.entries.map((e: Entry): string => " " + entry(e)).join("") + ")";
 }
 
 export function show(t: Timeline): string {

@@ -42,15 +42,15 @@ Administration (creating or suspending agents) is not designed yet.
 | --- | --- |
 | `src/markdown/` | Deterministic Markdown subset for chat replies, parsed into a closed tree of blocks and inline nodes that maps onto L0; incremental parsing for streaming answers |
 | `src/l1/` | L1 reactive core: signals, lazy computeds, effects, batches and keyed lists over an explicit runtime; accessors are functions, as in SolidJS |
-| `src/app/` | The product entry (`varta.json`, `main.tsx`): the API key from the KV database, the real `UarpClient`, a new session with the tenant's Head Agent, the request layer wired to the store and the followed session stream; `api.ts` adapts the client to the chat's `ChatApi` and `StreamApi` |
-| `src/chat/` | Chat timeline model: the dispatcher of session-stream frames as the wire delivers them and one handler per closed v1 event type, stream resume and end rules, transcripts as history, the reactive store with the person's actions as queued intents, the request layer that performs them through the uarp-sdk client, the follower of the live session stream (`follow.ts`), and a compact text form for tests |
-| `src/ui/` | Single Chat screen in TSX (L0 view protocol, v38): the live timeline, the composer, Markdown as L0 nodes, interface strings; the stylesheet is `mockups/console.css`, imported as text |
-| `src/tests/` | Tests executed by Varta itself (`varta.test.json`, one execution per group); `frames.ts`, `transcripts.ts` and `responses.ts` hold recorded v1 frames, transcripts and API responses |
+| `src/app/` | The product entry (`varta.json`, `main.tsx`): the settings (API key and base URL) from the KV database (`key.ts`), the real `UarpClient`, the tenant's Head Agent, its stitched sessions, the request layer wired to the store and the followed session stream (`console.ts`); `api.ts` adapts the client to the console's `ConsoleApi` |
+| `src/chat/` | Chat timeline model: the dispatcher of session-stream frames as the wire delivers them and one handler per closed v1 event type, stream resume and end rules, transcripts as history, session stitching (`stitch.ts`), the reactive store with the person's actions as queued intents, the request layer that performs them through the uarp-sdk client (creating the session before the first message when none is live), the follower of the live session stream (`follow.ts`), and a compact text form for tests |
+| `src/ui/` | The console screen in TSX (L0 view protocol, v38, `console.tsx`): top bar, start banner with its loading and error states, the stitched timeline with date lines and history on scroll, the empty chat, the composer, the context panel, the settings and confirm dialogs and the toasts (`notices.ts`); Markdown as L0 nodes, interface strings; the stylesheet is `mockups/console.css`, imported as text |
+| `src/tests/` | Tests executed by Varta itself (`varta.test.json`, one execution per group); `frames.ts`, `transcripts.ts` and `responses.ts` hold recorded v1 frames, transcripts and API responses; `sessions.ts` the session list of the stitching tests (composed from recorded bodies) and the recorded transcripts they serve |
 | `fixtures/events-v1/` | The API lane's nine recorded `event_schema=1` session streams and their transcripts (anonymised; provenance in its README), read by the scenario tests through the virtual root `/project` |
 | `src/tests/sdk/` | SDK client tests executed by Varta (`varta.sdk-test.json`): the real, unmodified `UarpClient` against the loopback mock, one execution per group; `contract.ts` holds the canned bodies, headers and timings both sides share |
-| `src/tests/sdk-server/` | The loopback mock of the UARP API, itself a Varta HTTP/1 application (`varta.sdk-server.json`); `e2e.ts` replays the recorded scenarios for the console end to end |
-| `src/tests/app.test.ts` | The console end to end: the product's start, request layer and follower with the real `UarpClient` against the mock, and the product manifest; `loopback.ts` is the instrumented `fetch` those tests pass to the client, `app-ceiling.json` the host ceiling budgets of the app groups |
-| `src/tests/view/` | View tests: a timeline from recorded frames rendered headlessly by `varta dev --view-script` (`varta.view.json`), compared with the reviewed tree and accessibility snapshot |
+| `src/tests/sdk-server/` | The loopback mock of the UARP API, itself a Varta HTTP/1 application (`varta.sdk-server.json`); `e2e.ts` replays the recorded scenarios for the console end to end, `stitch.ts` serves the session list and transcripts |
+| `src/tests/app.test.ts` | The console end to end: the product's start, settings, stitching, request layer and follower with the real `UarpClient` against the mock, and the product manifest; `loopback.ts` is the instrumented `fetch` those tests pass to the client, `app-ceiling.json` the host ceiling budgets of the app groups |
+| `src/tests/view/` | View tests rendered headlessly by `varta dev --view-script` (`varta.view.json`) and compared with the reviewed tree and accessibility snapshot: a timeline from recorded frames (`main.tsx`), and every console screen over recorded answers and settings in memory (`screens.tsx`) |
 | `design/agent-studio.md` | Draft of Agent Studio (building a personal agent with Varta tools); built after the rest of the console works |
 | `design/chat-timeline.md` | Draft model of the chat timeline: sources, entries, reducer, transport, session stitching |
 | `scripts/test.sh` | Builds the product and the test entry once, starts the loopback mock and runs the Varta-executed tests group by group, then the view tests |
@@ -72,6 +72,18 @@ Secrets such as the UARP API key live in the ignored `.env.local`, never in the
 repository.
 
 ## Status
+
+Checkpoint 2026-11-05, wave 3 (debug `varta` of `49186cf` with this example's
+working tree): `scripts/test.sh` passes **239 tests in 36 groups and ten headless
+view checks**. New since the checkpoint below: `chat-stitch`, `ui-notices`,
+`app-stitch` and `app-settings`, more cases in `chat-store` and `chat-requests`, the
+`app-*` flows starting from the session list, and the eight console screens
+`settings`, `settings-saved`, `empty`, `history`, `context`, `loading`, `error` and
+`confirm` ([product entry](#product-entry-and-the-console-end-to-end)). The run
+also found the test key in no output of `app-settings`, in neither
+`dist/app.wasm` nor `dist/app.manifest.json`, and the key the `settings-saved`
+script types in neither its snapshot nor its log. The product manifest's grants
+are unchanged. `scripts/sdk-loopback.sh` still passes its six groups (43 cases) against the extended mock.
 
 Checkpoint 2026-11-05 (debug `varta` of `4fce278` with this example's working
 tree, after the review fixes): `scripts/test.sh` passes **179 tests in 32 groups
@@ -122,7 +134,9 @@ performance limits or production capacity.
 | Single Chat screen | Live timeline over the store with the stylesheet, checked headlessly and deterministically (tree with cascaded styles, accessibility snapshot): thinking toggle, tool lines, approval, question and failure cards with their actions, streaming Markdown, the composer | Full cross-target acceptance beyond the focused official-browser interaction probes |
 | SDK source admission | `scripts/check-sdk.sh` checks 65/65 pinned 0.13.2 files unmodified under v38, plus the bodies of all six generic functions and methods through an instantiation probe (2026-11-04, debug build of `978b793`) | SDK-own tests (M7); generic bodies only for the probed type arguments |
 | Real requests to UARP | The real `UarpClient` runs natively under Varta against the loopback mock: unary JSON, problem documents and bare error bodies, retry after a 503 with `Retry-After` (and none with `x-should-retry: false`), `AbortSignal`, timeout, and `sessions.streamSessionEvents` to `[DONE]`; 43 cases in 6 groups pass (2026-11-04) | Live-service validation, streams with gaps between frames or of real size (finding F4), cross-target acceptance; findings below |
-| Product entry | `src/app/` with `varta.json`: key from KV, the real client, a new session with the Head Agent, the request layer and the followed session stream with the stream.ts reconnect rules; send, approve, answer, drop, reconnect (also after a 503) and the ends after `session_closed`, a final `error`, `[DONE]` alone and a 401 pass end to end against the recorded scenarios (2026-11-04); giving up after connections without progress, a frame strict parsing refuses and a refused stream open (403, capability denial) with the real reason in the note pass end to end (2026-11-05) | The settings screen (the key is only read), the session list and history stitching, live-service validation, the view under scripted input with the live stream, cross-target acceptance |
+| Product entry | `src/app/` with `varta.json`: settings from KV, the real client, the Head Agent's stitched sessions, the request layer and the followed session stream with the stream.ts reconnect rules; send, approve, answer, drop, reconnect (also after a 503) and the ends after `session_closed`, a final `error`, `[DONE]` alone and a 401 pass end to end against the recorded scenarios (2026-11-04); giving up after connections without progress, a frame strict parsing refuses and a refused stream open (403, capability denial) with the real reason in the note pass end to end (2026-11-05) | Live-service validation, the view under scripted input with the live stream, cross-target acceptance |
+| Session stitching | The live session from the newest page of the Head Agent's sessions, loaded from its transcript and followed without duplicates; older sessions loaded on scroll (or the button) one per request across pages, each prepended with its date line, a closed one as a note; the first message without a live session creates one; end to end against the mock (`app-stitch`), as a model (`chat-stitch`, `chat-store`, `chat-requests`) and headlessly (`history` view) (wave 3) | A recorded `GET /sessions` page (the pages are composed from recorded bodies); live-service validation; a window of about 30 entries (design) is not implemented, every loaded segment stays rendered |
+| Settings and the other screens | Settings dialog (base URL, API key) saving through KV only, with validation and "forget the key" behind the confirm dialog; the empty chat with suggestions; the context panel of runs and delegated agents mentioned in the conversation, with the context meter; loading and error banners; toasts. End to end for the settings (`app-settings`), as state (`ui-notices`) and in eight headless view checks (`settings`, `settings-saved`, `empty`, `history`, `context`, `loading`, `error`, `confirm`) (wave 3) | New settings apply at the next start once a session was reached (no in-place restart); the panel shows only what the timeline holds (no agent or run requests); copy buttons (`clipboard.write` is not granted); native rendering of these screens |
 
 ## Running the checks
 
@@ -220,7 +234,7 @@ requests exactly:
 | Grant | Scope | Why |
 | --- | --- | --- |
 | `net.request` | `https://api.snaga.ai/**` (`API_BASE_URL`), `GET` and `POST`, response headers `retry-after`, `x-correlation-id`, `x-request-id`, `x-should-retry` | The SDK's requests and the session stream; the four headers are the ones the SDK reads (retry timing, `APIError` ids) |
-| `kv.read`, `kv.write` | `/data/console.kv` (`KEY_DATABASE`, root `data`) | The API key (`src/app/key.ts`); nothing writes it yet, the settings screen will |
+| `kv.read`, `kv.write` | `/data/console.kv` (`KEY_DATABASE`, root `data`) | The settings (`src/app/key.ts`): the API key and the base URL, written by the settings screen; `kv.write` also covers forgetting the key (`Kv.delete`) |
 | `time.timer` | — | The SDK's `Transport.request` arms a `setTimeout` for its timeout on every request, so without it every request fails before the network (`NotAllowedError: <capability denied: time.timer> (setTimeout)`, observed) |
 | `time.now` | — | The SDK's `EventStream` reads `Date.now` (its default clock) when each connection opens (`core/sse.ts`, `connectedAt`) |
 
@@ -231,10 +245,35 @@ requests `time.timer` and `time.now` as well, and nothing wider: the `app-manife
 group fails on any other grant. `varta dev --config varta.json` maps
 the `data` root to `data/` here (git-ignored except its `.gitignore`).
 
-At start the console reads the key from KV, constructs `UarpClient` with it and the
-base URL, reads the tenant (`tenants.getCurrentTenant`), creates a session with its
-Head Agent (`sessions.create`), wires the request layer to the store's intents and
-follows the session (`src/chat/follow.ts`):
+At start the console reads the settings from KV (the key, and the base URL, which
+defaults to `API_BASE_URL`), constructs `UarpClient` with them, reads the tenant
+(`tenants.getCurrentTenant`) and stitches its Head Agent's sessions
+(`src/chat/stitch.ts`, design/chat-timeline.md "Session stitching"):
+
+- `sessions.list({ agent_id, limit: 20 })` gives the newest page, newest first. Its
+  first session whose `status` is `active` is live: the console reads its
+  transcript (`sessions.getSessionMessages`), which alone holds the person's
+  messages, and then follows it; the stream's replay of a run the transcript holds
+  is dropped (`fromHistory`), so nothing shows twice. Every other session of the
+  page, and of each further page behind the list's `cursor`, waits as history.
+- Scrolling the timeline to its top (a `scroll` event at most 48 px from the top)
+  or the "Показати раніші розмови" button loads the next older session as a history
+  segment from its transcript, prepended before the segments shown; one session per
+  load, the next page only once the queued sessions are used up. A closed session's
+  transcript is gone (404): its segment shows a note. A failed load shows a toast and
+  can be retried.
+- Without a live session the console is ready: the first message opens a local
+  segment at once, `sessions.create({ agent_id })` creates the session, the segment
+  takes its id and day, the message is sent and then the session is followed.
+  Messages sent meanwhile wait behind the creation; a failed creation marks them as
+  not sent with the API's code and closes the segment, and the next message starts
+  again. After `session_closed` the next message creates a new session the same way.
+- Each segment starts with a quiet date line, the UTC day of its session's
+  `created_at` ("3 січня 2026"; relative days such as "Сьогодні" in the mockup are
+  not shown, since they would need the clock in the view).
+
+The request layer is wired to the store's intents once the start has read the
+session list, and the live session is followed (`src/chat/follow.ts`):
 
 - `sessions.streamSessionEvents(sessionId, { event_schema: 1 })`; every frame goes to
   `applyFrame` (dispatch.ts), one frame per event turn, because a read of the
@@ -279,14 +318,50 @@ person's action between two connections. The mock (`src/tests/sdk-server/e2e.ts`
 serves the recorded scenarios `approval_approve`, `ask_user` and `session_end`
 (built in as text imports), checks every request body against the recording, and
 serves frames strictly after the `Last-Event-ID` it receives. A recording's first
-connection ends without `[DONE]` at its drop point (`DROP_AFTER`).
+connection ends without `[DONE]` at its drop point (`DROP_AFTER`). The mock also
+serves the Head Agent's session list (`src/tests/sdk-server/stitch.ts`), checking its
+query: a recorded scenario lists no session, so the person's first message creates
+one with the recorded `create_session`; a generated stream's scenario lists one live
+session, `session-1`, with an empty transcript, which the console follows at once;
+the stitch scenarios list the sessions of `src/tests/sessions.ts` and replay the
+recorded plain scenario for the live stream, the creation and the message. No
+`GET /sessions` page was recorded: those pages are composed in the list's served
+shape (`{items, cursor, has_more}`) from the recorded `create_session` body, with
+ids, status and times changed; the transcripts are the recorded ones, the runs of
+each older session renamed after it (every recording names its run `run-1`).
 
 | Group | What runs |
 | --- | --- |
-| `app-manifest` | The built `dist/app.manifest.json` requests exactly the grants above, with the `data` root only |
+| `app-manifest` | The built `dist/app.manifest.json` requests exactly the grants above, with the `data` root only; `scripts/test.sh` also checks that neither it nor `dist/app.wasm` contains the test key |
 | `app-start` | No stored key: no request. An ungranted database: `NotAllowedError` from `kv.read` before any effect. An ungranted origin (the product's own `fetch`): the SDK's `APIConnectionError` caused by the engine's `NotAllowedError` for `net.request`, which the reason shows, nothing followed. A tenant without a Head Agent: the tenant is read and no session is created. A key entry that does not decode as a string: the start reports the read's `TypeError`, and more such starts than the engine keeps databases open all report it, so the database is closed on that path too |
-| `app-e2e` | `approval_approve` and `ask_user`: send, the stream to the wait, the drop, approve or answer, the reconnect with the model's `Last-Event-ID`, the run to its end; the timeline equals the reviewed expectation of that recording (scenarios.test.ts) plus the person's message, and the requests come in the expected order. `session_end`: a drop mid-run, a reconnect the mock answers with a 503, the SDK's reconnect from the same event, then `session_closed` and `[DONE]` end following with `over`. A final `error` frame (`SESSION_NOT_FOUND`), `[DONE]` alone and a 401 end following without a reconnect. Connections that deliver only `connected`, and connections that deliver only a keep-alive comment, end with `gave_up` after `maxReconnects`. A run event missing a required field ends with `invalid` and the strict parser's `TypeError`. A stream open answered 403, or sent to an ungranted origin, ends with `refused` and the `PermissionDeniedError` or `NotAllowedError` after two requests; one answered 503 every time ends with `gave_up` and the `ServiceUnavailableError`. Each end checks the streams opened, the stream requests and the note with the real reason |
+| `app-e2e` | `approval_approve` and `ask_user`: no session listed, so the first message creates one (`POST /sessions`, then the message, then the stream), the stream to the wait, the drop, approve or answer, the reconnect with the model's `Last-Event-ID`, the run to its end; the timeline equals the reviewed expectation of that recording (scenarios.test.ts) plus the person's message, and the requests come in the expected order. `session_end`: a drop mid-run, a reconnect the mock answers with a 503, the SDK's reconnect from the same event, then `session_closed` and `[DONE]` end following with `over`. A final `error` frame (`SESSION_NOT_FOUND`), `[DONE]` alone and a 401 end following without a reconnect. Connections that deliver only `connected`, and connections that deliver only a keep-alive comment, end with `gave_up` after `maxReconnects`. A run event missing a required field ends with `invalid` and the strict parser's `TypeError`. A stream open answered 403, or sent to an ungranted origin, ends with `refused` and the `PermissionDeniedError` or `NotAllowedError` after two requests; one answered 503 every time ends with `gave_up` and the `ServiceUnavailableError`. Each end checks the streams opened, the stream requests and the note with the real reason |
 | `app-e2e-long` | One connection whose head the mock delays 200 ms (within the 250 ms window) and whose 100 content chunks (about 24 KB, several reads) are applied one per turn: the stream lasts longer than one per-turn deadline although no single wait does, every chunk is applied and `session_closed` + `[DONE]` end it |
+| `app-stitch` | `stitch`: the newest page lists an active, an expired and a closed session, with a second page behind its cursor; the active one is followed, its timeline starts from its recorded transcript, and the stream's replay of the same run adds nothing (the reconnect resumes from the start, `- -`). Three loads, as three scrolls, prepend the expired session's transcript, the closed session's note (its transcript is recorded as 404) and, from the second page, the oldest session's transcript, each with its date; a fourth makes no request. `stitch-new`: an expired and a closed session only, so the console is ready; the first message creates the session, is sent, and the stream of the recorded plain scenario gives the reviewed timeline plus the message; a load then puts the expired session before it. Both check every request in order |
+| `app-settings` | The product's settings store (`KvSettings`) on a test database, with the product's default base URL, which no test grant names: no key, no request; an empty key and a base URL without an HTTP scheme are refused and nothing is stored; a valid save writes the key and base URL to the database and starts the console with them (the mock accepts only the test key); the key is in no state the screen shows (start state, base URL, tenant name, toasts, timeline); a later save applies at the next start; forgetting deletes the key and keeps the base URL; a base URL no grant names is saved but denied by the engine (`NotAllowedError` for `net.request`). `scripts/test.sh` checks that the group's output, logs included, does not contain the test key |
+
+`app-reconnects` is a measurement, not part of the default run (below).
+
+### Reconnects and memory
+
+A wave-2 review found memory growing per reconnect in a test; the growth was the
+test's own instrument (`GatedFetch` records every request). `app-reconnects`
+measures the product follower without it: the engine's own `fetch`, the
+connected-only stream (no progress), 1000 connections with waits of 1–4 ms until
+the follower gives up. `scripts/test.sh app-reconnects` runs it; for the numbers,
+run it with a `VARTA_BIN` that adds `--budget-report` to `varta run`.
+
+Measured 2026-11-05 (debug `varta` of `49186cf`, this example's working tree, a
+heavily loaded machine): the group passes, all 1000 connections are made and the
+follower gives up as expected, in 5009 turns (about five per connection). The
+instance's memory starts at 2,424,832 bytes and grows by about 45 KB per
+connection (3,866,624 bytes after turn 205, 4,456,448 after turn 272: nine 64 KiB
+pages over about 13 connections) although the idle collector completes a cycle
+every seven or eight turns, and reaches the 8 MiB memory budget near turn 475
+(about 95 connections). The remaining ~900 connections then run at the budget
+without a failure, so what the follower keeps per connection is reclaimed: there is
+no unbounded growth to fix in the product follower. Not established: why the heap
+grows below the budget even after completed collection cycles (the engine's growth
+policy or garbage it collects late); that question belongs to the core.
 
 ## Pilot findings
 
@@ -407,3 +482,32 @@ code, never by changing the SDK.
   Request — unexpected user agent`, and `sdk-sse` ended with `execution deadline
   exceeded` while reconnecting. The mock now refuses a request that does carry the
   SDK's product token, which checks the host-owned rule instead.
+- **F8. Refused constructs met while writing the wave-3 screens and stitching**,
+  each rewritten in the console:
+  - `Array.prototype.unshift` (`list.unshift(y)` on an array of records):
+    `unsupported call` (a new array is built instead, `prependSegment`);
+  - a method call on a field of a call's result (`this.list(s).get()`, `get` a
+    function field): `unsupported call` (a local binding first);
+  - `Promise<never>` as a return type: `unsupported Promise value type never`
+    (methods that only throw are `async` with their own result type);
+  - `await` inside a `+` expression: `unsupported await inside \`+\` expression:
+    the suspension foundation does not admit it yet` (awaited into a local first);
+  - an empty array literal inside an object literal passed to `JSON.stringify`:
+    `empty array requires an element type annotation` (the JSON text is written out);
+  - a module constant whose initializer calls a function (`page(…)`,
+    `String(PAGE_LIMIT)`): `unsupported call in a module constant initializer`
+    (functions instead; F6 reports the same rule for a function reference);
+  - a local binding named like a module-level function (`list`, `recorded`):
+    `reserved binding` (renamed);
+  - an import cycle made only of `import type`: `cyclic module dependency` (the
+    shared interface moved to its own module, `sdk-server/responder.ts`).
+- **F9. Two commits in one turn end the instance.** A view event turn commits
+  right after its handler, before the handler's microtasks
+  (`dispatchViewEvent` in the view prelude), so a microtask of that turn that
+  commits pending operations again ends the instance. Observed with a minimal
+  view (a click handler that changes a class, then a `Promise.resolve().then`
+  that changes it again and calls `View.commit()`): `varta failed: view_commit
+  called twice in one turn`. This is the engine's documented one-commit rule, not
+  a defect, but it made the console's old microtask `commitSoon` unsafe once a
+  click awaits an in-process promise (a history load in the view tests).
+  `src/ui/commit.ts` now commits in a zero-delay timer turn of its own.

@@ -23,6 +23,7 @@ import {
   CODE,
   DELEGATED,
   FAILURE_TITLE,
+  MONTHS,
   QUESTION_TITLE,
   REJECT,
   REJECTED_TITLE,
@@ -500,16 +501,85 @@ function appended<T>(rt: Runtime, parent: number, items: Accessor<T[]>, make: (i
   });
 }
 
+// The parts of a `YYYY-MM-DD` day (timeline.ts `dayOf`).
+const YEAR_END = 4;
+const MONTH_START = 5;
+const MONTH_END = 7;
+const DAY_START = 8;
+const DAY_END = 10;
+
+/** A segment's date line ("3 січня 2026"); a day that does not parse reads as it is. */
+export function formatDay(day: string): string {
+  const month = MONTHS[Number(day.slice(MONTH_START, MONTH_END)) - 1];
+  const date = Number(day.slice(DAY_START, DAY_END));
+  if (month === undefined || !Number.isInteger(date)) return day;
+  return String(date) + " " + month + " " + day.slice(0, YEAR_END);
+}
+
+/**
+ * A segment with its date line, a quiet separator before its first entry,
+ * added once the segment's day is known (a new session learns it when it is
+ * created). A segment without a day has no date line.
+ */
 function segmentNode(store: ChatStore, s: Segment, agentName: string): number {
+  const rt = store.rt;
   const node = <div class="segment" />;
-  appended<Entry>(store.rt, node, store.entries(s), (e: Entry): number => entryNode(store, s, e, agentName));
+  let first = NO_NODE;
+  let dated = false;
+  const version = store.segmentVersion(s);
+  effect(rt, () => {
+    version();
+    if (dated || s.date === "") return;
+    dated = true;
+    View.insert(node, untracked<number>(rt, () => noteNode(formatDay(s.date))), first);
+  });
+  appended<Entry>(rt, node, store.entries(s), (e: Entry): number => {
+    const made = entryNode(store, s, e, agentName);
+    if (first === NO_NODE) first = made;
+    return made;
+  });
   return node;
+}
+
+/**
+ * Renders the store's segments into `thread`: older sessions loaded as history
+ * are prepended before the segments shown, a new session is appended after
+ * them (the store does nothing else to the list). Each segment is made once.
+ */
+export function segmentsInto(store: ChatStore, thread: number, agentName: string): void {
+  const rt = store.rt;
+  let rendered: Segment[] = [];
+  let firstNode = NO_NODE;
+  effect(rt, () => {
+    const list = store.segments.get();
+    untracked<number>(rt, () => {
+      const front = rendered.length === 0 ? 0 : list.indexOf(rendered[0]!);
+      const next: Segment[] = [];
+      let head = NO_NODE;
+      for (let i = 0; i < front; i++) {
+        const made = segmentNode(store, list[i]!, agentName);
+        if (head === NO_NODE) head = made;
+        View.insert(thread, made, firstNode);
+        next.push(list[i]!);
+      }
+      for (const s of rendered) next.push(s);
+      for (let i = front + rendered.length; i < list.length; i++) {
+        const made = segmentNode(store, list[i]!, agentName);
+        if (head === NO_NODE && next.length === 0) head = made;
+        View.insert(thread, made, NO_NODE);
+        next.push(list[i]!);
+      }
+      if (head !== NO_NODE) firstNode = head;
+      rendered = next;
+      return rendered.length;
+    });
+  });
 }
 
 export function ChatView(props: { store: ChatStore; agentName: string }): number {
   const store = props.store;
   const thread = <div class="thread" />;
-  appended<Segment>(store.rt, thread, store.segments.get, (s: Segment): number => segmentNode(store, s, props.agentName));
+  segmentsInto(store, thread, props.agentName);
   const section = <section class="timeline" aria-label={TIMELINE_LABEL} aria-live="polite" />;
   View.insert(section, thread, NO_NODE);
   return section;

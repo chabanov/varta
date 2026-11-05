@@ -4,6 +4,7 @@
 // the fixtures' own (fixtures/events-v1/README.md), and frame data stays opaque.
 import approvalApprove from "../../../fixtures/events-v1/approval_approve.json" with { type: "text" };
 import askUser from "../../../fixtures/events-v1/ask_user.json" with { type: "text" };
+import plain from "../../../fixtures/events-v1/plain.json" with { type: "text" };
 import sessionEnd from "../../../fixtures/events-v1/session_end.json" with { type: "text" };
 
 export interface RecordedFrame {
@@ -35,6 +36,7 @@ export interface Recording {
 export function recordingText(scenario: string): string | null {
   if (scenario === "approval_approve") return approvalApprove;
   if (scenario === "ask_user") return askUser;
+  if (scenario === "plain") return plain;
   if (scenario === "session_end") return sessionEnd;
   return null;
 }
