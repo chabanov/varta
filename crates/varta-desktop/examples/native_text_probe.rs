@@ -1,9 +1,10 @@
 //! Same strict browser oracle, using the product's native glyph rasterizer.
 //!
 //! `native_text_probe [SCALE] [decorations]` runs the inline corpus.
-//! `native_text_probe faces variable|collection [SCALE]` renders the desktop
-//! face fixtures (a `wght` variable font at several weights, or member 1 of a
-//! collection) and fails unless every glyph used native coverage.
+//! `native_text_probe faces variable|variable-names|collection [SCALE]`
+//! renders the desktop face fixtures (a `wght` variable font at several
+//! weights, the same face whose Mac and Windows axis names differ, or member 1
+//! of a collection) and fails unless every glyph used native coverage.
 #[cfg(target_os = "macos")]
 #[path = "../../varta-view/examples/native_inline_probe/probe.rs"]
 mod probe;
@@ -29,7 +30,10 @@ mod faces {
     use varta_view::{Access, BatchWriter as B, Broker, Renderer, TextMeasurer, View};
 
     pub const MODE: &str = "faces";
+    const KINDS: &str = "expected variable, variable-names or collection";
     const VARIABLE: &[u8] = include_bytes!("../tests/fixtures/fonts/variable.ttf");
+    /// CoreGraphics names this face's axis by its Mac record ("Gewicht").
+    const VARIABLE_NAMES: &[u8] = include_bytes!("../tests/fixtures/fonts/variable-names.ttf");
     const COLLECTION: &[u8] = include_bytes!("../tests/fixtures/fonts/collection.ttc");
     const VARIABLE_FAMILY: &str = "Varta Variable Fixture";
     const COLLECTION_FAMILY: &str = "Varta Collection One";
@@ -75,7 +79,7 @@ mod faces {
 
     pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut args = std::env::args().skip(2);
-        let kind = args.next().ok_or("expected variable or collection")?;
+        let kind = args.next().ok_or(KINDS)?;
         let scale = args
             .next()
             .map(|s| s.parse::<f32>())
@@ -92,13 +96,19 @@ mod faces {
         let (family, file, browser_font, weights): (_, &[u8], Vec<u8>, &[&str]) =
             match kind.as_str() {
                 "variable" => (VARIABLE_FAMILY, VARIABLE, VARIABLE.to_vec(), &WEIGHTS),
+                "variable-names" => (
+                    VARIABLE_FAMILY,
+                    VARIABLE_NAMES,
+                    VARIABLE_NAMES.to_vec(),
+                    &WEIGHTS,
+                ),
                 "collection" => (
                     COLLECTION_FAMILY,
                     COLLECTION,
                     standalone_face(COLLECTION, COLLECTION_MEMBER).ok_or("invalid member")?,
                     &WEIGHTS[..1],
                 ),
-                _ => return Err("expected variable or collection".into()),
+                _ => return Err(KINDS.into()),
             };
         let mut cases = Vec::new();
         for weight in weights {
@@ -120,7 +130,7 @@ mod faces {
                 let mut v = View::default();
                 v.commit(&b.finish(), false, &mut Denied)?;
                 let mut tree = v.snapshot()["tree"].clone();
-                if kind == "variable" {
+                if kind != "collection" {
                     browser_instance(&mut tree);
                 }
                 let geometry =
@@ -170,6 +180,7 @@ mod faces {
                         "declined_color": counts.declined_color,
                         "declined_optical_size": counts.declined_optical_size,
                         "declined_unsupported": counts.declined_unsupported,
+                        "declined_variation": counts.declined_variation,
                         "declined_resource": counts.declined_resource,
                         "declined_request": counts.declined_request,
                     },

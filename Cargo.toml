@@ -41,6 +41,9 @@ winit = "=0.30.12"
 # v21 reuses the existing locked CoreGraphics 0.24/CoreFoundation 0.10 stack.
 core-text = "=21.0.0"
 core-graphics = "=0.24.0"
+# The CoreFoundation types of that stack, named to read CoreGraphics's own
+# variation-axis records and verify an instance; already locked through it.
+core-foundation = "=0.10.1"
 softbuffer = { version = "=0.4.6", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 # Apache-2.0: semantic tree and native accessibility adapters, desktop only.
 accesskit = "=0.25.2"

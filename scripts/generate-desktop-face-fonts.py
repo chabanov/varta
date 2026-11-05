@@ -2,8 +2,12 @@
 """Original variable and collection faces for the desktop CoreText face tests.
 
 Writes `crates/varta-desktop/tests/fixtures/fonts/variable.ttf` (one `wght`
-axis with a nonlinear `avar` map and `gvar` outline deltas) and
-`collection.ttc` (two members with different family names and outlines).
+axis with a nonlinear `avar` map and `gvar` outline deltas),
+`variable-names.ttf` (the same face whose Mac and Windows axis-name records
+differ, as CoreGraphics and a Windows-first reader would name the axis),
+`variable-axes.ttf` (independent `wght` and `wdth` axes, each moving a
+different half of the outline) and `collection.ttc` (two members with
+different family names and outlines).
 All outlines are original; fixed timestamps keep the output reproducible.
 fontTools is needed only for regeneration.
 """
@@ -18,6 +22,7 @@ from fontTools.ttLib.ttCollection import TTCollection
 OUT = Path(__file__).resolve().parent.parent / 'crates/varta-desktop/tests/fixtures/fonts'
 EPOCH = 2082844800  # 1904-01-01, the OpenType `head` epoch.
 UPM = 1000
+MAC_PLATFORM = 1
 ADVANCE = 600
 
 
@@ -71,6 +76,14 @@ def builder(family, ps_name, glyphs):
     return b
 
 
+def split_deltas(glyf, name, right, left):
+    """Per-point x deltas: `right` for the right half, `left` for the left."""
+    coordinates, _, _ = glyf[name].getCoordinates(glyf)
+    middle = (min(x for x, _ in coordinates) + max(x for x, _ in coordinates)) / 2
+    # Phantom points (advance) do not vary.
+    return [(right if x > middle else left, 0) for x, _ in coordinates] + [(0, 0)] * 4
+
+
 def variable():
     glyphs = {'A': [STEM, BOWL], 'B': [DIAMOND]}
     b = builder('Varta Variable Fixture', 'VartaVariableFixture', glyphs)
@@ -83,14 +96,39 @@ def variable():
     variations = {}
     glyf = b.font['glyf']
     for name in glyphs:
-        coordinates, _, _ = glyf[name].getCoordinates(glyf)
-        middle = (min(x for x, _ in coordinates) + max(x for x, _ in coordinates)) / 2
-        # Heavier widens the right half; lighter narrows it. Phantom points
-        # (advance) do not vary.
-        heavy = [(160 if x > middle else 0, 0) for x, _ in coordinates] + [(0, 0)] * 4
-        light = [(-90 if x > middle else 0, 0) for x, _ in coordinates] + [(0, 0)] * 4
-        variations[name] = [TupleVariation({'wght': (0.0, 1.0, 1.0)}, heavy),
-                            TupleVariation({'wght': (-1.0, -1.0, 0.0)}, light)]
+        # Heavier widens the right half; lighter narrows it.
+        variations[name] = [
+            TupleVariation({'wght': (0.0, 1.0, 1.0)}, split_deltas(glyf, name, 160, 0)),
+            TupleVariation({'wght': (-1.0, -1.0, 0.0)}, split_deltas(glyf, name, -90, 0)),
+        ]
+    b.setupGvar(variations)
+    return b.font
+
+
+def variable_names():
+    """`variable.ttf` with its Mac axis-name record renamed; Windows keeps 'Weight'."""
+    font = variable()
+    axis = font['fvar'].axes[0].axisNameID
+    for record in font['name'].names:
+        if record.nameID == axis and record.platformID == MAC_PLATFORM:
+            record.string = 'Gewicht'
+    return font
+
+
+def variable_axes():
+    glyphs = {'A': [STEM, BOWL], 'B': [DIAMOND]}
+    b = builder('Varta Variable Axes Fixture', 'VartaVariableAxesFixture', glyphs)
+    b.setupFvar(axes=[('wght', 100, 400, 900, 'Weight'), ('wdth', 50, 100, 200, 'Width')],
+                instances=[])
+    glyf = b.font['glyf']
+    variations = {}
+    for name in glyphs:
+        # Weight moves the right half and width the left half, so an instance
+        # that drops or swaps either axis draws different ink.
+        variations[name] = [
+            TupleVariation({'wght': (0.0, 1.0, 1.0)}, split_deltas(glyf, name, 160, 0)),
+            TupleVariation({'wdth': (0.0, 1.0, 1.0)}, split_deltas(glyf, name, 0, -120)),
+        ]
     b.setupGvar(variations)
     return b.font
 
@@ -99,7 +137,8 @@ def reloaded(font):
     data = BytesIO()
     font.save(data)
     data.seek(0)
-    return TTFont(data)
+    # Saving the collection must not stamp the current time into `head`.
+    return TTFont(data, recalcTimestamp=False)
 
 
 def collection():
@@ -112,4 +151,6 @@ def collection():
 
 OUT.mkdir(parents=True, exist_ok=True)
 variable().save(OUT / 'variable.ttf')
+variable_names().save(OUT / 'variable-names.ttf')
+variable_axes().save(OUT / 'variable-axes.ttf')
 collection().save(OUT / 'collection.ttc', shareTables=True)

@@ -13,13 +13,9 @@ const MAX_SEGMENTS: usize = 256;
 const OFFSET_TABLE_BYTES: usize = 12;
 const TABLE_RECORD_BYTES: usize = 16;
 const FVAR_AXIS_BYTES: usize = 20;
-const NAME_RECORD_BYTES: usize = 12;
 /// F2Dot14 and 16.16 fixed-point scales.
 const F2DOT14_ONE: f64 = 16384.0;
 const FIXED_ONE: f64 = 65536.0;
-const WINDOWS_PLATFORM: u16 = 3;
-const UNICODE_PLATFORM: u16 = 0;
-const ENGLISH_US: u16 = 0x0409;
 
 fn u16_at(data: &[u8], offset: usize) -> Option<u16> {
     Some(u16::from_be_bytes(
@@ -119,15 +115,49 @@ impl<'a> Face<'a> {
     pub fn is_standalone(&self) -> bool {
         !self.collection
     }
+    /// Bytes of [`Self::standalone`] for this face, without building it: what
+    /// the platform face retains for a collection member.
+    pub fn standalone_len(&self) -> Option<usize> {
+        if self.is_standalone() {
+            return Some(self.data.len());
+        }
+        rebuilt_len(self.tables.iter().map(|table| table.range.len()))
+    }
     /// The same tables in a standalone sfnt: table bytes and checksums are
     /// copied unchanged, so the face's outlines and metrics are identical.
     pub fn standalone(&self) -> Option<Vec<u8>> {
-        let count = self.tables.len();
-        let header = OFFSET_TABLE_BYTES.checked_add(count.checked_mul(TABLE_RECORD_BYTES)?)?;
-        let mut size = header;
+        self.rebuilt(|table| {
+            self.data
+                .get(table.range.clone())
+                .map(|bytes| (table.checksum, bytes))
+        })
+    }
+    /// A standalone sfnt with `tag`'s table replaced by `bytes`, for building
+    /// regression faces from fixtures.
+    #[cfg(test)]
+    pub fn with_table(&self, tag: [u8; 4], bytes: &[u8]) -> Option<Vec<u8>> {
+        self.rebuilt(|table| {
+            if table.tag == tag {
+                Some((checksum(bytes), bytes))
+            } else {
+                self.data
+                    .get(table.range.clone())
+                    .map(|bytes| (table.checksum, bytes))
+            }
+        })
+    }
+    fn rebuilt<'b>(
+        &'b self,
+        source: impl Fn(&Record) -> Option<(u32, &'b [u8])>,
+    ) -> Option<Vec<u8>> {
+        let mut tables = Vec::with_capacity(self.tables.len());
         for table in &self.tables {
-            size = size.checked_add(table.range.len().checked_next_multiple_of(4)?)?;
+            let (checksum, bytes) = source(table)?;
+            tables.push((table.tag, checksum, bytes));
         }
+        let count = tables.len();
+        let header = OFFSET_TABLE_BYTES.checked_add(count.checked_mul(TABLE_RECORD_BYTES)?)?;
+        let size = rebuilt_len(tables.iter().map(|(_, _, bytes)| bytes.len()))?;
         let mut out = Vec::new();
         out.try_reserve_exact(size).ok()?;
         let selector = count.ilog2();
@@ -142,26 +172,47 @@ impl<'a> Face<'a> {
             out.extend_from_slice(&u16::try_from(value).ok()?.to_be_bytes());
         }
         let mut offset = header;
-        for table in &self.tables {
-            out.extend_from_slice(&table.tag);
-            out.extend_from_slice(&table.checksum.to_be_bytes());
+        for (tag, checksum, bytes) in &tables {
+            out.extend_from_slice(tag);
+            out.extend_from_slice(&checksum.to_be_bytes());
             out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
-            out.extend_from_slice(&u32::try_from(table.range.len()).ok()?.to_be_bytes());
-            offset += table.range.len().checked_next_multiple_of(4)?;
+            out.extend_from_slice(&u32::try_from(bytes.len()).ok()?.to_be_bytes());
+            offset += bytes.len().checked_next_multiple_of(4)?;
         }
-        for table in &self.tables {
-            out.extend_from_slice(self.data.get(table.range.clone())?);
+        for (_, _, bytes) in &tables {
+            out.extend_from_slice(bytes);
             out.resize(out.len().checked_next_multiple_of(4)?, 0);
         }
         (out.len() == size).then_some(out)
     }
 }
 
-/// One `fvar` axis in user coordinates, with its `avar` segment map.
+/// Size of a standalone sfnt holding tables of these lengths, each padded to
+/// four bytes after the table directory.
+fn rebuilt_len(lengths: impl ExactSizeIterator<Item = usize>) -> Option<usize> {
+    let header = OFFSET_TABLE_BYTES.checked_add(lengths.len().checked_mul(TABLE_RECORD_BYTES)?)?;
+    lengths.into_iter().try_fold(header, |size, length| {
+        size.checked_add(length.checked_next_multiple_of(4)?)
+    })
+}
+
+/// The OpenType table checksum: the wrapping sum of big-endian words, the
+/// last one zero-padded.
+#[cfg(test)]
+fn checksum(bytes: &[u8]) -> u32 {
+    bytes.chunks(4).fold(0u32, |sum, word| {
+        let mut padded = [0u8; 4];
+        padded[..word.len()].copy_from_slice(word);
+        sum.wrapping_add(u32::from_be_bytes(padded))
+    })
+}
+
+/// One `fvar` axis in user coordinates, with its `avar` segment map. Its
+/// name is not read here: CoreGraphics keys variations by its own choice of
+/// name record, so the rasterizer takes the key from CoreGraphics by index.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Axis {
     pub tag: [u8; 4],
-    pub name: String,
     pub min: f64,
     pub default: f64,
     pub max: f64,
@@ -189,7 +240,6 @@ pub(super) fn axes(face: &Face<'_>) -> Result<Vec<Axis>, VariationError> {
     if count > MAX_AXES || size < FVAR_AXIS_BYTES {
         return Err(malformed);
     }
-    let names = face.table(*b"name");
     let mut axes = Vec::with_capacity(count);
     for index in 0..count {
         let at = array + index * size;
@@ -200,16 +250,11 @@ pub(super) fn axes(face: &Face<'_>) -> Result<Vec<Axis>, VariationError> {
         let min = fixed_at(fvar, at + 4).ok_or(malformed)?;
         let default = fixed_at(fvar, at + 8).ok_or(malformed)?;
         let max = fixed_at(fvar, at + 12).ok_or(malformed)?;
-        let name_id = u16_at(fvar, at + 18).ok_or(malformed)?;
         if !(min <= default && default <= max) {
             return Err(malformed);
         }
-        let name = names
-            .and_then(|table| name(table, name_id))
-            .ok_or(malformed)?;
         axes.push(Axis {
             tag,
-            name,
             min,
             default,
             max,
@@ -279,38 +324,6 @@ impl Axis {
     }
 }
 
-/// An English (or first Unicode) string for `id`, as AppKit names axes.
-fn name(table: &[u8], id: u16) -> Option<String> {
-    let count = usize::from(u16_at(table, 2)?);
-    let strings = usize::from(u16_at(table, 4)?);
-    let mut fallback = None;
-    for index in 0..count {
-        let at = 6 + index * NAME_RECORD_BYTES;
-        let platform = u16_at(table, at)?;
-        let language = u16_at(table, at + 4)?;
-        if u16_at(table, at + 6)? != id || !matches!(platform, WINDOWS_PLATFORM | UNICODE_PLATFORM)
-        {
-            continue;
-        }
-        let length = usize::from(u16_at(table, at + 8)?);
-        let offset = strings.checked_add(usize::from(u16_at(table, at + 10)?))?;
-        let bytes = table.get(offset..offset.checked_add(length)?)?;
-        let units = bytes
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| u16::from_be_bytes(*pair));
-        let text = char::decode_utf16(units)
-            .collect::<Result<String, _>>()
-            .ok()?;
-        if platform == WINDOWS_PLATFORM && language == ENGLISH_US {
-            return Some(text);
-        }
-        fallback.get_or_insert(text);
-    }
-    fallback
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,12 +366,12 @@ mod tests {
     }
 
     #[test]
-    fn axes_read_fvar_names_and_invert_the_avar_map() {
+    fn axes_read_fvar_ranges_and_invert_the_avar_map() {
         let face = Face::parse(VARIABLE, 0).unwrap();
         let axes = axes(&face).unwrap();
         assert_eq!(axes.len(), 1);
         let weight = &axes[0];
-        assert_eq!((weight.tag, weight.name.as_str()), (*b"wght", "Weight"));
+        assert_eq!(weight.tag, *b"wght");
         assert_eq!(
             (weight.min, weight.default, weight.max),
             (100.0, 400.0, 900.0)

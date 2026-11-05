@@ -1,6 +1,9 @@
 use super::*;
 const VARIABLE: &[u8] = include_bytes!("../../tests/fixtures/fonts/variable.ttf");
 const COLLECTION: &[u8] = include_bytes!("../../tests/fixtures/fonts/collection.ttc");
+/// Independent `wght` (name ID 256, moves the right half) and `wdth` (name ID
+/// 257, moves the left half) axes, without `avar`.
+const VARIABLE_AXES: &[u8] = include_bytes!("../../tests/fixtures/fonts/variable-axes.ttf");
 /// Glyph order of both fixtures: `.notdef`, `space`, `A`, `B`.
 const GLYPH_A: u32 = 2;
 const GLYPH_B: u32 = 3;
@@ -82,6 +85,12 @@ fn collection_members_rasterize_their_own_outlines() {
         .unwrap();
     let rebuilt = draw(&mut raster, &request(2, &member, 0, GLYPH_A, &[]));
     assert_eq!(rebuilt.coverage, one.coverage);
+    // A member is charged its own standalone tables, not the whole file.
+    assert_eq!(
+        raster.faces[&(1, 1)].bytes,
+        std::mem::size_of::<Face>() + member.len()
+    );
+    assert!(member.len() < COLLECTION.len());
     let counts = statistics.counts();
     assert_eq!(counts.collection_members, 2);
     assert_eq!((counts.declined_unsupported, counts.declined_color), (0, 0));
@@ -157,12 +166,149 @@ fn variant_instances_are_bounded_per_face_and_by_the_shared_allowance() {
         raster.bytes,
         std::mem::size_of::<Face>() + 2 * VARIABLE.len() + MAX_FACE_VARIANTS * added_for(&[0])
     );
+    // Each retained instance is charged its native allowance, not a pointer.
+    assert!(added_for(&[0]) > INSTANCE_NATIVE_BYTES);
     let mut small = request(5, VARIABLE, 0, GLYPH_A, &[]);
     small.cache_bytes = VARIABLE.len();
     let mut refused = CoreTextRasterizer::default();
     assert!(refused.bounds(&small).is_none());
     assert_eq!(refused.statistics().counts().declined_resource, 1);
     assert_eq!(refused.retained_bytes(), 0);
+}
+
+/// Platform IDs of the OpenType `name` records the fixtures carry.
+const MAC_PLATFORM: u16 = 1;
+const WINDOWS_PLATFORM: u16 = 3;
+const NAME_HEADER_BYTES: usize = 6;
+const NAME_RECORD_BYTES: usize = 12;
+/// `name` IDs of the fixtures' first and second `fvar` axis names.
+const FIRST_AXIS_NAME: u16 = 256;
+const SECOND_AXIS_NAME: u16 = 257;
+
+/// `data` with every `name` record matching (platform, name ID) holding `text`
+/// (Mac Roman ASCII or UTF-16BE), rebuilt through the bounded sfnt writer.
+fn renamed(data: &[u8], changes: &[(u16, u16, &str)]) -> Vec<u8> {
+    let face = sfnt::Face::parse(data, 0).unwrap();
+    let table = face.table(*b"name").unwrap();
+    let word = |at: usize| u16::from_be_bytes([table[at], table[at + 1]]);
+    let count = usize::from(word(2));
+    let strings = usize::from(word(4));
+    let mut records = Vec::new();
+    let mut storage = Vec::new();
+    for index in 0..count {
+        let at = NAME_HEADER_BYTES + index * NAME_RECORD_BYTES;
+        let (platform, id) = (word(at), word(at + 6));
+        let start = strings + usize::from(word(at + 10));
+        let mut bytes = table[start..start + usize::from(word(at + 8))].to_vec();
+        if let Some((_, _, text)) = changes.iter().find(|(p, i, _)| (*p, *i) == (platform, id)) {
+            bytes = if platform == WINDOWS_PLATFORM {
+                text.encode_utf16().flat_map(u16::to_be_bytes).collect()
+            } else {
+                text.as_bytes().to_vec()
+            };
+        }
+        records.extend_from_slice(&table[at..at + 8]);
+        records.extend_from_slice(&u16::try_from(bytes.len()).unwrap().to_be_bytes());
+        records.extend_from_slice(&u16::try_from(storage.len()).unwrap().to_be_bytes());
+        storage.extend_from_slice(&bytes);
+    }
+    let mut name = table[..4].to_vec();
+    name.extend_from_slice(
+        &u16::try_from(NAME_HEADER_BYTES + records.len())
+            .unwrap()
+            .to_be_bytes(),
+    );
+    name.extend_from_slice(&records);
+    name.extend_from_slice(&storage);
+    face.with_table(*b"name", &name).unwrap()
+}
+
+#[test]
+fn variation_keys_come_from_coregraphics_when_mac_and_windows_axis_names_differ() {
+    // CoreGraphics names the axis by the Mac record ("Gewicht"); a key taken
+    // from the Windows record ("Weight") would be ignored and draw the default.
+    let differing = renamed(VARIABLE, &[(MAC_PLATFORM, FIRST_AXIS_NAME, "Gewicht")]);
+    let mut raster = CoreTextRasterizer::default();
+    let statistics = raster.statistics();
+    let width = |raster: &mut CoreTextRasterizer, data: &[u8], id: u64, coords: &[i16]| {
+        ink(&draw(raster, &request(id, data, 0, GLYPH_B, coords))).0
+    };
+    let default = width(&mut raster, &differing, 10, &[]);
+    let heavy = width(&mut raster, &differing, 10, &[16384]);
+    assert!((52..=54).contains(&default), "{default}");
+    assert!((68..=70).contains(&heavy), "{heavy}");
+    assert_eq!(heavy, width(&mut raster, VARIABLE, 11, &[16384]));
+    let counts = statistics.counts();
+    assert_eq!(
+        (counts.variation_instances, counts.declined_variation),
+        (2, 0)
+    );
+    // The read-back check alone refuses a key CoreGraphics does not know.
+    let face = sfnt::Face::parse(&differing, 0).unwrap();
+    let axes = sfnt::axes(&face).unwrap();
+    let graphics = Graphics::new(&Arc::new(differing.clone()), &axes).unwrap();
+    assert_eq!(graphics.keys, ["Gewicht"]);
+    let mut wrong = Variable {
+        axes,
+        data: Arc::new(differing),
+        graphics: Some(Ok(Graphics {
+            font: graphics.font,
+            keys: vec!["Weight".into()],
+        })),
+        variants: BTreeMap::new(),
+    };
+    assert_eq!(wrong.instance(&[16384]).err(), Some(Decline::Variation));
+}
+
+#[test]
+fn every_axis_is_set_by_index_and_duplicate_axis_names_are_declined() {
+    let mut raster = CoreTextRasterizer::default();
+    let statistics = raster.statistics();
+    let width = |raster: &mut CoreTextRasterizer, coords: &[i16]| {
+        ink(&draw(
+            raster,
+            &request(12, VARIABLE_AXES, 0, GLYPH_B, coords),
+        ))
+        .0
+    };
+    // B is 520 units wide; heavy adds 160 on the right, wide 120 on the left.
+    let default = width(&mut raster, &[]);
+    assert!((52..=54).contains(&default), "{default}");
+    let heavy = width(&mut raster, &[16384, 0]);
+    let wide = width(&mut raster, &[0, 16384]);
+    let both = width(&mut raster, &[16384, 16384]);
+    assert!((68..=70).contains(&heavy), "{heavy}");
+    assert!((64..=66).contains(&wide), "{wide}");
+    assert!((80..=82).contains(&both), "{both}");
+    assert_eq!(statistics.counts().variation_instances, 3);
+    // Both axes named "Weight": one variation key cannot address two axes.
+    let duplicate = renamed(
+        VARIABLE_AXES,
+        &[
+            (MAC_PLATFORM, SECOND_AXIS_NAME, "Weight"),
+            (WINDOWS_PLATFORM, SECOND_AXIS_NAME, "Weight"),
+        ],
+    );
+    let mut raster = CoreTextRasterizer::default();
+    let statistics = raster.statistics();
+    for coords in [[16384, 0], [0, 16384]] {
+        assert!(
+            raster
+                .bounds(&request(13, &duplicate, 0, GLYPH_B, &coords))
+                .is_none()
+        );
+    }
+    // The default instance needs no variation key.
+    assert!(
+        raster
+            .bounds(&request(13, &duplicate, 0, GLYPH_B, &[]))
+            .is_some()
+    );
+    let counts = statistics.counts();
+    assert_eq!(
+        (counts.declined_variation, counts.variation_instances),
+        (2, 0)
+    );
 }
 
 /// Replace one table tag in the directory of a single face.

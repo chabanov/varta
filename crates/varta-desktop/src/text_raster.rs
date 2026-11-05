@@ -2,16 +2,19 @@
 //! No system font lookup or process-wide font registration occurs here: a
 //! collection member is rebuilt as a standalone face from its own tables, and a
 //! variation instance is a CoreGraphics copy of that face at the user values
-//! whose normalization equals the shaper's normalized coordinates.
+//! whose normalization equals the shaper's normalized coordinates. CoreGraphics
+//! keys those values by axis names of its own choosing and silently ignores a
+//! key it does not know, so the keys come from its own axis records (matched to
+//! `fvar` by index and range), and every instance is read back before use.
 mod sfnt;
 #[cfg(test)]
 mod tests;
+use core_foundation::{dictionary::CFDictionary, number::CFNumber, string::CFString};
 use core_graphics::{
     base::kCGImageAlphaNoneSkipLast,
     color_space::CGColorSpace,
     context::{CGContext, CGTextDrawingMode},
     data_provider::CGDataProvider,
-    display::CFDictionary,
     font::CGFont,
     geometry::{CGPoint, CGRect, CGSize},
 };
@@ -42,6 +45,21 @@ const MAX_PHASE: u8 = 3;
 const PHASES: f64 = 4.0;
 /// CoreText face size before `clone_with_font_size` selects the request size.
 const INSTANCE_POINT_SIZE: f64 = 16.0;
+/// Keys of CoreGraphics's variation-axis records. Each exported constant
+/// (`kCGFontVariationAxisName`, ...) has its own name as its value; the safe
+/// wrappers do not bind the constants.
+const AXIS_NAME_KEY: &str = "kCGFontVariationAxisName";
+const AXIS_MIN_KEY: &str = "kCGFontVariationAxisMinValue";
+const AXIS_DEFAULT_KEY: &str = "kCGFontVariationAxisDefaultValue";
+const AXIS_MAX_KEY: &str = "kCGFontVariationAxisMaxValue";
+/// One 16.16 `fvar` unit: CoreGraphics's axis ranges and read-back values
+/// must equal the expected ones to this precision.
+const AXIS_VALUE_TOLERANCE: f64 = 1.0 / 65536.0;
+/// Native memory charged per retained variation instance. CoreGraphics and
+/// CoreText share the face bytes between instances; a copy plus one drawn
+/// glyph measured 6 to 20 KiB of process footprint per instance on macOS 27
+/// (faces of 1 KiB to 7.5 MiB), so this keeps headroom over that observation.
+const INSTANCE_NATIVE_BYTES: usize = 32 * 1024;
 
 /// Glyph requests this rasterizer declined, by reason, and the platform faces
 /// it created. A declined request keeps Varta's portable outline.
@@ -53,6 +71,10 @@ pub struct CoreTextCounts {
     pub declined_optical_size: usize,
     /// Malformed or unsupported faces, members or variation data.
     pub declined_unsupported: usize,
+    /// Variation instances CoreGraphics cannot apply exactly: its axis records
+    /// do not match `fvar` by index and range, two axes share a name (its
+    /// variation key), or the instance reads back other values.
+    pub declined_variation: usize,
     /// Faces that do not fit the shared glyph-cache allowance.
     pub declined_resource: usize,
     /// Invalid phase or size.
@@ -69,6 +91,7 @@ pub struct CoreTextStatistics {
     declined_color: AtomicUsize,
     declined_optical_size: AtomicUsize,
     declined_unsupported: AtomicUsize,
+    declined_variation: AtomicUsize,
     declined_resource: AtomicUsize,
     declined_request: AtomicUsize,
     collection_members: AtomicUsize,
@@ -82,6 +105,7 @@ impl CoreTextStatistics {
             declined_color: read(&self.declined_color),
             declined_optical_size: read(&self.declined_optical_size),
             declined_unsupported: read(&self.declined_unsupported),
+            declined_variation: read(&self.declined_variation),
             declined_resource: read(&self.declined_resource),
             declined_request: read(&self.declined_request),
             collection_members: read(&self.collection_members),
@@ -96,6 +120,7 @@ impl CoreTextStatistics {
             Decline::Color => &self.declined_color,
             Decline::OpticalSize => &self.declined_optical_size,
             Decline::Unsupported => &self.declined_unsupported,
+            Decline::Variation => &self.declined_variation,
             Decline::Resource => &self.declined_resource,
             Decline::Request => &self.declined_request,
         });
@@ -107,6 +132,7 @@ enum Decline {
     Color,
     OpticalSize,
     Unsupported,
+    Variation,
     Resource,
     Request,
 }
@@ -116,8 +142,15 @@ enum Decline {
 struct Variable {
     axes: Vec<sfnt::Axis>,
     data: Arc<Vec<u8>>,
-    graphics: Option<CGFont>,
+    /// Resolved on the first instance; a refusal is kept for the face.
+    graphics: Option<Result<Graphics, Decline>>,
     variants: BTreeMap<Vec<i16>, (CTFont, usize)>,
+}
+/// The CoreGraphics face and its own variation key for each `fvar` axis. Keys
+/// are kept as Rust strings: CoreFoundation strings are not `Send`.
+struct Graphics {
+    font: CGFont,
+    keys: Vec<String>,
 }
 struct Face {
     base: Result<CTFont, Decline>,
@@ -180,9 +213,7 @@ impl CoreTextRasterizer {
             *used = stamp;
             return Ok(font.clone());
         }
-        let added = std::mem::size_of::<CTFont>()
-            + std::mem::size_of::<Vec<i16>>()
-            + std::mem::size_of_val(r.normalized_coords);
+        let added = added_for(r.normalized_coords);
         if self.bytes.saturating_add(added) > r.cache_bytes {
             return Err(Decline::Resource);
         }
@@ -213,11 +244,15 @@ impl CoreTextRasterizer {
         let overhead = std::mem::size_of::<Face>();
         let parsed = sfnt::Face::parse(r.font_data, r.font_index);
         let parsed_collection = parsed.as_ref().is_some_and(|face| !face.is_standalone());
+        // CoreText copies the face's standalone bytes (a collection member's
+        // own tables, not the whole file); a variable face also retains them
+        // for CoreGraphics.
         let estimate = overhead
             + parsed.as_ref().map_or(0, |face| {
-                // A variable face also retains its standalone bytes for CoreGraphics.
                 let copies = if face.has_table(*b"fvar") { 2 } else { 1 };
-                r.font_data.len().saturating_mul(copies)
+                face.standalone_len()
+                    .unwrap_or(r.font_data.len())
+                    .saturating_mul(copies)
             });
         if estimate > r.cache_bytes {
             return Err(Decline::Resource);
@@ -255,8 +290,12 @@ impl CoreTextRasterizer {
     }
 }
 
+/// The charge of one retained variation instance.
 fn added_for(coords: &[i16]) -> usize {
-    std::mem::size_of::<CTFont>() + std::mem::size_of::<Vec<i16>>() + std::mem::size_of_val(coords)
+    INSTANCE_NATIVE_BYTES
+        + std::mem::size_of::<CTFont>()
+        + std::mem::size_of::<Vec<i16>>()
+        + std::mem::size_of_val(coords)
 }
 
 /// The exact selected face at its default instance, and its variation data.
@@ -299,33 +338,98 @@ fn create(face: sfnt::Face<'_>) -> Result<(CTFont, Option<Variable>), Decline> {
 }
 
 impl Variable {
-    /// CoreGraphics names axes by their `fvar` name strings and takes user
-    /// values; every axis is set, so no axis falls back to a size default.
+    /// The instance at the user values whose normalization gives `coords`;
+    /// every axis is set, so no axis falls back to a size default. Declined
+    /// unless CoreGraphics reads back exactly those values for every axis.
     fn instance(&mut self, coords: &[i16]) -> Result<CTFont, Decline> {
-        if self.graphics.is_none() {
-            let provider = CGDataProvider::from_buffer(self.data.clone());
-            self.graphics =
-                Some(CGFont::from_data_provider(provider).map_err(|_| Decline::Unsupported)?);
-        }
-        let graphics = self.graphics.as_ref().ok_or(Decline::Unsupported)?;
-        let values = self
-            .axes
+        let (data, axes) = (&self.data, &self.axes);
+        let graphics = self
+            .graphics
+            .get_or_insert_with(|| Graphics::new(data, axes))
+            .as_ref()
+            .map_err(|reason| *reason)?;
+        let values = axes
             .iter()
             .enumerate()
             .map(|(index, axis)| {
                 let coord = coords.get(index).copied().unwrap_or(0);
-                (
-                    axis.name.as_str().into(),
-                    axis.user_value(f64::from(coord) / F2DOT14_ONE).into(),
-                )
+                axis.user_value(f64::from(coord) / F2DOT14_ONE)
             })
             .collect::<Vec<_>>();
-        let variations = CFDictionary::from_CFType_pairs(&values);
+        let pairs = graphics
+            .keys
+            .iter()
+            .zip(&values)
+            .map(|(key, value)| (CFString::new(key), CFNumber::from(*value)))
+            .collect::<Vec<_>>();
         let varied = graphics
-            .create_copy_from_variations(&variations)
+            .font
+            .create_copy_from_variations(&CFDictionary::from_CFType_pairs(&pairs))
             .map_err(|_| Decline::Unsupported)?;
+        let applied = varied.copy_variations().ok_or(Decline::Variation)?;
+        let exact = applied.len() == values.len()
+            && graphics.keys.iter().zip(&values).all(|(key, value)| {
+                applied
+                    .find(CFString::new(key))
+                    .and_then(|number| number.to_f64())
+                    .is_some_and(|read| same(read, *value))
+            });
+        if !exact {
+            return Err(Decline::Variation);
+        }
         Ok(font::new_from_CGFont(&varied, INSTANCE_POINT_SIZE))
     }
+}
+
+impl Graphics {
+    /// The face and CoreGraphics's key for each `fvar` axis, by index. Its
+    /// records must match `fvar`'s count and every range, and the keys must be
+    /// distinct, or the face has no exact instances.
+    fn new(data: &Arc<Vec<u8>>, axes: &[sfnt::Axis]) -> Result<Self, Decline> {
+        let provider = CGDataProvider::from_buffer(data.clone());
+        let font = CGFont::from_data_provider(provider).map_err(|_| Decline::Unsupported)?;
+        let records = font.copy_variation_axes().ok_or(Decline::Variation)?;
+        if usize::try_from(records.len()).ok() != Some(axes.len()) {
+            return Err(Decline::Variation);
+        }
+        let name_key = CFString::from_static_string(AXIS_NAME_KEY);
+        let mut keys: Vec<String> = Vec::with_capacity(axes.len());
+        for (record, axis) in records.iter().zip(axes) {
+            let number = |key: &'static str| {
+                record
+                    .find(CFString::from_static_string(key))
+                    .and_then(|value| value.downcast::<CFNumber>())
+                    .and_then(|number| number.to_f64())
+            };
+            let ranges = [
+                (AXIS_MIN_KEY, axis.min),
+                (AXIS_DEFAULT_KEY, axis.default),
+                (AXIS_MAX_KEY, axis.max),
+            ];
+            if !ranges
+                .into_iter()
+                .all(|(key, value)| number(key).is_some_and(|read| same(read, value)))
+            {
+                return Err(Decline::Variation);
+            }
+            let name = record
+                .find(&name_key)
+                .and_then(|value| value.downcast::<CFString>())
+                .map(|name| name.to_string())
+                .ok_or(Decline::Variation)?;
+            // Two axes with one name would share one variation key.
+            if keys.contains(&name) {
+                return Err(Decline::Variation);
+            }
+            keys.push(name);
+        }
+        Ok(Self { font, keys })
+    }
+}
+
+/// Equal to within one 16.16 `fvar` unit.
+fn same(read: f64, expected: f64) -> bool {
+    (read - expected).abs() <= AXIS_VALUE_TOLERANCE
 }
 
 impl GlyphRasterizer for CoreTextRasterizer {
