@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "package": "uarp-sdk",
+  "version": "0.13.2",
+  "repository": "https://github.com/Snaga-AI/uarp-sdks.git",
+  "tag": "v0.13.2",
+  "commit": "9fc7776e7d78b17bf69baf5400dcfcb73123066b",
+  "packageDirectory": "packages/typescript",
+  "testScript": "npm run build && node --test test/*.test.ts",
+  "npmPackage": {
+    "integrity": "sha512-Zitwbwt6K0JGwn44YK1sZZprWgPNfiwXJRgIn4mNbhwYzEN2nnSdbskn0isRx9pbLAyHY8Ft3ofsQ9UB4gJ8sA==",
+    "comparedFiles": 68
+  },
+  "files": [
+    {
+      "path": "contract/sse-fixtures/mixed.expected.json",
+      "sha256": "b4891556a0d9dcc55e3e9a4609307beab7e5aea5c2899b836650c1a3fe39d830"
+    },
+    {
+      "path": "contract/sse-fixtures/mixed.txt",
+      "sha256": "f45318526a16c1f9afe5d6e59d6a335e4e59e86e3edc6a0dcc47aee6294449c1"
+    },
+    {
+      "path": "packages/typescript/test/sse-parity.test.ts",
+      "sha256": "90f2520e31d32b6bdacd1352e5473cf1760be31e4d83f7d089014e8bf02b5779"
+    },
+    {
+      "path": "packages/typescript/test/stream.test.ts",
+      "sha256": "8d292bd801206d1141b72cdef82a83151df7145b2387b6773221b6058d57ee06"
+    },
+    {
+      "path": "packages/typescript/test/transport.test.ts",
+      "sha256": "382f463a8f77078370e3812cbeaef4da083e49c409d45a6437ad6a724156e5db"
+    }
+  ]
+}
