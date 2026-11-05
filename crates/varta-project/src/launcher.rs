@@ -12,10 +12,14 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use varta_artifact::Resources;
 use varta_common::launcher::{self, LauncherInfo};
 
 /// How often the probe polls the runtime companion for its exit.
 const PROBE_POLL_MS: u64 = 10;
+/// The staged payload the validation probe reads (with its sidecar
+/// manifest and, for a package with resources, its sidecar section).
+const VALIDATION_WASM: &str = "validate.wasm";
 /// Attempts to create a fresh private staging directory.
 const STAGING_ATTEMPTS: usize = 16;
 /// Owner-only permissions of the staging directory and the staged runtime.
@@ -32,7 +36,12 @@ impl Drop for VerifiedLauncher {
     }
 }
 impl VerifiedLauncher {
-    pub fn prepare(candidate: &Path, artifact: &Artifact) -> Result<Self> {
+    /// Stage and probe the companion for `artifact` and its resource
+    /// section: its identity must match this build and, when the package
+    /// carries resources, advertise container format 2; its validation
+    /// probe then reads the payload with its sidecar section. Nothing is
+    /// written to the output until both probes pass.
+    pub fn prepare(candidate: &Path, artifact: &Artifact, resources: &Resources) -> Result<Self> {
         let source = File::open(candidate).map_err(|e| ProjectError::Usage(format!("cannot open runtime launcher {}: {e}; build/install varta-launcher or pass --launcher PATH", candidate.display())))?;
         let metadata = source.metadata()?;
         if !metadata.is_file() || metadata.len() > launcher::MAX_LAUNCHER_BYTES {
@@ -72,9 +81,12 @@ impl VerifiedLauncher {
         )?;
         let info: LauncherInfo = serde_json::from_slice(&info)
             .map_err(|_| invalid("runtime launcher did not return a valid identity"))?;
+        if !resources.is_empty() {
+            info.require_container_format(launcher::RESOURCE_CONTAINER_FORMAT)?;
+        }
         info.validate_current()?;
-        let wasm = staged.directory.join("validate.wasm");
-        artifact.write_wasm(&wasm)?;
+        let wasm = staged.directory.join(VALIDATION_WASM);
+        artifact.write_wasm_with(&wasm, resources)?;
         let result = probe(
             &staged.executable,
             &[
@@ -204,4 +216,94 @@ pub fn companion(cli: &Path) -> PathBuf {
         "varta-runtime{}",
         std::env::consts::EXE_SUFFIX
     )))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use varta_artifact::{FontFace, FontStyle, NORMAL_FONT_WEIGHT};
+    use varta_common::Manifest;
+
+    const FACE: &[u8] = include_bytes!("../../varta-view/tests/fixtures/advance-400.ttf");
+    const FAMILY: &str = "Varta Fixture 400";
+    const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
+    /// Owner-executable permissions of a fake companion script.
+    const SCRIPT_MODE: u32 = 0o700;
+
+    /// A private directory holding one fake companion script.
+    struct Fake(PathBuf);
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    impl Fake {
+        /// A companion that reports `info` and accepts every payload.
+        fn reporting(info: &serde_json::Value) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            let fake = Self(directory().unwrap());
+            let script = format!(
+                "#!/bin/sh\nif [ \"$1\" = \"{}\" ]; then printf '%s\\n' '{info}'; exit 0; fi\nprintf '%s\\n' '{{\"status\":\"ok\"}}'\n",
+                launcher::INFO_ARGUMENT
+            );
+            fs::write(fake.script(), script).unwrap();
+            fs::set_permissions(fake.script(), fs::Permissions::from_mode(SCRIPT_MODE)).unwrap();
+            fake
+        }
+        fn script(&self) -> PathBuf {
+            self.0.join("varta-runtime")
+        }
+    }
+
+    fn artifact() -> Artifact {
+        Artifact {
+            wasm: EMPTY_MODULE.to_vec(),
+            manifest: Manifest::new(&[]),
+        }
+    }
+    fn fonts() -> Resources {
+        Resources::new(vec![FontFace {
+            family: FAMILY.into(),
+            weight: NORMAL_FONT_WEIGHT,
+            style: FontStyle::Normal,
+            generics: Vec::new(),
+            data: FACE.to_vec(),
+        }])
+        .unwrap()
+    }
+
+    #[test]
+    fn a_companion_without_container_format_2_is_refused_for_packages_with_resources() {
+        // A protocol 2 companion's identity has no container formats.
+        let mut old = serde_json::to_value(LauncherInfo::current()).unwrap();
+        old["protocolVersion"] = serde_json::json!(launcher::PROTOCOL_VERSION - 1);
+        old.as_object_mut().unwrap().remove("containerFormats");
+        let fake = Fake::reporting(&old);
+        let error = VerifiedLauncher::prepare(&fake.script(), &artifact(), &fonts())
+            .err()
+            .expect("an older companion is refused")
+            .to_string();
+        assert!(
+            error.contains("container format 2") && error.contains("varta-runtime"),
+            "{error}"
+        );
+        // Without resources the same companion still fails the identity
+        // check (the protocol differs), not with the format diagnostic.
+        let error = VerifiedLauncher::prepare(&fake.script(), &artifact(), &Resources::default())
+            .err()
+            .expect("an older protocol is refused")
+            .to_string();
+        assert!(!error.contains("container format 2"), "{error}");
+
+        // The current identity passes, and the validation probe is handed
+        // the payload together with its sidecar resource section.
+        let current = Fake::reporting(&serde_json::to_value(LauncherInfo::current()).unwrap());
+        let staged = VerifiedLauncher::prepare(&current.script(), &artifact(), &fonts()).unwrap();
+        let wasm = staged.directory.join(VALIDATION_WASM);
+        assert!(wasm.exists());
+        assert!(
+            wasm.with_extension(crate::artifact::RESOURCE_SIDECAR_EXTENSION)
+                .exists()
+        );
+    }
 }

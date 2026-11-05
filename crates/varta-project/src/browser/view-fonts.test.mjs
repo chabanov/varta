@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFontNamespace } from './view-fonts.mjs';
+import { createFontNamespace, packagedFamilies, faceDescriptors } from './view-fonts.mjs';
 test('family names are case-insensitive and isolated, including unknown ambient fonts',()=>{
   const a=createFontNamespace('one',['Brand','Two Words']),b=createFontNamespace('two',['Brand']);
   assert.equal(a.family('Brand'),a.family('bRaNd'));assert.notEqual(a.family('Brand'),b.family('Brand'));
@@ -19,4 +19,26 @@ test('font variables have parallel names and keep other declaration values uncha
   assert.equal(values.get(n.variable('--nested')),`var(${n.variable('--font')} , serif)`);
   assert.equal(values.get('font-family'),`var(${n.variable('--nested')} , monospace)`);
   assert.throws(()=>n.value('var(123)'));
+});
+test('packaged generic families map to their family and the first family is the default, as in the native shell',()=>{
+  const faces=[{key:'Sans',weight:400,style:'normal',generics:[]},{key:'Sans',weight:700,style:'normal',generics:[]},{key:'Sans',weight:400,style:'italic',generics:[]},{key:'Mono',weight:400,style:'normal',generics:['monospace']}];
+  const [families,options]=packagedFamilies(faces);
+  assert.deepEqual(families,['Sans','Mono']);assert.equal(options.defaultFamily,'Sans');
+  const n=createFontNamespace('pack',families,options);
+  assert.equal(n.value('monospace'),n.family('Mono'));assert.equal(n.value('MONOSPACE'),n.family('Mono'));
+  assert.equal(n.value('Missing, monospace'),`${n.family('Missing')} , ${n.family('Mono')}`);
+  // A quoted generic name is a family name, and unmapped generics pass through.
+  assert.equal(n.value('"monospace"'),JSON.stringify(n.family('monospace')));assert.equal(n.value('serif'),'serif');
+  assert.equal(n.defaultFamily,n.family('Sans'));
+  assert.deepEqual(faces.map(faceDescriptors),[{weight:'400',style:'normal'},{weight:'700',style:'normal'},{weight:'400',style:'italic'},{weight:'400',style:'normal'}]);
+  // browser.fonts faces carry no descriptors and no default family.
+  const [plain,none]=packagedFamilies([{key:'Brand'}]);assert.deepEqual(plain,['Brand']);assert.equal(none.defaultFamily,undefined);
+  assert.deepEqual(faceDescriptors({key:'Brand'}),{});assert.equal(createFontNamespace('plain',plain,none).defaultFamily,undefined);
+});
+test('generic aliases and face descriptors are refused unless exact',()=>{
+  assert.throws(()=>packagedFamilies([{key:'A',weight:400,style:'normal',generics:['monospace']},{key:'B',weight:400,style:'normal',generics:['monospace']}]));
+  assert.throws(()=>createFontNamespace('bad',['A'],{aliases:new Map([['cursive','A']])}));
+  assert.throws(()=>createFontNamespace('bad',['A'],{aliases:new Map([['serif','B']])}));
+  assert.throws(()=>createFontNamespace('bad',['A'],{defaultFamily:'B'}));
+  for(const face of [{weight:0,style:'normal'},{weight:1001,style:'normal'},{weight:400.5,style:'normal'},{weight:400,style:'oblique'}])assert.throws(()=>faceDescriptors(face),JSON.stringify(face));
 });

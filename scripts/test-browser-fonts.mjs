@@ -48,6 +48,26 @@ try{
     for(const node of nodes){assert.match(node.family,/varta_font_/);assert.equal(node.width,32);assert.equal(node.layout,32);}
     assert.equal(nodes.find(node=>node.id==='via').color,'rgb(255, 0, 0)');
   });
+  // Packaged faces (configuration fonts): the bundle registers every face
+  // with its weight and style, maps the monospace alias and makes the first
+  // family the default, as varta-shell does. A synthesized bold or italic of
+  // the regular face, or the browser's own monospace, would be 32px wide.
+  await withBrowserPage(`${base}/view-font-packaged/index.html`,async(call)=>{
+    let result;const end=Date.now()+10000;
+    do{const r=await call('Runtime.evaluate',{expression:`(()=>{const e=document.querySelector('#varta-output');return{status:e.dataset.status,text:e.textContent,faces:document.fonts.size};})()`,returnByValue:true});result=r.result.value;if(result.status!=='ready')await new Promise(done=>setTimeout(done,20));}while(result.status!=='ready'&&Date.now()<end);
+    assert.equal(result.status,'ready',JSON.stringify(result));assert.equal(result.faces,4);
+    const golden=JSON.parse(await readFile(join(root,'view-font-packaged.golden.json'),'utf8'));assert.equal(result.text,golden.logs.join('\n'));
+    const {root:document}=await call('DOM.getDocument',{depth:-1,pierce:true}),widths={};
+    const visit=async(node)=>{
+      for(let i=0;i<(node.attributes?.length??0);i+=2)if(node.attributes[i]==='id'&&['regular','bold','italic','generic'].includes(node.attributes[i+1])){
+        const remote=await call('DOM.resolveNode',{nodeId:node.nodeId});
+        const measured=await call('Runtime.callFunctionOn',{objectId:remote.object.objectId,functionDeclaration:`function(){const range=document.createRange();range.selectNodeContents(this);return range.getBoundingClientRect().width;}`,returnByValue:true});
+        widths[node.attributes[i+1]]=measured.result.value;
+      }
+      for(const child of [...(node.children??[]),...(node.shadowRoots??[])])await visit(child);
+    };await visit(document);
+    assert.deepEqual(widths,{regular:32,bold:72,italic:72,generic:72});
+  });
   await withBrowserPage(`${base}/__embed`,async(call)=>{
     const result=await call('Runtime.evaluate',{expression:`(async()=>{globalThis.fontApps=[];const bytes=await(await fetch(${JSON.stringify(base+'/view-font-wide/varta-resource-0.ttf')})).arrayBuffer();const ambient=new FontFace('Brand',bytes);await ambient.load();document.fonts.add(ambient);globalThis.ambientFace=ambient;for(const name of ['view-font-ttf','view-font-wide']){const{mount}=await import(${JSON.stringify(base+'/')}+name+'/varta-host.js');const container=document.createElement('div');document.body.append(container);const app=mount({container});fontApps.push(app);await app.ready;}return document.fonts.size;})()`,awaitPromise:true,returnByValue:true});
     assert(!result.exceptionDetails,JSON.stringify(result.exceptionDetails));assert.equal(result.result.value,3);
@@ -76,5 +96,5 @@ try{
     });
   }
   assert(!requests.some(path=>/Brand|woff.*\?/.test(path)),'font-family values must never become fetch URLs');
-  console.log('Packaged fonts passed: TTF/OTF/WOFF/WOFF2 decoding, native usage, direct/quoted/variable families, actual text metrics, simultaneous session and ambient-name isolation, cleanup and pre-guest failures');
+  console.log('Packaged fonts passed: TTF/OTF/WOFF/WOFF2 decoding, native usage, direct/quoted/variable families, resource-section faces with weight, style, generic alias and default family, actual text metrics, simultaneous session and ambient-name isolation, cleanup and pre-guest failures');
 }finally{await new Promise(done=>server.close(done));}

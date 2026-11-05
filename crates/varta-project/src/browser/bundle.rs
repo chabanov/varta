@@ -229,7 +229,7 @@ fn embedded_sources(dom: bool) -> String {
             "viewFonts",
             "const {tokenizeValue}=viewCss;",
             VIEW_FONTS,
-            "createFontNamespace",
+            "createFontNamespace,packagedFamilies,faceDescriptors",
         ));
         source.push_str(&module("viewCustomProperties", "const {CssError}=viewCss;const {compileVariableValue,createVariableScope}=viewVariables;", VIEW_CUSTOM_PROPERTIES, "createCustomPropertyStyles"));
         source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;const {createCustomPropertyStyles}=viewCustomProperties;", VIEW_DOM, "createViewDom,encodeViewEvent"));
@@ -386,7 +386,12 @@ impl BrowserArtifact {
         let mut resource_files = BTreeMap::new();
         let resource_descriptors = resources.iter().enumerate().map(|(index, resource)| {
             let name = format!("varta-resource-{index}.{}",resource.extension);
-            let descriptor = serde_json::json!({"key":resource.name,"font":resource.font,"mediaType":resource.media_type,"file":file(&name,&resource.bytes)});
+            // A font face carries its FontFace descriptors and the generic
+            // families the applier maps to its family, as the native shell does.
+            let descriptor = match &resource.packaged {
+                Some(face) => serde_json::json!({"key":resource.name,"font":true,"weight":face.weight,"style":face.style.name(),"generics":face.generics,"mediaType":resource.media_type,"file":file(&name,&resource.bytes)}),
+                None => serde_json::json!({"key":resource.name,"font":resource.font,"mediaType":resource.media_type,"file":file(&name,&resource.bytes)}),
+            };
             resource_files.insert(name,resource.bytes.clone());
             descriptor
         }).collect::<Vec<_>>();

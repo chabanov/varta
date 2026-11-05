@@ -8,22 +8,25 @@ use std::collections::BTreeSet;
 /// sfnt version tags admitted: TrueType outlines and CFF outlines. Font
 /// collections and WOFF/WOFF2 containers are refused, because the native
 /// shaper reads neither.
-const TRUETYPE: [u8; 4] = [0, 1, 0, 0];
-const OPENTYPE_CFF: [u8; 4] = *b"OTTO";
+const TRUETYPE: Tag = [0, 1, 0, 0];
+const OPENTYPE_CFF: Tag = *b"OTTO";
 /// The offset table: sfnt version, table count and three search fields.
 const OFFSET_TABLE_BYTES: usize = 12;
 const TABLE_COUNT_AT: usize = 4;
 /// One table record: tag, checksum, offset and length.
 const TABLE_RECORD_BYTES: usize = 16;
+/// A table tag: four bytes at the start of its record.
+const TAG_BYTES: usize = 4;
+type Tag = [u8; TAG_BYTES];
 const RECORD_OFFSET_AT: usize = 8;
 const RECORD_LENGTH_AT: usize = 12;
 const MAX_TABLES: usize = 256;
 /// Tables are 4-byte aligned in the file.
 const TABLE_ALIGNMENT: usize = 4;
 /// Tables every admitted face must contain.
-const REQUIRED_TABLES: [&[u8; 4]; 4] = [b"cmap", b"head", b"name", b"OS/2"];
-const OS2: &[u8; 4] = b"OS/2";
-const NAME: &[u8; 4] = b"name";
+const REQUIRED_TABLES: [&Tag; 4] = [b"cmap", b"head", b"name", b"OS/2"];
+const OS2: &Tag = b"OS/2";
+const NAME: &Tag = b"name";
 /// `OS/2` fields: `usWeightClass` and `fsSelection`.
 const OS2_WEIGHT_AT: usize = 4;
 const OS2_SELECTION_AT: usize = 62;
@@ -89,7 +92,7 @@ pub(super) fn inspect(bytes: &[u8]) -> Result<Face, FaceError> {
     let mut os2 = None;
     let mut name = None;
     for record in (OFFSET_TABLE_BYTES..directory_end).step_by(TABLE_RECORD_BYTES) {
-        let tag: [u8; 4] = bytes[record..record + 4]
+        let tag: Tag = bytes[record..record + TAG_BYTES]
             .try_into()
             .map_err(|_| FaceError::Tables)?;
         let offset = u32_at(bytes, record + RECORD_OFFSET_AT).ok_or(FaceError::Tables)?;

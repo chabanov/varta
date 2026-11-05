@@ -31,8 +31,8 @@ pub struct FontSpec {
     pub weight: u16,
     #[serde(default)]
     pub style: Option<String>,
-    /// CSS generic families this family stands for on renderers that map
-    /// them to package fonts (the native shell).
+    /// CSS generic families this family stands for: every renderer (the
+    /// native shell and the browser applier) maps them to this family.
     #[serde(default)]
     pub generic: Vec<String>,
 }
@@ -81,6 +81,15 @@ pub(crate) fn validate_fonts(config: &VartaConfig) -> std::result::Result<(), Va
             "fonts require languageProfile checked-f64-utf16-v38 and a bounded face list",
         ));
     }
+    if config
+        .browser
+        .as_ref()
+        .is_some_and(|browser| !browser.fonts.is_empty())
+    {
+        return Err(invalid(
+            "fonts and browser.fonts cannot both be declared; declare every face in fonts, which every renderer loads",
+        ));
+    }
     for font in &config.fonts {
         crate::browser::resources::validate_name(&font.path)
             .map_err(|error| invalid(&error.to_string()))?;
@@ -98,9 +107,22 @@ pub(crate) fn resources(config: &VartaConfig, base: &Path) -> Result<Resources> 
     if config.fonts.is_empty() {
         return Ok(Resources::default());
     }
-    validate_fonts(config)?;
     let root = base.canonicalize()?;
     let loader = crate::modules::SourceLoader::new(&root, config.language_profile)?;
+    resources_with_loader(config, &root, &loader)
+}
+
+/// [`resources`] through an existing loader under the canonical `root` (the
+/// browser bundle and the development watcher read the same faces).
+pub(crate) fn resources_with_loader(
+    config: &VartaConfig,
+    root: &Path,
+    loader: &crate::modules::SourceLoader,
+) -> Result<Resources> {
+    if config.fonts.is_empty() {
+        return Ok(Resources::default());
+    }
+    validate_fonts(config)?;
     let mut faces = Vec::with_capacity(config.fonts.len());
     let mut total = 0usize;
     for font in &config.fonts {

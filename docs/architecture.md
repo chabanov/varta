@@ -175,7 +175,7 @@ registries change, replace a block with the test's expected output.
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
-Launcher protocol **2** advertises host ABI **34**, value ABI **18**, HTTP contract **2** and **41** language profiles (the rows above).
+Launcher protocol **3** advertises host ABI **34**, value ABI **18**, HTTP contract **2** and **41** language profiles (the rows above).
 <!-- generated:launcher-summary:end -->
 
 The `varta` tool and the `varta-runtime` companion must be rebuilt together
@@ -14892,8 +14892,23 @@ integrity, not authenticity; package signatures remain separate work.
 `Resources`; `Artifact::read` and `Artifact::embedded` validate the section the
 same way and drop it, so the `varta-runtime` companion refuses a tampered
 section too, before any guest code runs. Every artifact older than the section
-reads as one without resources. The browser bundle does not read this
-section yet: it still packages `browser.fonts` (one normal face per family).
+reads as one without resources.
+
+`varta build --target browser` (and the browser development server) carries
+the same validated faces: the project builds the section once and turns each
+face into a browser font resource with its family, weight, style and generic
+families, in canonical order. The loader verifies every face's bytes and
+registers each as a `FontFace` with its declared `weight` and `style` before
+the view renderer is created, so before the first view commit. The applier's
+private font namespace maps a face's declared generic families (an unquoted
+`monospace`, say) to that family's private name, and the view root's base
+style names the first family, so text without a `font-family` uses the
+default family as in the native shell. A configuration may not declare both
+`fonts` and `browser.fonts` (refused when the configuration is validated);
+`browser.fonts` keeps its meaning (one normal face per family, generic
+families passed to the browser, no default family). A generic family that no
+face declares still resolves to the browser's own fonts in the browser and is
+refused by the native shaper; that divergence predates the section.
 
 Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserialization
 are removed. Rebuild existing native artifacts. Native launchers currently compile
@@ -14920,12 +14935,17 @@ The native companion is a trusted build input. Packaging first opens a bounded
 regular file (512 MiB maximum) and copies it into private staging (0700 on Unix).
 It closes/syncs the snapshot before executing it and rejects a recognized capsule,
 including malformed capsules, so an already packaged application's main cannot
-be used as a probe. `--runtime-info` must return strict launcher protocol v2
+be used as a probe. `--runtime-info` must return strict launcher protocol v3
 metadata matching package version, OS, architecture, pointer width, host ABI,
-value ABI, HTTP contract and supported language-profile list. Protocol v1
-companions must be rebuilt/updated for new builds; their existing VARTA3 payloads
-remain readable. `--validate` then validates the staged portable Wasm
-and manifest without instantiation, main, tool handlers or binding a listener.
+value ABI, HTTP contract, supported language-profile list and the container
+formats it reads (`containerFormats`, `varta_common::launcher::CONTAINER_FORMATS`).
+A package with a resource section additionally requires container format 2
+first: an older companion, whose identity has no `containerFormats`, is refused
+with a diagnostic naming the format before any output is written. Protocol v1
+and v2 companions must be rebuilt/updated for new builds; their existing VARTA3
+payloads remain readable. `--validate` then validates the staged portable Wasm
+and manifest, with its sidecar resource section when the package has one,
+without instantiation, main, tool handlers or binding a listener.
 Each subprocess has a five-second deadline and 4 KiB stdout/stderr limits. Only
 after both probes pass are the public output files written. Probe failures leave
 existing outputs untouched; staging is removed on success and error.
@@ -15019,10 +15039,15 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   an absolute launcher path, never a `PATH` lookup (`/usr/bin/open -u URL` on
   macOS, `/usr/bin/xdg-open URL` on other Unix hosts; elsewhere every opening is
   refused). Only an absolute `https:`/`http:` URL without whitespace or control
-  characters reaches the launcher. A clipboard error, a launcher that cannot
-  start, exits unsuccessfully or outlives its five-second deadline (it is then
-  killed) reports `refused_by_platform`. With a sink the snapshot records no
-  clipboard text or opened URL.
+  characters reaches the launcher. The launcher is started detached (its own
+  process group, with null standard streams) and the opening succeeds once it
+  is spawned: view input handling never waits for it, because some launchers
+  (`xdg-open` on some Linux desktops) stay in the foreground until the browser
+  exits. A reaper thread collects its exit status, which is not observed. A
+  clipboard error or a launcher that cannot be started reports
+  `refused_by_platform`. With a sink the snapshot records no clipboard text or
+  opened URL. The Linux launcher and clipboard paths are not exercised by the
+  tests or acceptance runs.
 - **Storage.** A root is pinned (`FileRoots::open`) to the host-owned directory
   `<base>/sha256-<digest>/<root>`, where the digest is the lowercase hex SHA-256
   of the portable Wasm, the application identity
@@ -15070,8 +15095,13 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   in both modes. Guest output goes to stdout and host diagnostics, prefixed with
   the binary's name, to stderr.
 - **Embedding.** `varta_desktop::shell::Launch::packaged(&Package { artifact,
-  policy, storage })` prepares an application without a window and
-  `Launch::start(ViewLayout)` starts it; failures are the typed `ShellError`.
+  policy, storage, font })` prepares an application without a window (`font`
+  is the optional explicit `FontSet` of `--font`, refused for an artifact that
+  ships fonts), `Launch::unprivileged(wasm, font: Option<FontSet>) ->
+  Result<Launch, ShellError>` prepares a manifest-less module and parses its
+  optional font, and `Launch::start(ViewLayout, Arc<dyn PlatformEffects>)`
+  starts it with the host's platform-effects sink; failures are the typed
+  `ShellError`.
 - **Not yet.** Permission prompts and stored decisions (so `https://*` links
   are denied), manifest `app` metadata, OS bundles and prebuilt per-target
   shells

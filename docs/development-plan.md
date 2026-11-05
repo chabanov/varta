@@ -4336,12 +4336,19 @@ bound. On the development Mac `varta-shell` presented the view probe's
 regular, bold, italic and monospace lines from its artifact fonts and logged
 `invalid_context` for the copy in main; trusted clicks on the copy target and
 link were not performed manually (no UI automation was available), so the
-gesture paths rest on the headless trusted-input tests. Still open: the
+gesture paths rest on the headless trusted-input tests; a human still has to
+click the copy target and the link once in a live `varta-shell` window. After
+review, browser builds carry the same section (every face with its weight,
+style and generic families, registered before the first view commit, the
+first family as the default), `fonts` and `browser.fonts` are mutually
+exclusive, the oracle adds the `monospace` alias and default-family cases
+through the applier's own font namespace, `varta build --single` with fonts
+refuses a companion without container format 2 (launcher protocol 3), and the
+browser launcher is started detached (Linux not exercised). Still open: the
 first-run grant list and prompts with stored decisions (so `https://*` links
-are denied), the browser bundle reading the same resource section (it still
-packages `browser.fonts`, one normal face per family), real-font typography
-acceptance beyond the synthetic fixtures, manifest `app` metadata, OS
-bundles, prebuilt per-target shells, the code cache and UARP console
+are denied), font loading in the prototype `varta-web-host`, real-font
+typography acceptance beyond the synthetic fixtures, manifest `app` metadata,
+OS bundles, prebuilt per-target shells, the code cache and UARP console
 acceptance in the shell.
 
 #### Browser security model and honest guarantees

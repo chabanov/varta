@@ -28,12 +28,9 @@ use std::collections::BTreeMap;
 pub const RESOURCE_MAGIC: &[u8; 8] = b"VARTARS\0";
 /// The only section version this build reads and writes.
 pub const RESOURCE_VERSION: u32 = 1;
-/// At most this many faces, the native text shaper's collection ceiling.
-pub const MAX_FONT_FACES: usize = 16;
-/// The largest single face, the native text shaper's per-font ceiling.
-pub const MAX_FONT_FACE_BYTES: usize = 4 * 1024 * 1024;
-/// The largest total of font bytes, the native text shaper's ceiling.
-pub const MAX_FONT_BYTES: usize = 16 * 1024 * 1024;
+/// The face count and byte ceilings: the native text shaper's collection
+/// limits, owned by `varta_common::view::fonts`.
+pub use varta_common::view::fonts::{MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES};
 /// The longest family name, as for browser package fonts.
 pub const MAX_FAMILY_BYTES: usize = 64;
 /// Lightest and heaviest admitted weights, and their step.
@@ -256,6 +253,11 @@ pub enum ResourceError {
     FamilyMismatch(String),
     #[error("generic family {0} is mapped by more than one font family")]
     GenericConflict(&'static str),
+    #[error("font family {family:?} requests generic family {generic} more than once")]
+    DuplicateGeneric {
+        family: String,
+        generic: &'static str,
+    },
     #[error("duplicate font face {family:?} weight {weight} {style}")]
     Duplicate {
         family: String,
@@ -346,6 +348,18 @@ impl Resources {
                 || !(MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(&face.weight)
             {
                 return Err(ResourceError::Weight(face.weight));
+            }
+            if let Some(generic) = face
+                .generics
+                .iter()
+                .enumerate()
+                .find(|(at, generic)| face.generics[..*at].contains(generic))
+                .map(|(_, generic)| *generic)
+            {
+                return Err(ResourceError::DuplicateGeneric {
+                    family: face.family.clone(),
+                    generic: generic.name(),
+                });
             }
             let mask = GenericFamily::mask(&face.generics);
             let key = face.family.to_ascii_lowercase();
@@ -874,6 +888,16 @@ mod tests {
             Err(ResourceError::GenericConflict(
                 GenericFamily::Monospace.name()
             ))
+        );
+        // One face requesting the same generic family twice is its own error.
+        let mut twice = regular();
+        twice.generics = vec![GenericFamily::Monospace, GenericFamily::Monospace];
+        assert_eq!(
+            Resources::new(vec![twice]),
+            Err(ResourceError::DuplicateGeneric {
+                family: SANS.into(),
+                generic: GenericFamily::Monospace.name(),
+            })
         );
         assert_eq!(Resources::new(Vec::new()), Err(ResourceError::FaceCount(0)));
         let many = (0..=MAX_FONT_FACES).map(|_| regular()).collect();

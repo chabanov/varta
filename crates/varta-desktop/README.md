@@ -63,7 +63,9 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
 - **Guest effects.** A granted `copy_text` in a trusted gesture turn writes
   the system clipboard, and a trusted activation of a granted external link
   hands the URL to the system browser (`/usr/bin/open -u` on macOS,
-  `/usr/bin/xdg-open` on other Unix hosts), through `shell::NativeEffects`.
+  `/usr/bin/xdg-open` on other Unix hosts, started detached; the opening
+  succeeds once the launcher is spawned and is never awaited), through
+  `shell::NativeEffects`. The Linux launcher is not exercised by the tests.
   Denials (`not_allowed`) and non-gesture copies (`invalid_context`) happen
   before any effect; platform failures report `refused_by_platform`. Tests
   use a recording sink and never touch the system clipboard or browser.
@@ -78,7 +80,7 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
 
 The headless core is `varta_desktop::shell::Launch`: `Launch::packaged`
 prepares an application without a window and `Launch::start` starts it with
-a view layout; `tests/shell.rs` drives it with a loopback HTTP server and a
+a view layout and a `PlatformEffects` sink; `tests/shell.rs` drives it with a loopback HTTP server and a
 temporary storage base. Its guest is compiled at test time from
 `tests/fixtures/shell-probe/` (`main.ts` and `varta.config.json`): the tests
 build the workspace's `varta` binary with Cargo (offline, locked) and run
@@ -96,9 +98,11 @@ recording `PlatformEffects` sink.
 The packaged-font Chrome oracle loads the faces of a packaged artifact
 (by default the fixture faces packaged beside an empty module in a
 temporary directory; or the `ARTIFACT` argument, such as the view probe
-built by `varta build`) through `FontSet`, renders bold, italic, monospace
-and mixed lines with the shell's macOS glyph rasterizer, and gives Chrome the
-same face bytes with their weights and styles:
+built by `varta build`) through `FontSet`, renders bold, italic, monospace,
+generic `monospace`, default-family and mixed lines with the shell's macOS
+glyph rasterizer, and gives Chrome the same face bytes with their weights,
+styles and generic families, which the oracle registers and resolves through
+the browser applier's own font namespace (`view-fonts.mjs`):
 
 ```sh
 cargo run -p varta-desktop --example native_font_probe -- 1.25 [ARTIFACT] > fonts.json

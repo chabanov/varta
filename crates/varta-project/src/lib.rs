@@ -111,7 +111,7 @@ impl CheckedProject {
     /// `single`, also the container `<out>` around the verified runtime.
     pub fn build(&self, single: bool, launcher: &Path) -> Result<Vec<PathBuf>> {
         let launcher = single
-            .then(|| launcher::VerifiedLauncher::prepare(launcher, &self.artifact))
+            .then(|| launcher::VerifiedLauncher::prepare(launcher, &self.artifact, &self.resources))
             .transpose()?;
         let wasm = PathBuf::from(format!("{}.wasm", self.output.display()));
         self.artifact.write_wasm_with(&wasm, &self.resources)?;

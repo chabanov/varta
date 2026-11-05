@@ -8,8 +8,10 @@
 //! portable Wasm in a temporary directory and reads that artifact back. The
 //! faces are loaded through `FontSet::from_resources` and
 //! `TextMeasurer::new_with_fonts`, and painted with the macOS glyph
-//! rasterizer of the shell; the JSON carries the same face bytes, weights
-//! and styles for Chrome's `FontFace`.
+//! rasterizer of the shell; the JSON carries the same face bytes, weights,
+//! styles and generic families, which the oracle registers through the
+//! browser applier's own font namespace (`view-fonts.mjs`), so the generic
+//! `monospace` alias and the default family are compared as well.
 #[cfg(target_os = "macos")]
 mod probe {
     use std::path::{Path, PathBuf};
@@ -109,29 +111,45 @@ mod probe {
         Ok(Artifact::read_packaged(path)?.resources)
     }
 
-    /// One line of `A`s in the case's faces.
+    /// The oracle cases, in output order.
+    const CASES: [&str; 6] = ["bold", "italic", "mono", "generic", "default", "mixed"];
+    /// The line's family: the regular family, named explicitly.
+    const LINE_FAMILY: &str = "\"Varta Fixture 400\"";
+    const MONO_FAMILY: &str = "\"Varta Fixture 900\"";
+    /// The generic family the monospace face declares.
+    const GENERIC_MONO: &str = "monospace";
+
+    /// One line of `A`s in the case's faces. `generic` reaches the
+    /// monospace family only through its declared generic alias, and
+    /// `default` sets no family at all (the first family is the default).
     fn case_view(name: &str) -> Result<View, Box<dyn std::error::Error>> {
         let spans: &[(&str, Option<(P, &str)>)] = match name {
             "bold" => &[("A A", Some((P::FontWeight, "700")))],
             "italic" => &[("A A", Some((P::FontStyle, "italic")))],
-            "mono" => &[("A A", Some((P::FontFamily, "\"Varta Fixture 900\"")))],
+            "mono" => &[("A A", Some((P::FontFamily, MONO_FAMILY)))],
+            "generic" => &[("A A", Some((P::FontFamily, GENERIC_MONO)))],
+            "default" => &[("A", None), ("A", Some((P::FontWeight, "700")))],
             "mixed" => &[
                 ("A", None),
                 ("A", Some((P::FontWeight, "700"))),
                 ("A", Some((P::FontStyle, "italic"))),
-                ("A", Some((P::FontFamily, "\"Varta Fixture 900\""))),
+                ("A", Some((P::FontFamily, MONO_FAMILY))),
+                ("A", Some((P::FontFamily, GENERIC_MONO))),
             ],
             _ => return Err(format!("unknown case {name}").into()),
         };
         let mut batch = BatchWriter::new();
         batch.create_element(LINE, Tag::Div).insert(1, LINE, 0);
+        let family = (name != "default").then_some((P::FontFamily, LINE_FAMILY));
         for (property, value) in [
             (P::Width, "100px"),
-            (P::FontFamily, "\"Varta Fixture 400\""),
             (P::FontSize, "20px"),
             (P::LineHeight, "20px"),
             (P::Color, "#000"),
-        ] {
+        ]
+        .into_iter()
+        .chain(family)
+        {
             batch.set_style(LINE, property, value);
         }
         for (index, (text, style)) in (0u32..).zip(spans) {
@@ -184,7 +202,7 @@ mod probe {
         let mut measurer = fonts.measurer()?;
         let side = (VIEWPORT * scale).round() as u32;
         let mut cases = Vec::new();
-        for name in ["bold", "italic", "mono", "mixed"] {
+        for name in CASES {
             let view = case_view(name)?;
             let geometry =
                 view.layout_boxes_with_text(VIEWPORT, VIEWPORT, &mut measurer, TEXT_SIZE)?;
@@ -238,6 +256,7 @@ mod probe {
                     "family": face.family,
                     "weight": face.weight,
                     "style": face.style.name(),
+                    "generics": face.generics.iter().map(|generic| generic.name()).collect::<Vec<_>>(),
                     "font": face.data,
                 })
             })

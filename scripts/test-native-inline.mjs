@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {withBrowserPage} from './browser-probe.mjs';
+import {createFontNamespace,packagedFamilies,faceDescriptors} from '../crates/varta-project/src/browser/view-fonts.mjs';
 assert(process.argv[2], 'pass native_inline_probe JSON');
 const oracle=JSON.parse(await readFile(process.argv[2],'utf8'));
 const scale=oracle.scale??1;
@@ -9,9 +10,21 @@ assert(Number.isFinite(scale)&&scale>=0.25&&scale<=8,'invalid oracle scale');
 const viewport=oracle.viewport??{width:100,height:100};
 assert(Number.isInteger(viewport.width)&&viewport.width>0&&viewport.width<=4096&&Number.isInteger(viewport.height)&&viewport.height>0&&viewport.height<=4096,'invalid oracle viewport');
 // One face ({family, font}) or, from native_font_probe, every packaged face
-// with its weight and style ({fonts: [{family, weight, style, font}]}).
+// with its weight, style and generic families ({fonts: [{family, weight,
+// style, generics, font}]}).
 const faces=oracle.fonts??[{family:oracle.family,font:oracle.font}];
 assert(faces.length>0&&faces.every(face=>typeof face.family==='string'&&Array.isArray(face.font)),'invalid oracle fonts');
+// Packaged faces resolve exactly as the browser applier resolves them: its
+// own font namespace (private family names, generic aliases, the default
+// family on the view root) and its FontFace descriptors.
+let registered=faces.map(face=>({family:face.family,font:face.font,descriptors:{}})),fontFamily=value=>value,defaultFamily;
+if(oracle.fonts!==undefined){
+  const descriptors=faces.map(face=>({key:face.family,weight:face.weight,style:face.style,generics:face.generics??[]}));
+  const namespace=createFontNamespace('oracle',...packagedFamilies(descriptors));
+  registered=faces.map((face,index)=>({family:namespace.family(face.family),font:face.font,descriptors:faceDescriptors(descriptors[index])}));
+  fontFamily=value=>namespace.value(value);defaultFamily=namespace.defaultFamily;
+}
+const applied=node=>({...node,...(node.style?{style:Object.fromEntries(Object.entries(node.style).map(([property,value])=>[property,property==='font-family'?fontFamily(value):value]))}:{}),...(node.children?{children:node.children.map(applied)}:{})});
 let checks=0;
 const MAX_MEAN_RGB_DELTA=2; // Same bound as the native/GPU scene probes.
 await withBrowserPage('about:blank',async call=>{
@@ -20,12 +33,12 @@ await withBrowserPage('about:blank',async call=>{
     assert(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));return r.result.value;
   }
   await call('Emulation.setDeviceMetricsOverride',{...viewport,deviceScaleFactor:scale,mobile:false});
-  await evaluate(`(async()=>{document.open();document.write("<!doctype html><html><head></head><body></body></html>");document.close();for(const face of ${JSON.stringify(faces)})document.fonts.add(await new FontFace(face.family,Uint8Array.from(face.font),{weight:String(face.weight??400),style:face.style??'normal'}).load());document.body.style.margin='0';document.body.style.background='white';document.documentElement.style.colorScheme='light';})()`);
+  await evaluate(`(async()=>{document.open();document.write("<!doctype html><html><head></head><body></body></html>");document.close();for(const face of ${JSON.stringify(registered)})document.fonts.add(await new FontFace(face.family,Uint8Array.from(face.font),face.descriptors).load());${defaultFamily===undefined?'':`document.body.style.fontFamily=${JSON.stringify(defaultFamily)};`}document.body.style.margin='0';document.body.style.background='white';document.documentElement.style.colorScheme='light';})()`);
   for(const fixture of oracle.cases) {
     const actual=await evaluate(`(()=>{
       document.body.replaceChildren();const nodes=new Map();
       function create(n){const e=n.text!==undefined?document.createTextNode(n.text):document.createElement(n.tag==='root'?'div':n.tag);nodes.set(n.id,e);if(e.nodeType===1){e.dataset.node=n.id;for(const [p,v]of Object.entries(n.style??{}))e.style.setProperty(p,v);for(const c of n.children??[])e.append(create(c));}return e;}
-      document.body.append(create(${JSON.stringify(fixture.tree)}));
+      document.body.append(create(${JSON.stringify(applied(fixture.tree))}));
       const box=r=>({x:r.x,y:r.y,width:r.width,height:r.height}),boxes={};
       for(const [id,e]of nodes)if(e.nodeType===1&&id!==1&&e.tagName!=='BR')boxes[id]=box(e.getBoundingClientRect());
       const rects=[...nodes.values()].filter(e=>e.nodeType===1).flatMap(e=>[...e.getClientRects()]);

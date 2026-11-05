@@ -20,10 +20,11 @@ pub use resources::{
 
 const MAGIC: &[u8; 8] = b"VARTA3\0\0";
 /// Container format 1: Wasm and manifest, no resource section.
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = varta_common::launcher::CONTAINER_FORMAT;
 /// Container format 2: Wasm, manifest and a resource section, whose
-/// little-endian `u64` length precedes the fixed footer.
-const RESOURCE_FORMAT_VERSION: u32 = 2;
+/// little-endian `u64` length precedes the fixed footer. The runtime
+/// companion advertises the formats it reads (launcher protocol 3).
+const RESOURCE_FORMAT_VERSION: u32 = varta_common::launcher::RESOURCE_CONTAINER_FORMAT;
 /// The bare form's resource sidecar beside `app.wasm`: `app.resources`.
 pub const RESOURCE_SIDECAR_EXTENSION: &str = "resources";
 /// The footer's reserved word, zero in formats 1 and 2.
@@ -155,7 +156,7 @@ impl Artifact {
         file.read_exact(&mut footer)?;
         let version = read_u32(&footer[VERSION_AT..RESERVED_AT])?;
         if &footer[MAGIC_AT..] != MAGIC
-            || ![FORMAT_VERSION, RESOURCE_FORMAT_VERSION].contains(&version)
+            || !varta_common::launcher::CONTAINER_FORMATS.contains(&version)
             || footer[RESERVED_AT..MAGIC_AT] != RESERVED.to_le_bytes()
         {
             return Err(invalid(

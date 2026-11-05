@@ -3213,3 +3213,20 @@ filtered to `build`, formatting and strict Clippy (desktop also with `gpu`).
 A manual run presented the view probe's four lines from artifact fonts; no
 trusted clicks could be performed in the agent environment. No full gate was
 run for this package.
+
+Review fixes (same wave): `varta build --target browser` and the browser
+development server now carry the resource section's faces (built once through
+the same loader) with weight, style and generic families; the loader registers
+them as `FontFace`s before the renderer exists, the applier maps declared
+generic families and names the first family on the view root, and a
+configuration with both `fonts` and `browser.fonts` is refused. The Chrome
+oracle registers packaged faces through `view-fonts.mjs`'s namespace and adds
+`generic` and `default` cases (mutations dropping the alias or reordering the
+default family fail it), and `browser_bundle_probe`'s `view-font-packaged`
+bundle passes `scripts/test-browser-fonts.mjs`. Launcher protocol 3 adds
+`containerFormats`; packaging a section refuses a companion without format 2
+before writing output and validates the sidecar section through the probe.
+The shell's browser launcher is detached and succeeds on spawn. The font
+limits moved to `varta_common::view::fonts`, a repeated generic family in one
+face is `ResourceError::DuplicateGeneric`, and a leftover debug print in a
+runtime view test was removed.

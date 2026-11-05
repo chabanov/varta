@@ -14,6 +14,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
+use varta_common::view::fonts::{MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES};
 
 // Native shaping requests: completed output, intermediate scratch, charged
 // operations and reusable scratch. Independent from source/paint allowances.
@@ -310,7 +311,7 @@ impl TextMeasurer {
     /// Load a bounded collection of explicit fonts. Alias collisions are rejected.
     /// The first family is the default when CSS does not specify a family list.
     pub fn new_with_fonts(fonts: Vec<TextFont>) -> Result<Self, TextMeasureError> {
-        if fonts.is_empty() || fonts.len() > 16 {
+        if fonts.is_empty() || fonts.len() > MAX_FONT_FACES {
             return Err(TextMeasureError::Font);
         }
         let mut collection = Collection::new(CollectionOptions {
@@ -324,8 +325,8 @@ impl TextMeasurer {
                 .checked_add(font.data.len())
                 .ok_or(TextMeasureError::Font)?;
             if font.data.is_empty()
-                || font.data.len() > 4 * 1024 * 1024
-                || bytes > 16 * 1024 * 1024
+                || font.data.len() > MAX_FONT_FACE_BYTES
+                || bytes > MAX_FONT_BYTES
                 || font.family.is_empty()
                 || font.family.len() > 256
                 || font.aliases.len() > 16

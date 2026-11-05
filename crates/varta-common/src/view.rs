@@ -15,6 +15,7 @@ pub mod accessibility;
 pub mod attributes;
 pub mod css;
 pub mod expansion;
+pub mod fonts;
 pub mod stylesheet;
 
 /// Draft protocol version carried in every batch and event record header.
