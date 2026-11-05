@@ -2403,7 +2403,8 @@ fn layout_commit_scrolls_in_batch_order_and_rolls_back_on_failure() {
     let before = view.snapshot();
     let mut invalid = BatchWriter::new();
     invalid
-        .set_style(4, CssProperty::Position, "absolute")
+        .create_text(5, "A")
+        .insert(4, 5, 0)
         .command(4, Command::ScrollIntoView, 0.0);
     assert!(
         view.commit_with_layout(
@@ -2535,7 +2536,8 @@ fn scroll_into_view_plan_handles_nested_and_hidden_scrollports() {
     assert_eq!(view.scroll_into_view(5, 200.0, 100.0, None).unwrap(), 0);
     assert!(view.next_delivery().is_none());
     let mut unsupported = BatchWriter::new();
-    unsupported.set_style(5, CssProperty::Position, "absolute");
+    // Box-only geometry refuses text content.
+    unsupported.create_text(6, "A").insert(5, 6, 0);
     commit(&mut view, &unsupported).unwrap();
     let before = view.snapshot();
     assert!(view.scroll_into_view(5, 200.0, 100.0, None).is_err());

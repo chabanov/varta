@@ -129,7 +129,9 @@ impl View {
                 } else {
                     crate::layout::scroll_path_plan(
                         frame.layout_for_scroll(),
-                        self.tree.path(identity.id).into_iter().skip(1),
+                        // Absolute and fixed boxes skip scrollers outside their containing block.
+                        crate::layout::scroll_chain(&self.tree, &self.environment, identity.id)
+                            .map_err(|_| InputError::ScrollGeometry)?,
                         frame.layout_for_scroll()[&identity.id].rect,
                         hint.vertical(),
                     )

@@ -55,6 +55,71 @@ pub(crate) fn intersect(a: BoxRect, b: BoxRect) -> BoxRect {
     }
 }
 
+/// The CSS `position` schemes admitted by native layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scheme {
+    Static,
+    Relative,
+    Absolute,
+    Fixed,
+}
+impl Scheme {
+    /// A computed `position` value; an absent declaration is `static`.
+    pub(crate) fn parse(value: Option<&String>) -> Option<Self> {
+        match value.map(String::as_str) {
+            None | Some("static") => Some(Self::Static),
+            Some("relative") => Some(Self::Relative),
+            Some("absolute") => Some(Self::Absolute),
+            Some("fixed") => Some(Self::Fixed),
+            Some(_) => None,
+        }
+    }
+    /// Establishes a containing block for absolute descendants.
+    pub(crate) fn positioned(self) -> bool {
+        self != Self::Static
+    }
+    /// Taken out of flow: its parent neither clips nor scrolls it.
+    pub(crate) fn out_of_flow(self) -> bool {
+        matches!(self, Self::Absolute | Self::Fixed)
+    }
+}
+
+/// The ancestors whose scroll offsets move a node, innermost first. In-flow
+/// boxes follow their parent, absolute boxes their containing block (the
+/// nearest positioned ancestor; none for the initial containing block), and
+/// fixed boxes stay with the viewport. This is the chain geometry uses.
+pub(crate) fn scroll_chain(
+    tree: &Tree,
+    environment: &Environment,
+    target: u32,
+) -> Result<Vec<u32>, LayoutError> {
+    let path = tree.path(target);
+    let schemes = path
+        .iter()
+        .map(|&id| {
+            Scheme::parse(
+                tree.computed_read(id, environment)
+                    .get(&CssProperty::Position),
+            )
+            .ok_or(LayoutError::Unsupported(id))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut chain = Vec::new();
+    let mut index = 0;
+    loop {
+        let next = match schemes[index] {
+            Scheme::Fixed => None,
+            Scheme::Absolute => (index + 1..path.len()).find(|&next| schemes[next].positioned()),
+            Scheme::Static | Scheme::Relative => Some(index + 1).filter(|&next| next < path.len()),
+        };
+        let Some(next) = next else {
+            return Ok(chain);
+        };
+        chain.push(path[next]);
+        index = next;
+    }
+}
+
 /// Compute nearest-edge vertical scrolling, from the innermost scrollport out.
 pub(crate) fn scroll_into_view_plan(
     tree: &Tree,
@@ -65,23 +130,14 @@ pub(crate) fn scroll_into_view_plan(
     if !tree.displayed(target, environment) {
         return Ok(Vec::new());
     }
-    let path = tree.path(target);
-    for id in &path {
-        if tree
-            .computed_read(*id, environment)
-            .get(&CssProperty::Position)
-            .is_some_and(|position| matches!(position.as_str(), "absolute" | "fixed"))
-        {
-            return Err(LayoutError::Unsupported(*id));
-        }
-    }
+    let chain = scroll_chain(tree, environment, target)?;
     let rect = geometry
         .get(&target)
         .ok_or(LayoutError::Unsupported(target))?
         .rect;
     Ok(scroll_path_plan(
         geometry,
-        path.into_iter().skip(1),
+        chain,
         rect,
         ScrollAlignment::Nearest,
     ))
@@ -657,7 +713,9 @@ fn ua_box(
     if ua.margin_block_em != 0.0 && !nested {
         // Without a text measurer there is no host medium size for em.
         let base = base_size.ok_or(LayoutError::Unsupported(id))?;
-        let margin = resolve_text(tree, env, id, base)?.options.size * ua.margin_block_em;
+        // Blink resolves em lengths against the specified size, before the
+        // minimum logical font size.
+        let margin = resolve_text(tree, env, id, base)?.specified_size * ua.margin_block_em;
         style.margin.top = length(margin);
         style.margin.bottom = length(margin);
     }
@@ -677,7 +735,10 @@ pub(crate) fn alignment_admitted(layout: &parley::Layout<u32>, options: TextOpti
 
 /// Inherited text properties of one element, before font families resolve.
 pub(crate) struct ResolvedText {
+    /// `size` is the computed font size used for shaping and line heights.
     pub options: TextOptions,
+    /// The specified size before the minimum logical size: the em basis.
+    pub specified_size: f32,
     /// The nearest declared (or user-agent) family list and its element.
     pub family: Option<(u32, String)>,
 }
@@ -706,16 +767,35 @@ const MAX_FONT_SIZE: f32 = 4096.0;
 /// The denominator of a CSS percentage.
 const PERCENT: f32 = 100.0;
 
+/// Chrome's minimum logical font size in CSS pixels, observed in headless
+/// Chrome 156 with a fresh profile (Blink's `MinimumLogicalFontSize` setting).
+pub(crate) const MINIMUM_LOGICAL_FONT_SIZE: f32 = 9.0;
+
 /// Apply an author `font-size`: a percentage scales the inherited size and
-/// keeps its absolute flag; `px` and `rem` lengths are absolute.
-fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Option<()> {
+/// keeps its absolute flag; `px` and `rem` lengths are absolute. Returns
+/// whether the declaration was an absolute length.
+fn author_font_size(size: &mut style::FontSize, units: Units, value: &str) -> Option<bool> {
     if let Some(number) = value.strip_suffix('%') {
         let number: f32 = number.parse().ok()?;
         size.scale(number / PERCENT);
+        Some(false)
     } else {
         size.absolute(units.pixels(value, false)?);
+        Some(true)
     }
-    Some(())
+}
+
+/// Blink's `GetComputedSizeFromSpecifiedSize` at page zoom 1: a size derived
+/// from the `medium` keyword, user-agent scales or percentages, without an
+/// absolute length on the path, computes to at least
+/// [`MINIMUM_LOGICAL_FONT_SIZE`]. Descendant percentages and em lengths keep
+/// deriving from the unclamped specified size.
+fn computed_font_size(specified: f32, absolute: bool) -> f32 {
+    if absolute {
+        specified
+    } else {
+        specified.max(MINIMUM_LOGICAL_FONT_SIZE)
+    }
 }
 
 /// Resolve inherited text properties along the path from the root, applying
@@ -728,6 +808,9 @@ pub(crate) fn resolve_text(
 ) -> Result<ResolvedText, LayoutError> {
     let units = Units::new(env).ok_or(LayoutError::RootFont)?;
     let mut size = style::FontSize::medium(base_size);
+    // Whether an absolute length fixes the size; percentages and user-agent
+    // scales inherit it, as in `style::FontSize`.
+    let mut absolute = false;
     // The view root's parent is the document body: proportional `medium`.
     let mut parent_monospace = false;
     let mut line_height = None;
@@ -815,7 +898,8 @@ pub(crate) fn resolve_text(
             };
         }
         if let Some(value) = properties.get(&CssProperty::FontSize) {
-            author_font_size(&mut size, units, value).ok_or(LayoutError::Unsupported(ancestor))?;
+            absolute |= author_font_size(&mut size, units, value)
+                .ok_or(LayoutError::Unsupported(ancestor))?;
         }
         // Chrome re-derives the size where the generic family switches to or
         // from monospace, before a line-height percentage resolves against it.
@@ -845,7 +929,7 @@ pub(crate) fn resolve_text(
                 let percentage: f32 = value
                     .parse()
                     .map_err(|_| LayoutError::Unsupported(ancestor))?;
-                let px = size.px * percentage / PERCENT;
+                let px = computed_font_size(size.px, absolute) * percentage / PERCENT;
                 if !px.is_finite() || !(0.01..=1_000_000.0).contains(&px) {
                     return Err(LayoutError::Unsupported(ancestor));
                 }
@@ -862,8 +946,9 @@ pub(crate) fn resolve_text(
         }
     }
     Ok(ResolvedText {
+        specified_size: size.px,
         options: TextOptions {
-            size: size.px,
+            size: computed_font_size(size.px, absolute),
             line_height,
             weight,
             italic,
@@ -1984,5 +2069,108 @@ mod tests {
         );
         assert!(grid_tracks("1000001px", units, varta_common::view::css::property_value).is_none());
         assert!(grid_tracks("-1fr", units, varta_common::view::css::property_value).is_none());
+    }
+}
+
+#[cfg(test)]
+mod positioning_tests {
+    use super::{LineHeight, MINIMUM_LOGICAL_FONT_SIZE, resolve_text, scroll_chain};
+    use crate::{Access, BatchWriter, Broker, View};
+    use varta_common::view::{CssProperty as P, ROOT_NODE, Tag};
+
+    struct Deny;
+    impl Broker for Deny {
+        fn link_requested(&self, _: &str) -> bool {
+            false
+        }
+        fn open_url(&mut self, _: &str) -> Access {
+            Access::Denied
+        }
+        fn clipboard_write(&mut self) -> Access {
+            Access::Denied
+        }
+    }
+    const MEDIUM: f32 = 16.0;
+    type Row<'a> = (u32, u32, Tag, &'a [(P, &'a str)]);
+
+    /// Each `(id, parent, tag, styles)` row appended in order.
+    fn view(rows: &[Row]) -> View {
+        let mut b = BatchWriter::new();
+        for &(id, parent, tag, styles) in rows {
+            b.create_element(id, tag).insert(parent, id, 0);
+            for &(property, value) in styles {
+                b.set_style(id, property, value);
+            }
+        }
+        let mut view = View::default();
+        view.commit(&b.finish(), false, &mut Deny).unwrap();
+        view
+    }
+
+    #[test]
+    fn minimum_logical_font_size_applies_only_without_an_absolute_length() {
+        let view = view(&[
+            (2, ROOT_NODE, Tag::Div, &[(P::FontSize, "50%")]),
+            (3, 2, Tag::Span, &[(P::FontSize, "200%")]),
+            (4, 2, Tag::Span, &[(P::LineHeight, "200%")]),
+            (5, 2, Tag::Span, &[(P::LineHeight, "2")]),
+            (6, ROOT_NODE, Tag::Div, &[(P::FontSize, "8px")]),
+            (7, ROOT_NODE, Tag::Div, &[(P::FontSize, "4px")]),
+            (8, 7, Tag::Span, &[(P::FontSize, "200%")]),
+            (9, ROOT_NODE, Tag::Div, &[(P::FontSize, "25%")]),
+            (10, 9, Tag::H1, &[]),
+            (11, ROOT_NODE, Tag::Div, &[(P::FontSize, "0.5rem")]),
+        ]);
+        let resolve = |id| resolve_text(&view.tree, &view.environment, id, MEDIUM).unwrap();
+        // 50% of medium computes to the minimum; em lengths keep 8px.
+        let half = resolve(2);
+        assert_eq!(
+            (half.options.size, half.specified_size),
+            (MINIMUM_LOGICAL_FONT_SIZE, 8.0)
+        );
+        // Nested percentages derive from the specified, unclamped size.
+        assert_eq!(resolve(3).options.size, 16.0);
+        // Percentage line heights resolve against the computed size, as the
+        // shaper scales numeric line heights by it.
+        assert_eq!(
+            resolve(4).options.line_height,
+            Some(LineHeight::Absolute(18.0))
+        );
+        assert_eq!(
+            resolve(5).options.line_height,
+            Some(LineHeight::FontSizeRelative(2.0))
+        );
+        assert_eq!(resolve(5).options.size, MINIMUM_LOGICAL_FONT_SIZE);
+        // Absolute lengths, and percentages of them, keep their value.
+        assert_eq!(resolve(6).options.size, 8.0);
+        assert_eq!(resolve(8).options.size, 8.0);
+        assert_eq!(resolve(11).options.size, 8.0);
+        // A user-agent heading scale inherits the non-absolute state.
+        let heading = resolve(10);
+        assert_eq!(
+            (heading.options.size, heading.specified_size),
+            (MINIMUM_LOGICAL_FONT_SIZE, 8.0)
+        );
+    }
+
+    #[test]
+    fn scroll_chain_follows_containing_blocks() {
+        let view = view(&[
+            (2, ROOT_NODE, Tag::Div, &[(P::Position, "relative")]),
+            (3, 2, Tag::Div, &[]),
+            (4, 3, Tag::Div, &[(P::Position, "absolute")]),
+            (5, 4, Tag::Div, &[]),
+            (6, 3, Tag::Div, &[(P::Position, "fixed")]),
+            (7, 6, Tag::Div, &[]),
+            (8, ROOT_NODE, Tag::Div, &[(P::Position, "absolute")]),
+        ]);
+        let chain = |id| scroll_chain(&view.tree, &view.environment, id).unwrap();
+        assert_eq!(chain(3), vec![2, ROOT_NODE]);
+        // The unpositioned box between an absolute box and its containing
+        // block neither scrolls nor clips it.
+        assert_eq!(chain(5), vec![4, 2, ROOT_NODE]);
+        assert_eq!(chain(7), vec![6]);
+        // The initial containing block does not scroll with the root box.
+        assert_eq!(chain(8), Vec::<u32>::new());
     }
 }

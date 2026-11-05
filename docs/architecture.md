@@ -11901,8 +11901,8 @@ Outlines paint after descendants in tree postorder, including inline descendants
 and enclosing block outlines, with their original clips and opacity isolation.
 Their geometry consumes the existing shared text-paint allowance and captured
 commands share the existing frame limit. No texture, retained-cache or GPU-layer
-allowance is added. Distinct inline border side colors remain open, as do
-general positioned painting and real-font/platform interoperability.
+allowance is added. Distinct inline border side colors remain open, as does
+real-font/platform interoperability.
 
 Non-replaced inline top/bottom padding expands each own fragment's background,
 rounded hit region and outline without moving text or changing line metrics.
@@ -12009,7 +12009,16 @@ against the element's size after that step (`pre { line-height: 150% }` is
 19.5px). The user-agent family must resolve through the host's explicit
 aliases; an unmapped `monospace` is refused, and bold without a bold face stays
 a refused synthesized face. Em margins need the host text size, so the
-geometry-only path refuses them.
+geometry-only path refuses them. A size that is not fixed by an absolute
+length (the initial `medium` keyword, user-agent scales and percentages of
+them) computes to at least Chrome's minimum logical font size,
+`layout::MINIMUM_LOGICAL_FONT_SIZE` (observed in headless Chrome 156 with a
+fresh profile), for shaping, normal and numeric line heights and percentage
+`line-height`. Absolute lengths keep their value, and em margins and
+descendant percentages keep deriving from the unclamped specified size: with
+16px `medium`, `div { font-size: 50% } > span` draws at the minimum,
+`> span { font-size: 200% }` at 16px and `p { font-size: 50% }` keeps 8px
+margins, while `div { font-size: 8px } > span` stays 8px.
 
 `white-space: pre` preserves spaces and forced breaks and never wraps softly;
 leading indentation is measured exactly, while tabs and trailing line spaces
@@ -12152,7 +12161,8 @@ items and replaced controls paint atomically in the content phase; these pseudo
 contexts let descendant opacity contexts join the nearest real context. Original
 ancestor clips survive deferral. Text pointer regions use occupied line fragments,
 including their font-box height, rather than the anonymous block's available width.
-Full CSS painting remains open for general positioned/z-index content.
+Positioned boxes and z-index layers follow
+[native positioned painting](#native-positioned-painting-and-stacking).
 Paragraph text paints with its containing vertical origin rounded in CSS paint
 pixels before DPI scaling. Horizontal positions and intrinsic per-line/font/glyph
 offsets remain fractional. This is a paint-only adjustment: logical bounds,
@@ -12292,8 +12302,9 @@ increase host thread stacks. Scheduling is bounded before extending the list.
 
 The experimental `rasterize_boxes` API uses a bounded, transparent CPU image
 with premultiplied RGBA8 pixels. It paints solid CSS background colors for the
-supported unpositioned box tree in document order, respecting rectangular
-ancestor clips. Solid rectangular borders with a common color across visible
+supported box tree in the stacking order of
+[native positioned painting](#native-positioned-painting-and-stacking),
+respecting rectangular ancestor clips. Solid rectangular borders with a common color across visible
 sides use the CSS border cascade, including inherited `currentcolor` and
 shorthand resets. `rasterize_with_text` also paints the supported shaped text
 using the host's explicit fonts and bounded unhinted glyph outlines; it shares
@@ -12355,8 +12366,9 @@ needed. The charged meter still excludes some parser/Unicode-analysis/plan work;
 no complete RSS or wall-clock deadline guarantee follows. Fonts with excessive
 glyph/outline expansion can still hit the resource budgets; complete backend
 memory/platform acceptance remains open.
-Other controls, differently colored border sides, positioned elements and stacking
-effects still fail explicitly. Static rounded boxes and the explicit controls
+Other controls and differently colored border sides still fail explicitly;
+positioned elements and stacking follow
+[native positioned painting](#native-positioned-painting-and-stacking). Static rounded boxes and the explicit controls
 above use the shared corner/clip pipeline described earlier.
 Password painting shapes one `•` per extended grapheme, including transient
 preedit, with source-byte positions retained for hit testing and selection.
@@ -12564,7 +12576,8 @@ scroll range, propagates remaining movement outward and sends `scroll` events;
 `overflow: hidden` remains programmatically scrollable but ignores the wheel.
 The experimental geometry API can plan nearest-edge vertical scrolling through
 nested auto and hidden scrollports without applying changes. Absolute and fixed
-positioned paths are rejected. A separate experimental view API applies the plan atomically and
+paths follow their containing block chain
+([native positioned painting](#native-positioned-painting-and-stacking)). A separate experimental view API applies the plan atomically and
 emits scroll records without a user-gesture grant. An application-host API
 queues those records as later guest turns.
 An opt-in layout-aware batch API executes `scroll_into_view` and `scroll_to`
@@ -13088,6 +13101,55 @@ events and pending `copy_text` requests; `view::css::MAX_VALUE_TOKENS` bounds
 one CSS value; a headless script is at most `Script::MAX_BYTES` bytes and
 `Script::MAX_INPUTS` steps (inputs and waits), and one step settles within
 `Script::MAX_STEP_TURNS` turns.
+
+#### Native positioned painting and stacking
+
+Native paint, hit testing and scrolling admit `position: static | relative |
+absolute | fixed`, their insets and `z-index: auto | <integer>` with the paint
+order of [CSS2 Appendix E](https://www.w3.org/TR/CSS2/zindex.html) for the
+admitted subset. Real stacking contexts are the view root, a box with opacity
+below 1, every `position: fixed` box, and a positioned box or an in-flow
+flex/grid item with an integer `z-index`; `z-index` on any other box has no
+effect. A context paints its own background and border, then its negative
+layers, the backgrounds of its in-flow blocks, its content phase (inline
+content, atomic flex/grid items and controls), then its layers at level zero
+and above, then outlines. Layers are ordered by z-index and then tree order;
+opacity contexts, including inline opacity contexts, are at level zero. A
+positioned box with `z-index: auto` paints atomically at level zero as a pseudo
+context: its positioned and context-creating descendants join the nearest real
+context at their own tree-order place, including those found while it paints.
+A pre-pass over the painted element tree assigns every layer to its context
+before painting, so a negative layer paints before the in-flow ancestors that
+contain it; the same pre-pass builds each element's curved clip scope in tree
+order. The view root is the root stacking context: a root-level negative layer
+paints above the root's own background and below unpositioned blocks. The
+Chrome oracle therefore gives its stand-in root `div` `isolation: isolate`.
+
+Clips and scroll offsets follow the containing block chain. An in-flow box
+takes its parent's clip scope and scroll offset; an absolute box takes its
+containing block's (the nearest positioned ancestor, or none for the initial
+containing block, which does not scroll with the view root); a fixed box takes
+none and stays anchored to the viewport. The same chain drives wheel scroll
+chaining (`scroll_target`), `scroll_into_view_supported`, `scroll_into_view`
+planning and assistive reveal: absolute and fixed paths are admitted, and a
+scroller outside an absolute box's containing block neither moves nor clips it.
+Hit regions are recorded in paint order, so the topmost painted box is the
+target.
+
+An opacity group composites under its own rectangular and curved clip. An
+absolute or fixed descendant whose rectangular clip is not inside the innermost
+enclosing opacity group's clip, or whose curved scope does not descend from the
+group's scope, fails with `PaintError::Unsupported` instead of being clipped
+incorrectly. Positioned layers use only the existing rectangle, path, border,
+glyph and group commands: retained damage remains the existing command diff,
+vector preparation of positioned frames without opacity groups is
+pixel-identical to the CPU reference, and frames with opacity groups keep the
+existing explicit CPU fallback. Budgets, command limits and the guest ABI are
+unchanged. A positioned or z-indexed box inside an inline formatting context is
+refused by inline layout; `position: sticky` and other containing-block
+creating properties are not admitted. Chrome snaps scrolled content to whole
+device pixels while native paint keeps fractional scroll offsets, so the
+oracle's scroll offsets are whole device pixels at its scales.
 
 ## Local modules
 

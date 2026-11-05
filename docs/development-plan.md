@@ -480,7 +480,8 @@ Open after integration:
   descent down, Varta rounds it up (the `headings` structure case keeps
   rgbMaxDelta 255 with a passing mean); needs an owner decision because it
   changes every text path. Chrome's minimum logical font size (non-absolute
-  sizes below 9px compute to 9px) is neither modelled nor refused.
+  sizes below 9px compute to 9px) is modelled on the wave-2 branch
+  `wave2/w2-native-positioned-zindex`.
 - The portable `native_inline_probe` fails `paint-overlap-hits` against Chrome
   (portable rasterizer smoothing; the host CoreText probe passes); pre-existing.
 - `varta-shell` creates per-artifact KV directories before the runtime validates
@@ -582,6 +583,57 @@ Still open: Chrome's half-pixel ascent/descent rounding above, normal line
 height with fractional ascent/descent (Chrome rounds each), ordinal attributes,
 `list-style`, marker `tabular-nums`, multi-line ellipsis, decorated or bidi
 ellipsis, author `text-align` on fields and the full gate after merge.
+
+### Native positioned painting and z-index — wave-2 package `w2-native-positioned-zindex`, scoped 2026-11-04
+
+Branch `wave2/w2-native-positioned-zindex` (on `4fce278`) removes the native
+paint refusal of non-static `position` and non-`auto` `z-index`. Paint order,
+clip scopes, hit order, wheel chaining and scroll-into-view follow the
+[architecture contract](architecture.md#native-positioned-painting-and-stacking):
+CSS2 Appendix E layers per real stacking context, containing-block clip and
+scroll chains, fixed boxes anchored to the viewport, and a refusal for absolute
+or fixed boxes that escape an opacity group's clip. Zero-level contexts now
+paint strictly in tree order; before, an opacity context inside a flex/grid item
+painted after a later block's opacity context. Chrome's minimum logical font
+size is modelled for non-absolute sizes (the wave-1 open item).
+
+`native_positioned_probe` covers 10 cases (relative boxes over later in-flow
+blocks and text, z-index levels, negative layers in a context and under an
+auto-positioned box, fixed and initial-containing-block absolute boxes in a
+scrolled box, an absolute box with a scrolled containing block and a scrolled
+intermediate box, an opacity context with an inner z-index 5 below a later
+z-index 1 sibling, rounded positioned clips, flex-item z-index, fixed toasts
+with text, minimum font size) against Chrome through
+`scripts/test-native-positioned.mjs`: **5991 checks pass at each of 1×, 1.25×
+and 2×**, maximum RGB mean 1.349/255 (fixed toasts with text at 1.25×) under
+the unchanged 2/255 bound, and both nearest-edge `scrollIntoView` comparisons
+change exactly the native plan. With the minimum font size disabled the probe
+fails on the first affected box height. Unit tests cover layer order, hit
+order, negative layers, late-found pseudo-context layers, tree-ordered opacity
+contexts across flex items, flex items, fixed and
+absolute scrolling and wheel chaining, the escape refusal, retained/vector
+parity and the console mockup's toast stack and narrow-viewport panel rules.
+
+The existing oracles still pass: `native_inline_probe` 58 of 59 cases (9927
+checks per scale) with `paint-overlap-hits` failing exactly as documented
+before (portable smoothing, means 5.388889/3.940351/5.369444),
+`native_paragraph_probe` 81, `native_opacity_probe` 1971,
+`native_structure_probe` 51181 per scale and `native_lengths_probe` 168.
+`python3 scripts/verify.py local varta-view` passes (127 library + 346
+integration tests), as do strict all-target Clippy for `varta-view` and the
+104 default-feature `varta-desktop` tests; the GPU feature was not run.
+
+Outside the package's files: two refusal triggers in `crates/varta-view/tests/`
+(`headless.rs`, `renderer.rs`) now use still-unsupported content, and the two
+assistive scroll call sites use the containing block chain. The public
+`View::scroll_into_view_plan` doc comment in `lib.rs` still says positioned
+paths are rejected (owned by another wave-2 package). Open: the console source
+renders no toast or panel node yet and its initial frame still stops at the
+control-box rules, so `headless_frame` was not run; the browser host should
+make its view root a stacking context (`isolation: isolate`) to match native
+root-level negative layers; scrolled paint is not snapped to device pixels as
+in Chrome; positioned inline boxes, `position: sticky` and Metal GPU runs of
+positioned scenes remain open.
 
 ### Native inline painting commit gate — 2026-11-04
 
@@ -3889,6 +3941,10 @@ web-developer peer.
 | Cursor | default, pointer, text, not-allowed | — |
 | Motion | Transitions on opacity, color, background-color and transform (translate/scale only) | `@keyframes`, rotate (v1.1) |
 
+- **Positioning status.** Native layout, paint, hit testing and scrolling admit
+  the whole positioning row on the wave-2 branch
+  ([contract](architecture.md#native-positioned-painting-and-stacking)); a
+  positioned box inside an inline formatting context is still refused.
 - **Authoring guidance.** Grid and flex containers holding form fields use
   shrinkable tracks (`grid-template-columns: minmax(0, 1fr)`, `min-width: 0` on
   flex items); otherwise a `textarea`'s intrinsic width overflows narrow
