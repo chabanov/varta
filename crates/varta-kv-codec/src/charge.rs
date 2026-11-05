@@ -3,12 +3,12 @@
 use varta_common::{fuel, json::JsonSchema};
 
 /// Staging one key or value: its encoded key and value bytes.
-pub(super) fn staged(bytes: usize) -> u64 {
+pub fn staged(bytes: usize) -> u64 {
     fuel::work(bytes, fuel::KV_BYTE)
 }
 
 /// A read's entries: each entry and its key and value bytes.
-pub(super) fn returned(entries: impl Iterator<Item = usize>) -> u64 {
+pub fn returned(entries: impl Iterator<Item = usize>) -> u64 {
     entries.fold(0, |total: u64, bytes| {
         total
             .saturating_add(fuel::KV_ENTRY)
@@ -18,14 +18,14 @@ pub(super) fn returned(entries: impl Iterator<Item = usize>) -> u64 {
 
 /// A commit: the operation and the key and value bytes it writes (the keys
 /// of its checks and its mutations, and its values).
-pub(super) fn committed(bytes: usize) -> u64 {
+pub fn committed(bytes: usize) -> u64 {
     fuel::KV_OPERATION.saturating_add(fuel::work(bytes, fuel::KV_BYTE))
 }
 
 /// Decoding an entry's key or value into `schema`: the schema's types and
 /// fields and the values decoded, at the checked JSON rates (its bytes were
 /// charged when the read returned them).
-pub(super) fn decoded(schema: &JsonSchema, values: usize) -> u64 {
+pub fn decoded(schema: &JsonSchema, values: usize) -> u64 {
     fuel::work(schema.types.len(), fuel::JSON_SCHEMA_TYPE)
         .saturating_add(fuel::work(schema.fields(), fuel::JSON_SCHEMA_FIELD))
         .saturating_add(fuel::work(values, fuel::JSON_PARSE_VALUE))

@@ -68,6 +68,8 @@ crates/
   varta-bigint/          # engine numeric foundation: budgeted BigInt arithmetic and transport
   varta-intrinsics/      # engine: pure no_std intrinsics, one implementation for host imports and linked guest code
   varta-intrinsics-wasm/ # wasm32-only guest shim of varta-intrinsics; built by scripts/build-intrinsics.py
+  varta-kv-codec/        # engine: no_std KV value layer shared by the native runtime and the browser host
+  varta-kv-codec-wasm/   # wasm32-only browser shim of varta-kv-codec; built by scripts/build-kv-codec.py
   varta-view/            # engine: headless L0 view renderer (common only; no Wasm, I/O or clocks)
   varta-compiler/        # explicit TS module graph (SWC) -> Wasm; no runtime dependency
     src/link/intrinsics.wasm # checked-in linked intrinsic library (+ intrinsics.json fingerprint)
@@ -91,15 +93,17 @@ docs/
   history.md             # completed increment logs and superseded text
 scripts/verify.py        # scoped and full verification helper
 scripts/build-intrinsics.py # rebuilds the linked intrinsic library (offline, locked)
+scripts/build-kv-codec.py # rebuilds the browser KV codec module (offline, locked)
 .github/workflows/       # CI mirrors the commands below
 ```
 
 Placement rules:
 
-- Engine crates are `varta-common`, `varta-bigint`, `varta-intrinsics`, `varta-view`,
-  `varta-compiler` and `varta-runtime`; `varta-intrinsics-wasm` is the wasm32 build of
+- Engine crates are `varta-common`, `varta-bigint`, `varta-intrinsics`, `varta-kv-codec`,
+  `varta-view`, `varta-compiler` and `varta-runtime`; `varta-intrinsics-wasm` is the wasm32 build of
   `varta-intrinsics` (a workspace member only so it shares the lockfile and the
-  `intrinsics` profile; empty on host targets and not a default member);
+  `intrinsics` profile; empty on host targets and not a default member), and
+  `varta-kv-codec-wasm` likewise the wasm32 build of `varta-kv-codec`;
   `varta-conformance` is development tooling. Artifact
   and launcher crates supply the independent distribution layer. They must
   not depend on project tooling/CLI, including through test dependencies. Runtime
@@ -177,7 +181,7 @@ lints. Cargo dependencies remain locked.
 - Prefer the standard library and the existing dependency set. Adding a dependency requires justification in the PR description; new dependencies use exact `=` pins in `[workspace.dependencies]` (older entries rely on the
   locked `Cargo.lock`) and are referenced with `.workspace = true`.
 - Keep functions focused; extract helpers instead of nesting match arms past three levels. Delete dead code and redundant `let _ =` bindings rather than silencing them.
-- Workspace code forbids unsafe, with one exception: the guest shim `varta-intrinsics-wasm` builds only for wasm32, stays out of host builds (it is not a default member, and on host targets, including workspace builds and Clippy, it compiles to an empty crate), is built by `scripts/build-intrinsics.py`, and may use `unsafe` only to read and write its arguments in linear memory (its extern accessors, exports, arena and panic handler). It runs inside the guest sandbox, never in the host. All intrinsics logic stays in the safe `varta-intrinsics` (`#![forbid(unsafe_code)]`). Never deserialize native Wasmtime payloads from package input; only validated portable Wasm is accepted.
+- Workspace code forbids unsafe, with one exception: the guest shim `varta-intrinsics-wasm` builds only for wasm32, stays out of host builds (it is not a default member, and on host targets, including workspace builds and Clippy, it compiles to an empty crate), is built by `scripts/build-intrinsics.py`, and may use `unsafe` only to read and write its arguments in linear memory (its extern accessors, exports, arena and panic handler). It runs inside the guest sandbox, never in the host. All intrinsics logic stays in the safe `varta-intrinsics` (`#![forbid(unsafe_code)]`). The browser KV codec shim `varta-kv-codec-wasm` follows the same rule (wasm32 only, built by `scripts/build-kv-codec.py`, `unsafe` only for its host imports, exports, arena and panic handler, all logic in the safe `varta-kv-codec`). Never deserialize native Wasmtime payloads from package input; only validated portable Wasm is accepted.
 
 ## 6. Compiler rules (`varta-compiler`)
 

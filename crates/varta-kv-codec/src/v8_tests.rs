@@ -1,9 +1,10 @@
 //! The V8 codec against bytes Deno wrote: the Deno 2.9.4 fixture rows
 //! (`kv_cases/deno-2.9.4`) and the Deno 2.9.7 probe (`kv_cases/deno-2.9.7-probe`).
 use super::*;
+use alloc::{borrow::ToOwned, string::String, vec, vec::Vec};
 
-const ROWS: &str = include_str!("../kv_cases/deno-2.9.4/rows.json");
-const PROBE: &str = include_str!("../kv_cases/deno-2.9.7-probe/rows.txt");
+const ROWS: &str = include_str!("../../varta-runtime/src/kv_cases/deno-2.9.4/rows.json");
+const PROBE: &str = include_str!("../../varta-runtime/src/kv_cases/deno-2.9.7-probe/rows.txt");
 /// The v_encoding of V8 values (`denokv_proto::VALUE_ENCODING_V8`).
 const V8_ENCODING: i64 = 1;
 

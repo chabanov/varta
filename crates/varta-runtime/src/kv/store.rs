@@ -52,49 +52,18 @@ use std::{
 };
 use varta_common::kv;
 
-/// One failed KV operation: the name of the error the guest throws and its
-/// message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct KvError {
-    pub name: &'static str,
-    pub message: String,
-}
+pub(crate) use varta_kv_codec::protocol::KvError;
+#[cfg(test)]
+pub(crate) use varta_kv_codec::protocol::parse_versionstamp;
 
-impl KvError {
-    pub(crate) fn type_error(message: impl Into<String>) -> Self {
-        Self {
-            name: kv::error::TYPE_ERROR,
-            message: message.into(),
-        }
-    }
-    pub(crate) fn range_error(message: impl Into<String>) -> Self {
-        Self {
-            name: kv::error::RANGE_ERROR,
-            message: message.into(),
-        }
-    }
-    pub(crate) fn denied(id: &str, path: &str) -> Self {
-        Self {
-            name: kv::error::NOT_ALLOWED,
-            message: format!("<capability denied: {id}> ({path})"),
-        }
-    }
-    fn not_found(path: &str) -> Self {
-        Self {
-            name: kv::error::NOT_FOUND,
-            message: format!("no KV database at {path}"),
-        }
-    }
-    fn io(path: &str, error: impl std::fmt::Display) -> Self {
-        Self::type_error(format!("cannot open the KV database {path}: {error}"))
-    }
+/// A file system failure opening `path`.
+fn io(path: &str, error: impl std::fmt::Display) -> KvError {
+    KvError::unavailable(path, error)
 }
 
 /// The busy wait of an open database (rusqlite's default, which Deno keeps);
 /// the open-time checks wait for no lock at all.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
-/// The sidecar files SQLite keeps next to a database.
-const SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
 
 /// KV opens, one at a time in the process (step 5 above).
 static OPENING: Mutex<()> = Mutex::new(());
@@ -210,36 +179,33 @@ pub(crate) fn open_with(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some((name, parents)) = target.components.split_last() else {
-        return Err(KvError::type_error(format!(
-            "{path} names no database file"
-        )));
+        return Err(KvError::no_file(path));
     };
-    if name.starts_with(':') || SIDECAR_SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) {
-        return Err(KvError::type_error(format!(
-            "{path} is not a valid database file name"
-        )));
+    if name.starts_with(kv::RESERVED_NAME_PREFIX)
+        || kv::SIDECAR_SUFFIXES
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+    {
+        return Err(KvError::invalid_name(path));
     }
     let Some(directory) = &target.directory else {
         return Err(KvError::type_error(format!(
             "the file root of {path} has no host directory"
         )));
     };
-    let mut parent = target.root.try_clone().map_err(|e| KvError::io(path, e))?;
+    let mut parent = target.root.try_clone().map_err(|e| io(path, e))?;
     for part in parents {
-        parent = parent
-            .open_dir_nofollow(part)
-            .map_err(|e| KvError::io(path, e))?;
+        parent = parent.open_dir_nofollow(part).map_err(|e| io(path, e))?;
     }
     let pinned = pin_file(&parent, name, path, writable)?;
-    let identity = file_identity(&pinned).map_err(|e| KvError::io(path, e))?;
-    let host =
-        host_path(&target.root, directory, &target.components).map_err(|e| KvError::io(path, e))?;
+    let identity = file_identity(&pinned).map_err(|e| io(path, e))?;
+    let host = host_path(&target.root, directory, &target.components).map_err(|e| io(path, e))?;
     if path_identity(&host).ok() != Some(identity) {
         return Err(KvError::type_error(format!(
             "the KV database {path} changed while it was opened"
         )));
     }
-    let before = open_descriptors().map_err(|e| KvError::io(path, e))?;
+    let before = open_descriptors().map_err(|e| io(path, e))?;
     before_sqlite(&host);
     let mut flags = OpenFlags::SQLITE_OPEN_NOFOLLOW | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     flags |= if writable {
@@ -248,22 +214,21 @@ pub(crate) fn open_with(
         OpenFlags::SQLITE_OPEN_READ_ONLY
     };
     let connection =
-        rusqlite::Connection::open_with_flags(&host, flags).map_err(|e| KvError::io(path, e))?;
+        rusqlite::Connection::open_with_flags(&host, flags).map_err(|e| io(path, e))?;
     connection
         .busy_timeout(Duration::ZERO)
-        .map_err(|e| KvError::io(path, e))?;
+        .map_err(|e| io(path, e))?;
     check_schema(&connection, path, writable)?;
     let probe = if writable {
-        let probe = rusqlite::Connection::open_with_flags(&host, flags)
-            .map_err(|e| KvError::io(path, e))?;
+        let probe = rusqlite::Connection::open_with_flags(&host, flags).map_err(|e| io(path, e))?;
         probe
             .busy_timeout(Duration::ZERO)
-            .map_err(|e| KvError::io(path, e))?;
+            .map_err(|e| io(path, e))?;
         Some(probe)
     } else {
         None
     };
-    let after = open_descriptors().map_err(|e| KvError::io(path, e))?;
+    let after = open_descriptors().map_err(|e| io(path, e))?;
     // The pinned descriptor itself is no open by SQLite, whatever a rename
     // of its file did to the change time it shows.
     let pinned_fd = descriptor(&pinned);
@@ -284,17 +249,17 @@ pub(crate) fn open_with(
     }
     connection
         .busy_timeout(BUSY_TIMEOUT)
-        .map_err(|e| KvError::io(path, e))?;
+        .map_err(|e| io(path, e))?;
     let fence = std::sync::Arc::new(Fence(Mutex::new(Commit::Idle)));
     let hook = std::sync::Arc::clone(&fence);
     connection
         .commit_hook(Some(move || hook.refuses()))
-        .map_err(|e| KvError::io(path, e))?;
+        .map_err(|e| io(path, e))?;
     if writable {
         // A commit is reported only once it is durable (WAL, synchronous FULL).
         connection
             .pragma_update(None, "synchronous", "FULL")
-            .map_err(|e| KvError::io(path, e))?;
+            .map_err(|e| io(path, e))?;
     }
     let mut connection = Some(connection);
     let sqlite = denokv_sqlite::Sqlite::new(
@@ -319,7 +284,7 @@ pub(crate) fn open_with(
             batch_timeout: None,
         },
     )
-    .map_err(|e| KvError::io(path, e))?;
+    .map_err(|e| io(path, e))?;
     Ok(Database {
         sqlite,
         writable,
@@ -356,14 +321,12 @@ fn pin_file(
                 .write(true)
                 .create_new(true)
                 .follow(FollowSymlinks::No);
-            parent
-                .open_with(name, &create)
-                .map_err(|e| KvError::io(path, e))?
+            parent.open_with(name, &create).map_err(|e| io(path, e))?
         }
-        Err(error) => return Err(KvError::io(path, error)),
+        Err(error) => return Err(io(path, error)),
     };
     let file = file.into_std();
-    if !file.metadata().map_err(|e| KvError::io(path, e))?.is_file() {
+    if !file.metadata().map_err(|e| io(path, e))?.is_file() {
         return Err(KvError::type_error(format!("{path} is not a regular file")));
     }
     Ok(file)
@@ -496,9 +459,9 @@ fn check_schema(
 ) -> Result<(), KvError> {
     let failure = |error: rusqlite::Error| {
         if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) {
-            locked(path)
+            KvError::locked(path)
         } else {
-            KvError::io(path, error)
+            io(path, error)
         }
     };
     let unsupported = |detail: String| {
@@ -555,20 +518,14 @@ fn check_schema(
     Ok(())
 }
 
-fn locked(path: &str) -> KvError {
-    KvError::type_error(format!(
-        "the KV database {path} is locked by another writer"
-    ))
-}
-
 /// Take and release the write lock without waiting for it.
 fn probe_write_lock(connection: &rusqlite::Connection, path: &str) -> Result<(), KvError> {
     match connection.execute_batch("begin immediate; rollback;") {
         Ok(()) => Ok(()),
         Err(error) if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) => {
-            Err(locked(path))
+            Err(KvError::locked(path))
         }
-        Err(error) => Err(KvError::io(path, error)),
+        Err(error) => Err(io(path, error)),
     }
 }
 
@@ -642,21 +599,13 @@ impl Database {
         before_submit: &mut dyn FnMut(),
     ) -> Result<Option<denokv_proto::Versionstamp>, Wait> {
         if !self.writable {
-            return Err(Wait::Failed(KvError::type_error(format!(
-                "the KV database {} is open read-only",
-                self.path
-            ))));
+            return Err(Wait::Failed(KvError::read_only(&self.path)));
         }
         self.available()?;
         let cutoff = deadline
             .checked_sub(Duration::from_millis(kv::COMMIT_RESERVE_MS))
             .filter(|cutoff| Instant::now() < *cutoff)
-            .ok_or_else(|| {
-                Wait::Failed(KvError::type_error(format!(
-                    "too little time is left in this turn to commit to the KV database {}; nothing was applied",
-                    self.path
-                )))
-            })?;
+            .ok_or_else(|| Wait::Failed(KvError::too_late(&self.path)))?;
         if let Some(probe) = &self.probe {
             // Wait briefly, never past the cutoff: the worker's own expiry
             // collection holds the lock for a moment.
@@ -664,7 +613,7 @@ impl Database {
                 .min(cutoff.saturating_duration_since(Instant::now()));
             probe
                 .busy_timeout(wait)
-                .map_err(|e| Wait::Failed(KvError::io(&self.path, e)))?;
+                .map_err(|e| Wait::Failed(io(&self.path, e)))?;
             probe_write_lock(probe, &self.path).map_err(|error| {
                 Wait::Failed(KvError {
                     message: format!("{}; nothing was applied", error.message),
@@ -717,31 +666,4 @@ impl Database {
         }
         Ok(())
     }
-}
-
-/// The versionstamp text Deno returns: 20 lowercase hex digits.
-pub(crate) fn versionstamp_text(versionstamp: &denokv_proto::Versionstamp) -> String {
-    versionstamp
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-/// Hexadecimal digits of one versionstamp byte, and their radix.
-const HEX_DIGITS_PER_BYTE: usize = 2;
-const HEX_RADIX: u32 = 16;
-/// The digits of a versionstamp text: 20 for Deno's ten-byte versionstamp.
-const VERSIONSTAMP_DIGITS: usize = HEX_DIGITS_PER_BYTE * size_of::<denokv_proto::Versionstamp>();
-
-/// A versionstamp text Deno accepts in a check: exactly 20 hex digits.
-pub(crate) fn parse_versionstamp(text: &str) -> Option<denokv_proto::Versionstamp> {
-    if text.len() != VERSIONSTAMP_DIGITS || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut versionstamp = denokv_proto::Versionstamp::default();
-    for (index, byte) in versionstamp.iter_mut().enumerate() {
-        let digits = HEX_DIGITS_PER_BYTE * index..HEX_DIGITS_PER_BYTE * (index + 1);
-        *byte = u8::from_str_radix(&text[digits], HEX_RADIX).ok()?;
-    }
-    Some(versionstamp)
 }

@@ -8,31 +8,40 @@
 //! once (V8's back-reference); a cycle, a function, a promise, an Error, a
 //! BigInt, an array hole and a record with private state (an engine class or
 //! `#private` fields) fail with a `TypeError`, before anything is stored.
+//!
+//! Guest memory is read through [`Memory`]: the native runtime passes the
+//! instance's memory as a byte slice, the browser host its bounded copy
+//! accessors.
 use super::v8::{Key, Object, Value};
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+use crate::Deadline;
+use alloc::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    format,
     rc::Rc,
-    time::Instant,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
 };
-use varta_common::value::*;
-
-/// Values read between two deadline checks.
-const DEADLINE_STRIDE: usize = 1024;
+use varta_common::{memory::Memory, value::*};
 
 /// Why a value cannot be staged.
 #[derive(Debug)]
-pub(crate) enum StageError {
+pub enum StageError {
     /// A value outside the storable subset: a recoverable `TypeError`.
     Unsupported(String),
-    /// A malformed handle or an exhausted limit: fatal, as for JSON.
-    Fatal(wasmtime::Error),
+    /// A malformed handle or an exhausted limit: fatal, as for JSON. The
+    /// message carries its `kv value:` prefix.
+    Fatal(String),
+    /// A layout reader rejected a handle: fatal.
+    Abi(ValueAbiError),
 }
 
-fn fatal(message: impl std::fmt::Display) -> StageError {
-    StageError::Fatal(wasmtime::Error::msg(format!("kv value: {message}")))
+fn fatal(message: impl core::fmt::Display) -> StageError {
+    StageError::Fatal(format!("kv value: {message}"))
 }
 fn abi(error: ValueAbiError) -> StageError {
-    StageError::Fatal(wasmtime::Error::new(error))
+    StageError::Abi(error)
 }
 fn unsupported(kind: &str) -> StageError {
     StageError::Unsupported(format!("{kind} cannot be stored in a KV value"))
@@ -41,32 +50,32 @@ fn unsupported(kind: &str) -> StageError {
 /// The layout every v38 module uses.
 const VERSION: u32 = HASHED_DICTIONARY_VALUE_VERSION;
 
-pub(crate) struct Stager<'a> {
-    data: &'a [u8],
+pub struct Stager<'a, M: Memory + ?Sized, D: Deadline + ?Sized> {
+    data: &'a M,
     module: ModuleBounds,
-    deadline: Instant,
+    deadline: &'a D,
     nodes: usize,
     /// Aggregates on the current path (a cycle check).
-    path: HashSet<usize>,
+    path: BTreeSet<usize>,
     /// Aggregates already read, by handle address: written once by V8.
-    seen: HashMap<usize, Rc<Object>>,
+    seen: BTreeMap<usize, Rc<Object>>,
 }
 
-impl<'a> Stager<'a> {
-    pub(crate) fn new(data: &'a [u8], module: ModuleBounds, deadline: Instant) -> Self {
+impl<'a, M: Memory + ?Sized, D: Deadline + ?Sized> Stager<'a, M, D> {
+    pub fn new(data: &'a M, module: ModuleBounds, deadline: &'a D) -> Self {
         Self {
             data,
             module,
             deadline,
             nodes: 0,
-            path: HashSet::new(),
-            seen: HashMap::new(),
+            path: BTreeSet::new(),
+            seen: BTreeMap::new(),
         }
     }
 
     fn visit(&mut self, depth: usize) -> Result<(), StageError> {
         self.nodes += 1;
-        if self.nodes.is_multiple_of(DEADLINE_STRIDE) && Instant::now() >= self.deadline {
+        if self.nodes.is_multiple_of(crate::DEADLINE_STRIDE) && self.deadline.passed() {
             return Err(fatal("execution deadline"));
         }
         let limits = self.module.limits.data;
@@ -76,9 +85,9 @@ impl<'a> Stager<'a> {
         Ok(())
     }
 
-    fn bytes(&self, ptr: usize, len: usize) -> Result<&'a [u8], StageError> {
-        ptr.checked_add(len)
-            .and_then(|end| self.data.get(ptr..end))
+    fn bytes(&self, ptr: usize, len: usize) -> Result<Cow<'a, [u8]>, StageError> {
+        self.data
+            .borrow(ptr, len)
             .ok_or_else(|| fatal("range outside memory"))
     }
 
@@ -111,7 +120,13 @@ impl<'a> Stager<'a> {
                 self.resolve(cell.kind as u32, cell.payload)
             }
             ValueKind::PrimitiveUnion => {
-                let cell = PrimitiveBox::read_in(self.data, value, self.module).map_err(abi)?;
+                // `PrimitiveBox::read_in` under the module's string limit.
+                let cell = PrimitiveBox::read_limited(
+                    self.data,
+                    value,
+                    self.module.limits.data.string_bytes,
+                )
+                .map_err(abi)?;
                 self.resolve(cell.kind as u32, cell.payload)
             }
             kind => Ok((kind, value)),
@@ -123,17 +138,12 @@ impl<'a> Stager<'a> {
         if length > self.module.limits.data.string_bytes {
             return Err(fatal("string byte limit"));
         }
-        varta_common::text::units(self.bytes(packed as u32 as usize, length)?)
+        varta_common::text::units(&self.bytes(packed as u32 as usize, length)?)
             .map_err(|_| fatal("invalid UTF-16 byte length"))
     }
 
     /// Read the value of kind word `kind` and packed slot `packed`.
-    pub(crate) fn value(
-        &mut self,
-        kind: u32,
-        packed: u64,
-        depth: usize,
-    ) -> Result<Value, StageError> {
+    pub fn value(&mut self, kind: u32, packed: u64, depth: usize) -> Result<Value, StageError> {
         self.visit(depth)?;
         let (kind, packed) = self.resolve(kind, packed)?;
         Ok(match kind {
@@ -246,7 +256,7 @@ impl<'a> Stager<'a> {
             }
             order.push(slot);
         }
-        let mut fields = vec![None; count];
+        let mut fields: Vec<Option<(String, u32)>> = vec![None; count];
         let mut names = BTreeSet::new();
         for index in 0..count {
             let [key, len, raw_slot, kind] = self.words::<4>(
@@ -263,16 +273,19 @@ impl<'a> Stager<'a> {
             {
                 return Err(fatal("invalid record field metadata"));
             }
-            let name = std::str::from_utf8(self.bytes(key as usize, len as usize)?)
-                .map_err(|_| fatal("invalid field UTF-8"))?;
-            if !names.insert(name) {
+            let name = core::str::from_utf8(&self.bytes(key as usize, len as usize)?)
+                .map_err(|_| fatal("invalid field UTF-8"))?
+                .to_string();
+            if !names.insert(name.clone()) {
                 return Err(fatal("duplicate record field"));
             }
             fields[slot] = Some((name, kind));
         }
         let mut ranked: Vec<(Option<u32>, usize, u32)> = Vec::with_capacity(order.len());
         for (ordinal, slot) in order.iter().enumerate() {
-            let (name, _) = fields[*slot as usize].ok_or_else(|| fatal("missing field slot"))?;
+            let (name, _) = fields[*slot as usize]
+                .as_ref()
+                .ok_or_else(|| fatal("missing field slot"))?;
             if name.starts_with(PRIVATE_KEY_PREFIX) {
                 return Err(unsupported("an object with private state"));
             }
@@ -284,9 +297,12 @@ impl<'a> Stager<'a> {
         ranked.sort_by_key(|(index, ordinal, _)| (index.is_none(), index.unwrap_or(0), *ordinal));
         let mut properties = Vec::with_capacity(ranked.len());
         for (_, _, slot) in ranked {
-            let (name, kind) = fields[slot as usize].ok_or_else(|| fatal("missing field slot"))?;
-            let value = self.slot(ptr + RECORD_META_BYTES + slot as usize * RECORD_SLOT_BYTES)?;
+            let (name, kind) = fields[slot as usize]
+                .as_ref()
+                .ok_or_else(|| fatal("missing field slot"))?;
             let key = Key::of(name.encode_utf16().collect());
+            let kind = *kind;
+            let value = self.slot(ptr + RECORD_META_BYTES + slot as usize * RECORD_SLOT_BYTES)?;
             properties.push((key, self.value(kind, value, depth + 1)?));
         }
         Ok(Object::Plain(properties))

@@ -3,9 +3,11 @@
 //! and schema checks.
 use super::*;
 use crate::policy::FileRoots;
+use denokv_proto::KeyPart;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use varta_common::{CapabilityGrant, CapabilityValue, language::LanguageProfile};
+use varta_kv_codec::wire::MutationCode;
 
 const FIXTURE: &[u8] = include_bytes!("../kv_cases/deno-2.9.4/fixture.kv");
 const MANIFEST: &str = include_str!("../kv_cases/deno-2.9.4/manifest.json");
@@ -353,36 +355,51 @@ fn expire_in_is_stamped_on_the_kv_clock_as_deno_stamped_the_fixture() {
     ])));
     state
         .staged
-        .push(staged_value(StageMode::Value, &key).unwrap());
+        .push(protocol::staged_value(StageMode::Value, &key).unwrap());
     state
         .staged
-        .push(staged_value(StageMode::Value, &text("lives a day")).unwrap());
-    // No checks; one set of stage 0 to stage 1 with `expireIn`.
+        .push(protocol::staged_value(StageMode::Value, &text("lives a day")).unwrap());
+    // Database 1, no checks; one set of stage 0 to stage 1 with `expireIn`.
     let code = (MutationCode::Set as u8).to_string();
     let expire_in = DAY_MS.to_string();
-    let descriptor =
-        ["0", "1", &code, "0", "1", &expire_in].join(&kv::DESCRIPTOR_SEPARATOR.to_string());
-    let (checks, mutations) = parse_commit(&state, &mut descriptor.split(kv::DESCRIPTOR_SEPARATOR))
+    let descriptor = [
+        kv::DESCRIPTOR_VERSION,
+        "1",
+        "0",
+        "1",
+        &code,
+        "0",
+        "1",
+        &expire_in,
+    ]
+    .join(&kv::DESCRIPTOR_SEPARATOR.to_string());
+    let commit = |state: &Kv| {
+        let now = state.clock.now();
+        protocol::parse_commit(&descriptor, &state.staged, |milliseconds| {
+            clock::expire_at(now, milliseconds)
+        })
         .unwrap()
-        .unwrap();
-    assert!(checks.is_empty());
-    let [mutation] = &mutations[..] else {
-        panic!("{} mutations", mutations.len());
+        .unwrap()
+    };
+    let parsed = commit(&state);
+    assert!(parsed.checks.is_empty());
+    let [mutation] = &parsed.mutations[..] else {
+        panic!("{} mutations", parsed.mutations.len());
     };
     let (deno_value, deno_encoding) = deno_row(&mutation.key);
     assert_eq!(deno_encoding, 1);
     assert!(
-        matches!(&mutation.kind, MutationKind::Set(KvValue::V8(bytes)) if *bytes == deno_value)
+        matches!(&mutation.kind, protocol::Kind::Set(Stored::V8(bytes)) if *bytes == deno_value)
     );
     assert_eq!(
         mutation.expire_at.map(|at| at.timestamp_millis()),
         Some(expiration)
     );
+    // The browser host's stamp on the same clock reading is the same.
+    assert_eq!(protocol::expire_at_ms(written, DAY_MS), Some(expiration));
     // The system clock stamps a later expiration than Deno's.
     state.clock = clock::Clock::System;
-    let (_, mutations) = parse_commit(&state, &mut descriptor.split(kv::DESCRIPTOR_SEPARATOR))
-        .unwrap()
-        .unwrap();
+    let mutations = commit(&state).mutations;
     assert!(mutations[0].expire_at.unwrap().timestamp_millis() > expiration);
 }
 
@@ -1398,15 +1415,100 @@ fn reads_keep_denos_limits() {
     );
 }
 
+/// The shared key codec writes and reads exactly `denokv_proto`'s bytes:
+/// every key part Varta writes, and every part Deno can write, which the
+/// decoder must at least name.
 #[test]
-fn cursors_are_padded_base64url() {
-    for bytes in [&b""[..], b"a", b"ab", b"abc", &[0xFF, 0xFE, 0x00, 0x01]] {
-        let text = base64url_encode(bytes);
-        assert_eq!(base64url_decode(&text).as_deref(), Some(bytes), "{text}");
+fn the_shared_key_codec_is_denos() {
+    use varta_kv_codec::key::{self, Encode, Part};
+    let numbers = [
+        0.0,
+        -0.0,
+        1.5,
+        -1.5,
+        f64::MIN_POSITIVE,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+    ];
+    let texts = ["", "a", "a\0b", "\0", "Привіт 😀", "\u{ff}"];
+    for text in texts {
+        for number in numbers {
+            let deno = denokv_proto::encode_key(&denokv_proto::Key(vec![
+                KeyPart::String(text.into()),
+                KeyPart::Float(number),
+            ]))
+            .unwrap();
+            assert_eq!(
+                key::encode([Encode::String(text), Encode::Float(number)]),
+                deno
+            );
+            let parts = key::decode(&deno).unwrap();
+            assert_eq!(parts[0], Part::String(text.into()));
+            let deno_parts = denokv_proto::decode_key(&deno).unwrap().0;
+            assert!(
+                matches!((&parts[1], &deno_parts[1]), (Part::Float(read), KeyPart::Float(deno)) if read.to_bits() == deno.to_bits())
+            );
+        }
     }
-    assert_eq!(base64url_encode(&[0xFB, 0xFF]), "-_8=");
-    for bad in ["a", "ab=", "a===", "Zg=a", "Zh==", "Z!=="] {
-        assert_eq!(base64url_decode(bad), None, "{bad}");
+    let foreign = [
+        KeyPart::Int(0.into()),
+        KeyPart::Int(1.into()),
+        KeyPart::Int((-1).into()),
+        KeyPart::Int(num_bigint::BigInt::from(u64::MAX) * num_bigint::BigInt::from(1000)),
+        KeyPart::Int(-(num_bigint::BigInt::from(u64::MAX) * num_bigint::BigInt::from(1000))),
+        KeyPart::Bytes(vec![0, 1, 0, 255]),
+        KeyPart::True,
+        KeyPart::False,
+    ];
+    for part in foreign {
+        let expected = match &part {
+            KeyPart::Int(_) => Part::Int,
+            KeyPart::Bytes(_) => Part::Bytes,
+            KeyPart::True => Part::Boolean(true),
+            _ => Part::Boolean(false),
+        };
+        let deno =
+            denokv_proto::encode_key(&denokv_proto::Key(vec![part, KeyPart::Float(1.0)])).unwrap();
+        assert_eq!(key::decode(&deno).unwrap(), [expected, Part::Float(1.0)]);
+    }
+    // What Deno rejects, the shared decoder rejects.
+    for bytes in [
+        &[2u8, b'a'][..],
+        &[0x21, 0],
+        &[0x15],
+        &[0x7f],
+        &[2, 0xff, 0],
+    ] {
+        assert!(denokv_proto::decode_key(bytes).is_err(), "{bytes:?}");
+        assert!(key::decode(bytes).is_err(), "{bytes:?}");
+    }
+}
+
+/// The browser host's expiration bound is the native instant type's.
+#[test]
+fn the_shared_expiration_bound_is_chronos() {
+    assert_eq!(
+        protocol::MAX_EXPIRATION_MS,
+        chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis()
+    );
+    let now = chrono::DateTime::from_timestamp_millis(1_700_000_000_000).unwrap();
+    for milliseconds in [0, 1, DAY_MS, u64::MAX, i64::MAX as u64] {
+        assert_eq!(
+            clock::expire_at(now, milliseconds).map(|at| at.timestamp_millis()),
+            protocol::expire_at_ms(now.timestamp_millis(), milliseconds),
+            "{milliseconds}"
+        );
+    }
+    let last = u64::try_from(protocol::MAX_EXPIRATION_MS - now.timestamp_millis()).unwrap();
+    for milliseconds in [last, last + 1] {
+        assert_eq!(
+            clock::expire_at(now, milliseconds).map(|at| at.timestamp_millis()),
+            protocol::expire_at_ms(now.timestamp_millis(), milliseconds),
+            "{milliseconds}"
+        );
     }
 }
 

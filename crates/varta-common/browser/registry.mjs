@@ -92,10 +92,111 @@ export const registry = freeze({
       "read": "kv.read",
       "write": "kv.write"
     },
-    "denialText": "<capability denied: kv.read> ({path})",
+    "capabilityPlaceholder": "{capability}",
+    "checkFailed": 0.0,
+    "codec": {
+      "absent": 0,
+      "entries": {
+        "key": 1,
+        "none": 0,
+        "value": 2
+      },
+      "exports": {
+        "configure": "kv_configure",
+        "decode": "kv_decode",
+        "input": "kv_input",
+        "memory": "memory",
+        "output": "kv_output",
+        "outputLength": "kv_output_len",
+        "parseCommit": "kv_parse_commit",
+        "parseRead": "kv_parse_read",
+        "readEntries": "kv_read_entries",
+        "stage": "kv_stage"
+      },
+      "importModule": "varta_kv_host",
+      "imports": {
+        "allocate": "allocate",
+        "channelReady": "channel_ready",
+        "channelThrow": "channel_throw",
+        "charge": "charge",
+        "deadline": "deadline_passed",
+        "memoryRead": "memory_read",
+        "memorySize": "memory_size",
+        "memoryWrite": "memory_write",
+        "memoryZero": "memory_zero",
+        "resultLength": "result_length",
+        "retain": "retain"
+      },
+      "present": 1,
+      "sections": {
+        "intrinsics": "varta.intrinsics",
+        "static": "varta.static"
+      },
+      "statuses": {
+        "deadline": 3,
+        "failed": 1,
+        "fatal": 2,
+        "ok": 0
+      }
+    },
+    "commitReserveMs": 50,
+    "committed": 1.0,
+    "containerFormat": 1,
+    "deadlineError": "browser execution deadline exceeded",
+    "denialText": "<capability denied: {capability}> ({path})",
+    "encodings": {
+      "bytes": 3,
+      "u64": 2,
+      "v8": 1
+    },
+    "entryFields": {
+      "bytes": 3,
+      "cursor": 4,
+      "encoding": 1,
+      "range": 5,
+      "u64": 2,
+      "versionstamp": 0
+    },
+    "errors": {
+      "notAllowed": "NotAllowedError",
+      "notFound": "NotFoundError",
+      "rangeError": "RangeError",
+      "typeError": "TypeError"
+    },
     "failed": -1.0,
+    "failurePlaceholder": "{failure}",
+    "fuel": {
+      "operation": 100000
+    },
+    "guest": {
+      "allocate": "varta.value_abi.allocate",
+      "pending": "varta.exception.pending",
+      "resultLength": "env_result_len",
+      "retain": "varta.value_abi.retain"
+    },
+    "lockedErrors": [
+      "NoModificationAllowedError",
+      "InvalidStateError"
+    ],
     "maxDescriptorBytes": 65536,
+    "maxOpenDatabases": 8,
+    "maxStaged": 2100,
+    "maxStagedBytes": 901120,
+    "mutationNames": {
+      "2": "sum",
+      "3": "min",
+      "4": "max"
+    },
+    "mutations": {
+      "max": 4,
+      "min": 3,
+      "remove": 1,
+      "set": 0,
+      "sum": 2
+    },
+    "noStorage": "no KV storage was acquired for this application",
     "notAllowed": "NotAllowedError",
+    "operationPlaceholder": "{operation}",
     "operations": {
       "close": "kv_close",
       "commit": "kv_commit",
@@ -108,9 +209,38 @@ export const registry = freeze({
       "value": "kv_value"
     },
     "pathPlaceholder": "{path}",
-    "refusalSeparator": ", ",
+    "paths": {
+      "maxMatchWork": 65536,
+      "maxPathBytes": 4096,
+      "maxPatternBytes": 512,
+      "maxPatterns": 64,
+      "maxRootNameBytes": 64,
+      "separator": "/"
+    },
+    "quotaError": "QuotaExceededError",
+    "reservedNamePrefix": ":",
     "separator": "\n",
-    "storageRefusal": "browser KV storage is not implemented; the manifest grants "
+    "sidecarSuffixes": [
+      "-wal",
+      "-shm",
+      "-journal"
+    ],
+    "stagedTooLarge": "the staged keys and values of one KV operation are too large",
+    "storageUnavailable": "browser KV storage needs OPFS sync access handles in a dedicated Worker, which this host does not provide; the manifest grants ",
+    "texts": {
+      "corrupt": "{path} is not in a Varta KV container of format version 1: {failure}",
+      "full": "the KV storage of {path} is full ({failure}); nothing was applied",
+      "invalidName": "{path} is not a valid database file name",
+      "locked": "the KV database {path} is locked by another writer",
+      "noFile": "{path} names no database file",
+      "nonU64": "Failed to perform '{operation}' mutation on a non-U64 value in the database",
+      "notFound": "no KV database at {path}",
+      "readOnly": "the KV database {path} is open read-only",
+      "tooLate": "too little time is left in this turn to commit to the KV database {path}; nothing was applied",
+      "tooManyDatabases": "at most 8 KV databases are open at once",
+      "unavailable": "cannot open the KV database {path}: {failure}",
+      "uncertain": "the KV storage of {path} is unavailable after an unfinished write; reload the application"
+    }
   },
   "maxTurnFuel": 1000000000,
   "meter": {

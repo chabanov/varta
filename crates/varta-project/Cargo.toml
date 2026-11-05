@@ -22,3 +22,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
 tokio = { workspace = true, features = ["signal"] }
+
+[dev-dependencies]
+# The shared KV value layer, whose texts the browser registry repeats.
+varta-kv-codec = { path = "../varta-kv-codec" }

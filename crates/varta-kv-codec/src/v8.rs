@@ -30,15 +30,15 @@
 //! truncated or overlong field, a non-canonical BigInt, a duplicate key and
 //! trailing bytes fail with a typed [`V8Error`]; a failed read yields no
 //! partial value.
+use alloc::{collections::BTreeMap, rc::Rc, vec::Vec};
 use num_bigint::{BigInt, Sign};
-use std::{collections::HashMap, rc::Rc};
 
 /// The serializer version Deno 2.9.x (V8 15.0) writes.
-pub(crate) const WRITE_VERSION: u32 = 16;
+pub const WRITE_VERSION: u32 = 16;
 /// The oldest and newest serializer versions read. Deno KV files written by
 /// earlier Deno releases carry earlier headers of the same subset.
-pub(crate) const MIN_READ_VERSION: u32 = 13;
-pub(crate) const MAX_READ_VERSION: u32 = 16;
+pub const MIN_READ_VERSION: u32 = 13;
+pub const MAX_READ_VERSION: u32 = 16;
 /// Array buffer views carry a flags field from this version on.
 const VIEW_FLAGS_VERSION: u32 = 14;
 /// The largest array index (`2^32 - 2`).
@@ -103,7 +103,7 @@ const UNSUPPORTED: [(u8, &str); 15] = [
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum V8Error {
+pub enum V8Error {
     #[error("the value ends early")]
     Truncated,
     #[error("unsupported serializer version {0}")]
@@ -128,14 +128,14 @@ pub(crate) enum V8Error {
 
 /// A property key: an array index or any other string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum Key {
+pub enum Key {
     Index(u32),
     Name(Vec<u16>),
 }
 
 impl Key {
     /// The canonical key of `units`: an array index when the text spells one.
-    pub(crate) fn of(units: Vec<u16>) -> Self {
+    pub fn of(units: Vec<u16>) -> Self {
         match varta_common::value::array_index(&units) {
             Some(index) => Self::Index(index as u32),
             None => Self::Name(units),
@@ -145,7 +145,7 @@ impl Key {
 
 /// A JavaScript value of the stored subset.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Value {
+pub enum Value {
     Undefined,
     Null,
     Boolean(bool),
@@ -160,7 +160,7 @@ pub(crate) enum Value {
 
 /// The object kinds of the stored subset.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Object {
+pub enum Object {
     /// Own enumerable properties in V8 order (indices first, ascending).
     Plain(Vec<(Key, Value)>),
     /// Every element present (`None` only for a hole V8 wrote densely).
@@ -184,7 +184,7 @@ pub(crate) enum Object {
 
 impl Object {
     /// The kind name used in diagnostics.
-    pub(crate) fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Plain(_) => "object",
             Self::Dense(_) | Self::Sparse { .. } => "array",
@@ -198,7 +198,7 @@ impl Object {
 
 /// Structural bounds of one read.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Limits {
+pub struct Limits {
     /// Nesting depth of objects.
     pub depth: usize,
     /// Values read, back-references included.
@@ -211,7 +211,7 @@ pub(crate) struct Limits {
 }
 
 /// Decode one stored value; the whole input must be exactly one value.
-pub(crate) fn decode(bytes: &[u8], limits: Limits) -> Result<Value, V8Error> {
+pub fn decode(bytes: &[u8], limits: Limits) -> Result<Value, V8Error> {
     let mut reader = Reader {
         bytes,
         at: 0,
@@ -409,7 +409,7 @@ impl Reader<'_> {
             }
             _ => {
                 let length = self.length("string", max_bytes)?;
-                let text = std::str::from_utf8(self.take(length)?)
+                let text = core::str::from_utf8(self.take(length)?)
                     .map_err(|_| V8Error::Malformed("UTF-8 string"))?;
                 let units: Vec<u16> = text.encode_utf16().collect();
                 if units.len() > self.limits.string_units {
@@ -431,7 +431,7 @@ impl Reader<'_> {
     /// trailing property count.
     fn properties(&mut self, end: u8, depth: usize) -> Result<Vec<(Key, Value)>, V8Error> {
         let mut properties = Vec::new();
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = alloc::collections::BTreeSet::new();
         while self.peek_tag()? != end {
             if properties.len() == self.limits.elements {
                 return Err(V8Error::Limit("entry"));
@@ -580,7 +580,7 @@ fn zigzag(value: u32) -> i32 {
 /// The array index a numeric key names (V8 writes only array indices as
 /// numeric keys).
 fn index_of(number: f64) -> Result<u32, V8Error> {
-    if number.fract() == 0.0
+    if crate::integral(number)
         && (0.0..=f64::from(MAX_ARRAY_INDEX)).contains(&number)
         && !(number == 0.0 && number.is_sign_negative())
     {
@@ -593,10 +593,10 @@ fn index_of(number: f64) -> Result<u32, V8Error> {
 /// Encode `value` with the serializer header Deno 2.9.x writes. Objects
 /// shared by `Rc` are written once and back-referenced after, as V8 writes
 /// one object reached twice. Fails beyond `max_bytes` of output.
-pub(crate) fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
+pub fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error> {
     let mut writer = Writer {
         out: Vec::new(),
-        ids: HashMap::new(),
+        ids: BTreeMap::new(),
         next: 0,
         max_bytes,
     };
@@ -609,7 +609,7 @@ pub(crate) fn encode(value: &Value, max_bytes: usize) -> Result<Vec<u8>, V8Error
 
 struct Writer {
     out: Vec<u8>,
-    ids: HashMap<*const Object, u32>,
+    ids: BTreeMap<*const Object, u32>,
     next: u32,
     max_bytes: usize,
 }
@@ -633,7 +633,7 @@ impl Writer {
         }
     }
     fn number(&mut self, number: f64) {
-        if number.fract() == 0.0
+        if crate::integral(number)
             && number >= f64::from(i32::MIN)
             && number <= f64::from(i32::MAX)
             && !(number == 0.0 && number.is_sign_negative())

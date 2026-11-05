@@ -1,8 +1,8 @@
 //! Checked JSON decoding followed by allocation through the guest's own bounded
 //! collector. Complete input validation precedes the first guest helper call.
 mod exceptions;
+pub(crate) mod guest;
 pub(crate) mod heap;
-mod tree;
 use crate::RuntimeContext;
 use varta_common::{
     HostOperation, abi, fuel,
@@ -373,61 +373,6 @@ fn decode(
     publish_parsed(&mut caller, memory, &schema, parsed, recoverable)
 }
 
-/// The v38 checked schema at `schema_ptr` in the static region (schema 18,
-/// the one `json_parse_v19` reads), with its record and dictionary
-/// descriptors checked: the target of a KV decode (`kv_key`, `kv_value`).
-pub(crate) fn checked_schema(
-    caller: &mut Caller<'_, RuntimeContext>,
-    memory: wasmtime::Memory,
-    schema_ptr: i32,
-    schema_len: i32,
-) -> Result<JsonSchema, wasmtime::Error> {
-    if schema_ptr < 0 || schema_len < 0 {
-        return Err(error("schema range"));
-    }
-    let module = caller.data().module;
-    let data = memory.data(&*caller);
-    let schema = JsonSchema::from_bytes_within(
-        static_bytes(
-            data,
-            module.static_region,
-            schema_ptr as usize,
-            schema_len as usize,
-        )?,
-        &module.limits,
-    )
-    .map_err(error)?;
-    if schema.version != varta_common::json::HASHED_DICTIONARY_SCHEMA_VERSION {
-        return Err(error("schema version does not match the KV import"));
-    }
-    descriptors(&schema, data, module.static_region)?;
-    exceptions::ready(caller)?;
-    Ok(schema)
-}
-
-/// Publish a recoverable `TypeError` with `message` from a v38 KV decode.
-pub(crate) fn type_error(
-    caller: &mut Caller<'_, RuntimeContext>,
-    memory: wasmtime::Memory,
-    schema: &JsonSchema,
-    message: &str,
-) -> Result<u64, wasmtime::Error> {
-    exceptions::publish_message(caller, memory, schema, ErrorClass::TypeError, message)
-}
-
-/// Allocate a completely checked tree through the guest's own collector,
-/// then check the module's metadata again and publish the handle (a v38 KV
-/// decode).
-pub(crate) fn materialize(
-    caller: &mut Caller<'_, RuntimeContext>,
-    memory: wasmtime::Memory,
-    schema: &JsonSchema,
-    value: JsonValue,
-    recoverable: bool,
-) -> Result<u64, wasmtime::Error> {
-    publish_parsed(caller, memory, schema, Parsed::Value(value), recoverable)
-}
-
 /// Build a completely checked parse through the guest's own collector, then
 /// check the module's metadata again and publish the handle.
 fn publish_parsed(
@@ -448,7 +393,12 @@ fn publish_parsed(
         }
         Parsed::Value(value) => {
             let built = if top_down {
-                tree::build(&writer, caller, schema, &value, limits)
+                // The shared top-down builder of the KV value layer.
+                varta_kv_codec::build::value(&mut writer.heap(caller), schema, &value, limits)
+                    .map_err(|error| match error {
+                        varta_kv_codec::build::BuildError::Heap(error) => error,
+                        varta_kv_codec::build::BuildError::Invalid(message) => self::error(message),
+                    })
             } else {
                 writer.build(caller, schema, &value)
             };

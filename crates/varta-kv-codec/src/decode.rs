@@ -10,18 +10,22 @@
 //! JSON does. A `Date`, `Map`, `Set`, `Uint8Array` or BigInt has no checked
 //! schema yet and fails, like every mismatch, with a recoverable `TypeError`.
 use super::v8::{Key, Object, Value};
-use std::time::Instant;
+use crate::Deadline;
+use alloc::{
+    boxed::Box,
+    format,
+    rc::Rc,
+    string::{String, ToString},
+    vec::Vec,
+};
 use varta_common::{
     json::{JsonSchema, JsonType, JsonValue},
     limits::DataLimits,
     value::{ValueKind, array_index},
 };
 
-/// Values classified between two deadline checks.
-const DEADLINE_STRIDE: usize = 1024;
-
 #[derive(Debug)]
-pub(crate) enum DecodeError {
+pub enum DecodeError {
     /// The stored value does not match the type: a recoverable `TypeError`.
     Mismatch(String),
     /// The turn deadline passed while classifying.
@@ -55,15 +59,15 @@ fn unreadable(kind: &str) -> DecodeError {
     ))
 }
 
-pub(crate) struct Classifier<'a> {
+pub struct Classifier<'a, D: Deadline + ?Sized> {
     schema: &'a JsonSchema,
     limits: DataLimits,
-    deadline: Instant,
+    deadline: &'a D,
     nodes: usize,
 }
 
-impl<'a> Classifier<'a> {
-    pub(crate) fn new(schema: &'a JsonSchema, limits: DataLimits, deadline: Instant) -> Self {
+impl<'a, D: Deadline + ?Sized> Classifier<'a, D> {
+    pub fn new(schema: &'a JsonSchema, limits: DataLimits, deadline: &'a D) -> Self {
         Self {
             schema,
             limits,
@@ -74,7 +78,7 @@ impl<'a> Classifier<'a> {
 
     fn visit(&mut self, depth: usize) -> Result<(), DecodeError> {
         self.nodes += 1;
-        if self.nodes.is_multiple_of(DEADLINE_STRIDE) && Instant::now() >= self.deadline {
+        if self.nodes.is_multiple_of(crate::DEADLINE_STRIDE) && self.deadline.passed() {
             return Err(DecodeError::Deadline);
         }
         if depth > self.limits.json_depth || self.nodes > self.limits.json_nodes {
@@ -84,12 +88,12 @@ impl<'a> Classifier<'a> {
     }
 
     /// The values visited so far (the decoded values of a finished root).
-    pub(crate) fn values(&self) -> usize {
+    pub fn values(&self) -> usize {
         self.nodes
     }
 
     /// The root value at the schema's root type.
-    pub(crate) fn root(&mut self, value: &Value) -> Result<JsonValue, DecodeError> {
+    pub fn root(&mut self, value: &Value) -> Result<JsonValue, DecodeError> {
         self.classify(value, self.schema.root, 0)
     }
 
@@ -125,7 +129,7 @@ impl<'a> Classifier<'a> {
             (JsonType::Boolean, Value::Boolean(value)) => JsonValue::Boolean(*value),
             (JsonType::Float64, Value::Number(number)) => JsonValue::Float64(number.to_bits()),
             (JsonType::I32, Value::Number(number))
-                if number.fract() == 0.0
+                if crate::integral(*number)
                     && *number >= f64::from(i32::MIN)
                     && *number <= f64::from(i32::MAX)
                     && !(*number == 0.0 && number.is_sign_negative()) =>
@@ -277,24 +281,22 @@ fn key_text(key: &Key) -> Result<String, DecodeError> {
 }
 
 /// A stored key as the V8 array value it is in JavaScript.
-pub(crate) fn key_value(bytes: &[u8]) -> Result<Value, DecodeError> {
-    use denokv_proto::KeyPart;
-    let key =
-        denokv_proto::decode_key(bytes).map_err(|_| mismatch("the stored key is malformed"))?;
-    let parts = key
-        .0
+pub fn key_value(bytes: &[u8]) -> Result<Value, DecodeError> {
+    use crate::key::Part;
+    let parts = crate::key::decode(bytes).map_err(|_| mismatch("the stored key is malformed"))?;
+    let parts = parts
         .into_iter()
         .map(|part| match part {
-            KeyPart::String(text) => Ok(Value::String(text.encode_utf16().collect())),
-            KeyPart::Float(number) => Ok(Value::Number(number)),
-            KeyPart::Int(_) => Err(unreadable("BigInt key part")),
-            KeyPart::Bytes(_) => Err(unreadable("Uint8Array key part")),
-            KeyPart::True | KeyPart::False => Err(mismatch(
+            Part::String(text) => Ok(Value::String(text.encode_utf16().collect())),
+            Part::Float(number) => Ok(Value::Number(number)),
+            Part::Int => Err(unreadable("BigInt key part")),
+            Part::Bytes => Err(unreadable("Uint8Array key part")),
+            Part::Boolean(_) => Err(mismatch(
                 "a stored boolean key part is outside the string and number key parts",
             )),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Value::Object(std::rc::Rc::new(Object::Dense(
+    Ok(Value::Object(Rc::new(Object::Dense(
         parts.into_iter().map(Some).collect(),
     ))))
 }

@@ -11622,29 +11622,66 @@ into the static type the program names. V37 and earlier profiles reject
   path or with `:memory:` are not available (a program naming them fails to
   compile); `sum` takes no `min`/`max`/`clamp`; operations settle in the turn
   that started them.
-- **Browser host.** The official browser host admits the nine `kv_*` imports
-  of a v38 module but offers no KV storage: the operations are synchronous
-  host calls and a commit is reported only once durable, which IndexedDB, the
-  browser's asynchronous store, cannot provide inside a running guest call.
-  It implements the embedding contract's host without KV storage
-  ([mapping](embedding.md#browser-effect-mapping-official-host)): every
-  `kv_open` reads its path as the native host does, the broker audits a denied
-  `kv.read` operation, the denial is logged and the open rejects with
-  `NotAllowedError: <capability denied: kv.read> (<path>)`, whatever the host
-  ceiling. A grant could never be honoured, so `varta build --target browser`
-  and `varta dev --target browser` refuse a manifest that grants `kv.read` or
-  `kv.write` before any output (`browser KV storage is not implemented; the
-  manifest grants …`); a program that links the imports without a grant still
-  builds. No database is ever open, so the other id, stage and entry imports
-  are fatal; the engine prelude reaches none of them. For a program the
-  compiler produces, a browser run equals the native run of the same program
-  without a grant, including exact fair fuel and host calls
-  (`scripts/test-browser-kv.mjs`). A hand-crafted module that calls
-  `kv_stage`, `kv_read` or `kv_commit` without an open database is the
-  exception: the browser host fails fatally at once, while the native host
-  stages the value, or reads its descriptor first. Browser KV storage is an
-  open item of the
-  [development plan](development-plan.md#batch-v38-in-development).
+- **Shared value layer.** Everything the imports do to values is one safe
+  `no_std` crate, `varta-kv-codec`: the value18 staging walk, the V8
+  serializer subset, Deno's key codec (byte-identical with `denokv_proto`
+  0.14.0, checked by a differential test), the read and commit descriptors
+  with Deno's limits, cursors and versionstamp text, the fair fuel of KV work,
+  the classification of a stored entry into the module's schema and the
+  top-down construction of the result (or the recoverable `TypeError`)
+  through the guest's own allocator. The native runtime calls it directly
+  (its checked JSON values and recoverable JSON errors build through the same
+  `build` and `guest` modules); the browser host runs the same crate compiled
+  to wasm32 (`varta-kv-codec-wasm`, a checked-in build with a source
+  fingerprint, `scripts/build-kv-codec.py`). Only the storage engine differs.
+- **Browser host.** The official browser host stores KV databases in the
+  origin private file system (OPFS) and implements the
+  [embedding contract](embedding.md#kv-storage-v38) with the
+  [mapping](embedding.md#browser-effect-mapping-official-host) there:
+  - one Varta KV container file per artifact,
+    `varta-kv/sha256-<digest>/kv.varta`, named from the artifact identity, so
+    two artifacts on one origin never share databases and a new artifact
+    version starts empty, as the native `varta-shell` keys
+    `<data-dir>/sha256-<digest>/`; a virtual path names one database inside
+    it; the guest never chooses an OPFS name;
+  - the dedicated Worker acquires the container's
+    `FileSystemSyncAccessHandle` before instantiation, only when the program
+    imports KV and a package `kv.read` grant is covered by the ceiling; its
+    reads, writes and flushes are synchronous, so the imports stay
+    synchronous host calls; a Worker without sync access handles refuses
+    such a program by name before instantiation (`browser KV storage needs
+    OPFS sync access handles …`), never as a silent denial;
+  - `kv.read` and `kv.write` are decided like native virtual file roots
+    (declared root, request and ceiling patterns, the broker's state) before
+    any storage is touched; `resolvePermissions` validates a KV path-pattern
+    ceiling like a native host ceiling's grant;
+  - the container (format version 1) is a write-ahead log behind two
+    checksummed header slots: a commit appends one record, flushes, then
+    writes the other header slot and flushes again, and reports `COMMITTED`
+    only after that last flush; a crash or a closed tab leaves the old or the
+    new state; the log is compacted into a checkpoint without changing the
+    logical state;
+  - the observable semantics are native's: per-database data versions
+    advance by a random step of 1 to 9 per commit and by one per expiry
+    collection (versionstamps keep Deno's format and order, not its values),
+    checks, `set`/`delete`/`sum`/`min`/`max` and expiry collection at a
+    writable open follow `denokv_sqlite` 0.14.0, including its partial
+    application of a commit whose `sum`, `min` or `max` meets a non-`KvU64`
+    value;
+  - failures are recoverable `kv::FAILED` with a named `TypeError`, never
+    `COMMITTED` and never a trap: a second tab or Worker holding the
+    container (native's "locked by another writer" text), a corrupt
+    container, an exhausted quota (nothing applied), storage the origin
+    cannot provide, and a header write whose outcome is unknown (the
+    container then refuses every operation until the application reloads).
+  Deviations: the lock is per artifact, so a second tab cannot open even a
+  read-only database; expired entries are collected at a writable open only,
+  never later in the instance; a commit never waits for a lock. For the
+  programs `scripts/test-browser-kv.mjs` compares with native (commits,
+  checks, sums, lists, a strict decode mismatch, a reload over stored data,
+  another artifact, a missing grant and a narrower ceiling) a browser run
+  equals the native run, logs and exact fair fuel, host calls, microtasks,
+  output bytes and turns included.
 - **Tests** never use production data: the Deno 2.9.4 fixture
   (`kv_cases/deno-2.9.4`, written in a throwaway container by its generator,
   with every row in hex) and the Deno 2.9.7 serializer probe

@@ -212,6 +212,121 @@ pub const SCHEMA_TABLES: [&str; 5] = [
 /// The columns of the `kv` table, in order.
 pub const KV_COLUMNS: [&str; 6] = ["k", "v", "v_encoding", "version", "seq", "expiration_ms"];
 
+/// A database file name may not start with this character (SQLite's
+/// special names such as `:memory:`).
+pub const RESERVED_NAME_PREFIX: char = ':';
+/// Nor end with the name of a sidecar SQLite keeps next to a database.
+pub const SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
+/// The failure of a stage past [`MAX_STAGED_BYTES`].
+pub const STAGED_TOO_LARGE: &str = "the staged keys and values of one KV operation are too large";
+
+/// The interface of the browser host's KV codec module: the shared value
+/// layer (`varta-kv-codec`) compiled to wasm32 (`varta-kv-codec-wasm`),
+/// which the Worker instantiates beside the guest. The Worker passes inputs
+/// through the module's arena and reads results from its output buffer; the
+/// module reaches guest memory, the guest allocator, the exception channel,
+/// the deadline and the fuel tank only through the imports below. All
+/// multi-byte fields are little-endian; byte strings are a `u32` length and
+/// the bytes.
+pub mod codec {
+    /// The module the codec imports its host functions from.
+    pub const IMPORT_MODULE: &str = "varta_kv_host";
+    /// `() -> i32`: the guest memory's byte length.
+    pub const IMPORT_MEMORY_SIZE: &str = "memory_size";
+    /// `(at, into, len) -> i32`: copy guest bytes into codec memory; 0 when
+    /// the guest range is outside memory.
+    pub const IMPORT_MEMORY_READ: &str = "memory_read";
+    /// `(at, from, len) -> i32`: copy codec bytes into guest memory.
+    pub const IMPORT_MEMORY_WRITE: &str = "memory_write";
+    /// `(at, len) -> i32`: zero guest bytes.
+    pub const IMPORT_MEMORY_ZERO: &str = "memory_zero";
+    /// `(len) -> i32`: a guest block from the module's allocation helper.
+    pub const IMPORT_ALLOCATE: &str = "allocate";
+    /// `(i64) -> i64`: the module's retention helper.
+    pub const IMPORT_RETAIN: &str = "retain";
+    /// `() -> i32`: 1 once the turn deadline has passed.
+    pub const IMPORT_DEADLINE: &str = "deadline_passed";
+    /// `(i64) -> ()`: charge fair fuel (the host traps when it runs out).
+    pub const IMPORT_CHARGE: &str = "charge";
+    /// `() -> i32`: 1 when the exception channel is canonical and clear.
+    pub const IMPORT_CHANNEL_READY: &str = "channel_ready";
+    /// `(i64) -> i32`: throw an Error cell through the exception channel.
+    pub const IMPORT_CHANNEL_THROW: &str = "channel_throw";
+    /// `(i32) -> i32`: set the result length global.
+    pub const IMPORT_RESULT_LENGTH: &str = "result_length";
+    /// Every import, in this order.
+    pub const IMPORTS: [&str; 11] = [
+        IMPORT_MEMORY_SIZE,
+        IMPORT_MEMORY_READ,
+        IMPORT_MEMORY_WRITE,
+        IMPORT_MEMORY_ZERO,
+        IMPORT_ALLOCATE,
+        IMPORT_RETAIN,
+        IMPORT_DEADLINE,
+        IMPORT_CHARGE,
+        IMPORT_CHANNEL_READY,
+        IMPORT_CHANNEL_THROW,
+        IMPORT_RESULT_LENGTH,
+    ];
+
+    /// `(len) -> ptr`: start a call: reset the arena and reserve `len`
+    /// input bytes.
+    pub const EXPORT_INPUT: &str = "kv_input";
+    /// `() -> ptr` and `() -> len` of the last call's output.
+    pub const EXPORT_OUTPUT: &str = "kv_output";
+    pub const EXPORT_OUTPUT_LENGTH: &str = "kv_output_len";
+    /// `() -> status`: input the module's `varta.static` and
+    /// `varta.intrinsics` section payloads (each a byte string, empty when
+    /// absent).
+    pub const EXPORT_CONFIGURE: &str = "kv_configure";
+    /// `(mode, kind, packed: i64) -> status`: stage a guest value. Output:
+    /// the fuel (`u64`), the staged bytes (`u32`) and the staged record.
+    pub const EXPORT_STAGE: &str = "kv_stage";
+    /// `() -> status`: input the staged table and the descriptor; output
+    /// the database id, then each range's start, end, limit (`u32`),
+    /// reverse flag (`u8`) and cursor prefix.
+    pub const EXPORT_PARSE_READ: &str = "kv_parse_read";
+    /// `() -> status`: input the range prefixes, then each entry's range
+    /// (`u32`), key, stored value length (`u32`) and versionstamp (ten
+    /// bytes); output the fuel (`u64`), then each entry's cursor and
+    /// versionstamp text.
+    pub const EXPORT_READ_ENTRIES: &str = "kv_read_entries";
+    /// `(now_ms: f64) -> status`: input the staged table and the
+    /// descriptor; output the database id, the fuel (`u64`), the checks
+    /// (key, presence flag, versionstamp) and the mutations (kind, key, then
+    /// a staged value for a set, a `u64` for sum, min and max, then the
+    /// presence flag and expiration milliseconds as `f64`).
+    pub const EXPORT_PARSE_COMMIT: &str = "kv_parse_commit";
+    /// `(key, schema_ptr, schema_len) -> status`: input the entry kind and,
+    /// for a value, its encoding byte and bytes; output the result handle
+    /// (`u64`).
+    pub const EXPORT_DECODE: &str = "kv_decode";
+    /// The codec's own memory.
+    pub const EXPORT_MEMORY: &str = "memory";
+
+    /// Call statuses.
+    pub const OK: u32 = 0;
+    /// A recoverable failure: the `kv_text` in the output.
+    pub const FAILED: u32 = 1;
+    /// A fatal failure: the trap message in the output.
+    pub const FATAL: u32 = 2;
+    /// Host work stopped at the turn deadline.
+    pub const DEADLINE: u32 = 3;
+
+    /// The key of a staged record: encoded key bytes, or the text of why
+    /// the value is no key.
+    pub const KEY_BYTES: u8 = 0;
+    pub const KEY_FAILURE: u8 = 1;
+    /// The entry a decode reads: none (the index named none), the key, or
+    /// the value.
+    pub const ENTRY_NONE: u8 = 0;
+    pub const ENTRY_KEY: u8 = 1;
+    pub const ENTRY_VALUE: u8 = 2;
+    /// An optional field's presence byte.
+    pub const ABSENT: u8 = 0;
+    pub const PRESENT: u8 = 1;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

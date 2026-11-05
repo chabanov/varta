@@ -632,8 +632,9 @@ const KV_SOURCE: &str = "export async function main(): Promise<void> {\
 }";
 
 /// The KV imports are admitted under v38: a program using every one gets a
-/// bundle whose Worker carries the KV host (the contract of a host without
-/// KV storage, `kv-store.mjs`), and the loader does not.
+/// bundle whose Worker carries the KV host (`kv-store.mjs`) and the
+/// checked-in codec module beside it, pinned in the descriptor; the loader
+/// carries no KV host. A program without KV imports gets no codec.
 #[test]
 fn bundle_admits_the_v38_kv_imports() {
     use varta_common::HostOperation as H;
@@ -656,6 +657,146 @@ fn bundle_admits_the_v38_kv_imports() {
     assert!(!worker.contains("import {registry}"));
     let loader = std::str::from_utf8(&bundle.files()["varta-host.js"]).unwrap();
     assert!(!loader.contains("createKvHost"));
+    let codec = include_bytes!("kv-codec.wasm");
+    assert_eq!(bundle.files()["varta-kv-codec.wasm"], codec);
+    assert!(loader.contains(&varta_runtime::artifact_identity(codec)));
+    let plain = BrowserArtifact::prepare(
+        &v38_source("export function main():void{console.log(1);}"),
+        None,
+    )
+    .unwrap()
+    .bundle()
+    .unwrap();
+    assert!(!plain.files().contains_key("varta-kv-codec.wasm"));
+}
+
+/// The checked-in codec module is the build of its sources: the FNV-1a
+/// fingerprint `scripts/build-kv-codec.py` records over the same files.
+#[test]
+fn kv_codec_matches_its_sources() {
+    const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+    const FNV_PRIME: u64 = 0x0100_0000_01B3;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for directory in ["crates/varta-kv-codec", "crates/varta-kv-codec-wasm"] {
+        let mut pending = vec![root.join(directory)];
+        while let Some(path) = pending.pop() {
+            for entry in std::fs::read_dir(&path).unwrap() {
+                let path = entry.unwrap().path();
+                let relative = path.strip_prefix(root.join(directory)).unwrap();
+                if relative
+                    .components()
+                    .any(|part| part.as_os_str() == "target")
+                {
+                    continue;
+                }
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    files.push(
+                        path.strip_prefix(&root)
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .replace('\\', "/"),
+                    );
+                }
+            }
+        }
+    }
+    files.extend(
+        [
+            "Cargo.toml",
+            "src/lib.rs",
+            "src/abi.rs",
+            "src/abi/static_region.rs",
+            "src/bigint.rs",
+            "src/exceptions.rs",
+            "src/fuel.rs",
+            "src/json/mod.rs",
+            "src/json/build.rs",
+            "src/json/descriptor.rs",
+            "src/json/error.rs",
+            "src/json/read.rs",
+            "src/json/scan.rs",
+            "src/json/schema.rs",
+            "src/kv.rs",
+            "src/limits.rs",
+            "src/memory.rs",
+            "src/text.rs",
+            "src/value.rs",
+            "src/value/error.rs",
+            "src/value/primitive.rs",
+            "src/value/reference.rs",
+            "src/value/vector.rs",
+            "src/value/dictionary.rs",
+            "src/function.rs",
+            "src/function/view.rs",
+        ]
+        .map(|file| format!("crates/varta-common/{file}")),
+    );
+    files.sort();
+    let mut value = FNV_OFFSET;
+    for name in &files {
+        let content = std::fs::read(root.join(name)).unwrap();
+        for byte in name.bytes().chain([0]).chain(content).chain([0]) {
+            value = (value ^ u64::from(byte)).wrapping_mul(FNV_PRIME);
+        }
+    }
+    let metadata: serde_json::Value = serde_json::from_str(include_str!("kv-codec.json")).unwrap();
+    assert_eq!(
+        metadata["sourceFingerprint"],
+        format!("{value:016x}"),
+        "kv-codec.wasm is stale; run scripts/build-kv-codec.py"
+    );
+    assert_eq!(
+        metadata["bytes"],
+        include_bytes!("kv-codec.wasm").len(),
+        "kv-codec.json does not describe kv-codec.wasm"
+    );
+}
+
+/// The registry's failure texts are the native ones (the shared value
+/// layer's `KvError`), with the path filled in.
+#[test]
+fn kv_texts_equal_the_native_texts() {
+    use varta_kv_codec::protocol::KvError;
+    let kv = &varta_common::browser::registry()["kv"];
+    let path = "/data/$&.kv";
+    let fill = |name: &str| {
+        kv["texts"][name]
+            .as_str()
+            .unwrap()
+            .replace(kv["pathPlaceholder"].as_str().unwrap(), path)
+    };
+    for (name, native) in [
+        ("notFound", KvError::not_found(path)),
+        ("locked", KvError::locked(path)),
+        ("readOnly", KvError::read_only(path)),
+        ("tooLate", KvError::too_late(path)),
+        ("invalidName", KvError::invalid_name(path)),
+        ("noFile", KvError::no_file(path)),
+        ("tooManyDatabases", KvError::too_many_databases()),
+    ] {
+        assert_eq!(fill(name), native.message, "{name}");
+    }
+    assert_eq!(
+        fill("unavailable").replace(kv["failurePlaceholder"].as_str().unwrap(), "x"),
+        KvError::unavailable(path, "x").message
+    );
+    let denial = kv["denialText"]
+        .as_str()
+        .unwrap()
+        .replace(kv["capabilityPlaceholder"].as_str().unwrap(), "kv.write")
+        .replace(kv["pathPlaceholder"].as_str().unwrap(), path);
+    assert_eq!(denial, KvError::denied("kv.write", path).message);
+    assert_eq!(
+        kv["texts"]["nonU64"]
+            .as_str()
+            .unwrap()
+            .replace(kv["operationPlaceholder"].as_str().unwrap(), "sum"),
+        "Failed to perform 'sum' mutation on a non-U64 value in the database"
+    );
 }
 
 /// KV admission is the native profile's import admission: every KV import
@@ -699,6 +840,10 @@ fn kv_denial_text_equals_the_native_runtime_denial() {
     let denial = kv["denialText"]
         .as_str()
         .unwrap()
+        .replace(
+            kv["capabilityPlaceholder"].as_str().unwrap(),
+            varta_common::kv::READ_CAPABILITY,
+        )
         .replace(kv["pathPlaceholder"].as_str().unwrap(), path);
     let output = varta_runtime::VartaRuntime::new()
         .run_wasm_bytes(&v38_source(KV_SOURCE).wasm, &[])
@@ -715,53 +860,37 @@ fn kv_denial_text_equals_the_native_runtime_denial() {
     );
 }
 
-/// This host offers no KV storage, so a manifest granting `kv.read` or
-/// `kv.write` is refused before any bundle exists, whether or not the
-/// program links the KV imports; the same program without a grant still
-/// builds (every open is then denied as natively without a grant).
+/// A manifest granting `kv.read` and `kv.write` builds: the browser host
+/// stores KV databases in OPFS. Every descriptor carries the rules the
+/// loader validates a KV permission ceiling with.
 #[test]
-fn bundle_refuses_kv_grants_the_browser_host_cannot_honour() {
+fn bundle_admits_kv_grants() {
     use varta_common::{CapabilityGrant, CapabilityValue, kv};
     let grant = |id: &str| CapabilityGrant {
         id: id.into(),
         value: CapabilityValue::PathGlobs(vec!["/data/*.kv".into()]),
     };
-    let without_kv = "export function main():void{console.log(1);}";
-    for (source, grants, named) in [
-        (
-            KV_SOURCE,
-            vec![grant(kv::READ_CAPABILITY), grant(kv::WRITE_CAPABILITY)],
-            format!("{}, {}", kv::READ_CAPABILITY, kv::WRITE_CAPABILITY),
-        ),
-        (
-            KV_SOURCE,
-            vec![grant(kv::WRITE_CAPABILITY)],
-            kv::WRITE_CAPABILITY.to_owned(),
-        ),
-        (
-            without_kv,
-            vec![grant(kv::READ_CAPABILITY)],
-            kv::READ_CAPABILITY.to_owned(),
-        ),
-    ] {
+    for source in [KV_SOURCE, "export function main():void{console.log(1);}"] {
         let mut artifact = v38_source(source);
-        artifact.manifest = Manifest::new(&grants);
+        artifact.manifest =
+            Manifest::new(&[grant(kv::READ_CAPABILITY), grant(kv::WRITE_CAPABILITY)]);
         artifact.manifest.abi_version = LanguageProfile::CheckedF64Utf16V38.host_abi();
         artifact.manifest.fs_roots = Some(varta_common::files::FsRoots::Names(vec!["data".into()]));
         artifact.manifest.validate_package().unwrap();
         let prepared = BrowserArtifact::prepare(&artifact, None).unwrap();
-        for result in [prepared.bundle(), prepared.development_bundle(&[])] {
-            let error = result.err().expect("a KV grant is refused");
+        for bundle in [
+            prepared.bundle().unwrap(),
+            prepared.development_bundle(&[]).unwrap(),
+        ] {
+            let loader = std::str::from_utf8(&bundle.files()["varta-host.js"]).unwrap();
+            assert!(loader.contains(&format!(
+                r#""maxPatterns":{}"#,
+                varta_common::MAX_GRANT_PATTERNS
+            )));
             assert_eq!(
-                error.to_string(),
-                crate::ProjectError::Usage(format!(
-                    "browser KV storage is not implemented; the manifest grants {named}"
-                ))
-                .to_string()
+                bundle.files().contains_key("varta-kv-codec.wasm"),
+                source == KV_SOURCE
             );
         }
     }
-    let ungranted = BrowserArtifact::prepare(&v38_source(KV_SOURCE), None).unwrap();
-    assert!(ungranted.bundle().is_ok());
-    assert!(ungranted.development_bundle(&[]).is_ok());
 }

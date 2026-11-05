@@ -5091,6 +5091,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "varta-kv-codec"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "num-bigint",
+ "serde_json",
+ "thiserror 2.0.21",
+ "varta-common",
+]
+
+[[package]]
+name = "varta-kv-codec-wasm"
+version = "0.1.0"
+dependencies = [
+ "varta-common",
+ "varta-kv-codec",
+]
+
+[[package]]
 name = "varta-launcher"
 version = "0.1.0"
 dependencies = [
@@ -5120,6 +5139,7 @@ dependencies = [
  "varta-artifact",
  "varta-common",
  "varta-compiler",
+ "varta-kv-codec",
  "varta-runtime",
 ]
 
@@ -5154,6 +5174,7 @@ dependencies = [
  "varta-common",
  "varta-compiler",
  "varta-intrinsics",
+ "varta-kv-codec",
  "varta-view",
  "wasmparser 0.241.2",
  "wasmtime",

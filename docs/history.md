@@ -7,6 +7,40 @@ statements in them are historical. Current status is in the
 [development plan](development-plan.md#status); current contracts are in
 [architecture.md](architecture.md).
 
+## 2026-11-05 — Browser KV storage on OPFS (wave 3, `w3-browser-kv-opfs`, scoped)
+
+The official browser host stores KV databases instead of denying every open,
+on the agreed design. The value layer moved out of `varta-runtime/src/kv`
+into the safe `no_std` crate `varta-kv-codec` (staging, the V8 codec, a Deno
+key codec replacing the `denokv_proto` calls, descriptors, cursors,
+versionstamp text, fair fuel, the decode classifier and the top-down
+construction of the result and of checked JSON's recoverable errors); the
+native runtime calls it, and `varta-kv-codec-wasm` compiles it to a
+checked-in wasm32 module with a source fingerprint
+(`scripts/build-kv-codec.py`). The Worker acquires one OPFS container per
+artifact through a sync access handle before instantiation and commits
+through a write-ahead record and two checksummed header slots; the loader
+validates KV ceilings; the browser build admits KV grants. Lead decisions on
+the design's open questions are recorded in the
+[development plan](development-plan.md#browser-kv-storage-agreed-design-wave-3).
+
+Scoped evidence on `wave3/w3-browser-kv-opfs`: `verify.py local varta-runtime
+--filter kv` (25, the fuel goldens included, unchanged) and the runtime
+`json` tests (160) whose shared builder and error publication moved; a
+differential test of the key codec against `denokv_proto` and of the
+expiration bound against `chrono`; `varta-kv-codec` (18), common `browser::`
+(7) and project `browser::` (49) tests, the boundary test, the documentation
+tests and 201 Node tests (container crash points at every write, flush and
+truncate, compaction included, quota, corruption, lock, WebKit's lock error,
+the Worker's refusal without sync access handles); the codec build
+reproduces its fingerprint; strict Clippy of the touched crates and of the
+wasm32 shim. `scripts/test-browser-kv.mjs` passed in local Chrome three
+times (logs and exact fuel, host calls, microtasks, output bytes and turns
+equal to native for the basic, reload, isolation, missing-grant and ceiling
+cases; two tabs, corrupt, full and aborted storage) and in Playwright WebKit
+(all but the quota case, which needs Chrome's DevTools quota override);
+Playwright Firefox did not launch here. The full gate is the wave lead's.
+
 ## 2026-11-04 — Aborted fetch closes its connection (wave 2, `w2-net-abort`, scoped)
 
 Pilot finding F2 fixed. An abort while the head was pending only
