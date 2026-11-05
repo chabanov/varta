@@ -1627,12 +1627,14 @@ fn geometry_and_text_inner(
     while let Some((id, depth)) = pending.pop() {
         inventory.node(depth)?;
         let node = tree.nodes.get(&id).ok_or(LayoutError::Unsupported(id))?;
+        // Hidden subtrees, a closed dialog's included, measure no text.
         if id != ROOT_NODE
             && matches!(node.content, Content::Element(_))
-            && tree
-                .computed_read(id, &layout_env)
-                .get(&CssProperty::Display)
-                .is_some_and(|value| value.eq_ignore_ascii_case("none"))
+            && (tree.closed_dialog(id)
+                || tree
+                    .computed_read(id, &layout_env)
+                    .get(&CssProperty::Display)
+                    .is_some_and(|value| value.eq_ignore_ascii_case("none")))
         {
             continue;
         }

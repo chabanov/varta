@@ -229,9 +229,10 @@ pub(crate) fn prepare(
         }
         let values = prepared.computed(id, &env);
         let hidden = id != varta_common::view::ROOT_NODE
-            && values
-                .get(&CssProperty::Display)
-                .is_some_and(|v| v.eq_ignore_ascii_case("none"));
+            && (tree.closed_dialog(id)
+                || values
+                    .get(&CssProperty::Display)
+                    .is_some_and(|v| v.eq_ignore_ascii_case("none")));
         // A fresh preparation has one owner, and computed reads do not clone it.
         if let Some(cache) = prepared.render_reads.0.as_mut().and_then(Arc::get_mut) {
             cache.values.insert(id, values);

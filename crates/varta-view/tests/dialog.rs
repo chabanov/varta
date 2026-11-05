@@ -79,6 +79,24 @@ fn closed_dialogs_render_nothing() {
     assert_eq!(image.hit_test(60.0, 60.0), Some(2));
 }
 
+/// A closed dialog's contents are never laid out or measured: content the
+/// native path refuses (here a transition) cannot block the page.
+#[test]
+fn a_closed_dialog_with_refused_content_does_not_block_the_page() {
+    let mut view = page(&[]);
+    let mut b = B::new();
+    b.create_element(20, Tag::Div)
+        .insert(4, 20, 0)
+        .set_style(20, P::TransitionDuration, "120ms")
+        .create_text(21, "hidden")
+        .insert(20, 21, 0);
+    view.commit(&b.finish(), false, &mut Denied).unwrap();
+    let image = view
+        .rasterize_with_text(SIDE, SIDE, &mut font(), TEXT_SIZE)
+        .unwrap();
+    assert_eq!(pixel(&image, 60, 60), [255, 0, 0]);
+}
+
 #[test]
 fn a_modal_dialog_and_its_backdrop_paint_above_every_page_layer() {
     let view = page(&[4]);

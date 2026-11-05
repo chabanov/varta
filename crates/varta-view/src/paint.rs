@@ -2781,9 +2781,11 @@ fn rasterize_inner_scoped(
             continue;
         }
         let properties = tree.computed_read(id, &env);
-        if properties
-            .get(&CssProperty::Display)
-            .is_some_and(|v| v.eq_ignore_ascii_case("none"))
+        // Hidden elements, a closed dialog included, paint nothing.
+        if tree.closed_dialog(id)
+            || properties
+                .get(&CssProperty::Display)
+                .is_some_and(|v| v.eq_ignore_ascii_case("none"))
         {
             continue;
         }
