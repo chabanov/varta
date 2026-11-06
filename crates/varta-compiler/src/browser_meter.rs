@@ -478,6 +478,9 @@ fn cost(op: &O<'_>) -> i64 {
 fn supported(op: &O<'_>) -> bool {
     // Reject proposals with additional variable work or exception/control
     // rules until their native cost model is implemented, never leave them free.
+    // Fixed-width SIMD costs one unit per operator like the scalar operators;
+    // relaxed SIMD, which the reference engine disables (its results differ
+    // between hosts), is rejected.
     if matches!(
         op,
         O::TableCopy { .. } | O::TableFill { .. } | O::TableInit { .. } | O::TableGrow { .. }
@@ -486,7 +489,7 @@ fn supported(op: &O<'_>) -> bool {
     }
     macro_rules! proposal {
         ($(@$proposal:ident $name:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident ($($ann:tt)*) )*) => {
-            match op { $(O::$name $({ $($arg: _),* })? => matches!(stringify!($proposal),"mvp"|"sign_extension"|"saturating_float_to_int"|"bulk_memory"|"multi_value"|"simd"|"relaxed_simd"|"tail_call"),)* _=>false }
+            match op { $(O::$name $({ $($arg: _),* })? => matches!(stringify!($proposal),"mvp"|"sign_extension"|"saturating_float_to_int"|"bulk_memory"|"multi_value"|"simd"|"tail_call"),)* _=>false }
         }
     }
     wasmparser::for_each_operator!(proposal)

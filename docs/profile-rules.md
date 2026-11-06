@@ -4205,6 +4205,38 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders).
   JSON test switch; `compile_generic` is the comparison path, not a
   production mode.
 
+### SIMD scanning (`simd128`)
+
+Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders),
+[embedding validation step 10](embedding.md#module-validation).
+
+- Emit SIMD only under `LanguageProfile::simd128()` (`decoders::simd`); v37
+  and earlier stay byte-for-byte unchanged and runtime validation
+  (`validate::simd`) rejects any `v128` type, global, local or instruction in
+  their modules. Never emit relaxed SIMD: the engine disables it and the
+  browser meter rejects it, because its results differ between hosts.
+- The vector steps live in `emit::decoders::simd` (narrowing, the string-stop
+  and whitespace masks) and the `simd` branches of `scan::text`,
+  `scan::whitespace` and `scan::decode`. A step only skips or copies units
+  the scalar path would skip or copy unchanged; the unit that stops a step
+  goes to the unchanged scalar checks, and units without a whole step of
+  input (or of decoded string) left take the scalar path. Keep every
+  outcome, error position, limit and fallback the scalar scanner's.
+- Classify narrowed units only with tests proven exact over all 65,536 units
+  (`simd::tests::narrowed_bytes_classify_every_unit_exactly`). A new vector
+  test needs the same proof.
+- `json_decoder_test_hook::scalar` (`Mode::Scalar`) builds the decoders with
+  the scalar scanner. `json_simd_tests` compares the `simd128`, scalar and
+  linked decoders on specials at every lane, whitespace runs, every
+  truncation, the JSON corpora and forced collection; keep it passing and
+  extend it with every new vector step. The browser meter tests
+  (`simd128_operators_match_native_fuel`,
+  `real_v38_simd_json_decoders_match_native`) keep SIMD fuel equal to
+  Wasmtime's one unit per operator.
+- The linked library (`varta-intrinsics`, built for plain wasm32 by
+  `scripts/build-intrinsics.py`) uses no SIMD; enabling `simd128` there would
+  change the code of every linked intrinsic and needs its own measurement.
+
 ### View protocol stream (`view_protocol()`)
 
 - The registry is `varta_common::view` (codes, operands, tables, CSS and

@@ -86,19 +86,23 @@ fn decoder_code_bytes_per_target() {
         ("Record<string, number>", "", "Record<string, number>"),
         ("number[]", "", "number[]"),
     ];
-    println!("| target | module bytes | generic bytes | code bytes added | decoder functions |");
+    println!(
+        "| target | module bytes | generic bytes | code bytes added | decoder functions | scalar-scanner code bytes added |"
+    );
     for (label, declarations, ty) in targets {
         let source = program(declarations, &[ty]);
         let decoded = compile(&source, decoder_hook::Mode::Production);
         let generic = compile(&source, decoder_hook::Mode::Generic);
         let (functions, size) = code(&decoded);
         let (generic_functions, generic_size) = code(&generic);
+        let (_, scalar_size) = code(&compile(&source, decoder_hook::Mode::Scalar));
         println!(
-            "| {label} | {} | {} | {} | {} |",
+            "| {label} | {} | {} | {} | {} | {} |",
             decoded.len(),
             generic.len(),
             size - generic_size,
-            functions - generic_functions
+            functions - generic_functions,
+            scalar_size - generic_size
         );
     }
 }

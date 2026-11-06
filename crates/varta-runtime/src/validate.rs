@@ -1,4 +1,6 @@
 use crate::RuntimeError;
+
+mod simd;
 use varta_common::abi;
 use wasmtime::{Engine, Module};
 
@@ -29,6 +31,7 @@ pub(crate) fn module_with(
         return Err(wasmtime::Error::msg("expected a bounded portable Wasm module").into());
     }
     let module = Module::new(engine, bytes)?;
+    simd::check(bytes, language.profile.is_some_and(|p| p.simd128()))?;
     for import in module.imports() {
         if probes && import.module() == varta_common::profile::MODULE {
             let probe_signature = matches!(

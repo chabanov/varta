@@ -150,6 +150,12 @@ pub mod json_decoder_test_hook {
             crate::compile_typescript_with_profile(source, profile)
         })
     }
+    /// Run `compile` (any compilation entry point) with decoders whose
+    /// scanner and string builder read one unit per step, without `simd128`:
+    /// the reference the vectorised scanner is compared against.
+    pub fn scalar<T>(compile: impl FnOnce() -> T) -> T {
+        with(Mode::Scalar, compile)
+    }
 }
 
 /// Test-only: compile v38 programs that import the listed linked operations

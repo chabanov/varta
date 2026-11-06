@@ -94,7 +94,7 @@ fn profile(profile: LanguageProfile) -> Value {
         "toolEntries":!profile.binary64(),"httpVersion":http::version_for(profile),
         "exceptionChannel":profile.exceptions(),"exceptionVersion":exceptions,
         "frames":function::admission::frame_catalog_version(profile).map(|catalog|json!({"catalog":catalog})),
-        "scheduler":profile.promises(),"fairFuel":profile.fair_fuel(),
+        "scheduler":profile.promises(),"fairFuel":profile.fair_fuel(),"simd128":profile.simd128(),
         "schedulerLimits":{"held":profile.limits().data.pending_continuations,
             "timers":profile.limits().data.pending_timers,
             "timerError":if profile.limits().data.pending_timers==crate::scheduler::MAX_PENDING_TIMERS {crate::scheduler::SchedulerError::TimerBudget.to_string()}else{crate::scheduler::SchedulerError::TimerLimit{limit:profile.limits().data.pending_timers}.to_string()},

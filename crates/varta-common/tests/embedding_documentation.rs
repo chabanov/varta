@@ -205,6 +205,7 @@ fn profiles() -> String {
             "Exception channel",
             "Frames",
             "Scheduler",
+            "SIMD",
             "Admitted imports",
         ],
         language::SUPPORTED_PROFILES.iter().map(|&profile| {
@@ -252,6 +253,12 @@ fn profiles() -> String {
                 exceptions,
                 frames,
                 if profile.promises() { "yes" } else { "—" }.to_owned(),
+                if profile.simd128() {
+                    "`simd128`"
+                } else {
+                    "—"
+                }
+                .to_owned(),
                 imports.to_string(),
             ]
         }),

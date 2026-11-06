@@ -658,6 +658,19 @@ impl LanguageProfile {
     pub fn json_decoders(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, SIMD stream: a module may contain fixed-width WebAssembly
+    /// SIMD (`simd128`, WebAssembly 2.0: `v128` values and their
+    /// instructions), which its compiled JSON decoders use to scan string
+    /// bodies and whitespace sixteen units per step, so a host of this
+    /// profile must support `simd128`. Every SIMD instruction costs one fuel
+    /// unit like any other operator. Relaxed SIMD, whose results differ
+    /// between hosts, is never admitted, and modules of earlier profiles
+    /// must contain no SIMD at all. Admits no syntax and changes no host ABI,
+    /// value layout or schema version.
+    #[must_use]
+    pub fn simd128(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Whether this profile links `operation` into the guest module instead of
     /// importing it: a v38 module never imports a [`crate::HostOperation::linked`]
     /// operation, and runtime validation rejects one that does.

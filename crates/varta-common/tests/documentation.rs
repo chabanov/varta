@@ -21,6 +21,7 @@ fn version_matrix() -> String {
             exception,
             format!("`{}`", profile.json_stringify().name()),
             format!("`{}`", profile.json_parse().name()),
+            simd(profile).to_owned(),
         ]);
     }
     table(
@@ -31,9 +32,20 @@ fn version_matrix() -> String {
             "Exception export",
             "JSON stringify",
             "JSON parse",
+            "Wasm SIMD",
         ],
         rows,
     )
+}
+
+/// The fixed-width SIMD a module of `profile` may contain (and its hosts
+/// must support).
+fn simd(profile: language::LanguageProfile) -> &'static str {
+    if profile.simd128() {
+        "`simd128`"
+    } else {
+        "—"
+    }
 }
 
 fn launcher_summary() -> String {

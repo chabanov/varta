@@ -312,6 +312,18 @@ Passing validation is not proof of provenance or authorization.
    `http_service` import occur together or not at all. A `varta.functions`
    catalog and the `varta_resume` dispatcher follow
    [Function and frame catalogs](#function-and-frame-catalogs).
+10. **SIMD.** A module of a profile whose **SIMD** column in the
+   [profile table](#profiles) lists `simd128` may contain fixed-width
+   WebAssembly SIMD (WebAssembly 2.0: `v128` values and their instructions;
+   v38's compiled JSON decoders scan with it). A host of such a profile MUST
+   support `simd128`: a host whose engine lacks it cannot run that profile
+   and MUST refuse its modules before instantiation, never substitute a
+   scalar build. Each SIMD instruction costs one fuel unit, like every other
+   operator ([budget guarantees](#budget-guarantees)). A module of any other
+   profile, and unspecified generic Wasm, MUST be rejected when it holds a
+   `v128` parameter, result, global or local or any SIMD instruction. Relaxed
+   SIMD (whose results differ between hosts) MUST be rejected under every
+   profile.
 
 ### Module limits
 
@@ -344,49 +356,49 @@ Each profile fixes one host ABI, one value ABI and the physical encodings below.
 profile may import.
 
 <!-- generated:embedding-profiles:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
-| Profile | Host ABI | Value ABI | Numbers | Strings | Tool / HTTP entry points | Exception channel | Frames | Scheduler | Admitted imports |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `checked-i32-utf8-v1` | 1 | 2 | i32 | UTF-8 | yes / v1 | — | — | — | 15 |
-| `checked-f64-utf8-v1` | 2 | 3 | binary64 | UTF-8 | no / no | — | — | — | 17 |
-| `checked-f64-utf8-v2` | 3 | 4 | binary64 | UTF-8 | no / no | — | — | — | 18 |
-| `checked-f64-utf16-v1` | 4 | 5 | binary64 | UTF-16LE | no / no | — | — | — | 20 |
-| `checked-f64-utf16-v2` | 5 | 6 | binary64 | UTF-16LE | no / no | — | — | — | 26 |
-| `checked-f64-utf16-v3` | 6 | 7 | binary64 | UTF-16LE | no / no | — | — | — | 26 |
-| `checked-f64-utf16-v4` | 7 | 8 | binary64 | UTF-16LE | no / no | — | — | — | 27 |
-| `checked-f64-utf16-v5` | 8 | 8 | binary64 | UTF-16LE | no / no | — | — | — | 27 |
-| `checked-f64-utf16-v6` | 9 | 9 | binary64 | UTF-16LE | no / no | — | — | — | 27 |
-| `checked-f64-utf16-v7` | 10 | 9 | binary64 | UTF-16LE | no / no | pending/value only | — | — | 27 |
-| `checked-f64-utf16-v8` | 11 | 10 | binary64 | UTF-16LE | no / no | `varta.exception.version` = 2 | — | — | 28 |
-| `checked-f64-utf16-v9` | 12 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v10` | 13 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v11` | 14 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v12` | 15 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v13` | 16 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v14` | 17 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 28 |
-| `checked-f64-utf16-v15` | 18 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 29 |
-| `checked-f64-utf16-v16` | 19 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 49 |
-| `checked-f64-utf16-v17` | 20 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 50 |
-| `checked-f64-utf16-v18` | 21 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 50 |
-| `checked-f64-utf16-v19` | 22 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 51 |
-| `checked-f64-utf16-v20` | 23 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 52 |
-| `checked-f64-utf16-v21` | 24 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 53 |
-| `checked-f64-utf16-v22` | 25 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 56 |
-| `checked-f64-utf16-v23` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v24` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v25` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v26` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v27` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 58 |
-| `checked-f64-utf16-v28` | 27 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | 68 |
-| `checked-f64-utf16-v29` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | 75 |
-| `checked-f64-utf16-v30` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | 75 |
-| `checked-f64-utf16-v31` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | 75 |
-| `checked-f64-utf16-v32` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v5` = 5 | — | — | 75 |
-| `checked-f64-utf16-v33` | 29 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v5` = 5 | `varta_resume`, catalog 2 | — | 75 |
-| `checked-f64-utf16-v34` | 30 | 15 | binary64 | UTF-16LE | no / no | `varta.exception.version_v6` = 6 | `varta_resume`, catalog 2 | yes | 80 |
-| `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no / no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | 80 |
-| `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 84 |
-| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | 93 |
-| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | 52 |
+| Profile | Host ABI | Value ABI | Numbers | Strings | Tool / HTTP entry points | Exception channel | Frames | Scheduler | SIMD | Admitted imports |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `checked-i32-utf8-v1` | 1 | 2 | i32 | UTF-8 | yes / v1 | — | — | — | — | 15 |
+| `checked-f64-utf8-v1` | 2 | 3 | binary64 | UTF-8 | no / no | — | — | — | — | 17 |
+| `checked-f64-utf8-v2` | 3 | 4 | binary64 | UTF-8 | no / no | — | — | — | — | 18 |
+| `checked-f64-utf16-v1` | 4 | 5 | binary64 | UTF-16LE | no / no | — | — | — | — | 20 |
+| `checked-f64-utf16-v2` | 5 | 6 | binary64 | UTF-16LE | no / no | — | — | — | — | 26 |
+| `checked-f64-utf16-v3` | 6 | 7 | binary64 | UTF-16LE | no / no | — | — | — | — | 26 |
+| `checked-f64-utf16-v4` | 7 | 8 | binary64 | UTF-16LE | no / no | — | — | — | — | 27 |
+| `checked-f64-utf16-v5` | 8 | 8 | binary64 | UTF-16LE | no / no | — | — | — | — | 27 |
+| `checked-f64-utf16-v6` | 9 | 9 | binary64 | UTF-16LE | no / no | — | — | — | — | 27 |
+| `checked-f64-utf16-v7` | 10 | 9 | binary64 | UTF-16LE | no / no | pending/value only | — | — | — | 27 |
+| `checked-f64-utf16-v8` | 11 | 10 | binary64 | UTF-16LE | no / no | `varta.exception.version` = 2 | — | — | — | 28 |
+| `checked-f64-utf16-v9` | 12 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 28 |
+| `checked-f64-utf16-v10` | 13 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 28 |
+| `checked-f64-utf16-v11` | 14 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 28 |
+| `checked-f64-utf16-v12` | 15 | 11 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 28 |
+| `checked-f64-utf16-v13` | 16 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 28 |
+| `checked-f64-utf16-v14` | 17 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 28 |
+| `checked-f64-utf16-v15` | 18 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 29 |
+| `checked-f64-utf16-v16` | 19 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 49 |
+| `checked-f64-utf16-v17` | 20 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 50 |
+| `checked-f64-utf16-v18` | 21 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 50 |
+| `checked-f64-utf16-v19` | 22 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 51 |
+| `checked-f64-utf16-v20` | 23 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 52 |
+| `checked-f64-utf16-v21` | 24 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 53 |
+| `checked-f64-utf16-v22` | 25 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 56 |
+| `checked-f64-utf16-v23` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 58 |
+| `checked-f64-utf16-v24` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 58 |
+| `checked-f64-utf16-v25` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 58 |
+| `checked-f64-utf16-v26` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 58 |
+| `checked-f64-utf16-v27` | 26 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 58 |
+| `checked-f64-utf16-v28` | 27 | 12 | binary64 | UTF-16LE | no / no | `varta.exception.version_v3` = 3 | — | — | — | 68 |
+| `checked-f64-utf16-v29` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | — | 75 |
+| `checked-f64-utf16-v30` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | — | 75 |
+| `checked-f64-utf16-v31` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v4` = 4 | — | — | — | 75 |
+| `checked-f64-utf16-v32` | 28 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v5` = 5 | — | — | — | 75 |
+| `checked-f64-utf16-v33` | 29 | 13 | binary64 | UTF-16LE | no / no | `varta.exception.version_v5` = 5 | `varta_resume`, catalog 2 | — | — | 75 |
+| `checked-f64-utf16-v34` | 30 | 15 | binary64 | UTF-16LE | no / no | `varta.exception.version_v6` = 6 | `varta_resume`, catalog 2 | yes | — | 80 |
+| `checked-f64-utf16-v35` | 31 | 16 | binary64 | UTF-16LE | no / no | `varta.exception.version_v7` = 7 | `varta_resume`, catalog 3 | yes | — | 80 |
+| `checked-f64-utf16-v36` | 32 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | — | 84 |
+| `checked-f64-utf16-v37` | 33 | 17 | binary64 | UTF-16LE | no / no | `varta.exception.version_v8` = 8 | `varta_resume`, catalog 3 | yes | — | 93 |
+| `checked-f64-utf16-v38` | 34 | 18 | binary64 | UTF-16LE | no / v2 | `varta.exception.version_v9` = 9 | `varta_resume`, catalog 3 | yes | `simd128` | 52 |
 <!-- generated:embedding-profiles:end -->
 
 Acceptance details per profile (used by validation steps 3, 7 and 9):
@@ -3754,6 +3766,14 @@ A host that runs Varta modules MUST:
 | Host calls, output | Counted per call | Counted per call (enforceable) |
 | Per-turn renewal (v38) | Fuel, host calls and microtasks renewed per turn; deadline per turn in application instances | Renewable at turn boundaries the host itself drives; fuel only with the metering transform |
 | Stack | Engine stack limit, trap | Engine stack limit, `RangeError`, treat as a trap |
+
+Fuel counts every operator as Wasmtime's default operator costs do: one unit
+per instruction, `v128` (SIMD) instructions included, none for `nop`, `drop`,
+`block`, `loop`, `unreachable`, `return`, `else` and `end`, plus bulk-memory
+work per byte. The metering transform charges the same: a v38 module's
+vectorised JSON scanning costs the same fuel on a browser as on the reference
+host (`simd128_operators_match_native_fuel`,
+`real_v38_simd_json_decoders_match_native` in `browser_meter`).
 
 ## What is unstable
 

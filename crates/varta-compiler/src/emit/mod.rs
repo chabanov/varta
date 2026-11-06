@@ -1307,6 +1307,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             powers: *powers,
             collect: (decoders::hook::mode() == decoders::hook::Mode::Collecting)
                 .then(|| helpers[&strings::Helper::Collect]),
+            simd: decoders::simd(program.types.profile),
         };
         for (label, body) in decoders::bodies(plan, context)? {
             if body.byte_len() > limits.function_body_bytes {

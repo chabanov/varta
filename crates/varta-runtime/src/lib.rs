@@ -531,6 +531,10 @@ impl VartaRuntime {
             .consume_fuel(true)
             .epoch_interruption(true)
             .memory_init_cow(false);
+        // Fixed-width SIMD (`simd128`) is admitted where the profile admits
+        // it (`LanguageProfile::simd128`, checked in validation); relaxed
+        // SIMD, whose results may differ between hosts, never is.
+        config.wasm_simd(true).wasm_relaxed_simd(false);
         // This configuration only enables supported built-in engine settings.
         let engine = Engine::new(&config).expect("valid built-in Wasmtime configuration");
         Self { engine }
@@ -986,6 +990,8 @@ impl RunReport {
 mod direct_json_tests;
 #[cfg(test)]
 mod json_decoder_tests;
+#[cfg(test)]
+mod json_simd_tests;
 #[cfg(test)]
 mod linked_footprint_tests;
 #[cfg(test)]
