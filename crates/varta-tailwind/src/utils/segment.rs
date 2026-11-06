@@ -42,10 +42,8 @@ pub fn segment(input: &str, separator: char) -> Vec<String> {
                     });
                 }
             }
-            ')' | ']' | '}' => {
-                if stack.last() == Some(&c) {
-                    stack.pop();
-                }
+            ')' | ']' | '}' if stack.last() == Some(&c) => {
+                stack.pop();
             }
             _ => {}
         }

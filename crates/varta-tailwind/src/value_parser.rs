@@ -61,7 +61,9 @@ pub fn parse(input: &str) -> Vec<ValueNode> {
         let mut nodes = root;
         for &index in stack {
             match &mut nodes[index] {
-                ValueNode::Function { nodes: children, .. } => nodes = children,
+                ValueNode::Function {
+                    nodes: children, ..
+                } => nodes = children,
                 // Invariant: the stack only records function nodes.
                 _ => unreachable!("value parser stack points at a function"),
             }

@@ -5238,6 +5238,7 @@ dependencies = [
 name = "varta-tailwind"
 version = "0.1.0"
 dependencies = [
+ "ryu-js",
  "serde_json",
  "thiserror 2.0.21",
  "varta-common",

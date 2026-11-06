@@ -15,7 +15,10 @@ pub enum ContextValue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     /// A style rule: `selector { nodes }`.
-    Rule { selector: String, nodes: Vec<Node> },
+    Rule {
+        selector: String,
+        nodes: Vec<Node>,
+    },
     /// An at-rule; `name` keeps its `@` (e.g. `@media`).
     AtRule {
         name: String,
@@ -174,6 +177,9 @@ mod tests {
             split_at_rule_prelude("@supports(display:grid)"),
             ("@supports".into(), "(display:grid)".into())
         );
-        assert_eq!(split_at_rule_prelude("@slot"), ("@slot".into(), String::new()));
+        assert_eq!(
+            split_at_rule_prelude("@slot"),
+            ("@slot".into(), String::new())
+        );
     }
 }

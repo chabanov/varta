@@ -15,6 +15,10 @@ license.workspace = true
 # when it would accept it), so the answer is the engine's, not a guess.
 varta-common = { path = "../varta-common" }
 thiserror.workspace = true
+# ECMAScript Number::toString (already locked through the runtime): Tailwind
+# formats computed numbers (opacity percentages, fractions) with JavaScript
+# semantics, and the output must be byte-identical.
+ryu-js.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

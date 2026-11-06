@@ -6,13 +6,11 @@ use std::fmt::Write as _;
 #[must_use]
 pub fn escape(value: &str) -> String {
     let mut result = String::with_capacity(value.len());
-    let mut chars = value.chars();
     let first = value.chars().next();
     if value.chars().count() == 1 && first == Some('-') {
         return "\\-".to_owned();
     }
-    let mut index = 0usize;
-    while let Some(c) = chars.next() {
+    for (index, c) in value.chars().enumerate() {
         let code = c as u32;
         if code == 0 {
             result.push('\u{FFFD}');
@@ -29,7 +27,6 @@ pub fn escape(value: &str) -> String {
             result.push('\\');
             result.push(c);
         }
-        index += 1;
     }
     result
 }

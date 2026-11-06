@@ -12,11 +12,11 @@
 //!
 //! JavaScript configuration (`@plugin`, `@config`) is rejected.
 pub mod ast;
-pub mod theme;
-pub mod utils;
-pub mod value_parser;
 pub mod canonical;
 pub mod css_parser;
 pub mod optimize;
 pub mod printer;
 pub mod selector_parser;
+pub mod theme;
+pub mod utils;
+pub mod value_parser;

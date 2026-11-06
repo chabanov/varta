@@ -32,7 +32,10 @@ const IGNORED_THEME_KEYS: &[(&str, &[&str])] = &[
             "--text-underline-offset",
         ],
     ),
-    ("--grid-column", &["--grid-column-start", "--grid-column-end"]),
+    (
+        "--grid-column",
+        &["--grid-column-start", "--grid-column-end"],
+    ),
     ("--grid-row", &["--grid-row-start", "--grid-row-end"]),
 ];
 
@@ -45,8 +48,7 @@ fn ignored_for(namespace: &str) -> &'static [&'static str] {
 
 fn is_ignored_theme_key(key: &str, namespace: &str) -> bool {
     ignored_for(namespace).iter().any(|ignored| {
-        key == *ignored
-            || (key.starts_with(ignored) && key[ignored.len()..].starts_with('-'))
+        key == *ignored || (key.starts_with(ignored) && key[ignored.len()..].starts_with('-'))
     })
 }
 
@@ -207,7 +209,9 @@ impl Theme {
     #[must_use]
     pub fn get_options(&self, key: &str) -> u8 {
         let key = unescape(&self.unprefix_key(key));
-        self.values.get(&key).map_or(options::NONE, |(_, v)| v.options)
+        self.values
+            .get(&key)
+            .map_or(options::NONE, |(_, v)| v.options)
     }
 
     #[must_use]
@@ -311,7 +315,11 @@ impl Theme {
 
     /// Resolve a candidate value to its raw theme value.
     #[must_use]
-    pub fn resolve_value(&self, candidate_value: Option<&str>, namespaces: &[&str]) -> Option<String> {
+    pub fn resolve_value(
+        &self,
+        candidate_value: Option<&str>,
+        namespaces: &[&str],
+    ) -> Option<String> {
         let key = self.resolve_key(candidate_value, namespaces)?;
         self.values.get(&key).map(|(_, v)| v.value.clone())
     }
@@ -390,8 +398,12 @@ mod tests {
     fn map_order_and_resolution() {
         let mut theme = Theme::new();
         theme.add("--color-red-500", "red", options::NONE).unwrap();
-        theme.add("--color-blue-500", "blue", options::NONE).unwrap();
-        theme.add("--color-red-500", "crimson", options::NONE).unwrap();
+        theme
+            .add("--color-blue-500", "blue", options::NONE)
+            .unwrap();
+        theme
+            .add("--color-red-500", "crimson", options::NONE)
+            .unwrap();
         assert_eq!(
             theme.keys().collect::<Vec<_>>(),
             vec!["--color-red-500", "--color-blue-500"]
@@ -412,7 +424,10 @@ mod tests {
         theme.add("--text-color-x", "red", options::NONE).unwrap();
         theme.add("--leading-1_5", "1.5", options::NONE).unwrap();
         assert_eq!(theme.keys_in_namespaces(&["--text"]), vec!["sm"]);
-        assert_eq!(theme.resolve(Some("color-x"), &["--text"], options::NONE), None);
+        assert_eq!(
+            theme.resolve(Some("color-x"), &["--text"], options::NONE),
+            None
+        );
         assert_eq!(
             theme.resolve_value(Some("1.5"), &["--leading"]),
             Some("1.5".into())
