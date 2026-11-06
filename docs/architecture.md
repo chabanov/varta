@@ -14455,7 +14455,8 @@ until it runs this engine through Wasm (development plan, K8 T3).
   (§3.3) is required unless the syntax is universal and must be
   computationally independent (§4.1: no `var()`, font- or viewport-relative
   unit or `currentcolor`). Registrations are document-wide, the last one in
-  sheet order winning (§2.1, §2.8). A registered property starts at its
+  sheet order winning (§2.1, §2.8), and at most
+  `stylesheet::MAX_REGISTERED_PROPERTIES` (512) across all sheets. A registered property starts at its
   initial value, a non-inheriting one is reset to it at every element, and a
   value that does not match the syntax after substitution is invalid at
   computed-value time and computes as `unset` (§2.7): the parent's value

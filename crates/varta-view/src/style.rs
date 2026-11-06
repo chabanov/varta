@@ -643,6 +643,7 @@ fn layer_ranks(
     #[derive(Default)]
     struct Node {
         children: Vec<((Option<u32>, LayerName), Node)>,
+        index: BTreeMap<(Option<u32>, LayerName), usize>,
     }
     let key = |sheet: u32, path: &[LayerName]| -> LayerKey {
         path.iter()
@@ -657,9 +658,10 @@ fn layer_ranks(
         for path in layers {
             let mut node = &mut root;
             for segment in key(*sheet, path) {
-                let position = match node.children.iter().position(|(s, _)| *s == segment) {
-                    Some(position) => position,
+                let position = match node.index.get(&segment) {
+                    Some(position) => *position,
                     None => {
+                        node.index.insert(segment.clone(), node.children.len());
                         node.children.push((segment, Node::default()));
                         node.children.len() - 1
                     }

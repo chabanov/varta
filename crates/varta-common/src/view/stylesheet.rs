@@ -22,6 +22,9 @@ pub use media::{Media, MediaQueryList};
 pub const REM_PIXELS: f64 = 16.0;
 /// Nesting depth of `@media` and `@layer` blocks.
 pub const MAX_NESTING: usize = 8;
+/// `@property` registrations of a document (all sheets together): the
+/// native resolver seeds every one of them into each element's scope.
+pub const MAX_REGISTERED_PROPERTIES: usize = 512;
 
 /// A declared name: a subset property or a custom property (`--name`).
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +267,8 @@ struct Parser<'a> {
     allowance: usize,
     rules: Vec<Rule>,
     layers: Vec<Vec<LayerName>>,
+    /// Each declared layer path's index in `layers`.
+    layer_index: std::collections::BTreeMap<Vec<LayerName>, usize>,
     anonymous: usize,
     properties: Vec<Registration>,
 }
@@ -422,14 +427,13 @@ impl Parser<'_> {
     /// Declare a layer path and every prefix, in order (Cascade 5 §6.4.3).
     fn declare(&mut self, path: &[LayerName]) -> usize {
         for length in 1..=path.len() {
-            if !self.layers.iter().any(|known| known == &path[..length]) {
+            if !self.layer_index.contains_key(&path[..length]) {
+                self.layer_index
+                    .insert(path[..length].to_vec(), self.layers.len());
                 self.layers.push(path[..length].to_vec());
             }
         }
-        self.layers
-            .iter()
-            .position(|known| known == path)
-            .unwrap_or(0)
+        self.layer_index.get(path).copied().unwrap_or(0)
     }
     fn layer_rule(&mut self, context: &Context) -> Parsed<()> {
         // Layers inside conditional rules are outside the subset.
@@ -568,6 +572,9 @@ impl Parser<'_> {
             }
             (Syntax::Grammar(_), None) => return self.fail_at(start, Violation::Property),
         };
+        if self.properties.len() >= MAX_REGISTERED_PROPERTIES {
+            return self.fail_at(start, Violation::WorkLimit);
+        }
         self.properties.push(Registration {
             name,
             syntax,
@@ -941,6 +948,7 @@ pub fn parse_with_work_limit(
         allowance,
         rules: Vec::new(),
         layers: Vec::new(),
+        layer_index: std::collections::BTreeMap::new(),
         anonymous: 0,
         properties: Vec::new(),
     };

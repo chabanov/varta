@@ -1911,6 +1911,19 @@ impl Apply<'_, '_, '_> {
         if work > varta_common::view::DRAFT_MAX_STYLESHEET_WORK {
             return Err(self.fail(Violation::StylesheetWorkLimit));
         }
+        // Registrations are document-wide and seed every scope: bound them
+        // across all sheets.
+        let registered = self
+            .tree
+            .sheets
+            .iter()
+            .filter(|(id, _)| **id != sheet)
+            .map(|(_, other)| other.index.properties.len())
+            .sum::<usize>()
+            .saturating_add(parsed.properties.len());
+        if registered > varta_common::view::stylesheet::MAX_REGISTERED_PROPERTIES {
+            return Err(self.fail(Violation::StylesheetWorkLimit));
+        }
         let index = style::RuleIndex::parsed(&parsed);
         if let Some(old) = self.tree.sheets.get(&sheet) {
             self.tree.rule_index.remove(sheet, &old.index);

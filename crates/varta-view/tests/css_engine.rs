@@ -256,3 +256,56 @@ fn forbidden_constructs_cannot_hide_behind_escapes_or_comments() {
         );
     }
 }
+
+#[test]
+fn non_inherited_registrations_reset_at_every_level_and_are_bounded() {
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(
+        1,
+        "@property --local { syntax: \"<length>\"; inherits: false; initial-value: 1px }
+         .g { --local: 9px; padding: var(--local) } .c { padding: var(--local) }",
+    )
+    .create_element(2, Tag::Div)
+    .set_class(2, "g")
+    .insert(1, 2, 0)
+    .create_element(3, Tag::Div)
+    .insert(2, 3, 0)
+    .create_element(4, Tag::Div)
+    .set_class(4, "c")
+    .insert(3, 4, 0);
+    commit(&mut view, &b);
+    let tree = view.snapshot()["tree"].clone();
+    assert_eq!(tree["children"][0]["style"]["padding"], "9px");
+    assert_eq!(
+        tree["children"][0]["children"][0]["children"][0]["style"]["padding"],
+        "1px"
+    );
+    // Registrations are bounded per document, across sheets.
+    let limit = varta_common::view::stylesheet::MAX_REGISTERED_PROPERTIES;
+    let rules = |from: usize, count: usize| {
+        (from..from + count)
+            .map(|i| format!("@property --p{i} {{ syntax: \"*\"; inherits: false }}"))
+            .collect::<String>()
+    };
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(1, &rules(0, limit / 2));
+    commit(&mut view, &b);
+    let mut b = B::new();
+    b.stylesheet(2, &rules(limit, limit / 2 + 1));
+    assert!(view.commit(&b.finish(), false, &mut Deny).is_err());
+    // Many layer names parse in bounded time.
+    let layers = (0..10_000)
+        .map(|i| format!("l{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let started = std::time::Instant::now();
+    let mut b = B::new();
+    b.stylesheet(
+        3,
+        &format!("@layer {layers}; @layer l9999 {{ .x {{ color: #000 }} }}"),
+    );
+    commit(&mut view, &b);
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}

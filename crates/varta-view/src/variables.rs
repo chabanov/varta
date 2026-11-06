@@ -15,8 +15,12 @@ pub(crate) struct Scope<'a> {
     /// guaranteed-invalid value).
     initial: BTreeMap<&'a str, Option<usize>>,
     /// The parent's values of the registered properties that do not
-    /// inherit, saved by [`Scope::enter`] for `inherit`.
+    /// inherit and that the parent declared, saved by [`Scope::enter`] for
+    /// `inherit` (every other one has its initial value there).
     parent: BTreeMap<&'a str, Option<usize>>,
+    /// The registered properties that do not inherit and that the current
+    /// element declared: the next element resets exactly these.
+    local: Vec<&'a str>,
 }
 #[derive(Clone)]
 enum Piece<'a> {
@@ -242,24 +246,24 @@ impl<'a> Scope<'a> {
     /// Enter an element: a registered property that does not inherit takes
     /// its initial value (§3.2), keeping the parent's for `inherit`.
     pub(crate) fn enter(&mut self) {
-        let Some(registered) = self.registered else {
-            return;
-        };
         self.parent.clear();
-        for (name, registration) in registered {
-            if !registration.inherits {
-                let name = name.as_str();
-                let parent = self.values.get(name).copied().flatten();
-                self.parent.insert(name, parent);
-                self.values
-                    .insert(name, self.initial.get(name).copied().flatten());
-            }
+        for name in std::mem::take(&mut self.local) {
+            let parent = self.values.get(name).copied().flatten();
+            self.parent.insert(name, parent);
+            self.values
+                .insert(name, self.initial.get(name).copied().flatten());
         }
+    }
+    fn non_inherited(&self, name: &str) -> bool {
+        self.registered
+            .and_then(|registered| registered.get(name))
+            .is_some_and(|registration| !registration.inherits)
     }
     /// The inherited value of `name`: the parent's.
     fn inherited(&self, name: &str) -> Option<usize> {
         match self.parent.get(name) {
             Some(parent) => *parent,
+            None if self.non_inherited(name) => self.initial.get(name).copied().flatten(),
             None => self.values.get(name).copied().flatten(),
         }
     }
@@ -436,6 +440,11 @@ impl<'a> Scope<'a> {
             }
             debug_assert!(active.is_empty());
             debug_assert!(results.is_empty());
+        }
+        for name in &names {
+            if self.non_inherited(name) {
+                self.local.push(*name);
+            }
         }
         self.values.extend(names.into_iter().zip(resolved));
     }
