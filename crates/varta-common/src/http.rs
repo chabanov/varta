@@ -83,6 +83,21 @@ pub const CONNECTION_LIFETIME_SECONDS: u64 = 600;
 pub const STREAM_IDLE_SECONDS: u64 = crate::net::READ_INACTIVITY_SECONDS;
 pub const STREAM_LIFETIME_SECONDS: u64 = 3600;
 pub const STREAM_CHUNK_BYTES: usize = crate::net::MAX_CHUNK_BYTES;
+/// A v2 Web `Request` service: the most bytes one request body may stream
+/// to the guest. The host holds at most one received frame of it at a
+/// time; the guest reads it chunk by chunk.
+pub const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// A v2 Web `Request` service: the longest wait for the next request body
+/// frame once the guest asked for it (nginx's `client_body_timeout`).
+pub const REQUEST_BODY_IDLE_SECONDS: u64 = 60;
+/// A v2 Web `Request` service: a request lives at most this long from its
+/// head to its response head, its body included (Node's `requestTimeout`);
+/// a streaming response adds the stream lifetime.
+pub const REQUEST_LIFETIME_SECONDS: u64 = 300;
+/// A v2 connection whose response write makes no progress this long is
+/// closed, so a client that stops reading holds its connection no longer
+/// (nginx's `send_timeout`).
+pub const WRITE_IDLE_SECONDS: u64 = 60;
 /// Request details retained by a native server report. Totals keep counting
 /// after this bound; observers can receive every completed request instead.
 pub const MAX_REPORTED_REQUESTS: usize = 32;
@@ -107,6 +122,8 @@ pub enum HttpError {
     Denied(String),
     #[error("HTTP I/O: {0}")]
     Io(#[from] std::io::Error),
+    #[error("invalid host HTTP policy: {0}")]
+    Policy(String),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -119,6 +136,9 @@ pub struct HttpLimits {
     /// V2 only: workers and keep-alive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<PoolLimits>,
+    /// V2 only: request bodies, request lifetime and slow clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<TransportLimits>,
     pub request_bytes: usize,
     pub body_bytes: usize,
     pub header_bytes: usize,
@@ -138,6 +158,17 @@ pub struct PoolLimits {
     pub keep_alive_idle_ms: u64,
     pub keep_alive_requests: usize,
     pub connection_lifetime_ms: u64,
+}
+/// [`MAX_REQUEST_BODY_BYTES`], [`REQUEST_BODY_IDLE_SECONDS`],
+/// [`REQUEST_LIFETIME_SECONDS`] and [`WRITE_IDLE_SECONDS`] (times in
+/// milliseconds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TransportLimits {
+    pub request_body_bytes: usize,
+    pub body_idle_ms: u64,
+    pub request_lifetime_ms: u64,
+    pub write_idle_ms: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -168,6 +199,12 @@ impl HttpLimits {
                     lifetime_ms: STREAM_LIFETIME_SECONDS * crate::budget::MILLISECONDS_PER_SECOND,
                     chunk_bytes: STREAM_CHUNK_BYTES,
                 }),
+                transport: Some(TransportLimits {
+                    request_body_bytes: MAX_REQUEST_BODY_BYTES,
+                    body_idle_ms: REQUEST_BODY_IDLE_SECONDS * millis,
+                    request_lifetime_ms: REQUEST_LIFETIME_SECONDS * millis,
+                    write_idle_ms: WRITE_IDLE_SECONDS * millis,
+                }),
                 ..legacy
             }
         } else {
@@ -182,6 +219,7 @@ impl Default for HttpLimits {
             connections: MAX_CONNECTIONS,
             stream: None,
             pool: None,
+            transport: None,
             request_bytes: abi::MAX_INPUT_BYTES,
             body_bytes: MAX_BODY_BYTES,
             header_bytes: MAX_HEADER_BYTES,
@@ -203,6 +241,10 @@ pub struct HttpContract {
     /// whose body the host pulls in chunks ([`PULL`]).
     #[serde(default, skip_serializing_if = "is_false")]
     pub streaming: bool,
+    /// V2 only, with `asynchronous`: the handler takes a Web `Request`
+    /// ([`WebRequestHead`]) whose body streams from the host.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub web_request: bool,
     pub bind: String,
     pub export: String,
     pub required_effects: Vec<String>,
@@ -217,6 +259,7 @@ impl HttpContract {
         if !matches!(self.version, VERSION | UTF16_VERSION)
             || self.asynchronous && self.version != UTF16_VERSION
             || self.streaming && !self.asynchronous
+            || self.web_request && !self.asynchronous
             || self.export != HANDLER
             || addr.to_string() != self.bind
             || self.limits != HttpLimits::for_version(self.version)
@@ -272,6 +315,151 @@ pub struct HttpResponse {
     pub body: String,
     pub headers: Vec<HttpHeader>,
 }
+/// The request envelope of a v2 Web `Request` service, from which the
+/// adapter makes the handler's `Request`: `url` is absolute (the scheme and
+/// authority the request reached, its target's path and query) and `body`
+/// the id of the transfer its body streams through (`net_body_read*`), or
+/// 0 for a request without a body.
+#[derive(Debug, Serialize)]
+pub struct WebRequestHead {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<HttpHeader>,
+    pub body: u64,
+}
+
+/// The `http` member of a host policy: what the host sets for every
+/// service it runs, never a package.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HttpPolicy {
+    /// Lower server limits ([`HttpLimits::lowered`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<HostLimits>,
+}
+
+/// Server limits a host policy lowers: each present value replaces the
+/// registry's, and must lie between 1 and it. A contract v1 service has no
+/// lowerable limits.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HostLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_wait_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_alive_idle_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_alive_requests: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_lifetime_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_idle_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_lifetime_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_body_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_idle_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_lifetime_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_idle_ms: Option<u64>,
+}
+impl HostLimits {
+    /// Whether the policy lowers any limit.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Replace `limit` by a host's lower `value`: 1 to `limit` inclusive.
+fn lower<T: Copy + PartialOrd + From<u8> + std::fmt::Display>(
+    name: &str,
+    limit: &mut T,
+    value: Option<T>,
+) -> Result<(), HttpError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value < T::from(1) || value > *limit {
+        return Err(HttpError::Policy(format!(
+            "{name} {value} is outside 1..={limit}; a host may only lower a limit"
+        )));
+    }
+    *limit = value;
+    Ok(())
+}
+
+impl HttpLimits {
+    /// The limits a host policy leaves: each of `host`'s values replaces the
+    /// registry's, which it may only lower. A contract v1 service (no pool)
+    /// admits no lowered limit.
+    pub fn lowered(&self, host: &HostLimits) -> Result<Self, HttpError> {
+        let mut limits = self.clone();
+        if host.is_empty() {
+            return Ok(limits);
+        }
+        let (Some(pool), Some(stream), Some(transport)) = (
+            limits.pool.as_mut(),
+            limits.stream.as_mut(),
+            limits.transport.as_mut(),
+        ) else {
+            return Err(HttpError::Policy(
+                "host HTTP limits apply to contract v2 services only".into(),
+            ));
+        };
+        lower("connections", &mut limits.connections, host.connections)?;
+        lower("workers", &mut pool.workers, host.workers)?;
+        lower(
+            "workerWaitMs",
+            &mut pool.worker_wait_ms,
+            host.worker_wait_ms,
+        )?;
+        lower(
+            "keepAliveIdleMs",
+            &mut pool.keep_alive_idle_ms,
+            host.keep_alive_idle_ms,
+        )?;
+        lower(
+            "keepAliveRequests",
+            &mut pool.keep_alive_requests,
+            host.keep_alive_requests,
+        )?;
+        lower(
+            "connectionLifetimeMs",
+            &mut pool.connection_lifetime_ms,
+            host.connection_lifetime_ms,
+        )?;
+        lower("streamIdleMs", &mut stream.idle_ms, host.stream_idle_ms)?;
+        lower(
+            "streamLifetimeMs",
+            &mut stream.lifetime_ms,
+            host.stream_lifetime_ms,
+        )?;
+        lower(
+            "requestBodyBytes",
+            &mut transport.request_body_bytes,
+            host.request_body_bytes,
+        )?;
+        lower("bodyIdleMs", &mut transport.body_idle_ms, host.body_idle_ms)?;
+        lower(
+            "requestLifetimeMs",
+            &mut transport.request_lifetime_ms,
+            host.request_lifetime_ms,
+        )?;
+        lower(
+            "writeIdleMs",
+            &mut transport.write_idle_ms,
+            host.write_idle_ms,
+        )?;
+        Ok(limits)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -294,14 +482,76 @@ mod tests {
             version: UTF16_VERSION,
             asynchronous: false,
             streaming: false,
+            web_request: false,
             bind: "127.0.0.1:0".into(),
             export: HANDLER.into(),
             required_effects: vec![LISTEN_CAPABILITY.into()],
             limits: HttpLimits::for_version(UTF16_VERSION),
         };
         HttpContract::parse(&contract.to_bytes().unwrap()).unwrap();
+        // A Web `Request` handler needs the asynchronous v2 adapter.
+        contract.web_request = true;
+        assert!(contract.validate().is_err());
+        contract.asynchronous = true;
+        let bytes = contract.to_bytes().unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("\"webRequest\":true"));
+        HttpContract::parse(&bytes).unwrap();
         contract.version = LATEST_VERSION + 1;
         assert!(contract.validate().is_err());
+    }
+    #[test]
+    fn host_policies_only_lower_v2_limits_and_never_v1() {
+        let registry = HttpLimits::for_version(UTF16_VERSION);
+        assert_eq!(registry.lowered(&HostLimits::default()).unwrap(), registry);
+        let host = HostLimits {
+            connections: Some(16),
+            workers: Some(2),
+            request_body_bytes: Some(1024),
+            write_idle_ms: Some(500),
+            ..HostLimits::default()
+        };
+        let lowered = registry.lowered(&host).unwrap();
+        assert_eq!(lowered.connections, 16);
+        assert_eq!(lowered.pool.map(|pool| pool.workers), Some(2));
+        let transport = lowered.transport.unwrap();
+        assert_eq!(
+            (transport.request_body_bytes, transport.write_idle_ms),
+            (1024, 500)
+        );
+        assert_eq!(
+            transport.body_idle_ms,
+            REQUEST_BODY_IDLE_SECONDS * crate::budget::MILLISECONDS_PER_SECOND
+        );
+        // Raising, zero and v1 lowering are policy errors.
+        for host in [
+            HostLimits {
+                connections: Some(MAX_OPEN_CONNECTIONS + 1),
+                ..HostLimits::default()
+            },
+            HostLimits {
+                request_body_bytes: Some(MAX_REQUEST_BODY_BYTES + 1),
+                ..HostLimits::default()
+            },
+            HostLimits {
+                workers: Some(0),
+                ..HostLimits::default()
+            },
+        ] {
+            assert!(matches!(registry.lowered(&host), Err(HttpError::Policy(_))));
+        }
+        assert!(matches!(
+            HttpLimits::default().lowered(&host),
+            Err(HttpError::Policy(_))
+        ));
+        let policy: HttpPolicy =
+            serde_json::from_str(r#"{"limits":{"workers":1,"bodyIdleMs":1000}}"#).unwrap();
+        assert_eq!(
+            policy
+                .limits
+                .map(|limits| (limits.workers, limits.body_idle_ms)),
+            Some((Some(1), Some(1000)))
+        );
+        assert!(serde_json::from_str::<HttpPolicy>(r#"{"limits":{"chunkBytes":1}}"#).is_err());
     }
     #[test]
     fn listener_grants_are_exact_endpoints_with_no_outbound_or_boolean_fallback() {
@@ -360,6 +610,7 @@ mod tests {
             version: VERSION,
             asynchronous: false,
             streaming: false,
+            web_request: false,
             bind: "127.0.0.1:0".into(),
             export: HANDLER.into(),
             required_effects: vec!["net.listen".into()],
@@ -386,6 +637,8 @@ mod tests {
         // and the stream limits, and streaming needs v2's asynchronous form.
         contract.required_effects = vec!["net.listen".into()];
         assert!(!std::str::from_utf8(&legacy).unwrap().contains("stream"));
+        assert!(!std::str::from_utf8(&legacy).unwrap().contains("transport"));
+        assert!(!std::str::from_utf8(&legacy).unwrap().contains("webRequest"));
         contract.streaming = true;
         assert!(contract.validate().is_err());
         contract.limits = HttpLimits::for_version(UTF16_VERSION);

@@ -7066,6 +7066,37 @@ Stages, each with its own full gate and record:
 
 Later: HTTP/3, response compression (a dependency decision), WebSocket.
 
+#### H1 — Web requests, request bodies, host limits, slow clients (done 2026-11-05)
+
+- **Web `Request` handlers.** A v38 handler may take a Web `Request` with any
+  of the four result forms; the contract's `webRequest` flag (v2, with
+  `asynchronous`) selects the adapter, whose envelope (`WebRequestHead`)
+  carries the method, the absolute URL, the headers and the id of the body's
+  transfer. The fetch prelude's `httpRequest` builds the `Request`; `Request`
+  gained the body readers of `Response`, a `Request` made of a received one
+  takes its stream over and `fetch` of it sends the body as bytes.
+- **Streaming request bodies.** The body is a transfer of the request's own
+  Store (`Net::inbound`), read like a response body: one bounded chunk per
+  guest read, `http::MAX_REQUEST_BODY_BYTES` in all (413 before dispatch
+  when the declared length is larger), `http::REQUEST_BODY_IDLE_SECONDS` per
+  wait. Such a request is a sequence of renewing turns within
+  `http::REQUEST_LIFETIME_SECONDS`; its waits use no turn deadline
+  (`RuntimeContext::idle_bound`). `VartaHttpRequest` handlers are unchanged.
+- **Host limits.** A host policy's `http.limits` lowers the v2 server limits
+  (`HttpLimits::lowered`); a raised, zero or unknown limit, or any limit of a
+  v1 service, fails before bind. Packages cannot carry the member.
+- **Slow clients.** Keep-alive idle stays the head deadline; request bodies
+  have their idle bound; a response write that makes no progress for
+  `http::WRITE_IDLE_SECONDS` closes the connection (`server::io::WriteIdle`).
+- Tests: runtime `server_tests::web_request` (URL/headers/body, a body
+  slower than three turn deadlines, size and idle bounds, a client that stops
+  reading, lowered and raised limits, every result form), the HTTP ABI flag
+  and v37 rejection, contract/policy unit tests and the CLI smoke
+  `http_cli_host_policy_lowers_server_limits_and_cannot_raise_them`.
+- Gate: `python3 scripts/verify.py full` PASS (3872 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261105-233337-p4fj2lfr/report.json` (macOS only).
+
 ### Realistic turn budget and application memory (owner decisions, 2026-11-06)
 
 The UARP console against the live API was terminated first by a network turn

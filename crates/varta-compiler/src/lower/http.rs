@@ -112,6 +112,32 @@ pub(super) struct Service {
 /// The fetch prelude's function that turns a handler's `Response` into the
 /// streaming adapter's pull function.
 const RESPONSE_BODY: &str = "httpResponseBody";
+/// The fetch prelude's function that makes a Web `Request` handler's
+/// argument of its envelope (`varta_common::http::WebRequestHead`).
+const REQUEST_HEAD: &str = "httpRequest";
+
+/// How an adapter calls the handler: with which argument, and whether it
+/// awaits the handler's result.
+#[derive(Clone, Copy)]
+struct Call {
+    /// The handler takes a Web `Request` (`httpRequest`), not a
+    /// `VartaHttpRequest` parsed from the envelope.
+    web: bool,
+    awaited: bool,
+}
+impl Call {
+    /// The adapter statements before the response is used: `request` of the
+    /// envelope `text`, then `response` of the handler.
+    fn prologue(self) -> String {
+        let request = if self.web {
+            "httpRequest(text)"
+        } else {
+            "JSON.parse(text) as VartaHttpRequest"
+        };
+        let awaited = if self.awaited { "await " } else { "" };
+        format!("const request={request};const response={awaited}handler(request);")
+    }
+}
 
 pub(super) fn collect(
     graph: &Graph,
@@ -219,14 +245,29 @@ pub(super) fn collect(
                     (handler.result == web || resolves(handler.result, web))
                         .then_some(handler.result == web)
                 });
+                // V2 Web `Request` handlers (the prelude is loaded once a
+                // module names `Request`).
+                let inbound = types
+                    .profile
+                    .turn_budgets()
+                    .then(|| {
+                        types
+                            .engine
+                            .function(&crate::modules::engine::FETCH, REQUEST_HEAD)
+                            .cloned()
+                    })
+                    .flatten();
+                let web = inbound
+                    .as_ref()
+                    .is_some_and(|inbound| handler.params == [inbound.result]);
                 if handler.index == main
                     || handler.receiver.is_some()
                     || handler.shape.extended()
-                    || handler.params != [request]
+                    || handler.params != [request] && !web
                     || handler.result != response && !asynchronous && streaming.is_none()
                 {
                     return Err(type_error(if types.profile.turn_budgets() {
-                        "HTTP handler must have signature (VartaHttpRequest) => VartaHttpResponse, Promise<VartaHttpResponse>, Response or Promise<Response>"
+                        "HTTP handler must have signature (VartaHttpRequest or Request) => VartaHttpResponse, Promise<VartaHttpResponse>, Response or Promise<Response>"
                     } else {
                         "HTTP handler must have signature (VartaHttpRequest) => VartaHttpResponse"
                     }));
@@ -237,25 +278,39 @@ pub(super) fn collect(
                     .ok_or_else(|| unsupported("HTTP adapter for this profile"))?;
                 let contract = HttpContract {
                     version,
-                    asynchronous: asynchronous || streaming.is_some(),
+                    asynchronous: asynchronous || streaming.is_some() || web,
                     streaming: streaming.is_some(),
+                    web_request: web,
                     bind: addr.to_string(),
                     export: varta_common::http::HANDLER.into(),
                     required_effects: effects.into_iter().collect(),
                     limits: HttpLimits::for_version(version),
                 };
                 contract.validate().map_err(|e| invalid(e.to_string()))?;
+                let mut symbols = BTreeMap::from([("handler".into(), handler.clone())]);
+                if let (true, Some(inbound)) = (web, &inbound) {
+                    symbols.insert(REQUEST_HEAD.into(), inbound.clone());
+                }
                 if let (Some(synchronous), Some(body)) = (streaming, &body) {
+                    symbols.insert("body".into(), body.clone());
+                    let call = Call {
+                        web,
+                        awaited: !synchronous,
+                    };
                     let (index, poll, stream) =
-                        stream_adapter(handler, body, synchronous, functions, types, main)?;
+                        stream_adapter(call, &symbols, functions, types, main)?;
                     return Ok(Service {
                         entry: (index, contract),
                         poll: Some(poll),
                         stream: Some(stream),
                     });
                 }
-                if asynchronous {
-                    let (index, poll) = async_adapter(handler, functions, types, main)?;
+                if asynchronous || web {
+                    let call = Call {
+                        web,
+                        awaited: asynchronous,
+                    };
+                    let (index, poll) = async_adapter(call, &symbols, functions, types, main)?;
                     return Ok(Service {
                         entry: (index, contract),
                         poll: Some(poll),
@@ -314,26 +369,28 @@ pub(super) fn collect(
 /// Reuse the language's async lowering, normalization, exception handling and
 /// frame liveness. The synthetic source has only a private handler binding.
 fn async_adapter(
-    handler: &Signature,
+    call: Call,
+    symbols: &BTreeMap<String, Signature>,
     functions: &mut Vec<ir::Function>,
     types: &mut ir::ValueTypes,
     main: usize,
 ) -> Result<(usize, (usize, usize))> {
-    const SOURCE: &str = "async function adapter(text:string):Promise<string>{const request=JSON.parse(text) as VartaHttpRequest;const response=await handler(request);return JSON.stringify(response);}";
-    let symbols = BTreeMap::from([("handler".into(), handler.clone())]);
-    let (index, promise, source, span) = synthesize(SOURCE, &symbols, functions, types, main)?;
+    let source = format!(
+        "async function adapter(text:string):Promise<string>{{{}return JSON.stringify(response);}}",
+        call.prologue()
+    );
+    let (index, promise, source, span) = synthesize(&source, symbols, functions, types, main)?;
     let poll = accessors(promise, &source, span, functions, types)?;
     Ok((index, poll))
 }
 
 /// The v2 streaming adapter: `handle` resolves to a record holding the pull
 /// function of the handler's `Response` (the fetch prelude's
-/// [`RESPONSE_BODY`]); `pull` calls it, and its `Promise<string>` has
-/// accessors of its own.
+/// [`RESPONSE_BODY`], `body` in `symbols`); `pull` calls it, and its
+/// `Promise<string>` has accessors of its own.
 fn stream_adapter(
-    handler: &Signature,
-    body: &Signature,
-    synchronous: bool,
+    call: Call,
+    symbols: &BTreeMap<String, Signature>,
     functions: &mut Vec<ir::Function>,
     types: &mut ir::ValueTypes,
     main: usize,
@@ -342,15 +399,12 @@ fn stream_adapter(
     // record, which the host roots once. `pull` keeps the chunk promise it
     // returns in that record's `current`, so the promise stays reachable
     // until the next pull without a host root per chunk.
-    const AWAITED: &str = "async function adapter(text:string):Promise<{next:() => Promise<string>;current:Promise<string>}>{const request=JSON.parse(text) as VartaHttpRequest;const response=await handler(request);return {next:body(response),current:Promise.resolve('')};}";
-    const DIRECT: &str = "async function adapter(text:string):Promise<{next:() => Promise<string>;current:Promise<string>}>{const request=JSON.parse(text) as VartaHttpRequest;const response=handler(request);return {next:body(response),current:Promise.resolve('')};}";
     const PULL: &str = "function pull(body:{next:() => Promise<string>;current:Promise<string>}):Promise<string>{body.current=body.next();return body.current;}";
-    let symbols = BTreeMap::from([
-        ("handler".into(), handler.clone()),
-        ("body".into(), body.clone()),
-    ]);
-    let adapter = if synchronous { DIRECT } else { AWAITED };
-    let (index, promise, source, span) = synthesize(adapter, &symbols, functions, types, main)?;
+    let adapter = format!(
+        "async function adapter(text:string):Promise<{{next:() => Promise<string>;current:Promise<string>}}>{{{}return {{next:body(response),current:Promise.resolve('')}};}}",
+        call.prologue()
+    );
+    let (index, promise, source, span) = synthesize(&adapter, symbols, functions, types, main)?;
     let poll = accessors(promise, &source, span, functions, types)?;
     let (pull, chunk, source, span) = synthesize(PULL, &BTreeMap::new(), functions, types, main)?;
     let (state, value) = accessors(chunk, &source, span, functions, types)?;
@@ -360,7 +414,7 @@ fn stream_adapter(
 /// Compile the one function of a synthetic `text` against `symbols`: its
 /// index, result type, source and span.
 fn synthesize(
-    text: &'static str,
+    text: &str,
     symbols: &BTreeMap<String, Signature>,
     functions: &mut Vec<ir::Function>,
     types: &mut ir::ValueTypes,

@@ -318,6 +318,11 @@ pub(crate) struct RuntimeContext {
     /// V38: how long a network transfer may wait for bytes
     /// (`net::READ_INACTIVITY_SECONDS`, or the host's lower value).
     network_idle: std::time::Duration,
+    /// A request of a v2 Web `Request` service, whose turns renew: the
+    /// event loop's waits between turns end here (the request lifetime, or
+    /// a streaming pull's idle bound) instead of at the turn deadline, and
+    /// the task that ends a wait begins a fresh turn. `None` elsewhere.
+    idle_bound: Option<Instant>,
     budgets: varta_common::budget::Budgets,
     turns: turns::Turns,
     /// The permission broker (v37), with broker v1 states in v38.
@@ -400,6 +405,12 @@ impl RuntimeContext {
                 .exhausted(BudgetKind::Deadline, &self.budgets, text));
         }
         Ok(())
+    }
+
+    /// When the event loop's wait for its next task ends: the turn deadline,
+    /// or the idle bound of a request whose turns renew ([`Self::idle_bound`]).
+    pub(crate) fn wait_bound(&self) -> Instant {
+        self.idle_bound.unwrap_or(self.deadline)
     }
 
     /// The error of a deadline reached while the event loop waited.
@@ -750,6 +761,7 @@ impl VartaRuntime {
                     files,
                     output,
                     observer: options.observer.clone(),
+                    policy: options.http.as_ref(),
                 });
                 report.http = finished.requests;
                 match finished.result {
@@ -893,6 +905,10 @@ pub struct RunOptions {
     /// V38: a host's lower network inactivity window; a longer value keeps
     /// `net::READ_INACTIVITY_SECONDS`.
     pub network_idle: Option<std::time::Duration>,
+    /// The host policy's HTTP settings: lower server limits of a contract
+    /// v2 service ([`varta_common::http::HttpLimits::lowered`]). A package
+    /// never supplies them.
+    pub http: Option<varta_common::http::HttpPolicy>,
 }
 impl RunOptions {
     /// The options of a package manifest and an optional host ceiling
@@ -918,6 +934,7 @@ impl RunOptions {
             observer: None,
             fuel_profile: false,
             network_idle: None,
+            http: host.and_then(|host| host.http.clone()),
         })
     }
 }

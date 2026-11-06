@@ -4528,6 +4528,39 @@ fn http_cli_listener_denials_precede_bind_and_host_policy_cannot_expand_requests
 }
 
 #[test]
+fn http_cli_host_policy_lowers_server_limits_and_cannot_raise_them() {
+    let project = RegressionProject::new(
+        "async function handle(r:Request):Promise<Response>{const text=await r.text();return new Response(text);}export function main():void{}varta.http.serve({hostname:'127.0.0.1',port:0},handle);",
+        serde_json::json!({"net":{"listen":["127.0.0.1:0"]}}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    let policy = |limits: serde_json::Value| {
+        fs::write(
+            project.0.join("host-policy.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "abiVersion": 1,
+                "capabilities": [{"id": "net.listen", "patterns": ["127.0.0.1:0"]}],
+                "http": {"limits": limits},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    };
+    // A raised limit fails before the listener exists.
+    policy(serde_json::json!({"workers": 1_000_000}));
+    let output = project.command(&["dev", "--policy", "host-policy.json"]);
+    assert!(!output.status.success());
+    let text = combined(&output);
+    assert!(text.contains("invalid host HTTP policy"), "{text}");
+    assert!(!text.contains("listening"), "{text}");
+    // So does an unknown limit.
+    policy(serde_json::json!({"chunkBytes": 1}));
+    let output = project.command(&["dev", "--policy", "host-policy.json"]);
+    assert!(!output.status.success(), "{}", combined(&output));
+}
+
+#[test]
 fn checked_json_unions_and_optional_fields_run_without_sources_in_all_artifacts() {
     let project = RegressionProject::new(
         r#"

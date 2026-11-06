@@ -225,8 +225,15 @@ bounded wait for a worker), no unbounded task queue, parser/body/idle/
 connection deadlines and response framing controlled by the HTTP library.
 A streaming response pulls each chunk as its own turn under the idle bound and
 within the stream lifetime; a client that leaves or a shutdown cancels its
-worker. No business routes, authentication policy or example payloads belong
-in runtime.
+worker. A Web `Request` body streams through a transfer of the request's own
+Store, one bounded chunk per guest read, within `http::MAX_REQUEST_BODY_BYTES`,
+the body idle bound and the request lifetime; its waits between turns never
+use the turn deadline, and every turn renews only within that lifetime.
+Slow clients are bounded per connection: keep-alive idle (the head deadline),
+body idle and write idle. The registry fixes the server limits; a host policy
+may only lower them (`HttpLimits::lowered`, checked before bind), and a
+package can change none. No business routes, authentication policy or
+example payloads belong in runtime.
 
 ## 8. Testing requirements
 

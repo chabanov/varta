@@ -81,6 +81,16 @@ struct Replayed {
     released: bool,
 }
 
+/// The body of a request a v2 Web `Request` service received ([`Net::inbound`]):
+/// at most `limit` bytes, each wait for the next frame at most `idle`, and
+/// none past `deadline` (the request's lifetime).
+pub(crate) struct InboundBody {
+    pub body: hyper::body::Incoming,
+    pub limit: usize,
+    pub idle: std::time::Duration,
+    pub deadline: Instant,
+}
+
 /// Where completions come from.
 #[derive(Default)]
 enum Session {
@@ -376,6 +386,22 @@ impl Net {
         Ok(())
     }
     fn spawn(&mut self, id: u64, plan: client::Plan) -> Result<Transfer, wasmtime::Error> {
+        let connection = client::ConnectionSlot::default();
+        let slot = connection.clone();
+        self.transfer(connection, |events, pulls| {
+            client::run(id, plan, events, pulls, slot)
+        })
+    }
+    /// A transfer task made by `task` of the completion sender and the pull
+    /// receiver, on the execution's runtime (created by the first one).
+    fn transfer<F>(
+        &mut self,
+        connection: client::ConnectionSlot,
+        task: impl FnOnce(mpsc::UnboundedSender<Event>, mpsc::Receiver<ReadMode>) -> F,
+    ) -> Result<Transfer, wasmtime::Error>
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
         if self.runtime.is_none() {
             self.runtime = Some(
                 tokio::runtime::Builder::new_current_thread()
@@ -392,13 +418,37 @@ impl Net {
         let Some(runtime) = &self.runtime else {
             return Err(wasmtime::Error::new(NetError::State));
         };
-        let connection = client::ConnectionSlot::default();
-        let task = runtime.spawn(client::run(id, plan, events, pulls, connection.clone()));
+        let task = runtime.spawn(task(events, pulls));
         Ok(Transfer {
             task,
             pull,
             connection,
         })
+    }
+    /// Register the body of a request a v2 Web `Request` service received
+    /// as a transfer whose head was taken: the guest reads its chunks
+    /// exactly as a response body's (`net_body_read*`), one bounded chunk
+    /// per pull, so a slow guest applies backpressure to the client. Its id
+    /// goes into the request envelope ([`varta_common::http::WebRequestHead`]).
+    pub(crate) fn inbound(&mut self, body: InboundBody) -> Result<u64, wasmtime::Error> {
+        self.full()?;
+        self.next_id += 1;
+        let id = self.next_id;
+        let transfer = self.transfer(client::ConnectionSlot::default(), |events, pulls| {
+            client::inbound(id, body, events, pulls)
+        })?;
+        self.requests.insert(
+            id,
+            Request {
+                phase: Phase::Idle,
+                watcher: None,
+                transfer: Some(transfer),
+                logged: None,
+                read: None,
+                replay: None,
+            },
+        );
+        Ok(id)
     }
     fn tls(&mut self) -> Result<Arc<rustls::ClientConfig>, String> {
         if let Some(config) = &self.tls {

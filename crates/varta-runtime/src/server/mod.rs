@@ -1,5 +1,6 @@
 //! Host-driven HTTP lifetime. Every request gets a fresh bounded guest store.
 mod handler;
+mod io;
 mod report;
 mod transport;
 use crate::{RunOutput, RuntimeError, policy};
@@ -10,7 +11,7 @@ use std::{
 };
 use varta_common::{
     CapabilityGrant, abi,
-    http::{HttpContract, HttpError},
+    http::{HttpContract, HttpError, HttpLimits, HttpPolicy},
 };
 use wasmtime::Engine;
 
@@ -98,6 +99,13 @@ struct Shared {
     engine: Engine,
     module: crate::PreparedModule,
     contract: HttpContract,
+    /// The contract's limits as the host policy lowered them.
+    limits: HttpLimits,
+    /// The listener's actual address: a Web `Request`'s authority when the
+    /// request names none.
+    address: SocketAddr,
+    /// The scheme of a Web `Request`'s URL.
+    scheme: &'static str,
     request_setup: crate::execution::RequestSetup,
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
@@ -106,6 +114,16 @@ struct Shared {
     workers: Arc<tokio::sync::Semaphore>,
     sink: Arc<Sink>,
 }
+impl Shared {
+    /// The keep-alive pool of a contract v2 service.
+    fn pool(&self) -> Option<varta_common::http::PoolLimits> {
+        self.limits
+            .pool
+            .filter(|_| self.contract.version == varta_common::http::UTF16_VERSION)
+    }
+}
+/// The scheme of a cleartext listener.
+const HTTP_SCHEME: &str = "http";
 
 pub(super) struct Start<'a> {
     pub engine: Engine,
@@ -118,6 +136,8 @@ pub(super) struct Start<'a> {
     pub files: policy::FileMode,
     pub output: RunOutput,
     pub observer: Option<RuntimeObserver>,
+    /// The host policy's HTTP settings.
+    pub policy: Option<&'a HttpPolicy>,
 }
 pub(super) struct Finished {
     pub result: Result<RunOutput, RuntimeError>,
@@ -145,7 +165,14 @@ fn run_owned(
         files,
         output,
         observer,
+        policy,
     } = start;
+    // A host may only lower the registry's limits; an invalid policy fails
+    // before any socket exists.
+    let limits = match policy.and_then(|policy| policy.limits.as_ref()) {
+        Some(host) => contract.limits.lowered(host)?,
+        None => contract.limits.clone(),
+    };
     // This is the only bind path: authorization precedes every socket effect.
     let mut bind_policy = policy::Policy::with_files(requested, ceiling, &files);
     let _broker = crate::permission::Broker::new(
@@ -199,14 +226,14 @@ fn run_owned(
     });
     sink.lines(output.lines)?;
     // A v1 service has one worker; a v2 service its pool.
-    let workers = contract
-        .limits
-        .pool
-        .map_or(contract.limits.connections, |pool| pool.workers);
+    let workers = limits.pool.map_or(limits.connections, |pool| pool.workers);
     let shared = Arc::new(Shared {
         engine,
         module,
         contract,
+        limits,
+        address,
+        scheme: HTTP_SCHEME,
         request_setup,
         requested: requested.to_vec(),
         ceiling: ceiling.map(ToOwned::to_owned),

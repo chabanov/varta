@@ -604,22 +604,58 @@ function contentStream(source: BodySource): ReadableStream<Uint8Array> {
   return stream;
 }
 
+// A request an HTTP service received (`httpRequest`): the next `Request`
+// the prelude builds takes its method, URL, headers and body stream as they
+// are; program code can never fill it.
+class Inbound {
+  readonly method: string;
+  readonly url: string;
+  readonly headers: Headers;
+  readonly stream: ReadableStream<Uint8Array> | null;
+  constructor(method: string, url: string, headers: Headers, stream: ReadableStream<Uint8Array> | null) {
+    this.method = method;
+    this.url = url;
+    this.headers = headers;
+    this.stream = stream;
+  }
+}
+const INBOUND: { request: Inbound | null } = { request: null };
+
 export class Request {
   readonly method: string;
   readonly url: string;
   readonly headers: Headers;
   readonly redirect: RequestRedirect;
   private readonly content: BodySource | null;
+  // The body as a stream: the one a received request streams from the
+  // host (or a request made from one takes over), else one made of
+  // `content` when the body is first read.
+  private stream: ReadableStream<Uint8Array> | null;
   // The signal the request follows; a request without one gets a signal
   // that never aborts, created when first read.
   private readonly given: AbortSignal | null;
   private fallback: AbortSignal | null;
 
   constructor(input: string | URL | Request, init?: RequestInit) {
+    const inbound = INBOUND.request;
+    INBOUND.request = null;
     const base = input instanceof Request ? input : null;
-    this.url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
-    this.method = normalizeMethod(init?.method ?? (base === null ? 'GET' : base.method));
-    this.headers = new Headers(init?.headers ?? (base === null ? undefined : base.headers));
+    this.url =
+      inbound !== null
+        ? inbound.url
+        : input instanceof Request
+          ? input.url
+          : input instanceof URL
+            ? input.href
+            : input;
+    this.method =
+      inbound !== null
+        ? inbound.method
+        : normalizeMethod(init?.method ?? (base === null ? 'GET' : base.method));
+    this.headers =
+      inbound !== null
+        ? inbound.headers
+        : new Headers(init?.headers ?? (base === null ? undefined : base.headers));
     this.given = init?.signal ?? (base === null ? null : base.signalOf());
     this.fallback = null;
     let redirect: RequestRedirect = base === null ? 'error' : base.redirect;
@@ -632,13 +668,62 @@ export class Request {
     this.redirect = redirect;
     const given = init?.body ?? null;
     const body = given === null ? (base === null ? null : base.bodySource()) : bodySource(given);
-    if (body !== null && (this.method === 'GET' || this.method === 'HEAD')) {
+    // A received body streams; a request made from a received one without
+    // a body of its own takes its stream over.
+    const stream =
+      inbound !== null ? inbound.stream : given === null && base !== null ? base.streamOf() : null;
+    if (
+      inbound === null &&
+      (body !== null || stream !== null) &&
+      (this.method === 'GET' || this.method === 'HEAD')
+    ) {
       throw new TypeError('Request with GET/HEAD method cannot have body.');
     }
     if (body !== null && body.type !== '' && !this.headers.has('content-type')) {
       this.headers.set('content-type', body.type);
     }
     this.content = body;
+    this.stream = stream;
+  }
+
+  get body(): ReadableStream<Uint8Array> | null {
+    const stream = this.stream;
+    if (stream !== null) {
+      return stream;
+    }
+    const content = this.content;
+    if (content === null) {
+      return null;
+    }
+    const made = contentStream(content);
+    this.stream = made;
+    return made;
+  }
+
+  get bodyUsed(): boolean {
+    const stream = this.stream;
+    return stream !== null && stream.stateOf().disturbed;
+  }
+
+  // The body readers of `Response`, over this request's body.
+  text(): Promise<string> {
+    return new Response(this.body).text();
+  }
+
+  json(): Promise<unknown> {
+    return new Response(this.body).json();
+  }
+
+  arrayBuffer(): Promise<ArrayBuffer> {
+    return new Response(this.body).arrayBuffer();
+  }
+
+  bytes(): Promise<Uint8Array> {
+    return new Response(this.body).bytes();
+  }
+
+  blob(): Promise<Blob> {
+    return new Response(this.body, { headers: this.headers }).blob();
   }
 
   get signal(): AbortSignal {
@@ -659,6 +744,12 @@ export class Request {
   // Engine-internal: the signal the request follows, or null.
   signalOf(): AbortSignal | null {
     return this.given;
+  }
+
+  // Engine-internal: the body stream a received request (or one made from
+  // it) carries instead of content, or null.
+  streamOf(): ReadableStream<Uint8Array> | null {
+    return this.content === null ? this.stream : null;
   }
 }
 
@@ -902,7 +993,19 @@ async function send(
 
 export async function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const request = new Request(input, init);
-  return send(request, request.url, request.method, request.bodySource(), 0);
+  const body = request.bodySource();
+  if (body === null && request.streamOf() !== null) {
+    return sendStreamed(request);
+  }
+  return send(request, request.url, request.method, body, 0);
+}
+
+// A request whose body streams from a received one: the body is read whole
+// (within the received body's bound), then sent as bytes.
+async function sendStreamed(request: Request): Promise<Response> {
+  const bytes = await new Response(request.streamOf()).bytes();
+  const body = new BodySource(byteStringOf(bytes), true, '');
+  return send(request, request.url, request.method, body, 0);
 }
 
 // The body records of a v2 streaming HTTP service (`varta_common::http`
@@ -922,6 +1025,38 @@ interface HttpHead {
   status: number;
   body: string;
   headers: HttpHeadField[];
+}
+
+// The request envelope of a v2 Web `Request` HTTP service
+// (`varta_common::http::WebRequestHead`).
+interface HttpRequestHead {
+  method: string;
+  url: string;
+  headers: HttpHeadField[];
+  body: number;
+}
+
+// The handler's `Request` of a v2 Web `Request` HTTP service, made of the
+// envelope the host sends: the method, URL and headers as received, and a
+// body that streams from the host through transfer `body` (none for 0).
+// No program binding can name it: only the compiler's adapter calls it.
+function httpRequest(text: string): Request {
+  const head = JSON.parse(text) as HttpRequestHead;
+  const headers = new Headers();
+  for (const field of head.headers) {
+    headers.append(field.name, field.value);
+  }
+  let stream: ReadableStream<Uint8Array> | null = null;
+  if (head.body > 0) {
+    // The host registered the transfer with its head taken: the first
+    // read arms the first chunk.
+    const state = new StreamState(head.body, null);
+    state.armed = false;
+    HANDOFF.state = state;
+    stream = new ReadableStream<Uint8Array>();
+  }
+  INBOUND.request = new Inbound(head.method, head.url, headers, stream);
+  return new Request(head.url);
 }
 
 // A handler's `Response` as the pull function the HTTP streaming adapter

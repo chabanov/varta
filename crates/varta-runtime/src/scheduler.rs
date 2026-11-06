@@ -754,11 +754,12 @@ pub(crate) fn target(context: &RuntimeContext, due: f64) -> Instant {
 }
 
 /// Wait until the wall clock reaches loop time `due`, never past the
-/// execution deadline.
+/// execution deadline (the idle bound of a request whose turns renew).
 fn wait(context: &RuntimeContext, due: f64) -> Result<(), wasmtime::Error> {
     let target = target(context, due);
+    let bound = context.wait_bound();
     if let Some(cancellation) = &context.cancellation {
-        let until = target.min(context.deadline);
+        let until = target.min(bound);
         loop {
             cancellation.check()?;
             let now = Instant::now();
@@ -771,16 +772,16 @@ fn wait(context: &RuntimeContext, due: f64) -> Result<(), wasmtime::Error> {
                     .saturating_duration_since(now),
             );
         }
-        if Instant::now() >= context.deadline {
+        if Instant::now() >= bound {
             return Err(context.deadline_error());
         }
         return Ok(());
     }
     let now = Instant::now();
     if target > now {
-        std::thread::sleep(target.min(context.deadline) - now);
+        std::thread::sleep(target.min(bound) - now);
     }
-    if Instant::now() >= context.deadline {
+    if Instant::now() >= bound {
         return Err(context.deadline_error());
     }
     Ok(())
@@ -809,7 +810,7 @@ fn network_turn(
     due: Option<f64>,
 ) -> Result<Option<TurnKind>, RuntimeError> {
     let context = store.data_mut();
-    let deadline = context.deadline;
+    let deadline = context.wait_bound();
     let timer = due.map(|due| (due, target(context, due)));
     let fires = |instant: Instant| instant < deadline;
     if let Some((_, at)) = timer

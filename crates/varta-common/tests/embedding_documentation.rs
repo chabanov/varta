@@ -929,6 +929,21 @@ fn entry_limits() -> String {
             "`http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES`",
         ),
         (
+            "HTTP v2 Web request body bytes / body idle / request lifetime",
+            format!(
+                "{} / {} s / {} s",
+                http::MAX_REQUEST_BODY_BYTES,
+                http::REQUEST_BODY_IDLE_SECONDS,
+                http::REQUEST_LIFETIME_SECONDS
+            ),
+            "`http::MAX_REQUEST_BODY_BYTES`, `http::REQUEST_BODY_IDLE_SECONDS`, `http::REQUEST_LIFETIME_SECONDS`",
+        ),
+        (
+            "HTTP v2 response write idle",
+            format!("{} s", http::WRITE_IDLE_SECONDS),
+            "`http::WRITE_IDLE_SECONDS`",
+        ),
+        (
             "Native HTTP retained request reports / total retained audit entries",
             format!(
                 "{} / {}",

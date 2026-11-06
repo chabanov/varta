@@ -760,3 +760,4 @@ fn http_v1_keeps_legacy_budget_and_consent_semantics() {
 mod cancellation;
 mod reports;
 mod streaming;
+mod web_request;

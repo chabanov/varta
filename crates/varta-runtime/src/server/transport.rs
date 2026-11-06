@@ -126,16 +126,18 @@ fn response(
     }
     Ok(response)
 }
-async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> {
+/// The checks every request passes before dispatch: no CONNECT or upgrade,
+/// a body within `body_bytes` as far as its declared length shows, and the
+/// target and header bounds. Returns the request's header list.
+fn checked_head(req: &Request<Incoming>, body_bytes: usize) -> Result<Vec<HttpHeader>, StatusCode> {
     if req.method() == hyper::Method::CONNECT || req.headers().contains_key(hyper::header::UPGRADE)
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    if req.body().size_hint().lower() > http::MAX_BODY_BYTES as u64 {
+    if req.body().size_hint().lower() > body_bytes as u64 {
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
-    let head = req.method() == hyper::Method::HEAD;
-    let target = req.uri().to_string();
+    let target = req.uri().path_and_query().map_or("/", |path| path.as_str());
     if target.len() > http::MAX_TARGET_BYTES || req.headers().len() > http::MAX_HEADERS {
         return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }
@@ -153,6 +155,65 @@ async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> 
                 .map_err(|_| StatusCode::BAD_REQUEST)?
                 .to_owned(),
         });
+    }
+    Ok(headers)
+}
+
+/// The envelope of a v2 Web `Request` service: the method, the absolute URL
+/// (`scheme`, the authority the request names or else the listener's
+/// address, and the target's path and query), the headers and the body
+/// still unread, which the worker streams to the guest.
+fn web_request(
+    req: Request<Incoming>,
+    scheme: &str,
+    address: SocketAddr,
+    body_bytes: usize,
+) -> Result<(handler::Envelope, bool), StatusCode> {
+    let headers = checked_head(&req, body_bytes)?;
+    let head = req.method() == hyper::Method::HEAD;
+    // An absolute-form target or an HTTP/2 `:authority` names it; else the
+    // `Host` header, which must be a valid authority.
+    let authority = match req.uri().authority() {
+        Some(authority) => authority.to_string(),
+        None => match req.headers().get(hyper::header::HOST) {
+            Some(host) => host
+                .to_str()
+                .ok()
+                .and_then(|host| host.parse::<hyper::http::uri::Authority>().ok())
+                .ok_or(StatusCode::BAD_REQUEST)?
+                .to_string(),
+            None => address.to_string(),
+        },
+    };
+    let target = req.uri().path_and_query().map_or("/", |path| path.as_str());
+    let url = format!("{scheme}://{authority}{target}");
+    if url.len() > abi::MAX_INPUT_BYTES {
+        return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+    }
+    let method = req.method().to_string();
+    let incoming = req.into_body();
+    let body = (!incoming.is_end_stream()).then_some(incoming);
+    let head_record = http::WebRequestHead {
+        method,
+        url,
+        headers,
+        body: 0,
+    };
+    Ok((
+        handler::Envelope::Web {
+            head: head_record,
+            body,
+        },
+        head,
+    ))
+}
+
+async fn request(req: Request<Incoming>) -> Result<(handler::Envelope, bool), StatusCode> {
+    let headers = checked_head(&req, http::MAX_BODY_BYTES)?;
+    let head = req.method() == hyper::Method::HEAD;
+    let target = req.uri().to_string();
+    if target.len() > http::MAX_TARGET_BYTES {
+        return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }
     let method = req.method().to_string();
     let mut incoming = req.into_body();
@@ -179,7 +240,7 @@ async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> 
     if json.len() > abi::MAX_INPUT_BYTES {
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
-    Ok((json, head))
+    Ok((handler::Envelope::Text(json), head))
 }
 /// Close the connection after `reply`: always under contract v1, and on a
 /// keep-alive connection's last allowed request.
@@ -208,14 +269,29 @@ async fn handle(
     shared: Arc<Shared>,
     served: Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<Reply, Infallible> {
-    let pool = shared
-        .contract
-        .limits
-        .pool
-        .filter(|_| shared.contract.version == http::UTF16_VERSION);
+    let pool = shared.pool();
     let count = served.fetch_add(1, Ordering::AcqRel) + 1;
     let close = pool.is_none_or(|pool| count >= pool.keep_alive_requests);
     Ok(closing(handle_request(req, shared, pool).await, close))
+}
+
+/// The envelope of `req`: a Web `Request` service's head, its body still
+/// streaming; otherwise the whole request, read within the header bound.
+async fn envelope(
+    req: Request<Incoming>,
+    shared: &Shared,
+) -> Result<(handler::Envelope, bool), StatusCode> {
+    match shared.limits.transport {
+        Some(transport) if shared.contract.web_request => web_request(
+            req,
+            shared.scheme,
+            shared.address,
+            transport.request_body_bytes,
+        ),
+        _ => tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req))
+            .await
+            .unwrap_or(Err(StatusCode::REQUEST_TIMEOUT)),
+    }
 }
 
 async fn handle_request(
@@ -224,11 +300,10 @@ async fn handle_request(
     pool: Option<http::PoolLimits>,
 ) -> Reply {
     let (request, head) = tokio::select! {
-        _=shared.stop.cancelled()=>return failure(StatusCode::SERVICE_UNAVAILABLE),
-        value=tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req))=> match value {
-            Ok(Ok(value))=>value,
-            Ok(Err(status))=>return failure(status),
-            Err(_)=>return failure(StatusCode::REQUEST_TIMEOUT),
+        _ = shared.stop.cancelled() => return failure(StatusCode::SERVICE_UNAVAILABLE),
+        value = envelope(req, &shared) => match value {
+            Ok(value) => value,
+            Err(status) => return failure(status),
         }
     };
     if shared.stop.stopped() {
@@ -285,7 +360,7 @@ async fn handle_request(
 /// shutdown cancels a worker still pulling.
 async fn streaming(
     shared: Arc<Shared>,
-    request: Vec<u8>,
+    request: handler::Envelope,
     head: bool,
     permit: tokio::sync::OwnedSemaphorePermit,
     cancellation: Option<crate::cancellation::Cancellation>,
@@ -377,9 +452,7 @@ async fn pooled(
     listener: tokio::net::TcpListener,
     shared: Arc<Shared>,
 ) -> Result<(), RuntimeError> {
-    let slots = Arc::new(tokio::sync::Semaphore::new(
-        shared.contract.limits.connections,
-    ));
+    let slots = Arc::new(tokio::sync::Semaphore::new(shared.limits.connections));
     let mut open = tokio::task::JoinSet::new();
     let result = loop {
         while open.try_join_next().is_some() {}
@@ -408,13 +481,15 @@ async fn pooled(
 /// connection bound. Contract v2: keep-alive requests (the idle time is also
 /// the head deadline) within the connection lifetime, after which the
 /// connection finishes its current response and closes. A streaming
-/// service's bound adds the stream lifetime.
+/// service's bound adds the stream lifetime. A v2 connection whose response
+/// write makes no progress for the write idle bound closes.
 async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
-    let pool = shared
-        .contract
+    let pool = shared.pool();
+    let write_idle = shared
         .limits
-        .pool
-        .filter(|_| shared.contract.version == http::UTF16_VERSION);
+        .transport
+        .filter(|_| pool.is_some())
+        .map(|transport| Duration::from_millis(transport.write_idle_ms));
     let service = shared.clone();
     let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let answered = served.clone();
@@ -432,7 +507,7 @@ async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
     let entered = Arc::new(AtomicBool::new(false));
     let request_entered = entered.clone();
     let connection = builder.serve_connection(
-        TokioIo::new(stream),
+        TokioIo::new(io::WriteIdle::new(stream, write_idle)),
         service_fn(move |req| {
             request_entered.store(true, Ordering::Release);
             handle(req, service.clone(), served.clone())
@@ -441,19 +516,25 @@ async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
     // Stop reading new requests on shutdown, without dropping an active
     // response future. Its original connection/request deadlines still apply.
     tokio::pin!(connection);
-    let mut bound = pool.map_or(Duration::from_secs(http::CONNECTION_SECONDS), |pool| {
-        Duration::from_millis(pool.connection_lifetime_ms)
-    });
-    if let Some(limits) = shared
-        .contract
+    let stream_lifetime = shared
         .limits
         .stream
         .filter(|_| shared.contract.streaming)
-    {
-        bound += Duration::from_millis(limits.lifetime_ms);
-    }
+        .map_or(Duration::ZERO, |limits| {
+            Duration::from_millis(limits.lifetime_ms)
+        });
+    let bound = pool.map_or(Duration::from_secs(http::CONNECTION_SECONDS), |pool| {
+        Duration::from_millis(pool.connection_lifetime_ms)
+    }) + stream_lifetime;
     let until = tokio::time::Instant::now() + bound;
-    let drain = Duration::from_secs(http::CONNECTION_SECONDS);
+    // The current response of a connection whose lifetime ended may finish
+    // within its own bound: a Web `Request` service's request lifetime.
+    let drain = match shared.limits.transport {
+        Some(transport) if shared.contract.web_request => {
+            Duration::from_millis(transport.request_lifetime_ms) + stream_lifetime
+        }
+        _ => Duration::from_secs(http::CONNECTION_SECONDS),
+    };
     let result = tokio::select! {
         result = connection.as_mut() => Some(result),
         _ = tokio::time::sleep_until(until) => {

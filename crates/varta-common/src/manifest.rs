@@ -44,6 +44,11 @@ pub struct Manifest {
     /// root name mapped to an absolute host directory ([`crate::files`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fs_roots: Option<crate::files::FsRoots>,
+    /// Host policy only: settings of the HTTP services the host runs, such
+    /// as lower server limits ([`crate::http::HttpPolicy`]). A package
+    /// manifest never carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<crate::http::HttpPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +120,7 @@ impl Manifest {
                 .collect(),
             budgets: None,
             fs_roots: None,
+            http: None,
         }
     }
 
@@ -143,6 +149,11 @@ impl Manifest {
         if matches!(self.fs_roots, Some(crate::files::FsRoots::Directories(_))) {
             return Err(VartaError::InvalidManifest(
                 "a package names its fsRoots; only a host policy maps them to directories".into(),
+            ));
+        }
+        if self.http.is_some() {
+            return Err(VartaError::InvalidManifest(
+                "http settings belong to a host policy, never to a package".into(),
             ));
         }
         if self.abi_version < crate::abi::PROGRAM_LIMITS_VERSION {
@@ -373,6 +384,27 @@ mod tests {
         ] {
             assert!(Manifest::parse(source.as_bytes()).is_err(), "{source}");
         }
+    }
+    #[test]
+    fn http_settings_belong_to_a_host_policy_only() {
+        let source = br#"{"capabilities":[],"http":{"limits":{"workers":2}}}"#;
+        let manifest = Manifest::parse(source).unwrap();
+        manifest.validate_ceiling().unwrap();
+        assert!(manifest.validate_package().is_err());
+        assert_eq!(
+            manifest
+                .http
+                .and_then(|http| http.limits)
+                .and_then(|l| l.workers),
+            Some(2)
+        );
+        assert!(Manifest::parse(br#"{"capabilities":[],"http":{"workers":2}}"#).is_err());
+        // Without the member a manifest serializes as before.
+        assert!(
+            !String::from_utf8(Manifest::new(&[]).to_bytes().unwrap())
+                .unwrap()
+                .contains("http")
+        );
     }
     #[test]
     fn request_grants_keep_urls_and_optional_methods() {

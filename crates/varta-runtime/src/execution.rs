@@ -162,6 +162,7 @@ impl Execution {
                 network_idle: std::time::Duration::from_secs(
                     varta_common::net::READ_INACTIVITY_SECONDS,
                 ),
+                idle_bound: None,
                 budgets,
                 turns: crate::turns::Turns::new(setup.renew, renew_deadline, setup.capped),
                 broker,

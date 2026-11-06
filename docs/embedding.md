@@ -122,6 +122,7 @@ engine payloads from package input.
 | grant `responseHeaders` | Optional, `net.request` only; requires the `abiVersion` of the [limits table](#manifest-limits). An array of exact lowercase header names (RFC 9110 tokens), no duplicates, never a forbidden name, within the counts of the [limits table](#manifest-limits); allowed in a package and in a host ceiling. The response headers a v38 request shows the guest ([canonical head](#canonical-head-v38)); absent shows the CORS-safelisted names, `[]` shows none. V37 requests ignore it |
 | grant `purpose` | Optional untrusted text shown as a quote in prompts, valid by the [purpose rule](#manifest-limits); requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling |
 | `fsRoots` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). In a package: an array of [root names](#root-names), no duplicates; an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most the host root directory bytes of the [limits table](#manifest-limits), no duplicate key); an array is rejected. Either form holds at most the `fsRoots` entries of the [limits table](#manifest-limits). See [File roots](#file-roots-v38) |
+| `http` | Host ceiling only; rejected in a package. An object with an optional `limits` object that lowers the server limits of a contract v2 HTTP service: `connections`, `workers`, `workerWaitMs`, `keepAliveIdleMs`, `keepAliveRequests`, `connectionLifetimeMs`, `streamIdleMs`, `streamLifetimeMs`, `requestBodyBytes`, `bodyIdleMs`, `requestLifetimeMs`, `writeIdleMs`, each an integer from 1 to its value in the [entry-point limits](#entry-point-limits); a larger value, 0, an unknown member or any limit for a contract v1 service fails the run before a socket is bound. See [native HTTP v2](architecture.md#http-contract-v2--native-server) |
 
 Unknown or duplicate fields, unknown capability ids, duplicate ids and a value of
 the wrong kind (a boolean id needs exactly `enabled`, every other id exactly
@@ -3704,6 +3705,8 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
 | HTTP v1 connections / v2 open connections / v2 concurrent requests | 1 / 1024 / 8 | `http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS` |
 | HTTP v2 worker wait / keep-alive idle / requests per connection / connection lifetime | 10 s / 5 s / 1000 / 600 s | `http::WORKER_WAIT_SECONDS`, `http::KEEP_ALIVE_IDLE_SECONDS`, `http::MAX_KEEP_ALIVE_REQUESTS`, `http::CONNECTION_LIFETIME_SECONDS` |
 | HTTP v2 stream idle / lifetime / chunk bytes | 300 s / 3600 s / 65536 | `http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES` |
+| HTTP v2 Web request body bytes / body idle / request lifetime | 16777216 / 60 s / 300 s | `http::MAX_REQUEST_BODY_BYTES`, `http::REQUEST_BODY_IDLE_SECONDS`, `http::REQUEST_LIFETIME_SECONDS` |
+| HTTP v2 response write idle | 60 s | `http::WRITE_IDLE_SECONDS` |
 | Native HTTP retained request reports / total retained audit entries | 32 / 256 | `http::MAX_REPORTED_REQUESTS`, `permission::MAX_AUDIT_ENTRIES` |
 | Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |
 | Catalog types / bindings | 672 / 672 | `function::MAX_CAPTURE_TYPES` |

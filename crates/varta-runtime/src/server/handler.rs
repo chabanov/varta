@@ -12,6 +12,19 @@ pub(super) struct Streaming {
     pub bodyless: bool,
 }
 
+/// What a worker hands its adapter.
+pub(super) enum Envelope {
+    /// The whole request as the `VartaHttpRequest` JSON envelope.
+    Text(Vec<u8>),
+    /// A Web `Request` service's request head and its body still unread
+    /// (`None` without one); the worker registers the body as a transfer
+    /// and sets `head.body` to its id.
+    Web {
+        head: http::WebRequestHead,
+        body: Option<hyper::body::Incoming>,
+    },
+}
+
 /// A streaming body that ended without its end record.
 #[derive(Debug)]
 pub(super) struct StreamAborted;
@@ -24,7 +37,7 @@ impl std::error::Error for StreamAborted {}
 
 pub(super) fn execute(
     shared: &Shared,
-    request: Vec<u8>,
+    request: Envelope,
     cancellation: Option<crate::cancellation::Cancellation>,
     streaming: Option<Streaming>,
 ) -> Result<HttpResponse, RuntimeError> {
@@ -64,19 +77,36 @@ pub(super) fn execute(
 
 fn execute_owned(
     shared: &Shared,
-    request: Vec<u8>,
+    request: Envelope,
     cancellation: Option<crate::cancellation::Cancellation>,
     streaming: Option<Streaming>,
     evidence: &mut Option<(crate::BudgetReport, Vec<crate::AuditEntry>, u64)>,
 ) -> Result<HttpResponse, RuntimeError> {
     let setup = &shared.request_setup;
-    // A streaming response lives at most its lifetime; each body chunk is a
-    // turn of its own (`stream`).
-    let mode = match shared.contract.limits.stream {
-        Some(limits) if shared.contract.streaming => crate::execution::Mode::Application {
-            lifetime: Some(std::time::Duration::from_millis(limits.lifetime_ms)),
+    let stream = shared
+        .limits
+        .stream
+        .filter(|_| shared.contract.streaming)
+        .map(|limits| std::time::Duration::from_millis(limits.lifetime_ms));
+    // A Web `Request` service's request is a sequence of turns, each with
+    // fresh budgets and the per-turn deadline, which waits between turns
+    // (for its body, timers or transfers) do not use: it lives at most the
+    // request lifetime (plus a streaming response's). Otherwise a
+    // streaming response lives at most its lifetime, each body chunk a turn
+    // of its own (`stream`), and every other request is one bounded turn.
+    let web = shared
+        .limits
+        .transport
+        .filter(|_| shared.contract.web_request)
+        .map(|transport| std::time::Duration::from_millis(transport.request_lifetime_ms));
+    let mode = match (web, stream) {
+        (Some(lifetime), stream) => crate::execution::Mode::Application {
+            lifetime: Some(lifetime + stream.unwrap_or_default()),
         },
-        _ => crate::execution::Mode::Bounded,
+        (None, Some(lifetime)) => crate::execution::Mode::Application {
+            lifetime: Some(lifetime),
+        },
+        (None, None) => crate::execution::Mode::Bounded,
     };
     let mut execution = Execution::with_setup(
         &shared.engine,
@@ -86,7 +116,7 @@ fn execute_owned(
             files: shared.files.clone(),
             budgets: setup.budgets,
             capped: setup.capped.clone(),
-            renew: false,
+            renew: web.is_some(),
             mode,
             broker: setup.broker.setup(),
         },
@@ -94,6 +124,10 @@ fn execute_owned(
     execution.store.data_mut().cancellation = cancellation;
     execution.store.data_mut().http_control =
         Some((shared.contract.bind.clone(), shared.stop.clone()));
+    if let Some(lifetime) = web {
+        let context = execution.store.data_mut();
+        context.idle_bound = Some(context.started + lifetime);
+    }
     let mut instance = None;
     let response = execution
         .store
@@ -128,15 +162,42 @@ fn execute_owned(
     response
 }
 
+/// The wire envelope of `request`. A Web `Request`'s body becomes a
+/// transfer of the request's Store first, whose id the envelope carries.
+fn envelope(
+    shared: &Shared,
+    execution: &mut Execution,
+    request: Envelope,
+) -> Result<Vec<u8>, RuntimeError> {
+    let (mut head, body) = match request {
+        Envelope::Text(bytes) => return Ok(bytes),
+        Envelope::Web { head, body } => (head, body),
+    };
+    if let (Some(body), Some(transport)) = (body, shared.limits.transport) {
+        let context = execution.store.data_mut();
+        let deadline = context
+            .idle_bound
+            .ok_or_else(|| HttpError::Message("Web request without its lifetime".into()))?;
+        head.body = context.net.inbound(crate::net::InboundBody {
+            body,
+            limit: transport.request_body_bytes,
+            idle: std::time::Duration::from_millis(transport.body_idle_ms),
+            deadline,
+        })?;
+    }
+    serde_json::to_vec(&head).map_err(|_| HttpError::Message("request envelope".into()).into())
+}
+
 fn invoke(
     shared: &Shared,
     execution: &mut Execution,
-    request: Vec<u8>,
+    request: Envelope,
     streaming: Option<Streaming>,
     started: &mut Option<wasmtime::Instance>,
 ) -> Result<HttpResponse, RuntimeError> {
     let instance = execution.instantiate_prepared(&shared.module)?;
     *started = Some(instance);
+    let request = envelope(shared, execution, request)?;
     let memory = instance
         .get_memory(&mut execution.store, varta_common::abi::MEMORY_EXPORT)
         .ok_or_else(|| HttpError::Message("missing ABI memory".into()))?;
@@ -310,7 +371,6 @@ fn stream(
     streaming: Streaming,
 ) -> Result<HttpResponse, RuntimeError> {
     let limits = shared
-        .contract
         .limits
         .stream
         .ok_or_else(|| HttpError::Message("streaming contract without stream limits".into()))?;
@@ -342,8 +402,14 @@ fn stream(
             if shared.stop.stopped() {
                 return Ok(());
             }
-            execution.store.data_mut().budgets.deadline_per_turn =
-                std::time::Duration::from_millis(limits.idle_ms);
+            let idle = std::time::Duration::from_millis(limits.idle_ms);
+            let context = execution.store.data_mut();
+            context.budgets.deadline_per_turn = idle;
+            // A Web `Request` service's pull waits at most the idle bound too.
+            if context.idle_bound.is_some() {
+                let bound = std::time::Instant::now() + idle;
+                context.idle_bound = Some(context.lifetime.map_or(bound, |end| end.min(bound)));
+            }
             crate::turns::close(Some(&instance), &mut execution.store);
             crate::turns::begin(&mut execution.store, crate::turns::TurnKind::Stream)?;
             let record = pull(execution, (&instance, &memory), body)?;

@@ -1203,9 +1203,14 @@ declare const varta: {
      * until response settlement, and a Web `Response` (or a promise of one):
      * its body (text, bytes or a `ReadableStream`) streams to the client in
      * chunks, each pulled as its own turn within the stream's idle and
-     * lifetime bounds. Earlier HTTP v1 profiles require a sync handler.
+     * lifetime bounds. A v38 handler may also take a Web `Request` (method,
+     * absolute URL, `Headers` and a body that streams from the client
+     * within the host's size, idle and lifetime bounds); its request is a
+     * sequence of turns with fresh budgets. Earlier HTTP v1 profiles
+     * require a sync handler.
      */
     serve(options: { hostname: string; port: number }, handler: (request: VartaHttpRequest) => VartaHttpResponse | Promise<VartaHttpResponse> | Response | Promise<Response>): void;
+    serve(options: { hostname: string; port: number }, handler: (request: Request) => VartaHttpResponse | Promise<VartaHttpResponse> | Response | Promise<Response>): void;
     /** Stop this owned service after the current response has drained. */
     stop(): void;
   };

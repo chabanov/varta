@@ -16752,9 +16752,50 @@ A further connection waits in the listener's backlog. Shutdown stops
 accepting and waits for the open connections. HTTP contract v1 keeps one
 connection per request and its immediate 503. The limits travel in the
 contract metadata (`HttpLimits::for_version`: `connections`, `pool`,
-`stream`), so a v38 service built before them must be rebuilt. Not yet
-bounded: a client that reads a whole response slowly holds its connection
-(not a worker) until the connection's lifetime.
+`stream`, `transport`), so a v38 service built before them must be rebuilt.
+A v2 connection whose response write (or flush) makes no progress for
+`http::WRITE_IDLE_SECONDS` closes, so a client that stops reading holds its
+connection no longer than that.
+
+**Web `Request` handlers (v2).** A v38 handler may take a Web `Request`
+instead of a `VartaHttpRequest`, with any of the four result forms, as
+`Deno.serve` handlers do. The contract then sets `webRequest` (with
+`asynchronous`; v2 only), and the adapter makes the argument of a
+`WebRequestHead` envelope: the method; the absolute URL of the cleartext
+scheme, the authority the request names (an absolute-form target, an HTTP/2
+`:authority`, else the `Host` header, which must be a valid authority, else
+the listener's address) and the target's path and query; the headers as
+received; and `body`, the id of the transfer its body streams through, or 0
+for a request without one. The fetch prelude's `httpRequest` (unnameable by
+programs) builds the `Request`; its body is a `ReadableStream` whose reads
+are the network reads of a response body (`net_body_read*`), so the host
+holds at most one received frame and a slow guest applies backpressure to
+the client. `Request` gained `body`, `bodyUsed`, `text()`, `json()`,
+`arrayBuffer()`, `bytes()` and `blob()`; a `Request` made of a received one
+takes its stream over, and `fetch` of it reads the body whole (within the
+received bound) and sends it as bytes. A declared `content-length` above
+`http::MAX_REQUEST_BODY_BYTES` gets 413 before dispatch; a body that grows
+beyond it, or whose next frame takes longer than
+`http::REQUEST_BODY_IDLE_SECONDS` once the guest asked for it, fails the
+guest's read (a catchable `TypeError: terminated`). Such a request is a
+sequence of turns: the handler's first turn, then every timer, network or
+body completion begins a turn with fresh fuel, host calls, microtasks and
+the per-turn deadline (capped by the fixed handler deadline), and the waits
+between turns use no turn deadline. The request lives at most
+`http::REQUEST_LIFETIME_SECONDS` to its response head (plus the stream
+lifetime for a streaming response, whose pulls keep the stream idle bound),
+and a connection whose lifetime ends lets its current request finish within
+that bound. `VartaHttpRequest` handlers keep their whole-body envelope and
+budgets unchanged.
+
+**Host limits (v2).** A host policy's `http.limits`
+([embedding contract](embedding.md#manifest)) lowers server limits of a v2
+service: connections, workers, worker wait, keep-alive idle, requests and
+lifetime, stream idle and lifetime, request body bytes, body idle, request
+lifetime and write idle. Each value must lie between 1 and the registry's
+(`HttpLimits::lowered`); a larger one, 0, or any limit for a v1 service
+fails the run before a socket is bound. A package never carries the
+member, and the application can change no limit.
 
 Timer/Unicode, mutable-state, forced-GC, outbound-body/denial and hostile metadata
 cases have focused verification. Every request now receives a shareable snapshot
