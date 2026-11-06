@@ -261,9 +261,27 @@ fn a_kept_alive_connection_serves_several_requests_and_closes_when_idle() {
 
 #[test]
 fn a_request_that_finds_no_worker_in_time_gets_503_with_retry_after() {
-    let server = start();
-    // Every worker holds a stream that waits 30 seconds for its next chunk.
-    let open: Vec<Open> = (0..varta_common::http::MAX_CONCURRENT_REQUESTS)
+    // A host lowers the slots to two and the wait to a second.
+    const SLOTS: usize = 2;
+    let wait = Duration::from_secs(1);
+    let bytes =
+        varta_compiler::compile_typescript_with_profile(STREAMING, P::CheckedF64Utf16V38).unwrap();
+    let server = Server::start_options(
+        bytes,
+        RunOptions {
+            requested: vec![timers()],
+            http: Some(varta_common::http::HttpPolicy {
+                limits: Some(varta_common::http::HostLimits {
+                    workers: Some(SLOTS),
+                    worker_wait_ms: Some(wait.as_millis() as u64),
+                    ..Default::default()
+                }),
+            }),
+            ..RunOptions::default()
+        },
+    );
+    // Every slot holds a stream that waits 30 seconds for its next chunk.
+    let open: Vec<Open> = (0..SLOTS)
         .map(|_| {
             let mut open = Open::get(&server, "/slow");
             assert_eq!(open.chunk().as_deref(), Some("data: 1\n\n"));
@@ -278,8 +296,7 @@ fn a_request_that_finds_no_worker_in_time_gets_503_with_retry_after() {
         headers.to_ascii_lowercase().contains("retry-after: 1"),
         "{headers}"
     );
-    let wait = Duration::from_secs(varta_common::http::WORKER_WAIT_SECONDS);
-    assert!(waited >= wait - Duration::from_millis(500), "{waited:?}");
+    assert!(waited >= wait - Duration::from_millis(100), "{waited:?}");
     drop(open);
     server.finish();
 }

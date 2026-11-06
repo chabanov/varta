@@ -103,6 +103,18 @@ pub(crate) struct Kv {
     clock: clock::Clock,
 }
 
+impl Drop for Kv {
+    /// The databases close first, as the fields would; the waiting runtime
+    /// then shuts down outside any async context, which a native server's
+    /// request task (K7 H2) may be.
+    fn drop(&mut self) {
+        drop(std::mem::take(&mut self.databases));
+        if let Some(runtime) = self.runtime.take() {
+            crate::blocking(move || drop(runtime));
+        }
+    }
+}
+
 impl Kv {
     fn fail(&mut self, error: &KvError) -> f64 {
         self.text = error.text();

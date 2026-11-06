@@ -160,7 +160,7 @@ fn compiled_http_handler_serves_plain_json_headers_repeated_calls_and_shutdown()
     let server = Server::start(HANDLER);
     let (status, headers, body) =
         server.request("POST", "/echo?x=1", r#"{"value":"Привіт🦀"}"#.as_bytes());
-    assert_eq!(status, 201);
+    assert_eq!(status, 201, "{:?}", server.diagnostics.lock().unwrap());
     assert!(
         headers
             .to_ascii_lowercase()
@@ -760,4 +760,5 @@ fn http_v1_keeps_legacy_budget_and_consent_semantics() {
 mod cancellation;
 mod reports;
 mod streaming;
+mod tasks;
 mod web_request;

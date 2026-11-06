@@ -7,15 +7,70 @@ use crate::RuntimeContext;
 use varta_common::fuel;
 use wasmtime::{CallHook, Caller, Store, StoreContextMut, Trap};
 
+/// The call charge the hook took for the host call in progress.
+///
+/// Wasmtime runs the call hook around libcalls as well as host imports,
+/// among them the epoch check, which an engine's ticker or another Store's
+/// deadline or cancellation can reach at any instruction. The epoch
+/// callback refunds the charge ([`refund_libcall`]), so fuel never depends
+/// on when epochs advance. Fuel that cannot cover the charge does not fail
+/// at once (the call may be that libcall): it is emptied, a counted host
+/// call fails before its effect ([`RuntimeContext::tick`]) and any other
+/// call when it returns, like guest code running out of fuel.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CallCharge {
+    taken: u64,
+    short: bool,
+}
+impl CallCharge {
+    /// Whether the fuel could not cover the charge.
+    pub(crate) fn short(self) -> bool {
+        self.short
+    }
+}
+
 /// Charge [`fuel::CALL`] on every call of a host import.
 pub(crate) fn install(store: &mut Store<RuntimeContext>) {
     store.call_hook(|mut context: StoreContextMut<'_, RuntimeContext>, hook| {
-        if matches!(hook, CallHook::CallingHost) && context.data().fair_fuel {
-            let remaining = context.get_fuel()?;
-            take(remaining, fuel::CALL, |left| context.set_fuel(left))?;
+        if !context.data().fair_fuel {
+            return Ok(());
+        }
+        match hook {
+            CallHook::CallingHost => {
+                let remaining = context.get_fuel()?;
+                let taken = remaining.min(fuel::CALL);
+                context.set_fuel(remaining - taken)?;
+                context.data_mut().call_charge = Some(CallCharge {
+                    taken,
+                    short: taken < fuel::CALL,
+                });
+            }
+            CallHook::ReturningFromHost => {
+                if context
+                    .data_mut()
+                    .call_charge
+                    .take()
+                    .is_some_and(CallCharge::short)
+                {
+                    return Err(wasmtime::Error::new(Trap::OutOfFuel));
+                }
+            }
+            CallHook::CallingWasm | CallHook::ReturningFromWasm => {}
         }
         Ok(())
     });
+}
+
+/// The epoch callback runs inside the epoch libcall: give back the call
+/// charge the hook took for it, which is no host import.
+pub(crate) fn refund_libcall(
+    context: &mut StoreContextMut<'_, RuntimeContext>,
+) -> wasmtime::Result<()> {
+    if let Some(charge) = context.data_mut().call_charge.take() {
+        let remaining = context.get_fuel()?;
+        context.set_fuel(remaining.saturating_add(charge.taken))?;
+    }
+    Ok(())
 }
 
 /// Deduct `amount` from `remaining`; an amount it cannot cover empties the

@@ -908,6 +908,15 @@ fn entry_limits() -> String {
             "`http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS`",
         ),
         (
+            "HTTP v2 request memory / server memory ceiling",
+            format!(
+                "{} / {}",
+                http::REQUEST_MEMORY_BYTES,
+                http::SERVER_MEMORY_BYTES
+            ),
+            "`http::REQUEST_MEMORY_BYTES`, `http::SERVER_MEMORY_BYTES`",
+        ),
+        (
             "HTTP v2 worker wait / keep-alive idle / requests per connection / connection lifetime",
             format!(
                 "{} s / {} s / {} / {} s",

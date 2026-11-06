@@ -1,4 +1,5 @@
 //! Host-driven HTTP lifetime. Every request gets a fresh bounded guest store.
+mod engine;
 mod handler;
 mod io;
 mod report;
@@ -111,7 +112,16 @@ struct Shared {
     ceiling: Option<Vec<CapabilityGrant>>,
     files: policy::FileMode,
     stop: HttpShutdown,
+    /// The module linked once to the host operations (H2); every request
+    /// instantiates its own Store from it.
+    linked: wasmtime::InstancePre<crate::RuntimeContext>,
+    /// Instance slots: one per running request (the one worker of v1).
     workers: Arc<tokio::sync::Semaphore>,
+    /// The server memory ceiling in Wasm pages (v2): a request holds its
+    /// memory budget's pages while it runs.
+    memory: Arc<tokio::sync::Semaphore>,
+    /// The pages of one request's memory budget.
+    request_pages: u32,
     sink: Arc<Sink>,
 }
 impl Shared {
@@ -126,8 +136,8 @@ impl Shared {
 const HTTP_SCHEME: &str = "http";
 
 pub(super) struct Start<'a> {
-    pub engine: Engine,
-    pub module: crate::PreparedModule,
+    /// The validated module, compiled again for the server's engine.
+    pub bytes: &'a [u8],
     pub contract: HttpContract,
     pub request_setup: crate::execution::RequestSetup,
     pub requested: &'a [CapabilityGrant],
@@ -156,8 +166,7 @@ fn run_owned(
     requests: Arc<Mutex<HttpReport>>,
 ) -> Result<RunOutput, RuntimeError> {
     let Start {
-        engine,
-        module,
+        bytes,
         contract,
         mut request_setup,
         requested,
@@ -211,6 +220,28 @@ fn run_owned(
             });
         request_setup.budgets.memory_bytes = request_memory;
     }
+    // A v1 service has one worker; a v2 service its slots and its memory
+    // ceiling, which must hold at least one request.
+    let workers = limits.pool.map_or(limits.connections, |pool| pool.workers);
+    let page = abi::WASM_PAGE_BYTES;
+    let request_pages = request_setup.budgets.memory_bytes.div_ceil(page);
+    let memory_pages = limits
+        .pool
+        .map_or(request_pages, |pool| pool.memory_bytes / page);
+    if request_pages > memory_pages {
+        return Err(HttpError::Policy(
+            "the server memory ceiling is below one request's memory budget".into(),
+        )
+        .into());
+    }
+    // The server engine: the module compiled again with the runtime's
+    // settings, a pool of `workers` instance slots, linked once.
+    let engine = engine::engine(workers)?;
+    let module = crate::validate::module(&engine, bytes)?.0;
+    let mut linker = wasmtime::Linker::new(&engine);
+    crate::host::register(&mut linker)?;
+    let linked = linker.instantiate_pre(module.module())?;
+    let _ticker = engine::Ticker::start(engine.clone()).map_err(HttpError::Io)?;
     let listener = TcpListener::bind(&contract.bind).map_err(HttpError::Io)?;
     listener.set_nonblocking(true).map_err(HttpError::Io)?;
     let address = listener.local_addr().map_err(HttpError::Io)?;
@@ -225,8 +256,6 @@ fn run_owned(
         }),
     });
     sink.lines(output.lines)?;
-    // A v1 service has one worker; a v2 service its pool.
-    let workers = limits.pool.map_or(limits.connections, |pool| pool.workers);
     let shared = Arc::new(Shared {
         engine,
         module,
@@ -239,16 +268,25 @@ fn run_owned(
         ceiling: ceiling.map(ToOwned::to_owned),
         files,
         stop,
+        linked,
         workers: Arc::new(tokio::sync::Semaphore::new(workers)),
+        memory: Arc::new(tokio::sync::Semaphore::new(memory_pages)),
+        request_pages: u32::try_from(request_pages)
+            .map_err(|_| HttpError::Message("request memory pages".into()))?,
         sink: sink.clone(),
     });
     // A dedicated reactor also supports embedders already running Tokio.
+    // Requests are tasks of its worker threads, one per available CPU; a
+    // blocking host operation takes a thread of its own for its duration.
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     std::thread::Builder::new()
         .name("varta-http".into())
         .spawn(move || -> Result<(), RuntimeError> {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(threads)
                 .max_blocking_threads(workers)
+                .thread_name("varta-http-worker")
+                .enable_all()
                 .build()
                 .map_err(HttpError::Io)?;
             runtime.block_on(transport::serve(listener, address, shared))

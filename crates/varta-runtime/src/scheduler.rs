@@ -810,24 +810,64 @@ fn network_turn(
     due: Option<f64>,
 ) -> Result<Option<TurnKind>, RuntimeError> {
     let context = store.data_mut();
-    let deadline = context.wait_bound();
+    match network_step(context, due)? {
+        NetworkStep::Fired => Ok(Some(TurnKind::Timer)),
+        NetworkStep::Wait {
+            until,
+            timer,
+            bound,
+        } => {
+            if crate::net::wait(context, until)? {
+                return Ok(Some(TurnKind::Network));
+            }
+            network_idle(context, timer, bound)
+        }
+    }
+}
+
+/// How a network turn begins: a timer due now fired, or the turn waits for
+/// a completion until `until` (the timer's time, or the wait bound).
+enum NetworkStep {
+    Fired,
+    Wait {
+        until: Instant,
+        timer: Option<(f64, Instant)>,
+        bound: Instant,
+    },
+}
+
+fn network_step(
+    context: &mut RuntimeContext,
+    due: Option<f64>,
+) -> Result<NetworkStep, RuntimeError> {
+    let bound = context.wait_bound();
     let timer = due.map(|due| (due, target(context, due)));
-    let fires = |instant: Instant| instant < deadline;
     if let Some((_, at)) = timer
-        && fires(at)
+        && at < bound
         && at <= Instant::now()
     {
         context.scheduler.fire().map_err(fatal)?;
-        return Ok(Some(TurnKind::Timer));
+        return Ok(NetworkStep::Fired);
     }
     let until = match timer {
-        Some((_, at)) if fires(at) => at,
-        _ => deadline,
+        Some((_, at)) if at < bound => at,
+        _ => bound,
     };
-    if crate::net::wait(context, until)? {
-        return Ok(Some(TurnKind::Network));
-    }
-    if Instant::now() >= deadline {
+    Ok(NetworkStep::Wait {
+        until,
+        timer,
+        bound,
+    })
+}
+
+/// The end of a network turn whose wait delivered no completion: the
+/// deadline error once the bound passed, else the timer that became due.
+fn network_idle(
+    context: &mut RuntimeContext,
+    timer: Option<(f64, Instant)>,
+    bound: Instant,
+) -> Result<Option<TurnKind>, RuntimeError> {
+    if Instant::now() >= bound {
         // V38: a timer due at or beyond the deadline reports `TimerDeadline`,
         // as when no request is in flight; v37 keeps the deadline error.
         if context.turns.renew
@@ -837,7 +877,7 @@ fn network_turn(
         }
         return Err(context.deadline_error().into());
     }
-    if timer.is_some_and(|(_, at)| fires(at) && at <= Instant::now()) {
+    if timer.is_some_and(|(_, at)| at < bound && at <= Instant::now()) {
         context.scheduler.fire().map_err(fatal)?;
         return Ok(Some(TurnKind::Timer));
     }
@@ -925,6 +965,148 @@ pub(crate) fn drain(
             return Err(fatal(SchedulerError::Outcome).into());
         };
         let outcome = dispatcher.call(&mut *store, (token, Completion::Normal as i32, 0))?;
+        // Scheduled frames settle their promises themselves: they report
+        // suspension or completion and leave the exception channel empty.
+        if !matches!(
+            Outcome::from_code(outcome),
+            Some(Outcome::Suspended | Outcome::Returned)
+        ) {
+            return Err(fatal(SchedulerError::Outcome).into());
+        }
+        crate::exceptions::finish(instance, store)?;
+    }
+    Ok(())
+}
+
+/// What ends [`checkpoint_until_async`]: its first microtask checkpoint, or
+/// the settlement of `promise`, read through the guest's pure `state`
+/// accessor after every checkpoint.
+#[derive(Clone)]
+pub(crate) enum Until {
+    Drained,
+    Settled {
+        state: wasmtime::TypedFunc<i64, f64>,
+        promise: i64,
+    },
+}
+
+/// How [`checkpoint_until_async`] ended: its condition held, the promise
+/// was rejected (or reported an invalid state), or the loop became idle
+/// first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ended {
+    Complete,
+    Rejected,
+    Idle,
+}
+
+/// The async form of [`checkpoint_until`] for a native server's request
+/// task (K7 H2): the same loop, turns and bounds, but guest calls are
+/// asynchronous and every wait (timers, transfers, cancellation) awaits
+/// instead of blocking its thread.
+pub(crate) async fn checkpoint_until_async(
+    instance: &Instance,
+    store: &mut Store<RuntimeContext>,
+    until: Until,
+) -> Result<Ended, RuntimeError> {
+    use varta_common::scheduler::PromiseState;
+    loop {
+        drain_async(instance, store).await?;
+        if let Some(error) = store.data().scheduler.unhandled_rejection() {
+            return Err(error.into());
+        }
+        match &until {
+            Until::Drained => return Ok(Ended::Complete),
+            Until::Settled { state, promise } => {
+                let value = state.call_async(&mut *store, *promise).await?;
+                if value == PromiseState::Fulfilled as i32 as f64 {
+                    return Ok(Ended::Complete);
+                }
+                if value != PromiseState::Pending as i32 as f64 {
+                    return Ok(Ended::Rejected);
+                }
+            }
+        }
+        let busy = store.data().net.alive();
+        let due = store.data().scheduler.next_due(busy);
+        if busy {
+            let context = store.data_mut();
+            let kind = match network_step(context, due)? {
+                NetworkStep::Fired => Some(TurnKind::Timer),
+                NetworkStep::Wait {
+                    until,
+                    timer,
+                    bound,
+                } => {
+                    if crate::net::wait_async(context, until).await? {
+                        Some(TurnKind::Network)
+                    } else {
+                        network_idle(context, timer, bound)?
+                    }
+                }
+            };
+            if let Some(kind) = kind {
+                crate::turns::boundary(instance, store, kind)?;
+            }
+            continue;
+        }
+        let Some(due) = due else {
+            return Ok(Ended::Idle);
+        };
+        if let Some(error) = beyond_deadline(store.data(), due) {
+            return Err(error.into());
+        }
+        wait_async(store, due).await?;
+        store.data_mut().scheduler.fire().map_err(fatal)?;
+        crate::turns::boundary(instance, store, TurnKind::Timer)?;
+    }
+}
+
+/// The async form of [`wait`]: sleep until loop time `due` or the wait
+/// bound, ending early with the cancellation error once cancelled.
+async fn wait_async(store: &mut Store<RuntimeContext>, due: f64) -> Result<(), wasmtime::Error> {
+    // The context is not `Sync`: only owned values cross the await.
+    let (bound, until, cancellation) = {
+        let context = store.data();
+        let bound = context.wait_bound();
+        let until = tokio::time::Instant::from_std(target(context, due).min(bound));
+        (bound, until, context.cancellation.clone())
+    };
+    match &cancellation {
+        Some(cancellation) => {
+            tokio::select! {
+                () = tokio::time::sleep_until(until) => {}
+                () = cancellation.cancelled() => {}
+            }
+            cancellation.check()?;
+        }
+        None => tokio::time::sleep_until(until).await,
+    }
+    if Instant::now() >= bound {
+        return Err(store.data().deadline_error());
+    }
+    Ok(())
+}
+
+/// The async form of [`drain`].
+pub(crate) async fn drain_async(
+    instance: &Instance,
+    store: &mut Store<RuntimeContext>,
+) -> Result<(), RuntimeError> {
+    let mut resume = None;
+    while let Some(token) = store.data_mut().scheduler.next().map_err(fatal)? {
+        if resume.is_none() {
+            resume = Some(
+                instance
+                    .get_typed_func::<(i64, i32, i64), i32>(&mut *store, frame::RESUME_EXPORT)?,
+            );
+        }
+        let Some(dispatcher) = &resume else {
+            return Err(fatal(SchedulerError::Outcome).into());
+        };
+        let outcome = dispatcher
+            .call_async(&mut *store, (token, Completion::Normal as i32, 0))
+            .await?;
         // Scheduled frames settle their promises themselves: they report
         // suspension or completion and leave the exception channel empty.
         if !matches!(

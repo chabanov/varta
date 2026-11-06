@@ -7097,6 +7097,54 @@ Later: HTTP/3, response compression (a dependency decision), WebSocket.
   Node tests, conformance baseline), report
   `target/verification/20261105-233337-p4fj2lfr/report.json` (macOS only).
 
+#### H2 — Async execution (done 2026-11-06)
+
+- **Tasks, not threads.** The native server is a multi-threaded Tokio
+  runtime with one worker thread per available CPU; every v2 request is a
+  task. Its engine has the runtime's compilation settings (shared
+  `engine_config`, so fuel is identical), a pooling allocator with
+  `http::MAX_CONCURRENT_REQUESTS` slots of `http::REQUEST_MEMORY_BYTES`, and
+  the module linked once into an `InstancePre`; each request still
+  instantiates its own Store.
+- **Yielding.** Guest calls are `call_async`; a guest yields at every epoch
+  tick (one ticker thread per server, `server::engine::TICK`, which also
+  meets per-turn deadlines without a deadline thread per Store). The
+  scheduler's timer waits, network and body completions and cancellation are
+  awaited (`checkpoint_until_async`, `Net::wait_async`,
+  `Cancellation::cancelled`); a request's transfers run on the server
+  runtime (`Net::share_runtime`). Blocking host operations (legacy
+  `net.get`/`net.fetch`, KV) go through `crate::blocking` (`block_in_place`).
+- **Fuel stays exact.** Wasmtime runs the call hook around libcalls too, so
+  the v38 fair call charge counted every epoch check: with a ticker the
+  fuel of identical requests differed by up to 15%, and even before, any
+  epoch another Store's deadline or cancellation advanced on a shared engine
+  could add 50 fuel. The epoch callback now refunds that charge; fuel that
+  cannot cover a charge fails a counted host call before its effect and any
+  other call when it returns. The server does not yield on fuel intervals,
+  whose libcalls would count; the deterministic epoch yield suffices.
+- **Admission by memory.** A v2 request runs once a slot is free and its
+  memory budget fits `http::SERVER_MEMORY_BYTES` less the running requests'
+  budgets, within the worker wait (else 503 with `Retry-After`); a host may
+  lower slots and ceiling (`workers`, `memoryBytes`), and a ceiling below
+  one request fails before bind.
+- **Contract v1** keeps one blocking worker on the same engine and linked
+  module: its checked JSON parse calls back into the guest from a host
+  import, which an asynchronous call cannot.
+- Values set in the registry (open to an owner review):
+  `MAX_CONCURRENT_REQUESTS` 8 → 1024 slots and `SERVER_MEMORY_BYTES` 1 GiB
+  (128 requests of the full 8 MiB budget, more with smaller package
+  budgets). Lock: the `async` feature names an optional component-macro
+  dependency weakly, so `Cargo.lock` gains six lock-only entries that are
+  never built.
+- Tests: `server_tests::tasks` (a CPU-bound guest yields so a quick request
+  is answered while twice the worker threads spin, with identical fuel per
+  spin; 64 streams open at once; memory admission and a too-low ceiling);
+  the busy-503 test lowers the slots by host policy instead of opening 8
+  streams. Every other server test is unchanged.
+- Gate: `python3 scripts/verify.py full` PASS (3875 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261106-001950-ffibq692/report.json` (macOS only).
+
 ### Realistic turn budget and application memory (owner decisions, 2026-11-06)
 
 The UARP console against the live API was terminated first by a network turn

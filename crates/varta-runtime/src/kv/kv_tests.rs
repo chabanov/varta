@@ -344,10 +344,8 @@ fn expire_in_is_stamped_on_the_kv_clock_as_deno_stamped_the_fixture() {
         .count();
     assert_eq!(expiring, 1);
     let at = UNIX_EPOCH + Duration::from_millis(u64::try_from(written).unwrap());
-    let mut state = Kv {
-        clock: clock::Clock::Fixed(at),
-        ..Kv::default()
-    };
+    let mut state = Kv::default();
+    state.clock = clock::Clock::Fixed(at);
     let text = |text: &str| v8::Value::String(text.encode_utf16().collect());
     let key = v8::Value::Object(std::rc::Rc::new(v8::Object::Dense(vec![
         Some(text("fixture")),

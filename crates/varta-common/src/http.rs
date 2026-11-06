@@ -54,16 +54,23 @@ pub const MAX_CONNECTIONS: usize = 1;
 /// Open connections of a v2 service (HTTP/1.1 keep-alive): cheap while
 /// idle; a further connection waits in the listener's backlog.
 pub const MAX_OPEN_CONNECTIONS: usize = 1024;
-/// Requests a v2 service runs at once, each with its own worker and Store.
-pub const MAX_CONCURRENT_REQUESTS: usize = 8;
-/// A v2 request waits at most this long for a worker, then gets 503 with
-/// `Retry-After`.
+/// Requests a v2 service runs at once (H2: the instance slots of its
+/// pooling allocator), each a task with its own Store, and together within
+/// [`SERVER_MEMORY_BYTES`].
+pub const MAX_CONCURRENT_REQUESTS: usize = 1024;
+/// A v2 service's memory ceiling (H2): a request runs only while the
+/// memory budgets of the running requests, its own included, fit it, so
+/// the server's guest memory has a fixed bound whatever the load (128
+/// requests of the full [`REQUEST_MEMORY_BYTES`]).
+pub const SERVER_MEMORY_BYTES: usize = 1024 * 1024 * 1024;
+/// A v2 request waits at most this long for a slot and its memory, then
+/// gets 503 with `Retry-After`.
 pub const WORKER_WAIT_SECONDS: u64 = 10;
 /// The `Retry-After` of a 503 for a request that found no worker in time.
 pub const BUSY_RETRY_AFTER_SECONDS: u64 = 1;
-/// The memory one request's Store may use: the pool runs
-/// [`MAX_CONCURRENT_REQUESTS`] of them, so a request keeps the pre-v38 bound
-/// while a long-lived application instance gets the v38 maximum.
+/// The memory one request's Store may use (and the size of a pool slot):
+/// a request keeps the pre-v38 bound while a long-lived application
+/// instance gets the v38 maximum.
 pub const REQUEST_MEMORY_BYTES: usize = crate::abi::MAX_MEMORY_BYTES;
 /// A keep-alive connection's idle time between requests, which is also the
 /// time a client has to send a request's head (Node's keep-alive default).
@@ -147,13 +154,15 @@ pub struct HttpLimits {
     pub response_bytes: usize,
     pub handler_deadline_ms: u64,
 }
-/// [`MAX_CONCURRENT_REQUESTS`], [`WORKER_WAIT_SECONDS`],
-/// [`KEEP_ALIVE_IDLE_SECONDS`], [`MAX_KEEP_ALIVE_REQUESTS`] and
-/// [`CONNECTION_LIFETIME_SECONDS`] (times in milliseconds).
+/// [`MAX_CONCURRENT_REQUESTS`], [`SERVER_MEMORY_BYTES`],
+/// [`WORKER_WAIT_SECONDS`], [`KEEP_ALIVE_IDLE_SECONDS`],
+/// [`MAX_KEEP_ALIVE_REQUESTS`] and [`CONNECTION_LIFETIME_SECONDS`] (times in
+/// milliseconds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PoolLimits {
     pub workers: usize,
+    pub memory_bytes: usize,
     pub worker_wait_ms: u64,
     pub keep_alive_idle_ms: u64,
     pub keep_alive_requests: usize,
@@ -189,6 +198,7 @@ impl HttpLimits {
                 connections: MAX_OPEN_CONNECTIONS,
                 pool: Some(PoolLimits {
                     workers: MAX_CONCURRENT_REQUESTS,
+                    memory_bytes: SERVER_MEMORY_BYTES,
                     worker_wait_ms: WORKER_WAIT_SECONDS * millis,
                     keep_alive_idle_ms: KEEP_ALIVE_IDLE_SECONDS * millis,
                     keep_alive_requests: MAX_KEEP_ALIVE_REQUESTS,
@@ -349,6 +359,8 @@ pub struct HostLimits {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workers: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_wait_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_alive_idle_ms: Option<u64>,
@@ -415,6 +427,7 @@ impl HttpLimits {
         };
         lower("connections", &mut limits.connections, host.connections)?;
         lower("workers", &mut pool.workers, host.workers)?;
+        lower("memoryBytes", &mut pool.memory_bytes, host.memory_bytes)?;
         lower(
             "workerWaitMs",
             &mut pool.worker_wait_ms,

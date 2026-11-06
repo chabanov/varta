@@ -31,6 +31,13 @@ pub(crate) struct Setup<'a> {
     pub renew: bool,
     pub mode: Mode,
     pub broker: crate::permission::BrokerSetup,
+    /// The Store runs on an async task of the native server (K7 H2): its
+    /// guest calls are asynchronous and yield to the executor at every
+    /// epoch tick, and the server's epoch ticker meets its deadlines instead
+    /// of a deadline thread of its own. It never yields on fuel intervals:
+    /// each would be a libcall the fair call charge counts, at no fixed
+    /// point of the program, so fuel stays exactly the embedding engine's.
+    pub task: bool,
 }
 impl<'a> Setup<'a> {
     /// The production setup of every earlier entry point.
@@ -48,6 +55,7 @@ impl<'a> Setup<'a> {
             renew: false,
             mode: Mode::Bounded,
             broker: crate::permission::BrokerSetup::default(),
+            task: false,
         }
     }
 }
@@ -79,7 +87,9 @@ pub(crate) struct RequestSetup {
 
 pub(crate) struct Execution {
     pub store: Store<RuntimeContext>,
-    _deadline: Deadline,
+    /// The Store's epoch thread; none for an async task (the server's
+    /// ticker advances the epoch instead).
+    _deadline: Option<Deadline>,
     instantiation_started: bool,
     /// Test-only: charge fair host fuel (or not) whatever the profile.
     rated: Option<bool>,
@@ -138,7 +148,9 @@ impl Execution {
                 (lifetime.map_or(turn, |end| turn.min(end)), lifetime, true)
             }
         };
-        let control = Deadline::new(engine.clone(), deadline)?;
+        let control = (!setup.task)
+            .then(|| Deadline::new(engine.clone(), deadline))
+            .transpose()?;
         let mut store = Store::new(
             engine,
             RuntimeContext {
@@ -151,6 +163,7 @@ impl Execution {
                 cancellation: None,
                 function_catalog: None,
                 fair_fuel: false,
+                call_charge: None,
                 module: varta_common::value::ModuleBounds::LEGACY,
                 random: crate::random::RandomSource::default(),
                 scheduler: crate::scheduler::Scheduler::default(),
@@ -167,7 +180,7 @@ impl Execution {
                 turns: crate::turns::Turns::new(setup.renew, renew_deadline, setup.capped),
                 broker,
                 events: crate::events::HostEvents::default(),
-                rearm: Some(control.control.clone()),
+                rearm: control.as_ref().map(|control| control.control.clone()),
                 profiler: None,
                 view: crate::view::Session::default(),
             },
@@ -175,10 +188,16 @@ impl Execution {
         store.limiter(|context| &mut context.limits);
         store.set_fuel(budgets.fuel_per_turn)?;
         store.set_epoch_deadline(1);
-        store.epoch_deadline_callback(|context| {
+        let task = setup.task;
+        store.epoch_deadline_callback(move |mut context| {
+            // The epoch check is a libcall, not a host import: no fair
+            // call charge, whenever the epoch advanced.
+            crate::fair_fuel::refund_libcall(&mut context)?;
             context.data().check_cancelled()?;
             Ok(if Instant::now() >= context.data().deadline {
                 wasmtime::UpdateDeadline::Interrupt
+            } else if task {
+                wasmtime::UpdateDeadline::Yield(1)
             } else {
                 wasmtime::UpdateDeadline::Continue(1)
             })
@@ -228,6 +247,75 @@ impl Execution {
         (bounds, uncharged_initialization): (varta_common::value::ModuleBounds, bool),
         fair_fuel: bool,
     ) -> Result<Instance, wasmtime::Error> {
+        self.begin_instantiation(catalog, bounds, fair_fuel)?;
+        let result = (|| {
+            let mut linker = wasmtime::Linker::new(self.store.engine());
+            host::register(&mut linker)?;
+            if self.store.data().profiler.is_some() {
+                crate::fuel_profile::register(&mut linker)?;
+            }
+            let fuel = self.uncharge(uncharged_initialization)?;
+            let instance = linker.instantiate(&mut self.store, module);
+            self.finish_instantiation(fuel, instance)
+        })();
+        if result.is_err() {
+            self.store.data_mut().function_catalog.take();
+        }
+        result
+    }
+    /// The async instantiation of a native server's request task (H2): the
+    /// module was linked once into `pre`; everything else, fuel included,
+    /// is as [`Self::instantiate_prepared`].
+    pub async fn instantiate_pre_async(
+        &mut self,
+        module: &crate::PreparedModule,
+        pre: &wasmtime::InstancePre<RuntimeContext>,
+    ) -> Result<Instance, wasmtime::Error> {
+        self.begin_instantiation(
+            module.function_catalog.clone(),
+            module.bounds(),
+            module.profile.fair_fuel(),
+        )?;
+        let result = async {
+            let fuel = self.uncharge(!module.start_function)?;
+            let instance = pre.instantiate_async(&mut self.store).await;
+            self.finish_instantiation(fuel, instance)
+        }
+        .await;
+        if result.is_err() {
+            self.store.data_mut().function_catalog.take();
+        }
+        result
+    }
+    /// The synchronous form of [`Self::instantiate_pre_async`] (the frozen
+    /// HTTP contract v1 worker of a native server).
+    pub fn instantiate_linked(
+        &mut self,
+        module: &crate::PreparedModule,
+        pre: &wasmtime::InstancePre<RuntimeContext>,
+    ) -> Result<Instance, wasmtime::Error> {
+        self.begin_instantiation(
+            module.function_catalog.clone(),
+            module.bounds(),
+            module.profile.fair_fuel(),
+        )?;
+        let result = self.uncharge(!module.start_function).and_then(|fuel| {
+            let instance = pre.instantiate(&mut self.store);
+            self.finish_instantiation(fuel, instance)
+        });
+        if result.is_err() {
+            self.store.data_mut().function_catalog.take();
+        }
+        result
+    }
+    /// The metadata an instance's host operations read, set once before it
+    /// exists.
+    fn begin_instantiation(
+        &mut self,
+        catalog: Option<std::sync::Arc<varta_common::function::VerifiedFunctionCatalog>>,
+        bounds: varta_common::value::ModuleBounds,
+        fair_fuel: bool,
+    ) -> Result<(), wasmtime::Error> {
         // One instance per execution, including failed attempts. Never replace
         // metadata while an existing instance can still call host operations.
         if self.instantiation_started {
@@ -246,38 +334,37 @@ impl Execution {
             .data_mut()
             .scheduler
             .set_bounds(bounds.limits.data);
-        let result = (|| {
-            let mut linker = wasmtime::Linker::new(self.store.engine());
-            host::register(&mut linker)?;
-            if self.store.data().profiler.is_some() {
-                crate::fuel_profile::register(&mut linker)?;
-            }
-            // Owner decision (fuel determinism): instantiation never touches
-            // guest fuel, in every profile. Wasmtime meters its data-segment
-            // copy, which it performs, page-rounds or skips depending on the
-            // host's memory images, so the copy runs on an unmetered tank and
-            // the guest's budget is restored exactly before any guest code:
-            // the first turn (instantiation, `_start` and its microtasks) is
-            // charged only for guest code. Without a start function no guest
-            // code runs here; the work is bounded by the validated module
-            // size, the memory budget and the deadline. A start function is
-            // guest code, so such a module keeps paying its instantiation.
-            let fuel = self.store.get_fuel()?;
-            if uncharged_initialization {
-                self.store.set_fuel(u64::MAX)?;
-            }
-            let instance = linker.instantiate(&mut self.store, module);
-            if uncharged_initialization {
-                self.store.set_fuel(fuel)?;
-            }
-            let instance = instance?;
-            crate::exceptions::initial(&instance, &mut self.store)?;
-            Ok(instance)
-        })();
-        if result.is_err() {
-            self.store.data_mut().function_catalog.take();
+        Ok(())
+    }
+    /// Owner decision (fuel determinism): instantiation never touches guest
+    /// fuel, in every profile. Wasmtime meters its data-segment copy, which
+    /// it performs, page-rounds or skips depending on the host's memory
+    /// images, so the copy runs on an unmetered tank and the guest's budget
+    /// is restored exactly before any guest code: the first turn
+    /// (instantiation, `_start` and its microtasks) is charged only for
+    /// guest code. Without a start function no guest code runs here; the
+    /// work is bounded by the validated module size, the memory budget and
+    /// the deadline. A start function is guest code, so such a module keeps
+    /// paying its instantiation. Returns the guest's fuel to restore.
+    fn uncharge(&mut self, uncharged_initialization: bool) -> Result<Option<u64>, wasmtime::Error> {
+        if !uncharged_initialization {
+            return Ok(None);
         }
-        result
+        let fuel = self.store.get_fuel()?;
+        self.store.set_fuel(u64::MAX)?;
+        Ok(Some(fuel))
+    }
+    fn finish_instantiation(
+        &mut self,
+        fuel: Option<u64>,
+        instance: Result<Instance, wasmtime::Error>,
+    ) -> Result<Instance, wasmtime::Error> {
+        if let Some(fuel) = fuel {
+            self.store.set_fuel(fuel)?;
+        }
+        let instance = instance?;
+        crate::exceptions::initial(&instance, &mut self.store)?;
+        Ok(instance)
     }
     /// Test-only wall-clock allowance (CLAUDE.md §11) for a run that also
     /// declares a test-only fuel ceiling: under parallel test load such a run

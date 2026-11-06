@@ -219,10 +219,16 @@ instance. Require the varta.http metadata/feature-import pair, validate adapter
 signatures and actual effects, and keep copy/retain helpers host-free. Readiness
 and logging observers are trusted synchronous sinks and must return promptly.
 Keep connections and workers bounded and separate (contract v1: one
-connection, one worker; v2: `http::MAX_OPEN_CONNECTIONS` keep-alive connections
-and `http::MAX_CONCURRENT_REQUESTS` workers, each request in its own Store, a
-bounded wait for a worker), no unbounded task queue, parser/body/idle/
+connection, one blocking worker; v2: `http::MAX_OPEN_CONNECTIONS` keep-alive
+connections and `http::MAX_CONCURRENT_REQUESTS` request tasks, admitted while
+their memory budgets fit `http::SERVER_MEMORY_BYTES`, each request in its own
+Store instantiated from the server's pooled `InstancePre`, a bounded wait
+for admission), no unbounded task queue, parser/body/idle/
 connection deadlines and response framing controlled by the HTTP library.
+Request tasks run guest code with `call_async` and yield on epoch ticks only;
+every wait awaits; a blocking host operation goes through `crate::blocking`.
+Fuel must not depend on yields or epochs: the fair call charge of a libcall
+is refunded by the epoch callback.
 A streaming response pulls each chunk as its own turn under the idle bound and
 within the stream lifetime; a client that leaves or a shutdown cancels its
 worker. A Web `Request` body streams through a transfer of the request's own

@@ -254,6 +254,69 @@ fn closing(mut reply: Reply, close: bool) -> Reply {
     reply
 }
 
+/// What a running request holds: an instance slot and, in contract v2, its
+/// memory budget's pages of the server's memory ceiling. Released when its
+/// worker task ends, after its Store was dropped.
+struct Admission {
+    _slot: tokio::sync::OwnedSemaphorePermit,
+    _memory: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+/// Admit a request: v1 takes its one worker at once or gets 503; a v2
+/// request waits at most the worker wait for a slot and its memory, else it
+/// gets 503 with `Retry-After`. Shutdown ends the wait.
+async fn admit(shared: &Shared, pool: Option<http::PoolLimits>) -> Result<Admission, Refusal> {
+    let Some(pool) = pool else {
+        return shared
+            .workers
+            .clone()
+            .try_acquire_owned()
+            .map(|slot| Admission {
+                _slot: slot,
+                _memory: None,
+            })
+            .map_err(|_| Refusal::Unavailable);
+    };
+    let admitted = async {
+        let slot = shared.workers.clone().acquire_owned().await.ok()?;
+        let memory = shared
+            .memory
+            .clone()
+            .acquire_many_owned(shared.request_pages)
+            .await
+            .ok()?;
+        Some(Admission {
+            _slot: slot,
+            _memory: Some(memory),
+        })
+    };
+    tokio::select! {
+        _ = shared.stop.cancelled() => Err(Refusal::Unavailable),
+        admitted = tokio::time::timeout(Duration::from_millis(pool.worker_wait_ms), admitted) => {
+            match admitted {
+                Ok(Some(admission)) => Ok(admission),
+                _ => Err(Refusal::Busy),
+            }
+        }
+    }
+}
+
+/// Why a request was not admitted.
+enum Refusal {
+    /// The v1 worker is busy, or the service stops: 503.
+    Unavailable,
+    /// No admission within the worker wait: 503 with `Retry-After`.
+    Busy,
+}
+impl Refusal {
+    fn reply(self) -> Reply {
+        match self {
+            Self::Unavailable => failure(StatusCode::SERVICE_UNAVAILABLE),
+            Self::Busy => busy(),
+        }
+    }
+}
+
 /// A 503 for a request that found no worker within the wait bound.
 fn busy() -> Reply {
     let mut reply = failure(StatusCode::SERVICE_UNAVAILABLE);
@@ -309,37 +372,41 @@ async fn handle_request(
     if shared.stop.stopped() {
         return failure(StatusCode::SERVICE_UNAVAILABLE);
     }
-    // V1 refuses at once while its one worker is busy; a v2 request waits a
-    // bounded time for a worker of the pool.
-    let permit = match pool {
-        None => shared.workers.clone().try_acquire_owned().ok(),
-        Some(pool) => tokio::select! {
-            _ = shared.stop.cancelled() => None,
-            permit = tokio::time::timeout(
-                Duration::from_millis(pool.worker_wait_ms),
-                shared.workers.clone().acquire_owned(),
-            ) => match permit {
-                Ok(Ok(permit)) => Some(permit),
-                _ => return busy(),
-            },
-        },
+    let admission = match admit(&shared, pool).await {
+        Ok(admission) => admission,
+        Err(refusal) => return refusal.reply(),
     };
-    let Some(permit) = permit else {
-        return failure(StatusCode::SERVICE_UNAVAILABLE);
+    let result = match (pool, request) {
+        // Contract v1 (frozen): a blocking worker that is never cancelled.
+        (None, handler::Envelope::Text(request)) => {
+            let worker = shared.clone();
+            tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                handler::execute_legacy(&worker, request)
+            })
+            .await
+        }
+        (_, request) => {
+            let cancellation = Some(crate::cancellation::Cancellation::new(
+                shared.engine.clone(),
+            ));
+            let mut owner = crate::cancellation::CancelOnDrop(cancellation.clone());
+            if shared.contract.streaming {
+                return streaming(shared, request, head, admission, cancellation, owner).await;
+            }
+            // The worker is a task of its own: a connection that goes away
+            // drops only its owner, which cancels it; its admission ends
+            // with it.
+            let worker = shared.clone();
+            let result = tokio::spawn(async move {
+                let _admission = admission;
+                handler::execute(&worker, request, cancellation, None).await
+            })
+            .await;
+            owner.disarm();
+            result
+        }
     };
-    let cancellation = (shared.contract.version == http::UTF16_VERSION)
-        .then(|| crate::cancellation::Cancellation::new(shared.engine.clone()));
-    let mut owner = crate::cancellation::CancelOnDrop(cancellation.clone());
-    if shared.contract.streaming {
-        return streaming(shared, request, head, permit, cancellation, owner).await;
-    }
-    let worker = shared.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        handler::execute(&worker, request, cancellation, None)
-    })
-    .await;
-    owner.disarm();
     let reply = match result {
         Ok(Ok(value)) => response(value, head, None),
         // The owning worker has already delivered bounded output/diagnostics.
@@ -362,7 +429,7 @@ async fn streaming(
     shared: Arc<Shared>,
     request: handler::Envelope,
     head: bool,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    admission: Admission,
     cancellation: Option<crate::cancellation::Cancellation>,
     owner: crate::cancellation::CancelOnDrop,
 ) -> Reply {
@@ -379,8 +446,8 @@ async fn streaming(
         });
     }
     let worker = shared.clone();
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+    tokio::spawn(async move {
+        let _admission = admission;
         let _finished = finished;
         // The worker reports its own outcome; the transport sees its head.
         let _ = handler::execute(
@@ -392,7 +459,8 @@ async fn streaming(
                 chunks: chunk_sender,
                 bodyless: head,
             }),
-        );
+        )
+        .await;
     });
     let Ok(value) = head_receiver.await else {
         return failure(StatusCode::INTERNAL_SERVER_ERROR);

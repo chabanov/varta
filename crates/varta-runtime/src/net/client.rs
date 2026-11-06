@@ -280,6 +280,17 @@ pub(crate) fn fetch_cancellable(
     read_body: bool,
     cancellation: &crate::cancellation::Cancellation,
 ) -> Result<(i32, Vec<u8>), crate::http::Failure> {
+    // The call drives (and drops) a runtime of its own: a native server's
+    // request task (K7 H2) hands its thread on first.
+    crate::blocking(|| fetch_blocking(url, deadline, read_body, cancellation))
+}
+
+fn fetch_blocking(
+    url: &url::Url,
+    deadline: Instant,
+    read_body: bool,
+    cancellation: &crate::cancellation::Cancellation,
+) -> Result<(i32, Vec<u8>), crate::http::Failure> {
     use crate::{HostFailure, http::Failure};
     use http_body_util::BodyExt;
     let cancelled = || cancellation.check().map_err(|_| Failure::Cancelled);

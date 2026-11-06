@@ -16738,9 +16738,10 @@ service's connection lifetime adds the stream lifetime.
 
 V2 services keep HTTP/1.1 connections alive: up to `http::MAX_OPEN_CONNECTIONS`
 open connections, which cost no worker while idle, and up to
-`http::MAX_CONCURRENT_REQUESTS` requests running at once, each with its own
-worker and Store (so the memory of that many requests at most). A request
-waits at most `http::WORKER_WAIT_SECONDS` for a worker, else it gets 503 with
+`http::MAX_CONCURRENT_REQUESTS` requests running at once, each a task with its
+own Store, while the memory budgets of the running requests fit
+`http::SERVER_MEMORY_BYTES` (see async execution below). A request
+waits at most `http::WORKER_WAIT_SECONDS` for a slot and its memory, else it gets 503 with
 `Retry-After: http::BUSY_RETRY_AFTER_SECONDS`; the wait is bounded by the open
 connections, never an unbounded queue. A connection's idle time between
 requests is also its client's deadline for a request head
@@ -16809,18 +16810,47 @@ Lower package/host fuel, memory, host-call/output budgets, aggregate async bound
 listener consent and artifact/ceiling decisions have focused server verification.
 V1 still ignores v38-only budget/consent requests.
 
-The v2 service future owns a cancellation guard for its blocking request worker.
+**Async execution (H2).** The native server is a multi-threaded Tokio
+runtime with one worker thread per available CPU, and every v2 request is a
+task of it, never a thread of its own. Its engine shares the runtime's
+compilation settings (`engine_config`, so fuel is the embedding engine's),
+uses a pooling allocator of `http::MAX_CONCURRENT_REQUESTS` instance slots of
+`http::REQUEST_MEMORY_BYTES` each, and links the module once into an
+`InstancePre`; each request still instantiates its own Store from it. Guest
+calls are asynchronous (`call_async`) and yield to the executor at every
+epoch tick (one ticker thread per server advances the epoch every
+`server::engine::TICK`, which also meets per-turn deadlines without a
+deadline thread per Store). The fair call charge is taken around libcalls
+too, so the epoch callback refunds it: fuel never depends on when epochs
+advance, here or when another Store's deadline or cancellation advances a
+shared engine's epoch; the server does not yield on fuel intervals, whose
+libcalls would count. The scheduler's timer waits, network and request-body
+completions and cancellation are awaited (`checkpoint_until_async`,
+`Net::wait_async`, `Cancellation::cancelled`), and a request's transfers run
+on the server's runtime, so a waiting request or open stream costs no
+thread. A blocking host operation (legacy `net.get`/`net.fetch`, KV reads
+and commits) hands its thread's other tasks on first (`block_in_place`).
+A v2 request is admitted once a slot is free and its memory budget fits the
+server memory ceiling less the budgets of the running requests; the
+admission ends with its task, after its Store is dropped. A host policy may
+lower slots and ceiling (`workers`, `memoryBytes`); a ceiling below one
+request's budget fails before bind. Fuel, turn order, budgets, deadlines and
+cancellation keep their contracts. Contract v1 (frozen) keeps one blocking
+worker: its checked JSON parsing calls back into the guest from a host
+import, which an asynchronous call cannot.
+
+The v2 service future owns a cancellation guard for its request task.
 Disconnect or connection timeout drops that owner and signals its execution;
-epoch checks interrupt guest loops, while timer/network waits check the same token
-in bounded slices without advancing guest time or delivering extra guest events.
+epoch checks interrupt guest loops, while timer/network waits await the same
+token without advancing guest time or delivering extra guest events.
 Other Stores sharing the engine remain live. A completed worker disarms the guard
 and releases guest/network resources before invoking trusted output observers.
-A cancelled worker keeps the one worker permit until it stops (its next
-cancellation check, then its report and output delivery). The v2 transport
-accepts the next connection only once that permit is free, so a request sent
-right after a client disconnected waits in the listener's backlog instead of
-being refused with the transport's `503 request failed`; the wait is bounded by
-the worker's cancellation checks and its own request deadline, and shutdown
+A cancelled worker keeps its admission (slot and memory) until it stops (its
+next cancellation check, then its report and output delivery). A v2 request
+that finds no admission waits for one within the worker wait, so a request
+sent right after a client disconnected is served instead of being refused
+with the transport's `503 request failed`; the wait is bounded by the
+worker's cancellation checks and its own request deadline, and shutdown
 ends it. HTTP contract v1 is frozen: its workers are not cancelled, and its
 transport keeps the immediate 503 while the worker is busy; only v2 waits for
 the worker permit.
