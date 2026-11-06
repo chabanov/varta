@@ -309,7 +309,9 @@ fn begin(server: &Server) -> TcpStream {
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     client
-        .write_all(b"GET /slow HTTP/1.1\r\nHost: test\r\nContent-Length: 0\r\n\r\n")
+        .write_all(
+            b"GET /slow HTTP/1.1\r\nHost: test\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        )
         .unwrap();
     client
 }
@@ -558,7 +560,7 @@ fn http_v2_shutdown_drains_active_response_without_accepting_another_request() {
         if late.set_read_timeout(Some(Duration::from_secs(1))).is_err() {
             return;
         }
-        let _ = late.write_all(b"GET / HTTP/1.1\r\nHost: test\r\n\r\n");
+        let _ = late.write_all(b"GET / HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n");
         let mut reply = String::new();
         let _ = late.read_to_string(&mut reply);
         assert!(reply.is_empty(), "late request ran: {reply}");

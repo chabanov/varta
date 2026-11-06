@@ -3687,7 +3687,8 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
 | HTTP legacy / maximum version / metadata bytes | 1 / 2 / 8192 | `http::VERSION`, `http::LATEST_VERSION`, `http::MAX_METADATA_BYTES` |
 | HTTP headers / header bytes / target bytes / body bytes | 32 / 4096 / 1024 / 8192 | `http::MAX_*` |
 | HTTP header / connection timeout | 2 s / 10 s | `http::HEADER_SECONDS`, `http::CONNECTION_SECONDS` |
-| HTTP v1 / v2 concurrent connections | 1 / 8 | `http::MAX_CONNECTIONS`, `http::MAX_CONCURRENT_CONNECTIONS` |
+| HTTP v1 connections / v2 open connections / v2 concurrent requests | 1 / 1024 / 8 | `http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS` |
+| HTTP v2 worker wait / keep-alive idle / requests per connection / connection lifetime | 10 s / 5 s / 1000 / 600 s | `http::WORKER_WAIT_SECONDS`, `http::KEEP_ALIVE_IDLE_SECONDS`, `http::MAX_KEEP_ALIVE_REQUESTS`, `http::CONNECTION_LIFETIME_SECONDS` |
 | HTTP v2 stream idle / lifetime / chunk bytes | 60 s / 3600 s / 65536 | `http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES` |
 | Native HTTP retained request reports / total retained audit entries | 32 / 256 | `http::MAX_REPORTED_REQUESTS`, `permission::MAX_AUDIT_ENTRIES` |
 | Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |

@@ -51,9 +51,24 @@ pub const CONNECTION_SECONDS: u64 = 10;
 pub const HTTP_BUFFER_BYTES: usize = 8192;
 /// One bounded active connection and worker (contract v1).
 pub const MAX_CONNECTIONS: usize = 1;
-/// Concurrent connections of a v2 service, each with its own worker and
-/// Store; a further connection waits in the listener's backlog.
-pub const MAX_CONCURRENT_CONNECTIONS: usize = 8;
+/// Open connections of a v2 service (HTTP/1.1 keep-alive): cheap while
+/// idle; a further connection waits in the listener's backlog.
+pub const MAX_OPEN_CONNECTIONS: usize = 1024;
+/// Requests a v2 service runs at once, each with its own worker and Store.
+pub const MAX_CONCURRENT_REQUESTS: usize = 8;
+/// A v2 request waits at most this long for a worker, then gets 503 with
+/// `Retry-After`.
+pub const WORKER_WAIT_SECONDS: u64 = 10;
+/// The `Retry-After` of a 503 for a request that found no worker in time.
+pub const BUSY_RETRY_AFTER_SECONDS: u64 = 1;
+/// A keep-alive connection's idle time between requests, which is also the
+/// time a client has to send a request's head (Node's keep-alive default).
+pub const KEEP_ALIVE_IDLE_SECONDS: u64 = 5;
+/// Requests on one keep-alive connection; the last answer closes it.
+pub const MAX_KEEP_ALIVE_REQUESTS: usize = 1000;
+/// A keep-alive connection's lifetime, after which it finishes its current
+/// response and closes (a streaming service adds the stream lifetime).
+pub const CONNECTION_LIFETIME_SECONDS: u64 = 600;
 /// A v2 streaming response: the longest wait for the next body chunk (each
 /// chunk is one turn with fresh budgets and this deadline) and the longest
 /// whole response, after which the transport ends the body and the client
@@ -94,6 +109,9 @@ pub struct HttpLimits {
     /// milliseconds and [`STREAM_CHUNK_BYTES`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<StreamLimits>,
+    /// V2 only: workers and keep-alive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<PoolLimits>,
     pub request_bytes: usize,
     pub body_bytes: usize,
     pub header_bytes: usize,
@@ -101,6 +119,18 @@ pub struct HttpLimits {
     pub target_bytes: usize,
     pub response_bytes: usize,
     pub handler_deadline_ms: u64,
+}
+/// [`MAX_CONCURRENT_REQUESTS`], [`WORKER_WAIT_SECONDS`],
+/// [`KEEP_ALIVE_IDLE_SECONDS`], [`MAX_KEEP_ALIVE_REQUESTS`] and
+/// [`CONNECTION_LIFETIME_SECONDS`] (times in milliseconds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PoolLimits {
+    pub workers: usize,
+    pub worker_wait_ms: u64,
+    pub keep_alive_idle_ms: u64,
+    pub keep_alive_requests: usize,
+    pub connection_lifetime_ms: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -116,8 +146,16 @@ impl HttpLimits {
     pub fn for_version(version: u32) -> Self {
         let legacy = Self::default();
         if version == UTF16_VERSION {
+            let millis = crate::budget::MILLISECONDS_PER_SECOND;
             Self {
-                connections: MAX_CONCURRENT_CONNECTIONS,
+                connections: MAX_OPEN_CONNECTIONS,
+                pool: Some(PoolLimits {
+                    workers: MAX_CONCURRENT_REQUESTS,
+                    worker_wait_ms: WORKER_WAIT_SECONDS * millis,
+                    keep_alive_idle_ms: KEEP_ALIVE_IDLE_SECONDS * millis,
+                    keep_alive_requests: MAX_KEEP_ALIVE_REQUESTS,
+                    connection_lifetime_ms: CONNECTION_LIFETIME_SECONDS * millis,
+                }),
                 stream: Some(StreamLimits {
                     idle_ms: STREAM_IDLE_SECONDS * crate::budget::MILLISECONDS_PER_SECOND,
                     lifetime_ms: STREAM_LIFETIME_SECONDS * crate::budget::MILLISECONDS_PER_SECOND,
@@ -136,6 +174,7 @@ impl Default for HttpLimits {
         Self {
             connections: MAX_CONNECTIONS,
             stream: None,
+            pool: None,
             request_bytes: abi::MAX_INPUT_BYTES,
             body_bytes: MAX_BODY_BYTES,
             header_bytes: MAX_HEADER_BYTES,
@@ -347,7 +386,11 @@ mod tests {
         assert!(contract.validate().is_err());
         contract.asynchronous = true;
         HttpContract::parse(&contract.to_bytes().unwrap()).unwrap();
-        assert_eq!(contract.limits.connections, MAX_CONCURRENT_CONNECTIONS);
+        assert_eq!(contract.limits.connections, MAX_OPEN_CONNECTIONS);
+        assert_eq!(
+            contract.limits.pool.map(|pool| pool.workers),
+            Some(MAX_CONCURRENT_REQUESTS)
+        );
         contract.limits = HttpLimits::default();
         assert!(contract.validate().is_err());
     }

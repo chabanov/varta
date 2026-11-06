@@ -20,6 +20,8 @@ type Reply = Response<Either<Full<Bytes>, StreamBody>>;
 /// it (a finished response or a client that left) cancels that worker.
 pub(super) struct StreamBody {
     chunks: tokio::sync::mpsc::Receiver<Result<Bytes, handler::StreamAborted>>,
+    /// An abort received but not yet reported (see `poll_frame`).
+    aborted: Option<handler::StreamAborted>,
     _owner: crate::cancellation::CancelOnDrop,
 }
 impl Body for StreamBody {
@@ -29,9 +31,20 @@ impl Body for StreamBody {
         mut self: std::pin::Pin<&mut Self>,
         context: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
-        self.chunks
-            .poll_recv(context)
-            .map(|chunk| chunk.map(|chunk| chunk.map(hyper::body::Frame::data)))
+        use std::task::Poll;
+        if let Some(aborted) = self.aborted.take() {
+            return Poll::Ready(Some(Err(aborted)));
+        }
+        match self.chunks.poll_recv(context) {
+            // An error makes the transport close at once: first yield once,
+            // so the chunks already written are flushed to the client.
+            Poll::Ready(Some(Err(aborted))) => {
+                self.aborted = Some(aborted);
+                context.waker().wake_by_ref();
+                Poll::Pending
+            }
+            other => other.map(|chunk| chunk.map(|chunk| chunk.map(hyper::body::Frame::data))),
+        }
     }
 }
 /// Chunks a streaming worker may pull ahead of the client.
@@ -105,10 +118,6 @@ fn response(
         let value = hyper::header::HeaderValue::from_str(&header.value).map_err(|_| fail())?;
         response.headers_mut().append(name, value);
     }
-    response.headers_mut().insert(
-        hyper::header::CONNECTION,
-        hyper::header::HeaderValue::from_static("close"),
-    );
     if head && !streamed && !LENGTHLESS_HEAD_STATUSES.contains(&status) {
         response.headers_mut().insert(
             hyper::header::CONTENT_LENGTH,
@@ -172,34 +181,82 @@ async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> 
     }
     Ok((json, head))
 }
-/// The worker permit a v2 connection reserved before it was accepted.
-type Reserved = Arc<std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>>;
+/// Close the connection after `reply`: always under contract v1, and on a
+/// keep-alive connection's last allowed request.
+fn closing(mut reply: Reply, close: bool) -> Reply {
+    if close {
+        reply.headers_mut().insert(
+            hyper::header::CONNECTION,
+            hyper::header::HeaderValue::from_static("close"),
+        );
+    }
+    reply
+}
+
+/// A 503 for a request that found no worker within the wait bound.
+fn busy() -> Reply {
+    let mut reply = failure(StatusCode::SERVICE_UNAVAILABLE);
+    reply.headers_mut().insert(
+        hyper::header::RETRY_AFTER,
+        hyper::header::HeaderValue::from(http::BUSY_RETRY_AFTER_SECONDS),
+    );
+    reply
+}
 
 async fn handle(
     req: Request<Incoming>,
     shared: Arc<Shared>,
-    reserved: Reserved,
+    served: Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<Reply, Infallible> {
+    let pool = shared
+        .contract
+        .limits
+        .pool
+        .filter(|_| shared.contract.version == http::UTF16_VERSION);
+    let count = served.fetch_add(1, Ordering::AcqRel) + 1;
+    let close = pool.is_none_or(|pool| count >= pool.keep_alive_requests);
+    Ok(closing(handle_request(req, shared, pool).await, close))
+}
+
+async fn handle_request(
+    req: Request<Incoming>,
+    shared: Arc<Shared>,
+    pool: Option<http::PoolLimits>,
+) -> Reply {
     let (request, head) = tokio::select! {
-        _=shared.stop.cancelled()=>return Ok(failure(StatusCode::SERVICE_UNAVAILABLE)),
+        _=shared.stop.cancelled()=>return failure(StatusCode::SERVICE_UNAVAILABLE),
         value=tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req))=> match value {
             Ok(Ok(value))=>value,
-            Ok(Err(status))=>return Ok(failure(status)),
-            Err(_)=>return Ok(failure(StatusCode::REQUEST_TIMEOUT)),
+            Ok(Err(status))=>return failure(status),
+            Err(_)=>return failure(StatusCode::REQUEST_TIMEOUT),
         }
     };
     if shared.stop.stopped() {
-        return Ok(failure(StatusCode::SERVICE_UNAVAILABLE));
+        return failure(StatusCode::SERVICE_UNAVAILABLE);
     }
-    let permit = reserved.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let Some(permit) = permit.or_else(|| shared.workers.clone().try_acquire_owned().ok()) else {
-        return Ok(failure(StatusCode::SERVICE_UNAVAILABLE));
+    // V1 refuses at once while its one worker is busy; a v2 request waits a
+    // bounded time for a worker of the pool.
+    let permit = match pool {
+        None => shared.workers.clone().try_acquire_owned().ok(),
+        Some(pool) => tokio::select! {
+            _ = shared.stop.cancelled() => None,
+            permit = tokio::time::timeout(
+                Duration::from_millis(pool.worker_wait_ms),
+                shared.workers.clone().acquire_owned(),
+            ) => match permit {
+                Ok(Ok(permit)) => Some(permit),
+                _ => return busy(),
+            },
+        },
+    };
+    let Some(permit) = permit else {
+        return failure(StatusCode::SERVICE_UNAVAILABLE);
     };
     let cancellation = (shared.contract.version == http::UTF16_VERSION)
         .then(|| crate::cancellation::Cancellation::new(shared.engine.clone()));
     let mut owner = crate::cancellation::CancelOnDrop(cancellation.clone());
     if shared.contract.streaming {
-        return Ok(streaming(shared, request, head, permit, cancellation, owner).await);
+        return streaming(shared, request, head, permit, cancellation, owner).await;
     }
     let worker = shared.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -211,16 +268,16 @@ async fn handle(
     let reply = match result {
         Ok(Ok(value)) => response(value, head, None),
         // The owning worker has already delivered bounded output/diagnostics.
-        Ok(Err(_)) => return Ok(failure(StatusCode::INTERNAL_SERVER_ERROR)),
+        Ok(Err(_)) => return failure(StatusCode::INTERNAL_SERVER_ERROR),
         Err(_) => Err(HttpError::Message("handler worker failed".into())),
     };
-    Ok(match reply {
+    match reply {
         Ok(reply) => reply,
         Err(error) => {
             shared.sink.diagnostic(error.to_string());
             failure(StatusCode::INTERNAL_SERVER_ERROR)
         }
-    })
+    }
 }
 
 /// A streaming service's request: the worker sends the head, then keeps
@@ -267,6 +324,7 @@ async fn streaming(
     };
     let body = StreamBody {
         chunks,
+        aborted: None,
         _owner: owner,
     };
     match response(value, head, Some(body)) {
@@ -305,71 +363,86 @@ async fn sequential(
     while !shared.stop.stopped() {
         let accepted = tokio::select! { _ = shared.stop.cancelled() => break, value = listener.accept() => value };
         let (stream, _) = accepted.map_err(HttpError::Io)?;
-        connection(stream, shared.clone(), None).await;
+        connection(stream, shared.clone()).await;
     }
     Ok(())
 }
 
-/// Contract v2: up to `limits.connections` connections at once, each with a
-/// worker of its own. A connection is accepted only once a worker permit is
-/// free, and its request uses that permit, so a further client waits in the
-/// listener's backlog (never in an unbounded queue), including right after a
-/// client that left, whose cancelled worker keeps its permit until it stops.
-/// Shutdown stops accepting and waits for the open connections, which drain
-/// or end their responses.
+/// Contract v2: up to `limits.connections` open keep-alive connections, which
+/// cost no worker while idle; each request waits a bounded time for one of
+/// the pool's workers. A further connection waits in the listener's backlog,
+/// never in an unbounded queue. Shutdown stops accepting and waits for the
+/// open connections, which drain or end their responses.
 async fn pooled(
     listener: tokio::net::TcpListener,
     shared: Arc<Shared>,
 ) -> Result<(), RuntimeError> {
+    let slots = Arc::new(tokio::sync::Semaphore::new(
+        shared.contract.limits.connections,
+    ));
     let mut open = tokio::task::JoinSet::new();
     let result = loop {
         while open.try_join_next().is_some() {}
-        let permit = tokio::select! {
+        let slot = tokio::select! {
             _ = shared.stop.cancelled() => break Ok(()),
-            permit = shared.workers.clone().acquire_owned() => permit,
+            slot = slots.clone().acquire_owned() => slot,
         };
         // The semaphore is never closed.
-        let Ok(permit) = permit else { break Ok(()) };
+        let Ok(slot) = slot else { break Ok(()) };
         let accepted = tokio::select! { _ = shared.stop.cancelled() => break Ok(()), value = listener.accept() => value };
         let (stream, _) = match accepted {
             Ok(accepted) => accepted,
             Err(error) => break Err(HttpError::Io(error).into()),
         };
-        open.spawn(connection(stream, shared.clone(), Some(permit)));
+        let service = shared.clone();
+        open.spawn(async move {
+            let _slot = slot;
+            connection(stream, service).await;
+        });
     };
     while open.join_next().await.is_some() {}
     result
 }
 
-/// Serve one connection (no keep-alive) under its deadline: the connection
-/// bound, plus a streaming response's lifetime for a streaming service.
-async fn connection(
-    stream: tokio::net::TcpStream,
-    shared: Arc<Shared>,
-    permit: Option<tokio::sync::OwnedSemaphorePermit>,
-) {
+/// Serve one connection. Contract v1: one request, then close, within the
+/// connection bound. Contract v2: keep-alive requests (the idle time is also
+/// the head deadline) within the connection lifetime, after which the
+/// connection finishes its current response and closes. A streaming
+/// service's bound adds the stream lifetime.
+async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
+    let pool = shared
+        .contract
+        .limits
+        .pool
+        .filter(|_| shared.contract.version == http::UTF16_VERSION);
     let service = shared.clone();
-    let reserved: Reserved = Arc::new(std::sync::Mutex::new(permit));
+    let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut builder = http1::Builder::new();
     builder
-        .keep_alive(false)
+        .keep_alive(pool.is_some())
         .max_headers(http::MAX_HEADERS)
         .max_buf_size(http::HTTP_BUFFER_BYTES)
         .timer(TokioTimer::new())
-        .header_read_timeout(Duration::from_secs(http::HEADER_SECONDS));
+        .header_read_timeout(
+            pool.map_or(Duration::from_secs(http::HEADER_SECONDS), |pool| {
+                Duration::from_millis(pool.keep_alive_idle_ms)
+            }),
+        );
     let entered = Arc::new(AtomicBool::new(false));
     let request_entered = entered.clone();
     let connection = builder.serve_connection(
         TokioIo::new(stream),
         service_fn(move |req| {
             request_entered.store(true, Ordering::Release);
-            handle(req, service.clone(), reserved.clone())
+            handle(req, service.clone(), served.clone())
         }),
     );
     // Stop reading new requests on shutdown, without dropping an active
     // response future. Its original connection/request deadlines still apply.
     tokio::pin!(connection);
-    let mut bound = Duration::from_secs(http::CONNECTION_SECONDS);
+    let mut bound = pool.map_or(Duration::from_secs(http::CONNECTION_SECONDS), |pool| {
+        Duration::from_millis(pool.connection_lifetime_ms)
+    });
     if let Some(limits) = shared
         .contract
         .limits
@@ -379,24 +452,35 @@ async fn connection(
         bound += Duration::from_millis(limits.lifetime_ms);
     }
     let until = tokio::time::Instant::now() + bound;
+    let drain = Duration::from_secs(http::CONNECTION_SECONDS);
     let result = tokio::select! {
-        result=tokio::time::timeout_at(until,connection.as_mut())=>result,
+        result = connection.as_mut() => Some(result),
+        _ = tokio::time::sleep_until(until) => {
+            if pool.is_some() {
+                // The lifetime ends: finish the current response, then close.
+                connection.as_mut().graceful_shutdown();
+                tokio::time::timeout(drain, connection.as_mut()).await.ok()
+            } else {
+                None
+            }
+        }
         _=shared.stop.cancelled()=>{
             if entered.load(Ordering::Acquire) {
+                // Drain the current response within the connection bound.
                 connection.as_mut().graceful_shutdown();
-                tokio::time::timeout_at(until,connection.as_mut()).await
+                tokio::time::timeout_at(until, connection.as_mut()).await.ok()
             } else {
                 // No request exists to drain. Closing a partial header or
                 // an idle accepted socket must not wait for its timeout.
-                Ok(Ok(()))
+                Some(Ok(()))
             }
         }
     };
     match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => shared
+        Some(Ok(())) => {}
+        Some(Err(error)) => shared
             .sink
             .diagnostic(format!("HTTP connection rejected: {error}")),
-        Err(_) => shared.sink.diagnostic("HTTP connection deadline".into()),
+        None => shared.sink.diagnostic("HTTP connection deadline".into()),
     }
 }

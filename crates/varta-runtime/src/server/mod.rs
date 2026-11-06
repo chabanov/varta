@@ -184,8 +184,11 @@ fn run_owned(
         }),
     });
     sink.lines(output.lines)?;
-    // One worker per connection: a v1 service has one, a v2 service its pool.
-    let workers = contract.limits.connections;
+    // A v1 service has one worker; a v2 service its pool.
+    let workers = contract
+        .limits
+        .pool
+        .map_or(contract.limits.connections, |pool| pool.workers);
     let shared = Arc::new(Shared {
         engine,
         module,

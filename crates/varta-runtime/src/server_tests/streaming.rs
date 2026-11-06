@@ -61,7 +61,10 @@ impl Open {
             .set_read_timeout(Some(Duration::from_secs(15)))
             .unwrap();
         stream
-            .write_all(format!("GET {target} HTTP/1.1\r\nHost: example.test\r\n\r\n").as_bytes())
+            .write_all(
+                format!("GET {target} HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
             .unwrap();
         let mut reader = BufReader::new(stream);
         let mut head = String::new();
@@ -148,7 +151,7 @@ fn other_requests_are_served_while_a_stream_is_open_and_a_leaving_client_ends_it
     drop(open);
     // The cancelled worker stops at its next check and frees its permit:
     // every other slot keeps serving meanwhile.
-    for _ in 0..varta_common::http::MAX_CONCURRENT_CONNECTIONS {
+    for _ in 0..varta_common::http::MAX_CONCURRENT_REQUESTS {
         assert_eq!(server.request("GET", "/text", b"").0, 200);
     }
     server.finish();
@@ -172,5 +175,100 @@ fn shutdown_ends_an_open_stream_and_a_failure_aborts_the_body() {
         "{:?}",
         started.elapsed()
     );
+    server.finish();
+}
+
+/// One HTTP/1.1 response on a kept-alive connection, read by its
+/// `content-length`.
+fn exchange(reader: &mut BufReader<TcpStream>, target: &str) -> (String, String) {
+    reader
+        .get_mut()
+        .write_all(format!("GET {target} HTTP/1.1\r\nHost: example.test\r\n\r\n").as_bytes())
+        .unwrap();
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(reader.read_line(&mut line).unwrap(), 0, "{head}");
+        if line == "\r\n" {
+            break;
+        }
+        head.push_str(&line);
+    }
+    let lower = head.to_ascii_lowercase();
+    let mut body = String::new();
+    if let Some(length) = lower
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length: "))
+    {
+        let mut bytes = vec![0; length.trim().parse().unwrap()];
+        reader.read_exact(&mut bytes).unwrap();
+        body = String::from_utf8(bytes).unwrap();
+    } else {
+        // A chunked body: read chunks until the terminating one.
+        loop {
+            let mut size = String::new();
+            reader.read_line(&mut size).unwrap();
+            let size = usize::from_str_radix(size.trim_end(), 16).unwrap();
+            let mut data = vec![0; size + 2];
+            reader.read_exact(&mut data).unwrap();
+            if size == 0 {
+                break;
+            }
+            body.push_str(std::str::from_utf8(&data[..size]).unwrap());
+        }
+    }
+    (head, body)
+}
+
+#[test]
+fn a_kept_alive_connection_serves_several_requests_and_closes_when_idle() {
+    let server = start();
+    let stream = TcpStream::connect(server.addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    for _ in 0..3 {
+        let (head, body) = exchange(&mut reader, "/text");
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        assert!(
+            !head.to_ascii_lowercase().contains("connection: close"),
+            "{head}"
+        );
+        assert_eq!(body, "plain");
+    }
+    // Idle for longer than the keep-alive bound: the server closes.
+    let idle = Duration::from_secs(varta_common::http::KEEP_ALIVE_IDLE_SECONDS);
+    let started = Instant::now();
+    let mut rest = Vec::new();
+    assert_eq!(reader.read_to_end(&mut rest).unwrap(), 0);
+    let waited = started.elapsed();
+    assert!(waited >= idle - Duration::from_millis(500), "{waited:?}");
+    assert!(waited < idle + Duration::from_secs(3), "{waited:?}");
+    server.finish();
+}
+
+#[test]
+fn a_request_that_finds_no_worker_in_time_gets_503_with_retry_after() {
+    let server = start();
+    // Every worker holds a stream that waits 30 seconds for its next chunk.
+    let open: Vec<Open> = (0..varta_common::http::MAX_CONCURRENT_REQUESTS)
+        .map(|_| {
+            let mut open = Open::get(&server, "/slow");
+            assert_eq!(open.chunk().as_deref(), Some("data: 1\n\n"));
+            open
+        })
+        .collect();
+    let started = Instant::now();
+    let (status, headers, _) = server.request("GET", "/text", b"");
+    let waited = started.elapsed();
+    assert_eq!(status, 503, "{headers}");
+    assert!(
+        headers.to_ascii_lowercase().contains("retry-after: 1"),
+        "{headers}"
+    );
+    let wait = Duration::from_secs(varta_common::http::WORKER_WAIT_SECONDS);
+    assert!(waited >= wait - Duration::from_millis(500), "{waited:?}");
+    drop(open);
     server.finish();
 }

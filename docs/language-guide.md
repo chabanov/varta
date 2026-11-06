@@ -358,8 +358,9 @@ shared guest state, general async JS, TLS and HTTP/2 remain pending.
 
 Under `checked-f64-utf16-v38` a handler may also return a Web `Response` (or a
 promise of one), and its body streams to the client: server-sent events, for
-example, or a proxy that passes an upstream body through. v38 serves up to eight
-connections at once, so other requests are answered while a stream is open.
+example, or a proxy that passes an upstream body through. v38 keeps connections
+alive and runs up to eight requests at once, so other requests are answered
+while a stream is open.
 
 ```ts
 function handle(request: VartaHttpRequest): Response {

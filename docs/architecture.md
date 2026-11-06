@@ -16687,19 +16687,27 @@ chunks through a one-chunk channel, so it never runs ahead of the client. A
 client that leaves drops the body, which cancels the worker (it stops at its
 next cancellation check); a service shutdown cancels every streaming worker;
 a failure after the head aborts the body (no terminating chunk). A streaming
-service's connection bound is `http::CONNECTION_SECONDS` plus the stream
-lifetime.
+service's connection lifetime adds the stream lifetime.
 
-V2 services serve up to `http::MAX_CONCURRENT_CONNECTIONS` connections at
-once, each with its own worker and Store (so the memory of that many requests
-at most); a connection is accepted only once a worker permit is free and its
-one request uses that permit, so further clients wait in the listener's
-backlog, never in an unbounded queue, including right after a client that left
-and whose cancelled worker still holds its permit. Shutdown stops accepting
-and waits for the open connections. HTTP contract v1 keeps one connection and
-its immediate 503. The limits travel in the contract metadata
-(`HttpLimits::for_version`): v2 metadata names the pool and the stream limits,
-so a v38 service built before them must be rebuilt.
+V2 services keep HTTP/1.1 connections alive: up to `http::MAX_OPEN_CONNECTIONS`
+open connections, which cost no worker while idle, and up to
+`http::MAX_CONCURRENT_REQUESTS` requests running at once, each with its own
+worker and Store (so the memory of that many requests at most). A request
+waits at most `http::WORKER_WAIT_SECONDS` for a worker, else it gets 503 with
+`Retry-After: http::BUSY_RETRY_AFTER_SECONDS`; the wait is bounded by the open
+connections, never an unbounded queue. A connection's idle time between
+requests is also its client's deadline for a request head
+(`http::KEEP_ALIVE_IDLE_SECONDS`, Node's keep-alive default); its
+`http::MAX_KEEP_ALIVE_REQUESTS`-th answer, or the end of its lifetime
+(`http::CONNECTION_LIFETIME_SECONDS`, plus the stream lifetime for a streaming
+service), finishes the current response and closes it (`connection: close`).
+A further connection waits in the listener's backlog. Shutdown stops
+accepting and waits for the open connections. HTTP contract v1 keeps one
+connection per request and its immediate 503. The limits travel in the
+contract metadata (`HttpLimits::for_version`: `connections`, `pool`,
+`stream`), so a v38 service built before them must be rebuilt. Not yet
+bounded: a client that reads a whole response slowly holds its connection
+(not a worker) until the connection's lifetime.
 
 Timer/Unicode, mutable-state, forced-GC, outbound-body/denial and hostile metadata
 cases have focused verification. Every request now receives a shareable snapshot

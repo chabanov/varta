@@ -122,7 +122,7 @@ impl Server {
     }
     fn request(&self, method: &str, target: &str, body: &[u8]) -> (u16, String, String) {
         let mut wire = format!(
-            "{method} {target} HTTP/1.1\r\nHost: example.test\r\nContent-Length: {}\r\n\r\n",
+            "{method} {target} HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
             body.len()
         )
         .into_bytes();
@@ -228,12 +228,12 @@ fn http_body_framing_and_header_limits_reject_before_the_handler_and_recover() {
     assert_eq!(server.request("POST", "/echo", &[0xff]).0, 400);
     assert_eq!(
         server
-            .raw(b"GET / HTTP/1.1\r\nHost: test\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nx")
+            .raw(b"GET / HTTP/1.1\r\nHost: test\r\nConnection: close\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nx")
             .0,
         400
     );
     let wire = format!(
-        "GET / HTTP/1.1\r\nHost: test\r\nX-Large: {}\r\n\r\n",
+        "GET / HTTP/1.1\r\nHost: test\r\nConnection: close\r\nX-Large: {}\r\n\r\n",
         "a".repeat(varta_common::http::MAX_HEADER_BYTES + 1)
     );
     assert_eq!(server.raw(wire.as_bytes()).0, 431);
@@ -296,7 +296,8 @@ fn slow_headers_and_bodies_time_out_without_blocking_later_requests() {
     let mut discarded = String::new();
     stream.read_to_string(&mut discarded).unwrap();
     assert_eq!(server.request("GET", "/ok", b"").0, 200);
-    let (status, _, _) = server.raw(b"POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 8\r\n\r\nx");
+    let (status, _, _) = server
+        .raw(b"POST / HTTP/1.1\r\nHost: test\r\nConnection: close\r\nContent-Length: 8\r\n\r\nx");
     assert_eq!(status, 408);
     assert_eq!(server.request("GET", "/ok", b"").0, 200);
     server.finish();

@@ -893,13 +893,25 @@ fn entry_limits() -> String {
             "`http::HEADER_SECONDS`, `http::CONNECTION_SECONDS`",
         ),
         (
-            "HTTP v1 / v2 concurrent connections",
+            "HTTP v1 connections / v2 open connections / v2 concurrent requests",
             format!(
-                "{} / {}",
+                "{} / {} / {}",
                 http::MAX_CONNECTIONS,
-                http::MAX_CONCURRENT_CONNECTIONS
+                http::MAX_OPEN_CONNECTIONS,
+                http::MAX_CONCURRENT_REQUESTS
             ),
-            "`http::MAX_CONNECTIONS`, `http::MAX_CONCURRENT_CONNECTIONS`",
+            "`http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS`",
+        ),
+        (
+            "HTTP v2 worker wait / keep-alive idle / requests per connection / connection lifetime",
+            format!(
+                "{} s / {} s / {} / {} s",
+                http::WORKER_WAIT_SECONDS,
+                http::KEEP_ALIVE_IDLE_SECONDS,
+                http::MAX_KEEP_ALIVE_REQUESTS,
+                http::CONNECTION_LIFETIME_SECONDS
+            ),
+            "`http::WORKER_WAIT_SECONDS`, `http::KEEP_ALIVE_IDLE_SECONDS`, `http::MAX_KEEP_ALIVE_REQUESTS`, `http::CONNECTION_LIFETIME_SECONDS`",
         ),
         (
             "HTTP v2 stream idle / lifetime / chunk bytes",
