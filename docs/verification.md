@@ -8,15 +8,19 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-06
 
-- **Latest successful full gate:** `target/verification/20261106-121636-n8h8914c/report.json` passes every
-  command with unchanged inputs: **3975 Rust tests, 0 failures, 21 ignored;
-  218 browser Node tests**; checked-v38 conformance (135 passed, 5 known
-  unsupported of 140) matches its baseline. It covers merged `main`: the v38
-  iteration protocol and macOS overlay scrollbars on top of the audit fixes
-  of 2026-11-06 (HTTP/2 streams and idle bound, per-stream write idle, file
-  reads off the request workers, linear emoji fallback, Parley segment
-  counting), colour emoji and text under `scale()`. The audit-fix batch alone
-  passed `20261106-114846-cule_s6v` (3949 Rust tests).
+- **Latest successful full gate:** `target/verification/20261106-154451-50fltt1t/report.json` passes every
+  command with unchanged inputs: **4261 Rust tests, 0 failures, 25 ignored;
+  218 browser Node tests**; checked-v38 conformance matches its baseline. It
+  covers merged `main` with the K8 T1 Tailwind compiler port and its
+  follow-ups (class composition by type, project stylesheet imports), native
+  `img` to the HTML/CSS standards with the extended image limits, the v38
+  iteration protocol, macOS overlay scrollbars and the audit fixes.
+- **One full gate at a time:** `verify.py full` waits for the machine-wide
+  lock (`VARTA_GATE_LOCK`, default `varta-full-gate.lock` in the temporary
+  directory) before taking its fingerprint, so gates of several worktrees
+  queue instead of slowing each other and failing time-sensitive tests
+  (owner decision, 2026-11-06). A caller already holding the lock sets
+  `VARTA_GATE_LOCK_HELD=1`.
 - **Superseded runs of the same batch:** `20261106-112155-1m2tiy5k` passed
   every test but saw its sources change during the run (another session
   edited the tree); `20261106-113508-baj7a9l2` failed one new HTTP/2 test
