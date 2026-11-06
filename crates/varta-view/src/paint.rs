@@ -442,8 +442,9 @@ struct ClipMask {
     image: Option<Mask>,
 }
 struct Surface<'a> {
-    /// Open scaling transforms (`begin_transform`).
-    transforms: usize,
+    /// The device transforms of the open scaling transforms
+    /// (`begin_transform`), outermost first.
+    affines: Vec<Transform>,
     glyphs: Option<&'a mut Glyphs>,
     pixels: Option<Pixmap>,
     width: u32,
@@ -599,27 +600,49 @@ impl Surface<'_> {
     }
     /// Opens a scaling transform: what paints until [`Self::end_transform`]
     /// is recorded and then mapped. Returns where its draws start.
-    fn begin_transform(&mut self, node: u32) -> Result<usize, PaintError> {
+    fn begin_transform(
+        &mut self,
+        node: u32,
+        affine: crate::transform::Affine,
+    ) -> Result<usize, PaintError> {
         // An inline capture or a curved clip from outside cannot be mapped.
         if self.capture.is_some() || self.active_clip.is_some() {
             return Err(PaintError::Unsupported(node));
         }
         self.isolation_required = true;
+        let device = self.device_transform(affine);
+        self.affines.push(device);
         let recording = self.commands.get_or_insert_with(Recording::default);
-        self.transforms += 1;
         Ok(recording.commands.len())
     }
-    /// Maps the draws recorded since `start` through `affine` (CSS pixels).
-    fn end_transform(&mut self, start: usize, affine: crate::transform::Affine) {
-        self.transforms = self.transforms.saturating_sub(1);
-        let device = Transform::from_row(
+    /// `affine` (CSS pixels) as a transform of device pixels.
+    fn device_transform(&self, affine: crate::transform::Affine) -> Transform {
+        Transform::from_row(
             affine.scale_x,
             0.0,
             0.0,
             affine.scale_y,
             affine.x * self.scale,
             affine.y * self.scale,
-        );
+        )
+    }
+    /// Where device pixels painted now land once the open transforms map
+    /// them, when that is a uniform positive scale (with a translation) the
+    /// host rasterizer can draw at: identity without transforms.
+    fn glyph_placement(&self) -> Option<Transform> {
+        let total = self
+            .affines
+            .iter()
+            .fold(Transform::identity(), |total, device| {
+                total.pre_concat(*device)
+            });
+        (total.sx == total.sy && total.kx == 0.0 && total.ky == 0.0 && total.sx > 0.0)
+            .then_some(total)
+    }
+    /// Maps the draws recorded since `start` through `affine` (CSS pixels).
+    fn end_transform(&mut self, start: usize, affine: crate::transform::Affine) {
+        self.affines.pop();
+        let device = self.device_transform(affine);
         let Some(recording) = self.commands.as_mut() else {
             return;
         };
@@ -1594,14 +1617,18 @@ fn paint_shaped_with(
                         },
                         |f| f.shaped.offsets[line_index],
                     );
-                // Host coverage is device pixels at the unscaled size; text
-                // under a scaling transform draws the portable outlines,
-                // which the transform maps exactly.
-                let flat = pixmap.transforms == 0;
-                if let Some(cache) = pixmap
+                // Host glyphs are device pixels at their final size and
+                // position: under a uniform scaling transform they are drawn
+                // at the scaled size where the transform puts them, and
+                // recorded through its inverse, which the transform undoes.
+                // Other transforms draw the portable outlines, which they map
+                // exactly.
+                let placement = pixmap.glyph_placement();
+                if let Some((cache, placement)) = pixmap
                     .glyphs
                     .as_mut()
-                    .filter(|cache| flat && cache.has_provider())
+                    .filter(|cache| cache.has_provider())
+                    .zip(placement)
                 {
                     const PHASES: f32 = 4.0;
                     let mut request = crate::GlyphRasterRequest {
@@ -1609,14 +1636,16 @@ fn paint_shaped_with(
                         font_data: font_data.data.data(),
                         font_index: font_data.index,
                         glyph: glyph.id,
-                        size: run.font_size() * pixmap.scale,
+                        size: run.font_size() * pixmap.scale * placement.sx,
                         normalized_coords: run.normalized_coords(),
                         phase_x: 0,
                         max_pixels: MAX_TEXT_PAINT_WORK,
                         cache_bytes: glyphs::MAX_BYTES,
                     };
-                    let baseline = (y * pixmap.scale + 0.5).floor();
-                    let quarter = (x * pixmap.scale * PHASES + 0.5).floor() / PHASES;
+                    let mut device = tiny_skia::Point::from_xy(x * pixmap.scale, y * pixmap.scale);
+                    placement.map_point(&mut device);
+                    let baseline = (device.y + 0.5).floor();
+                    let quarter = (device.x * PHASES + 0.5).floor() / PHASES;
                     // A glyph without subpixel phases (a color image) takes
                     // the whole pixel nearest its quarter-pixel position.
                     let (origin, phase) = if cache.subpixel(&request) {
@@ -1636,6 +1665,7 @@ fn paint_shaped_with(
                     };
                     let physical_clip = clip
                         .transform(Transform::from_scale(pixmap.scale, pixmap.scale))
+                        .and_then(|clip| clip.transform(placement))
                         .ok_or(PaintError::Unsupported(id))?;
                     match cache.raster(key, &request, origin, physical_clip, work)? {
                         glyphs::Outcome::Culled => {
@@ -1646,7 +1676,10 @@ fn paint_shaped_with(
                         }
                         glyphs::Outcome::Ready(coverage) => {
                             let transform =
-                                Transform::from_scale(1.0 / pixmap.scale, 1.0 / pixmap.scale);
+                                Transform::from_scale(1.0 / pixmap.scale, 1.0 / pixmap.scale)
+                                    .pre_concat(
+                                        placement.invert().ok_or(PaintError::Unsupported(id))?,
+                                    );
                             for span in &coverage.spans {
                                 let rect = Rect::from_xywh(
                                     origin.0 + coverage.bounds.left as f32 + span.x as f32,
@@ -2622,7 +2655,7 @@ fn rasterize_inner_scoped(
         groups: Vec::new(),
         relative_clips: BTreeMap::new(),
         isolation_required: false,
-        transforms: 0,
+        affines: Vec::new(),
         capture: None,
     };
     let mut pending = order::Order::new(tree, &env, &geometry, |id| flows.contains_key(&id))?;
@@ -3065,7 +3098,7 @@ fn rasterize_inner_scoped(
         if phase == order::Phase::Context
             && let Some(affine) = geometry[&id].transform
         {
-            let start = pixmap.begin_transform(id)?;
+            let start = pixmap.begin_transform(id, affine)?;
             transform_scopes.push((id, start, hit_regions.len(), affine));
         }
         if opacity != 1.0 {
@@ -3326,7 +3359,7 @@ mod flow_text_tests {
             groups: Vec::new(),
             relative_clips: BTreeMap::new(),
             isolation_required: false,
-            transforms: 0,
+            affines: Vec::new(),
             capture: None,
         };
         let result = paint_flow_text(
@@ -3403,7 +3436,7 @@ mod retained_tests {
                 groups: Vec::new(),
                 relative_clips: BTreeMap::new(),
                 isolation_required: false,
-                transforms: 0,
+                affines: Vec::new(),
                 capture: None,
             };
             let mut reference = Surface {
@@ -3419,7 +3452,7 @@ mod retained_tests {
                 groups: Vec::new(),
                 relative_clips: BTreeMap::new(),
                 isolation_required: false,
-                transforms: 0,
+                affines: Vec::new(),
                 capture: None,
             };
             if complex {

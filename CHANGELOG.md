@@ -16,8 +16,9 @@
 - Native `varta-shell --system-fonts` on macOS draws colour emoji as Chrome
   does: Apple Color Emoji shaped without its bitmap strikes and drawn by the
   platform face, Chrome's size-dependent emoji advances and line heights,
-  whole-pixel placement and emoji presentation selectors. Colour glyphs on
-  Linux and under scaling transforms remain refused.
+  whole-pixel placement and emoji presentation selectors. Text and emoji
+  under a uniform `scale()` draw through CoreText at the scaled size. Colour
+  glyphs on Linux remain refused.
 
 - Integrated v38 application delivery across the official metered browser host
   and packaged native `varta-shell`, including host effects, OPFS KV storage,

@@ -13419,7 +13419,7 @@ shaper keeps its default) or `avar` version 2 are declined, and their glyphs
 keep the portable path. That path paints outlines in the text colour, so it
 refuses a glyph a face draws in colour (every glyph of a face with `sbix`,
 `CBDT` or `SVG ` tables, and a glyph its `COLR` table paints) rather than draw
-it without its colours; it also takes over under a scaling transform. A face is charged its
+it without its colours; it also takes over under a non-uniform scale. A face is charged its
 standalone bytes (a collection member's own tables, not the whole file), twice
 for a variable face whose copy CoreGraphics retains. At most 16 variation
 instances are kept per face; each is charged a fixed 32 KiB native estimate
@@ -14367,8 +14367,12 @@ in-flow siblings it overlaps. A list that scales (positive factors, at most
 origin) keeps every box where layout put it: its stacking context paints
 untransformed into the recorded scene and its draws and hit regions (and
 rounded hit regions) are then mapped through the transform in device
-pixels, nested scales composing; text under a scale draws its portable
-outlines (host glyph coverage is device pixels at the unscaled size). The
+pixels, nested scales composing. Under a uniform scale a host glyph
+rasterizer draws the text at the scaled size (the font size times the device
+and transform scales) where the transforms put each glyph, and the glyph is
+recorded through their inverse, which mapping undoes; Chrome rasterizes such
+text at the scaled size too, colour emoji included. Under a non-uniform scale
+text draws its portable outlines (which refuse colour glyphs). The
 context's ancestors' clip is taken back through the inverse transform, so
 the same pixels clip. `BoxGeometry::transform` carries the element's own
 scaling transform; the public geometry (`layout_boxes`, `layout_geometry`,
