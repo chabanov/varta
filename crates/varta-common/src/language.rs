@@ -820,6 +820,17 @@ impl LanguageProfile {
     pub fn standard_library(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D1 console stream: `console.log`, `console.info` and
+    /// `console.debug` take any number of arguments and print them as Node 24
+    /// does (`util.formatWithOptions`: `%` directives, `util.inspect` of every
+    /// non-string argument), and value18 record descriptors end with a
+    /// display trailer (`value::RecordDisplay`) naming class instances and
+    /// the engine's Error, `Map`, `Set` and `Date` layouts. Changes no host
+    /// ABI; `value_format_v12` formats the cell of the argument array.
+    #[must_use]
+    pub fn node_console(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
     /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
     /// in-development value layout 18) in record fields, array elements,

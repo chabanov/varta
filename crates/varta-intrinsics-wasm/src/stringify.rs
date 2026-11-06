@@ -12,18 +12,16 @@
 //! execution with its linked code (`EncodeError::linked_code`), which the
 //! runtime reports as the host's error; a noncanonical layout traps.
 use crate::{
-    arena::{entry, scratch},
+    arena::scratch,
     guest::{self, Guest, bounds},
     text,
 };
 use varta_bigint::Budget;
-use varta_common::{
-    limits::V38_MAX_STRING_BYTES,
-    value::{ErrorClass, PrimitiveBox, ValueKind, string_range},
-};
+use varta_common::value::{ErrorClass, ValueKind, string_range};
 use varta_intrinsics::{
     bigint::MAX_BITS,
-    json::{self, EncodeError},
+    inspect,
+    json::{self, EncodeError, Sink},
 };
 
 /// The first scratch block; later blocks double.
@@ -74,39 +72,27 @@ pub extern "C" fn json_stringify_owned(kind: i32, lo: i32, hi: i32) -> i64 {
     }
 }
 
-/// `value_format_v12 (cell) -> ptr`: the text `value_log_v12` logs for a
-/// value18 cell, as an owned string ([`text`]); v38 logs it through
-/// `log_string16`. A string cell's text is its own string, returned without
-/// a copy.
+/// `value_format_v12 (cell) -> ptr`: the text v38 logs through
+/// `log_string16` for the `unknown[]` cell of a `console.log` argument list
+/// (`node_console`): Node's `util.formatWithOptions` of the arguments
+/// ([`inspect::format_arguments`]), as an owned string ([`text`]).
 #[unsafe(no_mangle)]
 pub extern "C" fn value_format_v12(cell: i64) -> i32 {
-    let string = entry(|| {
-        let raw = PrimitiveBox::raw(&Guest, cell as u64).unwrap_or_else(|_| guest::trap());
-        (raw.kind == ValueKind::String).then(|| {
-            PrimitiveBox::read_limited(&Guest, cell as u64, V38_MAX_STRING_BYTES)
-                .unwrap_or_else(|_| guest::trap())
-                .payload
+    let bounds = bounds();
+    let handle = scratch(SCRATCH_BYTES, || {
+        guest::retain_root(cell as u64);
+        let units = inspect::format_arguments(
+            &Guest,
+            cell as u64,
+            bounds,
+            &mut Budget::new(MAX_BITS, u64::MAX),
+        )?;
+        text::produce(|sink| {
+            sink.units(&units);
+            Ok::<(), EncodeError>(())
         })
-    });
-    let handle = match string {
-        Some(handle) => handle,
-        None => {
-            let bounds = bounds();
-            scratch(SCRATCH_BYTES, || {
-                guest::retain_root(cell as u64);
-                text::produce(|sink| {
-                    json::format(
-                        &Guest,
-                        cell as u64,
-                        bounds,
-                        &mut Budget::new(MAX_BITS, u64::MAX),
-                        sink,
-                    )
-                })
-            })
-            .unwrap_or_else(|error| fatal(error))
-        }
-    };
+    })
+    .unwrap_or_else(|error| fatal(error));
     let (ptr, len) = string_range(handle);
     guest::set_result_len(len as i32);
     ptr as i32

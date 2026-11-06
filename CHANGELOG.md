@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- V38 console notation (K9 D1, `node_console`): `console.log`,
+  `console.info` and `console.debug` take any number of arguments and print
+  exactly what Node 24 prints (`util.formatWithOptions` with `%s %d %i %f
+  %j %o %O %c %%`, `util.inspect` depth, line breaking, column grouping,
+  quoting, circular references), including class instances, Error objects
+  as under `--stack-trace-limit=0`, `Map`, `Set`, `Date`, `Uint8Array` and
+  promises. **Changed v38 output:** booleans print `true`/`false` (not
+  `1`/`0`), aggregates print in Node's notation instead of compact JSON,
+  Errors print `[Error: message]`. Value layout 18 record descriptors end
+  with a display trailer naming class instances. Earlier profiles keep
+  their output.
 - V38 K9 type level (selector `type_level`): conditional types with
   distribution, `infer` (constrained, tuple, function, object and template
   patterns) and recursive generic aliases; mapped types with `as` remapping

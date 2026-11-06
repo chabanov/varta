@@ -217,6 +217,14 @@ impl Classes {
     pub(super) fn get(&self, id: u32) -> &Class {
         &self.list[id as usize]
     }
+    /// The laid-out classes with instances (no generic templates), by id.
+    pub(super) fn laid_out(&self) -> impl Iterator<Item = (u32, &Class)> {
+        self.list
+            .iter()
+            .enumerate()
+            .filter(|(_, class)| class.state == State::Ready && !class.is_template())
+            .map(|(id, class)| (id as u32, class))
+    }
     /// Whether some class declares a method of this name. Native intrinsic
     /// member calls of the same name are then no longer provably user-code free.
     pub(super) fn has_method(&self, name: &str) -> bool {

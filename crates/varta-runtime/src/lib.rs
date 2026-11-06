@@ -140,6 +140,8 @@ mod replay;
 pub use replay::NetworkMode;
 pub use varta_common::net::replay::{NetworkLog, NetworkLogError, ReplayError};
 #[cfg(test)]
+mod console_tests;
+#[cfg(test)]
 mod iteration_protocol_tests;
 mod number;
 mod number_format;

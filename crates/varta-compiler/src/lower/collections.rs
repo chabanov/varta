@@ -171,15 +171,20 @@ fn store(types: &mut ir::ValueTypes, name: &str, args: &[Type]) -> Result<Type> 
 }
 
 /// Whether a value of `ty` may reach a collection of a kind `leaf` selects
-/// (or, with `opaque`, an opaque builtin class instance) through classes,
-/// fields, elements, dictionary values and the declared fields of mixed
-/// records, union members and promises.
-fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: bool) -> bool {
+/// (or an opaque builtin class instance `opaque` selects by name) through
+/// classes, fields, elements, dictionary values and the declared fields of
+/// mixed records, union members and promises.
+fn reaches_where(
+    ty: Type,
+    types: &ir::ValueTypes,
+    leaf: fn(K) -> bool,
+    opaque: fn(&str) -> bool,
+) -> bool {
     fn visit(
         ty: Type,
         types: &ir::ValueTypes,
         leaf: fn(K) -> bool,
-        opaque: bool,
+        opaque: fn(&str) -> bool,
         seen: &mut BTreeSet<Type>,
     ) -> bool {
         if !seen.insert(ty) {
@@ -188,7 +193,7 @@ fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: 
         let mut child = |ty| visit(ty, types, leaf, opaque, seen);
         match ty {
             Type::Collection(kind, _) => leaf(kind),
-            Type::Class(id) if types.classes.get(id).opaque => opaque,
+            Type::Class(id) if types.classes.get(id).opaque => opaque(&types.classes.get(id).name),
             Type::Class(id) => child(Type::Record(types.classes.shape(id))),
             Type::Record(id) => types.records[id as usize]
                 .fields
@@ -218,16 +223,27 @@ fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: 
 /// Whether a value of `ty` may reach collection storage, which no host reader
 /// may see (logging, JSON, `unknown`).
 pub(super) fn reaches(ty: Type, types: &ir::ValueTypes) -> bool {
-    types.profile.collections() && reaches_where(ty, types, |_| true, true)
+    types.profile.collections() && reaches_where(ty, types, |_| true, |_| true)
 }
 /// Whether a value of `ty` may reach collection storage other than a
 /// `Uint8Array`'s (Map and Set storage, opaque builtin classes).
 pub(super) fn reaches_private(ty: Type, types: &ir::ValueTypes) -> bool {
-    reaches_where(ty, types, |kind| kind != K::Uint8Array, true)
+    reaches_where(ty, types, |kind| kind != K::Uint8Array, |_| true)
+}
+/// Whether a value of `ty` may reach an opaque builtin class instance that
+/// the v38 logged notation (`node_console`) does not print: every one but a
+/// `Date`. Map, Set and `Uint8Array` storage print as Node prints them.
+pub(super) fn reaches_unlogged(ty: Type, types: &ir::ValueTypes) -> bool {
+    reaches_where(
+        ty,
+        types,
+        |_| false,
+        |name| name != crate::modules::engine::DATE_CLASS,
+    )
 }
 /// Whether a value of `ty` may reach a `Uint8Array`.
 pub(super) fn reaches_bytes(ty: Type, types: &ir::ValueTypes) -> bool {
-    reaches_where(ty, types, |kind| kind == K::Uint8Array, false)
+    reaches_where(ty, types, |kind| kind == K::Uint8Array, |_| false)
 }
 /// Whether a value of `ty` may reach collection storage that a host value
 /// reader (logging, JSON, `unknown`) must not see: any collection, or under

@@ -41,15 +41,27 @@ fn execute(bytes: &[u8], fuel: u64) -> (Vec<String>, u64) {
     (store.data().output.lines.clone(), used)
 }
 fn run(source: &str, profile: P) -> Vec<String> {
-    let bytes = compile(source, profile);
-    if profile == V38 {
-        let linked: Vec<_> = imports(&bytes)
-            .into_iter()
-            .filter(|op| op.linked())
-            .collect();
-        assert!(linked.is_empty(), "v38 imports {linked:?}");
+    if profile != V38 {
+        return execute(&compile(source, profile), 100).0;
     }
-    execute(&bytes, 100).0
+    // V38 logs values in Node's notation (`node_console`, pinned by
+    // `console_tests`); with the formatter hosted it logs them through the
+    // host's renderer as v37 does, so the lines compare.
+    let bytes = varta_compiler::host_import_test_hook::compile_with_profile(
+        source,
+        V38,
+        &[HostOperation::ValueFormatV12],
+    )
+    .unwrap_or_else(|e| panic!("{e}\n{source}"));
+    let linked: Vec<_> = imports(&bytes)
+        .into_iter()
+        .filter(|op| op.linked() && *op != HostOperation::ValueLogV12)
+        .collect();
+    assert!(linked.is_empty(), "v38 imports {linked:?}");
+    crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
+    let lines = execute(&bytes, 100).0;
+    crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
+    lines
 }
 /// Both profiles print the same lines, and v37 really used host imports.
 fn same_as_host(source: &str) -> Vec<String> {
@@ -676,8 +688,9 @@ fn linked_calls_with_small_scratch_run_when_memory_cannot_grow() {
     let source = r#"
 export function main(): void {
   const s = "Straße";
-  console.log(s.charCodeAt(4));
-  console.log(Math.sin(0.5));
+  // String literals: logging a value would allocate its text.
+  if (s.charCodeAt(4) === 223) { console.log("223"); }
+  if (Math.sin(0.5) === 0.479425538604203) { console.log("0.479425538604203"); }
 }
 "#;
     let bytes = compile(source, V38);

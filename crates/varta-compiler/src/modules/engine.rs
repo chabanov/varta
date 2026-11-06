@@ -259,6 +259,8 @@ pub(crate) const DATE: Prelude = Prelude {
     lifted: Some(date_v38),
 };
 pub(crate) const DATE_CLASS: &str = "Date";
+/// The class [`AGGREGATE`] exports.
+pub(crate) const AGGREGATE_ERROR_CLASS: &str = "AggregateError";
 /// The v38 date prelude (`standard_library`): the v37 parser and calendar
 /// helpers, `Date.parse` extended to the legacy `toString` forms, and the
 /// complete `Date` class of `prelude/date_local.ts` in place of the v37 one.

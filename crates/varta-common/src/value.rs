@@ -397,6 +397,10 @@ pub const UNION_BYTES: usize = UNION_META_BYTES + RECORD_SLOT_BYTES;
 pub const MAX_UNION_TYPES: usize = 128;
 mod primitive;
 pub use primitive::{PrimitiveBox, string_range};
+mod display;
+pub use display::{
+    RECORD_DISPLAY_BYTES, RecordDisplay, display_layout, display_trailer, record_display,
+};
 mod reference;
 #[cfg(feature = "std")]
 pub use reference::validate_aggregate;

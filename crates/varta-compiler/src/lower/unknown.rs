@@ -118,6 +118,33 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
     if collections::reaches_hidden(value.ty, types) {
         return Err(collections::opaque("conversion to unknown"));
     }
+    boxed(value, types, true)
+}
+
+/// The cell of a logged argument (v38 `node_console`): `value` boxed as
+/// [`widen`] boxes it, except that Map and Set storage, `Date` instances and
+/// class instances with `#private` fields enter the cell too. Only the
+/// linked logged notation reads it, and it prints them as Node does (private
+/// names are no properties); the caller refuses every other builtin object.
+pub(super) fn logged(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
+    let value = literals::erase(value, types);
+    if value.ty == Type::Unknown {
+        return Ok(value);
+    }
+    if matches!(value.ty, Type::Object(_)) {
+        return Ok(Expr {
+            span: value.span,
+            ty: Type::Unknown,
+            kind: E::Reinterpret(Box::new(value)),
+        });
+    }
+    boxed(value, types, false)
+}
+
+/// Box `value` into an `unknown` cell; `checked` refuses values that reach a
+/// URL, a RegExp match array or a class instance with `#private` fields,
+/// which a host reader would misread.
+fn boxed(value: Expr, types: &ir::ValueTypes, checked: bool) -> Result<Expr> {
     // A tuple (v37) is an ordinary array to every dynamic reader.
     let value = match value.ty {
         Type::Tuple(id) => Expr {
@@ -146,14 +173,14 @@ pub(super) fn widen(value: Expr, types: &ir::ValueTypes) -> Result<Expr> {
             value.ty
         )));
     }
-    if types.profile.class_generics() && classes::reaches_json_form(value.ty, types) {
+    if checked && types.profile.class_generics() && classes::reaches_json_form(value.ty, types) {
         return Err(type_error(format!(
             "{} value is not assignable to unknown; it may reach a URL or a RegExp match \
              array, whose JSON form is not modelled",
             value.ty
         )));
     }
-    if classes::reaches_private(value.ty, types) {
+    if checked && classes::reaches_private(value.ty, types) {
         return Err(type_error(format!(
             "{} value is not assignable to unknown; it may reach a class instance with \
              #private fields, which host readers would see as properties",

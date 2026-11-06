@@ -166,12 +166,19 @@ fn every_v37_case_runs_identically_under_v38() {
         ) else {
             continue;
         };
-        let newer = varta_compiler::compile_typescript_with_profile(
+        // V38 logs in Node's notation (`node_console`, pinned by
+        // `console_tests`); with the formatter hosted, the host's renderer
+        // prints the earlier notation, so the runs compare line for line.
+        let newer = varta_compiler::host_import_test_hook::compile_with_profile(
             &source,
             LanguageProfile::CheckedF64Utf16V38,
+            &[varta_common::HostOperation::ValueFormatV12],
         )
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let (newer, older) = (run(&newer), run(&older));
+        crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(true));
+        let newer = run(&newer);
+        crate::validate::host_import::ADMITTED.with(|admitted| admitted.set(false));
+        let older = run(&older);
         match &older {
             // V38 (`codegen_v2`) may finish where v37 ran out of fuel or
             // host calls; it never runs out where v37 finished.
