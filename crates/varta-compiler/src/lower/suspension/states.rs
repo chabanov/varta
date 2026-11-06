@@ -248,7 +248,7 @@ impl Machine<'_> {
                 S::Init(_, value) if matches!(value.kind, E::Suspend { .. }) => {
                     let input = value.ty;
                     let span = value.span;
-                    let E::Suspend { value, state } = &mut value.kind else {
+                    let E::Suspend { value, state, .. } = &mut value.kind else {
                         return Err(CompilerError::Internal("missing suspension point".into()));
                     };
                     let admitted = if self.generator.is_some() {
@@ -432,6 +432,46 @@ impl Machine<'_> {
             Some(local(span, machine.inputs[&input], input))
         }))
     }
+    /// The resumption of an observed point: the completion kind goes to
+    /// `observer.kind`, a thrown input to `observer.thrown` and a returned
+    /// one to `observer.returned`; nothing throws or returns here. Only
+    /// generator frames (v38 `yield*`) have observed points.
+    fn observed(
+        &self,
+        machine: &ir::Suspendable,
+        guards: &Guards,
+        observer: ir::SuspendObserver,
+    ) -> Result<Vec<S>> {
+        let span = guards.span;
+        if machine.generator.is_none() {
+            return Err(CompilerError::Internal(
+                "observed suspension outside a generator".into(),
+            ));
+        }
+        let exception = machine.exception;
+        let mut code = vec![
+            S::Set(observer.kind, local(span, guards.completion, Type::Number)),
+            S::If(
+                guards.completion(Completion::Throw),
+                vec![S::Set(
+                    observer.thrown,
+                    local(span, machine.inputs[&exception], exception),
+                )],
+                vec![],
+            ),
+        ];
+        if let Some(input) = machine.return_input {
+            code.push(S::If(
+                guards.completion(Completion::Return),
+                vec![S::Set(
+                    observer.returned,
+                    local(span, machine.inputs[&input], input),
+                )],
+                vec![],
+            ));
+        }
+        Ok(code)
+    }
     fn list(&mut self, body: Vec<S>, guards: &Guards, machine: &ir::Suspendable) -> Result<Vec<S>> {
         let mut result = Vec::new();
         let mut run = Vec::new();
@@ -463,24 +503,37 @@ impl Machine<'_> {
         let enter = |body: Vec<S>| vec![S::If(guards.enter(states), body, vec![])];
         Ok(match statement {
             S::Init(target, value) => {
-                let E::Suspend { value, state } = value.kind else {
+                let E::Suspend {
+                    value,
+                    state,
+                    observe,
+                } = value.kind
+                else {
                     return Err(CompilerError::Internal("noncanonical suspension".into()));
                 };
                 let ty = machine.points[state as usize - 1].input;
-                let mut resumed = vec![
-                    S::Set(guards.state, integer(span, frame::INITIAL_STATE as i32)),
-                    S::If(
-                        guards.completion(Completion::Throw),
-                        vec![self.throw_delivery(machine, span)?],
-                        vec![],
-                    ),
-                ];
-                if let Some(delivery) = self.return_delivery(machine, span) {
-                    resumed.push(S::If(
-                        guards.completion(Completion::Return),
-                        vec![delivery],
-                        vec![],
-                    ));
+                let mut resumed = vec![S::Set(
+                    guards.state,
+                    integer(span, frame::INITIAL_STATE as i32),
+                )];
+                match observe {
+                    // A delegating `yield*` point (v38) records the
+                    // completion and its input for the delegation to forward.
+                    Some(observer) => resumed.extend(self.observed(machine, guards, observer)?),
+                    None => {
+                        resumed.push(S::If(
+                            guards.completion(Completion::Throw),
+                            vec![self.throw_delivery(machine, span)?],
+                            vec![],
+                        ));
+                        if let Some(delivery) = self.return_delivery(machine, span) {
+                            resumed.push(S::If(
+                                guards.completion(Completion::Return),
+                                vec![delivery],
+                                vec![],
+                            ));
+                        }
+                    }
                 }
                 resumed.push(S::Init(target, local(span, machine.inputs[&ty], ty)));
                 vec![
@@ -489,7 +542,11 @@ impl Machine<'_> {
                         vec![S::Expr(Expr {
                             span: value.span,
                             ty: Type::Void,
-                            kind: E::Suspend { value, state },
+                            kind: E::Suspend {
+                                value,
+                                state,
+                                observe: None,
+                            },
                         })],
                         vec![],
                     ),

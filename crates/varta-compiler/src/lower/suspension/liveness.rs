@@ -130,7 +130,7 @@ impl Liveness<'_> {
     fn statement(&mut self, statement: &S, out: Set, targets: &Targets) -> Result<Set> {
         let mut live = match statement {
             S::Init(slot, value) => {
-                if let E::Suspend { value, state } = &value.kind {
+                if let E::Suspend { value, state, .. } = &value.kind {
                     return self.point(*slot, value, *state, out, targets);
                 }
                 let mut live = out;

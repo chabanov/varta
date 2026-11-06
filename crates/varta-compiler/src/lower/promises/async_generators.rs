@@ -592,6 +592,7 @@ impl Lower<'_> {
                             kind: E::Suspend {
                                 value: Box::new(shapes.state(body.state)),
                                 state: 0,
+                                observe: None,
                             },
                         },
                     ),
@@ -821,6 +822,7 @@ impl Lower<'_> {
                                     kind: E::Suspend {
                                         value: Box::new(outer.state(body.state)),
                                         state: 0,
+                                        observe: None,
                                     },
                                 },
                             ),
@@ -977,6 +979,7 @@ impl Lower<'_> {
                 kind: E::Suspend {
                     value: Box::new(shapes.state(state)),
                     state: 0,
+                    observe: None,
                 },
             },
         ));

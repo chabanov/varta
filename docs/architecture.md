@@ -6068,7 +6068,8 @@ need no event loop and no new host import; every resumption is a guest call.
   `undefined` (a `void` `TNext` is also `undefined`), which can only reject
   programs that would need `any`. `T` is not `void`, and no type argument is a
   generator, `any` or `VartaResult`. Parameters are fixed: optional and rest
-  parameters, a `this` parameter, generator methods, generator function
+  parameters, a `this` parameter, generator methods (admitted by v38's
+  [iteration protocol](#iteration-protocol-iteration_protocol)), generator function
   expressions, async generators and a generator function used as a value are
   rejected with construct-specific diagnostics. Calling a generator function
   binds its arguments into a new frame and returns the generator object without
@@ -6079,7 +6080,8 @@ need no event loop and no new host import; every resumption is a guest call.
   return on every path. `yield` may appear in every normalized expression
   position of the [suspension foundation](#suspension-foundation-k44-block-1),
   inside `try`, `catch` and `finally` bodies, loops, labelled statements and
-  `switch` case bodies. `yield*` fails as `unsupported yield* delegation`;
+  `switch` case bodies. `yield*` fails as `unsupported yield* delegation`
+  (v38 admits it with the [iteration protocol](#iteration-protocol-iteration_protocol));
   `yield` inside an intrinsic value block (for example a `String(...)` call, a
   template literal or a generator method call), in a `switch` case test or in a
   `do-while` condition fails as `unsupported suspension point inside
@@ -11496,6 +11498,103 @@ import, value layout or ABI changes; v1–v37 keep rejecting every form below.
   snapshots) stay as they were. A `Uint8Array` held by `unknown` and the
   SDK's byte parts are the wave-3
   [bytes stream](#bytes-held-by-unknown-byte_values).
+
+#### Iteration protocol (`iteration_protocol`)
+
+Additions to v38 (2026-11-06) that make program classes iterable and let
+array literals, `Array.from` and generators consume every synchronous
+iterable the checked subset has, under the selector
+`LanguageProfile::iteration_protocol()`. No host import, value layout, frame
+catalog, scheduler or ABI changes: the forms below lower to guest code over
+the existing generator frames, so the native runtime and every JavaScript
+host run them unchanged. V1–v37 keep rejecting every form below with their
+old diagnostics (`computed or numeric class member name`, `generator method`,
+`array spread`, `yield* delegation`, `Array.from of a value other than a Map,
+Set, Uint8Array or their iterators`). No `Symbol` value exists: `Symbol.iterator`
+and `Symbol.asyncIterator` are recognized only as the spelled-out computed
+keys below.
+
+- **Iterable classes.** An instance method declared with the computed key
+  `[Symbol.iterator]` (a generator method `*[Symbol.iterator]()` or a plain
+  method returning a generator object) makes the class's instances
+  iterable, inherited and overridden like any other method (an override
+  dispatches through the root's dispatcher). `for...of`, an array literal
+  spread, `Array.from` and `yield*` call it once and iterate the generator
+  it returns; the method must have no parameters, must not be a getter and
+  must return a synchronous generator (`unsupported … over a class
+  instance: [Symbol.iterator]() must be a method without parameters
+  returning a synchronous generator`), and a class instance without one is
+  refused by name (`… the class declares no [Symbol.iterator]() method`).
+  `x[Symbol.iterator]()` and `x[Symbol.asyncIterator]()` call the methods
+  explicitly. A static or string-keyed `[Symbol.iterator]` and other
+  computed keys stay refused. `RegExp` match arrays, `Headers`, `FormData`
+  and collections keep their own iteration.
+- **Generator methods.** Every synchronous generator instance method is
+  admitted (`*entries(from: number): Generator<…>`): the method keeps its
+  index, receiver and shape and returns the object of a receiver-free
+  generator body that takes the receiver as its first parameter, so the
+  frames, liveness and resume rules of [synchronous
+  generators](#synchronous-generators-generators) apply unchanged. Optional
+  and rest parameters stay refused (`generator method with optional or rest
+  parameters`).
+- **Annotations.** `Iterator<T, TReturn?, TNext?>` and
+  `IterableIterator<T, TReturn?, TNext?>` denote synchronous generator
+  objects with `Generator`'s defaults, as the async iteration interfaces
+  denote async generator objects. `implements Iterable<T, TReturn?, TNext?>`
+  checks that the class declares a `[Symbol.iterator]()` method without
+  parameters returning a synchronous generator that yields exactly `T` (and
+  has the given `TReturn` and `TNext`). `Iterable<T>` as a value annotation
+  is refused by name: an iterable parameter would also have to accept
+  arrays, which a generator type does not.
+- **Array literal spreads.** `[a, ...xs, b, ...source]` spreads checked
+  arrays and tuples, strings (their code points, as the String iterator
+  yields them: a surrogate pair is one element, a lone surrogate one
+  element of its own), synchronous generators (whose `TNext` accepts
+  `undefined`), `Map`, `Set` and `Uint8Array` values and their
+  `keys()`/`values()`/`entries()` iterators, and iterable class instances.
+  Elements and sources evaluate in source order, and each source is iterated
+  to completion where it appears, before the next element is evaluated; a
+  generator source is resumed with `undefined` until it completes and is
+  never closed (no abrupt exit can leave a spread). An array source is read
+  at its live length; a hole of an element type without `undefined` throws
+  `TypeError: array element is a hole`, as in `for...of`, and reads as
+  `undefined` when the element type includes it. The result is a fresh
+  array whose element type is the context's array element type, or else the
+  union of every element and source element type. A hole beside a spread
+  element and async generators are refused by name. The v37 form
+  `[...collection]` keeps its own lowering.
+- **`Array.from(source)`.** One argument: the same fresh array as
+  `[...source]` for every source above, besides the v37 collection forms. A
+  map function, more arguments or a spread argument stay refused.
+- **`yield*`.** In a synchronous generator body, `yield* source` over a
+  generator, an array (or tuple, string, collection or `RegExp` match array)
+  or an iterable class instance yields each value the source produces (widened to
+  this generator's `T`). The delegating point observes how this generator is
+  resumed instead of throwing or returning at it (`Suspend::observe`):
+  `next(v)` resumes a generator source with `v` (the first resumption sends
+  `undefined`, so the source's `TNext` accepts `undefined` and this
+  generator's `TNext` converts to it), `throw(e)` is forwarded to the
+  source's `throw` (a not-started or completed source rethrows `e`), and
+  `return(v)` to its `return`: a completed source makes this generator return
+  the source's completion value, a source that yields again from a `finally`
+  block keeps the delegation going. An array source has no `throw` or
+  `return` method: a forwarded `throw` throws `TypeError: The iterator does
+  not provide a 'throw' method.` and a forwarded `return(v)` returns `v`
+  from this generator. The expression's value is the source generator's
+  return value (`undefined` for an array). Conversions are checked at
+  compile time (`yield* source yields …`, `yield* forwards what this
+  generator receives from return() to its source`); a generator whose
+  `TReturn` is `void` returns `undefined` after a forwarded `return()`, and
+  closes a source whose `TReturn` excludes `undefined` with a placeholder
+  the source cannot observe. This is the one deviation: if the source's
+  `finally` block returns a value of its own, JavaScript would return that
+  value from this `void` generator; Varta returns `undefined`. Async
+  generators keep their own `yield*` rules.
+- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`) and
+  iterator helpers, `Symbol()` values and symbol-keyed properties,
+  destructuring of generators, strings and iterable instances,
+  `Array.from` with a map function or an array-like, and `Iterable<T>`
+  value annotations.
 
 #### Bytes held by unknown (`byte_values`)
 

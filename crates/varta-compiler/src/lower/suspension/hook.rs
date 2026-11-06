@@ -58,6 +58,7 @@ impl Lower<'_> {
             kind: E::Suspend {
                 value: Box::new(value),
                 state: 0,
+                observe: None,
             },
         }))
     }
