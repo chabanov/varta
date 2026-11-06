@@ -11590,11 +11590,122 @@ keys below.
   `finally` block returns a value of its own, JavaScript would return that
   value from this `void` generator; Varta returns `undefined`. Async
   generators keep their own `yield*` rules.
-- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`) and
-  iterator helpers, `Symbol()` values and symbol-keyed properties,
-  destructuring of generators, strings and iterable instances,
-  `Array.from` with a map function or an array-like, and `Iterable<T>`
-  value annotations.
+- **Not admitted.** Iterator helpers, `Symbol()` values and symbol-keyed
+  properties, `Array.from` with a map function or an array-like, and
+  `Iterable<T>` value annotations. Hand-written iterator objects behind
+  `[Symbol.iterator]()` and destructuring of generators, strings,
+  collections and iterable instances are admitted by the [expression
+  forms](#expression-forms-expression_forms) stream.
+
+#### Expression forms (`expression_forms`)
+
+Additions to v38 (2026-11-06, K9 track C: expressions and functions) under
+the selector `LanguageProfile::expression_forms()`. No host import, value
+layout, frame catalog, scheduler or ABI changes: every form lowers to guest
+code over existing IR, so the native runtime and every JavaScript host run
+it unchanged. V1–v37 keep rejecting every form with its old diagnostic.
+Node 24 is the reference for every output below.
+
+- **`await` in every operand position.** In an async function `await`
+  may appear in call and `new` arguments, operands of every operator,
+  template substitutions, conditions, object and array literals (optional
+  fields included), member and index targets, compound and logical
+  assignments and optional chains. Normalization splits every intrinsic
+  value block around the suspension point: the block's roots become the
+  statement's frame-saved temporaries and its statements keep their order,
+  so operands evaluated before an `await` are materialized first and a
+  short-circuited operand (`a?.f(await x)`, `a || await b`) never awaits.
+  `await` in a `switch` case test, a `do...while` condition and at module
+  top level stays refused (`await inside switch case test`, `top-level await
+  is not supported`): module code runs only the pure constant initializers
+  of [module constants](#module-constants-module_constants).
+- **Operators and statements.** The comma operator evaluates every operand
+  in order and yields the last. `new.target === C` (`!==`, either order) in
+  a class constructor tests the class of the instance under construction
+  exactly; `new.target === undefined` is `false` there and `true` in a
+  function; other operands and comparisons inside constructor closures are
+  refused by name. Iterator results are created as `{ value, done }`, the
+  CreateIterResultObject order, so `JSON.stringify` and `Object.keys` of a
+  generator result match JavaScript.
+- **Tagged templates.** ``tag`a${x}b` `` calls `tag` with a fresh
+  `TemplateStringsArray` of the cooked strings (a readonly `string[]`)
+  followed by the substitutions, like `tag(["a", "b"], x)`; the
+  substitutions are checked against the tag's parameters as call arguments.
+  ``String.raw`…` `` joins the raw text (line terminators normalized to LF)
+  with the ToString of each substitution. Refused: the strings array's
+  `raw` property (`TemplateStringsArray.raw outside String.raw`), a part
+  whose cooked string is `undefined` (an invalid escape) and type arguments
+  on a tagged template. Deviation: the strings array is created per
+  evaluation instead of once per site.
+- **Spreads into fixed parameters.** A spread argument whose length is
+  static expands in place: an array literal spreads its elements and a
+  binding of a fixed-length tuple type spreads its elements (`f(...pair)`,
+  `new P(...pair)`). `Math.max(...xs)`/`Math.min(...xs)` fold each spread
+  array (`-Infinity`/`Infinity` for an empty one). Other spreads keep the
+  array-snapshot path of rest parameters, and a constructor spread of an
+  array whose length is not static keeps its refusal (`spread to a class
+  constructor`).
+- **Receivers.** A field `m` holding a function with an explicit `this`
+  parameter is called as `o.m(...)` with `o` as the receiver when `o` is a
+  binding or `this` (other bases are refused by name). A class field
+  without an annotation initialized by an arrow or function expression has
+  that function's type: annotated parameters (a default makes one
+  optional) and the annotated return type, or, without one, the type the
+  body's outermost operator fixes (arithmetic, comparisons, `!`, literals,
+  templates, `String(…)`, `+` with a string operand); other bodies need a
+  return annotation. A field initializer may read and capture `this.f` for
+  the fields initialized before it, as a constructor statement may.
+- **Object-literal methods that use `this`.** The literal binds its
+  methods to the object it creates: a hidden binding receives the object
+  right after it is built, and every such method is an arrow over that
+  binding. The object's type is its contextual closed object type, or the
+  record of its literal or binding field values and annotated methods.
+  Calls `o.m()` (and fluent chains `o.m().n()`) behave as in JavaScript.
+  Deviations, refused where observable: an object spread, `Object.assign`
+  source or own-key enumeration of a record type built by such a literal is
+  refused by name (the copied methods would keep the original receiver),
+  and a method value extracted and called alone sees the object instead of
+  `undefined`. Getters and setters of object literals (accessor properties)
+  and generator methods that use `this` stay refused by name.
+- **Computed keys.** `{ [k]: v }` with a constant key — a string or number
+  literal, a template without substitutions, or a `const` binding or
+  module constant initialized by such a literal — names a closed record
+  field, the ToString of the constant; `o[k]` reads it. Keys known only at
+  run time need an index-signature context and symbol keys stay refused.
+- **Destructuring everywhere.** Tuple parameter patterns, nested object and
+  array patterns with defaults and rest in parameters, declarations,
+  assignment patterns and `for...of` heads; an array rest has the source's
+  element type (a hole throws `TypeError: array element is a hole`). An
+  array pattern over a non-array source iterates it as `for...of` does
+  (strings by code point, `Map`/`Set`, iterable class instances,
+  generators): a generator is stepped once per element named and closed
+  with `return()` when the pattern has no rest element and the generator
+  is not done. Deviation: the elements are taken before the pattern's
+  defaults and targets run (JavaScript interleaves them).
+- **Hand-written iterators.** A non-generator class method
+  `[Symbol.iterator](): Iterator<T>` returning `{ next(): IteratorResult<T> }`
+  becomes the generator that calls `next()` once per element until a
+  result's `done` is true, so every iteration-protocol consumer drives it.
+  Deviations: the method body runs at the first `next()` rather than when
+  `[Symbol.iterator]()` is called, and the object's `return`/`throw`
+  members are not called.
+- **`using` and `await using`.** A block's `using x = e;` binds `x` like
+  `const`; the rest of the block runs in a `try` whose `finally` calls
+  `x[Symbol.dispose]()` (`await x[Symbol.asyncDispose]()`), one nested
+  `try` per declarator, so disposal runs in reverse order on normal
+  completion, `return`, `break`, `continue` and throws. Classes declare
+  `[Symbol.dispose]()`/`[Symbol.asyncDispose]()` and may `implements
+  Disposable`/`AsyncDisposable`. Deviation: when the block and a disposal
+  both throw, the disposal's error propagates instead of a
+  `SuppressedError`. `using` in a `for` head or at module top level stays
+  refused.
+- **Structural thenables.** `await t` and `Promise.resolve(t)` of a value
+  whose static type has a callable `then` (a closed object field or a class
+  method taking `(onFulfilled[, onRejected])`) resolve as PromiseResolve
+  does: a new promise whose resolving functions `then` receives one job
+  later (NewPromiseResolveThenableJob), so jobs interleave as in Node. A
+  thenable reached through a union or `unknown` keeps the runtime
+  `TypeError` of the [promise rules](#promise-values-promise_values).
 
 #### Bytes held by unknown (`byte_values`)
 

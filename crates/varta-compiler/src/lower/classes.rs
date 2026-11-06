@@ -405,7 +405,11 @@ fn member_name(key: &ast::PropName) -> Result<String> {
             "class member named like the inherited {name}"
         )));
     }
-    if name == ASYNC_ITERATOR_METHOD || name == ITERATOR_METHOD {
+    if name == ASYNC_ITERATOR_METHOD
+        || name == ITERATOR_METHOD
+        || name == DISPOSE_METHOD
+        || name == ASYNC_DISPOSE_METHOD
+    {
         return Err(unsupported(&format!("class member named {name}")));
     }
     Ok(name)
@@ -420,6 +424,32 @@ pub(super) const ASYNC_ITERATOR_METHOD: &str = "[Symbol.asyncIterator]";
 /// `iteration_protocol`); like the async iterator name, no string key
 /// reaches it.
 pub(super) const ITERATOR_METHOD: &str = "[Symbol.iterator]";
+
+/// The names `[Symbol.dispose]()` and `[Symbol.asyncDispose]()` methods
+/// are registered under (v38 `expression_forms`, `using` declarations).
+pub(super) const DISPOSE_METHOD: &str = "[Symbol.dispose]";
+pub(super) const ASYNC_DISPOSE_METHOD: &str = "[Symbol.asyncDispose]";
+
+/// The registered method name of `Symbol.dispose` or `Symbol.asyncDispose`
+/// that `expression` spells (v38 `expression_forms`).
+pub(super) fn dispose_symbol(expression: &ast::Expr) -> Option<&'static str> {
+    let ast::Expr::Member(ast::MemberExpr {
+        obj,
+        prop: ast::MemberProp::Ident(property),
+        ..
+    }) = stmt::unparen(expression)
+    else {
+        return None;
+    };
+    if !matches!(stmt::unparen(obj), ast::Expr::Ident(object) if object.sym == SYMBOL_GLOBAL) {
+        return None;
+    }
+    match property.sym.as_ref() {
+        "dispose" => Some(DISPOSE_METHOD),
+        "asyncDispose" => Some(ASYNC_DISPOSE_METHOD),
+        _ => None,
+    }
+}
 
 /// The global whose well-known members name the iterator methods.
 const SYMBOL_GLOBAL: &str = "Symbol";
@@ -472,6 +502,12 @@ fn method_name(
     }
     if profile.iteration_protocol() && iterator_key(key) {
         return Ok(ITERATOR_METHOD.to_owned());
+    }
+    if profile.expression_forms()
+        && let ast::PropName::Computed(computed) = key
+        && let Some(name) = dispose_symbol(&computed.expr)
+    {
+        return Ok(name.to_owned());
     }
     if profile.net_request()
         && prelude
@@ -599,8 +635,14 @@ pub(super) fn register(
                 declaration.class.clone()
             };
             // `constructor(private readonly x: T)` (v38).
-            if types.profile.structural_subtyping() {
+            let class = if types.profile.structural_subtyping() {
                 parameter_properties::rewrite(class, source)?
+            } else {
+                class
+            };
+            // Hand-written `[Symbol.iterator]()` methods (v38 `expression_forms`).
+            if types.profile.expression_forms() {
+                iterator_objects::rewrite(class)
             } else {
                 class
             }

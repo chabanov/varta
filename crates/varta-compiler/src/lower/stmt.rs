@@ -8,6 +8,18 @@ pub(super) fn unparen(mut expr: &ast::Expr) -> &ast::Expr {
 
 impl Lower<'_> {
     pub(super) fn block(&mut self, statements: &[ast::Stmt], scope: bool) -> Result<Vec<S>> {
+        // V38 (`expression_forms`): `using` declarations dispose through
+        // `try`/`finally` (`using_declarations`).
+        if self.types.profile.expression_forms()
+            && statements
+                .iter()
+                .any(|s| matches!(s, ast::Stmt::Decl(ast::Decl::Using(_))))
+        {
+            self.check_using(statements)?;
+            if let Some(rewritten) = using_declarations::rewrite(statements) {
+                return self.block(&rewritten, scope);
+            }
+        }
         self.depth += 1;
         if self.depth > super::MAX_NESTING {
             return Err(invalid(format!(

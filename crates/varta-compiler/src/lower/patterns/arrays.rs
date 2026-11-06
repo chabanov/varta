@@ -39,6 +39,12 @@ impl Lower<'_> {
     ) -> Result<Vec<S>> {
         let span = pattern.span;
         let value = self.match_array_values(value)?;
+        // V38 (`expression_forms`): iterables (`iterable_patterns`).
+        let value = if self.types.profile.expression_forms() {
+            self.destructured_source(value, pattern)?
+        } else {
+            value
+        };
         let (source, ty, mut roots, mut body) = self.pattern_source(value, true)?;
         if let Type::Tuple(_) = ty {
             body.extend(self.tuple_binding_pattern(pattern, local(span, source, ty), mode)?);
@@ -131,7 +137,10 @@ impl Lower<'_> {
             return Err(invalid("missing rest source"));
         };
         let element = self.types.arrays[id as usize];
-        let element = if self.types.profile.sparse_arrays() {
+        // V38 (`expression_forms`): the rest array has the source's element
+        // type, as TypeScript types it; a hole throws like `for...of`.
+        let checked = self.types.profile.expression_forms();
+        let element = if self.types.profile.sparse_arrays() && !checked {
             unions::intern(vec![element, Type::Undefined], self.types)?
         } else {
             element
@@ -202,14 +211,24 @@ impl Lower<'_> {
             local(span, index, Type::Float64),
             Type::Float64,
         );
+        let maybe = if checked {
+            unions::intern(vec![element, Type::Undefined], self.types)?
+        } else {
+            element
+        };
         let value = Expr {
             span,
-            ty: element,
+            ty: maybe,
             kind: if self.types.profile.sparse_arrays() {
                 E::MaybeIndex(Box::new(local(span, source, ty)), Box::new(source_index))
             } else {
                 E::Index(Box::new(local(span, source, ty)), Box::new(source_index))
             },
+        };
+        let value = if checked {
+            self.dense_read(value, element, super::super::dense::ITERATED_HOLE)?
+        } else {
+            value
         };
         let append = if self.types.profile.sparse_arrays() {
             S::SetIndex {

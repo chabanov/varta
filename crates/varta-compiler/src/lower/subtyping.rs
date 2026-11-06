@@ -53,6 +53,10 @@ pub(crate) struct Views {
     /// `Reinterpret` of the value that `resolve` replaces by a call of the
     /// pair's synthesized wrapper (`Rewriter::adapter`).
     adapters: RefCell<BTreeSet<(u32, u32)>>,
+    /// V38 (`expression_forms`): record shapes built by object literals whose
+    /// methods are bound to the object (`object_methods`); copying or
+    /// enumerating their own keys is refused in `spread_views`.
+    bound: RefCell<BTreeSet<u32>>,
     /// V38 (`sdk_paths`): the closed record shapes whose own keys a program
     /// copies or enumerates, with the form, source and span. `resolve`
     /// refuses a shape that is a view of an object type with other fields or
@@ -93,6 +97,10 @@ impl Views {
         self.spreads
             .borrow_mut()
             .push((shape, form, source.clone(), span));
+    }
+    /// Note a record shape built with methods bound to its object.
+    pub(crate) fn note_bound(&self, shape: u32) {
+        self.bound.borrow_mut().insert(shape);
     }
     /// Note the closed record shapes a value of `ty` entering an `unknown`
     /// cell may hold (v38 JSON-object reads of records).
@@ -840,7 +848,19 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
                 .collect(),
         )
     };
+    let bound = types.subtyping.bound.borrow();
     for (shape, form, source, span) in types.subtyping.spreads.borrow().iter() {
+        if bound_source(*shape, edges, &bound) {
+            return Err(source.locate(
+                unsupported(&format!(
+                    "{} of a {} built by an object literal whose methods use this; the copied \
+                     methods would keep that object as their receiver",
+                    form.name(),
+                    describe(Type::Record(*shape), types),
+                )),
+                *span,
+            ));
+        }
         let declared = names(Type::Record(*shape)).unwrap_or_default();
         let mut visited = BTreeSet::from([Type::Record(*shape)]);
         let mut stack = vec![*shape];
@@ -870,6 +890,25 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
         }
     }
     Ok(())
+}
+/// Whether a value of record `shape` may hold an object whose methods are
+/// bound to it: the shape itself or any record it views.
+fn bound_source(shape: u32, edges: &BTreeSet<(Type, u32)>, bound: &BTreeSet<u32>) -> bool {
+    let mut visited = BTreeSet::from([shape]);
+    let mut stack = vec![shape];
+    while let Some(target) = stack.pop() {
+        if bound.contains(&target) {
+            return true;
+        }
+        for (wider, _) in edges.iter().filter(|(_, t)| *t == target) {
+            if let Type::Record(id) = wider
+                && visited.insert(*id)
+            {
+                stack.push(*id);
+            }
+        }
+    }
+    false
 }
 /// Close the admitted edges and route every member access of a view shape
 /// through its accessors (see the module documentation).

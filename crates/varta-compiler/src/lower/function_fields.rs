@@ -171,6 +171,25 @@ impl Lower<'_> {
                 let name = member_name(&member.prop)?;
                 self.field_type(base, &name)
             }
+            // V38 (`expression_forms`): the result of calling a declared
+            // function or a function field (`make().f()`, `a.f().g()`).
+            ast::Expr::Call(call) if self.types.profile.expression_forms() => {
+                let ast::Callee::Expr(callee) = &call.callee else {
+                    return None;
+                };
+                match stmt::unparen(callee) {
+                    ast::Expr::Ident(id)
+                        if call.type_args.is_none() && self.binding(id.sym.as_ref()).is_err() =>
+                    {
+                        self.functions.get(id.sym.as_ref()).map(|f| f.result)
+                    }
+                    ast::Expr::Member(_) => match self.peek_type(callee, depth + 1)? {
+                        Type::Function(id) => Some(self.types.functions[id as usize].result),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
             // `x?.p` with a single non-nullish member: an `unknown` field stays
             // `unknown` (its `undefined` short circuit is absorbed).
             ast::Expr::OptChain(chain) => {
@@ -248,6 +267,14 @@ impl Lower<'_> {
                 )),
                 value.span,
             ));
+        }
+        // V38 (`expression_forms`): a field whose function declares a `this`
+        // parameter is called with the object as its receiver.
+        if self.types.profile.expression_forms()
+            && let Type::Function(id) = value.ty
+            && self.types.functions[id as usize].receiver.is_some()
+        {
+            return self.receiver_field_call(call, callee, value);
         }
         self.unbound(&value)?;
         // A generic method signature's erased function (v38).

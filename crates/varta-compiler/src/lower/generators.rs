@@ -557,10 +557,11 @@ impl Lower<'_> {
             Expr {
                 span,
                 ty: generator.result,
-                kind: E::Record(vec![
+                kind: E::Record(result_fields(
+                    self.types.profile.expression_forms(),
                     (done_field, local(span, done, Type::Boolean)),
                     (value_field, local(span, value, value_ty)),
-                ]),
+                )),
             },
         ));
         Ok(Expr {
@@ -717,5 +718,17 @@ impl Lower<'_> {
                 protected,
             ],
         ))
+    }
+}
+
+/// The fields of an iterator result in creation order: V38
+/// (`expression_forms`) creates `{ value, done }` in ECMAScript
+/// CreateIterResultObject order, so `JSON.stringify` and key enumeration
+/// match JavaScript; earlier profiles keep `done` first.
+fn result_fields(ordered: bool, done: (u32, Expr), value: (u32, Expr)) -> Vec<(u32, Expr)> {
+    if ordered {
+        vec![value, done]
+    } else {
+        vec![done, value]
     }
 }

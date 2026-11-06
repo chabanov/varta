@@ -171,6 +171,10 @@ pub(super) fn analyze(
             let compatible = matches!(present.as_slice(), [Type::Record(_)])
                 && matches!(binding, ast::Pat::Object(_))
                 || matches!(present.as_slice(), [Type::Array(_)])
+                    && matches!(binding, ast::Pat::Array(_))
+                // V38 (`expression_forms`): a tuple parameter pattern.
+                || types.profile.expression_forms()
+                    && matches!(present.as_slice(), [Type::Tuple(_)])
                     && matches!(binding, ast::Pat::Array(_));
             if !compatible {
                 return Err(locate(

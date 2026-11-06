@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 81 feature rows and 140 cases:
-135 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 92 feature rows and 154 cases:
+149 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -389,3 +389,15 @@ over a generator with `throw`/`return` forwarding and over an array
 (`yield-delegation.ts`). Their expected output is Node.js v24.20.0's. The
 `symbol-type` gap is unchanged: `Symbol.iterator` is recognized only as a
 computed method key, and no `Symbol` value exists.
+
+The v38 expressions-and-functions review (K9 C, 2026-11-06) adds eleven
+feature rows (`expression-operators`, `await-operands`, `tagged-templates`,
+`spread-arguments`, `function-receivers`, `object-literal-methods`,
+`computed-property-keys`, `destructuring-patterns`, `iterator-objects`,
+`using-declarations`, `promise-thenables`) and fourteen passing cases,
+among them `generator-control.ts` on the existing `generators` row. They are
+the programs of the runtime's `expression_form_cases`, and their expected
+output is Node.js v24.20.0's. Two forms noted above are now admitted: template
+computed keys and `await` inside a template literal or a call argument.
+`using` declarations (ECMAScript 2026) and TypeScript `this` parameters are
+pinned to the Varta contract rather than the ECMAScript 2025 text.

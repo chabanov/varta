@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- V38 expressions and functions (K9 C, `expression_forms`): `await` in
+  every operand position of an async function (call and `new` arguments,
+  operators, templates, conditions, object and array literals, assignments,
+  optional chains); the comma operator; `new.target === C` in constructors;
+  tagged templates and `String.raw`; spreads of tuples and array literals
+  into fixed parameters and `new`, `Math.max(...xs)`; `o.m()` for functions
+  with an explicit `this` parameter; class-field arrows typed from their
+  parameters and body; object-literal methods that use `this` (copies of
+  such objects are refused); constant computed keys; tuple parameter
+  patterns, typed array rest and destructuring of strings, collections,
+  iterable instances and generators (closed with `return()`); hand-written
+  `{ next() }` iterators behind `[Symbol.iterator]()`; `using` and `await
+  using` with `[Symbol.dispose]()`/`[Symbol.asyncDispose]()` and `implements
+  Disposable`/`AsyncDisposable`; structural thenables in `await` and
+  `Promise.resolve` with Node's job order. Generator results are created as
+  `{ value, done }`. Still refused: top-level `await`, object-literal
+  getters/setters, `TemplateStringsArray.raw`, `SuppressedError`. No host
+  ABI or value layout change; v37 keeps rejecting every form. Conformance:
+  149 passed, 5 known unsupported of 154 (eleven new feature rows).
 - Native `img`: packaged images (a configuration's new `images` map,
   stored in resource section version 2 and carried by the browser bundle
   under the same names) are laid out and drawn by the native renderer to the

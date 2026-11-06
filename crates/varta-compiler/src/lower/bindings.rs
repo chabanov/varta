@@ -138,6 +138,10 @@ impl Lower<'_> {
                     value.span,
                 ));
             }
+            if self.types.profile.expression_forms() && declaration.kind == ast::VarDeclKind::Const
+            {
+                self.note_constant_key(old.identity, &value);
+            }
             self.update(name, value.ty)?;
             self.mark_const_assertion(name, readonly)?;
             self.flow_known_binding(&old, &value);

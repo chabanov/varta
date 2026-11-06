@@ -3370,6 +3370,7 @@ The selectors are registered; the table records what each stream admits.
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Array.from` with a map function, `Iterable<T>` value annotations |
+| `expression_forms()` | K9 C — expressions and functions (2026-11-06): `await` anywhere, comma, `new.target` comparisons, tagged templates, spreads into fixed parameters, `this` parameters and field arrows, object-literal methods with `this`, computed keys, destructuring everywhere, hand-written iterators, `using`, structural thenables | Implemented in part ([contract](architecture.md#expression-forms-expression_forms), [record](#k9-c--expressions-and-functions-2026-11-06)): no ABI, value-layout, scheduler or host change. Pending: top-level `await` (needs module-level evaluation), object-literal getters/setters, `TemplateStringsArray.raw`, `SuppressedError` for double throws in `using`, `await` in `switch` case tests |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks
@@ -7543,6 +7544,43 @@ bearer tokens and cookies fit; contract v1 and response headers keep the
 earlier bounds. Open: a per-stream write-idle bound for HTTP/2 streams whose
 client never opens its window, h2c, HTTP/3, certificate reload, and Linux
 and sustained-load benchmarks.
+
+### K9 C — expressions and functions (2026-11-06)
+
+Owner decision (2026-11-06, K9): the first release covers the whole
+TypeScript language except `any`, with Node 24 as the runtime oracle and tsc
+5.x as the type-system reference. Track C admits the expression and function
+forms under the v38 selector `expression_forms()`
+([contract](architecture.md#expression-forms-expression_forms)); v37 and
+earlier keep every old diagnostic. No host ABI, value layout, frame catalog
+or scheduler change, so the browser host runs every form unchanged.
+
+| Construct | Status | Evidence (`expression_form_cases`) |
+| --- | --- | --- |
+| `await` in call/`new` arguments, operands, templates, conditions, object/array literals, assignments, optional chains | Admitted (value blocks split around suspensions) | `await_positions`, `await_arguments`, `await_operands` |
+| Top-level `await` (native and browser schedulers) | Refused: module code runs only pure constant initializers; needs module-level evaluation (calls and statements at module scope) first | refusal test |
+| Object-literal methods with `this`, shorthand methods, fluent chains | Admitted (methods bound to the object; copies of such objects refused) | `object_methods` |
+| Object-literal getters and setters | Refused: closed records have data fields only | refusal test |
+| Constant computed keys (string/number literals, templates, `const` bindings, module constants) | Admitted; symbol keys wait for track D | `computed_keys` |
+| Tagged templates, `String.raw` | Admitted; `TemplateStringsArray.raw` refused (cooked strings only), strings array fresh per evaluation | `tagged_templates` |
+| Explicit `this` parameters (`f.call(o)`, `o.m()`) | Admitted for binding/`this` bases | `receivers` |
+| Contextually typed class-field arrows | Admitted (annotated parameters; return annotation or evident body type) | `receivers` |
+| Destructuring: parameters (tuples), nested, defaults, rest, assignment patterns, `for...of` heads, iterables | Admitted (iterables taken before targets run) | `destructuring`, `iterators` |
+| Spread in calls and `new` | Admitted for static spreads (literals, tuples) and `Math.max/min` | `spreads` |
+| Hand-written iterators (`{ next() }` behind `[Symbol.iterator]()`) | Admitted for classes (body runs at the first `next()`) | `iterators` |
+| `using` / `await using` with `Symbol.dispose`/`asyncDispose` | Admitted; `SuppressedError` (track D) not built | `using` |
+| `new.target` | Admitted: `new.target.name` (v32) and comparisons | `operators` |
+| Structural thenables in `await`/`Promise.resolve` | Admitted for statically known `then` shapes, job order as Node | `thenables` |
+| Comma, `void`, `delete`, `in`, `instanceof`, optional chains, `&&=`/`\|\|=`/`??=`, `**=`, labelled blocks, `switch` fallthrough | Admitted (comma new; the rest pinned) | `operators` |
+| Generators driven by `next`/`return`/`throw` | Admitted; results now `{ value, done }` in creation order | `generators` |
+
+Every track-C probe of the K9 brief (`a29`–`a33`, `a41`, `a46`–`a49`,
+`a57`–`a61`, `a63`, `a64`, `a67`, `a68`) now compiles and prints Node's
+output; of the brief's 89 programs 50 run (43 compiled before). Still
+refused: top-level `await`, object-literal accessors and `raw`. Fuel: the v38 iterator
+result layout is `{ value, done }`; no fuel golden changed. Conformance:
+eleven feature rows and fourteen cases (149 passed, 5 known unsupported of
+154).
 
 ### K8 — Tailwind at compile level (agreed design, 2026-11-06)
 

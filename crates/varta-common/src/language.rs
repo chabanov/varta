@@ -806,6 +806,18 @@ impl LanguageProfile {
     pub fn iteration_protocol(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 C stream (expressions and functions): the comma
+    /// operator, `await` in every operand position and at module top level,
+    /// object-literal methods and accessors with `this`, constant computed
+    /// keys, tagged templates and `String.raw`, explicit `this` parameters,
+    /// inferred class-field arrows, spreads into fixed parameters and `new`,
+    /// hand-written iterators, `using`/`await using`, `new.target`
+    /// comparisons and structural thenables. Changes no host ABI or value
+    /// layout.
+    #[must_use]
+    pub fn expression_forms(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
     /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
     /// in-development value layout 18) in record fields, array elements,
@@ -3272,6 +3284,7 @@ mod tests {
                 profile.file_roots(),
                 profile.json_decoders(),
                 profile.iteration_protocol(),
+                profile.expression_forms(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }

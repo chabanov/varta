@@ -49,7 +49,12 @@ const CASE_DIRECTORIES: [&str; 20] = [
 /// their v38 form). V38's corrected checked-JSON record builder preserves
 /// document order; v37 retains schema order in `value15_cases/dictionary_json.ts`.
 /// Its complete v38 output is pinned by `json_decoder_tests` in all four modes.
-pub(crate) const V38_DEVIATIONS: [&str; 5] = [
+/// Under `expression_forms()` generator results are created as `{ value,
+/// done }` (CreateIterResultObject order), so `JSON.stringify` and
+/// `Object.keys` of a result differ from v37's `done`-first order
+/// (`expression_form_cases/generators.ts`).
+pub(crate) const V38_DEVIATIONS: [&str; 6] = [
+    "expression_form_cases/generators.ts",
     "unknown_cases/flow.ts",
     "v35_cases/unknown_json.ts",
     "net_cases/streams.ts",

@@ -232,7 +232,7 @@ fn method_signature(
 }
 
 /// Whether a method body uses its own `this` or `super` (arrows inherit it).
-fn uses_receiver(function: &ast::Function) -> bool {
+pub(super) fn uses_receiver(function: &ast::Function) -> bool {
     use swc_ecma_visit::{Visit, VisitWith};
     struct Receiver(bool);
     impl Visit for Receiver {
@@ -280,7 +280,11 @@ impl Lower<'_> {
                 method.function.span,
             ));
         }
-        if uses_receiver(&method.function) {
+        // V38 (`expression_forms`): a method that declares its `this`
+        // parameter is a function with a receiver (`o.m()` passes `o`).
+        let declared =
+            self.types.profile.expression_forms() && method.function.this_param.is_some();
+        if uses_receiver(&method.function) && !declared {
             return Err(self.source.locate(
                 unsupported("this or super in an object literal method; function fields are called without a receiver"),
                 method.function.span,
@@ -302,6 +306,16 @@ impl Lower<'_> {
         }
         if object.props.len() > self.types.max_record_fields() {
             return Err(invalid("object field count exceeds limit"));
+        }
+        // V38 (`expression_forms`): constant computed keys, then methods and
+        // accessors that use `this`.
+        if self.types.profile.expression_forms() {
+            if let Some(rewritten) = self.constant_keys(object)? {
+                return self.record(&rewritten, expected);
+            }
+            if let Some(value) = self.receiver_literal(object, expected)? {
+                return Ok(value);
+            }
         }
         // Object spread (v38): into a dictionary when the first source is
         // one (without another context), otherwise into a closed record.
@@ -432,6 +446,13 @@ impl Lower<'_> {
                 ) =>
             {
                 expression_key(&key.expr)?
+            }
+            // V38 (`expression_forms`): a constant key names its field.
+            ast::MemberProp::Computed(key)
+                if self.types.profile.expression_forms()
+                    && let Some(name) = self.constant_key(&key.expr) =>
+            {
+                name
             }
             ast::MemberProp::Computed(key) if read && self.types.profile.closures() => {
                 let key = self.expr(&key.expr)?;
