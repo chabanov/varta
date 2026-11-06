@@ -133,8 +133,16 @@ fn template_errors_name_the_construct_and_its_rule() {
             "unknown attribute `onclick`",
         ),
         (
-            "<div className=\"a\">x</div>",
-            "use `class` instead of `className`",
+            "<div class=\"a\" className=\"b\">x</div>",
+            "`<div>` has more than one class attribute; `className` is an alias of `class`",
+        ),
+        (
+            "<label htmlFor=\"a\">x</label>",
+            "use `for` instead of `htmlFor`",
+        ),
+        (
+            "<div className=\"a.b\">x</div>",
+            "invalid value `a.b` for attribute `className`",
         ),
         (
             "<button disabled=\"false\">x</button>",
@@ -286,4 +294,107 @@ fn the_jsx_namespace_of_the_host_declarations_matches_the_registry() {
         declarations[start..stop] == expected,
         "varta.d.ts JSX namespace is stale; replace it with:\n\n{expected}"
     );
+}
+
+/// K8: `className` is an alias of `class`; both compile to the same
+/// operations, static and bound.
+#[test]
+fn class_name_is_an_alias_of_class() {
+    let alias = valid(
+        "export function main(): void { let c = \"b\"; View.mount(<div className=\"a\"><p className={c}>x</p></div>); }",
+    );
+    let class = valid(
+        "export function main(): void { let c = \"b\"; View.mount(<div class=\"a\"><p class={c}>x</p></div>); }",
+    );
+    assert_eq!(alias, class);
+}
+
+/// One in-memory TSX entry plus named modules.
+struct Modules(&'static [(&'static str, &'static str)]);
+impl ModuleLoader for Modules {
+    fn resolve(&self, _: &Path, specifier: &str) -> Result<PathBuf, CompilerError> {
+        Ok(PathBuf::from(format!(
+            "{}.ts",
+            specifier.trim_start_matches("./")
+        )))
+    }
+    fn load(&self, path: &Path) -> Result<String, CompilerError> {
+        self.0
+            .iter()
+            .find(|(name, _)| Path::new(name) == path)
+            .map(|(_, text)| (*text).to_owned())
+            .ok_or_else(|| CompilerError::Module(format!("no module {}", path.display())))
+    }
+    fn resolve_text(&self, _: &Path, specifier: &str) -> Result<PathBuf, CompilerError> {
+        Ok(PathBuf::from(specifier.trim_start_matches("./")))
+    }
+}
+
+fn scan(text: &str, modules: &'static [(&'static str, &'static str)]) -> crate::ClassScan {
+    crate::scan_classes_with_profile(
+        ModuleSource {
+            path: "app.tsx".into(),
+            text: text.into(),
+        },
+        &Modules(modules),
+        V38,
+    )
+    .unwrap()
+}
+
+/// K8: class tokens come from the module graph's literals, template text and
+/// literal types (a finite union is enumerated), never from text resources.
+#[test]
+fn class_tokens_come_from_the_module_graph() {
+    let result = scan(
+        r#"import { tone } from "./tone";
+import css from "./app.css" with { type: "text" };
+type Size = "text-sm" | "text-lg";
+export function main(size: Size): void {
+  View.stylesheet(0, css);
+  const base = "flex p-4 hover:bg-red-500";
+  View.mount(<div className={base}><p class={size}>{`w-1/2 ${tone()}`}</p></div>);
+}"#,
+        &[
+            (
+                "tone.ts",
+                "export function tone(): string { return \"bg-blue-500\"; }",
+            ),
+            ("app.css", ".from-css { color: #fff; }"),
+        ],
+    );
+    for token in [
+        "flex",
+        "p-4",
+        "hover:bg-red-500",
+        "text-sm",
+        "text-lg",
+        "w-1/2",
+        "bg-blue-500",
+    ] {
+        assert!(
+            result.tokens.contains(token),
+            "{token}: {:?}",
+            result.tokens
+        );
+    }
+    assert!(!result.tokens.iter().any(|t| t.contains("from-css")));
+    assert!(result.compositions.is_empty());
+}
+
+/// K8: a class composed at run time is a located diagnostic.
+#[test]
+fn composed_class_names_are_located() {
+    let result = scan(
+        "export function main(size: string): void { View.mount(<div class={`btn-${size}`}>x</div>); }",
+        &[],
+    );
+    assert_eq!(result.compositions.len(), 1);
+    let diagnostic = result.compositions[0].diagnostic().unwrap();
+    assert!(
+        diagnostic.message.contains("composed at run time"),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(diagnostic.range.start.line, 1);
 }

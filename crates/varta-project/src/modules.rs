@@ -41,6 +41,9 @@ pub(crate) struct SourceLoader {
     package_specifiers: bool,
     packages: packages::Packages,
     watch: Option<watch::Observations>,
+    /// Text resources whose text the build generates (the Tailwind
+    /// stylesheet): `load` returns this text instead of the file's.
+    generated: std::cell::RefCell<std::collections::BTreeMap<PathBuf, String>>,
 }
 impl SourceLoader {
     pub(crate) fn new(
@@ -58,7 +61,17 @@ impl SourceLoader {
             package_specifiers: profile.package_specifiers(),
             packages: packages::Packages::default(),
             watch: None,
+            generated: Default::default(),
         })
+    }
+    /// The identity of a project file named relative to the configuration
+    /// directory, normalized like a text resource.
+    pub(crate) fn project_file(&self, relative: &str) -> Result<PathBuf> {
+        Ok(self.normalize(&self.root.join(relative))?)
+    }
+    /// Serve `text` as the contents of the text resource `path`.
+    pub(crate) fn set_generated(&self, path: PathBuf, text: String) {
+        self.generated.borrow_mut().insert(path, text);
     }
     pub(crate) fn entry(&self, path: &Path) -> Result<ModuleSource> {
         // The entry is explicit host configuration, including legacy layouts
@@ -343,6 +356,9 @@ impl ModuleLoader for SourceLoader {
         self.normalize(&parent.join(specifier))
     }
     fn load(&self, path: &Path) -> std::result::Result<String, CompilerError> {
+        if let Some(text) = self.generated.borrow().get(path) {
+            return Ok(text.clone());
+        }
         self.read(path).map_err(|e| {
             CompilerError::Module(format!("cannot load module {}: {e}", path.display()))
         })

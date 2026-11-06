@@ -187,6 +187,9 @@ Every project command loads and validates `varta.config.json`, resolves the entr
 and output relative to that configuration file, checks the supported language and
 its types, emits Wasm, and validates both bytecode and host ABI. Deno is not a
 prerequisite and its presence cannot change whether a project is accepted.
+With `"tailwind": {"entry": …}` (v38), the pipeline first generates the
+project's stylesheet and serves it as that entry's text resource
+([build-time Tailwind stylesheets](#build-time-tailwind-stylesheets-k8-t1)).
 
 The pipeline is:
 
@@ -14118,6 +14121,14 @@ spread attributes and children, and component children are rejected; names
 starting with `__vartaJsx` are reserved. `varta.d.ts` carries the typed
 `JSX` namespace generated from the same tables.
 
+**`className` (K8).** `className` is an alias of `class` with the same
+operations, static check and hole: `<p className="a">` compiles to the same
+bytes as `<p class="a">`. An element carrying both (or either twice) is a
+`TypeError` at the element; `htmlFor` stays rejected in favour of `for`. The
+static class value is checked against the L0 class-token grammar, so
+Tailwind tokens such as `hover:bg-red-500` or `w-1/2` are refused there until
+the T2 class-token stage (S1) widens that grammar.
+
 **Limits.** The `view::DRAFT_*` placeholders bound batch bytes and
 operations, live nodes and listeners, value and stylesheet bytes, pending
 events and pending `copy_text` requests; `view::css::MAX_VALUE_TOKENS` bounds
@@ -15076,6 +15087,179 @@ successful `check --json` expose `modules` as dependency-first `{path, imports}`
 records, with sorted, deduplicated import paths. This metadata is for build-time
 inspection and is not persisted into Wasm or manifests. ABI and artifact format
 are unchanged.
+
+## Build-time Tailwind stylesheets (K8 T1)
+
+`varta-tailwind` (tooling layer: `varta-project` depends on it; no engine
+crate, the runtime or the launcher does) is a Rust port of the CSS-first
+compiler of Tailwind CSS v4.3.5 (MIT, Tailwind Labs; `LICENSE-TAILWIND` in
+the crate). A project names its entry stylesheet in the configuration:
+
+```json
+{ "languageProfile": "checked-f64-utf16-v38", "tailwind": { "entry": "src/app.css" } }
+```
+
+```css
+/* src/app.css */
+@import "tailwindcss";
+@theme { --color-brand-500: oklch(0.6 0.2 250); }
+```
+
+```tsx
+import css from "./app.css" with { type: "text" };
+View.stylesheet(1, css);
+View.mount(<button className="rounded-lg bg-brand-500 px-4 py-2">Save</button>);
+```
+
+**Configuration.** `tailwind.entry` is a relative path inside the
+configuration directory (no absolute path, backslash, query or fragment) and
+requires profile v38 (`text_imports()`); otherwise the manifest is invalid.
+The program must import the entry as a [text resource](#local-modules):
+an entry the graph does not import is an error (`TailwindUnused`), so a
+configured stylesheet is never silently dropped.
+
+**Pipeline** (`check`, `dev`, `build` alike; `CheckedProject::load`):
+
+1. The entry file is read through the project loader (pinned root,
+   no-follow, 1 MiB).
+2. The module graph is loaded with the entry's text served as the empty
+   sheet and scanned for class tokens (`varta_compiler::
+   scan_classes_with_profile`, below). A class composed at run time is a
+   located `type_error` and stops the build.
+3. The entry is compiled (`varta_tailwind::compile`) and built with the
+   tokens plus its `@source inline(…)` safelist (`Compiler::build`).
+4. The generated stylesheet is served as the text of the entry's text
+   resource and the program is compiled as usual: it is a string constant in
+   the static data, checked against the L0 stylesheet grammar where it is
+   passed directly to `View.stylesheet` (the first violation is reported
+   inside the entry file with the position in the generated text), and
+   applied by the host exactly like any `View.stylesheet` text. The artifact
+   never reads the entry, a theme or the oracle at run time.
+
+**Determinism.** The tokens are a sorted set; Tailwind's sort (variant order
+bitmask, property order, declaration count, then the natural compare of the
+class) is total over them; the theme keeps JavaScript `Map` insertion order
+through a sequence index; every map in the port is ordered. The same entry
+and sources give the same stylesheet bytes, and therefore the same Wasm and
+`build --single` bytes (tested by rebuilding).
+
+**Class tokens.** Read from the parsed program, never from a filesystem
+walk: every string literal value and template literal text (the cooked
+value, ECMA-262 Static Semantics: TV), every string literal *type* (TypeScript
+literal types, so a `class` whose static type is a finite union of string
+literals, `type Tone = "bg-red-500" | "bg-blue-500"`, contributes exactly
+its members), and the static values of TSX attributes and text, of every
+program module; engine preludes and text resources are skipped. Each text is
+split on ASCII whitespace (Infra Standard "split a string on ASCII
+whitespace"), the HTML model of the `class` attribute (HTML Standard,
+global attribute `class`: a set of space-separated tokens). At most
+`varta_compiler::MAX_CLASS_TOKENS` distinct tokens of at most
+`MAX_CLASS_TOKEN_BYTES` bytes are kept (longer tokens are skipped; more
+tokens is an error). Tokens that are not Tailwind candidates produce no CSS,
+as in Tailwind.
+
+**Compositions.** In a class position (a TSX `class`/`className`
+expression, the class argument of `View.setClass`/`View.bindClass`), a
+template hole whose neighbouring literal text is not whitespace
+(`` `btn-${size}` ``) or a `+` whose literal operand touches the other
+operand (`"bg-" + tone`) builds a class name that exists only at run time;
+no build-time generator can see it (Tailwind's own scanner cannot either).
+It is reported as a located `type_error` naming the remedy (complete
+literals such as `cond ? "btn-lg" : "btn-sm"`, or `@source inline(…)`).
+Holes separated by whitespace (`` `p-2 ${active ? "a" : "b"}` ``) are fine:
+their literals are tokens.
+
+**Supported Tailwind surface.** Candidates (variants, static and functional
+utilities, named, fractional, bare and arbitrary values, `(--var)`
+shorthands, type hints, modifiers, `!` prefix and suffix, negative values,
+arbitrary properties and variants), every built-in utility and variant of
+v4.3.5 including the legacy utilities its compatibility layer registers,
+compound variants (`group-*`, `peer-*`, `not-*`, `has-*`, `in-*`, named
+groups), theme resolution (`theme.css` defaults, `@theme` with `default`,
+`inline`, `reference`, `static` and `prefix(…)`, namespace resets
+`--color-*: initial`, `@keyframes`), Preflight, `@apply` (including inside
+`@utility`, in dependency order), `@utility` (static and functional with
+`--value()`/`--modifier()`), `@custom-variant` (selector list or `@slot`
+body), `@variant`, `@source inline(…)`/`@source not inline(…)` with brace
+expansion, `--theme()`, `--spacing()`, `--alpha()` and `theme(--var)`,
+`@reference`, and `@import` of the embedded package with `layer()`,
+`supports()`, media, `important`, `prefix()`, `theme(…)` and `source(none)`
+parameters. `@import "tailwindcss"` resolves only to the embedded pinned
+copy of the published package (`index.css`, `theme.css`, `preflight.css`,
+`utilities.css` of npm `tailwindcss@4.3.5`), at build time.
+
+**Rejected, with typed errors (`TailwindError`).** `@plugin` and `@config`
+(they load JavaScript; Varta compiles Tailwind without a JavaScript
+runtime); `@source "path"` and `source("path")` (filesystem scanning; classes
+come from the module graph); `@import` of anything but the embedded package
+(including `url()`, `data:` and remote URLs); legacy dot-path `theme()`
+(Tailwind resolves it only through the JavaScript configuration layer);
+Tailwind's own directive errors (nested or empty `@utility`, invalid names,
+`@apply` of unknown classes, circular `@apply` or `@custom-variant`). Bounds:
+`MAX_INPUT_BYTES` (1 MiB entry), `MAX_IMPORT_DEPTH` (Tailwind's 100),
+`MAX_CANDIDATES`, `MAX_CANDIDATE_BYTES`, `MAX_OUTPUT_BYTES` (1 MiB, the
+text-resource bound), parser, selector, nesting, condition, variant and
+brace-expansion depth constants in the crate.
+
+**Canonical output.** The build runs Tailwind's `optimizeAst` without
+polyfills (unused theme variables and theme keyframes removed, `@property`
+deduplicated, at-root nodes hoisted, nesting resolved as Tailwind resolves
+it), then puts the sheet in canonical form, defined by the specifications:
+
+- no comments (Tailwind's `/*!` licence header included);
+- no nesting: remaining nested style rules are flattened by CSS Nesting 1
+  ("Nesting Style Rules" and the nesting selector `&`, with `:is()` where
+  the parent is a list), nested conditional group rules become the group
+  rule around a copy of the parent rule ("Nesting Other At-Rules"), and
+  declarations after a nested rule keep their order as a following rule
+  with the same selector (the nested declarations rule);
+- `@supports` resolved statically (CSS Conditional 3 "Feature Queries: the
+  `@supports` rule", Conditional 4 `selector()`): the condition grammar (`not`, `and`, `or`, `(declaration)`,
+  `selector()`; `<general-enclosed>` is false) is evaluated against Varta's
+  own engine, the L0 stylesheet grammar of `varta_common::view::stylesheet`
+  (a UA "supports" a declaration it would accept); a true block is replaced
+  by its contents in place, a false one is dropped. The answer therefore
+  follows the engine: as T2 widens the grammar, more blocks resolve true;
+- Media Queries 4 range syntax ("range context" of media features)
+  normalized to the
+  `min-`/`max-` forms (`(width >= X)` is `(min-width: X)`, `(width < X)` is
+  `not (min-width: X)`, `(width <= X)` is `(max-width: X)`, `(width > X)` is
+  `not (max-width: X)`, reversed and double ranges likewise, a `not` operand
+  of `and`/`or` parenthesized), for media and container size queries
+  (Containment 3), with directly nested single `@media` rules merged by
+  `and` (Conditional 3: nested conditional rules apply when all their
+  conditions hold);
+- printed in Tailwind's format (two-space indentation).
+
+The emitted CSS uses Cascade 5 `@layer`, Properties and Values API 1
+`@property`, Color 4/5 (`oklch()`, `color-mix(in oklab, …)`), Values 4
+`calc()`, Selectors 4 (`:where()`, `:is()`, `:not()`, `:has()`) and Media
+Queries 4 / Containment 3 queries. Tailwind's output also relies on browser
+behaviour beyond those specifications, which the compiler passes through
+unchanged and the engine's grammar decides: vendor-prefixed properties and
+pseudo-elements in Preflight and utilities (`-webkit-text-size-adjust`,
+`-webkit-tap-highlight-color`, `-webkit-font-smoothing`,
+`-moz-osx-font-smoothing`, `-webkit-box-decoration-break`,
+`::-webkit-*` and `::-moz-*`), draft features (`:open`, `:popover-open`,
+`field-sizing`, `::details-content`, `text-wrap`), and the `@supports`
+fallbacks it writes for older browsers (resolved as above).
+
+**Conformance.** The official compiler is only an oracle. Committed fixtures
+(`crates/varta-tailwind/tests/fixtures`, with the MIT notice): 2,986
+candidates of `candidatesToCss` (one utility per family, every variant and
+arbitrary form, a sample application's 312 class uses) and eight whole
+entry-stylesheet builds (`compile(css, { polyfills: 0 }).build(…)`:
+defaults, a customized theme with `@utility`, `@custom-variant`, `@apply`,
+`@variant`, `@source inline`, functions; `important`, `prefix()`, layered
+imports, `theme(static)`, `@reference`, utilities only). Both sides are put
+in canonical form before comparison; every case must match. The full corpus
+of 39,152 candidates runs as a manual test (`oracle_full`, ignored).
+
+**Application status.** Track T2 widens the engine grammar; until then the
+L0 grammar rejects most Tailwind output. The CLI tests assert the precise
+first violation of a full `@import "tailwindcss"` build (Preflight's
+`display: none !important`, stage S8) and of a static Tailwind class token
+(`w-1/2`, stage S1); the end-to-end application test is ignored until T2.
 
 ## Source diagnostics
 

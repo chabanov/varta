@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = (
     "varta", "varta-artifact", "varta-bigint", "varta-common", "varta-compiler",
     "varta-conformance", "varta-desktop", "varta-intrinsics", "varta-kv-codec", "varta-launcher",
-    "varta-project", "varta-runtime", "varta-view",
+    "varta-project", "varta-runtime", "varta-tailwind", "varta-view",
 )
 # The checked-in browser KV codec must match its sources (scripts/build-kv-codec.py).
 KV_CODEC_CHECK = [sys.executable, "scripts/build-kv-codec.py", "--check"]

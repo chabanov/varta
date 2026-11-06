@@ -1,0 +1,41 @@
+Oracle fixtures of the Varta Tailwind port (K8 T1)
+
+The expected CSS in this directory was produced by the official Tailwind CSS
+compiler, version 4.3.5 (npm `tailwindcss@4.3.5`, `@tailwindcss/node@4.3.5`),
+used only as a test oracle; it is not a build or runtime dependency of Varta.
+
+- oracle-candidates.jsonl: `designSystem.candidatesToCss([candidate])` per
+  candidate. Selected from the full corpus of 39,152 candidates (every
+  utility of `getClassList()`, one modifier per utility, every variant on
+  `flex` and `bg-red-500`, and arbitrary forms): one utility candidate per
+  family (root without its last value segment) with the shortest output, one
+  modifier candidate per root, every variant and arbitrary candidate, and all
+  312 class tokens of a five-component sample application. `@property`
+  rules are stored once in oracle-properties.json and referenced by index;
+  `css` is null when Tailwind produces nothing.
+- oracle-builds.json: `compile(css, { polyfills: 0 }).build(candidates)` of
+  whole entry stylesheets.
+
+Tailwind CSS is licensed under the MIT License:
+
+MIT License
+
+Copyright (c) Tailwind Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

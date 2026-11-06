@@ -86,9 +86,13 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 "varta-compiler",
                 "varta-runtime",
                 "varta-artifact",
+                "varta-tailwind",
             ]
             .as_slice(),
         ),
+        // The build-time Tailwind compiler (K8 T1) is tooling: it reads only
+        // common's stylesheet grammar, and no engine crate depends on it.
+        ("varta-tailwind", ["varta-common"].as_slice()),
         ("varta", ["varta-project"].as_slice()),
         (
             "varta-conformance",
@@ -229,6 +233,7 @@ fn is_source_tooling(name: &str) -> bool {
                 | "clap_derive"
                 | "varta-compiler"
                 | "varta-project"
+                | "varta-tailwind"
                 | "varta"
                 | "varta-conformance"
         )

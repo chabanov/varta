@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Checked TypeScript subset -> typed IR -> validated portable WebAssembly.
 pub mod browser_meter;
+mod classes;
 mod emit;
 mod error;
 mod ir;
@@ -8,6 +9,7 @@ mod jsx;
 mod link;
 mod lower;
 mod modules;
+pub use classes::{ClassScan, MAX_CLASS_TOKEN_BYTES, MAX_CLASS_TOKENS, scan_classes_with_profile};
 pub use modules::{Compilation, ModuleLoader, ModuleSource};
 #[cfg(test)]
 mod array_tests;
