@@ -16,6 +16,7 @@ members = [
   "crates/varta-kv-codec-wasm",
   "crates/varta-view",
   "crates/varta-desktop",
+  "crates/varta-tailwind",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
 exclude = [
