@@ -7021,6 +7021,49 @@ inside the Wasm module. No remote listener is enabled by this local milestone.
 Desktop/server/robot support must not be claimed merely because Wasm and MCP run
 on a development host. The selected UARP console is the separate product example
 used for acceptance; it does not add domain models to the engine.
+### K7 — Modern HTTP server (agreed design, 2026-11-05)
+
+Goal: the native HTTP server runs at current standards, secure and fast enough
+for an internet-facing service such as the UARP API itself, while each request
+keeps its own isolated, bounded instance. It builds on the v2 streaming
+responses and bounded pool ([HTTP streaming](#status)). Owner decisions:
+
+- **TLS** in the server with rustls, **TLS 1.3 only** (Mozilla "modern"). The
+  certificate and key come from the host (its roots and policy), never from
+  the package, and guest code never sees them.
+- **HTTP/1.1 with keep-alive and HTTP/2** (ALPN over TLS). HTTP/3 over QUIC is
+  a later, separate step.
+- **Async Wasmtime**: guest code runs as asynchronous Wasmtime calls with
+  fuel/epoch yielding, asynchronous host waits and a pooling allocator with
+  pre-instantiated modules, so thousands of connections and event streams
+  share a few OS threads.
+- **Limits**: the registry fixes safe maxima; a host policy may only lower
+  them; an application can change none.
+
+Stages, each with its own full gate and record:
+
+1. **H1 — Transport and Web requests.** HTTP/1.1 keep-alive; connections
+   decoupled from workers (many cheap idle connections, bounded workers, with
+   per-connection idle, header and request deadlines against slow clients); a
+   handler may take a Web `Request` (method, URL, `Headers`, a streaming body)
+   as well as `VartaHttpRequest`; request bodies stream with a registry bound;
+   host policy may lower the server limits.
+2. **H2 — Async execution.** `async_support`, `call_async`, fuel and epoch
+   yielding, the scheduler's waits and the network completions as futures,
+   pooling allocator and `InstancePre`; workers become tasks, admitted while
+   the sum of their memory budgets stays within the host's memory ceiling.
+   Determinism, budgets and cancellation keep their current contracts.
+3. **H3 — TLS 1.3 and HTTP/2.** rustls server configuration from host-supplied
+   files, ALPN `h2`/`http/1.1`, HTTP/2 stream and header-list bounds,
+   rapid-reset and flow-control protections; `net.listen` grants name whether
+   an endpoint serves TLS.
+4. **H4 — Hardening and performance acceptance.** Fuzzing of the envelopes
+   and adapters, flood and slow-client tests, and recorded load benchmarks
+   (throughput, p50/p99 latency, memory per connection and per stream) as
+   acceptance targets.
+
+Later: HTTP/3, response compression (a dependency decision), WebSocket.
+
 ### K5 — Modules, standard system APIs and package compatibility
 
 - Grow ES module resolution/loading under explicit host authority and resource
