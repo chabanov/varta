@@ -80,6 +80,8 @@ declare namespace JSX {
   type Element = number;
   interface Attributes {
     class?: string;
+    /** Alias of `class`; an element takes one of the two. */
+    className?: string;
     style?: string;
     ref?: (node: number) => void;
     id?: string;

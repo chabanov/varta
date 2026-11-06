@@ -71,6 +71,8 @@ const STOP_PROPAGATION: &str = "stopPropagation";
 const NOT_COMPOSING: &str = "notComposing";
 /// Attribute-like names with their own operations.
 const CLASS: &str = "class";
+/// React's name for `class`, accepted as an alias (K8).
+const CLASS_NAME: &str = "className";
 const STYLE: &str = "style";
 const VALUE: &str = "value";
 const CHECKED: &str = "checked";
@@ -81,8 +83,12 @@ fn error(message: impl Into<String>) -> CompilerError {
 }
 
 /// Desugar every JSX expression of a `.tsx` module into generated template
-/// functions and their calls.
-pub(crate) fn desugar(module: &mut ast::Module, source: &Source) -> Result<(), CompilerError> {
+/// functions and their calls. Returns the spans of `class` expressions that
+/// compose a class name at run time (see [`crate::classes`]).
+pub(crate) fn desugar(
+    module: &mut ast::Module,
+    source: &Source,
+) -> Result<Vec<Span>, CompilerError> {
     let mut reserved = Reserved(None);
     swc_ecma_visit::VisitWith::visit_with(&*module, &mut reserved);
     if let Some(span) = reserved.0 {
@@ -97,6 +103,7 @@ pub(crate) fn desugar(module: &mut ast::Module, source: &Source) -> Result<(), C
         source,
         templates: Vec::new(),
         error: None,
+        class_compositions: Vec::new(),
     };
     module.visit_mut_with(&mut desugar);
     if let Some(error) = desugar.error {
@@ -107,7 +114,7 @@ pub(crate) fn desugar(module: &mut ast::Module, source: &Source) -> Result<(), C
         generated.visit_mut_with(&mut Respan(span));
         module.body.extend(generated.body);
     }
-    Ok(())
+    Ok(desugar.class_compositions)
 }
 
 struct Reserved(Option<Span>);
@@ -161,6 +168,8 @@ struct Desugar<'a> {
     /// Generated template functions and the span of their element.
     templates: Vec<(String, Span)>,
     error: Option<CompilerError>,
+    /// Class expressions composing a class name at run time.
+    class_compositions: Vec<Span>,
 }
 
 impl VisitMut for Desugar<'_> {
@@ -482,6 +491,26 @@ impl Desugar<'_> {
         let node = template.node();
         template.line(format!("{VIEW}.createElement({node}, {})", tag.code()));
         let mut refs = Vec::new();
+        let class_attributes = element
+            .opening
+            .attrs
+            .iter()
+            .filter(|attr| match attr {
+                ast::JSXAttrOrSpread::JSXAttr(attr) => {
+                    let (name, namespace) = attr_name(attr);
+                    namespace.is_none() && (name == CLASS || name == CLASS_NAME)
+                }
+                ast::JSXAttrOrSpread::SpreadElement(_) => false,
+            })
+            .count();
+        if class_attributes > 1 {
+            return Err(self.fail(
+                format!(
+                    "`<{name}>` has more than one class attribute; `{CLASS_NAME}` is an alias of `{CLASS}`, use one of them"
+                ),
+                span,
+            ));
+        }
         for attr in &mut element.opening.attrs {
             let ast::JSXAttrOrSpread::JSXAttr(attr) = attr else {
                 return Err(self.fail("spread attributes are not supported", span));
@@ -663,6 +692,11 @@ impl Desugar<'_> {
         if namespace.is_some() {
             return Err(self.fail(format!("unknown namespaced attribute `{name}:`"), span));
         }
+        let name = if name == CLASS_NAME {
+            CLASS.to_owned()
+        } else {
+            name
+        };
         match name.as_str() {
             REF => {
                 let expr = attr
@@ -674,6 +708,12 @@ impl Desugar<'_> {
                 return Ok(Some(template.hole(expr, "(node: number) => void", "{}")));
             }
             CLASS => {
+                if let Some(ast::JSXAttrValue::JSXExprContainer(container)) = &attr.value
+                    && let ast::JSXExpr::Expr(expr) = &container.expr
+                {
+                    self.class_compositions
+                        .extend(crate::classes::compositions(expr));
+                }
                 return self
                     .dynamic_string(
                         attr,
@@ -753,14 +793,8 @@ impl Desugar<'_> {
                     )
                     .map(|()| None);
             }
-            "className" | "htmlFor" => {
-                return Err(self.fail(
-                    format!(
-                        "use `{}` instead of `{name}`",
-                        if name == "className" { CLASS } else { "for" }
-                    ),
-                    span,
-                ));
+            "htmlFor" => {
+                return Err(self.fail(format!("use `for` instead of `{name}`"), span));
             }
             _ => {}
         }
@@ -1019,6 +1053,8 @@ pub(crate) fn declarations() -> String {
     out.push_str("  type Element = number;\n");
     out.push_str("  interface Attributes {\n");
     out.push_str("    class?: string;\n");
+    out.push_str("    /** Alias of `class`; an element takes one of the two. */\n");
+    out.push_str("    className?: string;\n");
     out.push_str("    style?: string;\n");
     out.push_str("    ref?: (node: number) => void;\n");
     for attribute in Attribute::ALL {
