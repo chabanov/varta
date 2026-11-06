@@ -451,3 +451,37 @@ fn an_invalid_idle_status_terminates_the_instance_with_the_browser_registry_text
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(report.maintenance.is_empty());
 }
+
+/// Idle collection of a heap far larger than the earlier 8 MiB memory (a v38
+/// application with a long history): no idle step costs work in proportion
+/// to the heap (a new cycle's bitmaps are zeroed incrementally), so even a
+/// maintenance budget of one and a half step reserves is never exhausted,
+/// where zeroing the bitmaps of this heap at once cost more than a step.
+#[test]
+fn idle_steps_stay_bounded_on_heaps_past_the_earlier_memory() {
+    let bytes = churn(60_000);
+    let tight = BudgetRequest {
+        maintenance_fuel: Some(MAINTENANCE_STEP_FUEL * 3 / 2),
+        ..BudgetRequest::default()
+    };
+    let options = RunOptions {
+        budgets: tight,
+        ..RunOptions::default()
+    };
+    let (lines, report, failure) = session(&bytes, options, 6);
+    assert_eq!(failure, None, "{:?}", report.maintenance);
+    assert_eq!(lines.len(), 6);
+    // Bitmaps for this heap are larger than one step's fuel in bytes.
+    assert!(
+        report.peak_memory_bytes / 64 > MAINTENANCE_STEP_FUEL as usize,
+        "{}",
+        report.peak_memory_bytes
+    );
+    // Idle collection ran, one bounded step per period.
+    assert!(
+        report
+            .maintenance
+            .iter()
+            .any(|period| period.steps > 0 && period.fuel <= MAINTENANCE_STEP_FUEL * 3 / 2)
+    );
+}

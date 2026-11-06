@@ -511,7 +511,7 @@ impl Helper {
                 profile.data(),
             ),
             Self::CollectIdle => incremental::idle(globals, Self::calls(helpers)),
-            Self::CollectBegin => incremental::begin(globals, Self::calls(helpers)),
+            Self::CollectBegin => incremental::begin(globals),
             Self::CollectStep => incremental::step(
                 globals,
                 Self::calls(helpers),

@@ -30,7 +30,7 @@ ECMAScript, Node or npm compatibility.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last committed full gate | V38 network inactivity window (2026-11-06, macOS arm64, the commit that records it): **3860 Rust tests passed, 0 failures, 17 ignored; 218 browser Node tests passed**; conformance on `checked-f64-utf16-v38` 132/5 of 137, baseline matched; sources unchanged during the run. Report: `target/verification/20261105-221223-b333hlxd/report.json`. The Chrome streaming acceptance (`scripts/test-browser-streaming.mjs`, expectation updated) was not run. Linux CI and other platforms not run |
+| Last committed full gate | Incremental bitmap clearing of the v38 collector (2026-11-06, macOS arm64, the commit that records it): **3861 Rust tests passed, 0 failures, 17 ignored; 218 browser Node tests passed**; conformance on `checked-f64-utf16-v38` 132/5 of 137, baseline matched; sources unchanged during the run. Report: `target/verification/20261105-225401-b9bonnxr/report.json`. Linux CI and other platforms not run |
 | Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP streaming | V38 HTTP v2 services may return a Web `Response` whose text, bytes or `ReadableStream` body streams as chunked encoding, each chunk a `stream` turn within the idle and lifetime bounds; v2 serves a bounded pool of connections (owner decision 2026-11-05, replacing the one-worker invariant). The console proxy streams the live session's events. Limits: [embedding registry](embedding.md#entry-point-limits); contract: [streaming responses](architecture.md#http-contract-v2--native-server). The idle bound has no timed test |
 | Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **249 tests in 36 groups and 10 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
@@ -7114,6 +7114,21 @@ a host may lower it (`RunOptions::network_idle`, which the transfer tests
 use) and the browser host reads `network.readInactivityMs`. The HTTP v2
 stream idle bound equals it, so a proxy never cuts what its upstream allows.
 A v38 test keeps a stream silent for three turn deadlines and completes.
+
+**Idle collection on large heaps** (same day): with the reconnect loop gone
+the console loaded its history in about 2,200 turns, then ended with
+`turn 2241 (maintenance) exhausted its maintenance fuel budget`. A new cycle
+zeroed its two mark bitmaps (heap/64 bytes) in one `memory.fill`, and bulk
+memory work is charged per byte, so on a heap near 200 MB one idle step cost
+more than the whole maintenance budget; 8 MiB instances never saw it. The
+collector now clears the bitmaps incrementally
+(`collector::CLEAR_BYTES_SHIFT` bytes per work unit) before its root
+snapshot, with a headroom so blocks allocated meanwhile are ordinary blocks
+below the limit. A test with a heap past 100 MB and a maintenance budget of
+one and a half step reserves fails with the console's diagnostic on the
+earlier collector and passes now; the collector stress corpora pass. Open:
+`Map`/`Set` operations cost in proportion to their size (300,000 entries
+exhaust a turn).
 
 Application side, same batch: the console reads a session transcript in pages
 of 10 through the API's `limit`/`cursor` pagination (canonical `items`), and

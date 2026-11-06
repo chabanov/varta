@@ -634,8 +634,8 @@ const V38_LIMIT_CASES: [&str; 2] = ["data_limit_cases", "json_limit_cases"];
 /// 9558). Before instantiation left guest fuel alone, macOS hid both by
 /// charging v37 a 16 KiB page for its data-segment copy.
 const COSTLIER_UNDER_V38: [(&str, u64, u64); 2] = [
-    ("unknown_cases/assertions.ts", 24_938, 26_683),
-    ("value15_cases/values.ts", 173_371, 178_582),
+    ("unknown_cases/assertions.ts", 24_938, 26_693),
+    ("value15_cases/values.ts", 173_371, 178_592),
 ];
 
 /// Every runtime case program behaves identically under v37 and v38: same

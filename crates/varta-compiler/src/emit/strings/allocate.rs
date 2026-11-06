@@ -305,8 +305,9 @@ pub(super) fn function(
         I::I32Sub,
     ]);
     code.extend(grow(globals, collect, limits));
+    code.push(I::End);
+    code.extend(super::incremental::before_heap_end(globals, END, calls));
     code.extend([
-        I::End,
         I::GlobalGet(globals.heap),
         I::LocalTee(CURRENT),
         I::LocalGet(NEED),

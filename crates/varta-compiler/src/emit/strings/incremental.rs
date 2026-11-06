@@ -1,8 +1,11 @@
 //! V38 (`incremental_collection`): incremental collection inside turns and
 //! idle collection between them.
 //!
-//! A cycle marks from a snapshot of the exact roots (snapshot at the
-//! beginning): `CollectBegin` shades every root slot, then every allocation
+//! A cycle first zeroes its mark bitmaps incrementally (the clearing phase:
+//! bulk memory work is charged per byte, so zeroing heap/64 bytes at once
+//! would cost work in proportion to the heap in one step), then marks from a
+//! snapshot of the exact roots (snapshot at the beginning): the end of the
+//! clearing shades every root slot, then every allocation
 //! performs a bounded quantum of work (`CollectStep`, `collector::STEP_MIN_UNITS`
 //! plus the request's bytes shifted right by `collector::STEP_BYTE_SHIFT`).
 //! While the cycle marks, a deletion barrier before every reference store
@@ -81,9 +84,11 @@ pub(in crate::emit) enum Slot {
     LargeTail,
     /// Live bytes the sweep found so far.
     Swept,
+    /// The next bitmap byte the clearing phase zeroes (it ends at `Stack`).
+    Clear,
 }
 impl Slot {
-    pub(in crate::emit) const ALL: [Self; 19] = [
+    pub(in crate::emit) const ALL: [Self; 20] = [
         Self::Allocated,
         Self::Live,
         Self::Phase,
@@ -103,6 +108,7 @@ impl Slot {
         Self::LargeHead,
         Self::LargeTail,
         Self::Swept,
+        Self::Clear,
     ];
 }
 
@@ -113,6 +119,8 @@ enum Phase {
     Idle,
     Marking,
     Sweeping,
+    /// The bitmaps are being zeroed; the root snapshot follows.
+    Clearing,
 }
 
 /// Bytes of one mark-stack entry (a block header address).
@@ -325,6 +333,7 @@ pub(super) fn abandon(globals: Globals) -> Vec<I<'static>> {
         Slot::Run,
         Slot::LargeHead,
         Slot::LargeTail,
+        Slot::Clear,
     ]
     .into_iter()
     .flat_map(|slot| [I::I32Const(0), I::GlobalSet(state.global(slot))])
@@ -854,10 +863,11 @@ fn bump(globals: Globals, bytes: u32, size: u32, end: u32, ptr: u32) -> Vec<I<'s
 }
 
 /// `CollectBegin () -> i32 started`: start a cycle at the current heap end:
-/// size (or reuse) the bitmaps and the mark stack, keep metadata of earlier
-/// cycles below the limit, and shade every root. Returns 0, starting
-/// nothing, when the metadata does not fit the memory budget.
-pub(super) fn begin(globals: Globals, calls: Calls) -> Function {
+/// take a fresh metadata block for the bitmaps and the mark stack and enter
+/// the clearing phase, whose steps zero the bitmaps and then shade every
+/// root ([`snapshot`]). Returns 0, starting nothing, when the metadata does
+/// not fit the memory budget.
+pub(super) fn begin(globals: Globals) -> Function {
     const BITMAP_BYTES: u32 = 0;
     const STACK_BYTES: u32 = 1;
     const PTR: u32 = 2;
@@ -876,10 +886,21 @@ pub(super) fn begin(globals: Globals, calls: Calls) -> Function {
         I::I32Const(1),
         I::Return,
         I::End,
+        // While clearing, the limit is the end the bitmaps cover: the heap
+        // end plus its headroom; the snapshot lowers it to the heap end.
         I::GlobalGet(globals.heap),
+        I::GlobalGet(globals.heap),
+        I::I32Const(globals.base as i32),
+        I::I32Sub,
+        I::I32Const(collector::CLEAR_HEADROOM_SHIFT as i32),
+        I::I32ShrU,
+        I::I32Add,
+        I::I32Const(collector::CLEAR_HEADROOM_MIN_BYTES as i32),
+        I::I32Add,
         I::GlobalSet(g(Slot::Limit)),
     ];
-    // One fresh metadata block per cycle: both bitmaps (zeroed), then the
+    // One fresh metadata block per cycle: both bitmaps (zeroed by the
+    // clearing phase), then the
     // mark stack, one entry per heap bytes per entry and at least the
     // minimum. The block of the previous cycle is garbage now, freed by this
     // cycle's sweep, so no metadata outlives its cycle to split the heap.
@@ -914,12 +935,9 @@ pub(super) fn begin(globals: Globals, calls: Calls) -> Function {
         I::I32Const(0),
         I::Return,
         I::End,
+        // The bitmaps are zeroed incrementally (`Phase::Clearing`).
         I::LocalGet(PTR),
-        I::I32Const(0),
-        I::LocalGet(BITMAP_BYTES),
-        I::I32Const(1),
-        I::I32Shl,
-        I::MemoryFill(MEMORY),
+        I::GlobalSet(g(Slot::Clear)),
         I::LocalGet(PTR),
         I::GlobalSet(g(Slot::Bitmap)),
         I::LocalGet(PTR),
@@ -939,39 +957,157 @@ pub(super) fn begin(globals: Globals, calls: Calls) -> Function {
         I::LocalGet(STACK_BYTES),
         I::I32Add,
         I::GlobalSet(g(Slot::StackEnd)),
-        I::I32Const(Phase::Marking as i32),
+        I::I32Const(Phase::Clearing as i32),
         I::GlobalSet(g(Slot::Phase)),
-        I::I32Const(1),
-        I::GlobalSet(g(Slot::Marking)),
-    ]);
-    for slot in [Slot::Overflow, Slot::Scan, Slot::Partial] {
-        code.extend([I::I32Const(0), I::GlobalSet(g(slot))]);
-    }
-    // The snapshot: every root slot is shaded.
-    code.extend([
-        I::I32Const(abi::STRING_ROOT_BASE as i32),
-        I::LocalSet(CURSOR),
-        I::Block(BlockType::Empty),
-        I::Loop(BlockType::Empty),
-        I::LocalGet(CURSOR),
-        I::GlobalGet(globals.roots),
-        I::I32GeU,
-        I::BrIf(1),
-        I::LocalGet(CURSOR),
-        I::I64Load(ROOT),
-        I::Call(calls.shade),
-        I::LocalGet(CURSOR),
-        I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
-        I::I32Add,
-        I::LocalSet(CURSOR),
-        I::Br(0),
-        I::End,
-        I::End,
         I::I32Const(1),
         I::End,
     ]);
     instructions(&mut function, code);
     function
+}
+
+/// The end of the clearing phase: marking starts and every root slot is
+/// shaded (the snapshot), with `cursor` (an i32 local) walking the roots.
+fn snapshot(
+    globals: Globals,
+    state: State,
+    calls: Calls,
+    cursor: u32,
+    bits: Bits,
+) -> Vec<I<'static>> {
+    let g = |slot| state.global(slot);
+    let mut code = vec![
+        I::I32Const(Phase::Marking as i32),
+        I::GlobalSet(g(Slot::Phase)),
+        I::I32Const(1),
+        I::GlobalSet(g(Slot::Marking)),
+    ];
+    for slot in [Slot::Overflow, Slot::Scan, Slot::Partial, Slot::Clear] {
+        code.extend([I::I32Const(0), I::GlobalSet(g(slot))]);
+    }
+    // The limit is the heap end now: the blocks allocated while the
+    // bitmaps were cleared lie below it like any other, within the
+    // bitmaps' headroom. The cycle's own metadata block is live.
+    code.extend([
+        I::GlobalGet(globals.heap),
+        I::GlobalSet(g(Slot::Limit)),
+        I::GlobalGet(g(Slot::Bitmap)),
+        I::I32Const(HEADER as i32),
+        I::I32Sub,
+        I::LocalSet(cursor),
+    ]);
+    code.extend(bits.locate(globals, cursor));
+    code.extend(bits.set(g(Slot::Bitmap)));
+    code.extend([
+        I::I32Const(abi::STRING_ROOT_BASE as i32),
+        I::LocalSet(cursor),
+        I::Block(BlockType::Empty),
+        I::Loop(BlockType::Empty),
+        I::LocalGet(cursor),
+        I::GlobalGet(globals.roots),
+        I::I32GeU,
+        I::BrIf(1),
+        I::LocalGet(cursor),
+        I::I64Load(ROOT),
+        I::Call(calls.shade),
+        I::LocalGet(cursor),
+        I::I32Const(abi::STRING_ROOT_SLOT_BYTES as i32),
+        I::I32Add,
+        I::LocalSet(cursor),
+        I::Br(0),
+        I::End,
+        I::End,
+    ]);
+    code
+}
+
+/// Before the heap end grows to `end` (a local): while the bitmaps are
+/// cleared and `end` passes the end they cover, complete the clearing and
+/// take the snapshot first, so the new block lies above the limit (black).
+pub(super) fn before_heap_end(globals: Globals, end: u32, calls: Option<Calls>) -> Vec<I<'static>> {
+    let (Some(state), Some(calls)) = (globals.collector, calls) else {
+        return Vec::new();
+    };
+    let g = |slot| state.global(slot);
+    vec![
+        I::GlobalGet(g(Slot::Phase)),
+        I::I32Const(Phase::Clearing as i32),
+        I::I32Eq,
+        I::LocalGet(end),
+        I::GlobalGet(g(Slot::Limit)),
+        I::I32GtU,
+        I::I32And,
+        I::If(BlockType::Empty),
+        // Exactly the units of the bytes left, plus the snapshot's one.
+        I::GlobalGet(g(Slot::Stack)),
+        I::GlobalGet(g(Slot::Clear)),
+        I::I32Sub,
+        I::I32Const(collector::CLEAR_BYTES_SHIFT as i32),
+        I::I32ShrU,
+        I::I32Const(1),
+        I::I32Add,
+        I::Call(calls.step),
+        I::Drop,
+        I::End,
+    ]
+}
+
+/// Zero the next bitmap bytes of the clearing phase within `units` (a local,
+/// reduced by what it spends); once every byte is zero, take the snapshot.
+/// `size`, `cursor` and `bits` are scratch i32 locals.
+fn clearing(
+    globals: Globals,
+    state: State,
+    calls: Calls,
+    (units, size, cursor): (u32, u32, u32),
+    bits: Bits,
+) -> Vec<I<'static>> {
+    let g = |slot| state.global(slot);
+    let shift = collector::CLEAR_BYTES_SHIFT as i32;
+    let mut code = vec![
+        I::GlobalGet(g(Slot::Stack)),
+        I::GlobalGet(g(Slot::Clear)),
+        I::I32Sub,
+        I::LocalTee(size),
+        I::I32Const(shift),
+        I::I32ShrU,
+        I::LocalGet(units),
+        I::I32LtU,
+        I::If(BlockType::Empty),
+        // The rest fits: zero it, spend its units and take the snapshot.
+        I::GlobalGet(g(Slot::Clear)),
+        I::I32Const(0),
+        I::LocalGet(size),
+        I::MemoryFill(MEMORY),
+        I::LocalGet(units),
+        I::LocalGet(size),
+        I::I32Const(shift),
+        I::I32ShrU,
+        I::I32Const(1),
+        I::I32Add,
+        I::I32Sub,
+        I::LocalSet(units),
+    ];
+    code.extend(snapshot(globals, state, calls, cursor, bits));
+    code.extend([
+        I::Else,
+        // Every unit zeroes its bytes; units < size >> shift, so no overflow.
+        I::GlobalGet(g(Slot::Clear)),
+        I::I32Const(0),
+        I::LocalGet(units),
+        I::I32Const(shift),
+        I::I32Shl,
+        I::LocalTee(size),
+        I::MemoryFill(MEMORY),
+        I::GlobalGet(g(Slot::Clear)),
+        I::LocalGet(size),
+        I::I32Add,
+        I::GlobalSet(g(Slot::Clear)),
+        I::I32Const(0),
+        I::LocalSet(units),
+        I::End,
+    ]);
+    code
 }
 
 /// `CollectStep (i32 units) -> i32 status`: perform up to `units` units of
@@ -983,6 +1119,8 @@ pub(super) fn step(globals: Globals, calls: Calls, mark: u32) -> Function {
     const UNITS: u32 = 0;
     const CURRENT: u32 = 1;
     const BITS: Bits = Bits { offset: 6, mask: 7 };
+    /// A scratch local of the clearing phase (the sweep's `SIZE`).
+    const SCRATCH: u32 = 2;
     /// The last local, the sweep's limit (`sweep`).
     const LIMIT: u32 = 9;
     const AGAIN: u32 = 0;
@@ -1024,6 +1162,21 @@ pub(super) fn step(globals: Globals, calls: Calls, mark: u32) -> Function {
         I::Return,
         I::End,
         I::GlobalGet(g(Slot::Phase)),
+        I::I32Const(Phase::Clearing as i32),
+        I::I32Eq,
+        I::If(BlockType::Empty),
+    ];
+    code.extend(clearing(
+        globals,
+        state,
+        calls,
+        (UNITS, SCRATCH, CURRENT),
+        BITS,
+    ));
+    code.extend([
+        I::Br(AGAIN + 1),
+        I::End,
+        I::GlobalGet(g(Slot::Phase)),
         I::I32Const(Phase::Marking as i32),
         I::I32Eq,
         I::If(BlockType::Empty),
@@ -1031,7 +1184,7 @@ pub(super) fn step(globals: Globals, calls: Calls, mark: u32) -> Function {
         I::GlobalGet(g(Slot::Partial)),
         I::LocalTee(CURRENT),
         I::If(BlockType::Empty),
-    ];
+    ]);
     code.extend(spend(trace(vec![I::GlobalGet(g(Slot::PartialNext))])));
     code.extend(spend(vec![I::I32Const(1)]));
     code.extend([

@@ -59,6 +59,29 @@ pub const INCREMENTAL_HEAP_DIVISOR: u32 = 2;
 /// cycle: its own initialization costs work in proportion, and its block then
 /// goes where the garbage was instead of past a cycle's floating garbage.
 pub const LARGE_REQUEST_SHIFT: u32 = 3;
+/// A new cycle's mark bitmaps (one bit per header-sized span of the heap
+/// each) are zeroed incrementally, `1 << CLEAR_BYTES_SHIFT` bytes per work
+/// unit, before the cycle takes its root snapshot: zeroing them at once
+/// would cost work in proportion to the heap in one step (bulk memory work
+/// is charged per byte), past an idle step's fuel on a large heap.
+pub const CLEAR_BYTES_SHIFT: u32 = 6;
+/// While the bitmaps are cleared, the heap may grow by its bytes at the
+/// cycle's start shifted right by this (beyond the metadata block): the
+/// bitmaps cover that headroom, so the blocks allocated before the snapshot
+/// are ordinary blocks below the limit. An allocation that would pass it
+/// first completes the clearing and takes the snapshot.
+pub const CLEAR_HEADROOM_SHIFT: u32 = 3;
+/// Bytes added to that headroom, so it always holds the cycle's metadata
+/// block (two bitmaps of 1/128 and a mark stack of at least
+/// [`MIN_MARK_STACK_ENTRIES`] entries) with room left, however small the
+/// heap.
+pub const CLEAR_HEADROOM_MIN_BYTES: u32 = 16 * 1024;
+// The metadata of a heap of `h` bytes plus its headroom stays within the
+// headroom: (h + h/8 + MIN)/64 + max((h + h/8 + MIN)/128, 4 KiB) + 32 bytes
+// is below h/8 + MIN for every h.
+const _: () = assert!(
+    MIN_MARK_STACK_ENTRIES * 4 + 64 + CLEAR_HEADROOM_MIN_BYTES / 32 < CLEAR_HEADROOM_MIN_BYTES
+);
 /// Reference slots of one object traced per work quantum; a larger array is
 /// traced in chunks.
 pub const TRACE_CHUNK_SLOTS: u32 = 256;

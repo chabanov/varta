@@ -9252,7 +9252,7 @@ history, both nonmoving with the exact roots and block layout of the
   barrier from the store it protects (a cycle can begin inside any
   allocation). Stores into a block allocated by the same operation need no
   barrier: blocks allocated while marking are black (a block taken from a
-  free list below the cycle's **limit**, the heap end when it began, is
+  free list below the cycle's **limit**, the heap end at its snapshot, is
   blackened; blocks at or above it are black by address). Mark state lives in
   two side bitmaps with one bit per header-sized span below the limit (a
   block's mark bit, and a bit recording that a bulk barrier or black
@@ -9265,8 +9265,20 @@ history, both nonmoving with the exact roots and block layout of the
   it rebuilds the exact-size lists as it passes, publishes the larger free
   runs in address order when it finishes. The bitmaps and the stack share one
   ordinary heap block per cycle, taken from the heap end without a collection
-  and only within the memory budget (zeroed bitmaps), which the next cycle's
-  sweep frees. **When a cycle starts.** A request that would grow memory past
+  and only within the memory budget, which the next cycle's sweep frees.
+  **Clearing phase.** Bulk memory work is charged per byte, so the bitmaps
+  (heap/64 bytes) are not zeroed at once: a new cycle first clears them,
+  `1 << collector::CLEAR_BYTES_SHIFT` bytes per work unit, with no barrier
+  active, and then takes its snapshot (roots shaded, marking on). The
+  bitmaps cover the heap end at the start plus a headroom
+  (`collector::CLEAR_HEADROOM_SHIFT`, `CLEAR_HEADROOM_MIN_BYTES`) that always
+  holds the metadata block; an allocation that would grow the heap past it
+  completes the clearing first. The snapshot sets the limit to the heap end
+  then, so blocks allocated while clearing are ordinary blocks below it, and
+  marks the cycle's own metadata block live. No idle step therefore costs
+  work in proportion to the heap: before this phase, zeroing the bitmaps of
+  a heap past about 190 MB in one step exceeded the whole maintenance
+  budget and terminated the UARP console. **When a cycle starts.** A request that would grow memory past
   the collection threshold (twice the heap the last collection or cycle left)
   starts a cycle only while the managed heap holds at least
   `collector::INCREMENTAL_MIN_HEAP_BYTES`, the heap end stays below the memory
