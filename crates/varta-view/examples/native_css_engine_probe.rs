@@ -1,7 +1,8 @@
-//! K8 T2 S1–S3 scenes for the real-Chrome oracle: escaped class selectors,
-//! cascade layers, registered custom properties, media features, math
-//! functions, units and CSS Color 4/5 colours, painted natively at a device
-//! scale. Chrome evaluates the same stylesheet text in a shadow root.
+//! K8 T2 scenes for the real-Chrome oracle: escaped class selectors,
+//! cascade layers and importance, CSS-wide keywords, conditional rules,
+//! registered custom properties, media features, math functions, units and
+//! CSS Color 4/5 colours, painted natively at a device scale. The browser
+//! host's bridge (or Chrome's own cascade) applies the same stylesheet.
 //!
 //! cargo run -p varta-view --example native_css_engine_probe -- 2 > target/native-css-2.json
 //! node scripts/test-native-css-engine.mjs target/native-css-2.json
@@ -166,6 +167,88 @@ const SCENES: &[Scene] = &[
         nodes: &[Node("a", &[]), Node("b", &[])],
         reduced_motion: false,
         deviation: None,
+    },
+    Scene {
+        name: "css-wide-keywords",
+        sheet: ".p { display: flex; flex-wrap: wrap; padding: 4px; margin: 3px; color: #c60; background-color: #ddd } .box { width: 30px; height: 12px; margin: 2px; background-color: #f00 } .i { background-color: inherit } .n { background-color: initial } .u { background-color: unset; border: 2px solid; border-color: unset } .v { background-color: revert; outline: 2px solid; outline-color: initial } .m { padding: inherit; margin: initial; background-color: currentcolor } .w { width: inherit; max-width: 50px }",
+        nodes: &[Node(
+            "p",
+            &[
+                Node("i box", &[]),
+                Node("n box", &[]),
+                Node("u box", &[]),
+                Node("v box", &[]),
+                Node("m box", &[]),
+                Node("w box", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+    },
+    Scene {
+        name: "importance",
+        sheet: "@layer low, high; .r { display: flex; flex-wrap: wrap } .box { width: 30px; height: 12px; margin: 2px } .a { background-color: #f00 !important } .a.a.a { background-color: #00f } @layer low { .b { background-color: #0f0 !important } } @layer high { .b { background-color: #f00 !important } } .b { background-color: #00f !important } @layer high { .c { background-color: #f00 } } .c { background-color: #0aa } .d { background-color: #f00 ! important; background-color: #808 } .e { opacity: 2; background-color: #08f } .f { opacity: -1; background-color: #f00 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a box", &[]),
+                Node("b box", &[]),
+                Node("c box", &[]),
+                Node("d box", &[]),
+                Node("e box", &[]),
+                Node("f box", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+    },
+    Scene {
+        name: "conditional-rules",
+        sheet: ".r { display: flex; flex-wrap: wrap } .box { width: 30px; height: 12px; margin: 2px; background-color: #ccc } @supports (display: grid) and (not (color: nonsense)) { .a { background-color: #0a0 } } @supports (unknown-property: 1) or (width: frobnicate) { .b { background-color: #f00 } } @supports selector(.x:hover) { .c { background-color: #00a } } @media (width < 100px) { @layer narrow { .d { background-color: #f00 } } } @layer wide { .d { background-color: #a0a } } @layer narrow { .d { background-color: #0aa } } @media (width >= 100px) { @layer late { .e { background-color: #aa0 } } } @layer early { .e { background-color: #f00 } } @supports (width: 1px) { @media (orientation: landscape) { .f { background-color: #555 } } }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a box", &[]),
+                Node("b box", &[]),
+                Node("c box", &[]),
+                Node("d box", &[]),
+                Node("e box", &[]),
+                Node("f box", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+    },
+    Scene {
+        name: "named-colours-and-mixes",
+        sheet: ".r { display: flex; flex-wrap: wrap } .box { width: 30px; height: 12px; margin: 2px } .a { background-color: rebeccapurple } .b { background-color: CornflowerBlue } .c { background-color: transparent; border: 3px solid darkolivegreen } .d { background-color: color-mix(in srgb, red, blue 25%) } .e { background-color: color-mix(in oklab, red 60%, blue 60%) } .f { background-color: color-mix(in srgb, red 20%, blue 20%) } .g { background-color: color-mix(in hsl, teal, gold) } .h { background-color: color-mix(in srgb, transparent, navy) }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a box", &[]),
+                Node("b box", &[]),
+                Node("c box", &[]),
+                Node("d box", &[]),
+                Node("e box", &[]),
+                Node("f box", &[]),
+                Node("g box", &[]),
+                Node("h box", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+    },
+    Scene {
+        name: "multi-colour-mixes",
+        sheet: ".r { display: flex; flex-wrap: wrap } .box { width: 30px; height: 12px; margin: 2px } .a { background-color: color-mix(in srgb, red, lime 20%, blue) } .b { background-color: color-mix(in oklch, red 10%, lime 10%, blue 10%) } .c { background-color: color-mix(in oklab, teal) }",
+        nodes: &[Node(
+            "r",
+            &[Node("a box", &[]), Node("b box", &[]), Node("c box", &[])],
+        )],
+        reduced_motion: false,
+        deviation: Some(
+            "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration",
+        ),
     },
 ];
 

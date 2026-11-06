@@ -236,6 +236,7 @@ impl ApplicationHandler<GuiEvent> for Host {
             }
             WindowEvent::ThemeChanged(theme) => {
                 self.dark.store(theme == Theme::Dark, Ordering::Release);
+                super::refresh_preferences(&self.preferences);
                 self.frame_presented = false;
                 self.pressed = None;
                 if let Some(window) = &self.window {
@@ -267,6 +268,12 @@ impl ApplicationHandler<GuiEvent> for Host {
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::Focused(focused) => {
                 self.window_focused = focused;
+                if focused && super::refresh_preferences(&self.preferences) {
+                    self.frame_presented = false;
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                }
                 if let Some(window) = &self.window {
                     window.set_ime_allowed(focused && self.ime_binding.is_some());
                 }

@@ -745,17 +745,45 @@ cargo run -p varta-view --example native_transition_probe --locked > target/nati
 node scripts/test-native-transitions.mjs target/native-transitions.json
 ```
 
-The CSS engine (K8 T2 S1–S3: escaped classes, layers, registered
-properties, media features, math, units and Color 4/5) is compared with
-Chrome evaluating the same stylesheet text in a closed shadow root; a scene
-with a recorded deviation (out-of-gamut colours) reports instead of failing:
+The CSS engine (K8 T2 and T3: escaped classes, layers and importance,
+CSS-wide keywords, conditional rules, registered properties, media
+features, math, units and Color 4/5) is compared with Chrome in two modes:
+`bridge` applies each scene through the official browser host's
+`view-engine.wasm`, `platform` lets Chrome's own cascade evaluate the
+stylesheet text in a closed shadow root; in `platform` mode a scene with a
+recorded deviation (out-of-gamut colours) reports instead of failing:
 
 ```sh
-cargo test -p varta-view --test integration --locked css_engine
+cargo test -p varta-style --locked
+cargo test -p varta-view --test integration --locked css_
 for scale in 1 1.25 2; do
   cargo run -p varta-view --example native_css_engine_probe --locked -- "$scale" > "target/native-css-$scale.json"
-  node scripts/test-native-css-engine.mjs "target/native-css-$scale.json"
+  node scripts/test-native-css-engine.mjs "target/native-css-$scale.json" bridge
+  node scripts/test-native-css-engine.mjs "target/native-css-$scale.json" platform
 done
+```
+
+The browser host's engine is a checked-in build. After a change to
+`varta-style`, `varta-style-wasm` or `varta-common`'s view modules, rebuild
+it (offline, locked toolchain), regenerate the cross-host record from the
+native engine and renderer, and run the cross-host tests: the Rust test
+checks the Wasm module (under Wasmtime), the native `Session` and the native
+renderer against each other and the fingerprint against the sources, the
+Node test checks the browser view model against the same record:
+
+```sh
+python3 scripts/build-view-engine.py
+VARTA_UPDATE_VIEW_ENGINE_EXPECTED=1 cargo test -p varta-project --lib --locked view_engine
+cargo test -p varta-project --lib --locked view_engine
+node --test crates/varta-project/src/browser/view-engine.test.mjs
+```
+
+The desktop shell's system preferences (macOS reduced motion and increased
+contrast) are host inputs with their own tests:
+
+```sh
+cargo test -p varta-runtime --lib --locked native_layout_applies_recorded_preferences
+cargo test -p varta-desktop --lib --locked system_preferences
 ```
 
 Classic (always-shown) scrollbars are compared with Chrome run with macOS's

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- K8 T2 standards items and K8 T3: the browser host runs the Rust CSS engine
+  as `view-engine.wasm` (built by `scripts/build-view-engine.py`) and applies
+  its computed values, so browser and native hosts accept, refuse and
+  compute the same styles; the JavaScript CSS checker, variable resolver and
+  custom-property code are removed. The engine adds the CSS-wide keywords on
+  every property, `!important` with Cascade 5 layer order, `@layer` inside
+  `@media` and `@supports`, `@supports`, named colours, multi-colour
+  `color-mix()`, clamped `opacity` and math results, and the desktop shell
+  passes macOS reduced-motion and increased-contrast settings as media
+  inputs.
 - K8 T2 S1–S3, the view CSS engine, by the specifications: stylesheets and
   values are tokenized by CSS Syntax 3 (comments, escapes decoded before any
   check, so no escape hides `url()`, `@import` or `!important`); class names

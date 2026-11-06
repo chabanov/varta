@@ -165,8 +165,10 @@ fn template_errors_name_the_construct_and_its_rule() {
             "invalid value `//evil.test` for attribute `href`",
         ),
         (
-            "<div style=\"color: red\">x</div>",
-            "invalid value `red` for CSS property `color`",
+            // Named colours are CSS Color 4 §6.1 colours; an unknown name
+            // is not.
+            "<div style=\"color: reddish\">x</div>",
+            "invalid value `reddish` for CSS property `color`",
         ),
         (
             "<div style=\"font-family: Brand, unset\">x</div>",

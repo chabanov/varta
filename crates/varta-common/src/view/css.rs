@@ -1247,15 +1247,15 @@ mod tests {
         assert!(!property_value(CssProperty::Color, "URL(x)"));
         assert!(!property_value(CssProperty::Color, "\\75 rl(x)"));
         assert!(!property_value(CssProperty::Color, "#fff !important"));
-        for value in [
-            "inherit",
-            "INITIAL",
-            "\"A\", unset",
-            "revert",
-            "revert-layer, serif",
-        ] {
+        // Cascade 5 §7.3: a CSS-wide keyword is a whole value; inside a
+        // family list it is invalid, and `initial` names the user agent's
+        // own font, which no native host can supply.
+        for value in ["INITIAL", "\"A\", unset", "revert-layer, serif"] {
             assert!(!property_value(CssProperty::FontFamily, value), "{value}");
             assert!(font_family_css_wide_keyword(value).is_some(), "{value}");
+        }
+        for value in ["inherit", "unset", "revert", "Revert-Layer"] {
+            assert!(property_value(CssProperty::FontFamily, value), "{value}");
         }
         // A quoted name is a family; a keyword inside a longer name is not one.
         for value in ["\"inherit\"", "inheritance, serif", "monospace"] {

@@ -146,7 +146,7 @@ unrestricted browser DOM in guest code.
 | --- | --- |
 | Structure/layout | Block/flex/grid, dimensions and constraints, margins/padding/gaps, admitted positioning/z-index, inline shaping/line fragments, headings/lists/pre/labels |
 | Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, retained drawing/damage and mixed border colors |
-| CSS engine (K8 T2 S1–S3) | CSS Syntax 3 tokens (comments, escapes), HTML class names with escaped class selectors, `@layer`, `@property`, Media Queries 4/5 features as recorded host inputs, `calc()`/`min()`/`max()`/`clamp()`, every length unit, Color 4/5 colours with gamut mapping and `color-mix()`, numeric font weights, `cubic-bezier()`/`steps()`; native only, the browser host keeps its L0 checker |
+| CSS engine (K8 T2, T3) | CSS Syntax 3 tokens (comments, escapes), HTML class names with escaped class selectors, `@layer` with `!important` and conditional layers, `@supports`, `@property`, CSS-wide keywords, Media Queries 4/5 features as recorded host inputs (macOS reduced motion and increased contrast on the desktop), `calc()`/`min()`/`max()`/`clamp()`, every length unit, Color 4/5 colours with named colours, gamut mapping and multi-colour `color-mix()`, numeric font weights, `cubic-bezier()`/`steps()`; one Rust engine, linked natively and run by the browser host as `view-engine.wasm` |
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
@@ -158,12 +158,13 @@ The native scope still has concrete gaps:
 
 - Controls need admitted block/flex/grid placement; arbitrary atomic inline
   control layout and mixed block/inline formatting are not complete.
-- The CSS engine's S1–S3 superset runs natively and in compiler checks only:
-  the browser host still applies its own L0 checker and rejects it until it
-  runs the Rust engine through Wasm (K8 T3). Chrome ignores `@property` in
-  shadow trees, so the web bridge must register them at document level.
-  CSS-wide keywords on standard properties, `em`/`ch`/`lh` outside
-  `font-size` and percentage-plus-length math remain refused natively.
+- The CSS engine refuses `em`, `ex`, `ch`, `lh` and the other
+  font-relative units outside `font-size` and math mixing percentages with
+  lengths: both need the element's computed font or layout-time resolution,
+  which the engine and native layout do not provide yet. Registered
+  `<length>` values are inherited as written rather than absolutized.
+  Increased-contrast and reduced-motion are read from the OS on macOS only;
+  other desktops report no preference.
 - Native `<img>` is not admitted by the current layout path. Browser bundles
   support checked static PNG resources; that does not add native image painting.
 - General transforms/scaling and scrollable overflow from translated boxes
@@ -183,7 +184,7 @@ Contracts: [native controls](architecture.md#native-control-defaults),
 [dialogs](architecture.md#native-modal-dialogs-top-layer),
 [transitions](architecture.md#native-css-transitions),
 [transforms](architecture.md#native-css-transforms),
-[the CSS engine](architecture.md#view-css-engine-k8-t2-s1s3) and
+[the CSS engine](architecture.md#view-css-engine-k8-t2-and-t3) and
 [the native shell](architecture.md#native-shell-varta-shell).
 
 ## GPU and application graphics

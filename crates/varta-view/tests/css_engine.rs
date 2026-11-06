@@ -308,3 +308,64 @@ fn non_inherited_registrations_reset_at_every_level_and_are_bounded() {
     commit(&mut view, &b);
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
+
+/// The layout box of each element of a `div` chain under the root: one
+/// element per class list, each inside the previous one, the last with the
+/// inline `style` declarations.
+fn chain_boxes(source: &str, classes: &[&str], inline: &[(P, &str)]) -> Vec<varta_view::BoxRect> {
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(1, source);
+    let mut parent = 1;
+    for class in classes {
+        let id = parent + 1;
+        b.create_element(id, Tag::Div)
+            .set_class(id, class)
+            .insert(parent, id, 0);
+        parent = id;
+    }
+    for (property, value) in inline {
+        b.set_style(parent, *property, value);
+    }
+    commit(&mut view, &b);
+    let boxes = view.layout_boxes(800.0, 600.0).unwrap();
+    (2..=parent).map(|id| boxes[&id]).collect()
+}
+
+#[test]
+fn css_wide_keywords_and_importance_reach_layout() {
+    // Cascade 5 §7.3: `inherit` takes the parent's computed value even for
+    // a non-inherited property, `initial` the property's initial value and
+    // `unset` acts as `initial` on a non-inherited property.
+    let boxes = chain_boxes(
+        ".p { width: 200px; padding: 7px } .t { padding: inherit; width: 50px; width: initial; height: 10px } .u { width: 30px } .u.u { width: unset; height: 5px }",
+        &["p", "t", "u"],
+        &[],
+    );
+    assert_eq!((boxes[1].x, boxes[1].width), (7.0, 200.0));
+    assert_eq!((boxes[2].x, boxes[2].width), (14.0, 186.0));
+    // Cascade 5 §6.1: important author rules beat inline normal ones, and
+    // important declarations in earlier layers beat later and unlayered ones.
+    let boxes = chain_boxes(
+        "@layer a, b; @layer a { .t { width: 10px !important } } @layer b { .t { width: 20px !important } } .t { width: 30px !important; height: 4px }",
+        &["t"],
+        &[(P::Width, "40px")],
+    );
+    assert_eq!(boxes[0].width, 10.0);
+    // Out-of-range opacity is valid and clamped (Color 4 §15.1), a weight
+    // computed by math is clamped (Values 4 §10.12), and named colours
+    // compute to sRGB (Color 4 §6.1).
+    let got = style(
+        ".target { opacity: 2; font-weight: calc(2000); color: rebeccapurple }",
+        "target",
+    );
+    assert_eq!(got["opacity"], "1");
+    assert_eq!(got["font-weight"], "1000");
+    assert_eq!(got["color"], "rgba(102, 51, 153, 1)");
+    // An out-of-range literal weight is invalid (Fonts 4 §2.2), and the view
+    // refuses invalid declarations before any effect.
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(1, ".t { font-weight: 1001 }");
+    assert!(view.commit(&b.finish(), false, &mut Deny).is_err());
+}

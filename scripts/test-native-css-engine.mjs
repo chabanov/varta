@@ -12,8 +12,9 @@
 //   this mode registers them in the document.
 //
 // A scene with a recorded deviation (CSS Color 4 gamut mapping, which
-// Chrome does not perform on its own cascade) reports its difference
-// instead of failing in `platform` mode.
+// Chrome does not perform on its own cascade; `color-mix()` with other than
+// two colours, which Chrome drops) reports its difference instead of
+// failing in `platform` mode.
 //
 // cargo run -p varta-view --example native_css_engine_probe -- 2 > target/native-css-2.json
 // node scripts/test-native-css-engine.mjs target/native-css-2.json [bridge|platform]
@@ -45,6 +46,7 @@ const scale=oracle.scale;
 assert(Number.isFinite(scale)&&scale>=0.25&&scale<=8,'invalid oracle scale');
 const {width,height}=oracle.viewport;
 const MAX_MEAN_RGB_DELTA=2; // Same bound as the native/GPU scene probes.
+const MAX_CENTRE_RGB_DELTA=1; // One 8-bit rounding step inside a fill.
 const BOX_TOLERANCE=0.02;
 let checks=0;
 const report=[];
@@ -117,7 +119,19 @@ try{await withBrowserPage(`http://127.0.0.1:${server.address().port}/__css_engin
     report.push(row);console.log(JSON.stringify(row));
     // The bridge applies the engine's gamut-mapped colours, so only the
     // platform cascade shows Chrome's clipping.
-    if(!fixture.deviation||mode==='bridge'){assert(mean<=MAX_MEAN_RGB_DELTA,`${fixture.name}: RGB mean ${mean}, max ${maximum}`);checks++;}
+    if(!fixture.deviation||mode==='bridge'){
+      assert(mean<=MAX_MEAN_RGB_DELTA,`${fixture.name}: RGB mean ${mean}, max ${maximum}`);checks++;
+      // The scene mean hides one wrong fill, so every box's centre pixel,
+      // away from antialiased edges, must match within 1/255 as well.
+      for(const [id,box]of Object.entries(fixture.boxes)){
+        if(box.width<1||box.height<1)continue;
+        const x=Math.floor((box.x+box.width/2)*scale),y=Math.floor((box.y+box.height/2)*scale);
+        if(x>=w||y>=h)continue;
+        const at=(y*w+x)*4,white=255-fixture.raster[at+3];
+        const native=[0,1,2].map(c=>Math.min(255,fixture.raster[at+c]+white)),chrome=[...pixels.slice(at,at+3)];
+        assert(native.every((value,c)=>Math.abs(value-chrome[c])<=MAX_CENTRE_RGB_DELTA),`${fixture.name} #${id}: centre native ${native}, Chrome ${chrome}`);checks++;
+      }
+    }
   }
 });}finally{server.close();}
 console.log(`Native/Chrome CSS engine (${mode}) @${scale}x: ${checks} checks passed`);

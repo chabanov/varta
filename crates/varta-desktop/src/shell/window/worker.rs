@@ -15,7 +15,7 @@ use crate::shell::{Launch, NativeEffects};
 use crate::{clipboard, timing, wake};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     mpsc::{self, Receiver},
 };
 use std::time::{Duration, Instant};
@@ -31,6 +31,8 @@ const TURNS_PER_ITERATION: usize = 16;
 pub(super) struct WorkerState {
     pub dimensions: Arc<AtomicU64>,
     pub dark: Arc<AtomicBool>,
+    /// The system's user-preference media inputs (`super::preferences_of`).
+    pub preferences: Arc<AtomicU32>,
     pub scale: Arc<AtomicU64>,
     pub presented: Arc<AtomicU64>,
     pub pointer: Arc<Mutex<PointerState>>,
@@ -53,6 +55,7 @@ pub(super) fn worker(
     let WorkerState {
         dimensions,
         dark,
+        preferences,
         scale,
         presented,
         pointer,
@@ -95,6 +98,7 @@ pub(super) fn worker(
         )));
         let mut rgb = Vec::new();
         let initial_dark = dark.load(Ordering::Acquire);
+        let initial_preferences = preferences.load(Ordering::Acquire);
         let initial_scale = scale.load(Ordering::Acquire);
         let initial_factor = f64::from_bits(initial_scale) as f32;
         let layout = varta_runtime::ViewLayout::new(
@@ -105,7 +109,8 @@ pub(super) fn worker(
         )
         .map_err(|e| e.to_string())?
         .with_dark_mode(initial_dark)
-        .with_scrollbars(scrollbars);
+        .with_scrollbars(scrollbars)
+        .with_preferences(super::preferences_of(initial_preferences));
         let started = launch
             .start_with(
                 layout,
@@ -132,6 +137,7 @@ pub(super) fn worker(
             let mut sequence = 0u64;
             let mut environment_dimensions = initial_dimensions;
             let mut environment_dark = initial_dark;
+            let mut environment_preferences = initial_preferences;
             let mut environment_scale = initial_scale;
             let mut last_image: Option<Arc<FrameMetadata>> = None;
             let mut rendered_gpu = false;
@@ -249,6 +255,7 @@ pub(super) fn worker(
                 let viewport_width = (current_dimensions >> 32) as u32;
                 let viewport_height = current_dimensions as u32;
                 let current_dark = dark.load(Ordering::Acquire);
+                let current_preferences = preferences.load(Ordering::Acquire);
                 let current_scale = scale.load(Ordering::Acquire);
                 let factor = f64::from_bits(current_scale) as f32;
                 if (current_dimensions != environment_dimensions
@@ -265,18 +272,22 @@ pub(super) fn worker(
                     environment_scale = current_scale;
                     revision = revision.checked_add(1).ok_or("view revision exhausted")?;
                 }
-                if current_dark != environment_dark {
+                if current_dark != environment_dark
+                    || current_preferences != environment_preferences
+                {
                     app.view_set_environment(varta_view::Environment {
                         width: f64::from((environment_dimensions >> 32) as u32)
                             / f64::from_bits(environment_scale),
                         height: f64::from(environment_dimensions as u32)
                             / f64::from_bits(environment_scale),
                         dark: current_dark,
+                        preferences: super::preferences_of(current_preferences),
                         scrollbars,
                         ..Default::default()
                     })
                     .map_err(|e| e.to_string())?;
                     environment_dark = current_dark;
+                    environment_preferences = current_preferences;
                     revision = revision.checked_add(1).ok_or("view revision exhausted")?;
                 }
                 if let Some(consent) = &mut consent

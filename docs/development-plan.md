@@ -7521,7 +7521,7 @@ frame bounds.
 
 Owner directive of the same day: everything by the published standards,
 Chrome only as the oracle. The engine contract with its specification
-sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-s1s3).
+sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3).
 
 - **S1.** CSS Syntax 3 tokenizer (`view::syntax`: preprocessing, comments,
   escapes, numbers, url tokens, §9 serialization); stylesheets parsed on
@@ -7588,6 +7588,59 @@ sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-s1s3).
 - Gate: `python3 scripts/verify.py full` PASS (3979 Rust tests passed, 0
   failed, 21 ignored; 218 browser Node tests; conformance baseline), report
   `target/verification/20261106-130906-pnr2i3f3/report.json` (macOS only).
+
+#### K8 T2 standards items and T3 browser bridge (2026-11-06)
+
+- **T3, browser bridge.** `varta-common`'s view modules build `no_std` with
+  `alloc` and `libm` behind the `view` feature (the KV codec and intrinsic
+  library bytes are unchanged); the cascade, variables and computed values
+  moved into `varta-style`, shared by the native renderer and
+  `varta-style-wasm`, which `scripts/build-view-engine.py` builds into the
+  checked-in `view-engine.wasm` (`view-engine.json` fingerprint), as the KV
+  codec is built. The browser view model mirrors each batch into the engine
+  in a transaction and takes its verdicts; the DOM bridge applies the
+  engine's computed values inline and records media features, viewport and
+  interaction states as inputs. `view-css.mjs`, `view-variables.mjs`,
+  `view-custom-properties.mjs` and the CSS parts of `view-model.mjs` are
+  removed; no CSS decision remains in JavaScript. `@property` reaches Chrome
+  no more (the engine substitutes), so its shadow-tree gap does not apply.
+  Cross-host equality: the corpus `view-engine-corpus.json` (the Tailwind
+  application's 312 candidates plus synthetic and inline cases) is decided
+  identically by the Wasm module, the native session and the native
+  renderer (Rust test), and by the browser view model (Node test).
+- **Standards items (1)–(7) of the S1–S3 record:** (1) CSS-wide keywords
+  on every property (Cascade 5 §7.3, `revert` and `revert-layer` included;
+  `font-family: initial` stays refused, its initial value being the user
+  agent's font); (3) `opacity` takes any number, clamped; literal
+  `font-weight` outside [1, 1000] is invalid and math results are clamped
+  to the property range; (4) `!important` with reversed layer order,
+  `@layer` inside `@media`/`@supports` with conditional order, `@supports`,
+  the 148 named colours and `color-mix()` of one to `MAX_MIX_COLORS` colours
+  (Color 5 §3; Chrome mixes exactly two, a recorded deviation); (6) the desktop shell reads macOS
+  "Reduce motion" and "Increase contrast" as recorded inputs, again on focus
+  and theme changes; (7) gamut mapping stays per Color 4 §14.2, Chrome's
+  clipping recorded as its deviation. Not done: (2) `em` outside
+  `font-size`, `ex`/`ch`/`lh` and percentage-plus-length math (they need the
+  element's computed font in the engine and `calc()` lengths in native
+  layout; no use of the measured application needs them) and (5) the
+  absolutization of registered values before inheritance (same
+  prerequisite: the engine computing `font-size`).
+- **Chrome oracle,** 15 scenes (new: CSS-wide keywords, importance,
+  conditional rules, named colours and two-colour mixes, multi-colour
+  mixes), now also requiring every box's centre pixel to match within
+  1/255 besides the scene mean: `bridge` 451 checks and `platform` 439
+  checks pass at 1x, 1.25x and 2x. The bridge matches the native pixels
+  exactly at 1x and, apart from 1/64 px length snapping in one scene, at
+  2x, including out-of-gamut colours and multi-colour mixes; the 1.25x
+  differences are antialiased fractional edges (scene means at most
+  0.018). Platform-mode deviations: gamut clipping (mean 0.58) and Chrome
+  dropping `color-mix()` with other than two colours.
+- **Measured acceptance** of the five-component application: unchanged at
+  70.4% of 588 uses (64.1% of 312 distinct candidates). The new admissions
+  are not what the application is missing; its refusals are selectors (S5,
+  59 distinct), logical properties (S4), shadows (S6) and the values native
+  layout lacks (`inline-flex`, `inline-block`, `sticky`, `fit-content`,
+  `-webkit-box`).
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

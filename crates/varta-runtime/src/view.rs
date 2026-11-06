@@ -114,6 +114,7 @@ impl Session {
             environment.dark = dark;
         }
         environment.scrollbars = layout.scrollbars;
+        environment.preferences = layout.preferences;
         if let Some(size) = layout.root_font_size {
             environment.root_font_size = size;
         }
