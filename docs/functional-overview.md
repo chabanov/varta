@@ -28,7 +28,7 @@ defaults maintained in this overview.
 | --- | --- | --- |
 | Compiler | Shared TS parsing, resolved typed IR, Wasm emission and validation for check/dev/build; explicit profile negotiation and source-aware diagnostics | Deliberate checked subset; unsupported syntax/types produce diagnostics |
 | Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports; v38 iteration protocol: `[Symbol.iterator]()` iterable classes, generator methods, array literal spreads, `Array.from` of iterables and synchronous `yield*` ([contract](architecture.md#iteration-protocol-iteration_protocol)) | General dynamic properties/prototypes/descriptors, hand-written iterator objects and iterable destructuring, wider receiver behavior and remaining type/module semantics |
-| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, ahead-of-time RegExp and a UTC Date subset | Symbol, object coercion, wrappers, Intl, wider Date/RegExp and full conversion inventory |
+| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, ahead-of-time RegExp; v38 standard library (K9 D): V8-order `sort`/`toSorted`, the ES2023 copying methods, `splice`/`flat`/`flatMap`, iterator helpers, Set methods, `Object.groupBy`/`Map.groupBy`/`Object.fromEntries`, `JSON.stringify` property lists and indentation, `AggregateError` and the complete `Date` in the UTC zone ([contract](architecture.md#standard-library-standard_library)) | Symbol, weak references, Proxy/Reflect, integrity levels, `structuredClone`, object coercion, wrappers, Intl, host time zones, wider RegExp and full conversion inventory |
 | Async language | Promise chains/combinators, async/await, sync/async generators, for-await, timers, microtasks and abort support | Structural thenables, top-level await and wider async iterable forms |
 | Runtime | Bounded executions, isolated HTTP request instances and long-lived application instances with event turns, host tasks, permission answers and captured state | Broader sustained cancellation/shutdown, retained-resource and target evidence |
 | Collection | Exact roots/tracing across values, closures and suspension, incremental collection and idle maintenance; large-heap bitmap clearing before the root snapshot | Sustained leak/retained-root checks, collector tuning and peak-memory/RSS measurements |
@@ -279,8 +279,8 @@ codegen-v2 fuel comparison. Its recorded HEAD is `6dfb06e` with the GC changes
 present; `10ff9ae` commits that verified code. See
 [current verification evidence](verification.md#current-verification-evidence--2026-11-06).
 
-The checked-v38 ECMAScript 2025 inventory has 135 passing and five reviewed
-unsupported cases out of 140 after the iteration-protocol cases of 2026-11-06;
+The checked-v38 ECMAScript 2025 inventory has 146 passing and five reviewed
+unsupported cases out of 151 after the K9 D standard-library cases of 2026-11-06;
 eight feature rows have no executable case.
 The baseline matches. This is a bounded compatibility inventory rather than
 Test262, full language compatibility or a global completion percentage; see

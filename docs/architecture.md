@@ -11593,11 +11593,121 @@ keys below.
   `finally` block returns a value of its own, JavaScript would return that
   value from this `void` generator; Varta returns `undefined`. Async
   generators keep their own `yield*` rules.
-- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`) and
-  iterator helpers, `Symbol()` values and symbol-keyed properties,
-  destructuring of generators, strings and iterable instances,
-  `Array.from` with a map function or an array-like, and `Iterable<T>`
-  value annotations.
+- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`),
+  `Symbol()` values and symbol-keyed properties, destructuring of
+  generators, strings and iterable instances, and `Iterable<T>` value
+  annotations. Iterator helpers and `Array.from` with a map function or an
+  array-like are admitted by the [standard library](#standard-library-standard_library).
+
+#### Standard library (`standard_library`)
+
+Additions to v38 (K9 D, 2026-11-06) that complete the ECMAScript 2025
+library forms typed npm code uses most, under the selector
+`LanguageProfile::standard_library()`. Everything is typed guest code of the
+engine preludes (`<varta>/builtins/standard.ts`, `<varta>/builtins/aggregate.ts`,
+the v38 collections prelude and the v38 date prelude) called by
+`lower::standard`, so there is no host import, value layout, frame catalog
+or ABI change, and the native runtime and every JavaScript host run the same
+Wasm. V1–v37 keep rejecting every form below with their old diagnostics; the
+prelude loads only for programs that name one of its methods
+(`modules::engine::STANDARD_LOADS`).
+
+- **Sorting.** `array.sort(compare?)` and `array.toSorted(compare?)`
+  (§23.1.3.30, §23.1.3.34) run V8's TimSort (`array-sort.tq`, CPython's
+  listsort: run detection, binary insertion below the minimum run, galloping
+  merges with the adaptive `minGallop`), so every comparator is called with
+  the same arguments in the same order as in Node and an inconsistent
+  comparator leaves V8's order. A comparator result of NaN counts as 0.
+  Holes and `undefined` are taken out first; the sorted values, then the
+  `undefined`s, then the holes are written back (`sort` returns its
+  receiver). Without a comparator the elements' String forms compare by
+  code units; elements other than primitives are refused by name
+  (object-to-string conversion is not modelled). A readonly (`as const`)
+  receiver is refused for `sort`, `splice`, `copyWithin`, `shift` and
+  `unshift`.
+- **Copying and mutating methods.** `toReversed`, `with` (`RangeError:
+  Invalid index : n` outside the array), `toSpliced`, `splice` (the argument
+  count decides the delete count, as in §23.1.3.31), `copyWithin`,
+  `shift`, `unshift`, `concat` (an argument of the receiver's array type
+  spreads, one of its element type is appended; holes stay holes; a receiver
+  whose elements are arrays only takes arguments of its own type, since
+  JavaScript spreads every array argument), `keys`, `values` and `entries`
+  (live generators that read the length at every step) and `at` on strings.
+  Mutations keep holes as holes (`Object.hasOwn`/`delete` semantics). A
+  copying method that reads a hole of an element type without `undefined`
+  throws `TypeError` (`array element is missing`), as `for...of` does,
+  because such an array cannot hold the `undefined` JavaScript would copy;
+  with `undefined` in the element type the hole reads as `undefined`.
+- **Flattening.** `flat(depth?)` with a number literal, `Infinity` or no
+  depth (the result type depends on it): each level flattens `T[][]` or
+  `(T | T[])[]`, skipping holes; depth 0 is a hole-free copy.
+  `flatMap(callback)` flattens a callback returning arrays one level, maps
+  one returning other values, and refuses a callback returning both.
+- **Constructors.** `Array.of(...)` (the same fresh array as the literal,
+  `Array.of<T>()` typed by its argument), `Array.from(source, map)` (the
+  source is collected as one-argument `Array.from` collects it, then mapped
+  with `(value, index)`), `Array.from({ length: n }, map)` (ToLength, then
+  `RangeError: Invalid array length` above 2³²−1).
+- **Iterator helpers.** On a synchronous generator that returns `void` and
+  takes no `next` input (every built-in iterator: array, `Map` and `Set`
+  `keys`/`values`/`entries`, and the helpers themselves): `map`, `filter`,
+  `take`, `drop`, `flatMap` (array results), `reduce` (with or without an
+  initial value: `TypeError: Reduce of a done iterator with no initial
+  value`), `toArray`, `forEach`, `some`, `every`, `find`, and
+  `Iterator.from` of a generator, array, `Set` or `Map`. Helpers are lazy
+  guest generators over the source; `take`/`drop` validate their limit when
+  the helper is created (`RangeError: -1 must be positive`), a `break` or
+  `return()` closes the source through the helper's `for...of`, and
+  `take(0)` closes it without pulling. The one difference: `return()` on a
+  helper that has not started does not close the source (a JavaScript
+  helper does; a generator body that never ran has nothing to close).
+- **Sets and grouping.** `union`, `intersection`, `difference`,
+  `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`
+  (§24.2.4) of two `Set`s with the same element type, iterating the receiver
+  or the argument exactly as the specification chooses by size; other
+  set-like arguments are refused. `Map.groupBy(items, callback)`,
+  `Object.groupBy(items, callback)` (string and number keys, a dictionary in
+  JavaScript key order) and `Object.fromEntries` of `[key, value]` tuples or
+  a `Map`. `Object.getOwnPropertyNames` of a record or dictionary is its
+  `Object.keys`; `value.hasOwnProperty(key)` is `Object.hasOwn(value, key)`.
+- **JSON.** `JSON.stringify(value, replacer, space)` with a `null` or
+  `undefined` replacer or a property list (an array of strings and numbers,
+  deduplicated, selecting and ordering every object's members), and a number
+  (clamped to 10 spaces) or string (its first 10 code units) `space`: both
+  are deterministic rewrites of the compact text the engine serializer
+  produces. Replacer functions are refused (the host serializer cannot call
+  guest code). The replacer and space arguments must be free of effects
+  (literals, bindings, field reads), since they are evaluated after the
+  value is serialized.
+- **Errors and promises.** `AggregateError(errors, message?, { cause })`
+  is an `Error` subclass of typed guest code (`errors: unknown[]`,
+  `instanceof`, `cause`, `toString`). `Promise.all`/`allSettled`/`any`/`race`
+  over an array literal that mixes `Promise.reject(...)` with promises of one
+  type give the rejections that type (TypeScript's `Promise<never>`).
+  `Promise.any` still rejects with an `Error` named `Error`, not an
+  `AggregateError`.
+- **Math and strings.** `Math.max(...xs)`/`Math.min(...xs)` with spread
+  `number[]` arguments (NaN wins, +0 above −0). `String.prototype.at`,
+  `substr` (Annex B), `isWellFormed`, `toWellFormed` and locale-free
+  `toLocaleUpperCase`/`toLocaleLowerCase`.
+- **Date.** The v38 date prelude replaces the v37 class with the complete
+  `Date` (§21.4): `Date.UTC`, the component constructor (local time,
+  years 0–99 as 1900–1999), every local and UTC getter and setter (with
+  rest parameters, so an omitted argument and an explicit `undefined` never
+  meet), `getTimezoneOffset`, `getYear`, `toString`, `toDateString`,
+  `toTimeString`, `toUTCString`/`toGMTString`, `toJSON`, `valueOf`, and
+  `Date.parse` of the forms `toString`, `toDateString`, `toUTCString` and
+  `toISOString` produce. The time zone is a recorded host input; without a
+  host-granted zone (none is defined yet, an owner decision) it is UTC, so
+  every output equals Node's with `TZ=UTC`. `toString`, `valueOf` and
+  `toJSON` are prelude functions the compiler calls for `Date` receivers (a
+  class cannot declare them); `JSON.stringify` of a `Date`, `String(date)`
+  and the `toLocale*String` forms stay refused.
+- **Refused by name.** `Symbol()`/`Symbol.for`/`Symbol.keyFor`, `WeakMap`,
+  `WeakSet`, `WeakRef`, `FinalizationRegistry`, `Proxy`, `Reflect.*`,
+  `structuredClone`, `Object.freeze`/`seal`/`preventExtensions` and their
+  predicates, descriptor and prototype functions, and `Intl` fail with the
+  missing value-model part in the diagnostic.
 
 #### Bytes held by unknown (`byte_values`)
 

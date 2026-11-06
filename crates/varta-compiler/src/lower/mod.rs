@@ -459,6 +459,7 @@ mod sdk_paths;
 mod shared_unions;
 mod signature;
 mod spread;
+mod standard;
 mod stmt;
 mod string_enumeration;
 mod string_iteration;

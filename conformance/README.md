@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 81 feature rows and 140 cases:
-135 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 86 feature rows and 151 cases:
+146 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -389,3 +389,22 @@ over a generator with `throw`/`return` forwarding and over an array
 (`yield-delegation.ts`). Their expected output is Node.js v24.20.0's. The
 `symbol-type` gap is unchanged: `Symbol.iterator` is recognized only as a
 computed method key, and no `Symbol` value exists.
+
+The K9 D standard-library review (2026-11-06, selector `standard_library`)
+adds five feature rows with seven passing cases and four cases on existing
+rows: `array-copying-methods` (CORE-02) with `array-sort-comparator` (V8's
+comparator call order, `toSorted` stability, the default String order),
+`array-copying-methods` (`toReversed`, `with` and its `RangeError`,
+`toSpliced`, `Array.of`, mapped `Array.from`) and `array-splice-flat`
+(`splice`, `copyWithin`, `shift`/`unshift`, `concat`, `flat`, `flatMap`);
+`iterator-helpers` (CORE-03) over an infinite generator and an array
+iterator, including the `take` `RangeError`; `set-methods` (CORE-05);
+`grouping` (CORE-02, CORE-05) with `group-by` (`Object.groupBy`,
+`Map.groupBy`, `Object.fromEntries` of tuples and a `Map`);
+`aggregate-error` (CORE-04); `json-stringify-options` on `json-stringify`,
+`date-components` on `date` (the complete `Date` in the UTC zone),
+`string-well-formed` on `string-builtins` and `math-spread` on `math`. Their
+expected output is Node.js v24.20.0's with `TZ=UTC`. `Array.prototype.shift`,
+listed above as a rejected form, is admitted now. The `symbol-type` gap is
+unchanged: `Symbol()` is refused with the reason (a value tag awaiting an
+owner decision).

@@ -31,6 +31,22 @@
   browser host's L0 contract is unchanged. Native and Chrome match at 1x,
   1.25x and 2x (`scripts/test-native-css-engine.mjs`); the Tailwind
   application corpus's accepted class uses rise from 25.3% to 70.4%.
+- V38 standard library (K9 D, `standard_library`): `sort`/`toSorted` with
+  V8's TimSort comparator order, `toReversed`, `with`, `toSpliced`,
+  `splice`, `copyWithin`, `concat`, `shift`, `unshift`, `flat`, `flatMap`,
+  array `keys`/`values`/`entries`, `Array.of`, mapped and array-like
+  `Array.from`; ES2025 iterator helpers and `Iterator.from`; the ES2025 `Set`
+  methods; `Map.groupBy`, `Object.groupBy`, `Object.fromEntries`,
+  `Object.getOwnPropertyNames` and `hasOwnProperty`; `JSON.stringify`
+  property lists and indentation; `AggregateError`; promise combinator
+  arrays mixing `Promise.reject`; `Math.max`/`min` spreads; `String`
+  `at`/`substr`/`isWellFormed`/`toWellFormed`; and the complete `Date` with
+  local time in the UTC zone (a host zone awaits an owner decision). All in
+  typed guest code of engine preludes: no host ABI or value layout change.
+  `Symbol`, weak references, `Proxy`/`Reflect`, integrity levels,
+  `structuredClone` and `Intl` are refused with the reason. Conformance: 146
+  passed, 5 known unsupported of 151 (new features `array-copying-methods`,
+  `iterator-helpers`, `set-methods`, `grouping`, `aggregate-error`).
 - Native `img`: packaged images (a configuration's new `images` map,
   stored in resource section version 2 and carried by the browser bundle
   under the same names) are laid out and drawn by the native renderer to the

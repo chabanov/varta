@@ -1,0 +1,8 @@
+fulfilled,rejected,fulfilled
+value 1
+reason e
+value 3
+2
+TypeError: boom
+fast
+42

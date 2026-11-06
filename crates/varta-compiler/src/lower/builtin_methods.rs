@@ -47,6 +47,10 @@ impl Lower<'_> {
                 .collection_method(call, receiver, (kind, id), name)
                 .map(Some);
         }
+        // V38 (`standard_library`): the ES2025 array and string methods.
+        if self.types.profile.standard_library() && self.standard_receiver(member) {
+            return self.standard_method(call, member, expected).map(Some);
+        }
         let string = STRING_METHODS.iter().find(|(method, _)| *method == name);
         if string.is_none() && !ARRAY_METHODS.contains(&name) {
             return Ok(None);
@@ -203,7 +207,10 @@ impl Lower<'_> {
                         let ast::MemberProp::Ident(method) = &member.prop else {
                             return false;
                         };
-                        if matches!(method.sym.as_ref(), "add" | "set") {
+                        if matches!(method.sym.as_ref(), "add" | "set")
+                            || self.types.profile.standard_library()
+                                && standard::set_result(method.sym.as_ref())
+                        {
                             return self.collection_receiver(&member.obj, depth + 1);
                         }
                         // A class method declared to return a collection
