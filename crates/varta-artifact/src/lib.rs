@@ -12,10 +12,15 @@ mod frames;
 mod resources;
 
 pub use resources::{
-    FONT_WEIGHT_STEP, FaceError, FontFace, FontStyle, GenericFamily, MAX_FAMILY_BYTES,
-    MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES, MAX_FONT_WEIGHT,
-    MAX_RESOURCE_SECTION_BYTES, MIN_FONT_WEIGHT, NORMAL_FONT_WEIGHT, RESOURCE_MAGIC,
-    RESOURCE_VERSION, ResourceError, Resources,
+    FONT_WEIGHT_STEP, FaceError, FontFace, FontStyle, GenericFamily, IMAGE_RESOURCE_VERSION,
+    ImageResource, MAX_FAMILY_BYTES, MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES,
+    MAX_FONT_WEIGHT, MAX_RESOURCE_SECTION_BYTES, MIN_FONT_WEIGHT, NORMAL_FONT_WEIGHT,
+    RESOURCE_MAGIC, RESOURCE_VERSION, ResourceError, Resources,
+};
+/// The packaged image limits, owned by `varta_common::view::images`.
+pub use varta_common::view::images::{
+    MAX_IMAGE_BYTES, MAX_IMAGE_DECODED_BYTES, MAX_IMAGE_NAME_BYTES, MAX_IMAGE_TOTAL_BYTES,
+    MAX_IMAGES,
 };
 
 const MAGIC: &[u8; 8] = b"VARTA3\0\0";

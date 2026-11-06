@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Native `img`: packaged PNG images (a configuration's new `images` map,
+  stored in resource section version 2 and carried by the browser bundle
+  under the same names) are laid out and drawn by the native renderer with
+  Chrome's replaced sizing, inline line boxes, sampling (bilinear and Skia's
+  level chain below half size), rounded content clips, opacity and
+  transforms, and named by `alt`; checked against Chrome at four scales.
+  Animated, colour-managed and non-PNG images, inline images beside text and
+  `object-fit` are refused. New dependency `png` 0.17.16; the image limits
+  await an owner decision.
 - V38 compiled JSON decoders scan string bodies and whitespace, and copy
   escaped strings, sixteen UTF-16 units per step with fixed-width WebAssembly
   SIMD (`simd128`): 0.75 fuel per scanned string byte instead of 11.5, and a

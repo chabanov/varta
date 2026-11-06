@@ -11,6 +11,7 @@ use taffy::style::{GridPlacement, GridTemplateTracks, Overflow, RepetitionCount}
 use varta_common::view::{CssProperty, ROOT_NODE, Tag};
 
 pub(crate) mod controls;
+mod replaced;
 
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 128;
 pub(crate) const MAX_LAYOUT_NODES: usize = 4096;
@@ -734,6 +735,8 @@ fn alignment(value: &str) -> Option<AlignItems> {
 enum Measure {
     Text(TextShape),
     Control(controls::ControlSize),
+    /// A replaced image's natural size (`replaced::compute`).
+    Image((f32, f32)),
 }
 
 /// Measurements prepared before a layout pass, by node.
@@ -741,6 +744,9 @@ enum Measure {
 struct Measured<'a> {
     text: &'a BTreeMap<u32, TextShape>,
     controls: &'a BTreeMap<u32, controls::ControlSize>,
+    /// The parent's strut (ascent and descent with half-leading) of each
+    /// inline image's line box.
+    struts: &'a BTreeMap<u32, (f32, f32)>,
 }
 
 #[derive(Clone)]
@@ -1115,7 +1121,7 @@ fn build(
     tree: &Tree,
     env: &Environment,
     engine: &mut TaffyTree<Measure>,
-    ids: &mut BTreeMap<u32, NodeId>,
+    (ids, lines): (&mut BTreeMap<u32, NodeId>, &mut BTreeMap<u32, NodeId>),
     text_metrics: Measured<'_>,
     location: (u32, usize),
     sizes: ((f32, f32), Option<style::FontBase>),
@@ -1124,17 +1130,26 @@ fn build(
     let mut scheduled = 1usize;
     while let Some((id, depth, finish)) = pending.pop() {
         if finish {
+            // An inline image's parent holds its line box.
             let children = tree.nodes[&id]
                 .children
                 .iter()
-                .map(|child| ids[child])
+                .map(|child| lines.get(child).copied().unwrap_or(ids[child]))
                 .collect::<Vec<_>>();
             engine
                 .set_children(ids[&id], &children)
                 .map_err(|error| LayoutError::Engine(error.to_string()))?;
             continue;
         }
-        let (_, descend) = build_one(tree, env, engine, ids, text_metrics, (id, depth), sizes)?;
+        let (_, descend) = build_one(
+            tree,
+            env,
+            engine,
+            (ids, lines),
+            text_metrics,
+            (id, depth),
+            sizes,
+        )?;
         if descend {
             let children = &tree.nodes[&id].children;
             scheduled = scheduled
@@ -1159,7 +1174,7 @@ fn build_one(
     tree: &Tree,
     env: &Environment,
     engine: &mut TaffyTree<Measure>,
-    ids: &mut BTreeMap<u32, NodeId>,
+    (ids, lines): (&mut BTreeMap<u32, NodeId>, &mut BTreeMap<u32, NodeId>),
     measured: Measured<'_>,
     location: (u32, usize),
     sizes: ((f32, f32), Option<style::FontBase>),
@@ -1218,6 +1233,7 @@ fn build_one(
                 | Tag::Input
                 | Tag::Textarea
                 | Tag::Select
+                | Tag::Img
         ) || modal_dialog(tree, id)
             || style::ua_defaults(element.tag).is_some_and(|ua| ua.block)
             || (crate::inline::inline_tag(element.tag)
@@ -1277,6 +1293,18 @@ fn build_one(
         };
         for (property, value) in computed {
             match property {
+                // An image is a leaf whatever its display; an inline one
+                // stands in its line box (`replaced`).
+                CssProperty::Display if element.tag == Tag::Img => {
+                    style.display = match value.as_str() {
+                        "block" | "inline" => Display::Block,
+                        _ => return Err(LayoutError::Unsupported(id)),
+                    }
+                }
+                // A replaced box is not a scroll container or a clip.
+                CssProperty::Overflow if element.tag == Tag::Img && value != "visible" => {
+                    return Err(LayoutError::Unsupported(id));
+                }
                 CssProperty::Display => {
                     style.display = match value.as_str() {
                         "flex" => Display::Flex,
@@ -1545,6 +1573,8 @@ fn build_one(
     {
         let shape = text_metrics.get(&id).ok_or(LayoutError::Unsupported(id))?;
         engine.new_leaf_with_context(style, Measure::Text(shape.clone()))
+    } else if element.tag == Tag::Img {
+        return image_leaf(tree, env, engine, (ids, lines), measured, (id, style));
     } else if let Some(size) = (id != ROOT_NODE)
         .then(|| controls::square(tree, id))
         .flatten()
@@ -1563,6 +1593,47 @@ fn build_one(
     .map_err(|e| LayoutError::Engine(e.to_string()))?;
     ids.insert(id, node_id);
     Ok((node_id, descend))
+}
+
+/// An `img` leaf and, for an inline image, its line box (`replaced`).
+fn image_leaf(
+    tree: &Tree,
+    env: &Environment,
+    engine: &mut TaffyTree<Measure>,
+    (ids, lines): (&mut BTreeMap<u32, NodeId>, &mut BTreeMap<u32, NodeId>),
+    measured: Measured<'_>,
+    (id, mut style): (u32, Style),
+) -> Result<(NodeId, bool), LayoutError> {
+    let engine_error = |e: taffy::TaffyError| LayoutError::Engine(e.to_string());
+    let natural = replaced::natural_size(tree, id).ok_or(LayoutError::Unsupported(id))?;
+    style.item_is_replaced = true;
+    let inline = replaced::inline(tree, env, id);
+    if inline {
+        replaced::check_line(tree, env, id)?;
+        replaced::check_inline_style(tree, env, id)?;
+        replaced::line_item(&mut style);
+    }
+    let node_id = engine
+        .new_leaf_with_context(style, Measure::Image(natural))
+        .map_err(engine_error)?;
+    ids.insert(id, node_id);
+    if inline {
+        let strut = *measured
+            .struts
+            .get(&id)
+            .ok_or(LayoutError::Unsupported(id))?;
+        let parent = tree.nodes[&id].parent.ok_or(LayoutError::Unsupported(id))?;
+        let align = tree
+            .computed_property(parent, env, CssProperty::TextAlign)
+            .map(|value| TextAlign::parse(&value).ok_or(LayoutError::Unsupported(parent)))
+            .transpose()?
+            .unwrap_or_default();
+        let line = engine
+            .new_with_children(replaced::line_style(strut, align), &[node_id])
+            .map_err(engine_error)?;
+        lines.insert(id, line);
+    }
+    Ok((node_id, false))
 }
 
 pub(crate) fn boxes(
@@ -1628,6 +1699,7 @@ pub(crate) fn geometry_local(
         Measured {
             text: &BTreeMap::new(),
             controls: &BTreeMap::new(),
+            struts: &BTreeMap::new(),
         },
         None,
         None,
@@ -1703,6 +1775,7 @@ fn geometry_and_text_inner(
     let mut pending = vec![(ROOT_NODE, 0usize)];
     let mut metrics = BTreeMap::new();
     let mut control_sizes = BTreeMap::new();
+    let mut struts = BTreeMap::new();
     let mut inventory = crate::inline::Inventory::default();
     while let Some((id, depth)) = pending.pop() {
         inventory.node(depth)?;
@@ -1722,6 +1795,16 @@ fn geometry_and_text_inner(
             && element.tag == Tag::Select
         {
             continue;
+        }
+        if let Content::Element(element) = &node.content
+            && element.tag == Tag::Img
+            && replaced::inline(tree, &layout_env, id)
+        {
+            let parent = node.parent.ok_or(LayoutError::Unsupported(id))?;
+            struts.insert(
+                id,
+                crate::inline::strut(tree, &layout_env, parent, (measurer, font_size))?,
+            );
         }
         if controls::needs_intrinsic(tree, &layout_env, id) {
             control_sizes.insert(
@@ -1879,6 +1962,7 @@ fn geometry_and_text_inner(
         Measured {
             text: &metrics,
             controls: &control_sizes,
+            struts: &struts,
         },
         Some(measurer),
         Some(font_size),
@@ -1927,6 +2011,7 @@ fn boxes_inner(
     let mut engine = TaffyTree::new();
     engine.disable_rounding();
     let mut ids = BTreeMap::new();
+    let mut lines = BTreeMap::new();
     let layout_env = Environment {
         width: f64::from(width),
         ..*env
@@ -1941,7 +2026,7 @@ fn boxes_inner(
         tree,
         &layout_env,
         &mut engine,
-        &mut ids,
+        (&mut ids, &mut lines),
         measured,
         (ROOT_NODE, 0),
         ((width, height), base),
@@ -1997,6 +2082,9 @@ fn boxes_inner(
                     height: AvailableSpace::Definite(height),
                 },
                 |inputs, node, context, style| {
+                    if let Some(Measure::Image(natural)) = context.as_deref() {
+                        return replaced::compute(inputs, style, *natural);
+                    }
                     taffy::compute_leaf_layout(
                         inputs,
                         style,
@@ -2006,6 +2094,9 @@ fn boxes_inner(
                                 Some(Measure::Text(shape)) => shape,
                                 Some(Measure::Control(size)) => {
                                     return size.measure(known, available);
+                                }
+                                Some(Measure::Image(_)) => {
+                                    unreachable!("images use their own leaf layout")
                                 }
                                 None => {
                                     return Size {
@@ -2212,9 +2303,19 @@ fn boxes_inner(
             {
                 return Err(LayoutError::Unsupported(id));
             }
+            // An inline image sits in its line box, a child of its parent.
+            let line = match lines.get(&id) {
+                Some(&line) => {
+                    engine
+                        .layout(line)
+                        .map_err(|e| LayoutError::Engine(e.to_string()))?
+                        .location
+                }
+                None => taffy::geometry::Point::ZERO,
+            };
             let mut rect = BoxRect {
-                x: origin_x + layout.location.x,
-                y: origin_y + layout.location.y,
+                x: origin_x + line.x + layout.location.x,
+                y: origin_y + line.y + layout.location.y,
                 width: layout.size.width,
                 height: layout.size.height,
             };

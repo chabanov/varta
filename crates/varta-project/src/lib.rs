@@ -97,7 +97,7 @@ pub struct CheckedProject {
     /// (`file_roots`); `varta dev` reads under them.
     pub roots: FileRoots,
     /// The artifact's resource section: the configuration's validated font
-    /// faces in canonical order (empty without declared fonts).
+    /// faces and images in canonical order (empty without either).
     pub resources: varta_artifact::Resources,
 }
 
@@ -121,8 +121,8 @@ impl CheckedProject {
         })
     }
 
-    /// Write `<out>.wasm` with its sidecar manifest and, when fonts are
-    /// declared, its sidecar resource section `<out>.resources`; with
+    /// Write `<out>.wasm` with its sidecar manifest and, when fonts or images
+    /// are declared, its sidecar resource section `<out>.resources`; with
     /// `single`, also the container `<out>` around the verified runtime.
     pub fn build(&self, single: bool, launcher: &Path) -> Result<Vec<PathBuf>> {
         let launcher = single

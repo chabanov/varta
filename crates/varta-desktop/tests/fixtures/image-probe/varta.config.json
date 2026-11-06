@@ -1,0 +1,10 @@
+{
+  "entry": "main.ts",
+  "target": "wasm",
+  "policy": "strict",
+  "out": "probe",
+  "languageProfile": "checked-f64-utf16-v38",
+  "images": {
+    "icons/red.png": "images/red.png"
+  }
+}

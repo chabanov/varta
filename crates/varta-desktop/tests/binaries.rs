@@ -4,11 +4,13 @@ mod support;
 
 use std::path::Path;
 use std::process::{Command, Output};
-use support::{Temp, consent_probe, probe, view_probe};
+use support::{RED_PNG, Temp, consent_probe, image_probe, probe, view_probe};
 use varta_desktop::shell::MAX_FONT_BYTES;
 
 const SHELL_LABEL: &str = "varta-shell: ";
 const PREVIEW_LABEL: &str = "varta-preview: ";
+/// A byte of the image probe's compressed pixel stream.
+const IDAT_BYTE: usize = 43;
 
 fn shell() -> Command {
     Command::new(env!("CARGO_BIN_EXE_varta-shell"))
@@ -169,6 +171,43 @@ fn a_bad_font_is_refused_before_any_storage_is_created() {
         );
         assert!(!storage.exists(), "{font:?}");
     }
+}
+
+#[test]
+fn a_corrupt_packaged_image_is_refused_before_any_storage_is_created() {
+    let temp = Temp::new("varta-shell-binary-test");
+    let storage = temp.storage();
+    let built = image_probe();
+    let packaged = &built.resources.images()[0];
+    assert_eq!(packaged.data, RED_PNG);
+    // A flipped compressed byte keeps the file's structure (and the section
+    // digest covers the new bytes) but fails the image's checksum, which
+    // only decoding checks. The KV-requesting probe would create storage.
+    let mut data = packaged.data.clone();
+    data[IDAT_BYTE] ^= 1;
+    let resources = varta_artifact::Resources::with_images(
+        Vec::new(),
+        vec![varta_artifact::ImageResource {
+            name: packaged.name.clone(),
+            data,
+        }],
+    )
+    .unwrap();
+    let artifact = temp.path("image.wasm");
+    probe().write_wasm_with(&artifact, &resources).unwrap();
+    let output = shell()
+        .arg(&artifact)
+        .arg("--data-dir")
+        .arg(&storage)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let message = stderr(&output);
+    assert!(
+        message.starts_with(&format!("{SHELL_LABEL}images: ")) && message.contains("invalid PNG"),
+        "{message}"
+    );
+    assert!(!storage.exists());
 }
 
 #[test]

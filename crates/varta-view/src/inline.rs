@@ -67,6 +67,10 @@ impl Vertical {
             .clusters()
             .next()
             .and_then(|cluster| line_heights.get(&cluster.first_style().brush));
+        Self::owned_by(run, owner)
+    }
+    /// A run's vertical extent with `owner`'s line height.
+    fn owned_by(run: &parley::Run<'_, u32>, owner: Option<&LineHeight>) -> Self {
         let m = run.metrics();
         let line_height = match owner {
             Some(LineHeight::Absolute(value)) => *value,
@@ -237,6 +241,32 @@ pub(crate) struct Frame {
     pub fragments: BTreeMap<u32, Vec<BoxRect>>,
     pub fragment_lines: BTreeMap<u32, Vec<usize>>,
     pub glyph_owners: Vec<Vec<u32>>,
+}
+
+/// The strut of `id`'s line boxes: the distances its first available font
+/// reaches above and below the baseline with half of its line height's
+/// leading on each side, as a rich flow's strut.
+pub(crate) fn strut(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+    font: (&mut TextMeasurer, f32),
+) -> Result<(f32, f32), LayoutError> {
+    let (measurer, size) = font;
+    let (options, families) = layout::text_style(tree, env, id, size, measurer)?;
+    let options = layout::controls::control_line_height(tree, id, measurer, &families, options)?;
+    let (_, layout) = measurer
+        .shape_styled(" ", None, &families, options)
+        .map_err(LayoutError::text(id))?;
+    let run = layout
+        .lines()
+        .next()
+        .and_then(|line| line.runs().next())
+        .ok_or(LayoutError::Unsupported(id))?;
+    // The element's own line height, as `Vertical::owned` takes a span's:
+    // a lone space's run metrics need not carry it.
+    let vertical = Vertical::owned_by(&run, Some(&options.line_height.unwrap_or_default()));
+    Ok((vertical.above, vertical.below))
 }
 
 pub(crate) fn inline_tag(tag: Tag) -> bool {

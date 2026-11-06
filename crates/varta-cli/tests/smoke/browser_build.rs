@@ -221,6 +221,64 @@ fn browser_resource_inputs_are_pinned_and_invalid_paths_fail_before_output() {
     }
 }
 
+#[test]
+fn packaged_images_reach_the_resource_section_and_the_browser_bundle() {
+    let png = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240,
+        31, 0, 5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    let packaged = project("export function main():void{console.log(1);}");
+    fs::create_dir(packaged.0.join("images")).unwrap();
+    fs::write(packaged.0.join("images/red.png"), png).unwrap();
+    packaged.configure(
+        "images",
+        serde_json::json!({"icons/red.png":"images/red.png"}),
+    );
+    // The portable build writes the resource section beside the Wasm, and
+    // the runtime validates it with the artifact.
+    let built = packaged.command(&["build"]);
+    assert!(built.status.success(), "{}", combined(&built));
+    let section = fs::read(packaged.0.join("dist/app.resources")).unwrap();
+    assert!(section.windows(png.len()).any(|window| window == png));
+    let native = packaged.command(&["run", "dist/app.wasm"]);
+    assert!(native.status.success(), "{}", combined(&native));
+    // The browser bundle carries the same image under the same name.
+    let built = packaged.command(&["build", "--target", "browser"]);
+    assert!(built.status.success(), "{}", combined(&built));
+    assert_eq!(
+        fs::read(packaged.0.join("dist/web/varta-resource-0.png")).unwrap(),
+        png
+    );
+    // `browser.resources` beside `images` would be a browser-only image.
+    packaged.configure(
+        "browser",
+        serde_json::json!({"resources":{"other.png":"images/red.png"}}),
+    );
+    let refused = packaged.command(&["build", "--target", "browser"]);
+    assert!(!refused.status.success());
+    assert!(
+        combined(&refused).contains("images and browser.resources"),
+        "{}",
+        combined(&refused)
+    );
+    // An animated image is refused when the project is packaged.
+    let animated = project("export function main():void{}");
+    fs::create_dir(animated.0.join("images")).unwrap();
+    let mut bytes = png.to_vec();
+    bytes[37..41].copy_from_slice(b"acTL");
+    fs::write(animated.0.join("images/a.png"), bytes).unwrap();
+    animated.configure("images", serde_json::json!({"a.png":"images/a.png"}));
+    let refused = animated.command(&["build"]);
+    assert!(!refused.status.success());
+    assert!(
+        combined(&refused).contains("animated"),
+        "{}",
+        combined(&refused)
+    );
+    assert!(!animated.0.join("dist").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn browser_resource_loader_rejects_leaf_and_directory_symlinks() {

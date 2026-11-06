@@ -38,6 +38,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
 # CPU fallback for native view rendering, with no PNG or SIMD dependencies.
 tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", "simd"] }
+# MIT OR Apache-2.0: the PNG decoder of the native view renderer's packaged
+# images (`varta_view::ImageSet`), the format the browser bundle admits. The
+# image-rs reference decoder in safe Rust (it forbids unsafe code); its
+# inflate crates (fdeflate, miniz_oxide) are pure Rust. The decoder's own
+# allocation limit is set from the view image limits.
+png = "=0.17.16"
 # Font outlines for the CPU text renderer; already used transitively by Parley.
 skrifa = "=0.44.0"
 # Unicode grapheme boundaries for safe native text editing.

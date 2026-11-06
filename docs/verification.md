@@ -779,6 +779,26 @@ for scale in 1 1.5 2 3; do
 done
 ```
 
+Native images (`img`) are compared with Chrome on the probe's own PNG bytes:
+geometry, hits, image roles and names, and pixels of the viewport and of
+each image's box. Image sampling depends on the device scale (levels of
+detail, fractional edges), so all four scales run:
+
+```sh
+cargo test -p varta-common --lib --locked view::images
+cargo test -p varta-artifact --lib --locked resources::
+cargo test -p varta-view --lib --locked image::
+cargo test -p varta-view --lib --locked layout::replaced
+cargo test -p varta-project --lib --locked image_tests
+cargo test -p varta-desktop --test shell --locked image
+cargo test -p varta-desktop --test binaries --locked corrupt_packaged_image
+cargo test -p varta --test smoke --locked packaged_images
+for scale in 1 1.5 2 3; do
+  cargo run -p varta-view --example native_image_probe --locked -- "$scale" > "target/native-images-$scale.json"
+  node scripts/test-native-images.mjs "target/native-images-$scale.json"
+done
+```
+
 The Linux fontconfig lookups run on Linux with the desktop tests. On macOS
 they can be exercised against Homebrew fontconfig: the crate opens the Linux
 soname, so alias it in an ignored directory first.

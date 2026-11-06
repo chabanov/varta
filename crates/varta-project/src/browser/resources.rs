@@ -14,11 +14,11 @@ const MAX_NAME_BYTES: usize = 1024;
 /// Immutable checked PNG resource, independent of any source filesystem path.
 /// Browser decoding still verifies the complete image before guest execution.
 pub struct BrowserResource {
-    pub(super) name: String,
+    pub(crate) name: String,
     pub(super) bytes: Vec<u8>,
     pub(super) media_type: &'static str,
     pub(super) extension: &'static str,
-    pub(super) font: bool,
+    pub(crate) font: bool,
     /// The descriptors of a face from the artifact's resource section
     /// (configuration `fonts`); `None` for images and `browser.fonts` faces.
     pub(super) packaged: Option<PackagedFace>,
@@ -197,7 +197,7 @@ pub(crate) fn load(
     config: &crate::VartaConfig,
     root: &std::path::Path,
 ) -> Result<Vec<BrowserResource>> {
-    if config.browser.is_none() && config.fonts.is_empty() {
+    if config.browser.is_none() && config.fonts.is_empty() && config.images.is_empty() {
         return Ok(Vec::new());
     }
     let root = root.canonicalize()?;
@@ -211,9 +211,10 @@ pub(crate) fn load_with_loader(
     loader: &crate::modules::SourceLoader,
 ) -> Result<Vec<BrowserResource>> {
     let root = root.canonicalize()?;
-    // The configuration's `fonts` are the artifact's resource section: the
-    // same validated faces the native shell loads, never a second reading.
-    let mut resources = packaged_faces(&crate::artifact::resources_with_loader(
+    // The configuration's `fonts` and `images` are the artifact's resource
+    // section: the same validated faces and images the native shell loads,
+    // never a second reading.
+    let mut resources = packaged(&crate::artifact::resources_with_loader(
         config, &root, loader,
     )?)?;
     let Some(browser) = &config.browser else {
@@ -245,13 +246,20 @@ pub(crate) fn load_with_loader(
     Ok(resources)
 }
 
-/// Browser resources for every face of a validated resource section, in its
-/// canonical order (the first family is the default family).
-pub(crate) fn packaged_faces(section: &Resources) -> Result<Vec<BrowserResource>> {
+/// Browser resources for every face and image of a validated resource
+/// section, in its canonical order (the first family is the default family).
+/// An image keeps its name: the guest's `src` names it as natively.
+pub(crate) fn packaged(section: &Resources) -> Result<Vec<BrowserResource>> {
     section
         .fonts()
         .iter()
         .map(BrowserResource::packaged)
+        .chain(
+            section
+                .images()
+                .iter()
+                .map(|image| BrowserResource::png(&image.name, image.data.clone())),
+        )
         .collect()
 }
 

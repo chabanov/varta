@@ -258,6 +258,9 @@ pub(crate) struct Tree {
     pub modals: Vec<Modal>,
     /// The animation clock and running CSS transitions.
     pub animations: crate::transition::Animations,
+    /// The host's packaged images: what an `img` may name and draws. With
+    /// none, no `img` is laid out.
+    pub images: crate::image::Images,
 }
 
 /// A modal dialog in the top layer and the element focused before it was
@@ -291,6 +294,7 @@ impl Default for Tree {
             pending_requests: BTreeSet::new(),
             modals: Vec::new(),
             animations: crate::transition::Animations::default(),
+            images: crate::image::Images::default(),
         }
     }
 }
@@ -1345,6 +1349,12 @@ impl Apply<'_, '_, '_> {
         };
         if !valid {
             return Err(self.fail(Violation::InvalidAttributeValue(attribute.name())));
+        }
+        if attribute == Attribute::Src
+            && let Some(images) = &self.tree.images.0
+            && !images.contains(value)
+        {
+            return Err(self.fail(Violation::UnpackagedImage(value.into())));
         }
         let element = self.element(node)?;
         let changed = element.attributes.get(&attribute).map(String::as_str) != Some(value);

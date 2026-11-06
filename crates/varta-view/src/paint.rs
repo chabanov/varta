@@ -7,6 +7,7 @@ mod corner_clip;
 pub(crate) mod corners;
 mod curve_region;
 mod groups;
+mod image;
 mod inline_decor;
 mod inline_groups;
 mod inline_outline;
@@ -543,6 +544,7 @@ impl Surface<'_> {
             Primitive::Rect(rect) => *rect,
             Primitive::Path(path, _) => path.bounds(),
             Primitive::Border(border) => border.path.bounds(),
+            Primitive::Image(image) => image.rect,
             Primitive::BeginGroup { .. } | Primitive::EndGroup => {
                 unreachable!("group markers are recorded by scope")
             }
@@ -2517,7 +2519,13 @@ fn clip_scopes(
         if let Some(clip) = &surface.active_clip {
             scopes.children.insert(id, clip.clone());
         }
-        if matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select) && !radii.is_square() {
+        // A replaced image's content is clipped by its content-box curve
+        // whatever its `overflow` (CSS Backgrounds 3 §5.3), as a control's.
+        if matches!(
+            element.tag,
+            Tag::Input | Tag::Textarea | Tag::Select | Tag::Img
+        ) && !radii.is_square()
+        {
             let content = bounds.content;
             let insets = [
                 content.y - bounds.rect.y,
@@ -2896,6 +2904,14 @@ fn rasterize_inner_scoped(
                     scrolls.insert(id, scroll);
                 }
                 text_hits.insert(id, hit);
+            } else if element.tag == Tag::Img {
+                // The content scope differs from the element's own scope
+                // exactly when its content-box curve was pushed.
+                let rounded = !crate::render::clips::same(
+                    &scopes.content.get(&id).cloned(),
+                    &scopes.own.get(&id).cloned(),
+                );
+                image::paint(&mut pixmap, tree, id, (geometry[&id], rounded))?;
             }
             pixmap.active_clip = scopes.children.get(&id).cloned();
             if let Some(frame) = flows.get(&id) {
@@ -2967,11 +2983,13 @@ fn rasterize_inner_scoped(
             .transpose()?
             .unwrap_or(1.0);
         if phase == order::Phase::Enter
-            && (matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
-                || node.parent.is_some_and(|parent| {
-                    tree.computed_property(parent, &env, CssProperty::Display)
-                        .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"))
-                }))
+            && (matches!(
+                element.tag,
+                Tag::Input | Tag::Textarea | Tag::Select | Tag::Img
+            ) || node.parent.is_some_and(|parent| {
+                tree.computed_property(parent, &env, CssProperty::Display)
+                    .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"))
+            }))
         {
             pending.atomic(id);
             continue;
@@ -3170,7 +3188,10 @@ fn rasterize_inner_scoped(
         }
         if flows.contains_key(&id)
             || markers.contains_key(&id)
-            || matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
+            || matches!(
+                element.tag,
+                Tag::Input | Tag::Textarea | Tag::Select | Tag::Img
+            )
         {
             pending.content(id);
         }

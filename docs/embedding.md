@@ -81,7 +81,12 @@ formatting, BigInt) are not specified here at the bit level; see
   family, including the user-agent `monospace` of `pre` and `code`, the first
   family as the default, inherited by form controls, no synthesized bold or
   italic) or refuse the artifact; it MUST NOT silently substitute its own
-  fonts.
+  fonts. Section version 2 adds the application's packaged PNG images
+  ([format](architecture.md#packaged-images-section-version-2)); a host that
+  renders views MUST validate and decode them before guest code runs, refuse a
+  batch whose `img` names another image, and draw them as the reference hosts
+  do ([native images](architecture.md#native-images-img)), or refuse the
+  artifact.
 - **Host ceiling** (optional): a policy owned by the embedder, never by the
   package. It uses the [manifest](#manifest) schema with its defaults, so the
   smallest valid ceiling is `{"capabilities":[]}` (deny everything). Its

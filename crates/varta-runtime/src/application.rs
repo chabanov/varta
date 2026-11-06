@@ -68,6 +68,7 @@ pub struct ViewLayout {
     pub(crate) dark: Option<bool>,
     pub(crate) root_font_size: Option<f64>,
     pub(crate) scrollbars: varta_view::Scrollbars,
+    pub(crate) images: Option<std::sync::Arc<varta_view::ImageSet>>,
 }
 
 impl ViewLayout {
@@ -86,7 +87,17 @@ impl ViewLayout {
             dark: None,
             root_font_size: None,
             scrollbars: varta_view::Scrollbars::default(),
+            images: None,
         })
+    }
+
+    /// Give the view the application's decoded packaged images before the
+    /// first guest turn: what its `img` elements may name and draw
+    /// ([`varta_view::View::set_images`]).
+    #[must_use]
+    pub fn with_images(mut self, images: std::sync::Arc<varta_view::ImageSet>) -> Self {
+        self.images = Some(images);
+        self
     }
 
     /// Set the initial system color scheme before the first guest turn.

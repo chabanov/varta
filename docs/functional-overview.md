@@ -145,7 +145,7 @@ unrestricted browser DOM in guest code.
 | Part | Implemented native surface |
 | --- | --- |
 | Structure/layout | Block/flex/grid, dimensions and constraints, margins/padding/gaps, admitted positioning/z-index, inline shaping/line fragments, headings/lists/pre/labels |
-| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, retained drawing/damage and mixed border colors |
+| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, packaged PNG images (`img`), retained drawing/damage and mixed border colors |
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
@@ -157,8 +157,13 @@ The native scope still has concrete gaps:
 
 - Controls need admitted block/flex/grid placement; arbitrary atomic inline
   control layout and mixed block/inline formatting are not complete.
-- Native `<img>` is not admitted by the current layout path. Browser bundles
-  support checked static PNG resources; that does not add native image painting.
+- Native `<img>` draws packaged static PNG images (the configuration's
+  `images`, the same files the browser bundle carries) as a block-level box,
+  a flex/grid item, a positioned box or alone on a line, with Chrome's
+  replaced sizing and sampling. An image inline with text or inside an inline
+  element, `object-fit`/`aspect-ratio`, other formats, animated and
+  colour-managed images are refused, and the optional GPU backend presents
+  frames with images through its software fallback.
 - General transforms/scaling, scrollable overflow from translated boxes and
   visual native scrollbar painting remain unfinished.
 - OS glyph fallback and wider real-font typography remain open. Some ordinary
@@ -172,7 +177,8 @@ Contracts: [native controls](architecture.md#native-control-defaults),
 [preserved whitespace](architecture.md#native-preserved-white-space),
 [dialogs](architecture.md#native-modal-dialogs-top-layer),
 [transitions](architecture.md#native-css-transitions),
-[transforms](architecture.md#native-css-transforms) and
+[transforms](architecture.md#native-css-transforms),
+[images](architecture.md#native-images-img) and
 [the native shell](architecture.md#native-shell-varta-shell).
 
 ## GPU and application graphics
