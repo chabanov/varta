@@ -94,7 +94,14 @@ impl Lower<'_> {
                 if old.ty.is_none() && self.core.undefined_checked.contains(name) {
                     self.optional_index(init);
                 }
-                if old.ty.is_none() && self.types.profile.literal_types() {
+                if old.ty.is_none()
+                    && readonly
+                    && let Some(ty) = type_level::const_type(init, self.types)
+                {
+                    // `as const` (v38 `type_level`): readonly tuples and
+                    // records of literal types, as in TypeScript.
+                    self.expr_expected(init, Some(ty))?
+                } else if old.ty.is_none() && self.types.profile.literal_types() {
                     // An inferred binding keeps a literal-typed initializer's type.
                     self.expr_preserving(init)?
                 } else {
@@ -127,6 +134,16 @@ impl Lower<'_> {
                 return Err(unsupported(
                     "uninitialized variable without an undefined-capable let annotation",
                 ));
+            };
+            // V38 (`type_level`): TypeScript's declaration types of an
+            // unannotated binding: a `const` of a literal has the literal
+            // type, a `let`/`var` widens a fresh literal type.
+            let value = match (old.ty, init) {
+                (None, Some(init)) => {
+                    let constant = declaration.kind == ast::VarDeclKind::Const;
+                    self.declaration_type(&old, init, value, constant)
+                }
+                _ => value,
             };
             value_type(value.ty).map_err(|e| self.source.locate(e, value.span))?;
             if old.ty.is_some_and(|ty| ty != value.ty) {

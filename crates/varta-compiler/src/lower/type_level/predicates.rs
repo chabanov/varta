@@ -1,0 +1,277 @@
+//! Type predicates `x is T`, assertion signatures `asserts x is T` and
+//! `asserts x` (TypeScript Handbook, Using Type Predicates; Assertion
+//! Functions). A predicate function returns `boolean`, an assertion
+//! function `void`; a call guarding a branch (or, for an assertion, the
+//! call statement) narrows the argument binding.
+//!
+//! TypeScript trusts a predicate's body. Varta's narrowed reads must stay
+//! memory-safe even when a predicate lies, so a binding narrowed by a
+//! predicate is read through a run-time member test (`TypeError` when it
+//! holds another member) whenever the narrowed type is not already checked
+//! by its value tag. Narrowing a non-union class instance to a subclass or
+//! an `unknown` value to an object type has no checked read and is not
+//! applied (the binding keeps its type).
+use super::*;
+
+#[derive(Clone)]
+pub(super) struct Predicate {
+    /// The guarded parameter position; `None` for `this`.
+    parameter: Option<usize>,
+    /// The asserted type; `None` for `asserts x` (truthiness).
+    ty: Option<Type>,
+    asserts: bool,
+}
+
+/// The result type of a predicate signature.
+pub(super) fn result(predicate: &ast::TsTypePredicate, types: &mut ir::ValueTypes) -> Result<Type> {
+    if let Some(annotation) = &predicate.type_ann {
+        keyword_type(&annotation.type_ann, types)?;
+    }
+    Ok(if predicate.asserts {
+        Type::Void
+    } else {
+        Type::Boolean
+    })
+}
+
+/// Record the predicate of `declaration` at its function index.
+pub(super) fn note(
+    declaration: &ast::FnDecl,
+    signature: &Signature,
+    types: &mut ir::ValueTypes,
+) -> Result<()> {
+    if !types.profile.type_level() {
+        return Ok(());
+    }
+    let Some(annotation) = &declaration.function.return_type else {
+        return Ok(());
+    };
+    let ast::TsType::TsTypePredicate(predicate) = &*annotation.type_ann else {
+        return Ok(());
+    };
+    let parameter = match &predicate.param_name {
+        ast::TsThisTypeOrIdent::TsThisType(_) => None,
+        ast::TsThisTypeOrIdent::Ident(id) => Some(
+            signature
+                .names
+                .iter()
+                .position(|name| name.as_deref() == Some(id.sym.as_ref()))
+                .ok_or_else(|| {
+                    type_error(format!(
+                        "cannot find parameter '{}' of the type predicate",
+                        id.sym
+                    ))
+                })?,
+        ),
+    };
+    let ty = match &predicate.type_ann {
+        Some(annotation) => Some(keyword_type(&annotation.type_ann, types)?),
+        None => None,
+    };
+    if let (Some(at), Some(ty)) = (parameter, ty)
+        && !extends(ty, signature.params[at], types)
+        && !extends(signature.params[at], ty, types)
+        && !unions::members(signature.params[at], types)
+            .iter()
+            .any(|member| extends(*member, ty, types) || extends(ty, *member, types))
+    {
+        return Err(type_error(format!(
+            "a type predicate's type must be assignable to its parameter's type: {} is not assignable to {}",
+            subtyping::describe(ty, types),
+            subtyping::describe(signature.params[at], types)
+        )));
+    }
+    types.type_level.predicates.insert(
+        signature.index,
+        Predicate {
+            parameter,
+            ty,
+            asserts: predicate.asserts,
+        },
+    );
+    Ok(())
+}
+
+/// What a predicate keeps of `current` (`positive`) or excludes from it.
+fn narrowed(
+    current: Type,
+    target: Type,
+    positive: bool,
+    types: &mut ir::ValueTypes,
+) -> Option<Vec<Type>> {
+    if current == Type::Unknown {
+        let primitive = matches!(
+            target,
+            Type::String
+                | Type::Float64
+                | Type::Number
+                | Type::Boolean
+                | Type::BigInt
+                | Type::Null
+                | Type::Undefined
+        );
+        return primitive
+            .then(|| unknown::refine(references::Guard::Exact(target), positive, types))
+            .flatten();
+    }
+    let members = unions::members(current, types);
+    if members.len() <= 1 {
+        // A non-union keeps its type, or is excluded entirely.
+        return match (extends(current, target, types), positive) {
+            (true, false) => Some(Vec::new()),
+            _ => None,
+        };
+    }
+    let mut kept = Vec::new();
+    for member in members {
+        if extends(member, target, types) {
+            if positive {
+                kept.push(member);
+            }
+        } else if !positive {
+            kept.push(member);
+        } else if extends(target, member, types) && unions::members(target, types).len() == 1 {
+            // `x: string | number` narrowed by `x is 'a'`.
+            kept.push(target);
+        }
+    }
+    Some(kept)
+}
+
+impl Lower<'_> {
+    /// The predicate of a call expression, with its argument expressions.
+    fn call_predicate<'a>(&self, test: &'a ast::Expr) -> Option<(Predicate, &'a ast::CallExpr)> {
+        let ast::Expr::Call(call) = stmt::unparen(test) else {
+            return None;
+        };
+        let ast::Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let index = match stmt::unparen(callee) {
+            ast::Expr::Ident(id) if self.binding(id.sym.as_ref()).is_err() => {
+                match self.functions.get(id.sym.as_ref()) {
+                    Some(signature) => Some(signature.index),
+                    None => self.generic_call_index(call),
+                }
+            }
+            _ => None,
+        }?;
+        let predicate = self.types.type_level.predicates.get(&index)?.clone();
+        Some((predicate, call))
+    }
+
+    fn generic_call_index(&self, call: &ast::CallExpr) -> Option<usize> {
+        let module = named::current(self.types);
+        self.types
+            .type_level
+            .calls
+            .get(&(module, call.span.lo.0, call.span.hi.0))
+            .copied()
+    }
+
+    /// Narrow the guarded argument of a predicate call used as a condition.
+    pub(in crate::lower) fn predicate_guard(
+        &mut self,
+        test: &ast::Expr,
+        yes: bool,
+    ) -> Result<bool> {
+        if !self.types.profile.type_level() {
+            return Ok(false);
+        }
+        let Some((predicate, call)) = self.call_predicate(test) else {
+            return Ok(false);
+        };
+        if predicate.asserts {
+            return Ok(false);
+        }
+        self.apply_predicate(&predicate, call, yes)?;
+        Ok(true)
+    }
+
+    /// After an assertion call statement, narrow its asserted argument.
+    pub(in crate::lower) fn assertion_effect(&mut self, statement: &ast::Expr) -> Result<()> {
+        if !self.types.profile.type_level() {
+            return Ok(());
+        }
+        let Some((predicate, call)) = self.call_predicate(statement) else {
+            return Ok(());
+        };
+        if predicate.asserts {
+            self.apply_predicate(&predicate, call, true)?;
+        }
+        Ok(())
+    }
+
+    fn apply_predicate(
+        &mut self,
+        predicate: &Predicate,
+        call: &ast::CallExpr,
+        yes: bool,
+    ) -> Result<()> {
+        let Some(at) = predicate.parameter else {
+            return Ok(());
+        };
+        let Some(argument) = call.args.get(at) else {
+            return Ok(());
+        };
+        if argument.spread.is_some() {
+            return Ok(());
+        }
+        let ast::Expr::Ident(id) = stmt::unparen(&argument.expr) else {
+            return Ok(());
+        };
+        let name = id.sym.to_string();
+        let Some(target) = predicate.ty else {
+            // `asserts x`: x is truthy afterwards.
+            return self.refine(&name, references::Guard::Truth(yes), true);
+        };
+        let identity = self
+            .binding(&name)
+            .or_else(|_| self.resolve_binding(&name))
+            .ok()
+            .map(|binding| binding.identity);
+        self.refine_with(&name, |current, types| {
+            narrowed(current, target, yes, types)
+        })?;
+        if let Some(identity) = identity {
+            self.types.type_level.checked.insert(identity);
+        }
+        Ok(())
+    }
+
+    /// Whether reads of the binding `identity` narrowed to `narrow` must be
+    /// tested at run time (a predicate narrowed it to a reference member).
+    pub(in crate::lower) fn predicate_checked(&self, identity: (usize, u32), narrow: Type) -> bool {
+        self.types.profile.type_level()
+            && self.types.type_level.checked.contains(&identity)
+            && unions::members(narrow, self.types).iter().any(|member| {
+                !matches!(
+                    member,
+                    Type::String
+                        | Type::Float64
+                        | Type::Number
+                        | Type::Boolean
+                        | Type::BigInt
+                        | Type::Null
+                        | Type::Undefined
+                        | Type::Literal(..)
+                        | Type::Never
+                )
+            })
+    }
+
+    /// A read of a predicate-narrowed binding: its member tested at run time.
+    pub(in crate::lower) fn predicate_read(&mut self, local: Expr, narrow: Type) -> Result<Expr> {
+        if !local.ty.is_cell() {
+            return Ok(Expr {
+                ty: narrow,
+                ..local
+            });
+        }
+        self.checked_narrow(
+            local,
+            narrow,
+            "value does not have the type its type predicate asserted",
+        )
+    }
+}

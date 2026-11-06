@@ -198,6 +198,7 @@ fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: 
             Type::Tuple(id) => types.tuples[id as usize]
                 .elements
                 .iter()
+                .chain(types.tuples[id as usize].rest.iter())
                 .any(|ty| child(*ty)),
             Type::Dictionary(id) => {
                 child(types.dictionaries[id as usize].value)

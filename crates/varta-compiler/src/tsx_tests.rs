@@ -398,3 +398,52 @@ fn composed_class_names_are_located() {
     );
     assert_eq!(diagnostic.range.start.line, 1);
 }
+
+/// K9 A: TypeScript's literal inference makes `const size = "sm"` the
+/// literal type `"sm"`, so a class composed from holes of finite literal
+/// types is enumerated from the typed program instead of being refused; a
+/// widened `let` stays a run-time composition, and v37 keeps the syntactic
+/// rule.
+#[test]
+fn literal_typed_class_compositions_are_enumerated() {
+    let program = r#"type Tone = "red" | "blue";
+function badge(tone: Tone): void {
+  const size = "sm";
+  const weight = 600;
+  View.mount(<div class={`text-${size} font-${weight} bg-${tone}-500`}>x</div>);
+}
+export function main(): void {
+  badge("red");
+}"#;
+    let result = scan(program, &[]);
+    assert!(result.compositions.is_empty(), "{:?}", result.compositions);
+    for token in ["text-sm", "font-600", "bg-red-500", "bg-blue-500"] {
+        assert!(
+            result.tokens.contains(token),
+            "{token}: {:?}",
+            result.tokens
+        );
+    }
+    let widened = scan(
+        r#"export function main(): void {
+  let size = "sm";
+  size = "lg";
+  View.mount(<div class={`text-${size}`}>x</div>);
+}"#,
+        &[],
+    );
+    assert_eq!(widened.compositions.len(), 1);
+    let v37 = crate::scan_classes_with_profile(
+        ModuleSource {
+            path: "app.tsx".into(),
+            text: program.into(),
+        },
+        &Modules(&[]),
+        V37,
+    );
+    // V37 has no literal inference: the composition stays a diagnostic
+    // (or the profile refuses the TSX module outright).
+    if let Ok(v37) = v37 {
+        assert!(!v37.compositions.is_empty());
+    }
+}

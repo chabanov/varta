@@ -1212,6 +1212,8 @@ mod strict_member_tests;
 #[cfg(test)]
 mod subtyping_tests;
 #[cfg(test)]
+mod type_level_tests;
+#[cfg(test)]
 mod unknown_json_tests;
 #[cfg(test)]
 mod unknown_tests;

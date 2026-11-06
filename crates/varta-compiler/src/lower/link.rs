@@ -55,6 +55,7 @@ pub(crate) fn lower(
             let exports = named::link_module(graph, path, module, &type_exports, &mut types)?;
             type_exports.insert(path.clone(), exports);
         }
+        type_level::register_values(module, unit, graph, &mut types);
         if profile.binary64()
             && let Some(item) = unit.ast.body.iter().find(|item| {
                 tools::is_declaration(item)
@@ -85,6 +86,7 @@ pub(crate) fn lower(
             }
             let name = declaration.ident.sym.to_string();
             let signature = signature::check(declaration, next, &unit.source, &mut types)
+                .and_then(|s| type_level::note_signature(declaration, &s, &mut types).map(|()| s))
                 .map_err(|e| unit.source.locate(e, declaration.ident.span))?;
             if path == &graph.entry && name == "main" {
                 // `async function main(): Promise<void>` (v34) runs its body

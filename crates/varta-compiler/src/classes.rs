@@ -15,7 +15,10 @@
 //! `"bg-" + tone`) exists only at run time, so no build-time generator can
 //! see it; such compositions in a class position (TSX `class`/`className`,
 //! `View.setClass`/`View.bindClass`) are reported as located diagnostics,
-//! which a host that generates styles turns into errors.
+//! which a host that generates styles turns into errors. Under v38 a
+//! template whose holes all have finite literal types (TypeScript's literal
+//! inference: `const size = "sm"`, a `"sm" | "lg"` parameter) is not a
+//! composition: the typed program enumerates its values.
 use crate::modules::{Graph, engine};
 use crate::{CompilerError, ModuleLoader, ModuleSource};
 use std::collections::BTreeSet;
@@ -72,8 +75,17 @@ pub fn scan_classes_with_profile(
     profile: varta_common::language::LanguageProfile,
 ) -> Result<ClassScan, CompilerError> {
     let graph = Graph::load_with_profile(entry, loader, profile)?;
+    // V38 (`type_level`): a composition whose holes have finite literal
+    // types (`` `text-${size}` `` with `const size = "sm"`) is enumerated
+    // from the typed program; a program that does not lower keeps every
+    // composition a diagnostic.
+    let typed = if profile.type_level() {
+        crate::lower::lower(&graph, profile).ok()
+    } else {
+        None
+    };
     let mut scan = ClassScan::default();
-    for path in &graph.order {
+    for (module, path) in graph.order.iter().enumerate() {
         if engine::is_prelude(path) {
             continue;
         }
@@ -94,6 +106,14 @@ pub fn scan_classes_with_profile(
         spans.sort_by_key(|span| (span.lo, span.hi));
         spans.dedup();
         for span in spans {
+            if let Some(values) = typed.as_ref().and_then(|program| {
+                crate::lower::type_level::composition_values(&program.types, module, span)
+            }) {
+                for value in values {
+                    scan.add(value)?;
+                }
+                continue;
+            }
             scan.compositions.push(unit.source.locate(
                 CompilerError::Type(
                     "a class name composed at run time cannot be seen by the build-time style generator; write each class name as a complete string literal (for example `cond ? \"btn-lg\" : \"btn-sm\"`) or list it with `@source inline(…)`".into(),

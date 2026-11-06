@@ -5824,6 +5824,60 @@ Hand-written `{ next() }` iterators, `Symbol()` values and destructuring of
 generators are not supported, and a hole in a `number[]` throws `TypeError`
 when it is spread, as in `for...of`.
 
+#### Type-level TypeScript (opt-in v38)
+
+Conditional, mapped and template literal types, every utility type, type
+queries, predicates and literal inference are evaluated at compile time
+([contract](architecture.md#type-level-type_level)); the program below prints
+what Node prints.
+
+```ts
+interface User { readonly id: number; name: string; email?: string }
+type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
+type ElementOf<T> = T extends readonly (infer E)[] ? E : never;
+type Reverse<T extends unknown[]> = T extends [infer H, ...infer R] ? [...Reverse<R>, H] : [];
+const defaults = { width: 640, height: 480 };
+
+function isString(value: string | number): value is string {
+  return typeof value === 'string';
+}
+function assertDefined(value: number | undefined): asserts value is number {
+  if (value === undefined) throw new TypeError('missing');
+}
+class Builder {
+  parts: string[] = [];
+  add(part: string): this { this.parts.push(part); return this; }
+}
+class Html extends Builder {
+  render(): string { return this.parts.join(''); }
+}
+
+export function main(): void {
+  const user: User = { id: 1, name: 'Ada' };
+  const get: Getters<User> = { getId: () => user.id, getName: () => user.name };
+  const first: ElementOf<string[]> = 'x';
+  const reversed: Reverse<[1, 2, 3]> = [3, 2, 1];
+  const size: typeof defaults = { width: 800, height: 600 };
+  const picked: Pick<User, 'name'> = { name: get.getName() };
+  const mode = 'dark';                       // type 'dark'
+  let copy = mode;                           // widened to string
+  copy = 'light';
+  const config = { retries: 3 } satisfies Record<string, number>;
+  const value: string | number = 'v';
+  if (isString(value)) console.log(value.toUpperCase());
+  const maybe: number | undefined = config.retries;
+  assertDefined(maybe);
+  console.log(`${first} ${reversed.join()} ${size.width} ${picked.name} ${copy} ${maybe + 1}`);
+  console.log(new Html().add('<b>').add('</b>').render());
+}
+```
+
+Refused by name: `unique symbol`, pattern template types such as
+`` `on${string}` `` outside a conditional `extends` clause, intersections of
+function types or of a primitive with an object type, overloaded call
+signatures, mapped types and `keyof` over class instance types, and `typeof`
+of a function-local binding.
+
 #### Web bytes (opt-in v38)
 
 Response bodies are bytes, as in browsers and Node: a reader yields
@@ -6196,9 +6250,14 @@ same bytes. Build a class name from complete literals; a name composed at
 run time is a compile error, because no build-time generator can see it:
 
 ```tsx
-<p class={`text-${size}`}>x</p>                          // error: composed class name
+<p class={`text-${size}`}>x</p>                          // error when size: string
 <p class={size === 'lg' ? 'text-lg' : 'text-sm'}>x</p>    // fine
 ```
+
+Under v38 a template whose holes have finite literal types is enumerated
+instead: with `const size = 'sm'` (literal type `'sm'`) or a parameter
+`size: 'sm' | 'lg'`, `` `text-${size}` `` contributes `text-sm` (and
+`text-lg`).
 
 `@plugin` and `@config` (JavaScript) and `@source "path"` (file scanning)
 are rejected; list extra classes with `@source inline(…)`. Until the engine

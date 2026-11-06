@@ -11599,6 +11599,161 @@ keys below.
   `Array.from` with a map function or an array-like, and `Iterable<T>`
   value annotations.
 
+#### Type level (`type_level`)
+
+K9 track A (2026-11-06), under the selector `LanguageProfile::type_level()`:
+TypeScript's type-level language, with tsc 5.x as the reference and the
+[TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/) as the
+cited source. Varta monomorphizes: every type parameter is bound to a
+resolved type before a type expression is lowered, so each operator below is
+evaluated at compile time over resolved types and yields an existing closed
+type (record, dictionary, literal set, tuple, union, function type). No host
+import, value tag, value layout, frame catalog or ABI changes; nothing generic
+or deferred reaches emission. V1–v37 keep rejecting every form below with
+their earlier diagnostics. A construct without a sound static layout is
+refused with an `unsupported …` diagnostic that names it (list below).
+
+- **Conditional types** `C extends E ? T : F` ([Conditional
+  Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)):
+  the check type is resolved, so only the selected branch is evaluated. A
+  naked type parameter bound to a union distributes over its members (the
+  values of a literal set and `true | false` of `boolean` included); `never`
+  yields `never`; `[T] extends [U]` does not distribute. `infer X` and
+  `infer X extends C` bind the matched part of the check type in array,
+  `Array`/`ReadonlyArray`, `Promise`/`PromiseLike`, tuple (one rest position,
+  `[infer H, ...infer R]`, `[...infer I, infer L]`), function and construct
+  (`(...args: infer P) => infer R`; parameters contravariant, `never[]`
+  accepts every list), object (`{ k: infer V }`) and template literal
+  patterns; two candidates of one name join into a union. The assignability
+  relation of the condition, of generic constraints and of predicates is
+  TypeScript's over closed types: unions distribute on the source, literal
+  sets are subsets of their base, tuples and arrays are covariant, object
+  types are structural with width subtyping and optional properties, a record
+  is assignable to a string index signature when every property is, function
+  types are contravariant in parameters and covariant in their result, `{}`
+  admits every non-nullish value and `object` the object kinds.
+- **Recursive aliases.** A generic alias may refer to itself with other type
+  arguments (`type Reverse<T> = T extends [infer H, ...infer R] ?
+  [...Reverse<R>, H] : []`), up to `type_level::MAX_TYPE_DEPTH` (64) nested
+  instantiations and evaluations; the same instantiation inside itself, and
+  non-generic cycles, keep the earlier rules.
+- **Mapped types** `{ [K in C as N]: V }` with `+/-readonly` and `+/-?`
+  ([Mapped Types](https://www.typescriptlang.org/docs/handbook/2/mapped-types.html)):
+  the key set must resolve to string or number literals (a closed record) or
+  to `string` (a dictionary); `K` is bound to each key's singleton literal.
+  Over `keyof T` the mapped type is homomorphic: it keeps each property's
+  optionality, maps a tuple element-wise (`K` is `"0"`, `"1"`, …) and an
+  array element-wise, distributes over a union bound to a naked `T` and maps
+  a primitive to itself. `?`/`+?` adds `undefined` to an optional property,
+  `-?` removes it; `readonly` modifiers are accepted and, like `Readonly<T>`,
+  binding-level intent (the closed type is the same). An `as` clause renames
+  or (`never`) drops keys; keys renamed onto one name union their values.
+- **Template literal types** and `Uppercase`/`Lowercase`/`Capitalize`/
+  `Uncapitalize` ([Template Literal
+  Types](https://www.typescriptlang.org/docs/handbook/2/template-literal-types.html)):
+  placeholders of string, number (ECMAScript `Number::toString`), boolean,
+  `null` and `undefined` literal sets expand to the string literal set of
+  every combination, at most `literals::MAX_LITERAL_MEMBERS`. The intrinsic
+  types map each member with JavaScript's `toUpperCase`/`toLowerCase` (the
+  first code unit for (Un)capitalize). As an `extends` pattern a template
+  matches string literals: a placeholder followed by text takes the text up
+  to its first occurrence, one followed by another placeholder one code unit,
+  the last the rest; `${string}` matches any text, `${number}` round-tripping
+  numeric text, and `infer N extends number` converts such text to its number
+  literal (TypeScript 4.8).
+- **Utility types** ([Utility
+  Types](https://www.typescriptlang.org/docs/handbook/utility-types.html)):
+  `Partial`, `Required`, `Readonly`, `Pick`, `Omit`, `Record`, `Exclude`,
+  `Extract`, `NonNullable`, `ReturnType`, `Parameters` (optional parameters
+  are optional elements, a rest parameter the rest element),
+  `ConstructorParameters`, `InstanceType`, `ThisParameterType`,
+  `OmitThisParameter`, `Awaited`, `NoInfer` and the intrinsic string types,
+  each evaluated as its `lib.es5.d.ts` definition would be; `Partial` and
+  `Required` distribute over unions and apply to tuples and arrays. A module
+  declaration of the same name shadows the built-in.
+- **`keyof` and indexed access.** `keyof` of a record is its key literal set
+  (`never` when empty), of a dictionary `string | number`, of a union the
+  keys every member has, of `unknown` `never`. `T[K]` distributes over both
+  members: record properties, class data fields, tuple positions (`"0"` or
+  `0`), `T[number]` of tuples and arrays, `["length"]` of a tuple (the number
+  literal set of its admitted lengths), dictionary values and string
+  `length`/indexes. A computed read `obj[k]` whose key has a string literal
+  type of the record's fields has the precise type `T[K]` (the union of
+  those fields' types, read through a checked narrowing).
+- **Type queries.** `typeof x` gives module values a type-level identity: a
+  module constant is typed by its annotation or by TypeScript's declaration
+  type of its initializer (a `const` primitive literal keeps its literal
+  type; object and array literals widen theirs; `as const` keeps every
+  literal and makes readonly tuples; `as T` is `T`; a call of a module
+  function its result); a function by its signature; a class by its
+  constructor type. `typeof a.b` indexes the result, and queries follow value
+  imports.
+- **Intersections** ([Intersection
+  Types](https://www.typescriptlang.org/docs/handbook/2/objects.html#intersection-types)):
+  object types merge their properties (a property in both intersects its
+  types; it is optional only if optional in both), literal sets intersect
+  their base, disjoint primitives give `never`, `unknown` is the identity, a
+  union distributes, and a type assignable to the other is the result.
+- **Call and construct signatures, constructor types.** An object type or
+  interface whose only member is one call signature is that function type;
+  one construct signature, `new (…) => T` and `abstract new (…) => T` are a
+  construct type: a function type marked `construct` (`FunctionType::construct`),
+  physically the closure that constructs. A class named where a construct
+  type is expected (an annotated binding, an argument, `typeof C`, a generic
+  argument inferring from `typeof C`) becomes `(a0, …) => new C(a0, …)`;
+  only `new c(…)` invokes such a value (calling it is a type error).
+- **Tuples.** Named members, optional elements (`[name: string, age?:
+  number]`), one trailing rest element (`[number, ...number[]]`, stored in
+  `TupleType::rest`), the empty tuple `[]` (physically an empty array) and
+  variadic spreads of resolved tuples and arrays (`[...A, ...B]`), which
+  flatten at compile time.
+- **Type predicates and assertion functions.** A top-level or generic
+  function returning `x is T` returns `boolean`; `asserts x is T` and
+  `asserts x` return `void`. A call used as a condition narrows the argument
+  binding in each branch (union members assignable to `T` and the others;
+  a primitive `T` for `unknown`); an assertion call statement narrows it for
+  the rest of the block. TypeScript trusts a predicate's body; Varta reads a
+  predicate-narrowed binding holding a reference member through a run-time
+  member test that throws `TypeError` when the value holds another member,
+  so a lying predicate cannot confuse layouts.
+- **`satisfies`** (TypeScript 4.9): the expression keeps its own type when
+  that type is assignable to the target; otherwise the target is its
+  contextual type (literal properties, function literal parameters) and the
+  expression takes it. A failure is a type error naming both types.
+- **Polymorphic `this`.** `this` in a class method's signature is the class;
+  a method returning `this` has the receiver's class at each call (also in
+  call chains), and every return in its body must be `this`.
+- **`never` exhaustiveness.** Excluding the last value of a literal set
+  narrows to `never`, so a `default` clause or final `else` can assign the
+  discriminant to `never`.
+- **Literal inference** ([Literal
+  Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#literal-types)):
+  an unannotated `const` initialized by a string, number or boolean literal
+  has that literal type (a widening literal type); a `let`/`var` initialized
+  by a literal or by such a binding widens to the base primitive, while
+  annotated and `as const` literal types are kept; `x as const` gives readonly
+  tuples and records of literal types. A template literal whose holes all
+  have finite literal types records its values, so the [build-time Tailwind
+  scanner](#build-time-tailwind-stylesheets-k8-t1) enumerates
+  `` `text-${size}` `` instead of reporting a composition.
+
+Refused, each by name: `unique symbol` (no Symbol values in this profile),
+`import("…")` types, pattern template literal types outside an `extends`
+clause (`` `on${string}` ``), intrinsic string types over non-literal types,
+mapped types over class instance types and over `number`/symbol key sets,
+`keyof` of classes, arrays, tuples, primitives and `never`, intersections of
+function types (an overloaded value), of a primitive with an object type
+(branded primitives) and of object types whose shared property has no common
+type, overloaded call or construct signatures and callable objects with
+properties, generic call/construct signatures and constructor types, `typeof`
+of a function-local binding, of a generic function or class, and of an
+initializer whose type would need lowering, `infer` inside a union pattern
+or inside a declared generic type's arguments, `infer` over tuples with
+optional elements, tuple elements after a rest element, `this` types outside
+class member signatures, predicate narrowing of a non-union class instance to
+a subclass or of `unknown` to an object type (the binding keeps its type),
+and `this is T` method predicates (no narrowing).
+
 #### Bytes held by unknown (`byte_values`)
 
 Wave 3 of v38, selector `LanguageProfile::byte_values()` (owner decision of
@@ -15125,7 +15280,10 @@ configured stylesheet is never silently dropped.
 2. The module graph is loaded with the entry's text served as the empty
    sheet and scanned for class tokens (`varta_compiler::
    scan_classes_with_profile`, below). A class composed at run time is a
-   located `type_error` and stops the build.
+   located `type_error` and stops the build. Under v38 a template whose
+   holes all have finite literal types (`const size = "sm"`, a `"sm" |
+   "lg"` parameter; see [type level](#type-level-type_level)) is not a
+   composition: the scanner lowers the program and enumerates its values.
 3. The entry is compiled (`varta_tailwind::compile`) and built with the
    tokens plus its `@source inline(…)` safelist (`Compiler::build`).
 4. The generated stylesheet is served as the text of the entry's text

@@ -137,6 +137,15 @@ impl Lower<'_> {
             ast::Expr::OptChain(chain) if self.types.profile.function_fields() => {
                 self.optional_chain(chain)
             }
+            // K9 type level (v38): `satisfies`, class values of constructor
+            // types and `new` on such values.
+            ast::Expr::TsSatisfies(satisfies) if self.types.profile.type_level() => {
+                self.satisfies(satisfies, expected)
+            }
+            ast::Expr::Ident(id) if let Some(context) = self.constructor_context(id, expected) => {
+                self.class_constructor_value(id, context)
+            }
+            ast::Expr::New(new) if self.constructs_value(&new.callee) => self.construct_value(new),
             _ => self.expr_inner(expression),
         };
         if result.is_ok() {
@@ -294,6 +303,10 @@ impl Lower<'_> {
                         && narrow == Self::unknown_array_type(self.types)?
                     {
                         return self.unknown_array(local);
+                    }
+                    // A type predicate's narrowing is tested at run time (v38).
+                    if self.predicate_checked(binding.identity, narrow) {
+                        return self.predicate_read(local, narrow);
                     }
                     // A literal guard may refine a non-union local in place.
                     let retag =

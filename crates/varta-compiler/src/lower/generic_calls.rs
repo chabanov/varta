@@ -186,6 +186,28 @@ impl Inference {
             ast::TsType::TsUnionOrIntersectionType(
                 ast::TsUnionOrIntersectionType::TsUnionType(union),
             ) => self.union(union, actual, types, depth),
+            // `new (params) => T` against a constructor value (v38 `type_level`).
+            ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsConstructorType(
+                constructor,
+            )) => {
+                let Type::Function(id) = actual else {
+                    return Ok(());
+                };
+                let signature = types.functions[id as usize].clone();
+                for (parameter, ty) in constructor.params.iter().zip(signature.params) {
+                    if let ast::TsFnParam::Ident(binding) = parameter
+                        && let Some(annotation) = &binding.type_ann
+                    {
+                        self.unify(&annotation.type_ann, ty, types, depth + 1)?;
+                    }
+                }
+                self.unify(
+                    &constructor.type_ann.type_ann,
+                    signature.result,
+                    types,
+                    depth + 1,
+                )
+            }
             ast::TsType::TsFnOrConstructorType(ast::TsFnOrConstructorType::TsFnType(callback)) => {
                 let Type::Function(id) = actual else {
                     return Ok(());
@@ -465,6 +487,7 @@ impl Lower<'_> {
         };
         let signature = generics::instantiate(id, &args, self.next_function, self.types)
             .map_err(|e| self.source.locate(e, span))?;
+        type_level::note_call(self.types, span, signature.index);
         // An object literal typed on its own while it determined the value
         // type of a `Record<string, T>` parameter (v35) is copied into the
         // instantiated dictionary, keeping its key order.
@@ -571,6 +594,8 @@ impl Lower<'_> {
                 self.expr_expected(&arg.expr, Some(ty))?
             } else {
                 let hint = self.constraint_hint(function, &inference.bound, pattern);
+                // A class passed for a constructor type (v38): `typeof C`.
+                let hint = hint.or(self.class_value_hint(&arg.expr)?);
                 let value = self.expr_expected(&arg.expr, hint)?;
                 inference
                     .unify(pattern, value.ty, self.types, 0)
