@@ -375,6 +375,19 @@ impl<'a> Rewriter<'a> {
                     let span = member.span;
                     match &key {
                         Some(key) => match enumeration.members.iter().find(|(n, _)| n == key) {
+                            // A string member is nominal to its enum: `'x' as E`.
+                            Some((_, value @ Value::String(_))) => {
+                                let alias = ast::TsType::TsTypeRef(ast::TsTypeRef {
+                                    span,
+                                    type_name: ast::TsEntityName::Ident(self.renamed(&base, span)),
+                                    type_params: None,
+                                });
+                                *expr = ast::Expr::TsAs(ast::TsAsExpr {
+                                    span,
+                                    expr: Box::new(enums::literal(value, span)),
+                                    type_ann: Box::new(alias),
+                                });
+                            }
                             Some((_, value)) => *expr = enums::literal(value, span),
                             None => self.fail(
                                 type_error(format!(
@@ -480,7 +493,10 @@ impl<'a> Rewriter<'a> {
                 }
                 if let Some(enumeration) = &base.enumeration {
                     return match enumeration.members.iter().find(|(n, _)| *n == key) {
-                        Some((_, value)) => Some(TypeResolved::Literal(value.clone())),
+                        Some((_, value)) => Some(TypeResolved::Literal(
+                            value.clone(),
+                            enumeration.group.clone(),
+                        )),
                         None => {
                             self.fail(
                                 type_error(format!(
@@ -507,7 +523,8 @@ impl<'a> Rewriter<'a> {
 
 enum TypeResolved {
     Symbol(Symbol, String),
-    Literal(Value),
+    /// An enum member type, with its enum's nominal group.
+    Literal(Value, String),
 }
 
 impl super::Enum {
@@ -712,8 +729,12 @@ impl VisitMut for Rewriter<'_> {
         }
         if let ast::TsType::TsTypeRef(reference) = ty {
             match self.type_path(&reference.type_name) {
-                Some(TypeResolved::Literal(value)) => {
-                    *ty = enums::literal_type(&value, reference.span);
+                Some(TypeResolved::Literal(value, group)) => {
+                    let literal = enums::literal_type(&value, reference.span);
+                    *ty = match value {
+                        Value::String(_) => enums::marked(literal, &group, reference.span),
+                        Value::Number(_) => literal,
+                    };
                     return;
                 }
                 Some(TypeResolved::Symbol(symbol, original)) => {

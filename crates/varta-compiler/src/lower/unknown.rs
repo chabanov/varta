@@ -429,6 +429,16 @@ impl Lower<'_> {
             value
         };
         let source = value.ty;
+        // V38 (`declaration_forms`): `'x' as E` of a string enum member.
+        if self.types.profile.declaration_forms()
+            && let Some(member) = literals::retag(source, target, self.types)
+        {
+            let value = Expr {
+                ty: member,
+                ..value
+            };
+            return unions::widen(value, Some(target), self.types);
+        }
         if upcast(source, target, self.types) {
             return unions::widen(value, Some(target), self.types);
         }

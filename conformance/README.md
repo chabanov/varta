@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 103 feature rows and 173 cases:
-168 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 103 feature rows and 174 cases:
+169 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -472,3 +472,6 @@ of numeric, string and heterogeneous enum objects, `typeof` and `keyof
 typeof`) and `namespace-object` (a namespace object's keys, its use as a
 `typeof NS` argument and a nested namespace object), both matching Node.js
 v24.20.0.
+`enum-assignability` pins tsc 5's enum assignability (a `number` value to a
+numeric enum, nominal string enums, `'x' as E`); tsc accepts it and Node.js
+v24.20.0 prints the stored output.

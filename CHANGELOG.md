@@ -90,6 +90,10 @@
   in static methods, re-exports of enums, namespaces and classes with static
   fields, static fields of classes in namespaces and writes of imported
   static fields. Conformance: `static-block` passes.
+- V38 enum assignability as tsc 5 decides it (K9 B): any `number` value is
+  assignable to a numeric enum type (a numeric literal only if it is a
+  member), and string enum types are nominal; `E[k]` with a dynamic key stays
+  `string | undefined` (owner decision).
 - V38 enum and namespace objects (K9 B): a non-const enum or a namespace used
   as a value is a generated object with JavaScript's keys and order
   (`Object.keys(E)`, `f(NS)`, `typeof E`, `keyof typeof E`). Conformance: two

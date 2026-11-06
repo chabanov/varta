@@ -437,10 +437,11 @@ fn evaluate(
     if let Some(last) = object.last_mut() {
         *last = "object";
     }
+    let group = format!("{}{}", generated(&segments), super::module_hash(source));
     enums::evaluate(
         decl,
         name,
-        (generated(&segments), generated(&object)),
+        (generated(&segments), generated(&object), group),
         source,
         &lookup,
     )

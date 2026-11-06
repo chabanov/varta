@@ -41,6 +41,10 @@ use swc_ecma_visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// Generated names start with this prefix, which program code may not use.
 pub(crate) const PREFIX: &str = "__vartaDecl";
+/// The generated type reference `__vartaDeclEnum<T, "group">` of an enum
+/// type: `T`'s numeric literals accept any `number` and its string literals
+/// are nominal to the enum (`lower::literals::enum_type`).
+pub(crate) const ENUM_TYPE: &str = "__vartaDeclEnum";
 /// Separates the segments of a generated name.
 const SEPARATOR: char = '$';
 
@@ -92,6 +96,8 @@ pub(crate) struct Enum {
     /// The generated module constant that is the enum object of a non-const
     /// enum (its value when used as one: `Object.keys(E)`, `f(E)`).
     pub object: Option<String>,
+    /// The identity of the enum's nominal string type, unique in the graph.
+    pub group: String,
 }
 
 /// The exported and unexported members of a namespace, merged over all of
@@ -200,7 +206,9 @@ fn tag(module: &mut ast::Module, exports: Exports, source: &Source) -> Exports {
     impl Tag {
         fn name(&self, name: &str) -> String {
             match name.strip_prefix(PREFIX) {
-                Some(rest) if !rest.starts_with(&self.0) => format!("{PREFIX}{}{rest}", self.0),
+                Some(rest) if rest.starts_with(SEPARATOR) && !rest.starts_with(&self.0) => {
+                    format!("{PREFIX}{}{rest}", self.0)
+                }
                 _ => name.to_owned(),
             }
         }
@@ -212,12 +220,7 @@ fn tag(module: &mut ast::Module, exports: Exports, source: &Source) -> Exports {
             }
         }
     }
-    // FNV-1a of the module path: stable across runs and platforms.
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in source.file.name.to_string().bytes() {
-        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
-    }
-    let mut tag = Tag(format!("{SEPARATOR}m{hash:016x}"));
+    let mut tag = Tag(format!("{SEPARATOR}m{}", module_hash(source)));
     module.visit_mut_with(&mut tag);
     let symbols = exports
         .symbols
@@ -225,6 +228,15 @@ fn tag(module: &mut ast::Module, exports: Exports, source: &Source) -> Exports {
         .map(|(name, symbol)| (name.clone(), mapped(symbol, &|n| tag.name(n))))
         .collect();
     Exports { symbols }
+}
+
+/// FNV-1a of the module path: stable across runs and platforms.
+fn module_hash(source: &Source) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in source.file.name.to_string().bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// Whether a module item declares an enum, a namespace or a class with
@@ -271,6 +283,7 @@ fn mapped(symbol: &Symbol, map: &dyn Fn(&str) -> String) -> Symbol {
             is_const: enumeration.is_const,
             reverse: enumeration.reverse.as_deref().map(map),
             object: enumeration.object.as_deref().map(map),
+            group: enumeration.group.clone(),
         }));
     }
     if let Some(namespace) = &symbol.namespace {

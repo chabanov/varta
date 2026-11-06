@@ -14,7 +14,7 @@ use swc_ecma_visit::{VisitMut, VisitMutWith};
 pub(super) fn evaluate(
     decl: &ast::TsEnumDecl,
     name: &str,
-    (reverse, object): (String, String),
+    (reverse, object, group): (String, String, String),
     source: &Source,
     lookup: &dyn Fn(&str) -> Option<Symbol>,
 ) -> Result<Enum, CompilerError> {
@@ -94,6 +94,7 @@ pub(super) fn evaluate(
     let numeric = members.iter().any(|(_, v)| matches!(v, Value::Number(_)));
     Ok(Enum {
         name: name.to_owned(),
+        group,
         is_const: decl.is_const,
         object: (!decl.is_const && members.iter().all(|(_, v)| object_key(v).is_some()))
             .then_some(object),
@@ -212,7 +213,8 @@ pub(super) fn literal_type(value: &Value, span: Span) -> ast::TsType {
     ast::TsType::TsLitType(ast::TsLitType { span, lit })
 }
 
-/// The enum type: the union of its member literal types.
+/// The enum type: the union of its member literal types, as the enum type
+/// marker (`ENUM_TYPE`).
 fn union(enumeration: &Enum, span: Span) -> ast::TsType {
     let mut types: Vec<Box<ast::TsType>> = Vec::new();
     for (_, value) in &enumeration.members {
@@ -221,12 +223,32 @@ fn union(enumeration: &Enum, span: Span) -> ast::TsType {
             types.push(Box::new(ty));
         }
     }
-    if types.len() == 1 {
-        return *types.remove(0);
-    }
-    ast::TsType::TsUnionOrIntersectionType(ast::TsUnionOrIntersectionType::TsUnionType(
-        ast::TsUnionType { span, types },
-    ))
+    let union = if types.len() == 1 {
+        *types.remove(0)
+    } else {
+        ast::TsType::TsUnionOrIntersectionType(ast::TsUnionOrIntersectionType::TsUnionType(
+            ast::TsUnionType { span, types },
+        ))
+    };
+    marked(union, &enumeration.group, span)
+}
+
+/// `__vartaDeclEnum<ty, "group">`.
+pub(super) fn marked(ty: ast::TsType, group: &str, span: Span) -> ast::TsType {
+    ast::TsType::TsTypeRef(ast::TsTypeRef {
+        span,
+        type_name: ast::TsEntityName::Ident(ast::Ident::new_no_ctxt(super::ENUM_TYPE.into(), span)),
+        type_params: Some(Box::new(ast::TsTypeParamInstantiation {
+            span,
+            params: vec![
+                Box::new(ty),
+                Box::new(ast::TsType::TsLitType(ast::TsLitType {
+                    span,
+                    lit: ast::TsLit::Str(string(group, span)),
+                })),
+            ],
+        })),
+    })
 }
 
 /// The declarations an enum lowers to: its type alias and, for a non-const

@@ -72,6 +72,11 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/enum_objects.expected"),
     ),
     (
+        "enum_typing",
+        include_str!("declaration_form_cases/enum_typing.ts"),
+        include_str!("declaration_form_cases/enum_typing.expected"),
+    ),
+    (
         "namespace_objects",
         include_str!("declaration_form_cases/namespace_objects.ts"),
         include_str!("declaration_form_cases/namespace_objects.expected"),
@@ -177,6 +182,23 @@ fn class_expressions_match_node() {
 #[test]
 fn declare_override_and_parameter_properties_match_node() {
     matches_node("declarations");
+}
+
+/// A `number` is assignable to a numeric enum type, a numeric literal only
+/// if it is a member value, and a string enum type is nominal (tsc 5).
+#[test]
+fn enum_assignability_matches_tsc() {
+    matches_node("enum_typing");
+    refused(
+        V38,
+        "enum D { Up = 'UP', Down = 'DOWN' } function f(d: D): D { return d; } export function main(): void { console.log(f('UP')); }",
+        "value 'UP' is not assignable",
+    );
+    refused(
+        V38,
+        "enum L { Low = 1, High } export function main(): void { let l: L = L.Low; l = 7; console.log(String(l)); }",
+        "is not assignable",
+    );
 }
 
 #[test]

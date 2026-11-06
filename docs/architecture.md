@@ -11890,14 +11890,22 @@ time (`new.target.name`, an Error subclass's `name`).
   `length` of a string literal. The enum type is the union of its member
   literal types; `E.X` (and `E['X']`) is the member's literal, and the
   member type `E.X` its literal type, so enum members narrow and
-  discriminate unions like literals. An unannotated `let`/`var`, parameter
+  discriminate unions like literals. Assignability follows tsc 5: the
+  numeric part of an enum type accepts any `number` value but a numeric
+  literal only if it is a member value (it stays a literal type for
+  narrowing and exhaustive `switch`; an out-of-domain value read from a
+  `number` falls to `default`), and the string part is nominal: only the
+  enum's members (`E.X`, `'x' as E`) are assignable, never a bare string
+  literal (`lower::literals::LiteralKind`). An unannotated `let`/`var`, parameter
   default or mutable class field initialized with a member gets the enum
   type, as TypeScript widens it. The reverse mapping `E[k]` of a non-const
   enum with numeric members is the member name for a constant key, and
   otherwise a call of a generated function typed
   `(value: number) => string | undefined` that returns the name of the last
-  member with that value or `undefined` (TypeScript types it `string`; the
-  difference is the honest type of a missing key). Refused by name: a
+  member with that value or `undefined`. TypeScript types it `string`; this
+  is the intended deviation (owner decision, 2026-11-06): it equals tsc
+  under `noUncheckedIndexedAccess` and keeps a missing key honest. Refused
+  by name: a
   computed member whose initializer is not a constant expression, a
   non-finite member value, merged enum declarations, a string member
   followed by an uninitialized one (TS1061), a dynamic key of a const enum
@@ -12006,10 +12014,8 @@ time (`new.target.name`, an Error subclass's `name`).
 - **Not admitted yet.** Standard decorators (they need classes as values
   and the decorator context objects), class index signatures and generic
   overload signatures are refused by name (`decorator`, `class index
-  signature`, `generic overload signature`); a `number` is not assignable
-  to a numeric enum type and a string enum type accepts its member
-  literals (tsc decides both the other way). Legacy `experimentalDecorators`
-  are not planned.
+  signature`, `generic overload signature`). Legacy
+  `experimentalDecorators` are not planned.
 
 #### Module evaluation (`module_evaluation`)
 

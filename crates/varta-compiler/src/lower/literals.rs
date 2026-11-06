@@ -73,10 +73,26 @@ pub(super) fn boolean(value: bool, types: &mut ir::ValueTypes) -> Option<Type> {
     .ok()
 }
 
+/// How a literal set relates to other literal types (v38
+/// `declaration_forms`): an ordinary literal type, the numeric part of an
+/// enum type (which, as in TypeScript, also accepts any `number`), or the
+/// string part of an enum type (nominal: only values of that enum's type
+/// are assignable, never a bare string literal).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LiteralKind {
+    #[default]
+    Plain,
+    Open,
+    Nominal(u32),
+}
+
 #[derive(Default)]
 pub(crate) struct LiteralTypes {
     sets: Vec<(LiteralBase, Set)>,
-    index: BTreeMap<(LiteralBase, Set), u32>,
+    kinds: Vec<LiteralKind>,
+    index: BTreeMap<(LiteralBase, Set, LiteralKind), u32>,
+    /// Nominal enum groups by their generated enum name.
+    groups: BTreeMap<String, u32>,
     members: usize,
     /// Union containing literal members -> the same union with erased members.
     erased_unions: BTreeMap<u32, Type>,
@@ -90,6 +106,74 @@ impl LiteralTypes {
     fn set(&self, id: u32) -> &Set {
         &self.sets[id as usize].1
     }
+    fn kind(&self, id: u32) -> LiteralKind {
+        self.kinds.get(id as usize).copied().unwrap_or_default()
+    }
+}
+
+/// Whether a value of literal kind `inner` may stand where kind `outer` is
+/// expected: enum kinds accept ordinary literals of their values (numeric
+/// enum members are such literals), a nominal enum only its own values.
+fn kinds_accept(outer: LiteralKind, inner: LiteralKind) -> bool {
+    match outer {
+        LiteralKind::Plain | LiteralKind::Open => {
+            matches!(inner, LiteralKind::Plain | LiteralKind::Open)
+        }
+        LiteralKind::Nominal(group) => inner == LiteralKind::Nominal(group),
+    }
+}
+
+/// The type of an enum (v38 `declaration_forms`, `desugar::ENUM_TYPE`): the
+/// literal members of `ty`, its numeric ones open and its string ones
+/// nominal to `group`.
+pub(super) fn enum_type(ty: Type, group: &str, types: &mut ir::ValueTypes) -> Result<Type> {
+    let next = types.literals.groups.len() as u32;
+    let group = *types
+        .literals
+        .groups
+        .entry(group.to_owned())
+        .or_insert(next);
+    let kinded = |ty: Type, types: &mut ir::ValueTypes| -> Result<Type> {
+        let Type::Literal(base, id) = ty else {
+            return Err(invalid("enum member type is not a literal"));
+        };
+        let kind = if base == LiteralBase::Number {
+            LiteralKind::Open
+        } else {
+            LiteralKind::Nominal(group)
+        };
+        let values = types.literals.set(id).clone();
+        intern_kind(base, values, kind, types)
+    };
+    if !ty.is_union() {
+        return kinded(ty, types);
+    }
+    let mut members = Vec::new();
+    for member in unions::members(ty, types) {
+        members.push(kinded(member, types)?);
+    }
+    unions::intern(members, types)
+}
+
+/// `'x' as E` of a string enum member: a free retag of an ordinary literal
+/// to the enum's nominal type (or the nominal member of a mixed enum).
+pub(super) fn retag(source: Type, target: Type, types: &ir::ValueTypes) -> Option<Type> {
+    let Type::Literal(base, inner) = source else {
+        return None;
+    };
+    if types.literals.kind(inner) != LiteralKind::Plain {
+        return None;
+    }
+    let candidates = if target.is_union() {
+        unions::members(target, types)
+    } else {
+        vec![target]
+    };
+    candidates.into_iter().find(|candidate| {
+        matches!(*candidate, Type::Literal(b, outer) if b == base
+            && matches!(types.literals.kind(outer), LiteralKind::Nominal(_))
+            && types.literals.set(inner).is_subset(types.literals.set(outer)))
+    })
 }
 
 /// Whether no value of the literal type `literal` is a value of `other`
@@ -279,6 +363,15 @@ pub(super) fn string_members(ty: Type, types: &ir::ValueTypes) -> Option<Vec<Str
 }
 
 fn intern(base: LiteralBase, values: Set, types: &mut ir::ValueTypes) -> Result<Type> {
+    intern_kind(base, values, LiteralKind::Plain, types)
+}
+
+fn intern_kind(
+    base: LiteralBase,
+    values: Set,
+    kind: LiteralKind,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
     if values.is_empty() {
         return Err(invalid("empty literal type"));
     }
@@ -289,7 +382,7 @@ fn intern(base: LiteralBase, values: Set, types: &mut ir::ValueTypes) -> Result<
         return Err(invalid("literal type member count exceeds limit"));
     }
     let table = &mut types.literals;
-    let key = (base, values);
+    let key = (base, values, kind);
     if let Some(&id) = table.index.get(&key) {
         return Ok(Type::Literal(base, id));
     }
@@ -299,7 +392,8 @@ fn intern(base: LiteralBase, values: Set, types: &mut ir::ValueTypes) -> Result<
     let id =
         u32::try_from(table.sets.len()).map_err(|_| invalid("literal type table exceeds limit"))?;
     table.members += key.1.len();
-    table.sets.push(key.clone());
+    table.sets.push((key.0, key.1.clone()));
+    table.kinds.push(kind);
     table.index.insert(key, id);
     Ok(Type::Literal(base, id))
 }
@@ -310,15 +404,20 @@ pub(super) fn normalize(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result
     if !values.iter().any(|ty| matches!(ty, Type::Literal(..))) {
         return Ok(values);
     }
-    let mut groups: BTreeMap<LiteralBase, Vec<u32>> = BTreeMap::new();
+    // One set per base and kind: an enum's sets never merge with ordinary
+    // literals.
+    let mut groups: BTreeMap<(LiteralBase, LiteralKind), Vec<u32>> = BTreeMap::new();
     let mut rest = Vec::new();
     for ty in values {
         match ty {
-            Type::Literal(base, id) => groups.entry(base).or_default().push(id),
+            Type::Literal(base, id) => groups
+                .entry((base, types.literals.kind(id)))
+                .or_default()
+                .push(id),
             other => rest.push(other),
         }
     }
-    for (base, ids) in groups {
+    for ((base, kind), ids) in groups {
         if rest.contains(&base.erased()) {
             continue;
         }
@@ -329,7 +428,7 @@ pub(super) fn normalize(values: Vec<Type>, types: &mut ir::ValueTypes) -> Result
                 .iter()
                 .flat_map(|id| types.literals.set(*id).iter().cloned())
                 .collect();
-            intern(base, values, types)?
+            intern_kind(base, values, kind, types)?
         };
         rest.push(merged);
     }
@@ -393,8 +492,19 @@ pub(super) fn fresh(value: &Expr, types: &mut ir::ValueTypes) -> Option<Type> {
 
 /// Whether `value` statically belongs to literal set `target` of `base`.
 fn fits(value: &Expr, base: LiteralBase, target: u32, types: &ir::ValueTypes) -> bool {
+    let kind = types.literals.kind(target);
     match value.ty {
-        Type::Literal(own, set) => own == base && subset(set, target, types),
+        Type::Literal(own, set) => {
+            own == base
+                && subset(set, target, types)
+                && kinds_accept(kind, types.literals.kind(set))
+        }
+        // A numeric enum type accepts any `number`, but a numeric literal
+        // only if it is a member value (TypeScript 5).
+        ty if ty == base.erased() && kind == LiteralKind::Open => {
+            constant(value).is_none_or(|v| types.literals.set(target).contains(&v))
+        }
+        ty if ty == base.erased() && matches!(kind, LiteralKind::Nominal(_)) => false,
         ty if ty == base.erased() => {
             constant(value).is_some_and(|v| types.literals.set(target).contains(&v))
         }
@@ -423,14 +533,29 @@ pub(super) fn erase(value: Expr, types: &ir::ValueTypes) -> Expr {
 pub(super) fn member_of(member: Type, target: &[Type], types: &ir::ValueTypes) -> bool {
     target.contains(&member)
         || matches!(member, Type::Literal(base, set) if target.contains(&base.erased())
-            || target.iter().any(|t| matches!(*t, Type::Literal(b, outer) if b == base && subset(set, outer, types))))
+            || target.iter().any(|t| matches!(*t, Type::Literal(b, outer) if b == base
+                && subset(set, outer, types)
+                && kinds_accept(types.literals.kind(outer), types.literals.kind(set)))))
+        || member == Type::Float64
+            && target.iter().any(|t| {
+                matches!(*t, Type::Literal(LiteralBase::Number, outer)
+                if types.literals.kind(outer) == LiteralKind::Open)
+            })
 }
 
 /// Literal-aware scalar assignability of an already-typed value.
 pub(super) fn assignable(expected: Type, actual: Type, types: &ir::ValueTypes) -> bool {
     match (expected, actual) {
-        (Type::Literal(b, outer), Type::Literal(a, inner)) => b == a && subset(inner, outer, types),
+        (Type::Literal(b, outer), Type::Literal(a, inner)) => {
+            b == a
+                && subset(inner, outer, types)
+                && kinds_accept(types.literals.kind(outer), types.literals.kind(inner))
+        }
         (_, Type::Literal(base, _)) => expected == base.erased(),
+        // A numeric enum type accepts any `number` (TypeScript).
+        (Type::Literal(LiteralBase::Number, outer), Type::Float64) => {
+            types.literals.kind(outer) == LiteralKind::Open
+        }
         _ => false,
     }
 }
@@ -504,6 +629,11 @@ pub(super) fn guard_operand(
     let ast::Expr::Ident(id) = name else {
         return None;
     };
+    // A string enum member is `'x' as E` (v38 `declaration_forms`).
+    let literal = match literal {
+        ast::Expr::TsAs(assertion) if types.profile.declaration_forms() => &*assertion.expr,
+        literal => literal,
+    };
     let value = match literal {
         ast::Expr::Lit(ast::Lit::Str(text)) => {
             LiteralValue::String(string_bytes(text, types.profile).ok()?)
@@ -540,13 +670,16 @@ pub(super) fn refine(
         match *member {
             m if positive && m == base.erased() => refined.push(single),
             Type::Literal(b, set) if b == base && types.literals.set(set).contains(&value) => {
+                // An enum's narrowed set stays of the enum's kind.
+                let kind = types.literals.kind(set);
                 if positive {
+                    let single = intern_kind(base, Set::from([value.clone()]), kind, types).ok()?;
                     refined.push(single);
                 } else {
                     let mut rest = types.literals.set(set).clone();
                     rest.remove(&value);
                     if !rest.is_empty() {
-                        refined.push(intern(base, rest, types).ok()?);
+                        refined.push(intern_kind(base, rest, kind, types).ok()?);
                     }
                 }
             }

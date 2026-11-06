@@ -3604,6 +3604,21 @@
       "baseline": {
         "status": "supported"
       }
+    },
+    {
+      "id": "enum-assignability",
+      "feature": "enums",
+      "path": "cases/enum-assignability.ts",
+      "sha256": "ee947fec4e71e55207d9250860063a70919219ef38b18c4feb680bfd8f147d54",
+      "stdout": [
+        "varta log: mid level 7 high",
+        "varta log: DOWN UP true",
+        "varta log: text YES number 0 number 0",
+        "varta log: UP true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
     }
   ]
 }
