@@ -1,6 +1,6 @@
 # Varta functional overview
 
-Checkpoint: 2026-11-05, implementation on `main` at `10ff9ae`.
+Checkpoint: 2026-11-06, implementation on `main` (audit fixes of that day).
 
 Varta compiles strictly typed TypeScript ahead of time into portable WebAssembly.
 Native applications execute in Wasmtime through a capability-checked host;
@@ -35,7 +35,7 @@ defaults maintained in this overview.
 | Authority | Deny-by-default grants, exact operation/resource checks, package request intersected with a host ceiling, permission broker and validated artifact/ABI boundaries | Broader policy/permission UX, independent review and complete alternate-host acceptance |
 | System access | Text file reads/printing under virtual roots, environment access, clock/timers, logging and guest exit | General filesystem writes, arbitrary subprocess spawning and a broader standard system API |
 | Client networking | Capability-gated async HTTP(S) fetch, headers, streamed response reads, cancellation/timeout and admitted Web request/response values | Complete Web compatibility and all cross-host network behavior |
-| Server networking | Sync/async HTTP v2 handlers, JSON and streamed Web Response bodies, HTTP/1.1 keep-alive, bounded separate connection/worker pools | Web Request ingress/streamed request bodies, async Wasmtime/pooling, server TLS/HTTP2 and hardening/load acceptance |
+| Server networking | Sync/async HTTP v2 handlers, JSON and streamed Web Response bodies, Web Request ingress with streamed request bodies, HTTP/1.1 keep-alive, async Wasmtime with pooled instances and admission, TLS 1.3 with HTTP/2, fuzz/flood tests and local benchmarks | Per-stream HTTP/2 write idle, h2c, HTTP/3, certificate reload, Linux and sustained-load acceptance |
 | Persistent data | Native Deno-KV-compatible files; browser OPFS backend with the shared Rust value codec; typed reads, lists and atomic updates | Async storage completion, watch/queues and complete Deno KV compatibility |
 | UI | TSX, checked tree/style/event batches, native layout/paint/input and official browser view sessions | Complete native L0/HTML/CSS/IME/accessibility and cross-renderer acceptance |
 | GPU UI | Optional wgpu/Vello backend, shared bounded display scenes, CPU recovery and direct mixed-border color fields | Direct GPU opacity groups, other devices and full presentation/performance acceptance |
@@ -123,14 +123,14 @@ keep-alive, worker waiting, stream idle/lifetime and disconnect/shutdown behavio
 The UARP proxy uses the streaming response path for upstream session events.
 
 The agreed [modern HTTP server stages](development-plan.md#k7--modern-http-server-agreed-design-2026-11-05)
-remain partially implemented:
+are merged ([record](development-plan.md#k7-merged-values-approved-2026-11-06)):
 
 | Stage | Implemented | Still open |
 | --- | --- | --- |
-| H1 | HTTP/1.1 keep-alive and separate bounded connection/worker pools | Web Request ingress, streamed incoming bodies and remaining host-policy exposure |
-| H2 | Current language scheduler and owned network completions | Async Wasmtime calls/yielding, pooling/InstancePre and task/memory admission |
-| H3 | HTTP(S) client transport | Server TLS 1.3, ALPN and HTTP/2 with their resource/security limits |
-| H4 | Existing boundary, denial, lifecycle and regression checks | Fuzzing, flood/slow-client tests and reproducible throughput/p50/p99/memory acceptance |
+| H1 | HTTP/1.1 keep-alive, separate bounded connection/worker pools, Web `Request` ingress with streamed incoming bodies and host-lowered limits | — |
+| H2 | Async Wasmtime calls yielding on epochs, pooled `InstancePre`, task/memory admission | — |
+| H3 | Native TLS 1.3 with ALPN `h2`/`http/1.1`, HTTP/2 stream/header/reset bounds; a connection stays open while a body streams | Per-stream write idle, h2c, certificate reload |
+| H4 | Fuzzing, flood and slow-client tests, local throughput/p50/p99/memory benchmarks (macOS arm64) | Linux and sustained-load benchmarks |
 
 HTTP/3, WebSocket and response compression remain later work. The implemented
 pool limits are safety bounds, not measured production capacity.
@@ -248,7 +248,7 @@ on unchanged inputs: **3861 Rust tests, zero failures, 17 ignored, and 218 brows
 Node tests**. It includes the large-heap idle-work test and the corrected
 codegen-v2 fuel comparison. Its recorded HEAD is `6dfb06e` with the GC changes
 present; `10ff9ae` commits that verified code. See
-[current verification evidence](verification.md#current-verification-evidence--2026-11-05).
+[current verification evidence](verification.md#current-verification-evidence--2026-11-06).
 
 The checked-v38 ECMAScript 2025 inventory has 132 passing and five reviewed
 unsupported cases out of 137; eight feature rows have no executable case.

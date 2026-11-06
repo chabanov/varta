@@ -27,8 +27,12 @@ pub(super) struct State {
     /// Requests whose client left before their response (an HTTP/2 stream
     /// reset, a closed connection).
     abandoned: AtomicUsize,
-    /// Requests whose service future is running.
+    /// Requests whose service future is running or whose response body is
+    /// still sending.
     active: AtomicUsize,
+    /// Counts every start and end of a request or response body: the idle
+    /// bound measures quiet since the last of them.
+    events: AtomicUsize,
     /// Whether any request was received (a shutdown drains it).
     entered: AtomicBool,
     /// HTTP/2: ask the connection to finish its streams and close (`GOAWAY`).
@@ -41,6 +45,7 @@ impl State {
             served: AtomicUsize::new(0),
             abandoned: AtomicUsize::new(0),
             active: AtomicUsize::new(0),
+            events: AtomicUsize::new(0),
             entered: AtomicBool::new(false),
             retire: tokio::sync::Notify::new(),
         })
@@ -49,9 +54,19 @@ impl State {
     pub(super) fn begin(self: &Arc<Self>) -> Active {
         self.entered.store(true, Ordering::Release);
         self.active.fetch_add(1, Ordering::AcqRel);
+        self.events.fetch_add(1, Ordering::AcqRel);
         Active {
             state: self.clone(),
             completed: false,
+        }
+    }
+    /// A response body that is still sending: the request stays running
+    /// until the guard drops.
+    pub(super) fn streaming(self: &Arc<Self>) -> Streaming {
+        self.active.fetch_add(1, Ordering::AcqRel);
+        self.events.fetch_add(1, Ordering::AcqRel);
+        Streaming {
+            state: self.clone(),
         }
     }
     /// Ask an HTTP/2 connection to finish its streams and close.
@@ -75,12 +90,26 @@ impl Active {
 impl Drop for Active {
     fn drop(&mut self) {
         self.state.active.fetch_sub(1, Ordering::AcqRel);
+        self.state.events.fetch_add(1, Ordering::AcqRel);
         if !self.completed
             && self.state.abandoned.fetch_add(1, Ordering::AcqRel) + 1
                 > http::MAX_ABANDONED_REQUESTS
         {
             self.state.retire();
         }
+    }
+}
+
+/// A response body still sending on its connection (see
+/// [`State::streaming`]); a client that leaves mid-body is not counted as
+/// abandoned, its request having completed.
+pub(super) struct Streaming {
+    state: Arc<State>,
+}
+impl Drop for Streaming {
+    fn drop(&mut self) {
+        self.state.active.fetch_sub(1, Ordering::AcqRel);
+        self.state.events.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -361,16 +390,19 @@ where
     }
 }
 
-/// Resolves once the connection had no running request for `idle`.
+/// Resolves once the connection had no running request for `idle`: a whole
+/// `idle` passed with nothing running and no request or body starting or
+/// ending, so the quiet is measured from the last of them (a body that ends
+/// just before a check does not make the connection idle at once).
 async fn idled(state: &State, idle: Duration) {
-    let mut served = state.served.load(Ordering::Acquire);
     loop {
+        let events = state.events.load(Ordering::Acquire);
         tokio::time::sleep(idle).await;
-        let now = state.served.load(Ordering::Acquire);
-        if now == served && state.active.load(Ordering::Acquire) == 0 {
+        if state.events.load(Ordering::Acquire) == events
+            && state.active.load(Ordering::Acquire) == 0
+        {
             return;
         }
-        served = now;
     }
 }
 

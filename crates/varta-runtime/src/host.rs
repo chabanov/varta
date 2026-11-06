@@ -370,7 +370,10 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 let value: Result<i32, crate::http::Failure> = (|| {
                     let target = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, utf16)?;
                     let bytes = if id == "fs.read" {
-                        caller.data().policy.read(id, &target)?
+                        // A disk read blocks: off the async worker, so other
+                        // requests keep running while it completes.
+                        let policy = &caller.data().policy;
+                        crate::blocking(|| policy.read(id, &target))?
                     } else {
                         let url = caller
                             .data()
@@ -423,7 +426,8 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
                 reset(&mut caller)?;
                 let value = (|| {
                     let path = input(&mut caller, ptr, len, abi::MAX_INPUT_BYTES, utf16)?;
-                    let bytes = caller.data().policy.read("fs.print", &path)?;
+                    let policy = &caller.data().policy;
+                    let bytes = crate::blocking(|| policy.read("fs.print", &path))?;
                     String::from_utf8(bytes).map_err(|_| HostFailure::invalid())
                 })();
                 match value {

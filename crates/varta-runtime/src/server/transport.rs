@@ -12,10 +12,15 @@ type Reply = Response<Either<Full<Bytes>, StreamBody>>;
 /// The body of a streaming response: the chunks its worker pulls. Dropping
 /// it (a finished response or a client that left) cancels that worker.
 pub(super) struct StreamBody {
-    chunks: tokio::sync::mpsc::Receiver<Result<Bytes, handler::StreamAborted>>,
-    /// An abort received but not yet reported (see `poll_frame`).
-    aborted: Option<handler::StreamAborted>,
+    chunks: tokio::sync::mpsc::Receiver<Bytes>,
+    /// Set by the worker before its chunks close when the stream failed.
+    aborted: Arc<std::sync::atomic::AtomicBool>,
+    /// An abort seen but not yet reported (see `poll_frame`).
+    pending_abort: Option<handler::StreamAborted>,
     _owner: crate::cancellation::CancelOnDrop,
+    /// Keeps its request running on its connection until the body ends, so
+    /// an HTTP/2 connection is not idle while a stream still sends.
+    held: Option<connection::Streaming>,
 }
 impl Body for StreamBody {
     type Data = Bytes;
@@ -25,18 +30,20 @@ impl Body for StreamBody {
         context: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
         use std::task::Poll;
-        if let Some(aborted) = self.aborted.take() {
+        if let Some(aborted) = self.pending_abort.take() {
             return Poll::Ready(Some(Err(aborted)));
         }
         match self.chunks.poll_recv(context) {
-            // An error makes the transport close at once: first yield once,
-            // so the chunks already written are flushed to the client.
-            Poll::Ready(Some(Err(aborted))) => {
-                self.aborted = Some(aborted);
+            Poll::Ready(Some(chunk)) => Poll::Ready(Some(Ok(hyper::body::Frame::data(chunk)))),
+            // Closed: the end, or an abort. An error makes the transport
+            // close at once: first yield once, so the chunks already written
+            // are flushed to the client.
+            Poll::Ready(None) if self.aborted.load(Ordering::Acquire) => {
+                self.pending_abort = Some(handler::StreamAborted);
                 context.waker().wake_by_ref();
                 Poll::Pending
             }
-            other => other.map(|chunk| chunk.map(|chunk| chunk.map(hyper::body::Frame::data))),
+            other => other.map(|chunk| chunk.map(|chunk| Ok(hyper::body::Frame::data(chunk)))),
         }
     }
 }
@@ -352,6 +359,11 @@ pub(super) async fn handle(
     let count = state.served.fetch_add(1, Ordering::AcqRel) + 1;
     let last = pool.is_none_or(|pool| count >= pool.keep_alive_requests);
     let mut reply = handle_request(req, shared, pool).await;
+    // A streamed body is still part of the request: the connection is not
+    // idle until it ends.
+    if let Either::Right(body) = reply.body_mut() {
+        body.held = Some(state.streaming());
+    }
     active.complete();
     match state.protocol {
         connection::Protocol::Http1 => reply = closing(reply, last),
@@ -466,6 +478,7 @@ async fn streaming(
 ) -> Reply {
     let (head_sender, head_receiver) = tokio::sync::oneshot::channel();
     let (chunk_sender, chunks) = tokio::sync::mpsc::channel(STREAM_BUFFER);
+    let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (finished, done) = tokio::sync::oneshot::channel::<()>();
     if let Some(token) = cancellation.clone() {
         let stop = shared.stop.clone();
@@ -477,6 +490,7 @@ async fn streaming(
         });
     }
     let worker = shared.clone();
+    let worker_aborted = aborted.clone();
     tokio::spawn(async move {
         let _admission = admission;
         let _finished = finished;
@@ -488,6 +502,7 @@ async fn streaming(
             Some(handler::Streaming {
                 head: head_sender,
                 chunks: chunk_sender,
+                aborted: worker_aborted,
                 bodyless: head,
             }),
         )
@@ -498,8 +513,10 @@ async fn streaming(
     };
     let body = StreamBody {
         chunks,
-        aborted: None,
+        aborted,
+        pending_abort: None,
         _owner: owner,
+        held: None,
     };
     match response(value, head, Some(body)) {
         Ok(reply) => reply,

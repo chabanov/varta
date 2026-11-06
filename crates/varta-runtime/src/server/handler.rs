@@ -5,10 +5,13 @@ use hyper::body::Bytes;
 use varta_common::http::{self, HttpResponse};
 
 /// Where a streaming response goes: its head once, then its body chunks. A
-/// failure after the head ends the body with [`StreamAborted`].
+/// failure after the head sets `aborted` before the chunks close, and the
+/// body ends with [`StreamAborted`]: a flag, so an abort reaches the body
+/// even while its chunk buffer is full (a client that stopped reading).
 pub(super) struct Streaming {
     pub head: tokio::sync::oneshot::Sender<HttpResponse>,
-    pub chunks: tokio::sync::mpsc::Sender<Result<Bytes, StreamAborted>>,
+    pub chunks: tokio::sync::mpsc::Sender<Bytes>,
+    pub aborted: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// A HEAD request: the head only, no pull of the body.
     pub bodyless: bool,
 }
@@ -471,8 +474,16 @@ async fn stream(
     let Streaming {
         head,
         chunks,
+        aborted,
         bodyless,
     } = streaming;
+    // A chunk the transport does not take within the write idle bound (an
+    // HTTP/2 stream whose client keeps its window closed) aborts the
+    // stream, releasing its worker and admission.
+    let write_idle = shared
+        .limits
+        .transport
+        .map(|transport| std::time::Duration::from_millis(transport.write_idle_ms));
     let first = pull(execution, (&instance, &memory), body).await?;
     let response = serde_json::from_str::<HttpResponse>(
         &String::from_utf16(&first)
@@ -514,8 +525,18 @@ async fn stream(
                         .map(|unit| u8::try_from(*unit))
                         .collect::<Result<Vec<u8>, _>>()
                         .map_err(|_| HttpError::Message("stream chunk byte".into()))?;
+                    if bytes.is_empty() {
+                        continue;
+                    }
+                    let sent = chunks.send(Bytes::from(bytes));
+                    let sent = match write_idle {
+                        Some(idle) => tokio::time::timeout(idle, sent)
+                            .await
+                            .map_err(|_| HttpError::Message("response stream write idle".into()))?,
+                        None => sent.await,
+                    };
                     // The client is gone once its body is dropped.
-                    if !bytes.is_empty() && chunks.send(Ok(Bytes::from(bytes))).await.is_err() {
+                    if sent.is_err() {
                         return Ok(());
                     }
                 }
@@ -525,8 +546,9 @@ async fn stream(
     }
     .await;
     if result.is_err() {
-        let _ = chunks.send(Err(StreamAborted)).await;
+        aborted.store(true, std::sync::atomic::Ordering::Release);
     }
+    drop(chunks);
     result.map(|()| response)
 }
 

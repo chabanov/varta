@@ -410,3 +410,294 @@ fn http2_announces_its_bounds_and_ends_a_rapid_reset_flood() {
     });
     server.finish();
 }
+
+/// Streams five chunks 150 ms apart: longer than the lowered idle bound.
+const LONG_STREAM: &str = r#"
+function handle(request: VartaHttpRequest): Response {
+  if (request.target == "/text") {
+    return new Response("plain");
+  }
+  let count = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull: async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+      count += 1;
+      if (count > 5) {
+        controller.close();
+        return;
+      }
+      if (count > 1) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 150);
+        });
+      }
+      controller.enqueue(new TextEncoder().encode(String(count)));
+    },
+  });
+  return new Response(stream);
+}
+export function main(): void {}
+varta.http.serve({ hostname: "127.0.0.1", port: 0 }, handle);
+"#;
+
+#[test]
+fn an_http2_connection_is_not_idle_while_a_response_body_streams() {
+    let certificate = Certificate::new("streaming-idle");
+    let idle = std::time::Duration::from_millis(300);
+    let bytes = varta_compiler::compile_typescript_with_profile(LONG_STREAM, P::CheckedF64Utf16V38)
+        .unwrap();
+    let mut policy = certificate.policy();
+    policy.limits = Some(varta_common::http::HostLimits {
+        keep_alive_idle_ms: Some(idle.as_millis() as u64),
+        ..Default::default()
+    });
+    let server = Server::start_options(
+        bytes,
+        RunOptions {
+            requested: vec![CapabilityGrant {
+                id: "time.timer".into(),
+                value: CapabilityValue::Boolean(true),
+            }],
+            http: Some(policy),
+            ..RunOptions::default()
+        },
+    );
+    let port = server.addr.port();
+    runtime().block_on(async {
+        let tls = connect(
+            &server,
+            &certificate.client(&[b"h2"], &[&rustls::version::TLS13]),
+        )
+        .await
+        .unwrap();
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(Spawner, hyper_util::rt::TokioIo::new(tls))
+                .await
+                .unwrap();
+        tokio::spawn(connection);
+        let get = |target: &str| {
+            hyper::Request::get(format!("https://127.0.0.1:{port}{target}"))
+                .body(http_body_util::Empty::<hyper::body::Bytes>::new())
+                .unwrap()
+        };
+        let started = std::time::Instant::now();
+        let response = sender.send_request(get("/stream")).await.unwrap();
+        let body = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        assert_eq!(&body[..], b"12345");
+        // The body outlasted the idle bound, yet the connection stayed open.
+        assert!(started.elapsed() > idle * 2, "{:?}", started.elapsed());
+        let response = sender.send_request(get("/text")).await.unwrap();
+        let body = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        assert_eq!(&body[..], b"plain");
+    });
+    server.finish();
+}
+
+/// Streams 64 chunks of 64 bytes as fast as the client takes them.
+const FAST_STREAM: &str = r#"
+function handle(request: VartaHttpRequest): Response {
+  if (request.target == "/text") {
+    return new Response("plain");
+  }
+  let count = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull: async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+      count += 1;
+      if (count > 64) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(new TextEncoder().encode("x".repeat(64)));
+    },
+  });
+  return new Response(stream);
+}
+export function main(): void {}
+varta.http.serve({ hostname: "127.0.0.1", port: 0 }, handle);
+"#;
+
+/// An HTTP/2 client that keeps its stream window closed holds the stream's
+/// worker no longer than the write idle bound: the stream aborts, its
+/// admission returns (the only worker serves the next request) and the
+/// client sees the stream reset once it reads.
+#[test]
+fn an_http2_stream_whose_client_stops_reading_ends_at_the_write_idle_bound() {
+    let certificate = Certificate::new("stream-write-idle");
+    let bytes = varta_compiler::compile_typescript_with_profile(FAST_STREAM, P::CheckedF64Utf16V38)
+        .unwrap();
+    let mut policy = certificate.policy();
+    policy.limits = Some(varta_common::http::HostLimits {
+        workers: Some(1),
+        worker_wait_ms: Some(200),
+        write_idle_ms: Some(300),
+        ..Default::default()
+    });
+    let server = Server::start_tls(bytes, policy);
+    let port = server.addr.port();
+    runtime().block_on(async {
+        let tls = connect(
+            &server,
+            &certificate.client(&[b"h2"], &[&rustls::version::TLS13]),
+        )
+        .await
+        .unwrap();
+        let (mut sender, connection) = hyper::client::conn::http2::Builder::new(Spawner)
+            .initial_stream_window_size(16)
+            .adaptive_window(false)
+            .handshake(hyper_util::rt::TokioIo::new(tls))
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let get = |target: &str| {
+            hyper::Request::get(format!("https://127.0.0.1:{port}{target}"))
+                .body(http_body_util::Empty::<hyper::body::Bytes>::new())
+                .unwrap()
+        };
+        // The head arrives; the body is not read, so its window stays shut.
+        let stalled = sender.send_request(get("/stream")).await.unwrap();
+        assert_eq!(stalled.status(), 200);
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        // The stalled stream gave its worker back.
+        let response = sender.send_request(get("/text")).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let body = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        assert_eq!(&body[..], b"plain");
+        // Reading the stalled body now ends in its reset, not a full body.
+        assert!(
+            http_body_util::BodyExt::collect(stalled.into_body())
+                .await
+                .is_err()
+        );
+    });
+    server.finish();
+}
+
+/// An HTTP/2 connection over TLS to `server` with `window` bytes of stream
+/// window, its sender and its connection task.
+async fn h2(
+    server: &Server,
+    certificate: &Certificate,
+    window: Option<u32>,
+) -> (
+    hyper::client::conn::http2::SendRequest<http_body_util::Empty<hyper::body::Bytes>>,
+    tokio::task::JoinHandle<Result<(), hyper::Error>>,
+) {
+    let tls = connect(
+        server,
+        &certificate.client(&[b"h2"], &[&rustls::version::TLS13]),
+    )
+    .await
+    .unwrap();
+    let mut builder = hyper::client::conn::http2::Builder::new(Spawner);
+    if let Some(window) = window {
+        builder
+            .initial_stream_window_size(window)
+            .adaptive_window(false);
+    }
+    let (sender, connection) = builder
+        .handshake(hyper_util::rt::TokioIo::new(tls))
+        .await
+        .unwrap();
+    (sender, tokio::spawn(connection))
+}
+
+fn get(port: u16, target: &str) -> hyper::Request<http_body_util::Empty<hyper::body::Bytes>> {
+    hyper::Request::get(format!("https://127.0.0.1:{port}{target}"))
+        .body(http_body_util::Empty::new())
+        .unwrap()
+}
+
+/// The idle bound applies again once streams end, whether they finished,
+/// ran side by side or were reset by their client mid-body.
+#[test]
+fn an_http2_connection_idles_out_after_its_streams_end_however_they_end() {
+    let certificate = Certificate::new("streaming-ends");
+    let idle = std::time::Duration::from_millis(300);
+    let bytes = varta_compiler::compile_typescript_with_profile(LONG_STREAM, P::CheckedF64Utf16V38)
+        .unwrap();
+    let mut policy = certificate.policy();
+    policy.limits = Some(varta_common::http::HostLimits {
+        keep_alive_idle_ms: Some(idle.as_millis() as u64),
+        ..Default::default()
+    });
+    let server = Server::start_options(
+        bytes,
+        RunOptions {
+            requested: vec![CapabilityGrant {
+                id: "time.timer".into(),
+                value: CapabilityValue::Boolean(true),
+            }],
+            http: Some(policy),
+            ..RunOptions::default()
+        },
+    );
+    let port = server.addr.port();
+    runtime().block_on(async {
+        // Two streams side by side, both read to their end.
+        let (mut sender, connection) = h2(&server, &certificate, None).await;
+        let first = sender.send_request(get(port, "/stream"));
+        let second = sender.clone().send_request(get(port, "/stream"));
+        let (first, second) = tokio::join!(first, second);
+        for response in [first.unwrap(), second.unwrap()] {
+            let body = http_body_util::BodyExt::collect(response.into_body())
+                .await
+                .unwrap()
+                .to_bytes();
+            assert_eq!(&body[..], b"12345");
+        }
+        tokio::time::sleep(idle * 4).await;
+        assert!(
+            connection.is_finished(),
+            "kept open after its streams ended"
+        );
+        // A stream its client resets after the first chunk.
+        let (mut sender, connection) = h2(&server, &certificate, None).await;
+        let response = sender.send_request(get(port, "/stream")).await.unwrap();
+        let mut body = response.into_body();
+        let first = http_body_util::BodyExt::frame(&mut body)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.into_data().unwrap(), "1");
+        drop(body);
+        tokio::time::sleep(idle * 4).await;
+        assert!(connection.is_finished(), "kept open after a reset stream");
+    });
+    server.finish();
+}
+
+/// A client that reads slowly but steadily (each chunk taken within the
+/// write idle bound) gets the whole body.
+#[test]
+fn an_http2_stream_read_slowly_but_steadily_completes() {
+    let certificate = Certificate::new("stream-slow-reader");
+    let bytes = varta_compiler::compile_typescript_with_profile(FAST_STREAM, P::CheckedF64Utf16V38)
+        .unwrap();
+    let mut policy = certificate.policy();
+    policy.limits = Some(varta_common::http::HostLimits {
+        write_idle_ms: Some(300),
+        ..Default::default()
+    });
+    let server = Server::start_tls(bytes, policy);
+    let port = server.addr.port();
+    runtime().block_on(async {
+        let (mut sender, _connection) = h2(&server, &certificate, Some(64)).await;
+        let response = sender.send_request(get(port, "/stream")).await.unwrap();
+        let mut body = response.into_body();
+        let mut received = 0;
+        while let Some(frame) = http_body_util::BodyExt::frame(&mut body).await {
+            received += frame.unwrap().into_data().map_or(0, |data| data.len());
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(received, 64 * 64);
+    });
+    server.finish();
+}

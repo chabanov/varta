@@ -17,6 +17,10 @@ Original crates.io package SHA-256 (from the preceding lockfile):
 - `src/layout/cluster.rs`: glyph iteration recognizes that inline sentinel.
 - `src/shape/mod.rs`: the contributing-character counter uses `usize` to support
   whole graphemes longer than 255 scalars without debug overflow/release wrapping.
+  Each font segment of an item finds its first character index by counting
+  only the characters since the previous segment, not from the item start
+  (quadratic in the segments of text that alternates faces, such as emoji
+  between letters).
 - `src/analysis/cluster.rs`: coverage counts use `usize`, and font mapping scans
   every character rather than a fixed 32-element scratch prefix. A second pure
   nominal-mapping pass updates glyph IDs only for a better candidate, retaining

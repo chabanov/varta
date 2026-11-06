@@ -17100,7 +17100,13 @@ contract metadata (`HttpLimits::for_version`: `connections`, `pool`,
 `stream`, `transport`), so a v38 service built before them must be rebuilt.
 A v2 connection whose response write (or flush) makes no progress for
 `http::WRITE_IDLE_SECONDS` closes, so a client that stops reading holds its
-connection no longer than that.
+connection no longer than that. The same bound applies to each streamed
+body on its own: a chunk the transport does not take within it (an HTTP/2
+stream whose client keeps its window closed while the connection still
+moves other streams) aborts the stream, so its worker and admission are
+released then; the client sees the stream reset once it reads again. A
+failure after the head reaches the body through a flag set before its chunks
+close, never through its full chunk buffer.
 
 **Web `Request` handlers (v2).** A v38 handler may take a Web `Request`
 instead of a `VartaHttpRequest`, with any of the four result forms, as
@@ -17172,8 +17178,12 @@ libcalls would count. The scheduler's timer waits, network and request-body
 completions and cancellation are awaited (`checkpoint_until_async`,
 `Net::wait_async`, `Cancellation::cancelled`), and a request's transfers run
 on the server's runtime, so a waiting request or open stream costs no
-thread. A blocking host operation (legacy `net.get`/`net.fetch`, KV reads
-and commits) hands its thread's other tasks on first (`block_in_place`).
+thread. A blocking host operation (legacy `net.get`/`net.fetch`,
+`fs.read`/`fs.print` file reads, KV reads and commits) hands its thread's
+other tasks on first (`block_in_place`), within the server's blocking-thread
+bound (one per request slot). An operating-system read cannot be
+interrupted: it is bounded by the result size limit, and the request's
+deadline and cancellation take effect as soon as it returns.
 A v2 request is admitted once a slot is free and its memory budget fits the
 server memory ceiling less the budgets of the running requests; the
 admission ends with its task, after its Store is dropped. A host policy may
@@ -17216,7 +17226,10 @@ path and query. A connection whose clients abandon more than
 application) is retired with `GOAWAY` and closed within a second; its
 keep-alive request count, idle bound and lifetime retire it with `GOAWAY`
 (HTTP/2 has no `connection` header), and the write idle bound covers its
-TLS records.
+TLS records. A request counts as running for the idle bound until its
+response body ends (streamed, aborted, or reset by its client), not only
+until its head is sent, and the bound measures quiet since the last request
+or body started or ended.
 
 **Hardening (H4).** Seeded fuzz tests cover the contract metadata and host
 policies, the response envelope's framing and every adapter form with

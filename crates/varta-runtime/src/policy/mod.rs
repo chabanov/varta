@@ -2,6 +2,8 @@ mod files;
 mod glob;
 use files::FilePolicy;
 pub use files::FileRoots;
+#[cfg(test)]
+pub(crate) use files::slow_disk;
 pub(crate) use files::{DatabaseTarget, FileMode};
 use glob::{glob, wildcard};
 use varta_common::{CapabilityGrant, CapabilityValue};

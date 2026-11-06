@@ -14,7 +14,7 @@ Its full gate passes **3861 Rust tests and 218 browser Node tests**, with
 17 ignored Rust tests and unchanged inputs across all ten commands. The earlier
 codegen-v2 fuel comparison failure is superseded by this successful run; the
 existing cost measurements were updated for the collector change. See
-[current verification evidence](verification.md#current-verification-evidence--2026-11-05).
+[current verification evidence](verification.md#current-verification-evidence--2026-11-06).
 
 Varta remains an experimental research project: a working compiler for an
 explicit checked TypeScript subset, a capability-checked Wasmtime runtime,
@@ -32,10 +32,10 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Native text under `scale()` on `main`, macOS arm64, 2026-11-06, the commit that records it: **3940 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-095739-_1scico_/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Audit fixes on `main` (HTTP/2 stream lifecycle and per-stream write idle, file reads off the request workers, linear emoji fallback), macOS arm64, 2026-11-06, the commit that records it: **3949 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-114846-cule_s6v/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
 | Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
-| HTTP streaming | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies and supports HTTP/1.1 keep-alive with separate bounded connection and worker pools. The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Modern-server H1 is partial: Web `Request` ingress/streamed request bodies and remaining host-policy work are open; H2 async Wasmtime/pooling, H3 server TLS 1.3/HTTP/2 and H4 hardening/load acceptance remain planned ([K7](#k7--modern-http-server-agreed-design-2026-11-05)). |
+| HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
 | Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). Colour glyphs on Linux, the overlay scrollbar shown while scrolling and every Linux comparison with Chrome remain open. |
@@ -89,6 +89,39 @@ hover color, thumb dragging and track clicks, a dark `color-scheme` (outside
 the subset), rounded scroll containers with classic bars (refused), live
 changes of the system setting (read at window start) and Chrome's Linux Aura
 scrollbars (Linux keeps overlay behaviour).
+
+### Review fixes — 2026-11-06
+
+An independent review of `54d318a` reproduced two defects; both are fixed
+with regression tests.
+
+- **HTTP/2 idle with a streaming body.** A request stopped counting as
+  running once its handler returned the response head, while the body was
+  still streaming; past the idle bound the connection sent `GOAWAY` and the
+  next request on it failed (`connection was not ready`). The streamed body
+  now keeps its request running until it ends (`connection::Streaming`); a
+  client leaving mid-body is not counted as abandoned. The new test streams
+  for twice the lowered idle bound over HTTP/2 and serves a second request
+  on the connection; it fails without the fix. Under full-gate load that
+  test also exposed a race: the idle timer only compared request counts
+  across a sleep, so a body ending just before a check made the connection
+  idle at once. The bound now measures quiet since the last request or body
+  start or end (24 parallel runs: 4 failures before, none after).
+- **Emoji fallback on long text.** Finding uncoloured emoji searched every
+  emoji grapheme for each cluster, cutting emoji out of missing ranges
+  searched every emoji for each range, each range's current family stack was
+  searched among all overrides, fixed line heights shaped a primary-font
+  sample per override, and each run searched all primary ranges. All are now
+  one walk over sorted ranges or a logarithmic range map
+  (`fallback::RangeMap`), with one sample per style. Parley also counted the
+  characters from its item start for every font segment; it now counts from
+  the previous segment ([patch record](../vendor/parley/VARTA-PATCH.md)).
+  8000 emoji/letter pairs with a fallback face: 2.75 s to 0.59 s (Debug),
+  204 ms to 32 ms (release), against 0.10 s and 3 ms without fallback, the
+  rest being the shaping of 16000 font runs, which such text needs.
+- **Status.** The HTTP status row above and the functional overview's
+  server rows described the merged K7 stages as planned; they are current
+  now.
 
 ### Native colour emoji — 2026-11-06
 

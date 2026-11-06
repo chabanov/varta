@@ -6,35 +6,28 @@ gate once on the completed code batch before committing. A full pass does not ne
 to be repeated after a documentation-only edit. New code/build inputs invalidate
 any previous check whose scope includes those inputs.
 
-## Current verification evidence — 2026-11-05
+## Current verification evidence — 2026-11-06
 
-Status refreshed from `main` at `10ff9ae`. The existing full verification run
-completed before these documentation changes; this refresh adds no engine tests.
-
-- **Latest successful full gate:**
-  `target/verification/20261105-225401-b9bonnxr/report.json` passes all ten
-  commands with unchanged inputs: **3861 Rust tests, 0 failures, 17 ignored;
-  218 browser Node tests**. Checked-v38 conformance is 132 passed/5 known
-  unsupported of 137, baseline matched, with no regressions or infrastructure
-  failures. Recorded HEAD is `6dfb06e` with the GC changes in the snapshot;
-  commit `10ff9ae` records the verified collector/fuel follow-up.
-- **Superseded failure:**
-  `target/verification/20261105-224058-jqgmhs2m/report.json` failed the
-  `codegen_v2_tests::case_corpus_behaves_identically_under_v38` fuel pair on
-  `unknown_cases/assertions.ts`: `(24938,26693)` versus `(24938,26683)`.
-  The newer run passes that test and the new large-heap idle-step bound test.
-  Retain the failure as history; do not present it as an outstanding current
-  failure, or the earlier 3860-test pass as the latest evidence.
-- **Source scope:** the 1878 non-Markdown source/resource inputs captured during
-  the run still match the committed code at this refresh. Existing GC and
-  architecture changes were preserved. Only README/changelog/status/verification
-  prose changes here; test assertions and expected values are untouched by this
-  documentation task.
-- **Separate external acceptance:** Chrome streaming after the network inactivity
-  change has not been run. Real-window/system-input checks, current remote CI,
-  remaining browser/platform matrices, sustained live sessions and release/
-  security/performance acceptance remain open. A passing local full gate does
-  not close those requirements.
+- **Latest successful full gate:** `target/verification/20261106-114846-cule_s6v/report.json` passes every
+  command with unchanged inputs: **3949 Rust tests, 0 failures, 21 ignored;
+  218 browser Node tests**; checked-v38 conformance matches its baseline.
+  It covers the audit fixes of 2026-11-06 (HTTP/2 streams and idle bound,
+  per-stream write idle, file reads off the request workers, linear emoji
+  fallback, Parley segment counting) on top of colour emoji and text under
+  `scale()`.
+- **Superseded runs of the same batch:** `20261106-112155-1m2tiy5k` passed
+  every test but saw its sources change during the run (another session
+  edited the tree); `20261106-113508-baj7a9l2` failed one new HTTP/2 test
+  under load, which exposed the idle-timer race fixed before the passing
+  run. Neither is current evidence.
+- **Source scope:** the gate fingerprint covers every tracked and untracked
+  file except the independent product examples (`examples/`), which no
+  engine input depends on (`scripts/verify.py`, `INDEPENDENT_PREFIXES`).
+- **Separate external acceptance:** Chrome streaming after the network
+  inactivity change has not been run. Real-window/system-input checks,
+  current remote CI, remaining browser/platform matrices, sustained live
+  sessions and release/security/performance acceptance remain open. A
+  passing local full gate does not close those requirements.
 
 The dated sections below are historical/scoped records. Merged packages and CI
 job definitions do not establish every current target. Documentation-only edits

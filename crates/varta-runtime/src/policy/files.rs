@@ -261,6 +261,8 @@ fn read_below(directory: &Dir, parts: &[&OsStr]) -> Result<Vec<u8>, crate::HostF
     if !file.metadata().map_err(crate::HostFailure::io)?.is_file() {
         return Err(crate::HostFailure::io("only regular files are readable"));
     }
+    #[cfg(test)]
+    slow_disk::read(name);
     let mut result = Vec::new();
     file.take((MAX_RESULT_BYTES + 1) as u64)
         .read_to_end(&mut result)
@@ -269,6 +271,19 @@ fn read_below(directory: &Dir, parts: &[&OsStr]) -> Result<Vec<u8>, crate::HostF
         return Err(crate::HostFailure::too_large());
     }
     Ok(result)
+}
+
+/// A slow disk for tests: reading a file of this name takes
+/// [`slow_disk::DELAY`], whatever else runs.
+#[cfg(test)]
+pub(crate) mod slow_disk {
+    pub(crate) const NAME: &str = "varta-slow-disk.txt";
+    pub(crate) const DELAY: std::time::Duration = std::time::Duration::from_millis(1500);
+    pub(super) fn read(name: &std::ffi::OsStr) {
+        if name == NAME {
+            std::thread::sleep(DELAY);
+        }
+    }
 }
 
 impl FilePolicy {
