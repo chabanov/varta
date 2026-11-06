@@ -77,10 +77,11 @@ fn parse_import_params(params: &[ValueNode]) -> Result<Option<ImportParams>, Tai
         if let ValueNode::Word(word) = node
             && uri.is_none()
         {
-            if !(word.starts_with('"') || word.starts_with('\'')) || word.len() < 2 {
+            let mut inner = word.chars();
+            if !matches!(inner.next(), Some('"' | '\'')) || inner.next_back().is_none() {
                 return Ok(None);
             }
-            uri = Some(word[1..word.len() - 1].to_owned());
+            uri = Some(inner.as_str().to_owned());
             continue;
         }
         if let ValueNode::Function { name, .. } = node
