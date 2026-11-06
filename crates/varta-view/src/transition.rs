@@ -35,10 +35,9 @@ const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 const INITIAL_BACKGROUND: Value = Value::Color([0.0; 4]);
 const INITIAL_OPACITY: Value = Value::Number(1.0);
 /// `transform: none`.
-const INITIAL_TRANSFORM: Value = Value::Translate([0.0; 4]);
+const INITIAL_TRANSFORM: Value = Value::Transform(crate::transform::List::NONE);
 const CURRENT_COLOR: &str = "currentcolor";
 const CHANNEL_MAX: f64 = 255.0;
-const PERCENT: f64 = 100.0;
 /// Chrome's cubic Bézier solver tolerance (`gfx::CubicBezier`).
 const BEZIER_EPSILON: f64 = 1e-7;
 const NEWTON_ITERATIONS: usize = 8;
@@ -47,20 +46,20 @@ const BISECTION_ITERATIONS: usize = 64;
 const FRACTION_DIGITS: usize = 6;
 
 /// An animatable value: straight sRGB color channels and alpha in `0..=1`,
-/// a number, or a translation's pixel and box-fraction parts
-/// ([`crate::transform::translation_parts`]).
+/// a number, or a transform list ([`crate::transform::List`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Value {
     Color([f64; 4]),
     Number(f64),
-    Translate([f64; 4]),
+    Transform(crate::transform::List),
 }
 
 impl Value {
     fn parse(property: CssProperty, value: &str, units: Units) -> Option<Self> {
         match property {
-            CssProperty::Transform => crate::transform::translation_parts(value, units)
-                .map(|parts| Self::Translate(parts.map(f64::from))),
+            CssProperty::Transform => {
+                crate::transform::List::parse(value, units).map(Self::Transform)
+            }
             CssProperty::Opacity => value
                 .parse::<f64>()
                 .ok()
@@ -84,10 +83,10 @@ impl Value {
         let mix = |a: f64, b: f64| a + (b - a) * progress;
         match (self, end) {
             (Self::Number(a), Self::Number(b)) => Self::Number(mix(a, b)),
-            // Translations interpolate linearly in each part, as both CSS
-            // list and matrix interpolation do for pure translations.
-            (Self::Translate(a), Self::Translate(b)) => {
-                Self::Translate(std::array::from_fn(|i| mix(a[i], b[i])))
+            // Lists of matching primitives (or `none`) interpolate each
+            // function's arguments linearly (CSS Transforms 1 §9).
+            (Self::Transform(a), Self::Transform(b)) => {
+                Self::Transform(a.interpolate(b, progress as f32))
             }
             (Self::Color(a), Self::Color(b)) => {
                 let alpha = mix(a[3], b[3]).clamp(0.0, 1.0);
@@ -108,11 +107,7 @@ impl Value {
     fn css(self) -> String {
         match self {
             Self::Number(number) => format!("{number:.FRACTION_DIGITS$}"),
-            Self::Translate([x, y, fx, fy]) => format!(
-                "translate({x:.FRACTION_DIGITS$}px, {y:.FRACTION_DIGITS$}px) translate({:.FRACTION_DIGITS$}%, {:.FRACTION_DIGITS$}%)",
-                fx * PERCENT,
-                fy * PERCENT
-            ),
+            Self::Transform(list) => list.css(FRACTION_DIGITS),
             Self::Color([r, g, b, a]) => {
                 let channel = |value: f64| (value * CHANNEL_MAX).round() as u8;
                 format!(
@@ -128,10 +123,8 @@ impl Value {
     fn same_kind(self, other: Self) -> bool {
         matches!(
             (self, other),
-            (Self::Number(_), Self::Number(_))
-                | (Self::Color(_), Self::Color(_))
-                | (Self::Translate(_), Self::Translate(_))
-        )
+            (Self::Number(_), Self::Number(_)) | (Self::Color(_), Self::Color(_))
+        ) || matches!((self, other), (Self::Transform(a), Self::Transform(b)) if a.interpolable(b))
     }
 }
 

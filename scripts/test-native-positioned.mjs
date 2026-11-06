@@ -13,6 +13,10 @@ assert(viewport&&Number.isInteger(viewport.width)&&viewport.width>0&&viewport.wi
 let checks=0;
 const MAX_MEAN_RGB_DELTA=2; // Same bound as the native/GPU scene probes.
 const BOX_TOLERANCE=0.02;
+// native_scrollbar_probe compares classic (always-shown) scrollbars: Chrome
+// runs with macOS's "Show scroll bars: Always" for this process only.
+const classic=oracle.scrollbars==='classic';
+assert(oracle.scrollbars===undefined||classic,'invalid oracle scrollbars');
 await withBrowserPage('about:blank',async call=>{
   async function evaluate(expression) {
     const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
@@ -20,6 +24,9 @@ await withBrowserPage('about:blank',async call=>{
   }
   await call('Emulation.setDeviceMetricsOverride',{...viewport,deviceScaleFactor:scale,mobile:false});
   await evaluate(`(async()=>{document.open();document.write("<!doctype html><html><head></head><body></body></html>");document.close();document.fonts.add(await new FontFace(${JSON.stringify(oracle.family)},Uint8Array.from(${JSON.stringify(oracle.font)})).load());document.body.style.margin='0';document.body.style.background='white';document.documentElement.style.colorScheme='light';})()`);
+  // The gutter of an overflowing scroll container shows Chrome's scrollbar style.
+  const gutter=await evaluate(`(()=>{const d=document.createElement('div');d.style.cssText='overflow:auto;width:50px;height:50px';d.append(Object.assign(document.createElement('div'),{style:'height:100px'}));document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return g;})()`);
+  assert.equal(gutter,classic?15:0,`Chrome scrollbar gutter ${gutter}`);
   for(const fixture of oracle.cases) {
     const actual=await evaluate(`(async()=>{
       document.body.replaceChildren();scrollTo(0,0);const nodes=new Map(),scrolls=[];
@@ -80,5 +87,5 @@ await withBrowserPage('about:blank',async call=>{
       console.log(JSON.stringify({case:fixture.name,reveal:fixture.reveal.target,changes:changed.changes}));checks++;
     }
   }
-});
+},classic?{macDefaults:{AppleShowScrollBars:'Always'}}:{});
 console.log(`Native/Chrome positioned (scale ${scale}): ${checks} checks passed`);

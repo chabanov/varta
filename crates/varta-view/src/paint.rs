@@ -14,6 +14,7 @@ mod order;
 mod outline_curve;
 mod outline_union;
 mod scroll;
+mod scrollbar;
 mod select;
 mod snap;
 mod text_geometry;
@@ -411,6 +412,8 @@ struct ClipMask {
     image: Option<Mask>,
 }
 struct Surface<'a> {
+    /// Open scaling transforms (`begin_transform`).
+    transforms: usize,
     glyphs: Option<&'a mut Glyphs>,
     pixels: Option<Pixmap>,
     width: u32,
@@ -563,6 +566,40 @@ impl Surface<'_> {
             return;
         }
         self.pixels = Some(pixels);
+    }
+    /// Opens a scaling transform: what paints until [`Self::end_transform`]
+    /// is recorded and then mapped. Returns where its draws start.
+    fn begin_transform(&mut self, node: u32) -> Result<usize, PaintError> {
+        // An inline capture or a curved clip from outside cannot be mapped.
+        if self.capture.is_some() || self.active_clip.is_some() {
+            return Err(PaintError::Unsupported(node));
+        }
+        self.isolation_required = true;
+        let recording = self.commands.get_or_insert_with(Recording::default);
+        self.transforms += 1;
+        Ok(recording.commands.len())
+    }
+    /// Maps the draws recorded since `start` through `affine` (CSS pixels).
+    fn end_transform(&mut self, start: usize, affine: crate::transform::Affine) {
+        self.transforms = self.transforms.saturating_sub(1);
+        let device = Transform::from_row(
+            affine.scale_x,
+            0.0,
+            0.0,
+            affine.scale_y,
+            affine.x * self.scale,
+            affine.y * self.scale,
+        );
+        let Some(recording) = self.commands.as_mut() else {
+            return;
+        };
+        for draw in recording.commands.iter_mut().skip(start) {
+            draw.transform = device.pre_concat(draw.transform);
+            if let Some(bounds) = draw.bounds.transform(device) {
+                draw.bounds = bounds;
+            }
+            draw.clip = draw.clip.and_then(|clip| clip.transform(device));
+        }
     }
     fn fallback_mask(&self, mask: Option<&ClipMask>) -> Result<Option<ClipMask>, PaintError> {
         // A mask may have been created before a recording overflow. Subsequent
@@ -1521,7 +1558,15 @@ fn paint_shaped_with(
                         },
                         |f| f.shaped.offsets[line_index],
                     );
-                if let Some(cache) = pixmap.glyphs.as_mut().filter(|cache| cache.has_provider()) {
+                // Host coverage is device pixels at the unscaled size; text
+                // under a scaling transform draws the portable outlines,
+                // which the transform maps exactly.
+                let flat = pixmap.transforms == 0;
+                if let Some(cache) = pixmap
+                    .glyphs
+                    .as_mut()
+                    .filter(|cache| flat && cache.has_provider())
+                {
                     const PHASES: f32 = 4.0;
                     let quarter = (x * pixmap.scale * PHASES + 0.5).floor() / PHASES;
                     let origin = (quarter.floor(), (y * pixmap.scale + 0.5).floor());
@@ -1828,6 +1873,8 @@ fn paint_marker(
                     clip,
                     scroll: None,
                     programmatic_scroll: None,
+                    scrollbars: None,
+                    transform: None,
                 },
                 (&underline::Style::plain(color), "", WhiteSpaceMode::Pre),
                 id,
@@ -2083,6 +2130,8 @@ fn paint_input(
             content,
             scroll: None,
             programmatic_scroll: None,
+            scrollbars: None,
+            transform: None,
         };
         let style = underline::Style::resolve(tree, env, id, true, color)?;
         paint_shaped(
@@ -2122,6 +2171,8 @@ fn paint_input(
             content,
             scroll: None,
             programmatic_scroll: None,
+            scrollbars: None,
+            transform: None,
         };
         let style = underline::Style::resolve(tree, env, id, true, theme::PLACEHOLDER.color())?;
         paint_shaped(
@@ -2468,7 +2519,7 @@ fn rasterize_inner_scoped(
         )?
     } else {
         (
-            layout::geometry(tree, &env, width as f32 / scale, height as f32 / scale)?,
+            layout::geometry_local(tree, &env, width as f32 / scale, height as f32 / scale)?,
             BTreeMap::new(),
             BTreeMap::new(),
         )
@@ -2508,6 +2559,7 @@ fn rasterize_inner_scoped(
         groups: Vec::new(),
         relative_clips: BTreeMap::new(),
         isolation_required: false,
+        transforms: 0,
         capture: None,
     };
     let mut pending = order::Order::new(tree, &env, &geometry, |id| flows.contains_key(&id))?;
@@ -2526,6 +2578,9 @@ fn rasterize_inner_scoped(
     let mut text_hits = BTreeMap::new();
     let mut menu_control = None;
     let mut cursors = BTreeMap::new();
+    // Open scaling transforms: the box, its first draw and hit region, and
+    // its transform in CSS pixels.
+    let mut transform_scopes: Vec<(u32, usize, usize, crate::transform::Affine)> = Vec::new();
     while let Some((id, phase)) = pending.next() {
         if phase == order::Phase::InlineOutline {
             inline_programs.paint_outlines(id, &mut pixmap)?;
@@ -2644,6 +2699,30 @@ fn rasterize_inner_scoped(
                 )?;
             }
             pixmap.end_group(id)?;
+            if let Some((_, start, hits, affine)) = transform_scopes.pop_if(|scope| scope.0 == id) {
+                pixmap.end_transform(start, affine);
+                if hit_clips.range(hits..).next().is_some() {
+                    return Err(PaintError::Unsupported(id));
+                }
+                for (_, rect) in &mut hit_regions[hits..] {
+                    *rect = affine.rect(*rect);
+                }
+                let device = crate::transform::Affine {
+                    x: affine.x * scale,
+                    y: affine.y * scale,
+                    ..affine
+                };
+                for (_, region) in rounded_regions.range_mut(hits..) {
+                    let inline_decor::Region::Box(bounds, radii) = region else {
+                        return Err(PaintError::Unsupported(id));
+                    };
+                    *bounds = device.rect(*bounds);
+                    for [x, y] in &mut radii.0 {
+                        *x *= affine.scale_x;
+                        *y *= affine.scale_y;
+                    }
+                }
+            }
             if group_clips.last().is_some_and(|(group, _)| *group == id) {
                 group_clips.pop();
             }
@@ -2918,6 +2997,14 @@ fn rasterize_inner_scoped(
         {
             return Err(PaintError::Unsupported(id));
         }
+        // A scaling transform maps everything its stacking context paints,
+        // and the hit regions it adds, until its outline phase ends it.
+        if phase == order::Phase::Context
+            && let Some(affine) = geometry[&id].transform
+        {
+            let start = pixmap.begin_transform(id)?;
+            transform_scopes.push((id, start, hit_regions.len(), affine));
+        }
         if opacity != 1.0 {
             pixmap.begin_group(id, opacity, geometry[&id].clip)?;
             group_clips.push((id, geometry[&id].clip));
@@ -3004,6 +3091,14 @@ fn rasterize_inner_scoped(
                 paint_radii,
                 colors,
             )?;
+        }
+        if let Some(bars) = geometry[&id].scrollbars {
+            // Classic scrollbars follow the box's square border edge; a
+            // rounded scroll container would clip them.
+            if !paint_radii.is_square() {
+                return Err(PaintError::Unsupported(id));
+            }
+            scrollbar::paint(&mut pixmap, bars, geometry[&id].clip)?;
         }
         if matches!(phase, order::Phase::Context | order::Phase::Atomic) {
             pending.finish_after_children(id, phase);
@@ -3094,7 +3189,7 @@ fn rasterize_inner_scoped(
             select_menu,
             cursors,
             scroll_sources: scroll::sources(tree, &geometry, &pending),
-            scroll_layout: geometry,
+            scroll_layout: layout::visual(tree, geometry),
         },
     })
 }
@@ -3168,6 +3263,7 @@ mod flow_text_tests {
             groups: Vec::new(),
             relative_clips: BTreeMap::new(),
             isolation_required: false,
+            transforms: 0,
             capture: None,
         };
         let result = paint_flow_text(
@@ -3180,6 +3276,8 @@ mod flow_text_tests {
                 content: rect,
                 scroll: None,
                 programmatic_scroll: None,
+                scrollbars: None,
+                transform: None,
             },
             underline::Style::plain(Color::BLACK),
             (TEXT, FLOW, false),
@@ -3242,6 +3340,7 @@ mod retained_tests {
                 groups: Vec::new(),
                 relative_clips: BTreeMap::new(),
                 isolation_required: false,
+                transforms: 0,
                 capture: None,
             };
             let mut reference = Surface {
@@ -3257,6 +3356,7 @@ mod retained_tests {
                 groups: Vec::new(),
                 relative_clips: BTreeMap::new(),
                 isolation_required: false,
+                transforms: 0,
                 capture: None,
             };
             if complex {

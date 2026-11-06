@@ -1,6 +1,7 @@
 //! Deterministic text shaping using only explicitly supplied fonts.
 mod cache;
 pub(crate) mod edges;
+pub(crate) mod fallback;
 pub(crate) mod field_display;
 pub(crate) mod whitespace;
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
@@ -10,6 +11,7 @@ use parley::{
 };
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -92,6 +94,13 @@ pub struct TextMeasurer {
     entries: Vec<FontEntry>,
     /// Generic aliases name packaged families ([`Self::new_with_packaged_fonts`]).
     packaged: bool,
+    /// The host's platform fallback ([`Self::set_fallback`]).
+    fallback: Option<fallback::Fallbacks>,
+    /// The registered family of each loaded font blob.
+    blob_families: BTreeMap<u64, String>,
+    /// Families whose ascent the platform's browser enlarges
+    /// ([`Self::set_enlarged_ascent_families`]).
+    enlarged_ascent: Vec<String>,
     view_shaping: Arc<ViewShapingState>,
     #[cfg(test)]
     shaping_builds: usize,
@@ -218,6 +227,50 @@ pub enum TextMeasureError {
     /// Text whose layout the native white-space model does not reproduce.
     #[error("text layout outside the native white-space model")]
     Unsupported,
+    /// The platform would draw this character with a face the native
+    /// renderer refuses ([`fallback::FallbackRefusal`]).
+    #[error("platform fallback face for {character:?}: {refusal}")]
+    Fallback {
+        character: char,
+        refusal: fallback::FallbackRefusal,
+    },
+}
+
+/// The share of a face's rounded height Chrome on macOS adds to the ascent of
+/// Times, Helvetica and Courier ([`TextMeasurer::set_enlarged_ascent_families`]).
+pub const ENLARGED_ASCENT_FRACTION: f32 = 0.15;
+
+/// One flow's shaping input ([`TextMeasurer::build_once`]).
+#[derive(Clone, Copy)]
+struct Shaping<'a> {
+    text: &'a str,
+    families: &'a [String],
+    options: TextOptions,
+    spans: &'a [TextSpan],
+    edges: &'a [edges::TextEdge],
+    tabs: &'a [whitespace::TabStyle],
+}
+
+/// The family list a platform fallback face extends over a text range.
+type FamilyOverride = (std::ops::Range<usize>, Vec<String>);
+/// A family list and style: the shaping segment fallback groups by.
+type StyleKey<'a> = (&'a [String], TextOptions);
+
+/// The family list and style at `offset`: the last span holding it, else
+/// the flow's own.
+fn style_at<'a>(
+    families: &'a [String],
+    options: TextOptions,
+    spans: &'a [TextSpan],
+    offset: usize,
+) -> (&'a [String], TextOptions) {
+    spans
+        .iter()
+        .rev()
+        .find(|span| span.range.contains(&offset))
+        .map_or((families, options), |span| {
+            (span.families.as_slice(), span.options)
+        })
 }
 
 fn same_family(a: &FontFamilyName<'_>, b: &FontFamilyName<'_>) -> bool {
@@ -323,6 +376,179 @@ impl TextMeasurer {
                 .is_some())
     }
 
+    /// Let `provider` name the platform face of every cluster the CSS
+    /// families lack (see [`fallback`]); `None` keeps `.notdef` for such a
+    /// cluster. Faces registered by an earlier provider stay registered.
+    pub fn set_fallback(&mut self, provider: Option<Box<dyn fallback::FontFallback>>) {
+        self.fallback = provider.map(fallback::Fallbacks::new);
+    }
+
+    /// The registered family of the platform face for `character`,
+    /// registering the face on first use; `None` when the platform has none.
+    fn fallback_family(
+        &mut self,
+        character: char,
+        families: &[String],
+        options: TextOptions,
+    ) -> Result<Option<String>, TextMeasureError> {
+        let Some(state) = self.fallback.as_mut() else {
+            return Ok(None);
+        };
+        let refused = |refusal| TextMeasureError::Fallback { character, refusal };
+        let primary = families.first().ok_or(TextMeasureError::Limit)?;
+        let Some(face) = state
+            .provider
+            .face(&fallback::FallbackRequest {
+                character,
+                family: primary,
+                weight: options.weight,
+                italic: options.italic,
+            })
+            .map_err(refused)?
+        else {
+            return Ok(None);
+        };
+        if let Some(family) = state.registered.get(&face.key) {
+            return Ok(Some(family.clone()));
+        }
+        // A face of a family the measurer already loaded (a system family a
+        // generic maps) adds nothing: that family's own faces are used.
+        if face.data.len() > fallback::MAX_FALLBACK_FACE_BYTES {
+            return Err(refused(fallback::FallbackRefusal::Limit));
+        }
+        let names =
+            Self::registered_families(face.data.to_vec(), fallback::MAX_FALLBACK_FACE_BYTES)
+                .map_err(|_| refused(fallback::FallbackRefusal::Unreadable))?;
+        if let Some(entry) = self.entries.iter().find(|entry| {
+            names.iter().any(|name| {
+                same_family(
+                    &FontFamilyName::named(&entry.family),
+                    &FontFamilyName::named(name),
+                )
+            })
+        }) {
+            let family = entry.family.clone();
+            state.registered.insert(face.key, family.clone());
+            return Ok(Some(family));
+        }
+        let bytes = state
+            .bytes
+            .checked_add(face.data.len())
+            .filter(|&bytes| {
+                bytes <= fallback::MAX_FALLBACK_BYTES
+                    && face.data.len() <= fallback::MAX_FALLBACK_FACE_BYTES
+                    && state.registered.len() < fallback::MAX_FALLBACK_FACES
+            })
+            .ok_or_else(|| refused(fallback::FallbackRefusal::Limit))?;
+        let blob = Blob::new(Arc::new(face.data));
+        let blob_id = blob.id();
+        let registered = self.fonts.collection.register_fonts(blob, None);
+        let family = registered
+            .first()
+            .and_then(|(id, _)| self.fonts.collection.family_name(*id))
+            .ok_or_else(|| refused(fallback::FallbackRefusal::Unreadable))?
+            .to_owned();
+        state.bytes = bytes;
+        state.registered.insert(face.key, family.clone());
+        self.blob_families.insert(blob_id, family.clone());
+        Ok(Some(family))
+    }
+
+    /// Enlarge the ascent of every face of these registered families by
+    /// [`ENLARGED_ASCENT_FRACTION`] of its rounded height, rounded, as the
+    /// platform's browser does for them (Chrome on macOS: Times, Helvetica
+    /// and Courier, to match the vertical metrics of their Windows
+    /// counterparts). A host sets it for the platform's own faces only.
+    pub fn set_enlarged_ascent_families(&mut self, families: &[&str]) {
+        self.enlarged_ascent = families.iter().map(|family| (*family).to_owned()).collect();
+    }
+
+    /// The enlarged ascent and descent of a run in a font of an
+    /// [`Self::set_enlarged_ascent_families`] family.
+    fn enlarged(
+        &self,
+        font: &parley::FontData,
+        metrics: &parley::RunMetrics,
+    ) -> Option<(f32, f32)> {
+        let family = self.blob_families.get(&font.data.id())?;
+        if !self
+            .enlarged_ascent
+            .iter()
+            .any(|enlarged| enlarged.eq_ignore_ascii_case(family))
+        {
+            return None;
+        }
+        let (ascent, descent) = (metrics.ascent.round(), metrics.descent.round());
+        Some((
+            ascent + ((ascent + descent) * ENLARGED_ASCENT_FRACTION + 0.5).floor(),
+            descent,
+        ))
+    }
+
+    /// Gives runs the vertical metrics Chrome lays lines out with: an
+    /// enlarged-ascent family's runs their enlarged ascent, and a platform
+    /// fallback face's runs under a line height other than `normal` the
+    /// metrics of their element's primary font (Blink adds the metrics of
+    /// other used fonts to an inline box only for `line-height: normal`).
+    /// Returns the charged operations of shaping the primary fonts.
+    fn adjust_vertical_metrics(
+        &mut self,
+        layout: &mut Layout<u32>,
+        input: Shaping<'_>,
+        overrides: &[FamilyOverride],
+    ) -> Result<usize, TextMeasureError> {
+        let Shaping {
+            families,
+            options,
+            spans,
+            ..
+        } = input;
+        const SPACE: &str = " ";
+        if self.enlarged_ascent.is_empty() && overrides.is_empty() {
+            return Ok(0);
+        }
+        let mut operations = 0usize;
+        let mut primaries: Vec<(std::ops::Range<usize>, (f32, f32))> = Vec::new();
+        for (range, _) in overrides {
+            let (list, style) = style_at(families, options, spans, range.start);
+            if !matches!(
+                style.line_height,
+                Some(LineHeight::Absolute(_) | LineHeight::FontSizeRelative(_))
+            ) {
+                continue;
+            }
+            let sample_input = Shaping {
+                text: SPACE,
+                families: list,
+                options: style,
+                spans: &[],
+                edges: &[],
+                tabs: &[],
+            };
+            let (mut sample, used) = self.build_once(sample_input, &[])?;
+            operations = operations.saturating_add(used);
+            let mut primary = None;
+            sample.adjust_run_metrics(|_, font, metrics| {
+                primary.get_or_insert_with(|| {
+                    self.enlarged(font, metrics)
+                        .unwrap_or((metrics.ascent, metrics.descent))
+                });
+                None
+            });
+            if let Some(primary) = primary {
+                primaries.push((range.clone(), primary));
+            }
+        }
+        layout.adjust_run_metrics(|range, font, metrics| {
+            primaries
+                .iter()
+                .find(|(covered, _)| covered.start <= range.start && range.end <= covered.end)
+                .map(|(_, primary)| *primary)
+                .or_else(|| self.enlarged(font, metrics))
+        });
+        Ok(operations)
+    }
+
     /// Load one font family from bytes. No OS font lookup is enabled.
     pub fn new(font: Vec<u8>, family: &str) -> Result<Self, TextMeasureError> {
         Self::new_with_aliases(font, family, &[])
@@ -375,7 +601,13 @@ impl TextMeasurer {
     /// it. A host reads them from the file because a platform may know its
     /// UI font under another name than the file's own.
     pub fn system_font_families(data: Vec<u8>) -> Result<Vec<String>, TextMeasureError> {
-        if data.is_empty() || data.len() > MAX_SYSTEM_FONT_FILE_BYTES {
+        Self::registered_families(data, MAX_SYSTEM_FONT_FILE_BYTES)
+    }
+
+    /// The family names `data` registers, in order and without repeats, for
+    /// a face of at most `limit` bytes.
+    fn registered_families(data: Vec<u8>, limit: usize) -> Result<Vec<String>, TextMeasureError> {
+        if data.is_empty() || data.len() > limit {
             return Err(TextMeasureError::Font);
         }
         let mut collection = Collection::new(CollectionOptions {
@@ -405,6 +637,7 @@ impl TextMeasurer {
             system_fonts: false,
         });
         let mut entries: Vec<FontEntry> = Vec::new();
+        let mut blob_families = BTreeMap::new();
         let mut bytes = 0usize;
         for font in fonts {
             bytes = bytes
@@ -464,7 +697,9 @@ impl TextMeasurer {
                     return Err(TextMeasureError::Font);
                 }
             }
-            let registered = collection.register_fonts(Blob::new(Arc::new(font.data)), None);
+            let blob = Blob::new(Arc::new(font.data));
+            blob_families.insert(blob.id(), font.family.clone());
+            let registered = collection.register_fonts(blob, None);
             let Some(family_id) = collection.family_id(&font.family) else {
                 return Err(TextMeasureError::Font);
             };
@@ -498,6 +733,9 @@ impl TextMeasurer {
             },
             entries,
             packaged: false,
+            fallback: None,
+            blob_families,
+            enlarged_ascent: Vec::new(),
             view_shaping: Arc::new(ViewShapingState {
                 remaining: AtomicUsize::new(NO_VIEW_REQUEST),
                 inline_remaining: AtomicUsize::new(NO_VIEW_REQUEST),
@@ -710,6 +948,122 @@ impl TextMeasurer {
         edges: &[edges::TextEdge],
         tabs: &[whitespace::TabStyle],
     ) -> Result<(Layout<u32>, usize), TextMeasureError> {
+        let input = Shaping {
+            text,
+            families,
+            options,
+            spans,
+            edges,
+            tabs,
+        };
+        let (mut layout, mut operations) = self.build_once(input, &[])?;
+        // Platform fallback faces, appended to the CSS families of the
+        // `.notdef` ranges; a later override of a position wins.
+        let mut overrides: Vec<FamilyOverride> = Vec::new();
+        let passes = if self.fallback.is_some() {
+            fallback::Fallbacks::passes()
+        } else {
+            0
+        };
+        for _ in 0..passes {
+            if !self.fallback_pass(&mut layout, input, &mut overrides)? {
+                break;
+            }
+            let (rebuilt, used) = self.build_once(input, &overrides)?;
+            layout = rebuilt;
+            operations = operations.saturating_add(used);
+        }
+        let used = self.adjust_vertical_metrics(&mut layout, input, &overrides)?;
+        Ok((layout, operations.saturating_add(used)))
+    }
+
+    /// One fallback pass over `layout`, as Blink's shaper falls back: the
+    /// `.notdef` ranges of one style (one shaping segment) all try the face
+    /// the platform gives the first range's first character, after the
+    /// families they had. Returns whether a range took a new face.
+    fn fallback_pass(
+        &mut self,
+        layout: &mut Layout<u32>,
+        input: Shaping<'_>,
+        overrides: &mut Vec<FamilyOverride>,
+    ) -> Result<bool, TextMeasureError> {
+        let Shaping {
+            text,
+            families,
+            options,
+            spans,
+            ..
+        } = input;
+        // Ranges split where the style changes, grouped by style in the
+        // order of their first range.
+        let mut groups: Vec<(StyleKey<'_>, Vec<std::ops::Range<usize>>)> = Vec::new();
+        for range in fallback::missing_clusters(layout, text) {
+            let mut start = range.start;
+            while start < range.end {
+                let style = style_at(families, options, spans, start);
+                let end = spans
+                    .iter()
+                    .flat_map(|span| [span.range.start, span.range.end])
+                    .filter(|&boundary| boundary > start && boundary < range.end)
+                    .filter(|&boundary| style_at(families, options, spans, boundary) != style)
+                    .min()
+                    .unwrap_or(range.end);
+                let index = match groups.iter().position(|(key, _)| *key == style) {
+                    Some(index) => index,
+                    None => {
+                        groups.push((style, Vec::new()));
+                        groups.len() - 1
+                    }
+                };
+                groups[index].1.push(start..end);
+                start = end;
+            }
+        }
+        let mut added = false;
+        for ((list, style), ranges) in groups {
+            let Some(first) = ranges.first() else {
+                continue;
+            };
+            let character = text[first.clone()]
+                .chars()
+                .next()
+                .ok_or(TextMeasureError::Limit)?;
+            let Some(family) = self.fallback_family(character, list, style)? else {
+                continue;
+            };
+            for range in ranges {
+                let current = overrides
+                    .iter()
+                    .rev()
+                    .find(|(covered, _)| covered.contains(&range.start))
+                    .map_or(list, |(_, stack)| stack.as_slice());
+                if current.contains(&family) {
+                    continue;
+                }
+                let mut stack = current.to_vec();
+                stack.push(family.clone());
+                overrides.push((range, stack));
+                added = true;
+            }
+        }
+        Ok(added)
+    }
+
+    /// One shaping build; `overrides` replace the family list of their
+    /// ranges after every span (platform fallback faces).
+    fn build_once(
+        &mut self,
+        input: Shaping<'_>,
+        overrides: &[FamilyOverride],
+    ) -> Result<(Layout<u32>, usize), TextMeasureError> {
+        let Shaping {
+            text,
+            families,
+            options,
+            spans,
+            edges,
+            tabs,
+        } = input;
         let remaining = self.view_shaping.remaining.load(Ordering::Relaxed);
         let scoped = remaining != NO_VIEW_REQUEST;
         self.layout.set_shaping_operation_ceiling(
@@ -796,6 +1150,16 @@ impl TextMeasurer {
                     OverflowWrap::Normal
                 }),
                 range,
+            );
+        }
+        for (range, stack) in overrides {
+            let names: Vec<_> = stack
+                .iter()
+                .map(|name| FontFamilyName::Named(Cow::Borrowed(name.as_str())))
+                .collect();
+            builder.push(
+                StyleProperty::FontFamily(names.as_slice().into()),
+                range.clone(),
             );
         }
         for &tab in tabs {

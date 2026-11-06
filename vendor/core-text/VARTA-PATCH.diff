@@ -1,0 +1,54 @@
+--- a/src/font.rs
++++ b/src/font.rs
+@@ -17,7 +17,7 @@
+ use crate::font_manager::create_font_descriptor;
+ 
+ use core_foundation::array::{CFArray, CFArrayRef};
+-use core_foundation::base::{CFIndex, CFOptionFlags, CFType, CFTypeID, CFTypeRef, TCFType};
++use core_foundation::base::{CFIndex, CFOptionFlags, CFRange, CFType, CFTypeID, CFTypeRef, TCFType};
+ use core_foundation::data::{CFData, CFDataRef};
+ use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+ use core_foundation::number::CFNumber;
+@@ -283,6 +283,29 @@
+         unsafe {
+             let desc = CTFontCopyFontDescriptor(self.0);
+             CTFontDescriptor::wrap_under_create_rule(desc)
++        }
++    }
++
++    /// The font CoreText draws the start of `string` with when this font
++    /// lacks it (`CTFontCreateForStringWithLanguage` over the whole string):
++    /// this font itself when it covers the text, otherwise the first font
++    /// of its fallback cascade that does, as AppKit and WebKit text fall
++    /// back. `language`, a BCP 47 tag, selects language-specific cascade
++    /// entries; `None` uses the user's preferred languages.
++    pub fn create_for_string_with_language(&self, string: &str, language: Option<&str>) -> CTFont {
++        let text = CFString::new(string);
++        let range = CFRange::init(0, text.char_len());
++        let language = language.map(CFString::new);
++        unsafe {
++            let font_ref = CTFontCreateForStringWithLanguage(
++                self.0,
++                text.as_concrete_TypeRef(),
++                range,
++                language
++                    .as_ref()
++                    .map_or(ptr::null(), |language| language.as_concrete_TypeRef()),
++            );
++            CTFont::wrap_under_create_rule(font_ref)
+         }
+     }
+ 
+@@ -692,6 +715,12 @@
+     ) -> CTFontRef;
+     //fn CTFontCreateCopyWithFamily
+     //fn CTFontCreateForString
++    fn CTFontCreateForStringWithLanguage(
++        currentFont: CTFontRef,
++        string: CFStringRef,
++        range: CFRange,
++        language: CFStringRef,
++    ) -> CTFontRef;
+ 
+     /* Getting Font Data */
+     fn CTFontCopyFontDescriptor(font: CTFontRef) -> CTFontDescriptorRef;

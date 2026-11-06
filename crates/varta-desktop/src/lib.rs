@@ -10,6 +10,7 @@ mod gpu;
 mod gpu_scene;
 mod input_queue;
 mod pixels;
+mod sfnt;
 pub mod shell;
 #[cfg(target_os = "macos")]
 pub mod text_raster;

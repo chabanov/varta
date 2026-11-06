@@ -7,6 +7,9 @@ license.workspace = true
 [features]
 default = []
 gpu = ["dep:wgpu", "dep:vello_gpu", "dep:pollster"]
+# The Linux fontconfig lookups of `--system-fonts` on another host, to test
+# them against a local fontconfig (always built on Linux).
+fontconfig = ["dep:fontconfig", "dep:skrifa"]
 
 [[bin]]
 name = "varta-preview"
@@ -45,13 +48,24 @@ arboard.workspace = true
 wgpu = { workspace = true, optional = true }
 vello_gpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
+# fontconfig for `--system-fonts` on Linux, optional elsewhere (the
+# `fontconfig` feature); skrifa (already locked through the view) reads a
+# fallback face's character map.
+fontconfig = { workspace = true, optional = true }
+skrifa = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Exercise the same safe live planner compiled by the patched platform adapter.
 accesskit_consumer = "=0.39.2"
 sha2.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+fontconfig.workspace = true
+skrifa.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
 core-text.workspace = true
 core-graphics.workspace = true
 core-foundation.workspace = true

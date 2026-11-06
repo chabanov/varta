@@ -14156,6 +14156,101 @@ DOM boundary reports it as an indexed `ViewProtocolError` (`font-family
 keyword` for `set_style`, `stylesheet value` for a stylesheet). Custom
 property values keep such keywords. A quoted name is an ordinary family.
 
+#### Native scrollbars
+
+`Environment::scrollbars` selects the platform's scrollbar style, as Chrome on
+macOS follows the system's "Show scroll bars" setting. `Scrollbars::Overlay`
+(the default, and headless Chrome's style on a Mac with a trackpad) reserves
+no space and paints nothing while a container is not being scrolled.
+`Scrollbars::Classic` (always shown) gives every scroll container
+(`overflow: auto`, and the top-layer dialog) whose content overflows on an
+axis that axis's bar: a gutter of `CLASSIC_SCROLLBAR_THICKNESS` inside the
+borders (the vertical bar at the right, the horizontal one at the bottom),
+which the content box, the scrollport and the content clip leave out. Layout
+runs again after adding gutters; a gutter can make content overflow on the
+other axis, so gutters are only added, for at most `MAX_GUTTER_PASSES` more
+passes, and gutters still growing after them are refused
+(`LayoutError::Unsupported`). `BoxGeometry::scrollbars` gives each bar's
+track and its axis's range. Paint follows Chrome 156's `NativeThemeMac` in
+the light scheme (the subset has no `color-scheme`, and the official host
+never sets one, so Chrome paints light scrollbars in either OS scheme), in
+device pixels: the track filled `#FAFAFA` with a one-pixel (floored when
+scaled) inner border `#E8E8E8` on the content side and outer border `#EDEDED`
+on the outer edge; the corner where both bars meet filled likewise with its
+inner square and both outer borders; and the thumb, a pill of black at alpha
+`0x3A`, whose length and position are Blink's (`round(visible / total ·
+track)`, at least 20 pixels scaled, at `trunc(offset · (track − thumb) /
+max)`, one pixel for an offset under one), inset by 3 pixels (rounded when
+scaled) on every side plus the border on the content side, the insets
+shrinking (`ConstrainInsets`) to keep a 6 by 18 pixel minimum. A bar paints
+after its container's border and before its content, clipped to the
+container's clip; a classic scroll container with rounded corners is refused
+at paint. Pointers over a bar hit the container. Native layout scrolls only
+vertically, so a horizontal thumb stays at the start. Geometry, hits and
+pixels match Chrome 156 run with `-AppleShowScrollBars Always` (its argument
+domain only) at 1x, 1.25x and 2x within the 2/255 mean bound
+(`native_scrollbar_probe` with `scripts/test-native-positioned.mjs`); at 2x
+Chrome's scrollbar layer filters the track borders over two more pixels,
+which native does not. Not implemented: the overlay thumb that Chrome shows
+while scrolling and fades out after about half a second, the hover color of
+the classic thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a
+track, and Chrome's Linux (Aura) scrollbars.
+
+`varta-shell` reads AppKit's preferred scroller style
+(`NSScroller.preferredScrollerStyle`, where "Automatically" resolves by the
+attached pointing devices) on the main thread when its window opens and hands
+it to the instance (`ViewLayout::with_scrollbars`); a later change of the
+setting applies after a restart. Other platforms keep overlay scrollbars.
+
+#### Native fallback faces
+
+A host that lays text out with the platform's own fonts may give a
+`TextMeasurer` a `FontFallback` (`TextMeasurer::set_fallback`); `varta-shell
+--system-fonts` does, and no other host or font set looks anything up (a
+cluster none of the families covers keeps `.notdef`). The shaper first shapes
+with the CSS families. Then, as Blink's shaper falls back over a segment, the
+`.notdef` ranges of one style (adjacent clusters form one range; line breaks
+and control characters are not missing) all try the face the host names for
+the first range's first character (`FallbackRequest { character, family,
+weight, italic }`, `family` being the element's primary family), appended
+after the families each range had, and the text is shaped again; ranges that
+still miss repeat this, at most `MAX_FALLBACK_PASSES` times, and every pass is
+charged to the view's shaping budget. A covered character never changes face.
+The measurer registers each face once (by its `FallbackFace::key`); a face of
+a family the set already loads adds nothing and that family's faces are used.
+At most `MAX_FALLBACK_FACES` faces of at most `MAX_FALLBACK_FACE_BYTES` each
+and `MAX_FALLBACK_BYTES` in all are registered per measurer. A face drawing
+colour glyphs (`COLR`, `CBDT`, `EBDT`, `sbix` or `SVG ` tables, for example
+Apple Color Emoji), a face past these limits, or one that cannot be read
+refuses the text (`TextMeasureError::Fallback { character, refusal }`, a
+layout or paint failure) rather than drawing another face. As in Blink, a
+fallback face's run under a `line-height` other than `normal` takes its
+element's primary font ascent and descent, so it does not change the line box;
+under `normal` its own metrics take part (in an inline formatting context;
+plain text with `normal` keeps Parley's largest line height, a remaining
+difference). Weight and style select among the family's registered faces, and
+synthesis follows the paint rules of packaged faces (only the bold Chrome
+would synthesize stays refused).
+
+The shell names the face as Chrome does: on macOS CoreText's
+`CTFontCreateForStringWithLanguage` for the primary font (the UI font for the
+family `system-ui` maps, otherwise the named family) with the bold
+(weight 600 or more) and italic traits, then that family's face with those
+traits; the face is the platform font's own tables assembled as a standalone
+face, so no file is read. On Linux fontconfig's sorted match (`FcFontSort`)
+for a pattern of the character and the process locale (`LC_ALL`,
+`LC_MESSAGES`, then `LANG`), the first scalable face whose character map has
+it, extracted from its file or collection; like Chrome on Linux it does not
+ask for the weight or style. Answers and faces are cached per font set and
+shared by its measurers. Blink also splits fallback segments at script runs,
+which native grouping by style does not; they differ only when one segment's
+fallback face covers another script's missing characters. On macOS 27 with
+Chrome 156, `native_fallback_probe` with `scripts/test-native-inline.mjs`
+matches Chrome's boxes at 1x and 2x and its pixels within the 2/255 mean bound
+for lines whose primary font is Helvetica, Times or Menlo; lines in the UI
+font compare geometry only, because its `opsz` axis makes the CoreText
+rasterizer decline its glyphs (portable outlines, about 2.7/255 mean).
+
 #### Native modal dialogs (top layer)
 
 A closed `dialog` renders nothing. A modal one (`show_modal`) lays out as
@@ -14183,10 +14278,13 @@ those bounds and drops the inert page.
 
 The native view runs CSS Transitions 1 as Chrome 156 does for the subset's
 animatable properties: the paint-only `color`, `background-color` and
-`opacity`, and `transform` translations ([native transforms](#native-css-transforms)),
-whose pixel and box-fraction parts interpolate linearly (as both CSS list and
-matrix interpolation do for pure translations; a scaling list is refused by
-layout). `transition-property` (initially `all`; `none` matches
+`opacity`, and `transform` ([native transforms](#native-css-transforms)), whose
+lists interpolate function by function when they pair (CSS Transforms 1 §9:
+the same length and the same primitive in each position, `translate()` and
+its one-axis forms being one primitive; `none` stands for the identity
+functions of the other list), each argument linearly (a translation's pixel
+and box-fraction parts separately). Lists that do not pair, which Chrome
+interpolates as matrices, start no transition: the value changes at once. `transition-property` (initially `all`; `none` matches
 nothing), `-duration`, `-timing-function` (`linear`, `ease`, `ease-in`,
 `ease-out`, `ease-in-out` as their cubic Béziers) and `-delay` are
 paint-only: layout admits them and they change no box. A property's
@@ -14223,14 +14321,32 @@ moves the element's box and everything in it for paint, hits, geometry,
 accessibility bounds and scroll-into-view; no other box moves, as in
 layout. Any transform makes the element a stacking context painted at level
 zero (CSS2 Appendix E with CSS Transforms 1 §3), so it paints over later
-in-flow siblings it overlaps. Refused with `LayoutError::Unsupported`: a list
-that scales (a factor other than one), and a fixed descendant of a
-transformed box or an absolute one whose containing block would be a
-transformed box that is not positioned (the transformed box contains them,
-which native layout does not model yet); a transform on an inline box has no
-effect, as in CSS. Geometry, hits and pixels match Chrome at 1x, 1.25x and 2x
-for whole-pixel and percentage translations (the `transform-*` cases of
-`native_positioned_probe`). A translation that is not a whole CSS pixel
+in-flow siblings it overlaps. A list that scales (positive factors, at most
+`MAX_TRANSFORM_FUNCTIONS` functions, applied in list order around the
+origin) keeps every box where layout put it: its stacking context paints
+untransformed into the recorded scene and its draws and hit regions (and
+rounded hit regions) are then mapped through the transform in device
+pixels, nested scales composing; text under a scale draws its portable
+outlines (host glyph coverage is device pixels at the unscaled size). The
+context's ancestors' clip is taken back through the inverse transform, so
+the same pixels clip. `BoxGeometry::transform` carries the element's own
+scaling transform; the public geometry (`layout_boxes`, `layout_geometry`,
+scroll-into-view and accessibility bounds) maps every box of the subtree as
+`getBoundingClientRect` does. Refused with `LayoutError::Unsupported`: a
+factor that is not positive, a scroll container or clip (`overflow` other
+than `visible`), text field or select in a scaled subtree or on the scaled
+box, a scaled stacking context inside an inline capture or under a curved
+clip (`PaintError::Unsupported`), and a fixed descendant of a transformed box
+or an absolute one whose containing block would be a transformed box that is
+not positioned (the transformed box contains them, which native layout does
+not model yet); a transform on an inline box has no effect, as in CSS.
+Geometry, hits and pixels match Chrome at 1x, 1.25x and 2x for whole-pixel
+and percentage translations and for scales (the `transform-*` and `scale-*`
+cases of `native_positioned_probe`: a scaled button with radii, outline and
+text, list order with anisotropic factors, nested scales with a stacked
+child). Blink paints an element's outline before its stacking-context
+children at level zero, native after them (CSS2 Appendix E), a difference
+that is not specific to transforms. A translation that is not a whole CSS pixel
 moves the box exactly but its edges are snapped with it, while Chrome draws
 the snapped box at the fraction; its edges then differ by under one pixel.
 Native scrollable overflow does not include translated boxes.
@@ -16354,24 +16470,44 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
 - **System fonts.** `--system-fonts`, also only for an artifact without fonts
   (`ShellError::FontConflict` otherwise) and exclusive with `--font`, maps the
   CSS generic families to this computer's fonts as the platform's browser
-  does: on macOS, as probed with Chrome 156, Times for `serif` (first, so the
-  family of text without `font-family`), the system UI font (its regular and
-  italic files, named by CoreText's UI font) for `system-ui`, Helvetica for
-  `sans-serif` and Menlo for `monospace`. The host names each file through the
-  platform's font APIs (a named family must be installed under that exact
-  family, `ShellError::SystemFontMissing` otherwise), reads it bounded by
-  `MAX_SYSTEM_FONT_FILE_BYTES` (a variable UI font exceeds the packaged-face
-  limit; the collection keeps `MAX_FONT_FACES` and `MAX_FONT_BYTES`), checks
-  that the file registers the family (`TextMeasurer::system_font_families`;
-  `ShellError::SystemFontFamily`) and loads the set with
-  `TextMeasurer::new_with_system_fonts`, before storage directories are
-  created. The application never names a file, and nothing else of the
-  system's fonts is reachable: a character outside these faces gets only the
-  next family of its CSS list, never an OS fallback. Text then depends on the
-  machine and its OS version, so pixel and geometry oracles do not apply to a
-  run with system fonts; packaged fonts remain the deterministic path. Other
-  platforms refuse the option (`ShellError::SystemFontsUnsupported`) until
-  their font lookup is added.
+  does, the standard font first (the family of text without `font-family`):
+  - on macOS, as probed with Chrome 156, Times for `serif`, the system UI font
+    (its regular and italic files, named by CoreText's UI font) for
+    `system-ui`, Helvetica for `sans-serif` and Menlo for `monospace`; a named
+    family must be installed under that exact family;
+  - on Linux, through fontconfig as Chrome on Linux resolves its defaults
+    (Times New Roman for the standard and `serif` font, Arial for
+    `sans-serif`, Monospace for `monospace`): the face fontconfig sorts first
+    for the name in the regular style counts only when Skia's fontconfig
+    interface would accept it (the family the configuration put first, the
+    requested family, a metric-compatible one such as Liberation Serif for
+    Times New Roman, or any face for `sans`, `serif` and `monospace`),
+    otherwise Blink's last resort for the generic (`Serif`, `Sans`,
+    `Monospace`) is used; `system-ui` is the family fontconfig matches for
+    `sans` (Chrome's UI font without a desktop toolkit). Each family loads the
+    faces fontconfig matches for regular and bold, roman and italic.
+    libfontconfig is opened at run time (`ShellError::SystemFontsUnavailable`
+    when it does not load).
+
+  A family already mapped takes a later generic as an alias, and no file is
+  read twice. The host reads each file bounded by `MAX_SYSTEM_FONT_FILE_BYTES`
+  (a variable UI font exceeds the packaged-face limit; the collection keeps
+  `MAX_FONT_FACES` and `MAX_FONT_BYTES`), checks that the file registers the
+  family (`TextMeasurer::system_font_families`; `ShellError::SystemFontFamily`)
+  and loads the set with `TextMeasurer::new_with_system_fonts`, before storage
+  directories are created; `ShellError::SystemFontMissing` names a generic
+  with no face. The application never names a file. A character none of an
+  element's families covers takes the platform's fallback face as the
+  platform's browser draws it ([native fallback faces](#native-fallback-faces));
+  nothing else of the system's fonts is reachable. On macOS the set's faces of
+  Times, Helvetica and Courier have their ascent enlarged by
+  `varta_view::ENLARGED_ASCENT_FRACTION` of their rounded height, rounded, as
+  Chrome's `FontMetrics::AscentDescentWithHacks` does
+  (`TextMeasurer::set_enlarged_ascent_families`). Text then depends on the
+  machine and its OS version, so pixel and geometry oracles compare a run with
+  system fonts only with the platform's browser on the same machine; packaged
+  fonts remain the deterministic path. Other platforms refuse the option
+  (`ShellError::SystemFontsUnsupported`).
   `--renderer cpu|gpu|auto` selects
   presentation (default `cpu`). An explicit `gpu` is refused before anything
   else in a build without the `gpu` feature, and is an error

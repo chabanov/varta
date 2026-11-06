@@ -38,6 +38,8 @@ pub(super) struct WorkerState {
     pub gpu_active: Arc<AtomicBool>,
     pub accessibility_active: Arc<AtomicBool>,
     pub console: Console,
+    /// The system's scrollbar style, read once when the window opened.
+    pub scrollbars: varta_view::Scrollbars,
     /// Set by the window when its event loop ended: run no further turns.
     pub stop: Arc<AtomicBool>,
 }
@@ -58,6 +60,7 @@ pub(super) fn worker(
         gpu_active,
         accessibility_active,
         console,
+        scrollbars,
         stop,
     } = state;
     let execute = || -> Result<(), String> {
@@ -98,7 +101,8 @@ pub(super) fn worker(
             ROOT_FONT_SIZE,
         )
         .map_err(|e| e.to_string())?
-        .with_dark_mode(initial_dark);
+        .with_dark_mode(initial_dark)
+        .with_scrollbars(scrollbars);
         let started = launch
             .start_with(
                 layout,
@@ -263,6 +267,7 @@ pub(super) fn worker(
                         width: f64::from((environment_dimensions >> 32) as u32)
                             / f64::from_bits(environment_scale),
                         dark: current_dark,
+                        scrollbars,
                         ..Default::default()
                     })
                     .map_err(|e| e.to_string())?;

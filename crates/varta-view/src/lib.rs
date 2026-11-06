@@ -62,7 +62,10 @@ pub use geometry::{DEFAULT_VIEWPORT_HEIGHT, GEOMETRY_KEY, GeometryRequest};
 pub use glyph_raster::{
     GlyphRasterBounds, GlyphRasterError, GlyphRasterMask, GlyphRasterRequest, GlyphRasterizer,
 };
-pub use layout::{BoxGeometry, BoxRect, LayoutError, ScrollMetrics};
+pub use layout::{
+    BoxGeometry, BoxRect, CLASSIC_SCROLLBAR_THICKNESS, LayoutError, ScrollMetrics,
+    ScrollbarGeometry,
+};
 pub use paint::{
     FieldTextCluster, FieldTextGeometry, FieldTextLine, FrameMetadata, PaintError, PointerCursor,
     RasterImage, SelectHit, SelectMenuMetrics, TextNavigation,
@@ -71,8 +74,13 @@ pub use platform_effects::{PlatformEffects, PlatformRefusal};
 pub use render::{RenderStats, Renderer};
 pub use snapshot::project_flex_blockification;
 pub use snapshot_json::{SnapshotError, SnapshotFormat, encode_snapshot};
-pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment, NATIVE_UA_VERSION};
-pub use text::{TextFont, TextMeasureError, TextMeasurer, TextMetrics};
+pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment, NATIVE_UA_VERSION, Scrollbars};
+pub use text::fallback::{
+    FallbackFace, FallbackRefusal, FallbackRequest, FontFallback, MAX_FALLBACK_BYTES,
+    MAX_FALLBACK_FACE_BYTES, MAX_FALLBACK_FACES, MAX_FALLBACK_PASSES,
+};
+pub use text::{ENLARGED_ASCENT_FRACTION, TextFont, TextMeasureError, TextMeasurer, TextMetrics};
+pub use transform::{Affine, MAX_FUNCTIONS as MAX_TRANSFORM_FUNCTIONS};
 pub use wire::{BatchWriter, EventRecord};
 
 /// Whether a number field's value is valid under Chrome's number

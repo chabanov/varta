@@ -1,20 +1,27 @@
-//! Bounded reads of the explicit font bytes: one collection member's tables,
-//! its `fvar` axes and `avar` maps, rebuilt as a standalone face for CoreText.
-//! Every offset and length is checked against the supplied slice.
+//! Bounded reads of explicit font bytes: one collection member's tables,
+//! its `fvar` axes and `avar` maps, rebuilt as a standalone face for CoreText;
+//! and standalone faces assembled from a platform face's own tables (the
+//! shell's fallback faces). Every offset and length is checked against the
+//! supplied slice.
 
 /// OpenType collection header tag.
 const COLLECTION: [u8; 4] = *b"ttcf";
 /// Sanity ceiling for a face's table directory; real faces use a few dozen.
 const MAX_TABLES: usize = 256;
+#[cfg(target_os = "macos")]
 /// Variation axes accepted for platform instantiation.
-pub(super) const MAX_AXES: usize = 64;
+pub(crate) const MAX_AXES: usize = 64;
+#[cfg(target_os = "macos")]
 /// `avar` segment-map pairs accepted per axis.
 const MAX_SEGMENTS: usize = 256;
 const OFFSET_TABLE_BYTES: usize = 12;
 const TABLE_RECORD_BYTES: usize = 16;
+#[cfg(target_os = "macos")]
 const FVAR_AXIS_BYTES: usize = 20;
+#[cfg(target_os = "macos")]
 /// F2Dot14 and 16.16 fixed-point scales.
 const F2DOT14_ONE: f64 = 16384.0;
+#[cfg(target_os = "macos")]
 const FIXED_ONE: f64 = 65536.0;
 
 fn u16_at(data: &[u8], offset: usize) -> Option<u16> {
@@ -22,6 +29,7 @@ fn u16_at(data: &[u8], offset: usize) -> Option<u16> {
         data.get(offset..offset.checked_add(2)?)?.try_into().ok()?,
     ))
 }
+#[cfg(target_os = "macos")]
 fn i16_at(data: &[u8], offset: usize) -> Option<i16> {
     u16_at(data, offset).map(|v| v as i16)
 }
@@ -30,9 +38,11 @@ fn u32_at(data: &[u8], offset: usize) -> Option<u32> {
         data.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
     ))
 }
+#[cfg(target_os = "macos")]
 fn fixed_at(data: &[u8], offset: usize) -> Option<f64> {
     u32_at(data, offset).map(|v| f64::from(v as i32) / FIXED_ONE)
 }
+#[cfg(target_os = "macos")]
 fn f2dot14_at(data: &[u8], offset: usize) -> Option<f64> {
     i16_at(data, offset).map(|v| f64::from(v) / F2DOT14_ONE)
 }
@@ -44,7 +54,7 @@ struct Record {
 }
 
 /// One face of a font file or collection.
-pub(super) struct Face<'a> {
+pub(crate) struct Face<'a> {
     data: &'a [u8],
     version: u32,
     tables: Vec<Record>,
@@ -100,6 +110,7 @@ impl<'a> Face<'a> {
             collection,
         })
     }
+    #[cfg(any(target_os = "macos", test))]
     pub fn table(&self, tag: [u8; 4]) -> Option<&'a [u8]> {
         let record = self.tables.iter().find(|t| t.tag == tag)?;
         self.data.get(record.range.clone())
@@ -107,6 +118,7 @@ impl<'a> Face<'a> {
     pub fn has_table(&self, tag: [u8; 4]) -> bool {
         self.tables.iter().any(|t| t.tag == tag)
     }
+    #[cfg(target_os = "macos")]
     /// The whole supplied file.
     pub fn bytes(&self) -> &'a [u8] {
         self.data
@@ -115,6 +127,7 @@ impl<'a> Face<'a> {
     pub fn is_standalone(&self) -> bool {
         !self.collection
     }
+    #[cfg(target_os = "macos")]
     /// Bytes of [`Self::standalone`] for this face, without building it: what
     /// the platform face retains for a collection member.
     pub fn standalone_len(&self) -> Option<usize> {
@@ -134,7 +147,7 @@ impl<'a> Face<'a> {
     }
     /// A standalone sfnt with `tag`'s table replaced by `bytes`, for building
     /// regression faces from fixtures.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
     pub fn with_table(&self, tag: [u8; 4], bytes: &[u8]) -> Option<Vec<u8>> {
         self.rebuilt(|table| {
             if table.tag == tag {
@@ -155,36 +168,80 @@ impl<'a> Face<'a> {
             let (checksum, bytes) = source(table)?;
             tables.push((table.tag, checksum, bytes));
         }
-        let count = tables.len();
-        let header = OFFSET_TABLE_BYTES.checked_add(count.checked_mul(TABLE_RECORD_BYTES)?)?;
-        let size = rebuilt_len(tables.iter().map(|(_, _, bytes)| bytes.len()))?;
-        let mut out = Vec::new();
-        out.try_reserve_exact(size).ok()?;
-        let selector = count.ilog2();
-        let search = (1usize << selector) * TABLE_RECORD_BYTES;
-        out.extend_from_slice(&self.version.to_be_bytes());
-        for value in [
-            count,
-            search,
-            selector as usize,
-            count * TABLE_RECORD_BYTES - search,
-        ] {
-            out.extend_from_slice(&u16::try_from(value).ok()?.to_be_bytes());
-        }
-        let mut offset = header;
-        for (tag, checksum, bytes) in &tables {
-            out.extend_from_slice(tag);
-            out.extend_from_slice(&checksum.to_be_bytes());
-            out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
-            out.extend_from_slice(&u32::try_from(bytes.len()).ok()?.to_be_bytes());
-            offset += bytes.len().checked_next_multiple_of(4)?;
-        }
-        for (_, _, bytes) in &tables {
-            out.extend_from_slice(bytes);
-            out.resize(out.len().checked_next_multiple_of(4)?, 0);
-        }
-        (out.len() == size).then_some(out)
+        build(self.version, &tables)
     }
+}
+
+#[cfg(target_os = "macos")]
+/// The `sfnt` version of a face with CFF outlines (`OTTO`), and of every
+/// other face (TrueType outlines, `0x00010000`).
+const CFF_VERSION: u32 = u32::from_be_bytes(*b"OTTO");
+#[cfg(target_os = "macos")]
+const TRUETYPE_VERSION: u32 = 0x0001_0000;
+#[cfg(target_os = "macos")]
+/// Tables holding CFF outlines.
+const CFF_TABLES: [[u8; 4]; 2] = [*b"CFF ", *b"CFF2"];
+
+#[cfg(target_os = "macos")]
+/// A standalone face of these tables, sorted by tag, with their checksums
+/// computed: what a platform face's own tables form. `None` for a repeated
+/// tag or past the table limit.
+pub(crate) fn from_tables(mut tables: Vec<([u8; 4], Vec<u8>)>) -> Option<Vec<u8>> {
+    tables.sort_by_key(|(tag, _)| *tag);
+    if tables.is_empty()
+        || tables.len() > MAX_TABLES
+        || tables.windows(2).any(|pair| pair[0].0 == pair[1].0)
+    {
+        return None;
+    }
+    let version = if tables.iter().any(|(tag, _)| CFF_TABLES.contains(tag)) {
+        CFF_VERSION
+    } else {
+        TRUETYPE_VERSION
+    };
+    let records: Vec<([u8; 4], u32, &[u8])> = tables
+        .iter()
+        .map(|(tag, bytes)| (*tag, checksum(bytes), bytes.as_slice()))
+        .collect();
+    build(version, &records)
+}
+
+#[cfg(target_os = "macos")]
+/// Bytes of [`from_tables`] for tables of these lengths.
+pub(crate) fn tables_len(lengths: impl ExactSizeIterator<Item = usize>) -> Option<usize> {
+    rebuilt_len(lengths)
+}
+
+fn build(version: u32, tables: &[([u8; 4], u32, &[u8])]) -> Option<Vec<u8>> {
+    let count = tables.len();
+    let header = OFFSET_TABLE_BYTES.checked_add(count.checked_mul(TABLE_RECORD_BYTES)?)?;
+    let size = rebuilt_len(tables.iter().map(|(_, _, bytes)| bytes.len()))?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(size).ok()?;
+    let selector = count.ilog2();
+    let search = (1usize << selector) * TABLE_RECORD_BYTES;
+    out.extend_from_slice(&version.to_be_bytes());
+    for value in [
+        count,
+        search,
+        selector as usize,
+        count * TABLE_RECORD_BYTES - search,
+    ] {
+        out.extend_from_slice(&u16::try_from(value).ok()?.to_be_bytes());
+    }
+    let mut offset = header;
+    for (tag, checksum, bytes) in tables {
+        out.extend_from_slice(tag);
+        out.extend_from_slice(&checksum.to_be_bytes());
+        out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
+        out.extend_from_slice(&u32::try_from(bytes.len()).ok()?.to_be_bytes());
+        offset += bytes.len().checked_next_multiple_of(4)?;
+    }
+    for (_, _, bytes) in tables {
+        out.extend_from_slice(bytes);
+        out.resize(out.len().checked_next_multiple_of(4)?, 0);
+    }
+    (out.len() == size).then_some(out)
 }
 
 /// Size of a standalone sfnt holding tables of these lengths, each padded to
@@ -196,9 +253,9 @@ fn rebuilt_len(lengths: impl ExactSizeIterator<Item = usize>) -> Option<usize> {
     })
 }
 
+#[cfg(target_os = "macos")]
 /// The OpenType table checksum: the wrapping sum of big-endian words, the
 /// last one zero-padded.
-#[cfg(test)]
 fn checksum(bytes: &[u8]) -> u32 {
     bytes.chunks(4).fold(0u32, |sum, word| {
         let mut padded = [0u8; 4];
@@ -207,12 +264,13 @@ fn checksum(bytes: &[u8]) -> u32 {
     })
 }
 
+#[cfg(target_os = "macos")]
 /// One `fvar` axis in user coordinates, with its `avar` segment map. Its
 /// name is not read here: CoreGraphics keys variations by its own choice of
 /// name record, so the rasterizer takes the key from the platform's axis
 /// records by this tag.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Axis {
+pub(crate) struct Axis {
     pub tag: [u8; 4],
     pub min: f64,
     pub default: f64,
@@ -221,16 +279,18 @@ pub(super) struct Axis {
     pub segments: Vec<(f64, f64)>,
 }
 
+#[cfg(target_os = "macos")]
 /// Why a face's variation data cannot be instantiated exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum VariationError {
+pub(crate) enum VariationError {
     Malformed,
     /// `avar` version 2 maps axes jointly; the per-axis inverse does not apply.
     UnsupportedAvar,
 }
 
+#[cfg(target_os = "macos")]
 /// The face's axes, or an empty list for a static face.
-pub(super) fn axes(face: &Face<'_>) -> Result<Vec<Axis>, VariationError> {
+pub(crate) fn axes(face: &Face<'_>) -> Result<Vec<Axis>, VariationError> {
     let Some(fvar) = face.table(*b"fvar") else {
         return Ok(Vec::new());
     };
@@ -294,6 +354,7 @@ pub(super) fn axes(face: &Face<'_>) -> Result<Vec<Axis>, VariationError> {
     Ok(axes)
 }
 
+#[cfg(target_os = "macos")]
 impl Axis {
     /// The user value whose normalization (default normalization, then this
     /// axis's `avar` map) yields `normalized`, as CoreText will apply it.
@@ -328,8 +389,8 @@ impl Axis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const VARIABLE: &[u8] = include_bytes!("../../tests/fixtures/fonts/variable.ttf");
-    const COLLECTION_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/fonts/collection.ttc");
+    const VARIABLE: &[u8] = include_bytes!("../tests/fixtures/fonts/variable.ttf");
+    const COLLECTION_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/fonts/collection.ttc");
 
     #[test]
     fn collection_members_rebuild_as_standalone_faces_with_identical_tables() {
@@ -351,6 +412,37 @@ mod tests {
         assert!(Face::parse(VARIABLE, 1).is_none());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_face_assembled_from_its_tables_has_the_same_tables_and_checksums() {
+        let member = Face::parse(COLLECTION_FIXTURE, 1).unwrap();
+        let tables: Vec<([u8; 4], Vec<u8>)> = member
+            .tables
+            .iter()
+            .rev()
+            .map(|table| (table.tag, member.table(table.tag).unwrap().to_vec()))
+            .collect();
+        let lengths = tables.iter().map(|(_, bytes)| bytes.len());
+        let expected = tables_len(lengths).unwrap();
+        let bytes = from_tables(tables.clone()).unwrap();
+        assert_eq!(bytes.len(), expected);
+        let rebuilt = Face::parse(&bytes, 0).unwrap();
+        assert!(rebuilt.is_standalone());
+        assert_eq!(rebuilt.version, TRUETYPE_VERSION);
+        for (record, original) in rebuilt.tables.iter().zip(&member.tables) {
+            assert_eq!(record.tag, original.tag);
+            assert_eq!(record.checksum, checksum(member.table(record.tag).unwrap()));
+            assert_eq!(rebuilt.table(record.tag), member.table(record.tag));
+        }
+        // A CFF face takes the OpenType version; a repeated tag is refused.
+        let cff = from_tables(vec![(*b"CFF ", vec![1, 2, 3])]).unwrap();
+        assert_eq!(Face::parse(&cff, 0).unwrap().version, CFF_VERSION);
+        let mut repeated = tables;
+        repeated.push(repeated[0].clone());
+        assert!(from_tables(repeated).is_none());
+        assert!(from_tables(Vec::new()).is_none());
+    }
+
     #[test]
     fn truncated_and_out_of_range_directories_are_refused() {
         for end in [0, 4, 12, 20, COLLECTION_FIXTURE.len() / 2] {
@@ -366,6 +458,7 @@ mod tests {
         assert!(Face::parse(&forged, 0).is_none());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn axes_read_fvar_ranges_and_invert_the_avar_map() {
         let face = Face::parse(VARIABLE, 0).unwrap();

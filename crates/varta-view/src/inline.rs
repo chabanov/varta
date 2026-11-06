@@ -1160,6 +1160,8 @@ pub(crate) fn frames(
             clip,
             scroll: None,
             programmatic_scroll: None,
+            scrollbars: None,
+            transform: None,
         };
         let shaped = rich
             .shape(shape, measurer, Some(rect.width.clamp(0.01, 1_000_000.0)))

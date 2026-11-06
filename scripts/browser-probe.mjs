@@ -1,5 +1,5 @@
 // Shared real-wall-clock Chrome driver for local host acceptance probes.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -31,13 +31,26 @@ const exitWithin = (child, ms) => new Promise((resolve) => {
   child.once("exit", done);
 });
 
-export async function withBrowserPage(url, action) {
+// `macDefaults` sets macOS user defaults for this Chrome process only, in
+// AppKit's argument domain (`-Key Value`), for example
+// `{ AppleShowScrollBars: "Always" }` for classic scrollbars; no system
+// setting changes. Chrome then reads the last value as its initial target,
+// so the process starts in the private profile directory beside an empty
+// file of that name, which it opens locally instead of the default page.
+export async function withBrowserPage(url, action, { macDefaults } = {}) {
   const profile = await mkdtemp(join(tmpdir(), "varta-browser-probe-"));
   const executable = process.env.VARTA_CHROME_BIN ?? (process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "chromium");
   let child, socket, spawnError;
   const waiting = new Map();
   try {
-    child = spawn(executable, ["--headless", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: "ignore" });
+    const defaults = Object.entries(macDefaults ?? {});
+    if (defaults.length && process.platform !== "darwin") throw new Error("macDefaults needs macOS");
+    for (const [key, value] of defaults) {
+      if (!/^[A-Za-z]+$/.test(key) || !/^[A-Za-z]+$/.test(value)) throw new Error(`invalid macOS default ${key}`);
+    }
+    if (defaults.length) await writeFile(join(profile, defaults.at(-1)[1]), "");
+    const initial = defaults.length ? defaults.flatMap(([key, value]) => [`-${key}`, value]) : ["about:blank"];
+    child = spawn(executable, ["--headless", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${profile}`, ...initial], { stdio: "ignore", cwd: profile });
     child.on("error", (error) => { spawnError = error; });
     const started = Date.now(); let port;
     while (!port) {

@@ -189,6 +189,30 @@ const CASES: &[Case] = &[
         ],
         samples: &[0.0, 30.0, 60.0, 80.0, 100.0, 140.0],
     },
+    // A scale with a translation before it: each function interpolates from
+    // `none`'s identities, then reverses, and a third list restarts from
+    // the current value.
+    Case {
+        name: "scale",
+        first: &[
+            (BOX, P::TransitionProperty, "transform"),
+            (BOX, P::TransitionDuration, "100ms"),
+            (BOX, P::TransitionTimingFunction, "ease-in-out"),
+            (BOX, P::BackgroundColor, "#0000e0"),
+        ],
+        steps: &[
+            (
+                0.0,
+                &[(BOX, P::Transform, Some("translateY(-4px) scale(0.5, 1.25)"))],
+            ),
+            (40.0, &[(BOX, P::Transform, None)]),
+            (
+                70.0,
+                &[(BOX, P::Transform, Some("translateX(10%) scale(1.5)"))],
+            ),
+        ],
+        samples: &[0.0, 20.0, 40.0, 55.0, 70.0, 110.0, 200.0],
+    },
     // A child without its own color paints its parent's animated color.
     Case {
         name: "inherited",
@@ -254,7 +278,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .into_iter()
                 .map(|node| {
                     let rect = geometry[&node];
-                    (node.to_string(), serde_json::json!([rect.x, rect.y]))
+                    (
+                        node.to_string(),
+                        serde_json::json!([rect.x, rect.y, rect.width, rect.height]),
+                    )
                 })
                 .collect();
             let pixels: serde_json::Map<_, _> = PROBES

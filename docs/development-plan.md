@@ -38,12 +38,122 @@ their current limitations and the evidence behind this checkpoint.
 | HTTP streaming | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies and supports HTTP/1.1 keep-alive with separate bounded connection and worker pools. The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Modern-server H1 is partial: Web `Request` ingress/streamed request bodies and remaining host-policy work are open; H2 async Wasmtime/pooling, H3 server TLS 1.3/HTTP/2 and H4 hardening/load acceptance remain planned ([K7](#k7--modern-http-server-agreed-design-2026-11-05)). |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
-| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures, `scale()`, OS glyph fallback and scrollbar painting remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). |
+| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji are the next step (owner decision 2026-11-06), and the overlay scrollbar shown while scrolling and every Linux comparison with Chrome remain open. |
 | Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
+
+### Native CSS `scale()` — native backlog batch, 2026-11-06
+
+`transform` lists that scale are admitted
+([contract](architecture.md#native-css-transforms)): the stacking context
+paints into the recorded scene and its draws and hit regions are mapped
+through the transform in device pixels (nested scales compose); the
+ancestors' clip goes back through the inverse transform; text under a scale
+uses the portable outlines; the public geometry maps the subtree as
+`getBoundingClientRect` does. Transitions interpolate pairing transform lists
+function by function (scale included); non-pairing lists jump (Chrome
+interpolates their matrices; recorded in the contract). Three new
+`native_positioned_probe` cases (`scale-button`, `scale-order`,
+`scale-nested`) match Chrome at 1x, 1.25x and 2x (11801 checks per scale;
+pixel means 0.00 to 0.95/255), and the transition oracle now also compares
+`getBoundingClientRect` boxes on every sample, including a new `scale` case
+(867 checks). Refused inside a scaled subtree: scroll containers and clips,
+text fields, selects, a curved outer clip and inline captures. Found on the
+way, not specific to scale: Blink paints an element's outline before its
+level-zero stacking children, native after them.
+
+### Native classic scrollbars — native backlog batch, 2026-11-06
+
+Scrollbars are painted natively when the system shows them always
+([contract](architecture.md#native-scrollbars)). `Environment::scrollbars`
+carries the style; `varta-shell` reads `NSScroller.preferredScrollerStyle`
+(through the already locked `objc2-app-kit`, a safe class method). With
+classic scrollbars an overflowing `overflow: auto` axis reserves a 15px
+gutter (Taffy's `scrollbar_width`, per axis, in up to three layout passes, so
+a vertical gutter that makes content overflow horizontally adds the
+horizontal bar as in Chrome), and the track, borders, corner and thumb are
+painted from Chromium's `NativeThemeMac` constants and Blink's thumb geometry
+in device pixels. The oracle runs Chrome with `-AppleShowScrollBars Always` in
+its own argument domain (no system setting is touched; `browser-probe.mjs`
+gains `macDefaults`), checks that Chrome's gutter is 15px, and compares seven
+cases (vertical, horizontal, both with the corner, gutter-induced overflow,
+borders and padding, the minimum thumb, content that fits): 10124 geometry and
+hit checks per scale and pixel means 0.00 to 0.02/255 (1x), 0.06 to 0.48 and
+1.13 for the bordered case (1.25x), 0.06 to 0.09 (2x). Open: the overlay thumb
+Chrome shows while scrolling (it fades about 0.6s after the scroll), thumb
+hover color, thumb dragging and track clicks, a dark `color-scheme` (outside
+the subset), rounded scroll containers with classic bars (refused), live
+changes of the system setting (read at window start) and Chrome's Linux Aura
+scrollbars (Linux keeps overlay behaviour).
+
+### Native fallback faces and Linux system fonts — native backlog batch, 2026-11-06
+
+Closes the console's `⚙` (U+2699) `.notdef`: with `varta-shell
+--system-fonts`, a character none of an element's families covers takes the
+face the platform's browser draws it with
+([contract](architecture.md#native-fallback-faces)).
+
+- **macOS.** CoreText's `CTFontCreateForStringWithLanguage` for the primary
+  font, exactly Chrome's `PlatformFallbackFontForCharacter`. The default
+  cascade list alone is not Chrome: for U+2699 it names the hidden
+  `.Apple Symbols Fallback`, while CoreText and Chrome draw Menlo; for U+2192
+  under Times it misses Times New Roman. The call needs one `unsafe` FFI
+  declaration, so `core-text` 21.0.0 is vendored with a single safe wrapper
+  ([patch record](../vendor/core-text/VARTA-PATCH.md)); the face is the
+  platform font's own tables assembled as a standalone face (no file read).
+  The unit test checks nine character/primary/weight cases against Chrome
+  156's `CSS.getPlatformFontsForNode` (Menlo, Menlo-Bold, Lucida Grande and
+  its bold, Times New Roman, Zapf Dingbats, Hiragino Sans W3/W6), and Apple
+  Color Emoji is refused as a colour face.
+- **Blink's segment rule.** Chrome falls back over all `.notdef` ranges of one
+  shaping segment with the face of the first range's first character, so a
+  star after a check mark under Times draws in Zapf Dingbats, not Songti SC;
+  native does the same per style, in passes. Blink also splits segments at
+  script runs, which native does not (recorded in the contract).
+- **Line metrics.** Two Chrome rules the oracle exposed, both through one
+  recorded Parley hook (`Layout::adjust_run_metrics`, [patch
+  record](../vendor/parley/VARTA-PATCH.md)): a fallback face's run under a
+  fixed `line-height` takes the primary font's ascent and descent (the line
+  box stayed 24px in Chrome, 25 to 26 natively before), and Chrome on macOS
+  enlarges the ascent of Times, Helvetica and Courier by 15% of their height
+  (the `serif` and `sans-serif` spans were 2px too short and 3px too low
+  before). Plain text with `line-height: normal` and mixed faces still uses
+  Parley's largest line height (20 where Chrome has 22 for the fixtures);
+  an inline formatting context matches.
+- **Linux.** `--system-fonts` maps the generic families through fontconfig as
+  Chrome on Linux does (Times New Roman, Arial and Monospace through Skia's
+  acceptance rules, Blink's last resort otherwise, `system-ui` as the
+  fontconfig match for `sans`) and falls back through `FcFontSort` for the
+  character and locale. New dependency: `fontconfig` 0.11.0 (MIT, safe
+  wrapper, `dlopen`, so no link-time fontconfig); its one new package is
+  `yeslogic-fontconfig-sys` 6.0.1, the rest was already locked.
+
+Verification on macOS 27, Chrome 156: `native_fallback_probe` with
+`scripts/test-native-inline.mjs` passes at 1x (72 checks) and 2x (72 checks);
+pixel means 0.17 to 0.35/255 (1x) and 0.10 to 0.18/255 (2x) for the
+Helvetica, Times and Menlo lines. The three UI-font lines compare geometry
+only: the UI font's `opsz` axis makes the CoreText rasterizer decline it
+(pre-existing), and its glyphs differ from Chrome by about 2.7/255 mean with
+or without fallback. View unit tests cover ranges, the segment rule, refusal,
+limits, the primary-metrics rule and the enlarged ascent.
+
+**Not verified on Linux.** No Linux machine with fontconfig and Chrome was
+available. The fontconfig code was compiled and its tests run on macOS against
+Homebrew fontconfig 2.x (`--features fontconfig`, with the library aliased to
+the Linux soname through `DYLD_LIBRARY_PATH`; serif mapped to Times New Roman,
+sans-serif to Arial, monospace to Andale Mono, system-ui to Verdana there),
+and the crate type-checks for Linux in a Debian container without
+fontconfig. Chrome on Linux was not compared: the generic mapping, the
+acceptance rules and the fallback order follow Chromium's sources
+(`SkFontConfigInterfaceDirect::matchFamilyName`,
+`gfx::GetFallbackFontForChar`) and remain to be checked with a Linux Chrome
+oracle. Owner decisions: the fallback limits (`MAX_FALLBACK_FACES`,
+`MAX_FALLBACK_FACE_BYTES`, `MAX_FALLBACK_BYTES`) are new native-host limits,
+and packaged and `--font` runs still keep `.notdef` (deterministic, but unlike
+Chrome, which falls back to the system there too).
 
 ### Native border CPU follow-up — scoped 2026-11-04
 

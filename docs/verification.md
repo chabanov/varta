@@ -750,6 +750,42 @@ cargo run -p varta-view --example native_transition_probe --locked > target/nati
 node scripts/test-native-transitions.mjs target/native-transitions.json
 ```
 
+Classic (always-shown) scrollbars are compared with Chrome run with macOS's
+"Show scroll bars: Always" for that process only (no system setting changes):
+
+```sh
+cargo test -p varta-view --test integration --locked scrollbars
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_scrollbar_probe --locked -- "$scale" > "target/native-scrollbars-$scale.json"
+  node scripts/test-native-positioned.mjs "target/native-scrollbars-$scale.json"
+done
+```
+
+Platform fallback faces with `--system-fonts` (macOS) are compared with
+Chrome on the same machine; the oracle carries no font bytes, so Chrome
+resolves the generic families and fallback faces itself:
+
+```sh
+cargo test -p varta-view --test integration --locked fallback
+cargo test -p varta-desktop --lib --locked shell::
+for scale in 1 2; do
+  cargo run -p varta-desktop --example native_fallback_probe --locked -- "$scale" > "target/native-fallback-$scale.json"
+  node scripts/test-native-inline.mjs "target/native-fallback-$scale.json"
+done
+```
+
+The Linux fontconfig lookups run on Linux with the desktop tests. On macOS
+they can be exercised against Homebrew fontconfig: the crate opens the Linux
+soname, so alias it in an ignored directory first.
+
+```sh
+mkdir -p target/fontconfig-dylib
+ln -sf /opt/homebrew/lib/libfontconfig.1.dylib target/fontconfig-dylib/libfontconfig.dylib.1
+DYLD_LIBRARY_PATH="$PWD/target/fontconfig-dylib" cargo test -p varta-desktop --lib --locked --features fontconfig fontconfig
+```
+
+This checks the fontconfig rules, not Chrome on Linux.
+
 The oracle carries its original font bytes and compares fixed control boxes and
 UTF-8 caret offsets for password graphemes, emoji and search text. It suppresses
 Chrome's search-clear affordance to compare the admitted plain-field surface.
