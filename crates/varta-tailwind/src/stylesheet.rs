@@ -102,6 +102,13 @@ pub fn candidates_to_css(ds: &mut DesignSystem, classes: &[&str]) -> Vec<Option<
         .collect()
 }
 
+/// Whether a class token compiles to any CSS on its own.
+#[must_use]
+pub fn compiles(ds: &DesignSystem, class: &str) -> bool {
+    let compiled = compile_candidates([class], ds, true);
+    compiled.invalid.is_empty() && !compiled.nodes.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

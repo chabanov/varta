@@ -11,13 +11,16 @@
 //! grammar). The same inputs always give the same bytes.
 //!
 //! JavaScript configuration (`@plugin`, `@config`) is rejected.
+pub mod apply;
 pub mod ast;
 pub mod candidate;
 pub mod canonical;
 pub mod compile;
+pub mod compiler;
 pub mod css_functions;
 pub mod css_parser;
 pub mod design_system;
+pub mod error;
 pub mod optimize;
 pub mod printer;
 pub mod property_order;
@@ -28,3 +31,7 @@ pub mod utilities;
 pub mod utils;
 pub mod value_parser;
 pub mod variants;
+
+pub use canonical::{Supports, VartaSupports};
+pub use compiler::{Build, Compiler, compile};
+pub use error::TailwindError;

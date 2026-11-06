@@ -27,7 +27,9 @@ impl DesignSystem {
     /// Build the design system of `theme` (port of `buildDesignSystem`).
     #[must_use]
     pub fn new(theme: Theme) -> Self {
-        let utilities = create_utilities(&theme);
+        let mut utilities = create_utilities(&theme);
+        // Tailwind's compatibility hooks register these on every build.
+        crate::utilities::legacy::register(&mut utilities);
         let variants = create_variants(&theme);
         Self {
             theme,

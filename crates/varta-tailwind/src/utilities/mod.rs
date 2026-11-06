@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 pub mod css_utility;
+pub mod legacy;
 mod part1;
 mod part2;
 mod part3;
