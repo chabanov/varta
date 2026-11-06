@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Checked TypeScript subset -> typed IR -> validated portable WebAssembly.
 pub mod browser_meter;
+mod desugar;
 mod emit;
 mod error;
 mod ir;

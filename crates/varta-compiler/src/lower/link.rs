@@ -112,6 +112,7 @@ pub(crate) fn lower(
             }
             next += 1;
         }
+        overloads::declare_functions(&unit.ast, &symbols, &unit.source, &mut types)?;
         if let Some(name) = generics::collision(&types, module, symbols.keys())
             .cloned()
             .or_else(|| generics::class_collision(&types, module))

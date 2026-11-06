@@ -431,6 +431,7 @@ mod object_enumeration;
 mod object_is;
 mod object_narrowing;
 mod optional_chains;
+pub(crate) mod overloads;
 mod own_keys;
 mod parameters;
 mod paths;

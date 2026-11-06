@@ -444,6 +444,11 @@ impl Lower<'_> {
         }
         if let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) = &assign.left {
             let base = self.write_member_base(member)?;
+            // V38 (`declaration_forms`): a class setter.
+            let base = match self.accessor_assignment(member, base, &assign.right, assign.span)? {
+                Ok(value) => return Ok(S::Expr(value)),
+                Err(base) => base,
+            };
             if matches!(base.ty, Type::Dictionary(_)) {
                 return Ok(S::Expr(self.dictionary_write(
                     member,

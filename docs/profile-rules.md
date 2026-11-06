@@ -3977,6 +3977,58 @@ Contract: [architecture.md](architecture.md#iteration-protocol-iteration_protoco
   `v38_iteration_protocol_runs_in_dev_and_artifacts` and the conformance
   feature `iteration-protocol`.
 
+### Declarations and classes (`declaration_forms`)
+
+Contract: [architecture.md](architecture.md#declarations-and-classes-declaration_forms).
+
+- Gate every admission on `declaration_forms()`; v37 keeps its diagnostics
+  for each form (`v37_keeps_rejecting_declaration_forms`). Only v38 parses
+  `@` (`parse::parse_module_with`).
+- Enums, namespaces, static fields, class expressions and function overload
+  signatures are lowered in `crate::desugar` before the module is scanned
+  (`modules::Builder::visit`), never in the type checker. Generated names
+  start with `desugar::PREFIX` (program identifiers may not) and their last
+  segment is the declared name; anything shown at run time goes through
+  `desugar::display_name` (class names in `classes::register`).
+- Rewriting is scope-aware (`desugar::rewrite`, `desugar::scope`): a name a
+  local scope binds shadows every frame. A new syntax form that binds names
+  must be added to `scope` and to the `Rewriter` scope pushes, and a new
+  expression position that can reference a namespace member must be
+  rewritten there (identifier, member chain, shorthand property, assignment
+  target, type reference, `typeof`, heritage).
+- Imported enums and namespaces are rewritten after the dependencies load
+  (`desugar::imports`) through `Unit::declarations`; the generated names
+  they use are added as import bindings, and a namespace without a value
+  loses its binding. A re-export of an enum or namespace forwards only the
+  enum type (the generated names are not re-exported).
+- Enum values are compile-time constants (`desugar::constants`, ECMAScript
+  number semantics); never emit an enum object. A non-constant key of a
+  numeric enum calls the generated reverse-mapping function, typed
+  `string | undefined`.
+- Static fields are module variables declared after their class and follow
+  every module-constant rule; never admit calls or effects in their
+  initializers here (that needs the owner's module-initialization design,
+  as do static blocks and decorators). `this` in static code is the class;
+  an inherited static method that uses `this` is copied into the subclasses
+  that reach it (`statics::lower_class`).
+- Class forms are a pre-layout rewrite (`classes::forms`, after
+  `private_names` and `parameter_properties`): setters become methods named
+  `forms::setter_key` (no string key can spell it), abstract members get an
+  unreachable throwing body and are recorded in `Class::forms`, overload
+  signatures are removed and recorded. Assignments reach setters only
+  through `classes::accessors` (statement, value, compound, update; logical
+  assignment refused); a new member-assignment path must call it first.
+- Overloads (`lower::overloads`): resolution by declaration order with
+  `arguments::accepts`, literal arguments retyped against literal
+  parameters, arguments bound to the hidden implementation and the result
+  checked with `assert_value`. Keyed by implementation function index for
+  functions and by (declaring class, key, static) for methods.
+- Tests: `varta-runtime` `declaration_form_tests` (the
+  `declaration_form_cases/*.expected` files are Node 24.20.0 output of the
+  tsc 5.9.3 emit; the collector stress builds must print the same, and the
+  multi-module test pins imported enums, namespaces and statics), the
+  conformance feature `declarations-and-classes`.
+
 ### Bytes held by unknown (`byte_values`)
 
 Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).

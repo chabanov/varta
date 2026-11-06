@@ -11596,6 +11596,133 @@ keys below.
   `Array.from` with a map function or an array-like, and `Iterable<T>`
   value annotations.
 
+#### Declarations and classes (`declaration_forms`)
+
+Additions to v38 (2026-11-06, K9 track B) under the selector
+`LanguageProfile::declaration_forms()`: TypeScript's declaration forms and
+the remaining class member forms. No host import, value layout, frame
+catalog, scheduler or ABI changes: every form lowers to the checked subset
+before or during type checking, so the native runtime and every
+JavaScript host run it unchanged. V1–v37 keep rejecting every form below
+with their old diagnostics (`top-level declaration`, `abstract class`,
+`function body is required`, `class setter`, `static class field`,
+`function or class in a module constant initializer`, `class auto-accessor`;
+`@` stays a syntax error). Generated declarations are named
+`__vartaDecl$…`; program identifiers may not start with `__vartaDecl`. A
+class declared under a generated name shows its own declared name at run
+time (`new.target.name`, an Error subclass's `name`).
+
+- **Enums.** `enum` and `const enum`, numeric (auto-increment from 0 or
+  from the previous numeric member), string and heterogeneous. Member
+  initializers are TypeScript's constant enum expressions, evaluated by
+  the compiler with ECMAScript number semantics: numeric and string
+  literals, no-substitution templates, references to earlier members (bare
+  or qualified) and to members of other enums, parentheses, unary `+ - ~`,
+  binary `+ - * / % ** << >> >>> & | ^`, string concatenation and the
+  `length` of a string literal. The enum type is the union of its member
+  literal types; `E.X` (and `E['X']`) is the member's literal, and the
+  member type `E.X` its literal type, so enum members narrow and
+  discriminate unions like literals. An unannotated `let`/`var`, parameter
+  default or mutable class field initialized with a member gets the enum
+  type, as TypeScript widens it. The reverse mapping `E[k]` of a non-const
+  enum with numeric members is the member name for a constant key, and
+  otherwise a call of a generated function typed
+  `(value: number) => string | undefined` that returns the name of the last
+  member with that value or `undefined` (TypeScript types it `string`; the
+  difference is the honest type of a missing key). Refused by name: a
+  computed member whose initializer is not a constant expression, a
+  non-finite member value, merged enum declarations, a string member
+  followed by an uninitialized one (TS1061), a dynamic key of a const enum
+  (TS2476) or of a string enum, `declare enum`, and the enum object as a
+  value (`enum object E used as a value`) or in `typeof`.
+- **Namespaces.** `namespace N { … }`, nested and dotted (`namespace
+  A.B.C`), exported or not. Every member is hoisted to a module declaration
+  under a generated name and every reference to it, unqualified inside the
+  namespace or qualified (`N.x`, `N.Inner.f()`, the type `N.T`,
+  `implements N.I`, `typeof N.x`), becomes that name; a local binding that
+  shadows a member is never rewritten. Members are functions (with
+  overloads), classes, `const`/`let` variables (module constants and
+  variables with their initializer rules), interfaces, type aliases, enums
+  and namespaces. Declaration merging follows TypeScript: namespaces merge
+  with namespaces (exported members are visible unqualified in every
+  declaration; unexported ones only in their own), and with a function,
+  class or enum of the same name (`f.helper`, `C.create()`, `E.parse()`);
+  interfaces merge with interfaces. An exported namespace or enum is used
+  from other modules through its generated declarations, also under an
+  import alias. Refused by name: statements in a namespace body, ambient
+  namespaces and modules, the namespace object as a value or a type, an
+  unexported member reached qualified (`namespace N has no exported member
+  …`), a type-only import of a namespace, and import aliases
+  (`import x = N.y`).
+- **Abstract classes.** `abstract class` with abstract methods, getters
+  and fields. An abstract class cannot be constructed (TS2511), a concrete
+  descendant must implement every inherited abstract member (TS2515),
+  `super.m()` of an abstract method is refused (TS2513), and abstract
+  members appear only in abstract classes (TS1244). An abstract method's
+  slot dispatches to the overriding implementations like any overridden
+  method (its own body throws and is unreachable); an abstract field is a
+  declared slot that the concrete descendant defines, which the abstract
+  class's constructor may not read.
+- **Overloads.** Function, method, static method and constructor overload
+  signatures (`function f(x: string): string;` before the implementation).
+  A call resolves to the first signature in declaration order whose arity
+  admits the arguments and whose parameters accept them (a literal
+  argument, including an enum member, has its literal type); no match is
+  TS2769. The implementation signature is hidden: the arguments are bound
+  to it, and its result is checked against the selected signature's result
+  type, free for an upcast and otherwise tested like `x as T` (a
+  `TypeError` if the implementation returns a value its overload does not
+  admit). Signatures need return annotations and must be compatible with the
+  implementation (TS2394); they precede it directly with the same export
+  state (TS2391, TS2383). Generic overloads and an overloaded function used
+  as a value are refused by name.
+- **Setters and accessors.** `set x(v)` with or without a `get x()`: an
+  assignment `o.x = v` evaluates `o`, then `v`, calls the setter and yields
+  `v`; `o.x op= v` and `o.x++` read through the getter first. Accessors are
+  inherited and overridden like methods; a class that declares only one
+  half of an inherited get/set pair is refused (JavaScript would drop the
+  other half), as are logical assignments through accessors and compound
+  updates of setter-only accessors. `accessor x = v` (an ECMAScript
+  auto-accessor) is a private storage field with a get/set pair; `static
+  accessor x` is a static field.
+- **Static fields.** `static x: T = v` of a module-level class is the
+  module variable `__vartaDecl$C$x` declared right after the class, so its
+  initializer runs in the module initializer sequence at the class's
+  position (it follows the module initializer subset: no calls other than
+  `new Map`/`new Set`, …). `C.x`, and `this.x` in static code, read and
+  write it; a subclass reads an inherited static field through the same
+  variable, and writing it through the subclass (which creates an own
+  property of the subclass in JavaScript) is refused. `private`,
+  `protected` (TS2341) and `readonly` (TS2540) are checked. Imported
+  classes expose their static fields read-only, like every imported module
+  variable.
+- **Static methods and `this`.** In static methods and static field
+  initializers `this` is the class. A static method that uses `this` is
+  copied into each module-level subclass that inherits it and is named
+  through that subclass (or that is exported), with `this` naming the
+  subclass, so `Derived.create()` calls `Derived.kind()` as in JavaScript.
+  `super` in static code is refused.
+- **Class expressions and local classes.** `const X = class [N] { … }` at
+  module level or in a function body, and a class declaration in a function
+  body, is a module class declaration (named `X`, or the class's own name
+  `N`); a class in a function may not reference the function's local
+  bindings (`class expression that captures the local binding …`, `local
+  class that captures …`), and class expressions in any other position are
+  refused.
+- **Other class forms.** `override` on methods and accessors, `declare`
+  field redeclarations, `implements` of several interfaces, and
+  constructor parameter properties with default values (a non-literal
+  default needs a type annotation).
+- **Not admitted (owner decision).** Static blocks, static field
+  initializers outside the module initializer subset and standard
+  decorators all run code when a class is defined; that needs a
+  module-initialization design for effects at class definition (and for
+  tool and HTTP entries), which the module constant rules reserve. They are
+  refused by name (`static class block`, `call in a module constant
+  initializer`, `decorator (a decorator runs code when its class is
+  defined, …)`). Class index signatures stay refused (`class index
+  signature`). Legacy `experimentalDecorators` are not planned.
+
 #### Bytes held by unknown (`byte_values`)
 
 Wave 3 of v38, selector `LanguageProfile::byte_values()` (owner decision of

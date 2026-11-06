@@ -16,6 +16,23 @@
   images and alternative-text rendering are refused. New dependencies `png`
   0.18.1, `image` 0.25.10 and `moxcms` 0.8.1; the image limits await an
   owner decision.
+- V38 declarations and classes (K9 B, `declaration_forms`): numeric,
+  string, heterogeneous and `const` enums with constant member expressions,
+  enum types as literal unions and the reverse mapping `E[n]`; namespaces
+  (nested, dotted, exported across modules) and declaration merging with
+  namespaces, functions, classes and enums; abstract classes, methods,
+  getters and fields (TS2511/TS2513/TS2515 checks); function, method, static
+  and constructor overloads resolved as tsc resolves them, with the
+  implementation's result checked against the selected signature; class
+  setters and getter/setter pairs, `accessor` fields; static fields as module
+  variables with `private`/`readonly` checks and `this` in static methods
+  resolved through the called subclass; class expressions bound by `const`
+  and classes declared in functions; parameter-property defaults. Static
+  blocks, effectful static initializers and decorators are refused by name
+  pending a module-initialization design. No host ABI or value layout
+  change; v37 keeps rejecting every form. Conformance: 145 passed, 6 known
+  unsupported of 151 (eight new feature rows, a `typescript` reference
+  origin, `class-instance` promoted).
 - V38 iteration protocol: a class's `[Symbol.iterator]()` generator method
   makes its instances iterable by `for...of`, array spreads, `Array.from` and
   `yield*`; classes declare synchronous generator methods; array literals

@@ -30,7 +30,7 @@ impl Lower<'_> {
             }),
         }
     }
-    fn check_access(
+    pub(super) fn check_access(
         &self,
         owner: u32,
         access: Access,
@@ -83,7 +83,7 @@ impl Lower<'_> {
         }
         self.unknown_member(class, name, kind)
     }
-    fn member_key(&self, prop: &ast::MemberProp) -> Result<String> {
+    pub(super) fn member_key(&self, prop: &ast::MemberProp) -> Result<String> {
         match prop {
             ast::MemberProp::Ident(id) => Ok(id.sym.to_string()),
             ast::MemberProp::PrivateName(_) => Err(unsupported("#private class member")),
@@ -230,6 +230,7 @@ impl Lower<'_> {
                 new.callee.span(),
             ));
         }
+        self.reject_abstract_new(class, new.span)?;
         let args = new.args.as_deref().unwrap_or_default();
         if args.iter().any(|arg| arg.spread.is_some()) {
             return Err(unsupported("spread to a class constructor"));
@@ -239,6 +240,11 @@ impl Lower<'_> {
             .init
             .clone()
             .ok_or_else(|| CompilerError::Internal("missing class initializer".into()))?;
+        // V38 (`declaration_forms`): constructor overloads.
+        if let Some(overloads) = self.constructor_overloads(class) {
+            let (values, _) = self.overloaded_values(args, new.span, &overloads, &signature)?;
+            return self.construct(new.span, class, values);
+        }
         if !signature.shape.extended() && args.len() != signature.params.len() {
             return Err(invalid(format!(
                 "class {} constructor expects {} arguments",
@@ -525,6 +531,15 @@ impl Lower<'_> {
             ty: Type::Class(receiver),
             ..value
         };
+        if let Some(overloads) = self.types.overloads.method(method.owner, &name, false) {
+            return self.overloaded_class_call(
+                call,
+                &method.signature,
+                &overloads,
+                target,
+                Some(receiver),
+            );
+        }
         self.class_call(call, &method.signature, target, receiver)
     }
     fn class_call(
@@ -599,6 +614,10 @@ impl Lower<'_> {
         }
         if call.args.iter().any(|arg| arg.spread.is_some()) {
             return Err(unsupported("spread to a class method"));
+        }
+        if let Some(overloads) = self.types.overloads.method(method.owner, &name, true) {
+            let index = method.signature.index;
+            return self.overloaded_class_call(call, &method.signature, &overloads, index, None);
         }
         let signature = method.signature;
         if !signature.shape.extended() && call.args.len() != signature.params.len() {
@@ -690,11 +709,22 @@ impl Lower<'_> {
         };
         let current = self.types.classes.context.map_or(parent, |c| c.class);
         self.check_access(method.owner, method.access, current, &name, property.span)?;
+        self.reject_abstract_super(&method, &name, property.span)?;
         let this = self.this_value(property.span)?;
         let receiver = Expr {
             ty: Type::Class(method.owner),
             ..this
         };
+        if let Some(overloads) = self.types.overloads.method(method.owner, &name, false) {
+            let index = method.signature.index;
+            return self.overloaded_class_call(
+                call,
+                &method.signature,
+                &overloads,
+                index,
+                Some(receiver),
+            );
+        }
         self.class_call(call, &method.signature, method.signature.index, receiver)
     }
     /// A union holds at most one record-tagged member, which may be a class.

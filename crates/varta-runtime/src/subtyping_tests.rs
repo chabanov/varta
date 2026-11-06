@@ -587,12 +587,16 @@ fn constructor_parameter_properties_match_node() {
             r#"{"baseURL":"https://api.test","retries":1}"#,
         ],
     );
+    // A default value is admitted by `declaration_forms` (K9 B, see
+    // `declaration_form_tests`); a non-literal one needs an annotation.
     let error = rejected(
-        "class A{constructor(public x:number=1){}}export function main():void{}",
+        "class A{constructor(public x=Math.random()){}}export function main():void{}",
         V38,
     );
     assert!(
-        error.contains("constructor parameter property with a default value"),
+        error.contains(
+            "a parameter property with a non-literal default value needs a type annotation"
+        ),
         "{error}"
     );
     let frozen = rejected(

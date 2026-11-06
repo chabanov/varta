@@ -1297,6 +1297,10 @@ impl Lower<'_> {
                     signature.params.len()
                 )));
             }
+            // V38 (`declaration_forms`): a call of an overloaded function.
+            if let Some(overloads) = self.types.overloads.function(signature.index) {
+                return self.overloaded_function_call(call, &signature, &overloads);
+            }
             let values = self.call_arguments(&call.args, &signature.params, &signature.shape)?;
             let mut args = Vec::new();
             if let Some(ty) = signature.receiver {

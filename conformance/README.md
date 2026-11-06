@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 81 feature rows and 140 cases:
-135 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 89 feature rows and 151 cases:
+145 pass, 6 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -389,3 +389,42 @@ over a generator with `throw`/`return` forwarding and over an array
 (`yield-delegation.ts`). Their expected output is Node.js v24.20.0's. The
 `symbol-type` gap is unchanged: `Symbol.iterator` is recognized only as a
 computed method key, and no `Symbol` value exists.
+
+The v38 declarations-and-classes review (K9 B, 2026-11-06) adds a third
+feature origin, `typescript`, whose references point into the TypeScript
+Handbook (`https://www.typescriptlang.org/docs/handbook/`), for language
+features that ECMAScript does not define. It adds eight feature rows and
+eleven original cases, each printing what Node.js v24.20.0 prints for the
+tsc 5.9.3 emit (strict, ES2022, `useDefineForClassFields`, `await main();`
+appended):
+
+- `enums` (typescript; CORE-01, CORE-02) with `enum-members` (auto-increment,
+  string and bit-flag members, reverse mapping of constant and dynamic keys,
+  an exhaustive `switch`, `let` widening to the enum type) and `const-enum`
+  (string and computed `const enum` members in interface fields);
+- `namespaces` (typescript; CORE-02, CORE-03) with `namespace-merging`
+  (merged namespace declarations, a nested namespace, a namespace type and a
+  function merged with a namespace);
+- `abstract-classes` (typescript; CORE-02) with `abstract-members`
+  (abstract methods and getters dispatched through an abstract base type);
+- `overloads` (typescript; CORE-03) with `function-overloads` (function and
+  method overloads selecting their result types);
+- `class-accessors` (ECMAScript method definitions; CORE-02, CORE-03) with
+  `class-setters` (getter/setter pairs, a setter-only accessor, compound
+  assignment and update through accessors) and `auto-accessor`;
+- `static-class-members` (ECMAScript class definitions; CORE-02, CORE-03)
+  with `static-fields` (static fields, `readonly` statics and `this` in a
+  static method called through a subclass) and the known gap
+  `static-block` (`unsupported_syntax`: static blocks run code at class
+  definition, pending the module-initialization design);
+- `class-expressions` (ECMAScript class definitions; CORE-02, CORE-03) with
+  `class-expression` (anonymous and named class expressions bound by
+  `const` at module level and in a function);
+- `decorators` (typescript; CORE-02, CORE-03) with the known gap
+  `class-decorator` (`unsupported_syntax`, for the same reason as static
+  blocks).
+
+Classes declared inside functions are hoisted to module classes like class
+expressions (a class that would capture the function's locals is refused),
+so the `class-instance` gap is promoted to supported with its pinned hash
+and output.

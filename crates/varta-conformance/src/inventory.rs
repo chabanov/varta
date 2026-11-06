@@ -123,6 +123,7 @@ fn validate(i: &Inventory) -> Result<(), Error> {
         }
         let prefix = match f.origin {
             Origin::Ecmascript2025 => "https://tc39.es/ecma262/2025/multipage/",
+            Origin::Typescript => "https://www.typescriptlang.org/docs/handbook/",
             Origin::VartaContract => "docs/",
         };
         if !f.reference.starts_with(prefix)

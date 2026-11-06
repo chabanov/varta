@@ -47,6 +47,11 @@ impl Lower<'_> {
             }
             ast::Expr::Member(member) => {
                 let base = self.write_member_base(member)?;
+                // V38 (`declaration_forms`): a class getter/setter pair.
+                let base = match self.accessor_update(member, base, update)? {
+                    Ok(value) => return Ok(value),
+                    Err(base) => base,
+                };
                 if self.types.profile.mixed_index_records()
                     && matches!(base.ty, Type::Dictionary(_))
                 {
