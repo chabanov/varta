@@ -23,6 +23,7 @@ fn reference(ty: Type) -> bool {
                 | Type::Class(_)
                 | Type::Array(_)
                 | Type::Function(_)
+                | Type::Symbol
         )
 }
 fn member(span: swc_common::Span, slot: u32, source: Type, selected: Type) -> Expr {

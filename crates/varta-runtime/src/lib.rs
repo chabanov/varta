@@ -210,6 +210,8 @@ mod sdk_path_tests;
 #[cfg(test)]
 mod standard_library_tests;
 #[cfg(test)]
+mod symbol_tests;
+#[cfg(test)]
 mod timer_tests;
 #[cfg(test)]
 mod truth_guard_tests;

@@ -402,6 +402,7 @@ impl Lower<'_> {
                             Type::Promise(_) if self.types.profile.promise_values() => "object",
                             Type::Number | Type::Float64 => "number",
                             Type::BigInt => "bigint",
+                            Type::Symbol => "symbol",
                             Type::Boolean => "boolean",
                             Type::String => "string",
                             _ => return Err(unsupported("typeof an opaque result value")),
@@ -742,6 +743,7 @@ impl Lower<'_> {
                                 | Type::Dictionary(_)
                                 | Type::Class(_)
                                 | Type::Promise(_)
+                                | Type::Symbol
                                 | Type::Array(_)
                         ) =>
                     {
@@ -765,6 +767,13 @@ impl Lower<'_> {
             ast::Expr::Call(call) => return self.call(call, None, None),
             ast::Expr::Member(member) => {
                 if let Some(value) = self.environment_read(member)? {
+                    return Ok(value);
+                }
+                // V38 (`symbol_values`): well-known symbols and
+                // `symbol.description`.
+                if self.types.profile.symbol_values()
+                    && let Some(value) = self.symbol_member(member)?
+                {
                     return Ok(value);
                 }
                 return self.member_read(member);
@@ -808,6 +817,13 @@ impl Lower<'_> {
             && let ast::Callee::Expr(callee) = &call.callee
             && let Some(name) = callee_name(callee)
             && let Some(value) = self.prelude_kv(call, &name)?
+        {
+            return Ok(value);
+        }
+        // V38 (`symbol_values`): `Symbol(...)`, `Symbol.for`, `Symbol.keyFor`
+        // and the methods of a symbol.
+        if self.types.profile.symbol_values()
+            && let Some(value) = self.symbol_call(call)?
         {
             return Ok(value);
         }

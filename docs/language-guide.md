@@ -5872,11 +5872,37 @@ export function main(): void {
 }
 ```
 
-Refused by name: `unique symbol`, pattern template types such as
+`unique symbol` is a `symbol` (see Symbol values below). Refused by name:
+pattern template types such as
 `` `on${string}` `` outside a conditional `extends` clause, intersections of
 function types or of a primitive with an object type, overloaded call
 signatures, mapped types and `keyof` over class instance types, and `typeof`
 of a function-local binding.
+
+#### Symbol values (opt-in v38)
+
+`Symbol()` values, the global registry and the well-known symbols, with
+their own value tag, so records, arrays, unions, `unknown` and `Map`/`Set`
+keys hold them; `JSON.stringify` skips them as Node does:
+
+```ts
+const RED: unique symbol = Symbol('red');
+
+function describe(value: string | symbol): string {
+  return typeof value === 'symbol' ? `symbol ${String(value.description)}` : value;
+}
+
+export function main(): void {
+  const names = new Map<symbol, string>([[RED, 'red']]);
+  console.log(describe(RED)); // symbol red
+  console.log(String(names.get(RED))); // red
+  console.log(String(Symbol.for('app') === Symbol.for('app'))); // true
+  console.log(Symbol.iterator.toString()); // Symbol(Symbol.iterator)
+  console.log(JSON.stringify({ tag: RED, name: 'x' })); // {"name":"x"}
+}
+```
+
+Symbol-keyed properties (`{ [RED]: 1 }`, `obj[RED]`) are not admitted yet.
 
 #### Standard library (opt-in v38)
 

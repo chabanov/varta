@@ -154,6 +154,9 @@ impl ReferenceBox {
             // Value18 `Uint8Array` (v38 `byte_values`): its byte storage,
             // every element checked.
             byte_vector(data, cell.payload, version, module)?;
+        } else if cell.kind == ValueKind::Symbol {
+            // Value18 `Symbol` (v38 `symbol_values`): its private record.
+            symbol_record(data, cell.payload, version, module)?;
         } else if matches!(cell.kind, ValueKind::Record | ValueKind::Array) {
             aggregate(data, cell, version, module)?;
         } else {

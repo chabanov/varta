@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- V38 K9 D2 symbol values (selector `symbol_values`): `Symbol()` values
+  with the additive value18 tag `ValueKind::Symbol` (16), `Symbol.for`/
+  `Symbol.keyFor`, the well-known symbols as values, `description`,
+  `toString`, `String`/`Number` conversion, `typeof` narrowing, identity,
+  and symbols in records, classes, arrays, unions, dictionaries, `unknown`
+  and `Map`/`Set` keys; `unique symbol` annotations. JSON skips symbols as
+  Node does, diagnostics show `Symbol(description)`, KV refuses them. Value
+  ABI number unchanged (18); v37 keeps rejecting every form. Symbol-keyed
+  properties are not admitted yet.
 - V38 K9 type level (selector `type_level`): conditional types with
   distribution, `infer` (constrained, tuple, function, object and template
   patterns) and recursive generic aliases; mapped types with `as` remapping

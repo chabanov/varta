@@ -52,6 +52,14 @@ impl Lower<'_> {
             }
             return self.unknown_string(value, span);
         }
+        // V38 (`symbol_values`): `String(symbol)` is its descriptive string;
+        // `Number(symbol)` throws a `TypeError` (§7.1.4 ToNumber).
+        if value.ty == Type::Symbol && rest.is_empty() {
+            if !number {
+                return self.symbol_text(value);
+            }
+            return self.symbol_number(value, span);
+        }
         if value.ty == Type::BigInt {
             let input = self.hidden(Type::BigInt);
             let mut body = vec![S::Init(input, value)];

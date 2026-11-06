@@ -398,6 +398,7 @@ impl Lower<'_> {
         {
             let guard = match text.value.as_str()? {
                 "bigint" if self.types.profile.bigint_values() => Guard::Exact(Type::BigInt),
+                "symbol" if self.types.profile.symbol_values() => Guard::Exact(Type::Symbol),
                 "number" => Guard::Exact(Type::Float64),
                 "boolean" => Guard::Exact(Type::Boolean),
                 "string" => Guard::Exact(Type::String),

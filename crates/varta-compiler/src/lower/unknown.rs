@@ -60,6 +60,7 @@ pub(super) fn admissible(ty: Type, types: &ir::ValueTypes) -> bool {
                 | Type::Null
                 | Type::Undefined
                 | Type::BigInt
+                | Type::Symbol
                 | Type::Error
                 | Type::NativeError(_)
                 | Type::Record(_)
@@ -229,7 +230,8 @@ fn primitive_kind(element: Type) -> Option<varta_common::value::ValueKind> {
         | Type::String
         | Type::Null
         | Type::Undefined
-        | Type::BigInt => element.value_kind(),
+        | Type::BigInt
+        | Type::Symbol => element.value_kind(),
         _ => None,
     }
 }
@@ -313,6 +315,7 @@ fn checkable_visit(
         | Type::Null
         | Type::Undefined
         | Type::BigInt
+        | Type::Symbol
         | Type::Error
         | Type::NativeError(_)
         | Type::Literal(..)
@@ -597,6 +600,7 @@ impl Lower<'_> {
             | Type::Null
             | Type::Undefined
             | Type::BigInt
+            | Type::Symbol
             | Type::Error
             | Type::NativeError(_) => member(target),
             Type::Literal(base, set) => {
@@ -841,6 +845,23 @@ impl Lower<'_> {
             };
             let instance = self.class_error_text(instance, span)?;
             object = vec![S::If(is_instance, vec![assign(instance)], object)];
+        }
+        // V38 (`symbol_values`): a symbol converts to its descriptive
+        // string. A module without the symbol prelude has no symbol value.
+        if self.types.profile.symbol_values()
+            && engine::module(&crate::modules::engine::SYMBOL, self.types).is_some()
+        {
+            let held = test(
+                span,
+                E::IsUnionMember(Box::new(local(span, saved, Type::Unknown)), Type::Symbol),
+            );
+            let symbol = self.symbol_text(Expr {
+                span,
+                ty: Type::Symbol,
+                kind: E::UnboxUnion(Box::new(local(span, saved, Type::Unknown))),
+            })?;
+            symbols::use_type(self.types);
+            object = vec![S::If(held, vec![assign(symbol)], object)];
         }
         // V38 (`byte_values`): a `Uint8Array` converts as
         // `Uint8Array.prototype.toString`, its elements joined by commas. A

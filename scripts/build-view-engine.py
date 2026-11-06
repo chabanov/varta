@@ -54,6 +54,7 @@ COMMON_CORE = (
     "crates/varta-common/src/value/error.rs",
     "crates/varta-common/src/value/primitive.rs",
     "crates/varta-common/src/value/reference.rs",
+    "crates/varta-common/src/value/symbol.rs",
     "crates/varta-common/src/value/vector.rs",
     "crates/varta-common/src/value/dictionary.rs",
     "crates/varta-common/src/function.rs",

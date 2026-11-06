@@ -388,6 +388,27 @@ fn initializer_form(
             }
             return Ok(());
         }
+        // `Symbol()` and `Symbol(literal)` (v38 `symbol_values`): the call
+        // only allocates the new symbol, reading no other module's state.
+        ast::Expr::Call(ast::CallExpr {
+            callee: ast::Callee::Expr(callee),
+            args,
+            type_args: None,
+            ..
+        }) if profile.symbol_values()
+            && matches!(stmt::unparen(callee), ast::Expr::Ident(id)
+                if id.sym == crate::modules::engine::SYMBOL_GLOBAL && !names.contains(id.sym.as_ref()))
+            && args.len() <= 1
+            && args.iter().all(|arg| {
+                arg.spread.is_none()
+                    && matches!(
+                        stmt::unparen(&arg.expr),
+                        ast::Expr::Lit(ast::Lit::Str(_) | ast::Lit::Num(_))
+                    )
+            }) =>
+        {
+            return Ok(());
+        }
         ast::Expr::Lit(
             ast::Lit::Str(_)
             | ast::Lit::Num(_)

@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the K9 A TypeScript type level on top of the first K9 D standard library stream, the K8 CSS engine and Wasm bridge, the Tailwind compiler, native `img`, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4327 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-175014-3nwe44o_/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **155 passed, 5 known unsupported out of 160** after the K9 A type-level cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **158 passed, 4 known unsupported out of 162** after the K9 A type-level and K9 D2 symbol cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -249,10 +249,9 @@ other platforms not run.
 
 Not done, each refused by name with its reason:
 
-- **`Symbol()` values, `Symbol.for`/`keyFor`, symbol-keyed properties and
-  the remaining well-known symbols**: a new value tag in value layout 18
-  (extended in place, v38 is unreleased) read by every value reader in both
-  hosts, plus symbol-keyed members. Needs the owner's value-layout decision.
+- **Symbol-keyed properties**: `Symbol()` values are admitted by the [K9
+  D2 record](#k9-d2-value-layout-and-collector--2026-11-06); symbol-keyed
+  members are not.
 - **`WeakMap`, `WeakSet`, `WeakRef`, `FinalizationRegistry`**: weak edges
   (ephemerons) in the exact-root collector and deterministic cleanup turns
   in both schedulers. A strong-reference stand-in would leak and is not
@@ -278,6 +277,37 @@ Not done, each refused by name with its reason:
 - `Promise.any` still rejects with an `Error`, not an `AggregateError`;
   object-to-primitive conversion (`String(date)`, `` `${array}` ``) stays
   refused.
+
+### K9 D2 value layout and collector — 2026-11-06
+
+Owner decisions (2026-11-06, K9 D hand-off): the `Symbol` tag and a
+per-object integrity flag extend the unreleased value layout 18 in place
+(precedent: the byte-array tag), and weak collections get real weak
+semantics in the exact-root collector. Layout changes of this track are
+kept apart from the concurrent D1 change (class names in record
+descriptors): D2 adds value tags and heap header flags only, never a
+descriptor field.
+
+Item 1, Symbol values (selector `symbol_values()`,
+[contract](architecture.md#symbol-values-symbol_values),
+[rules](profile-rules.md#symbol-values-symbol_values)): `ValueKind::Symbol`
+(tag 16) whose payload is the private record of the builtin symbol prelude;
+`Symbol()`, `Symbol.for`/`keyFor` over a guest registry, the fifteen
+well-known symbols as values, `description`/`toString`/`valueOf`,
+`String`/`Number` conversion, `typeof` and its narrowing, identity, and
+symbols in records, classes, arrays, unions, dictionaries, `unknown` and
+`Map`/`Set` keys; `unique symbol` annotations (track A's refusal replaced).
+Every value18 reader handles the tag: the native host's JSON encoder and
+diagnostic logger, the linked serializer, `typeof`, truthiness and equality
+readers (rebuilt `intrinsics.wasm`) and the KV stager of both hosts (rebuilt
+browser `kv-codec.wasm`). Evidence: `varta-runtime` `symbol_tests` (three
+Node 24.20.0 programs, collector stress builds, v37 denials), the KV
+refusal case, the `language` tag test, the regenerated browser registry and
+the conformance feature `symbol`. The linked serializer's symbol check raises the v38 `json` fuel golden of `fuel_determinism_tests` from 33439 to 33558. Not done in item 1: symbol-keyed
+properties and the protocols keyed by `toPrimitive`, `toStringTag` and
+`hasInstance` (they need a static key identity for a `unique symbol`
+across modules and record types; refused by the existing computed-key
+diagnostics), `Object.getOwnPropertySymbols`.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -3444,7 +3474,8 @@ The selectors are registered; the table records what each stream admits.
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
 | `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
-| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
+| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decision: host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
+| `symbol_values()` | K9 D2 Symbol values (2026-11-06): value18 tag 16, registry, well-known symbols | Implemented ([contract](architecture.md#symbol-values-symbol_values), [record](#k9-d2-value-layout-and-collector--2026-11-06)); symbol-keyed properties pending |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks
