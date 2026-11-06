@@ -204,8 +204,8 @@ where
     let mut builder = http1::Builder::new();
     builder
         .keep_alive(pool.is_some())
-        .max_headers(http::MAX_HEADERS)
-        .max_buf_size(http::HTTP_BUFFER_BYTES)
+        .max_headers(shared.limits.headers)
+        .max_buf_size(http::request_buffer_bytes(shared.limits.header_bytes))
         .timer(TokioTimer::new())
         .header_read_timeout(
             pool.map_or(Duration::from_secs(http::HEADER_SECONDS), |pool| {

@@ -121,8 +121,13 @@ fn response(
 }
 /// The checks every request passes before dispatch: no CONNECT or upgrade,
 /// a body within `body_bytes` as far as its declared length shows, and the
-/// target and header bounds. Returns the request's header list.
-fn checked_head(req: &Request<Incoming>, body_bytes: usize) -> Result<Vec<HttpHeader>, StatusCode> {
+/// target and the contract's request header bounds. Returns the request's
+/// header list.
+fn checked_head(
+    req: &Request<Incoming>,
+    body_bytes: usize,
+    limits: &http::HttpLimits,
+) -> Result<Vec<HttpHeader>, StatusCode> {
     if req.method() == hyper::Method::CONNECT || req.headers().contains_key(hyper::header::UPGRADE)
     {
         return Err(StatusCode::BAD_REQUEST);
@@ -131,14 +136,14 @@ fn checked_head(req: &Request<Incoming>, body_bytes: usize) -> Result<Vec<HttpHe
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
     let target = req.uri().path_and_query().map_or("/", |path| path.as_str());
-    if target.len() > http::MAX_TARGET_BYTES || req.headers().len() > http::MAX_HEADERS {
+    if target.len() > http::MAX_TARGET_BYTES || req.headers().len() > limits.headers {
         return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }
     let mut headers = Vec::new();
     let mut size = 0;
     for (name, value) in req.headers() {
         size += name.as_str().len() + value.as_bytes().len();
-        if size > http::MAX_HEADER_BYTES {
+        if size > limits.header_bytes {
             return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
         headers.push(HttpHeader {
@@ -161,8 +166,9 @@ fn web_request(
     scheme: &str,
     address: SocketAddr,
     body_bytes: usize,
+    limits: &http::HttpLimits,
 ) -> Result<(handler::Envelope, bool), StatusCode> {
-    let headers = checked_head(&req, body_bytes)?;
+    let headers = checked_head(&req, body_bytes, limits)?;
     let head = req.method() == hyper::Method::HEAD;
     // An absolute-form target or an HTTP/2 `:authority` names it; else the
     // `Host` header, which must be a valid authority.
@@ -201,8 +207,11 @@ fn web_request(
     ))
 }
 
-async fn request(req: Request<Incoming>) -> Result<(handler::Envelope, bool), StatusCode> {
-    let headers = checked_head(&req, http::MAX_BODY_BYTES)?;
+async fn request(
+    req: Request<Incoming>,
+    limits: &http::HttpLimits,
+) -> Result<(handler::Envelope, bool), StatusCode> {
+    let headers = checked_head(&req, http::MAX_BODY_BYTES, limits)?;
     let head = req.method() == hyper::Method::HEAD;
     // An HTTP/2 request's URI is absolute (its `:scheme` and `:authority`);
     // its target is the path and query, as an HTTP/1.1 origin-form target.
@@ -368,10 +377,14 @@ async fn envelope(
             shared.scheme,
             shared.address,
             transport.request_body_bytes,
+            &shared.limits,
         ),
-        _ => tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req))
-            .await
-            .unwrap_or(Err(StatusCode::REQUEST_TIMEOUT)),
+        _ => tokio::time::timeout(
+            Duration::from_secs(http::HEADER_SECONDS),
+            request(req, &shared.limits),
+        )
+        .await
+        .unwrap_or(Err(StatusCode::REQUEST_TIMEOUT)),
     }
 }
 

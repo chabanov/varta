@@ -32,7 +32,7 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Merged `main` at `0ae0235` (JSON SIMD scanning, hashed `Map`/`Set`, native fallback faces/`scale()`/macOS scrollbars on top of `10ff9ae`), macOS arm64, 2026-11-06: **3901 Rust tests passed, 0 failures, 19 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-065715-9i0bwsmq/report.json`. The HTTP server branch (K7 H1–H4) is not merged yet. Linux CI and other platforms not run |
+| Last recorded successful full gate | Merged `main` with all four agent batches (JSON SIMD scanning, hashed `Map`/`Set`, native fallback faces/`scale()`/macOS scrollbars, K7 HTTP server H1–H4) and the v2 request header bounds, macOS arm64, 2026-11-06, the commit that records it: **3929 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-071841-50h7f6v8/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
 | Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP streaming | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies and supports HTTP/1.1 keep-alive with separate bounded connection and worker pools. The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Modern-server H1 is partial: Web `Request` ingress/streamed request bodies and remaining host-policy work are open; H2 async Wasmtime/pooling, H3 server TLS 1.3/HTTP/2 and H4 hardening/load acceptance remain planned ([K7](#k7--modern-http-server-agreed-design-2026-11-05)). |
@@ -7202,6 +7202,22 @@ inside the Wasm module. No remote listener is enabled by this local milestone.
 Desktop/server/robot support must not be claimed merely because Wasm and MCP run
 on a development host. The selected UARP console is the separate product example
 used for acceptance; it does not add domain models to the engine.
+### K7 merged, values approved (2026-11-06)
+
+The K7 stages H1–H4 are merged into `main` after the owner reviewed the
+values set during implementation and accepted them as registry maxima that a
+host may only lower: `MAX_CONCURRENT_REQUESTS` 1024 within a 1 GiB server
+memory ceiling (`SERVER_MEMORY_BYTES`), 16 MiB request bodies, 60 s body
+idle, 300 s request lifetime, 60 s write idle, and HTTP/2 bounds of 100
+streams per connection, a 16 KiB header list and closing a connection after
+100 abandoned requests. Contract v2 request heads were raised from 32
+fields / 4 KiB to `http::V2_MAX_REQUEST_HEADERS` /
+`V2_MAX_REQUEST_HEADER_BYTES` (owner decision, Node's 16 KiB default), so
+bearer tokens and cookies fit; contract v1 and response headers keep the
+earlier bounds. Open: a per-stream write-idle bound for HTTP/2 streams whose
+client never opens its window, h2c, HTTP/3, certificate reload, and Linux
+and sustained-load benchmarks.
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

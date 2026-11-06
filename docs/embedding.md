@@ -3712,7 +3712,8 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
 | Tool string bytes / memory bytes | 1048576 / 8388608 | `ToolLimits::default()` |
 | Tool fuel / host calls / deadline | 1000000 / 1024 / 5000 ms | `ToolLimits::default()` |
 | HTTP legacy / maximum version / metadata bytes | 1 / 2 / 8192 | `http::VERSION`, `http::LATEST_VERSION`, `http::MAX_METADATA_BYTES` |
-| HTTP headers / header bytes / target bytes / body bytes | 32 / 4096 / 1024 / 8192 | `http::MAX_*` |
+| HTTP headers / header bytes / target bytes / body bytes (contract v1; v2 responses) | 32 / 4096 / 1024 / 8192 | `http::MAX_*` |
+| HTTP contract v2 request headers / header bytes | 100 / 16384 | `http::V2_MAX_REQUEST_HEADERS`, `http::V2_MAX_REQUEST_HEADER_BYTES` |
 | HTTP header / connection timeout | 2 s / 10 s | `http::HEADER_SECONDS`, `http::CONNECTION_SECONDS` |
 | HTTP v1 connections / v2 open connections / v2 concurrent requests | 1 / 1024 / 1024 | `http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS` |
 | HTTP v2 request memory / server memory ceiling | 8388608 / 1073741824 | `http::REQUEST_MEMORY_BYTES`, `http::SERVER_MEMORY_BYTES` |

@@ -885,7 +885,7 @@ fn entry_limits() -> String {
             "`http::VERSION`, `http::LATEST_VERSION`, `http::MAX_METADATA_BYTES`",
         ),
         (
-            "HTTP headers / header bytes / target bytes / body bytes",
+            "HTTP headers / header bytes / target bytes / body bytes (contract v1; v2 responses)",
             format!(
                 "{} / {} / {} / {}",
                 http::MAX_HEADERS,
@@ -894,6 +894,15 @@ fn entry_limits() -> String {
                 http::MAX_BODY_BYTES
             ),
             "`http::MAX_*`",
+        ),
+        (
+            "HTTP contract v2 request headers / header bytes",
+            format!(
+                "{} / {}",
+                http::V2_MAX_REQUEST_HEADERS,
+                http::V2_MAX_REQUEST_HEADER_BYTES
+            ),
+            "`http::V2_MAX_REQUEST_HEADERS`, `http::V2_MAX_REQUEST_HEADER_BYTES`",
         ),
         (
             "HTTP header / connection timeout",

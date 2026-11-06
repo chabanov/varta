@@ -49,6 +49,25 @@ pub const MAX_TARGET_BYTES: usize = 1024;
 pub const HEADER_SECONDS: u64 = 2;
 pub const CONNECTION_SECONDS: u64 = 10;
 pub const HTTP_BUFFER_BYTES: usize = 8192;
+/// Contract v2 request header bounds (owner decision 2026-11-06): header
+/// fields, and their name and value bytes together, as Node's default 16 KiB
+/// header size and the HTTP/2 header list bound ([`MAX_HEADER_LIST_BYTES`]),
+/// so an internet-facing service accepts bearer tokens and cookies. Contract
+/// v1 keeps [`MAX_HEADERS`] and [`MAX_HEADER_BYTES`]; response headers keep
+/// them in both versions. A host policy may only lower them.
+pub const V2_MAX_REQUEST_HEADERS: usize = 100;
+pub const V2_MAX_REQUEST_HEADER_BYTES: usize = 16 * 1024;
+/// The HTTP/1.1 read buffer for request heads within `header_bytes`: room for
+/// the field syntax and the target as well, never below [`HTTP_BUFFER_BYTES`].
+#[must_use]
+pub const fn request_buffer_bytes(header_bytes: usize) -> usize {
+    let room = header_bytes * 2;
+    if room > HTTP_BUFFER_BYTES {
+        room
+    } else {
+        HTTP_BUFFER_BYTES
+    }
+}
 /// One bounded active connection and worker (contract v1).
 pub const MAX_CONNECTIONS: usize = 1;
 /// Open connections of a v2 service (HTTP/1.1 keep-alive): cheap while
@@ -257,6 +276,8 @@ impl HttpLimits {
                     request_lifetime_ms: REQUEST_LIFETIME_SECONDS * millis,
                     write_idle_ms: WRITE_IDLE_SECONDS * millis,
                 }),
+                headers: V2_MAX_REQUEST_HEADERS,
+                header_bytes: V2_MAX_REQUEST_HEADER_BYTES,
                 ..legacy
             }
         } else {

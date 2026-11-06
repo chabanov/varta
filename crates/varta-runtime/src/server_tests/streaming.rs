@@ -337,3 +337,32 @@ fn a_request_keeps_the_request_memory_under_the_v38_application_memory() {
     );
     server.finish();
 }
+
+/// Contract v2 request heads (owner decision 2026-11-06): up to
+/// `http::V2_MAX_REQUEST_HEADERS` fields and `V2_MAX_REQUEST_HEADER_BYTES`
+/// of names and values pass, so bearer tokens and cookies fit; one more
+/// field or byte is refused with 431. Contract v1 keeps its 4 KiB bound
+/// (`http_body_framing_and_header_limits_reject_before_the_handler_and_recover`).
+#[test]
+fn v2_request_heads_admit_tokens_and_cookies_within_their_bounds() {
+    use varta_common::http::{V2_MAX_REQUEST_HEADER_BYTES, V2_MAX_REQUEST_HEADERS};
+    let server = start();
+    let get = |headers: &str| {
+        let wire =
+            format!("GET /text HTTP/1.1\r\nHost: test\r\nConnection: close\r\n{headers}\r\n");
+        server.raw(wire.as_bytes()).0
+    };
+    // `Host` and `Connection` count as fields and bytes too.
+    let fixed = "host".len() + "test".len() + "connection".len() + "close".len();
+    let token = "a".repeat(V2_MAX_REQUEST_HEADER_BYTES - fixed - "authorization".len());
+    assert_eq!(get(&format!("Authorization: {token}\r\n")), 200);
+    assert_eq!(get(&format!("Authorization: {token}a\r\n")), 431);
+    let many = |count: usize| {
+        (0..count)
+            .map(|i| format!("X-{i}: v\r\n"))
+            .collect::<String>()
+    };
+    assert_eq!(get(&many(V2_MAX_REQUEST_HEADERS - 2)), 200);
+    assert_eq!(get(&many(V2_MAX_REQUEST_HEADERS - 1)), 431);
+    server.finish();
+}
