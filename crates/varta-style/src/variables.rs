@@ -1,13 +1,13 @@
 //! Computed custom-property scopes. References use arena indices, so neither
 //! dependency depth nor dropping a long alias chain consumes the native stack.
-use std::collections::BTreeMap;
+use crate::prelude::*;
 use varta_common::view::{DRAFT_MAX_VALUE_BYTES, css, stylesheet::Registration};
 
 /// Registered custom properties by name (Properties and Values API 1).
-pub(crate) type Registered = BTreeMap<String, Registration>;
+pub type Registered = BTreeMap<String, Registration>;
 
 #[derive(Default)]
-pub(crate) struct Scope<'a> {
+pub struct Scope<'a> {
     values: BTreeMap<&'a str, Option<usize>>,
     nodes: Vec<Value<'a>>,
     registered: Option<&'a Registered>,
@@ -226,7 +226,7 @@ impl<'a> Template<'a> {
 impl<'a> Scope<'a> {
     /// A scope whose registered properties start at their initial values
     /// (Properties and Values API 1 §3.3).
-    pub(crate) fn registered(registered: &'a Registered) -> Self {
+    pub fn registered(registered: &'a Registered) -> Self {
         let mut scope = Self {
             registered: Some(registered),
             ..Self::default()
@@ -245,9 +245,9 @@ impl<'a> Scope<'a> {
     }
     /// Enter an element: a registered property that does not inherit takes
     /// its initial value (§3.2), keeping the parent's for `inherit`.
-    pub(crate) fn enter(&mut self) {
+    pub fn enter(&mut self) {
         self.parent.clear();
-        for name in std::mem::take(&mut self.local) {
+        for name in core::mem::take(&mut self.local) {
             let parent = self.values.get(name).copied().flatten();
             self.parent.insert(name, parent);
             self.values
@@ -291,7 +291,7 @@ impl<'a> Scope<'a> {
         out.trim().to_owned()
     }
     /// Resolve this element's declarations before making them inherited values.
-    pub(crate) fn extend(&mut self, raw: BTreeMap<&'a str, &'a str>) {
+    pub fn extend(&mut self, raw: BTreeMap<&'a str, &'a str>) {
         if raw.is_empty() {
             return;
         }
@@ -494,7 +494,7 @@ impl<'a> Scope<'a> {
         }
         Some(out)
     }
-    pub(crate) fn substitute(&self, source: &str) -> Option<String> {
+    pub fn substitute(&self, source: &str) -> Option<String> {
         let template = Template::parse(source)?;
         let value = self.evaluate(&template, &|name| self.values.get(name).copied().flatten())?;
         Some(self.materialize(&value.pieces))

@@ -79,7 +79,9 @@ pub mod text;
 mod tool;
 pub mod value;
 /// L0 view protocol tables, unstable draft v0 (data only; no host operation).
-#[cfg(feature = "std")]
+/// The registry and the CSS engine (`view::css`, `view::stylesheet`,
+/// `view::syntax`, `view::expansion`) are part of the `no_std` core, so the
+/// browser host's Wasm style engine compiles the same code.
 pub mod view;
 #[cfg(feature = "std")]
 pub use capability::*;

@@ -10,6 +10,8 @@
 //! a parse error of the specification becomes a `BadString`/`BadUrl` token
 //! or a `Delim`, which the checked grammars then refuse. Its work is linear
 //! in the input, which callers bound and charge.
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 /// One token of §4 with the byte span of its source text.
 #[derive(Debug, Clone, PartialEq)]

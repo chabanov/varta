@@ -243,7 +243,6 @@ fn forbidden_constructs_cannot_hide_behind_escapes_or_comments() {
     for source in [
         ".a { color: #fff } @\\69mport \"x\";",
         ".a { background-color: \\75 rl(x) }",
-        ".a { color: #fff !/**/important }",
         ".a { color: attr(x) }",
         "<!-- .a {} -->",
     ] {

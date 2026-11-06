@@ -10,7 +10,7 @@ pub(crate) fn snapshot(tree: &Tree, environment: &Environment, platform: &Effect
     let mut out = json!({
         "title": tree.title,
         "focus": tree.focus,
-        "stylesheets": tree.sheets.iter().map(|(id, sheet)| json!({"id": id, "text": sheet.text})).collect::<Vec<_>>(),
+        "stylesheets": tree.styles.sheets().iter().map(|(id, sheet)| json!({"id": id, "text": sheet.text})).collect::<Vec<_>>(),
         "clipboard": platform.clipboard,
         "opened": platform.opened,
         "prompts": platform.prompts,

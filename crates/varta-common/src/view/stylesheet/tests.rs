@@ -90,10 +90,7 @@ fn the_stylesheet_grammar_is_checked() {
         "div { color: red }",
         ".a > .b { color: #fff }",
         ".a .b { color: #fff }",
-        ".a { color: red }",
         ".a { colour: #fff }",
-        ".a { color: #fff !important }",
-        ".a { color: #fff ! IMPORTANT }",
         ".a { background-color: url(x) }",
         ".a { background-color: \\75 rl(x) }",
         ".a { background-color: u\\72l(\"x\") }",
@@ -108,15 +105,17 @@ fn the_stylesheet_grammar_is_checked() {
         "@media (orientation: sideways) { .a { color: #fff } }",
         ":root.a { --x: 1 }",
         "@media (prefers-color-scheme: dark) { .a { color: #fff }",
-        "@supports (display: grid) { .a { color: #fff } }",
         "<!-- .a { color: #fff } -->",
         ".a { color: #fff } }",
         "@property --x { syntax: '<length>'; inherits: false }",
         "@media screen { @property --x { syntax: '*'; inherits: false } }",
-        "@media screen { @layer a { .a {} } }",
         "@layer initial;",
         "@layer a, b { .a {} }",
         "@layer a,;",
+        ".a { color: #fff ! importantx }",
+        ".a { color: ! important }",
+        "@supports display: grid { .a {} }",
+        "@property --x { syntax: '*'; inherits: false !important }",
     ] {
         assert!(parse(invalid).is_err(), "{invalid}");
     }
@@ -292,4 +291,34 @@ fn pointer_pseudo_classes_are_independent_and_can_combine_with_disabled() {
             assert_eq!(rules[2].matching(&subject).is_some(), hovered);
         }
     }
+}
+
+#[test]
+fn importance_supports_and_conditional_layers_follow_the_specifications() {
+    let parsed = parse_with_work_limit(
+        ".a { color: #fff ! IMPORTANT; padding: 1px; --x: 2 !important }
+         @supports (display: grid) and (not (display: inline-grid)) { .b { color: #000 } }
+         @supports (margin-trim: block) { .c { unknown-property: 1 } @layer never; }
+         @media (width >= 40rem) { @layer wide { .d { color: #111 } } }
+         @layer wide, narrow;",
+        usize::MAX,
+    )
+    .unwrap();
+    let rules = &parsed.rules;
+    assert_eq!(rules.len(), 4);
+    assert!(!rules[0].important && rules[1].important);
+    assert_eq!(
+        rules[1].declarations,
+        [
+            (Name::Property(CssProperty::Color), "#fff".into()),
+            (Name::Custom("x".into()), "2".into())
+        ]
+    );
+    assert_eq!(rules[2].selectors[0].classes, ["b"]);
+    assert_eq!(rules[3].media.len(), 1);
+    // `never` sits in a false @supports block: it is not declared.
+    assert_eq!(parsed.layers.len(), 2);
+    assert_eq!(parsed.layer_declarations.len(), 3);
+    assert_eq!(parsed.layer_declarations[0].media.len(), 1);
+    assert!(parsed.layer_declarations[1].media.is_empty());
 }

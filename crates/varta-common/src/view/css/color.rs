@@ -14,9 +14,14 @@
 //! search with a JND of 0.02 in ΔEOK). Named colours, system colours,
 //! `color()`, relative colours and `light-dark()` are outside the subset.
 use super::{V, math};
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 /// Hexadecimal digit counts of Color 4 §5.2.
 pub const HEX_DIGITS: [usize; 4] = [3, 4, 6, 8];
+/// Colours one `color-mix()` admits (Color 5 §3 admits any number; the
+/// bound keeps the work of a value bounded like its token count).
+pub const MAX_MIX_COLORS: usize = 16;
 /// The just-noticeable difference of the gamut mapping algorithm (§14.2).
 const JND: f64 = 0.02;
 /// The binary search's precision (§14.2.2).
@@ -24,6 +29,167 @@ const GAMUT_EPSILON: f64 = 0.0001;
 /// Chroma at or below which a polar colour's hue is powerless (achromatic),
 /// per space; HSL and HWB use their own tests (§4.4.1).
 const ACHROMATIC_CHROMA: f64 = 1e-6;
+
+/// The named colours of CSS Color 4 §6.1 (sRGB, 8-bit channels).
+pub const NAMED_COLORS: &[(&str, [u8; 3])] = &[
+    ("aliceblue", [240, 248, 255]),
+    ("antiquewhite", [250, 235, 215]),
+    ("aqua", [0, 255, 255]),
+    ("aquamarine", [127, 255, 212]),
+    ("azure", [240, 255, 255]),
+    ("beige", [245, 245, 220]),
+    ("bisque", [255, 228, 196]),
+    ("black", [0, 0, 0]),
+    ("blanchedalmond", [255, 235, 205]),
+    ("blue", [0, 0, 255]),
+    ("blueviolet", [138, 43, 226]),
+    ("brown", [165, 42, 42]),
+    ("burlywood", [222, 184, 135]),
+    ("cadetblue", [95, 158, 160]),
+    ("chartreuse", [127, 255, 0]),
+    ("chocolate", [210, 105, 30]),
+    ("coral", [255, 127, 80]),
+    ("cornflowerblue", [100, 149, 237]),
+    ("cornsilk", [255, 248, 220]),
+    ("crimson", [220, 20, 60]),
+    ("cyan", [0, 255, 255]),
+    ("darkblue", [0, 0, 139]),
+    ("darkcyan", [0, 139, 139]),
+    ("darkgoldenrod", [184, 134, 11]),
+    ("darkgray", [169, 169, 169]),
+    ("darkgreen", [0, 100, 0]),
+    ("darkgrey", [169, 169, 169]),
+    ("darkkhaki", [189, 183, 107]),
+    ("darkmagenta", [139, 0, 139]),
+    ("darkolivegreen", [85, 107, 47]),
+    ("darkorange", [255, 140, 0]),
+    ("darkorchid", [153, 50, 204]),
+    ("darkred", [139, 0, 0]),
+    ("darksalmon", [233, 150, 122]),
+    ("darkseagreen", [143, 188, 143]),
+    ("darkslateblue", [72, 61, 139]),
+    ("darkslategray", [47, 79, 79]),
+    ("darkslategrey", [47, 79, 79]),
+    ("darkturquoise", [0, 206, 209]),
+    ("darkviolet", [148, 0, 211]),
+    ("deeppink", [255, 20, 147]),
+    ("deepskyblue", [0, 191, 255]),
+    ("dimgray", [105, 105, 105]),
+    ("dimgrey", [105, 105, 105]),
+    ("dodgerblue", [30, 144, 255]),
+    ("firebrick", [178, 34, 34]),
+    ("floralwhite", [255, 250, 240]),
+    ("forestgreen", [34, 139, 34]),
+    ("fuchsia", [255, 0, 255]),
+    ("gainsboro", [220, 220, 220]),
+    ("ghostwhite", [248, 248, 255]),
+    ("gold", [255, 215, 0]),
+    ("goldenrod", [218, 165, 32]),
+    ("gray", [128, 128, 128]),
+    ("green", [0, 128, 0]),
+    ("greenyellow", [173, 255, 47]),
+    ("grey", [128, 128, 128]),
+    ("honeydew", [240, 255, 240]),
+    ("hotpink", [255, 105, 180]),
+    ("indianred", [205, 92, 92]),
+    ("indigo", [75, 0, 130]),
+    ("ivory", [255, 255, 240]),
+    ("khaki", [240, 230, 140]),
+    ("lavender", [230, 230, 250]),
+    ("lavenderblush", [255, 240, 245]),
+    ("lawngreen", [124, 252, 0]),
+    ("lemonchiffon", [255, 250, 205]),
+    ("lightblue", [173, 216, 230]),
+    ("lightcoral", [240, 128, 128]),
+    ("lightcyan", [224, 255, 255]),
+    ("lightgoldenrodyellow", [250, 250, 210]),
+    ("lightgray", [211, 211, 211]),
+    ("lightgreen", [144, 238, 144]),
+    ("lightgrey", [211, 211, 211]),
+    ("lightpink", [255, 182, 193]),
+    ("lightsalmon", [255, 160, 122]),
+    ("lightseagreen", [32, 178, 170]),
+    ("lightskyblue", [135, 206, 250]),
+    ("lightslategray", [119, 136, 153]),
+    ("lightslategrey", [119, 136, 153]),
+    ("lightsteelblue", [176, 196, 222]),
+    ("lightyellow", [255, 255, 224]),
+    ("lime", [0, 255, 0]),
+    ("limegreen", [50, 205, 50]),
+    ("linen", [250, 240, 230]),
+    ("magenta", [255, 0, 255]),
+    ("maroon", [128, 0, 0]),
+    ("mediumaquamarine", [102, 205, 170]),
+    ("mediumblue", [0, 0, 205]),
+    ("mediumorchid", [186, 85, 211]),
+    ("mediumpurple", [147, 112, 219]),
+    ("mediumseagreen", [60, 179, 113]),
+    ("mediumslateblue", [123, 104, 238]),
+    ("mediumspringgreen", [0, 250, 154]),
+    ("mediumturquoise", [72, 209, 204]),
+    ("mediumvioletred", [199, 21, 133]),
+    ("midnightblue", [25, 25, 112]),
+    ("mintcream", [245, 255, 250]),
+    ("mistyrose", [255, 228, 225]),
+    ("moccasin", [255, 228, 181]),
+    ("navajowhite", [255, 222, 173]),
+    ("navy", [0, 0, 128]),
+    ("oldlace", [253, 245, 230]),
+    ("olive", [128, 128, 0]),
+    ("olivedrab", [107, 142, 35]),
+    ("orange", [255, 165, 0]),
+    ("orangered", [255, 69, 0]),
+    ("orchid", [218, 112, 214]),
+    ("palegoldenrod", [238, 232, 170]),
+    ("palegreen", [152, 251, 152]),
+    ("paleturquoise", [175, 238, 238]),
+    ("palevioletred", [219, 112, 147]),
+    ("papayawhip", [255, 239, 213]),
+    ("peachpuff", [255, 218, 185]),
+    ("peru", [205, 133, 63]),
+    ("pink", [255, 192, 203]),
+    ("plum", [221, 160, 221]),
+    ("powderblue", [176, 224, 230]),
+    ("purple", [128, 0, 128]),
+    ("rebeccapurple", [102, 51, 153]),
+    ("red", [255, 0, 0]),
+    ("rosybrown", [188, 143, 143]),
+    ("royalblue", [65, 105, 225]),
+    ("saddlebrown", [139, 69, 19]),
+    ("salmon", [250, 128, 114]),
+    ("sandybrown", [244, 164, 96]),
+    ("seagreen", [46, 139, 87]),
+    ("seashell", [255, 245, 238]),
+    ("sienna", [160, 82, 45]),
+    ("silver", [192, 192, 192]),
+    ("skyblue", [135, 206, 235]),
+    ("slateblue", [106, 90, 205]),
+    ("slategray", [112, 128, 144]),
+    ("slategrey", [112, 128, 144]),
+    ("snow", [255, 250, 250]),
+    ("springgreen", [0, 255, 127]),
+    ("steelblue", [70, 130, 180]),
+    ("tan", [210, 180, 140]),
+    ("teal", [0, 128, 128]),
+    ("thistle", [216, 191, 216]),
+    ("tomato", [255, 99, 71]),
+    ("turquoise", [64, 224, 208]),
+    ("violet", [238, 130, 238]),
+    ("wheat", [245, 222, 179]),
+    ("white", [255, 255, 255]),
+    ("whitesmoke", [245, 245, 245]),
+    ("yellow", [255, 255, 0]),
+    ("yellowgreen", [154, 205, 50]),
+];
+
+/// The named colour `name` (ASCII case-insensitively), if any.
+#[must_use]
+pub fn named(name: &str) -> Option<[u8; 3]> {
+    NAMED_COLORS
+        .iter()
+        .find(|(known, _)| name.eq_ignore_ascii_case(known))
+        .map(|(_, rgb)| *rgb)
+}
 
 /// The colour spaces of the subset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +263,17 @@ pub(crate) fn parse(tokens: &[V], at: usize) -> Option<(Parsed, usize)> {
         )),
         V::Ident(name) if name.eq_ignore_ascii_case("currentcolor") => {
             Some((Parsed::Current, at + 1))
+        }
+        V::Ident(name) => {
+            let rgb = named(name)?;
+            Some((
+                Parsed::Color(Color {
+                    space: Space::Srgb,
+                    components: rgb.map(|c| Some(f64::from(c) / 255.0)),
+                    alpha: Some(1.0),
+                }),
+                at + 1,
+            ))
         }
         V::Function(name) => {
             let name = name.to_ascii_lowercase();
@@ -363,9 +540,13 @@ impl Arguments<'_> {
             }
             _ => (Space::Oklab, Hue::Shorter, false),
         };
+        // Color 5 §3: one or more colours, each with an optional percentage.
         let mut items = Vec::new();
-        for index in 0..2 {
-            if explicit || index > 0 {
+        loop {
+            if explicit || !items.is_empty() {
+                if self.peek() == Some(&V::Close) && !items.is_empty() {
+                    break;
+                }
                 self.eat(&V::Comma).then_some(())?;
             }
             let mut percent = self.percent();
@@ -378,27 +559,35 @@ impl Arguments<'_> {
                 return None;
             }
             items.push((color, percent));
+            if items.len() > MAX_MIX_COLORS {
+                return None;
+            }
+            if self.peek() == Some(&V::Close) {
+                break;
+            }
         }
-        let (first, second) = (items[0], items[1]);
-        let (p1, p2) = match (first.1, second.1) {
-            (None, None) => (50.0, 50.0),
-            (Some(p), None) => (p, 100.0 - p),
-            (None, Some(p)) => (100.0 - p, p),
-            (Some(a), Some(b)) => (a, b),
+        let (weights, leftover) =
+            normalize_mix(&items.iter().map(|item| item.1).collect::<Vec<_>>());
+        let mut colors = Vec::with_capacity(items.len());
+        for (parsed, _) in &items {
+            match parsed {
+                Parsed::Color(color) => colors.push(*color),
+                _ => return Some(Parsed::Current),
+            }
+        }
+        // Color 5 §3.3: mix in order, each result weighted by the sum of its
+        // inputs' percentages.
+        let mut stack: Vec<(Color, f64)> = colors.into_iter().zip(weights).rev().collect();
+        let mut mixed = loop {
+            let (a, pa) = stack.pop()?;
+            let Some((b, pb)) = stack.pop() else {
+                break convert_carrying(a, space);
+            };
+            let combined = pa + pb;
+            let progress = if combined == 0.0 { 0.5 } else { pb / combined };
+            stack.push((interpolate(a, b, progress, space, method), combined));
         };
-        // Color 5 §3.2: percentages summing to zero mix evenly with a zero
-        // alpha multiplier; a sum below 100% multiplies the alpha.
-        let total = p1 + p2;
-        let (progress, multiplier) = if total == 0.0 {
-            (0.5, 0.0)
-        } else {
-            (p2 / total, if total < 100.0 { total / 100.0 } else { 1.0 })
-        };
-        let (Parsed::Color(a), Parsed::Color(b)) = (first.0, second.0) else {
-            return Some(Parsed::Current);
-        };
-        let mut mixed = interpolate(a, b, progress, space, method);
-        mixed.alpha = mixed.alpha.map(|alpha| alpha * multiplier);
+        mixed.alpha = mixed.alpha.map(|alpha| alpha * (1.0 - leftover));
         Some(Parsed::Color(mixed))
     }
     /// A `<color-interpolation-method>` after `in` (Color 4 §13.1).
@@ -431,6 +620,36 @@ impl Arguments<'_> {
                 None
             }
         }
+    }
+}
+
+/// CSS Values 5 §6.1, "normalize mix percentages", with forced
+/// normalization: omitted percentages share what the specified ones leave
+/// (their sum clamped to 100%), a total above 100% (or any positive total)
+/// is scaled to 100%, and a total below 100% leaves the fraction returned as
+/// the leftover (Color 5 §3.3 multiplies the alpha by one minus it).
+fn normalize_mix(percentages: &[Option<f64>]) -> (Vec<f64>, f64) {
+    let specified: f64 = percentages.iter().flatten().sum::<f64>().min(100.0);
+    let omitted = percentages.iter().filter(|p| p.is_none()).count();
+    let share = if omitted == 0 {
+        0.0
+    } else {
+        (100.0 - specified) / omitted as f64
+    };
+    let weights: Vec<f64> = percentages.iter().map(|p| p.unwrap_or(share)).collect();
+    let total: f64 = weights.iter().sum();
+    let leftover = if total < 100.0 {
+        (100.0 - total) / 100.0
+    } else {
+        0.0
+    };
+    if total > 0.0 {
+        (
+            weights.iter().map(|w| w * 100.0 / total).collect(),
+            leftover,
+        )
+    } else {
+        (weights, leftover)
     }
 }
 
@@ -468,8 +687,8 @@ impl Hue {
         })
     }
     fn adjust(self, mut a: f64, mut b: f64) -> (f64, f64) {
-        a = a.rem_euclid(360.0);
-        b = b.rem_euclid(360.0);
+        a = a.libm_rem_euclid(360.0);
+        b = b.libm_rem_euclid(360.0);
         let delta = b - a;
         match self {
             Self::Shorter => {
@@ -555,7 +774,7 @@ fn interpolate(a: Color, b: Color, progress: f64, space: Space, method: Hue) -> 
         };
         *slot = Some(if hue == Some(index) {
             let (x, y) = method.adjust(x, y);
-            (x + (y - x) * progress).rem_euclid(360.0)
+            (x + (y - x) * progress).libm_rem_euclid(360.0)
         } else {
             let premultiplied = (x * alpha_a) + (y * alpha_b - x * alpha_a) * progress;
             match alpha {
@@ -687,21 +906,21 @@ fn srgb_to_linear(c: f64) -> f64 {
     if abs <= 0.04045 {
         c / 12.92
     } else {
-        sign * ((abs + 0.055) / 1.055).powf(2.4)
+        sign * ((abs + 0.055) / 1.055).libm_pow(2.4)
     }
 }
 fn linear_to_srgb(c: f64) -> f64 {
     let sign = c.signum();
     let abs = c.abs();
     if abs > 0.003_130_8 {
-        sign * (1.055 * abs.powf(1.0 / 2.4) - 0.055)
+        sign * (1.055 * abs.libm_pow(1.0 / 2.4) - 0.055)
     } else {
         12.92 * c
     }
 }
 fn hsl_to_srgb([h, s, l]: Vec3) -> Vec3 {
     let (s, l) = (s / 100.0, l / 100.0);
-    let h = h.rem_euclid(360.0);
+    let h = h.libm_rem_euclid(360.0);
     let f = |n: f64| {
         let k = (n + h / 30.0) % 12.0;
         let a = s * l.min(1.0 - l);
@@ -737,7 +956,7 @@ fn srgb_to_hsl([r, g, b]: Vec3) -> Vec3 {
         if hue.is_nan() {
             0.0
         } else {
-            hue.rem_euclid(360.0)
+            hue.libm_rem_euclid(360.0)
         },
         sat * 100.0,
         light * 100.0,
@@ -761,18 +980,18 @@ fn lab_to_xyz_d50([l, a, b]: Vec3) -> Vec3 {
     let fy = (l + 16.0) / 116.0;
     let fx = a / 500.0 + fy;
     let fz = fy - b / 200.0;
-    let x = if fx.powi(3) > LAB_EPSILON {
-        fx.powi(3)
+    let x = if fx.libm_powi(3) > LAB_EPSILON {
+        fx.libm_powi(3)
     } else {
         (116.0 * fx - 16.0) / LAB_KAPPA
     };
     let y = if l > LAB_KAPPA * LAB_EPSILON {
-        fy.powi(3)
+        fy.libm_powi(3)
     } else {
         l / LAB_KAPPA
     };
-    let z = if fz.powi(3) > LAB_EPSILON {
-        fz.powi(3)
+    let z = if fz.libm_powi(3) > LAB_EPSILON {
+        fz.libm_powi(3)
     } else {
         (116.0 * fz - 16.0) / LAB_KAPPA
     };
@@ -781,7 +1000,7 @@ fn lab_to_xyz_d50([l, a, b]: Vec3) -> Vec3 {
 fn xyz_d50_to_lab(xyz: Vec3) -> Vec3 {
     let f = |v: f64| {
         if v > LAB_EPSILON {
-            v.cbrt()
+            v.libm_cbrt()
         } else {
             (LAB_KAPPA * v + 16.0) / 116.0
         }
@@ -795,18 +1014,18 @@ fn xyz_d50_to_lab(xyz: Vec3) -> Vec3 {
 }
 fn polar_to_rect([l, c, h]: Vec3) -> Vec3 {
     let radians = h.to_radians();
-    [l, c * radians.cos(), c * radians.sin()]
+    [l, c * radians.libm_cos(), c * radians.libm_sin()]
 }
 fn rect_to_polar([l, a, b]: Vec3) -> Vec3 {
-    let hue = b.atan2(a).to_degrees().rem_euclid(360.0);
-    [l, (a * a + b * b).sqrt(), hue]
+    let hue = b.libm_atan2(a).to_degrees().libm_rem_euclid(360.0);
+    [l, (a * a + b * b).libm_sqrt(), hue]
 }
 fn oklab_to_xyz(lab: Vec3) -> Vec3 {
-    let lms = multiply(&invert(&LMS_TO_OKLAB), lab).map(|c| c.powi(3));
+    let lms = multiply(&invert(&LMS_TO_OKLAB), lab).map(|c| c.libm_powi(3));
     multiply(&invert(&XYZ_TO_LMS), lms)
 }
 fn xyz_to_oklab(xyz: Vec3) -> Vec3 {
-    let lms = multiply(&XYZ_TO_LMS, xyz).map(f64::cbrt);
+    let lms = multiply(&XYZ_TO_LMS, xyz).map(Portable::libm_cbrt);
     multiply(&LMS_TO_OKLAB, lms)
 }
 
@@ -861,7 +1080,7 @@ fn in_srgb_gamut(rgb: Vec3) -> bool {
 }
 fn delta_eok(a: Vec3, b: Vec3) -> f64 {
     let [l, x, y] = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-    (l * l + x * x + y * y).sqrt()
+    (l * l + x * x + y * y).libm_sqrt()
 }
 
 /// Map `color` into the sRGB gamut (Color 4 §14.2.2, binary search with
@@ -930,11 +1149,11 @@ pub fn to_srgb(color: Color) -> Vec3 {
 /// which every renderer of the subset paints.
 #[must_use]
 pub fn to_legacy(color: Color) -> String {
-    let [r, g, b] = to_srgb(color).map(|c| (c * 255.0).round());
+    let [r, g, b] = to_srgb(color).map(|c| (c * 255.0).libm_round());
     let alpha = color.alpha.unwrap_or(0.0).clamp(0.0, 1.0);
     format!(
         "rgba({r}, {g}, {b}, {})",
-        super::format_number((alpha * 1e6).round() / 1e6)
+        super::format_number((alpha * 1e6).libm_round() / 1e6)
     )
 }
 
@@ -1019,8 +1238,22 @@ mod tests {
             legacy("color-mix(in srgb, #000 0%, #fff 0%)").as_deref(),
             Some("rgba(128, 128, 128, 0)")
         );
+        // Color 5 §3.3: any number of colours, mixed in order.
+        assert_eq!(
+            legacy("color-mix(in srgb, #000, #fff, #f00)").as_deref(),
+            Some("rgba(170, 85, 85, 1)")
+        );
+        assert_eq!(
+            legacy("color-mix(in srgb, #f00)").as_deref(),
+            Some("rgba(255, 0, 0, 1)")
+        );
+        assert_eq!(
+            legacy("RebeccaPurple").as_deref(),
+            Some("rgba(102, 51, 153, 1)")
+        );
+        assert_eq!(NAMED_COLORS.len(), 148);
         for invalid in [
-            "color-mix(in srgb, #000, #fff, #f00)",
+            "notacolor",
             "color-mix(, #000, #fff)",
             "rgb(1, 2 3)",
             "rgb(1, 2%, 3)",

@@ -1,7 +1,7 @@
 //! The live node tree and the semantic rules of every operation. A batch is
 //! applied to a copy of the tree; only a batch whose every operation and
 //! final invariant holds replaces the live tree (fail closed, atomic).
-use crate::style::{self, Environment, Name, Rule, Subject};
+use crate::style::{self, Environment};
 use crate::wire::{Operation, Value};
 use crate::{ViewError, Violation};
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,8 +9,8 @@ use std::sync::Arc;
 use varta_common::view::attributes as values;
 use varta_common::view::{
     ANY_KEY, Attribute, AttributeValue, Command, CssProperty, DRAFT_MAX_LIVE_LISTENERS,
-    DRAFT_MAX_LIVE_NODES, DRAFT_MAX_PENDING_COMMANDS, DRAFT_MAX_STYLESHEET_BYTES, EventKind,
-    ListenOption, MODIFIER_MASK, NO_NODE, Opcode, ROOT_NODE, Tag, Tags,
+    DRAFT_MAX_LIVE_NODES, DRAFT_MAX_PENDING_COMMANDS, EventKind, ListenOption, MODIFIER_MASK,
+    NO_NODE, Opcode, ROOT_NODE, Tag, Tags,
 };
 
 /// One `listen` registration.
@@ -229,24 +229,13 @@ pub(crate) enum Effect {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Sheet {
-    pub text: String,
-    pub rules: Vec<Rule>,
-    pub index: style::RuleIndex,
-    pub work: usize,
-    pub text_units: usize,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Tree {
     pub render_reads: crate::render::ReadCache,
     pub nodes: BTreeMap<u32, Node>,
     /// Live handler ids and the node holding each.
     pub handlers: BTreeMap<u32, u32>,
-    pub sheets: BTreeMap<u32, Sheet>,
-    pub stylesheet_bytes: usize,
-    pub stylesheet_work: usize,
-    pub rule_index: style::CascadeIndex,
+    /// The stylesheets and the cascade (the shared style engine).
+    pub styles: varta_style::Styles,
     pub title: String,
     pub focus: Option<u32>,
     pub hovered: Option<crate::NodeIdentity>,
@@ -282,10 +271,7 @@ impl Default for Tree {
             render_reads: crate::render::ReadCache::default(),
             nodes: BTreeMap::from([(ROOT_NODE, root)]),
             handlers: BTreeMap::new(),
-            sheets: BTreeMap::new(),
-            stylesheet_bytes: 0,
-            stylesheet_work: 0,
-            rule_index: style::CascadeIndex::default(),
+            styles: varta_style::Styles::default(),
             title: String::new(),
             focus: None,
             hovered: None,
@@ -356,7 +342,7 @@ impl Tree {
             }
         };
         charge(self.title.len())?;
-        for sheet in self.sheets.values() {
+        for sheet in self.styles.sheets().values() {
             charge(sheet.text.len())?;
         }
         for node in self.nodes.values_mut() {
@@ -381,143 +367,15 @@ impl Tree {
     /// One conservative full-inventory read. Candidate anchors ignore media and
     /// local field/focus state; var() scopes include the ancestor inventory cost.
     fn potential_cascade_work(&self, allowance: usize) -> Result<usize, Violation> {
-        let weight = varta_common::view::DRAFT_STYLESHEET_NODE_WORK;
-        let mut total = 0usize;
-        let mut charge = |work: usize| {
-            total = total.saturating_add(work);
-            if total > allowance {
-                Err(Violation::CascadeWorkLimit)
-            } else {
-                Ok(())
-            }
-        };
-        let mut pending: Vec<_> = self
-            .nodes
-            .iter()
-            .filter_map(|(id, node)| node.parent.is_none().then_some((*id, 0usize)))
-            .collect();
-        while let Some((id, ancestors)) = pending.pop() {
-            charge(weight)?;
-            let node = &self.nodes[&id];
-            let mut own = weight;
-            let mut variables = false;
-            if let Content::Element(element) = &node.content {
-                charge(element.class.len())?;
-                own = own.saturating_add(element.class.len());
-                for value in element.style.values() {
-                    let work = weight + value.len();
-                    charge(work)?;
-                    own = own.saturating_add(work);
-                    variables |= varta_common::view::css::contains_variable(value);
-                }
-                let classes = element.class.split_ascii_whitespace().collect();
-                for (sheet, index) in self.rule_index.candidates(id == ROOT_NODE, &classes) {
-                    let cost = self.sheets[&sheet].index.costs[index];
-                    charge(cost.work)?;
-                    own = own.saturating_add(cost.work);
-                    variables |= cost.variables;
-                }
-            }
-            let scope = ancestors.saturating_add(own);
-            if variables && self.rule_index.has_custom() {
-                charge(scope)?;
-            }
-            pending.extend(node.children.iter().map(|child| (*child, scope)));
-        }
-        Ok(total)
+        self.styles
+            .potential_cascade_work(self, allowance)
+            .map_err(|varta_style::BudgetExceeded| Violation::CascadeWorkLimit)
     }
 
-    /// Potential UTF-16 component text. Scope alternatives ignore environment,
-    /// local state and winners, while aliases do not duplicate fresh literals.
     fn potential_expanded_values(&self, allowance: usize) -> Result<usize, Violation> {
-        use varta_common::view::expansion::{Checkpoint, Scope, Value};
-        enum Work {
-            Enter(u32),
-            Leave(Checkpoint),
-        }
-        let mut pending: Vec<_> = self
-            .nodes
-            .iter()
-            .filter_map(|(id, node)| node.parent.is_none().then_some(Work::Enter(*id)))
-            .collect();
-        let mut scope = Scope::default();
-        let mut total = 0usize;
-        let mut charge = |units: usize| {
-            total = total.saturating_add(units.saturating_mul(2));
-            if total > allowance {
-                Err(Violation::ExpandedValueLimit)
-            } else {
-                Ok(())
-            }
-        };
-        // Registered initial values (Properties and Values API 1 §3.3) are
-        // the outermost definitions of every scope.
-        let initial: Vec<(&str, Value)> = self
-            .rule_index
-            .registered()
-            .values()
-            .filter_map(|registration| {
-                let value = registration.initial.as_deref()?;
-                Some((registration.name.as_str(), Value::new(value)))
-            })
-            .collect();
-        if !initial.is_empty() {
-            let base: BTreeMap<&str, Vec<&Value>> = initial
-                .iter()
-                .map(|(name, value)| (*name, vec![value]))
-                .collect();
-            let (_, fresh) = scope.extend(&base);
-            charge(fresh)?;
-        }
-        while let Some(task) = pending.pop() {
-            let id = match task {
-                Work::Leave(checkpoint) => {
-                    scope.restore(checkpoint);
-                    continue;
-                }
-                Work::Enter(id) => id,
-            };
-            let node = &self.nodes[&id];
-            let mut custom: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
-            let mut properties: BTreeMap<CssProperty, Vec<&Value>> = BTreeMap::new();
-            let mut inline = Vec::new();
-            if let Content::Element(element) = &node.content {
-                let classes = element.class.split_ascii_whitespace().collect();
-                for (sheet, index) in self.rule_index.candidates(id == ROOT_NODE, &classes) {
-                    for (name, value) in &self.sheets[&sheet].index.expansion[index] {
-                        match name {
-                            Name::Custom(name) => custom.entry(name).or_default().push(value),
-                            Name::Property(property) => {
-                                properties.entry(*property).or_default().push(value)
-                            }
-                        }
-                    }
-                }
-                inline.extend(
-                    element
-                        .style
-                        .iter()
-                        .map(|(property, value)| (*property, Value::new(value))),
-                );
-                for (property, value) in &inline {
-                    properties.entry(*property).or_default().push(value);
-                }
-            }
-            let (checkpoint, fresh) = scope.extend(&custom);
-            charge(fresh)?;
-            for values in properties.values() {
-                charge(
-                    values
-                        .iter()
-                        .map(|value| scope.upper(value))
-                        .max()
-                        .unwrap_or(0),
-                )?;
-            }
-            pending.push(Work::Leave(checkpoint));
-            pending.extend(node.children.iter().rev().map(|id| Work::Enter(*id)));
-        }
-        Ok(total)
+        self.styles
+            .potential_expanded_values(self, allowance)
+            .map_err(|varta_style::BudgetExceeded| Violation::ExpandedValueLimit)
     }
 
     pub(crate) fn radio_groups(&self) -> RadioGroups {
@@ -834,28 +692,8 @@ impl Tree {
         &'a self,
         id: u32,
         environment: &Environment,
-    ) -> crate::variables::Scope<'a> {
-        let registered = self.rule_index.registered();
-        let mut scope = if registered.is_empty() {
-            crate::variables::Scope::default()
-        } else {
-            crate::variables::Scope::registered(registered)
-        };
-        if self.rule_index.has_custom() {
-            for ancestor in self.path(id).into_iter().rev() {
-                scope.enter();
-                let raw = self
-                    .cascade_refs(ancestor, environment)
-                    .into_iter()
-                    .filter_map(|(name, value)| match name {
-                        Name::Custom(name) => Some((name.as_str(), value)),
-                        Name::Property(_) => None,
-                    })
-                    .collect();
-                scope.extend(raw);
-            }
-        }
-        scope
+    ) -> varta_style::Scope<'a> {
+        self.styles.scope(self, id, &environment.media())
     }
     pub(crate) fn pointer_contains(&self, target: Option<&crate::NodeIdentity>, id: u32) -> bool {
         target.is_some_and(|target| {
@@ -866,44 +704,15 @@ impl Tree {
                 && self.path(target.id).contains(&id)
         })
     }
-    pub(crate) fn cascade_refs(&self, id: u32, environment: &Environment) -> Vec<(&Name, &str)> {
-        let Some(element) = self.element(id) else {
-            return Vec::new();
-        };
-        let classes: BTreeSet<_> = element.class.split_ascii_whitespace().collect();
-        let class_list: Vec<_> = classes.iter().copied().collect();
-        let subject = Subject {
-            root: id == ROOT_NODE,
-            classes: &class_list,
-            focused: self.focus == Some(id),
-            hovered: self.pointer_contains(self.hovered.as_ref(), id),
-            active: self.pointer_contains(self.active.as_ref(), id),
-            disabled: element.disabled(),
-            checked: element.checked,
-        };
-        let mut matched = Vec::new();
-        for (sheet, index) in self.rule_index.candidates(subject.root, &classes) {
-            let rule = &self.sheets[&sheet].rules[index];
-            if style::applies(rule, environment)
-                && let Some(specificity) =
-                    rule.matching_with_classes(&subject, |class| classes.contains(class))
-            {
-                let layer = self.rule_index.layer_rank(sheet, rule.layer);
-                matched.push((layer, specificity, sheet, index, rule));
-            }
-        }
-        // Cascade 5 §6.1: layer, then specificity, then order of appearance.
-        matched.sort_by_key(|(layer, specificity, sheet, index, _)| {
-            (*layer, *specificity, *sheet, *index)
-        });
-        matched
-            .into_iter()
-            .flat_map(|(_, _, _, _, rule)| {
-                rule.declarations
-                    .iter()
-                    .map(|(name, value)| (name, value.as_str()))
-            })
-            .collect()
+    /// The matching rule declarations of `id` in cascade order (Cascade 5
+    /// §6.1): normal ones, which inline values override, and important
+    /// ones, which override inline values.
+    pub(crate) fn cascade_refs(
+        &self,
+        id: u32,
+        environment: &Environment,
+    ) -> varta_style::Cascade<'_> {
+        self.styles.cascade(self, id, &environment.media())
     }
     /// Select one winning property without resolving unrelated values/variables.
     pub(crate) fn computed_property(
@@ -918,18 +727,7 @@ impl Tree {
         if let Some(value) = self.animations.overlay_property(id, property) {
             return Some(value);
         }
-        let inline = self
-            .element(id)
-            .and_then(|element| element.style.get(&property));
-        let raw = inline.map(String::as_str).or_else(|| {
-            self.cascade_refs(id, environment)
-                .into_iter()
-                .rev()
-                .find_map(|(name, value)| {
-                    matches!(name,Name::Property(p) if *p==property).then_some(value)
-                })
-        })?;
-        style::Variables::new(self, id, environment).property(property, raw)
+        self.computed_static(id, environment).remove(&property)
     }
     /// The computed values layout and paint read: the cascade with the
     /// current value of each running transition.
@@ -946,32 +744,49 @@ impl Tree {
         values
     }
     /// The computed values without transitions: what a style change compares
-    /// and snapshots show.
+    /// and snapshots show. The engine resolves the cascade and `var()`; the
+    /// CSS-wide keywords it leaves resolve against the native user-agent
+    /// origin ([`Tree::keyword`]).
     pub(crate) fn computed_static(
         &self,
         id: u32,
         environment: &Environment,
     ) -> BTreeMap<CssProperty, String> {
-        let mut declared = BTreeMap::new();
-        for (name, value) in self.cascade_refs(id, environment) {
-            if let Name::Property(property) = name {
-                declared.insert(*property, value);
-            }
-        }
-        if let Some(element) = self.element(id) {
-            for (property, value) in &element.style {
-                declared.insert(*property, value.as_str());
-            }
-        }
-        let variables = style::Variables::new(self, id, environment);
-        declared
+        self.styles
+            .computed(self, id, &environment.style(), |property, value| {
+                self.render_reads.validate(environment, property, value)
+            })
             .into_iter()
-            .filter_map(|(property, value)| {
-                variables
-                    .property(property, value)
+            .filter_map(|(property, computed)| {
+                self.keyword(id, environment, property, computed)
                     .map(|value| (property, value))
             })
             .collect()
+    }
+    /// A computed value's native text: a value as is; `initial` the
+    /// property's initial value where the native user-agent origin sets one
+    /// for this element, else no value (which is the initial value); and
+    /// `inherit` the parent's computed value, or for an inherited property
+    /// the marker [`style::INHERIT`] its consumers follow (Cascade 5 §7.3).
+    pub(crate) fn keyword(
+        &self,
+        id: u32,
+        environment: &Environment,
+        property: CssProperty,
+        computed: varta_style::Computed,
+    ) -> Option<String> {
+        match computed {
+            varta_style::Computed::Value(value) => Some(value),
+            varta_style::Computed::Initial => style::initial_override(self, id, property),
+            varta_style::Computed::Inherit if varta_style::inherited(property) => {
+                Some(style::INHERIT.into())
+            }
+            varta_style::Computed::Inherit => {
+                let parent = self.nodes.get(&id)?.parent?;
+                self.computed_property(parent, environment, property)
+                    .or_else(|| style::ua_value(self, parent, property))
+            }
+        }
     }
     pub(crate) fn computed_read<'a>(
         &'a self,
@@ -993,16 +808,11 @@ impl Tree {
                 CssProperty::TransitionDuration | CssProperty::TransitionDelay
             )
         };
-        self.sheets.values().any(|sheet| {
-            sheet.rules.iter().any(|rule| {
-                rule.declarations
-                    .iter()
-                    .any(|(name, _)| matches!(name, Name::Property(p) if declares(p)))
+        self.styles.declares_transitions()
+            || self.nodes.keys().any(|id| {
+                self.element(*id)
+                    .is_some_and(|element| element.style.keys().any(declares))
             })
-        }) || self.nodes.keys().any(|id| {
-            self.element(*id)
-                .is_some_and(|element| element.style.keys().any(declares))
-        })
     }
     /// Document order with hidden subtrees skipped once, rather than checking
     /// the complete ancestor path for every prospective focus stop.
@@ -1897,73 +1707,17 @@ impl Apply<'_, '_, '_> {
     }
 
     fn stylesheet(&mut self, sheet: u32, text: &str) -> Result<(), ViewError> {
-        if sheet == 0 {
-            return Err(self.fail(Violation::InvalidSheet));
-        }
-        if text.is_empty() {
-            if let Some(old) = self.tree.sheets.remove(&sheet) {
-                self.tree.rule_index.remove(sheet, &old.index);
-                self.tree.stylesheet_bytes -= old.text_units;
-                self.tree.stylesheet_work -= old.work;
-            }
-            return Ok(());
-        }
-        let parsed = style::parse(
-            text,
-            varta_common::view::DRAFT_MAX_STYLESHEET_WORK.saturating_sub(self.stylesheet_work),
-        )
-        .map_err(|error| {
-            self.fail(
-                if error.violation == varta_common::view::stylesheet::Violation::WorkLimit {
-                    Violation::StylesheetWorkLimit
-                } else {
-                    Violation::InvalidStylesheet
-                },
-            )
-        })?;
-        self.stylesheet_work = self.stylesheet_work.saturating_add(parsed.work);
-        let text_units = text.encode_utf16().count() * 2;
-        let old = self.tree.sheets.get(&sheet);
-        let bytes =
-            self.tree.stylesheet_bytes - old.map_or(0, |sheet| sheet.text_units) + text_units;
-        if bytes > DRAFT_MAX_STYLESHEET_BYTES {
-            return Err(self.fail(Violation::StylesheetsTooLarge));
-        }
-        let work = self.tree.stylesheet_work - old.map_or(0, |sheet| sheet.work) + parsed.work;
-        if work > varta_common::view::DRAFT_MAX_STYLESHEET_WORK {
-            return Err(self.fail(Violation::StylesheetWorkLimit));
-        }
-        // Registrations are document-wide and seed every scope: bound them
-        // across all sheets.
-        let registered = self
-            .tree
-            .sheets
-            .iter()
-            .filter(|(id, _)| **id != sheet)
-            .map(|(_, other)| other.index.properties.len())
-            .sum::<usize>()
-            .saturating_add(parsed.properties.len());
-        if registered > varta_common::view::stylesheet::MAX_REGISTERED_PROPERTIES {
-            return Err(self.fail(Violation::StylesheetWorkLimit));
-        }
-        let index = style::RuleIndex::parsed(&parsed);
-        if let Some(old) = self.tree.sheets.get(&sheet) {
-            self.tree.rule_index.remove(sheet, &old.index);
-        }
-        self.tree.rule_index.insert(sheet, &index);
-        self.tree.sheets.insert(
-            sheet,
-            Sheet {
-                text: text.into(),
-                rules: parsed.rules,
-                index,
-                work: parsed.work,
-                text_units,
-            },
-        );
-        self.tree.stylesheet_bytes = bytes;
-        self.tree.stylesheet_work = work;
-        Ok(())
+        self.tree
+            .styles
+            .set(sheet, text, &mut self.stylesheet_work)
+            .map_err(|error| {
+                self.fail(match error {
+                    varta_style::SheetError::InvalidId => Violation::InvalidSheet,
+                    varta_style::SheetError::Invalid(_) => Violation::InvalidStylesheet,
+                    varta_style::SheetError::WorkLimit => Violation::StylesheetWorkLimit,
+                    varta_style::SheetError::TooLarge => Violation::StylesheetsTooLarge,
+                })
+            })
     }
 
     /// Invariants of the whole batch: `id` values unique among live elements.
@@ -2055,4 +1809,39 @@ pub(crate) fn focus_records(tree: &mut Tree, next: Option<u32>) -> Vec<crate::Ev
         records.push(crate::EventRecord::occurrence(EventKind::Focusin, next));
     }
     records
+}
+
+/// The native document of the shared style engine.
+impl varta_style::Document for Tree {
+    fn element(&self, id: u32) -> Option<varta_style::Element<'_>> {
+        Tree::element(self, id).map(|element| varta_style::Element {
+            class: &element.class,
+            style: &element.style,
+            disabled: element.disabled(),
+            checked: element.checked,
+        })
+    }
+    fn parent(&self, id: u32) -> Option<u32> {
+        self.nodes.get(&id).and_then(|node| node.parent)
+    }
+    fn children(&self, id: u32) -> &[u32] {
+        self.nodes
+            .get(&id)
+            .map_or(&[], |node| node.children.as_slice())
+    }
+    fn top_level(&self) -> Vec<u32> {
+        self.nodes
+            .iter()
+            .filter_map(|(id, node)| node.parent.is_none().then_some(*id))
+            .collect()
+    }
+    fn focused(&self, id: u32) -> bool {
+        self.focus == Some(id)
+    }
+    fn hovered(&self, id: u32) -> bool {
+        self.pointer_contains(self.hovered.as_ref(), id)
+    }
+    fn active(&self, id: u32) -> bool {
+        self.pointer_contains(self.active.as_ref(), id)
+    }
 }

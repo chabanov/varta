@@ -9,7 +9,72 @@
 //! ([`ViewCapability`]); every other profile rejects them. Codes may change
 //! until the protocol is frozen by the freeze criterion; a frozen protocol
 //! gets its own version and host ABI.
+#[cfg(feature = "std")]
 use crate::HostScalar;
+use prelude::*;
+
+/// `alloc` items for the view modules, which build in the `no_std` core.
+pub(crate) mod prelude {
+    pub use alloc::borrow::ToOwned;
+    pub use alloc::boxed::Box;
+    pub use alloc::collections::{BTreeMap, BTreeSet};
+    pub use alloc::string::{String, ToString};
+    pub use alloc::vec::Vec;
+    pub use alloc::{format, vec};
+
+    /// Binary64 functions through the portable `libm` crate, so the CSS
+    /// engine computes the same bits natively and in Wasm. Methods have
+    /// their own names: inherent `std` methods would otherwise win.
+    pub(crate) trait Portable: Sized {
+        fn libm_pow(self, exponent: f64) -> f64;
+        fn libm_powi(self, exponent: i32) -> f64;
+        fn libm_cbrt(self) -> f64;
+        fn libm_sqrt(self) -> f64;
+        fn libm_sin(self) -> f64;
+        fn libm_cos(self) -> f64;
+        fn libm_atan2(self, x: f64) -> f64;
+        fn libm_floor(self) -> f64;
+        fn libm_round(self) -> f64;
+        fn libm_rem_euclid(self, modulus: f64) -> f64;
+    }
+    impl Portable for f64 {
+        fn libm_pow(self, exponent: f64) -> f64 {
+            libm::pow(self, exponent)
+        }
+        fn libm_powi(self, exponent: i32) -> f64 {
+            libm::pow(self, f64::from(exponent))
+        }
+        fn libm_cbrt(self) -> f64 {
+            libm::cbrt(self)
+        }
+        fn libm_sqrt(self) -> f64 {
+            libm::sqrt(self)
+        }
+        fn libm_sin(self) -> f64 {
+            libm::sin(self)
+        }
+        fn libm_cos(self) -> f64 {
+            libm::cos(self)
+        }
+        fn libm_atan2(self, x: f64) -> f64 {
+            libm::atan2(self, x)
+        }
+        fn libm_floor(self) -> f64 {
+            libm::floor(self)
+        }
+        fn libm_round(self) -> f64 {
+            libm::round(self)
+        }
+        fn libm_rem_euclid(self, modulus: f64) -> f64 {
+            let remainder = libm::fmod(self, modulus);
+            if remainder < 0.0 {
+                remainder + modulus.abs()
+            } else {
+                remainder
+            }
+        }
+    }
+}
 
 pub mod accessibility;
 pub mod attributes;
@@ -26,12 +91,15 @@ pub const DRAFT_VERSION: u16 = 0;
 /// `len` bytes of one batch at `ptr`; the status is 0 for an applied batch,
 /// and an invalid batch ends the instance instead of returning.
 pub const COMMIT_IMPORT: &str = "view_commit";
+#[cfg(feature = "std")]
 pub const COMMIT_PARAMS: [HostScalar; 2] = [HostScalar::I32, HostScalar::I32];
+#[cfg(feature = "std")]
 pub const COMMIT_RESULTS: [HostScalar; 1] = [HostScalar::I32];
 /// The guest export that receives one event record of `len` bytes written at
 /// `abi::RESULT_BASE`: `(len: i32) -> ()`. The guest copies the record before
 /// any other host operation; each call is the task of one turn.
 pub const EVENT_EXPORT: &str = "varta.view_abi.event";
+#[cfg(feature = "std")]
 pub const EVENT_EXPORT_PARAMS: [HostScalar; 1] = [HostScalar::I32];
 
 /// Node id of the root container that the host creates; guest ids are nonzero.

@@ -1,0 +1,17 @@
+[package]
+name = "varta-style-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The browser host's view style engine: `varta-style` compiled to one core
+# wasm32 module by `scripts/build-view-engine.py` (profile `intrinsics`).
+# The browser bundle embeds the checked-in result; the view model and the
+# DOM applier call it. On native targets this crate is empty.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+varta-style = { path = "../varta-style" }
+varta-common = { path = "../varta-common", default-features = false }

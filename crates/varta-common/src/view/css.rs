@@ -22,6 +22,8 @@
 //!   ([`color`]). A valid engine value is then lowered ([`lower`]) at
 //!   computed-value time to the host grammar the renderer's consumers read.
 use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE, syntax};
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 pub mod color;
 pub mod math;
@@ -858,9 +860,11 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
                 | CssProperty::FlexShrink,
                 V::Num { value, text, .. },
             ) => *value >= 0.0 && !text.starts_with('-'),
-            (CssProperty::Opacity, V::Num { value, unit, .. }) => match unit {
-                NumUnit::Percent if mode == Mode::Engine => (0.0..=100.0).contains(value),
-                NumUnit::None => (0.0..=1.0).contains(value),
+            // Color 4 §11.2: an `<alpha-value>` outside [0, 1] is valid and
+            // clamped at computed-value time; the host grammar refuses it.
+            (CssProperty::Opacity, V::Num { value, unit, .. }) => match (unit, mode) {
+                (NumUnit::Percent | NumUnit::None, Mode::Engine) => value.is_finite(),
+                (NumUnit::None, Mode::Host) => (0.0..=1.0).contains(value),
                 _ => false,
             },
             (CssProperty::FontWeight, V::Num { value, .. }) => (1.0..=1000.0).contains(value),
@@ -922,6 +926,20 @@ pub fn check(property: CssProperty, value: &str) -> Result<(), Refusal> {
         return valid_variables(&tokens)
             .then_some(())
             .ok_or(Refusal::Invalid);
+    }
+    // Cascade 5 §7.3: every property takes the CSS-wide keywords as its
+    // whole value. `font-family: initial` names the user agent's own initial
+    // font, which no native host can supply.
+    if let [V::Ident(word)] = tokens.as_slice()
+        && CSS_WIDE_KEYWORDS
+            .iter()
+            .any(|keyword| word.eq_ignore_ascii_case(keyword))
+    {
+        return if property == CssProperty::FontFamily && word.eq_ignore_ascii_case("initial") {
+            Err(Refusal::Invalid)
+        } else {
+            Ok(())
+        };
     }
     if !matches_tokens(grammar(property), &tokens, Mode::Engine) {
         let specified = unrendered(property)
@@ -1032,9 +1050,12 @@ fn lower_math(
     let value = clamp_magnitude(evaluated.value);
     let text = if kind == Type::NUMBER {
         let value = if integer_property(property) {
-            (value + 0.5).floor()
+            (value + 0.5).libm_floor()
         } else if property == CssProperty::Opacity {
             value.clamp(0.0, 1.0)
+        } else if property == CssProperty::FontWeight {
+            // Fonts 4 §2.2: a math result is clamped to [1, 1000].
+            value.clamp(1.0, 1000.0)
         } else {
             value
         };
@@ -1072,6 +1093,9 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
     match unit {
         NumUnit::Percent if property == CssProperty::Opacity => {
             Some(format_number((value / 100.0).clamp(0.0, 1.0)))
+        }
+        NumUnit::None if property == CssProperty::Opacity => {
+            Some(format_number(value.clamp(0.0, 1.0)))
         }
         NumUnit::Dimension(name) => {
             let lower = name.to_ascii_lowercase();
@@ -1131,6 +1155,8 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
         }
         let colour = match token {
             V::Hash(hex) => !HEX_COLOR_DIGITS.contains(&hex.len()),
+            // Color 4 §6.1 named colours, where the property takes a colour.
+            V::Ident(name) => grammar(property).contains("<color>") && color::named(name).is_some(),
             V::Function(name) => [
                 "rgb",
                 "rgba",
@@ -1195,7 +1221,27 @@ mod tests {
         assert!(property_value(CssProperty::Display, "var(--mode)"));
         assert!(property_value(CssProperty::Display, "var(--mode, none)"));
         assert!(property_value(CssProperty::Display, "var(--mode,)"));
-        assert!(!property_value(CssProperty::Opacity, "1.5"));
+        assert!(property_value(CssProperty::Opacity, "1.5"));
+        assert_eq!(
+            lower(CssProperty::Opacity, "1.5", &Context::NOMINAL).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            lower(CssProperty::Opacity, "-20%", &Context::NOMINAL).as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            lower(CssProperty::Color, "Red", &Context::NOMINAL).as_deref(),
+            Some("rgba(255, 0, 0, 1)")
+        );
+        assert_eq!(
+            lower(CssProperty::Border, "1px solid tomato", &Context::NOMINAL).as_deref(),
+            Some("1px solid rgba(255, 99, 71, 1)")
+        );
+        assert_eq!(
+            lower(CssProperty::FontWeight, "calc(2000)", &Context::NOMINAL).as_deref(),
+            Some("1000")
+        );
         assert!(property_value(CssProperty::Opacity, "0.5"));
         assert!(!property_value(CssProperty::Color, "#fff;"));
         assert!(!property_value(CssProperty::Color, "URL(x)"));
@@ -1292,8 +1338,8 @@ mod tests {
                 "color-mix(in oklab, currentcolor 50%, transparent)",
                 Refusal::Unrenderable,
             ),
-            (P::Color, "red", Refusal::Invalid),
-            (P::Opacity, "150%", Refusal::Invalid),
+            (P::Color, "notacolor", Refusal::Invalid),
+            (P::Opacity, "150%x", Refusal::Invalid),
             (P::FontWeight, "1001", Refusal::Invalid),
             (P::TransitionProperty, "a, none", Refusal::Invalid),
             (

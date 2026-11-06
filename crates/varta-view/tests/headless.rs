@@ -3800,7 +3800,7 @@ fn semantic_rules_reject_the_whole_batch() {
         ),
         (
             Box::new(|b| {
-                b.set_style(2, CssProperty::Color, "red");
+                b.set_style(2, CssProperty::Color, "notacolor");
             }),
             Violation::InvalidStyleValue,
         ),

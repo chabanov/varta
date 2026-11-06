@@ -131,6 +131,14 @@ pub struct TextNavigation {
 fn pointer_cursor(tree: &Tree, env: &Environment, id: u32) -> PointerCursor {
     for ancestor in tree.path(id) {
         if let Some(value) = tree.computed_read(ancestor, env).get(&CssProperty::Cursor) {
+            // Cascade 5 §7.3.2: `inherit` defers to the parent; the initial
+            // `auto` is the user agent's choice below.
+            if value == style::INHERIT {
+                continue;
+            }
+            if value == "auto" {
+                break;
+            }
             return match value.as_str() {
                 "pointer" => PointerCursor::Pointer,
                 "text" => PointerCursor::Text,
@@ -916,7 +924,14 @@ fn clipped(a: BoxRect, b: BoxRect) -> Option<Rect> {
 /// which stops inheritance from outside the control.
 fn current_color(tree: &Tree, env: &Environment, id: u32) -> Option<Color> {
     for ancestor in tree.path(id) {
-        if let Some(value) = tree.computed_read(ancestor, env).get(&CssProperty::Color)
+        let computed = tree.computed_read(ancestor, env);
+        let value = computed.get(&CssProperty::Color);
+        // Cascade 5 §7.3.2: `inherit` takes the parent's color, past this
+        // element's user-agent color.
+        if value.is_some_and(|value| value == style::INHERIT) {
+            continue;
+        }
+        if let Some(value) = value
             && value != "currentcolor"
         {
             return color(value);
@@ -992,10 +1007,16 @@ fn border_colors(
             values[usize::from(*side)] = value.to_owned();
         }
     };
-    for (name, value) in tree.cascade_refs(id, env) {
-        if let Name::Property(property) = name {
-            let property = *property;
-            set(&mut values, property, value, border_color_sides(property));
+    // Cascade 5 §6.1: rule declarations, inline values, important rules.
+    let cascade = tree.cascade_refs(id, env);
+    for declared in &cascade.normal {
+        if let Name::Property(property) = declared.name {
+            set(
+                &mut values,
+                *property,
+                declared.value,
+                border_color_sides(*property),
+            );
         }
     }
     for (&side, (property, raw)) in &tree
@@ -1004,6 +1025,16 @@ fn border_colors(
         .border_color_inline
     {
         set(&mut values, *property, raw, &[side]);
+    }
+    for declared in &cascade.important {
+        if let Name::Property(property) = declared.name {
+            set(
+                &mut values,
+                *property,
+                declared.value,
+                border_color_sides(*property),
+            );
+        }
     }
     let mut result = [Color::TRANSPARENT; 4];
     for (index, (width, value)) in widths.into_iter().zip(values).enumerate() {
@@ -1040,14 +1071,21 @@ type OutlineValues = BTreeMap<CssProperty, (CssProperty, Option<String>)>;
 fn outline_values(tree: &Tree, env: &Environment, id: u32) -> Result<OutlineValues, PaintError> {
     let variables = style::Variables::new(tree, id, env);
     let mut values = BTreeMap::new();
-    for (name, raw) in tree.cascade_refs(id, env) {
-        if let Name::Property(property) = name {
-            let property = *property;
-            for component in outline_components(property) {
-                values.insert(*component, (property, variables.property(property, raw)));
+    // Cascade 5 §6.1: rule declarations, inline values, important rules.
+    let cascade = tree.cascade_refs(id, env);
+    let rules = |values: &mut OutlineValues, list: &[varta_style::Declared<'_>]| {
+        for declared in list {
+            if let Name::Property(property) = declared.name {
+                for component in outline_components(*property) {
+                    values.insert(
+                        *component,
+                        (*property, variables.property(*property, declared.value)),
+                    );
+                }
             }
         }
-    }
+    };
+    rules(&mut values, &cascade.normal);
     for (component, (property, raw)) in tree
         .element(id)
         .ok_or(PaintError::Unsupported(id))?
@@ -1057,6 +1095,7 @@ fn outline_values(tree: &Tree, env: &Environment, id: u32) -> Result<OutlineValu
     {
         values.insert(*component, (*property, variables.property(*property, raw)));
     }
+    rules(&mut values, &cascade.important);
     Ok(values)
 }
 

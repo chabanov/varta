@@ -16,3 +16,7 @@ url = { workspace = true, optional = true }
 thiserror = { version = "2.0", default-features = false }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+# Portable binary64 functions for the CSS engine's colour and math
+# evaluation: the same bits natively and in the browser host's Wasm engine
+# (already locked through the intrinsics).
+libm = "=0.2.16"

@@ -1,6 +1,7 @@
 //! State-independent upper bounds for derived CSS component text. This is an
 //! admission estimator, not the renderer's active-cycle substitution algorithm.
-use std::collections::{BTreeMap, BTreeSet};
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 const CAP: usize = super::DRAFT_MAX_VALUE_BYTES / 2;
 #[derive(Debug, Clone, PartialEq)]

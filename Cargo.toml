@@ -14,6 +14,8 @@ members = [
   "crates/varta-intrinsics-wasm",
   "crates/varta-kv-codec",
   "crates/varta-kv-codec-wasm",
+  "crates/varta-style",
+  "crates/varta-style-wasm",
   "crates/varta-view",
   "crates/varta-desktop",
 ]

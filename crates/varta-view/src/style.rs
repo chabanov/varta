@@ -62,6 +62,13 @@ impl Environment {
             preferences: self.preferences,
         }
     }
+    /// The shared style engine's inputs.
+    pub(crate) fn style(&self) -> varta_style::Environment {
+        varta_style::Environment {
+            media: self.media(),
+            context: self.lowering(),
+        }
+    }
     /// The reference metrics of computed-value lowering.
     pub(crate) fn lowering(&self) -> varta_common::view::css::Context {
         varta_common::view::css::Context {
@@ -80,93 +87,78 @@ impl Environment {
 }
 /// Default headless viewport width in CSS pixels.
 pub const DEFAULT_VIEWPORT_WIDTH: f64 = 1024.0;
-pub(crate) use varta_common::view::stylesheet::{Name, Rule, Subject};
+pub(crate) use varta_common::view::stylesheet::Name;
 
-/// Whether `rule`'s media conditions hold in `environment`.
-pub(crate) fn applies(rule: &Rule, environment: &Environment) -> bool {
-    rule.applies(&environment.media())
-}
+/// The computed-value marker of `inherit` on an inherited property: its
+/// consumers take the parent's value and skip the element's own
+/// user-agent row (Cascade 5 §7.3.2).
+pub(crate) const INHERIT: &str = "inherit";
 
-/// Parse a whole stylesheet with the shared grammar
-/// (`varta_common::view::stylesheet`), retaining its typed work-limit error.
-pub(crate) fn parse(
-    text: &str,
-    allowance: usize,
-) -> Result<
-    varta_common::view::stylesheet::ParsedStylesheet,
-    varta_common::view::stylesheet::StylesheetError,
-> {
-    varta_common::view::stylesheet::parse_with_work_limit(text, allowance)
-}
-
-/// Rule anchors preserve the shared matcher's semantics, including comma
-/// specificity. Each rule is considered once even with duplicate class names.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct RuleIndex {
-    roots: Vec<usize>,
-    classes: BTreeMap<String, Vec<usize>>,
-    pub has_custom: bool,
-    pub costs: Vec<RuleCost>,
-    pub expansion: Vec<Vec<(Name, varta_common::view::expansion::Value)>>,
-    /// The sheet's cascade layers in declaration order (Cascade 5 §6.4.3).
-    pub layers: Vec<Vec<varta_common::view::stylesheet::LayerName>>,
-    /// The sheet's `@property` registrations in sheet order.
-    pub properties: Vec<varta_common::view::stylesheet::Registration>,
-}
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct RuleCost {
-    pub work: usize,
-    pub variables: bool,
-}
-impl RuleIndex {
-    /// The index of a parsed sheet: its rules, layers and registrations.
-    pub fn parsed(parsed: &varta_common::view::stylesheet::ParsedStylesheet) -> Self {
-        let mut index = Self::new(&parsed.rules);
-        index.layers.clone_from(&parsed.layers);
-        index.properties.clone_from(&parsed.properties);
-        index.has_custom |= !index.properties.is_empty();
-        index
-    }
-    pub fn new(rules: &[Rule]) -> Self {
-        let mut out = Self::default();
-        for (index, rule) in rules.iter().enumerate() {
-            out.expansion.push(
-                rule.declarations
-                    .iter()
-                    .map(|(name, value)| {
-                        (
-                            name.clone(),
-                            varta_common::view::expansion::Value::new(value),
-                        )
-                    })
-                    .collect(),
-            );
-            out.costs.push(RuleCost {
-                work: rule.cascade_work(),
-                variables: rule
-                    .declarations
-                    .iter()
-                    .any(|(_, value)| varta_common::view::css::contains_variable(value)),
-            });
-            out.has_custom |= rule
-                .declarations
-                .iter()
-                .any(|(name, _)| matches!(name, Name::Custom(_)));
-            for selector in &rule.selectors {
-                let list = if selector.root {
-                    &mut out.roots
-                } else {
-                    let Some(class) = selector.classes.first() else {
-                        continue;
-                    };
-                    out.classes.entry(class.clone()).or_default()
-                };
-                if list.last() != Some(&index) {
-                    list.push(index);
+/// The initial value (each property definition's "Initial" line) that a
+/// computed `initial` must state explicitly natively: for an inherited
+/// property, to stop inheritance; for another, where the native user-agent
+/// origin gives this element a value. Elsewhere no value is the initial
+/// value. The texts are in the grammar the consumers read; `font-size`
+/// takes the keyword `medium`, `color` the light scheme's `CanvasText`.
+pub(crate) fn initial_override(
+    tree: &crate::tree::Tree,
+    id: u32,
+    property: varta_common::view::CssProperty,
+) -> Option<String> {
+    use varta_common::view::CssProperty as P;
+    let text = match property {
+        P::Color => "#000000",
+        P::FontSize => "medium",
+        P::FontWeight | P::FontStyle | P::LineHeight | P::WhiteSpace | P::OverflowWrap => "normal",
+        P::TextAlign => "start",
+        P::Cursor => "auto",
+        _ => {
+            let element = tree.element(id)?;
+            let ua = ua_defaults(element.tag).is_some() || ControlKind::of(element).is_some();
+            if !ua {
+                return None;
+            }
+            match property {
+                P::Display => "inline",
+                P::Width | P::Height => "auto",
+                P::Margin
+                | P::MarginTop
+                | P::MarginRight
+                | P::MarginBottom
+                | P::MarginLeft
+                | P::Padding
+                | P::PaddingTop
+                | P::PaddingRight
+                | P::PaddingBottom
+                | P::PaddingLeft
+                | P::BorderRadius => "0",
+                P::Border | P::BorderTop | P::BorderRight | P::BorderBottom | P::BorderLeft => {
+                    "none"
                 }
+                P::BorderStyle => "none",
+                P::BackgroundColor => "transparent",
+                _ => return None,
             }
         }
-        out
+    };
+    Some(text.into())
+}
+
+/// The native user-agent origin's value of a non-inherited `property` for
+/// element `id`, where `inherit` reads it from a parent without an author
+/// value: the outer display type of the user-agent table.
+pub(crate) fn ua_value(
+    tree: &crate::tree::Tree,
+    id: u32,
+    property: varta_common::view::CssProperty,
+) -> Option<String> {
+    let element = tree.element(id)?;
+    match property {
+        varta_common::view::CssProperty::Display => {
+            let row = ua_defaults(element.tag)?;
+            row.block.then(|| "block".into())
+        }
+        _ => None,
     }
 }
 
@@ -175,7 +167,7 @@ pub(crate) struct Variables<'a> {
     tree: &'a crate::tree::Tree,
     id: u32,
     environment: &'a Environment,
-    custom: std::cell::OnceCell<crate::variables::Scope<'a>>,
+    custom: std::cell::OnceCell<varta_style::Scope<'a>>,
 }
 impl<'a> Variables<'a> {
     pub fn new(tree: &'a crate::tree::Tree, id: u32, environment: &'a Environment) -> Self {
@@ -192,6 +184,31 @@ impl<'a> Variables<'a> {
         value: &str,
     ) -> Option<String> {
         let result = self.substitute(value)?;
+        // Cascade 5 §7.3: a CSS-wide keyword resolves against the native
+        // user-agent origin; `revert` drops this declaration.
+        let keyword = result.trim();
+        let computed = if keyword.eq_ignore_ascii_case("initial") {
+            Some(varta_style::Computed::Initial)
+        } else if keyword.eq_ignore_ascii_case("inherit") {
+            Some(varta_style::Computed::Inherit)
+        } else if keyword.eq_ignore_ascii_case("unset") {
+            Some(if varta_style::inherited(property) {
+                varta_style::Computed::Inherit
+            } else {
+                varta_style::Computed::Initial
+            })
+        } else if keyword.eq_ignore_ascii_case("revert")
+            || keyword.eq_ignore_ascii_case("revert-layer")
+        {
+            return None;
+        } else {
+            None
+        };
+        if let Some(computed) = computed {
+            return self
+                .tree
+                .keyword(self.id, self.environment, property, computed);
+        }
         // CSS Variables 1 §3.1: an invalid substituted value is invalid at
         // computed-value time. A valid one is lowered to the host grammar the
         // renderer's consumers read; one the renderer cannot render is
@@ -629,172 +646,6 @@ pub(crate) fn themed(properties: &BTreeMap<varta_common::view::CssProperty, Stri
         .any(|property| properties.contains_key(property))
 }
 
-/// A layer path across sheets: named segments are shared by every sheet of
-/// the document, anonymous ones belong to their sheet (Cascade 5 §6.4.2).
-type LayerKey = Vec<(Option<u32>, varta_common::view::stylesheet::LayerName)>;
-
-/// The cascade rank of every sheet-local layer (Cascade 5 §6.4.3): layers
-/// in order of first declaration across sheets by ascending id, a layer's
-/// own rules after its sublayers, unlayered rules after every layer.
-fn layer_ranks(
-    sheets: &BTreeMap<u32, Vec<Vec<varta_common::view::stylesheet::LayerName>>>,
-) -> BTreeMap<(u32, usize), usize> {
-    use varta_common::view::stylesheet::LayerName;
-    #[derive(Default)]
-    struct Node {
-        children: Vec<((Option<u32>, LayerName), Node)>,
-        index: BTreeMap<(Option<u32>, LayerName), usize>,
-    }
-    let key = |sheet: u32, path: &[LayerName]| -> LayerKey {
-        path.iter()
-            .map(|segment| match segment {
-                LayerName::Anonymous(_) => (Some(sheet), segment.clone()),
-                LayerName::Named(_) => (None, segment.clone()),
-            })
-            .collect()
-    };
-    let mut root = Node::default();
-    for (sheet, layers) in sheets {
-        for path in layers {
-            let mut node = &mut root;
-            for segment in key(*sheet, path) {
-                let position = match node.index.get(&segment) {
-                    Some(position) => *position,
-                    None => {
-                        node.index.insert(segment.clone(), node.children.len());
-                        node.children.push((segment, Node::default()));
-                        node.children.len() - 1
-                    }
-                };
-                node = &mut node.children[position].1;
-            }
-        }
-    }
-    // Post-order numbering without recursion.
-    let mut ranks: BTreeMap<LayerKey, usize> = BTreeMap::new();
-    let mut stack: Vec<(&Node, LayerKey, usize)> = vec![(&root, Vec::new(), 0)];
-    let mut next = 0usize;
-    while let Some((node, path, child)) = stack.pop() {
-        if let Some((segment, inner)) = node.children.get(child) {
-            stack.push((node, path.clone(), child + 1));
-            let mut inner_path = path;
-            inner_path.push(segment.clone());
-            stack.push((inner, inner_path, 0));
-        } else if !path.is_empty() {
-            ranks.insert(path, next);
-            next += 1;
-        }
-    }
-    let mut out = BTreeMap::new();
-    for (sheet, layers) in sheets {
-        for (local, path) in layers.iter().enumerate() {
-            if let Some(rank) = ranks.get(&key(*sheet, path)) {
-                out.insert((*sheet, local), *rank);
-            }
-        }
-    }
-    out
-}
-
-/// Incremental cross-sheet anchors avoid scanning unrelated (or empty) sheets.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct CascadeIndex {
-    roots: std::collections::BTreeSet<(u32, usize)>,
-    classes: BTreeMap<String, std::collections::BTreeSet<(u32, usize)>>,
-    custom_sheets: usize,
-    layers: BTreeMap<u32, Vec<Vec<varta_common::view::stylesheet::LayerName>>>,
-    ranks: BTreeMap<(u32, usize), usize>,
-    registrations: BTreeMap<u32, Vec<varta_common::view::stylesheet::Registration>>,
-    registered: BTreeMap<String, varta_common::view::stylesheet::Registration>,
-}
-impl CascadeIndex {
-    /// The cascade rank of a rule's layer; unlayered rules outrank every
-    /// layer (Cascade 5 §6.4.4, normal declarations).
-    pub fn layer_rank(&self, sheet: u32, layer: Option<usize>) -> usize {
-        layer.map_or(usize::MAX, |local| {
-            self.ranks
-                .get(&(sheet, local))
-                .copied()
-                .unwrap_or(usize::MAX)
-        })
-    }
-    /// The registered custom properties of the document (Properties and
-    /// Values API 1 §3: the last registration in sheet order wins).
-    pub fn registered(&self) -> &BTreeMap<String, varta_common::view::stylesheet::Registration> {
-        &self.registered
-    }
-    fn rebuild(&mut self) {
-        self.ranks = layer_ranks(&self.layers);
-        self.registered = self
-            .registrations
-            .values()
-            .flatten()
-            .map(|registration| (registration.name.clone(), registration.clone()))
-            .collect();
-    }
-    pub fn insert(&mut self, sheet: u32, index: &RuleIndex) {
-        if !index.layers.is_empty() {
-            self.layers.insert(sheet, index.layers.clone());
-        }
-        if !index.properties.is_empty() {
-            self.registrations.insert(sheet, index.properties.clone());
-        }
-        if !index.layers.is_empty() || !index.properties.is_empty() {
-            self.rebuild();
-        }
-        self.custom_sheets += usize::from(index.has_custom);
-        self.roots
-            .extend(index.roots.iter().map(|rule| (sheet, *rule)));
-        for (class, rules) in &index.classes {
-            self.classes
-                .entry(class.clone())
-                .or_default()
-                .extend(rules.iter().map(|rule| (sheet, *rule)));
-        }
-    }
-    pub fn remove(&mut self, sheet: u32, index: &RuleIndex) {
-        if self.layers.remove(&sheet).is_some() | self.registrations.remove(&sheet).is_some() {
-            self.rebuild();
-        }
-        self.custom_sheets -= usize::from(index.has_custom);
-        for rule in &index.roots {
-            self.roots.remove(&(sheet, *rule));
-        }
-        for (class, rules) in &index.classes {
-            let empty = if let Some(entries) = self.classes.get_mut(class) {
-                for rule in rules {
-                    entries.remove(&(sheet, *rule));
-                }
-                entries.is_empty()
-            } else {
-                false
-            };
-            if empty {
-                self.classes.remove(class);
-            }
-        }
-    }
-    pub fn has_custom(&self) -> bool {
-        self.custom_sheets != 0
-    }
-    pub fn candidates(
-        &self,
-        root: bool,
-        classes: &std::collections::BTreeSet<&str>,
-    ) -> Vec<(u32, usize)> {
-        if root {
-            return self.roots.iter().copied().collect();
-        }
-        let mut candidates = std::collections::BTreeSet::new();
-        for class in classes {
-            if let Some(rules) = self.classes.get(*class) {
-                candidates.extend(rules);
-            }
-        }
-        candidates.into_iter().collect()
-    }
-}
-
 #[cfg(test)]
 mod ua_tests {
     use super::*;
@@ -945,36 +796,5 @@ mod ua_tests {
         assert!(close(fixed, 24.0) && fixed.is_absolute());
         assert!(sole_monospace(" Monospace ") && !sole_monospace("monospace, monospace"));
         assert!(!sole_monospace("\"monospace\""));
-    }
-}
-
-#[cfg(test)]
-mod index_tests {
-    use super::*;
-    use std::collections::BTreeSet;
-    #[test]
-    fn unrelated_and_duplicate_anchors_do_not_expand_candidate_lists() {
-        let mut index = CascadeIndex::default();
-        for sheet in 1..1001 {
-            let parsed = parse(&format!(".unrelated{sheet} {{ color:#abc }}"), usize::MAX).unwrap();
-            index.insert(sheet, &RuleIndex::new(&parsed.rules));
-        }
-        let rules = parse(".a, .a.b, .b, :root { color:#fff }", usize::MAX)
-            .unwrap()
-            .rules;
-        let anchors = RuleIndex::new(&rules);
-        index.insert(2000, &anchors);
-        assert_eq!(
-            index.candidates(false, &BTreeSet::from(["a", "b"])),
-            vec![(2000, 0)]
-        );
-        assert_eq!(index.candidates(true, &BTreeSet::new()), vec![(2000, 0)]);
-        index.remove(2000, &anchors);
-        assert!(
-            index
-                .candidates(false, &BTreeSet::from(["a", "b"]))
-                .is_empty()
-        );
-        assert!(index.candidates(true, &BTreeSet::new()).is_empty());
     }
 }

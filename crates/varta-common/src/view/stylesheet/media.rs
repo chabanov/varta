@@ -15,6 +15,8 @@
 use super::super::css::math;
 use super::super::syntax::{Spanned, Token};
 use super::REM_PIXELS;
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 /// `prefers-contrast` (Media Queries 5 §12.3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

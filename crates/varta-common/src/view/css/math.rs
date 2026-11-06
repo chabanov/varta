@@ -9,6 +9,8 @@
 //! clamped to the target range. Every node is bounded by the value's token
 //! limit ([`super::MAX_VALUE_TOKENS`]).
 use super::V;
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 /// The math functions of §10 the engine admits; every other function name
 /// (`round()`, `sin()`, …) is outside the subset.
@@ -125,7 +127,7 @@ pub fn angle_unit(unit: &str) -> Option<f64> {
     Some(match unit.to_ascii_lowercase().as_str() {
         "deg" => 1.0,
         "grad" => 0.9,
-        "rad" => 180.0 / std::f64::consts::PI,
+        "rad" => 180.0 / core::f64::consts::PI,
         "turn" => 360.0,
         _ => return None,
     })
@@ -263,8 +265,8 @@ impl Parser<'_> {
             V::Ident(name) => {
                 // §10.7.1 numeric constants.
                 let value = match name.to_ascii_lowercase().as_str() {
-                    "e" => std::f64::consts::E,
-                    "pi" => std::f64::consts::PI,
+                    "e" => core::f64::consts::E,
+                    "pi" => core::f64::consts::PI,
                     "infinity" => f64::INFINITY,
                     "-infinity" => f64::NEG_INFINITY,
                     "nan" => f64::NAN,

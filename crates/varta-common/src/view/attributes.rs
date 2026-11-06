@@ -3,6 +3,8 @@
 //! ([`super::AttributeValue`]): an `href` admits the internal route grammar
 //! here; whether an external link may appear is the embedder's decision.
 use super::{AttributeValue, BUTTON_TYPES, INPUT_TYPES, Tag};
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 /// Longest `id`/`for` ident.
 pub const MAX_IDENT_CHARS: usize = 64;

@@ -156,7 +156,7 @@ pub(crate) fn same_sources(a: &Tree, b: &Tree) -> bool {
         && a.focus == b.focus
         && a.hovered == b.hovered
         && a.active == b.active
-        && a.sheets == b.sheets
+        && a.styles == b.styles
         && a.nodes.len() == b.nodes.len()
         && a.nodes.iter().all(|(id, node)| {
             b.nodes.get(id).is_some_and(|other| {
@@ -206,12 +206,9 @@ pub(crate) fn prepare(
         ..env
     };
     let layout_environment = (layout_env != env
-        && tree.sheets.values().all(|sheet| {
-            sheet
-                .rules
-                .iter()
-                .all(|rule| rule.applies(&env.media()) == rule.applies(&layout_env.media()))
-        }))
+        && tree
+            .styles
+            .same_media_decisions(&env.media(), &layout_env.media()))
     .then_some(layout_env);
     prepared.render_reads = ReadCache(Some(Arc::new(Prepared {
         environment: env,

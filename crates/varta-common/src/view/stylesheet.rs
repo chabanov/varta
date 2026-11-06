@@ -13,9 +13,12 @@
 //! admit. Forbidden constructs are found on decoded tokens, so no escape can
 //! hide them.
 use super::{CssProperty, PSEUDO_CLASSES, css, syntax};
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 use syntax::{Spanned, Token};
 
 pub mod media;
+mod supports;
 pub use media::{Media, MediaQueryList};
 
 /// CSS pixels per `rem` (the initial font size).
@@ -75,6 +78,20 @@ pub struct Rule {
     /// The rule's cascade layer: an index into [`ParsedStylesheet::layers`],
     /// or `None` for an unlayered rule.
     pub layer: Option<usize>,
+    /// Whether these are the rule's `!important` declarations (Cascade 5
+    /// §6.1, "Origin and Importance"); a rule with both kinds is parsed into
+    /// a normal and an important record, in that order.
+    pub important: bool,
+}
+
+/// One declaration of a layer name (Cascade 5 §6.4.3): an index into
+/// [`ParsedStylesheet::layers`] and the media query lists of the conditional
+/// rules around it. The layer order counts only the declarations whose
+/// conditions currently hold.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerDeclaration {
+    pub layer: usize,
+    pub media: Vec<MediaQueryList>,
 }
 
 /// The `syntax` descriptor of a registered custom property (Properties and
@@ -186,7 +203,7 @@ impl Rule {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Violation {
     #[error(
-        "forbidden CSS construct (`url()`, `image-set()`, `expression()`, `attr()`, `element()`, `@import`, `!important` or an HTML comment token)"
+        "forbidden CSS construct (`url()`, `image-set()`, `expression()`, `attr()`, `element()`, `@import` or an HTML comment token)"
     )]
     Forbidden,
     #[error(
@@ -214,7 +231,7 @@ pub enum Violation {
     #[error("unterminated rule")]
     Unterminated,
     #[error(
-        "at-rule outside the subset (admitted: @media, @layer, @property) or in a context that does not admit it"
+        "at-rule outside the subset (admitted: @media, @supports, @layer, @property) or in a context that does not admit it"
     )]
     AtRule,
     #[error("invalid @layer name list")]
@@ -223,8 +240,10 @@ pub enum Violation {
         "invalid @property rule (a custom property name; `syntax`, `inherits` and, unless the syntax is `\"*\"`, a computationally independent `initial-value`)"
     )]
     Property,
-    #[error("@media and @layer blocks nest deeper than the subset admits")]
+    #[error("@media, @supports and @layer blocks nest deeper than the subset admits")]
     Nesting,
+    #[error("invalid @supports condition")]
+    Supports,
 }
 
 /// A stylesheet violation and the zero-based UTF-8 byte offset where it was
@@ -243,9 +262,11 @@ type Parsed<T> = Result<T, StylesheetError>;
 pub struct ParsedStylesheet {
     pub rules: Vec<Rule>,
     pub work: usize,
-    /// Layer names in order of first declaration (Cascade 5 §6.4.3), each
-    /// as its full path from the top level.
+    /// Every layer name declared, each as its full path from the top level
+    /// (rules refer to them by index).
     pub layers: Vec<Vec<LayerName>>,
+    /// The layer declarations in source order, with their conditions.
+    pub layer_declarations: Vec<LayerDeclaration>,
     /// `@property` registrations in stylesheet order.
     pub properties: Vec<Registration>,
 }
@@ -268,7 +289,10 @@ struct Parser<'a> {
     rules: Vec<Rule>,
     layers: Vec<Vec<LayerName>>,
     /// Each declared layer path's index in `layers`.
-    layer_index: std::collections::BTreeMap<Vec<LayerName>, usize>,
+    layer_index: BTreeMap<Vec<LayerName>, usize>,
+    layer_declarations: Vec<LayerDeclaration>,
+    /// Layers already declared without a condition.
+    unconditional: BTreeSet<usize>,
     anonymous: usize,
     properties: Vec<Registration>,
 }
@@ -346,6 +370,7 @@ impl Parser<'_> {
             "media" => self.media_rule(context),
             "layer" => self.layer_rule(context),
             "property" if context.depth == 0 => self.property_rule(),
+            "supports" => self.supports_rule(context),
             "import" => self.fail_at(start, Violation::Forbidden),
             _ => self.fail_at(start, Violation::AtRule),
         }
@@ -370,6 +395,32 @@ impl Parser<'_> {
         if context.depth >= MAX_NESTING {
             return self.fail(Violation::Nesting);
         }
+        Ok(())
+    }
+    /// `@supports` (CSS Conditional 3 §6): the condition is decided by this
+    /// engine's own grammar, so it does not depend on the host; a true block
+    /// is parsed like the enclosing rule list, a false one is skipped (its
+    /// rules never apply and its layers are not declared, Cascade 5 §6.4.3).
+    fn supports_rule(&mut self, context: &Context) -> Parsed<()> {
+        self.nested(context)?;
+        self.node()?;
+        let open = self.prelude(false)?;
+        let holds =
+            supports::evaluate(&self.tokens[self.at..open]).map_err(|index| StylesheetError {
+                violation: Violation::Supports,
+                offset: self.offset(self.at + index),
+            })?;
+        let end = self.block_end(open + 1).map_or_else(
+            || self.fail_at(self.tokens.len(), Violation::Unterminated),
+            Ok,
+        )?;
+        if holds {
+            let mut inner = context.clone();
+            inner.depth += 1;
+            self.at = open + 1;
+            self.rule_list(end, &inner)?;
+        }
+        self.at = end + 1;
         Ok(())
     }
     fn media_rule(&mut self, context: &Context) -> Parsed<()> {
@@ -424,22 +475,43 @@ impl Parser<'_> {
             }
         }
     }
-    /// Declare a layer path and every prefix, in order (Cascade 5 §6.4.3).
-    fn declare(&mut self, path: &[LayerName]) -> usize {
+    /// Declare a layer path and every prefix, in order (Cascade 5 §6.4.3),
+    /// under the conditions of `media`.
+    fn declare(&mut self, path: &[LayerName], media: &[MediaQueryList]) -> usize {
+        let mut index = 0;
         for length in 1..=path.len() {
-            if !self.layer_index.contains_key(&path[..length]) {
-                self.layer_index
-                    .insert(path[..length].to_vec(), self.layers.len());
-                self.layers.push(path[..length].to_vec());
+            index = match self.layer_index.get(&path[..length]) {
+                Some(index) => *index,
+                None => {
+                    let index = self.layers.len();
+                    self.layer_index.insert(path[..length].to_vec(), index);
+                    self.layers.push(path[..length].to_vec());
+                    index
+                }
+            };
+            // A declaration after an unconditional one cannot move the layer.
+            if self.unconditional.contains(&index) {
+                continue;
+            }
+            let repeated = self
+                .layer_declarations
+                .iter()
+                .rev()
+                .find(|declaration| declaration.layer == index)
+                .is_some_and(|declaration| declaration.media.as_slice() == media);
+            if !repeated {
+                self.layer_declarations.push(LayerDeclaration {
+                    layer: index,
+                    media: media.to_vec(),
+                });
+            }
+            if media.is_empty() {
+                self.unconditional.insert(index);
             }
         }
-        self.layer_index.get(path).copied().unwrap_or(0)
+        index
     }
     fn layer_rule(&mut self, context: &Context) -> Parsed<()> {
-        // Layers inside conditional rules are outside the subset.
-        if !context.media.is_empty() {
-            return self.fail_at(self.at - 1, Violation::AtRule);
-        }
         self.nested(context)?;
         self.node()?;
         let end = self.prelude(true)?;
@@ -472,7 +544,7 @@ impl Parser<'_> {
                 return self.fail_at(end, Violation::Layer);
             }
             for name in &names {
-                self.declare(&full(name));
+                self.declare(&full(name), &context.media);
             }
             self.at = end + 1;
             return Ok(());
@@ -485,7 +557,7 @@ impl Parser<'_> {
             [name] => full(name),
             _ => return self.fail_at(end, Violation::Layer),
         };
-        self.declare(&path);
+        self.declare(&path, &context.media);
         let close = self.block_end(end + 1).map_or_else(
             || self.fail_at(self.tokens.len(), Violation::Unterminated),
             Ok,
@@ -521,7 +593,10 @@ impl Parser<'_> {
         let mut syntax = None;
         let mut inherits = None;
         let mut initial = None;
-        for (descriptor, first, last) in self.declarations(open + 1, close)? {
+        for (descriptor, first, last, important) in self.declarations(open + 1, close)? {
+            if important {
+                return self.fail_at(first, Violation::Property);
+            }
             self.node()?;
             let text = self.value_text(first, last);
             self.charge(text.len())?;
@@ -597,7 +672,7 @@ impl Parser<'_> {
     /// Split a declaration block (tokens `from..close`) into declarations:
     /// `(name, first value token, end of value tokens)`, values trimmed of
     /// whitespace. Only a final `;` may leave an empty declaration.
-    fn declarations(&self, from: usize, close: usize) -> Parsed<Vec<(String, usize, usize)>> {
+    fn declarations(&self, from: usize, close: usize) -> Parsed<Vec<(String, usize, usize, bool)>> {
         let mut out = Vec::new();
         let mut parts = Vec::new();
         let mut start = from;
@@ -645,17 +720,24 @@ impl Parser<'_> {
             while value < last && self.tokens[value].token == Token::Whitespace {
                 value += 1;
             }
-            // `!important` (Syntax 3 §5.4.6) is outside the subset.
+            // Syntax 3 §5.4.6: a final `!` and `important` (ASCII
+            // case-insensitively) mark the declaration important and are
+            // not part of its value.
             let meaningful: Vec<usize> = (value..last)
                 .filter(|&i| self.tokens[i].token != Token::Whitespace)
                 .collect();
+            let mut important = false;
             if let [.., bang, word] = meaningful.as_slice()
                 && self.tokens[*bang].token == Token::Delim('!')
                 && matches!(&self.tokens[*word].token, Token::Ident(w) if w.eq_ignore_ascii_case("important"))
             {
-                return self.fail_at(*bang, Violation::Forbidden);
+                important = true;
+                last = *bang;
+                while last > value && self.tokens[last - 1].token == Token::Whitespace {
+                    last -= 1;
+                }
             }
-            out.push((name.clone(), value, last));
+            out.push((name.clone(), value, last, important));
         }
         Ok(out)
     }
@@ -684,7 +766,8 @@ impl Parser<'_> {
             Ok,
         )?;
         let mut declarations = Vec::new();
-        for (name, first, last) in self.declarations(open + 1, close)? {
+        let mut important = Vec::new();
+        for (name, first, last, is_important) in self.declarations(open + 1, close)? {
             let offset = self.declaration_offset(first);
             let value = self.value_text(first, last);
             let entry = declaration(&name, &value)
@@ -697,15 +780,33 @@ impl Parser<'_> {
                         Name::Property(_) => 0,
                     },
             )?;
-            declarations.push(entry);
+            if is_important {
+                important.push(entry);
+            } else {
+                declarations.push(entry);
+            }
         }
-        let layer = (!context.layer.is_empty()).then(|| self.declare(&context.layer));
-        self.rules.push(Rule {
+        let layer =
+            (!context.layer.is_empty()).then(|| self.declare(&context.layer, &context.media));
+        let rule = Rule {
             selectors,
             declarations,
             media: context.media.clone(),
             layer,
-        });
+            important: false,
+        };
+        if !important.is_empty() {
+            self.charge(super::DRAFT_STYLESHEET_NODE_WORK)?;
+            let important_rule = Rule {
+                declarations: important,
+                important: true,
+                ..rule.clone()
+            };
+            self.rules.push(rule);
+            self.rules.push(important_rule);
+        } else {
+            self.rules.push(rule);
+        }
         self.at = close + 1;
         Ok(())
     }
@@ -948,7 +1049,9 @@ pub fn parse_with_work_limit(
         allowance,
         rules: Vec::new(),
         layers: Vec::new(),
-        layer_index: std::collections::BTreeMap::new(),
+        layer_index: BTreeMap::new(),
+        layer_declarations: Vec::new(),
+        unconditional: BTreeSet::new(),
         anonymous: 0,
         properties: Vec::new(),
     };
@@ -962,6 +1065,7 @@ pub fn parse_with_work_limit(
         rules: parser.rules,
         work: parser.work,
         layers: parser.layers,
+        layer_declarations: parser.layer_declarations,
         properties: parser.properties,
     })
 }
