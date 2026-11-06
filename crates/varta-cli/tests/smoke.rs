@@ -17081,6 +17081,60 @@ fn v38_iteration_protocol_runs_in_dev_and_artifacts() {
     assert!(!text.contains("varta log:"), "{text}");
 }
 
+/// V38 standard library (`standard_library`) through `varta dev`, both
+/// artifacts, both binaries and the packaged executable: a comparator sort
+/// and `toSorted` of records from another module, `flatMap`, iterator
+/// helpers over a generator, Set methods, `Object.groupBy`, indented JSON
+/// and the UTC `Date`; v37 keeps rejecting the sort.
+#[test]
+fn v38_standard_library_runs_in_dev_and_artifacts() {
+    let source = "import {Item, items} from './items.ts';\
+         function* ids(xs:Item[]):Generator<number,void,undefined>{for(const x of xs)yield x.id;}\
+         export function main():void{const xs=items();xs.sort((a,b)=>b.id-a.id);\
+         const names=xs.toSorted((a,b)=>a.name<b.name?-1:1).map((x)=>x.name).join('');\
+         const flat=xs.flatMap((x)=>[x.id,x.id*10]).join(',');\
+         const odd=ids(xs).filter((n)=>n%2===1).map((n)=>n*n).toArray().join(',');\
+         const set=[...new Set([1,2,3]).union(new Set([4])).difference(new Set([2]))].join('');\
+         const groups=JSON.stringify(Object.groupBy(xs,(x)=>x.id>1?'big':'small'),null,1).split('\\n').length;\
+         console.log(`${xs.map((x)=>x.id).join('')} ${names} ${flat} ${odd} ${set} ${groups} ${new Date(Date.UTC(2024,1,29)).toUTCString()}`);}";
+    let items = "export interface Item{id:number;name:string;}\
+         export function items():Item[]{return [{id:2,name:'b'},{id:3,name:'a'},{id:1,name:'c'}];}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    fs::write(project.0.join("src/items.ts"), items).unwrap();
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same line.
+    let expected = ["varta log: 321 abc 3,30,2,20,1,10 9,1 134 18 Thu, 29 Feb 2024 00:00:00 GMT"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+    assert!(!combined(&rejected).contains("varta log:"));
+}
+
 #[test]
 fn v38_declaration_forms_run_in_dev_and_artifacts() {
     let source = "import {Kind, Units, Shape, Square} from './shapes.ts';\

@@ -1,0 +1,30 @@
+created 0
+10 yield 1
+32,43
+yield 1,yield 2,yield 3,yield 4,yield 5,closed
+1,2 yield 1,yield 2,closed
+0 
+4,5
+0
+1,2,3
+1
+RangeError: -1 must be positive
+RangeError: -1 must be positive
+RangeError: NaN must be positive
+RangeError: NaN must be positive
+yield 1,yield 2,yield 3,closed
+1,-1,2,-2,3,-3,4,-4
+10
+>1@0 2@1 3@2 4@3 
+TypeError: Reduce of a done iterator with no initial value
+0:1 1:2 2:3
+true yield 1,yield 2,closed
+true false
+4 undefined
+11,21,31
+0a,2c
+X,Y
+7
+2,3
+1,2
+s

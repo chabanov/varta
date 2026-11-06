@@ -26,10 +26,9 @@ pub struct Feature {
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
     Ecmascript2025,
-    /// A TypeScript language feature (`enum`, `namespace`, overloads,
-    /// abstract classes, decorators), referenced in the TypeScript Handbook.
-    Typescript,
     VartaContract,
+    /// The TypeScript Handbook (type-system features; tsc is the reference).
+    TypescriptHandbook,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

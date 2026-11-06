@@ -17,31 +17,50 @@ pub(super) fn intern(
     readonly: bool,
     types: &mut ir::ValueTypes,
 ) -> Result<Type> {
+    intern_rest(elements, required, None, readonly, types)
+}
+
+/// A tuple type with an optional rest element (v38 `type_level`). Under v38
+/// the empty tuple `[]` is admitted: physically an empty `undefined[]`.
+pub(super) fn intern_rest(
+    elements: Vec<Type>,
+    required: usize,
+    rest: Option<Type>,
+    readonly: bool,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
     if elements.len() > MAX_TUPLE_ELEMENTS {
         return Err(invalid("tuple element count exceeds limit"));
     }
-    if elements.is_empty() {
+    if elements.is_empty() && rest.is_none() && !types.profile.type_level() {
         return Err(unsupported("empty tuple type"));
     }
-    if let Some(id) = types
-        .tuples
-        .iter()
-        .position(|t| t.elements == elements && t.required == required && t.readonly == readonly)
-    {
+    if let Some(id) = types.tuples.iter().position(|t| {
+        t.elements == elements && t.required == required && t.rest == rest && t.readonly == readonly
+    }) {
         return Ok(Type::Tuple(id as u32));
     }
-    let mut members: Vec<Type> = elements.iter().map(|ty| physical(*ty, types)).collect();
-    if required < elements.len() {
+    let mut members: Vec<Type> = elements
+        .iter()
+        .chain(rest.iter())
+        .map(|ty| physical(*ty, types))
+        .collect();
+    if required < elements.len() || members.is_empty() {
         members.push(Type::Undefined);
     }
-    let element = unions::intern(members, types).map_err(|_| {
-        unsupported("tuple whose element types do not form one admitted union (at most one record shape, array type and function type)")
-    })?;
+    let element = if let [only] = members[..] {
+        only
+    } else {
+        unions::intern(members, types).map_err(|_| {
+            unsupported("tuple whose element types do not form one admitted union (at most one record shape, array type and function type)")
+        })?
+    };
     let array = arrays::intern(element, types)?;
     let id = types.tuples.len() as u32;
     types.tuples.push(ir::TupleType {
         elements,
         required,
+        rest,
         readonly,
         array,
     });
@@ -119,7 +138,9 @@ impl Lower<'_> {
             return Err(invalid("missing tuple array"));
         };
         let element = self.types.arrays[physical as usize];
-        if array.elems.len() < tuple.required || array.elems.len() > tuple.elements.len() {
+        if array.elems.len() < tuple.required
+            || tuple.rest.is_none() && array.elems.len() > tuple.elements.len()
+        {
             return Err(self.source.locate(
                 type_error(format!(
                     "tuple literal has {} elements, the tuple type expects {}",
@@ -130,7 +151,13 @@ impl Lower<'_> {
             ));
         }
         let mut values = Vec::new();
-        for (entry, expected) in array.elems.iter().zip(&tuple.elements) {
+        let positions = tuple
+            .elements
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(tuple.rest.unwrap_or(Type::Never)));
+        for (entry, expected) in array.elems.iter().zip(positions) {
+            let expected = &expected;
             let Some(entry) = entry else {
                 return Err(self
                     .source
@@ -168,7 +195,7 @@ impl Lower<'_> {
         };
         let tuple = self.types.tuples[id as usize].clone();
         let span = value.span;
-        let Some(&ty) = tuple.elements.get(index) else {
+        let Some(ty) = tuple.elements.get(index).copied().or(tuple.rest) else {
             return Err(self.source.locate(
                 type_error(format!(
                     "tuple index {index} is out of range for a tuple of length {}",

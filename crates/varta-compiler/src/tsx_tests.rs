@@ -500,27 +500,49 @@ fn composed_class_names_without_finite_types_are_located() {
     assert!(message.contains("more than 4096 combinations"), "{message}");
 }
 
-/// K8: holes resolve with the v38 checker's types, which give an
-/// unannotated `const` string or an `as const` tuple element the type
-/// `string` (TypeScript would infer literal types); such holes stay located
-/// errors until the checker infers them.
+/// K8 with K9 A: holes resolve with the v38 checker's types, which follow
+/// TypeScript's literal inference: an unannotated `const` string, number or
+/// boolean literal and an `as const` tuple element have literal types and
+/// enumerate; a widened `let` stays a located error, and v37 (no literal
+/// inference) keeps the compositions errors.
 #[test]
 fn composed_class_names_follow_the_checker_types() {
-    let result = scan_result(
-        r#"function paint(): void {
+    let program = r#"function paint(): void {
   const node = View.node();
   const leading = "leading";
   View.setClass(node, `${leading}-6`);
   const SIZES = ["xs", "xl"] as const;
   View.setClass(node, `m-${SIZES[1]}`);
+  const weight = 600;
+  View.setClass(node, `font-${weight}`);
+  let loose = "a";
+  loose = "b";
+  View.setClass(node, `p-${loose}`);
 }
-export function main(): void { paint(); }"#,
-    )
-    .unwrap();
+export function main(): void { paint(); }"#;
+    let result = scan_result(program).unwrap();
     let lines: Vec<usize> = result
         .compositions
         .iter()
         .map(|error| error.diagnostic().unwrap().range.start.line)
         .collect();
-    assert_eq!(lines, vec![4, 6]);
+    assert_eq!(lines, vec![11]);
+    for token in ["leading-6", "m-xl", "font-600"] {
+        assert!(
+            result.tokens.contains(token),
+            "{token}: {:?}",
+            result.tokens
+        );
+    }
+    let v37 = crate::scan_classes_with_profile(
+        ModuleSource {
+            path: "app.tsx".into(),
+            text: program.into(),
+        },
+        &Modules(&[]),
+        V37,
+    );
+    if let Ok(v37) = v37 {
+        assert!(!v37.compositions.is_empty());
+    }
 }

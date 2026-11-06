@@ -41,6 +41,7 @@ pub(super) fn intern_marked(
         params,
         result,
         generic,
+        construct: false,
     };
     if let Some(index) = types.functions.iter().position(|ty| ty == &signature) {
         return Ok(Type::Function(index as u32));
@@ -143,6 +144,11 @@ impl Lower<'_> {
             return Err(type_error("called value is not a typed function"));
         };
         let signature = self.types.functions[index as usize].clone();
+        if signature.construct {
+            return Err(type_error(
+                "a value of a constructor type is not callable; construct it with new",
+            ));
+        }
         if !signature.shape.extended() && call.args.len() != signature.params.len() {
             return Err(invalid("callback argument count mismatch"));
         }

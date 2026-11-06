@@ -696,7 +696,11 @@ fn method(
         ));
     }
     let declaration = function_declaration(&name, method.key.span(), method.function.clone());
-    let mut signature = signature::check(&declaration, 0, source, types)
+    // A `this` result type is polymorphic (v38 `type_level`).
+    let mut signature =
+        type_level::member_signature(types, (owner, &name, &method.function), |t| {
+            signature::check(&declaration, 0, source, t)
+        })
         .map_err(|e| source.locate(e, method.key.span()))?;
     signature.receiver = Some(Type::Class(owner));
     receiver_width(&signature).map_err(|e| source.locate(e, method.key.span()))?;

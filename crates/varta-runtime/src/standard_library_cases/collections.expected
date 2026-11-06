@@ -1,0 +1,22 @@
+{1,3,5,7,9,4}
+{1,9}
+{9,1}
+{9,1}
+{3,5,7}
+{4}
+{3,5,7,4}
+true false
+true false
+true false
+5 3
+abc
+ann: 10+7
+bob: 5
+1,0,2
+{"ann":[{"customer":"ann","total":10},{"customer":"ann","total":7}],"bob":[{"customer":"bob","total":5}]}
+{"1":[1],"2":[2],"big":[3,10,21]}
+a,b
+{"1":4,"2":2,"b":1,"a":3}
+{"x":true,"y":false}
+{"k":1,"j":2} 1
+{"1":"one","2":"two"}

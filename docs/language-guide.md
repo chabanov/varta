@@ -5879,6 +5879,104 @@ function's locals).
 Static blocks, static initializers with calls and decorators, which run code
 when a class is defined, are not supported yet; neither are enum or namespace
 objects used as values.
+#### Type-level TypeScript (opt-in v38)
+
+Conditional, mapped and template literal types, every utility type, type
+queries, predicates and literal inference are evaluated at compile time
+([contract](architecture.md#type-level-type_level)); the program below prints
+what Node prints.
+
+```ts
+interface User { readonly id: number; name: string; email?: string }
+type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
+type ElementOf<T> = T extends readonly (infer E)[] ? E : never;
+type Reverse<T extends unknown[]> = T extends [infer H, ...infer R] ? [...Reverse<R>, H] : [];
+const defaults = { width: 640, height: 480 };
+
+function isString(value: string | number): value is string {
+  return typeof value === 'string';
+}
+function assertDefined(value: number | undefined): asserts value is number {
+  if (value === undefined) throw new TypeError('missing');
+}
+class Builder {
+  parts: string[] = [];
+  add(part: string): this { this.parts.push(part); return this; }
+}
+class Html extends Builder {
+  render(): string { return this.parts.join(''); }
+}
+
+export function main(): void {
+  const user: User = { id: 1, name: 'Ada' };
+  const get: Getters<User> = { getId: () => user.id, getName: () => user.name };
+  const first: ElementOf<string[]> = 'x';
+  const reversed: Reverse<[1, 2, 3]> = [3, 2, 1];
+  const size: typeof defaults = { width: 800, height: 600 };
+  const picked: Pick<User, 'name'> = { name: get.getName() };
+  const mode = 'dark';                       // type 'dark'
+  let copy = mode;                           // widened to string
+  copy = 'light';
+  const config = { retries: 3 } satisfies Record<string, number>;
+  const value: string | number = 'v';
+  if (isString(value)) console.log(value.toUpperCase());
+  const maybe: number | undefined = config.retries;
+  assertDefined(maybe);
+  console.log(`${first} ${reversed.join()} ${size.width} ${picked.name} ${copy} ${maybe + 1}`);
+  console.log(new Html().add('<b>').add('</b>').render());
+}
+```
+
+Refused by name: `unique symbol`, pattern template types such as
+`` `on${string}` `` outside a conditional `extends` clause, intersections of
+function types or of a primitive with an object type, overloaded call
+signatures, mapped types and `keyof` over class instance types, and `typeof`
+of a function-local binding.
+
+#### Standard library (opt-in v38)
+
+The ECMAScript 2025 library methods typed code uses most: `sort` and
+`toSorted` (with V8's comparator order), `toReversed`, `with`, `toSpliced`,
+`splice`, `copyWithin`, `concat`, `shift`, `unshift`, `flat`, `flatMap`,
+`keys`/`values`/`entries`, `Array.of`, `Array.from` with a map function,
+iterator helpers on generators, the `Set` methods, `Map.groupBy`,
+`Object.groupBy`, `Object.fromEntries`, indented `JSON.stringify` and
+property lists, `AggregateError`, `Math.max(...xs)` and the complete `Date`:
+
+```ts
+interface Order {
+  customer: string;
+  total: number;
+  placed: Date;
+}
+function* ids(): Generator<number, void, undefined> {
+  for (let id = 1; ; id++) yield id;
+}
+export function main(): void {
+  const orders: Order[] = [
+    { customer: "ann", total: 30, placed: new Date(2024, 1, 29) },
+    { customer: "bob", total: 12, placed: new Date(2024, 0, 15) },
+    { customer: "ann", total: 7, placed: new Date(2024, 2, 1) },
+  ];
+  const byTotal = orders.toSorted((a, b) => b.total - a.total);
+  console.log(byTotal.map((o) => o.total).join(",")); // 30,12,7
+  const groups = Map.groupBy(orders, (o) => o.customer);
+  console.log([...groups.keys()].join(",")); // ann,bob
+  console.log(JSON.stringify(Object.groupBy(orders, (o) => o.customer)["ann"]!.map((o) => o.total))); // [30,7]
+  console.log(ids().filter((id) => id % 2 === 0).map((id) => id * 10).take(3).toArray().join(",")); // 20,40,60
+  console.log([...new Set(["a", "b"]).union(new Set(["c"]))].join("")); // abc
+  console.log(JSON.stringify({ first: byTotal[0]!.customer, totals: [30, 12] }, null, 1).split("\n").length); // 7
+  console.log(orders[0]!.placed.toUTCString()); // Thu, 29 Feb 2024 00:00:00 GMT
+  console.log(Math.max(...orders.map((o) => o.total))); // 30
+}
+```
+
+Local time is UTC unless the host grants the program a time zone (not
+defined yet), so a `Date` prints what Node prints with `TZ=UTC`. Sorting
+without a comparator needs primitive elements, `flat` needs a literal
+depth, and `JSON.stringify` takes property lists but no replacer
+function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
+`structuredClone`, `Object.freeze` and `Intl` are refused with the reason.
 
 #### Web bytes (opt-in v38)
 
@@ -6263,8 +6361,9 @@ function Bad(size: string): number {
 }
 ```
 
-Annotate a constant you compose with (`const tone: 'red' = 'red'`): an
-unannotated `const` string is `string` in the v38 checker.
+The checker follows TypeScript's literal inference, so an unannotated
+constant composes too: `const tone = 'red'` has the type `'red'` (a `let`
+widens to `string` and stays an error).
 
 The entry may import project stylesheets by relative path, at build time
 only (`@import "./components/buttons.css" layer(components);`), before its

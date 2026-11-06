@@ -198,6 +198,7 @@ fn reaches_where(ty: Type, types: &ir::ValueTypes, leaf: fn(K) -> bool, opaque: 
             Type::Tuple(id) => types.tuples[id as usize]
                 .elements
                 .iter()
+                .chain(types.tuples[id as usize].rest.iter())
                 .any(|ty| child(*ty)),
             Type::Dictionary(id) => {
                 child(types.dictionaries[id as usize].value)
@@ -458,7 +459,7 @@ impl Lower<'_> {
     }
     /// An array literal of `[key, value]` pair literals as `[K, V][]`, with
     /// `K` and `V` the unions of the positions' types.
-    fn entry_literals(&mut self, entries: &ast::ArrayLit) -> Result<Expr> {
+    pub(super) fn entry_literals(&mut self, entries: &ast::ArrayLit) -> Result<Expr> {
         let mut pairs = Vec::new();
         for entry in &entries.elems {
             let pair = match entry {
@@ -542,6 +543,13 @@ impl Lower<'_> {
             return self.bytes_method(call, receiver, id, name);
         }
         let set = kind == K::Set;
+        // V38 (`standard_library`): the ES2025 Set methods.
+        if set
+            && self.types.profile.standard_library()
+            && let Some(function) = standard::set_method(name)
+        {
+            return self.standard_set_method(call, receiver, id, function);
+        }
         let function = match (set, name) {
             (true, "has") => "setHas",
             (true, "add") => "setAdd",

@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 89 feature rows and 151 cases:
-145 pass, 6 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 103 feature rows and 171 cases:
+165 pass, 6 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -372,7 +372,7 @@ nothing of the parent environment.
 `A | B` of record interfaces where `{ n: number }` is expected (Node prints
 `1 2`), while v38 views only a single record or class instance as a narrower
 record. Writing the cases also met forms v38 rejects that are not inventory
-cases yet: a `this` return type, `Array.prototype.shift`, a union of `Map` and
+cases yet: `Array.prototype.shift`, a union of `Map` and
 `Set`, template-literal computed keys in object literals, `await` inside a
 template literal or inside a call argument such as `String((await g()).n)`
 (an awaited property base in a declaration, `const n = (await g()).n`, is
@@ -390,24 +390,60 @@ over a generator with `throw`/`return` forwarding and over an array
 `symbol-type` gap is unchanged: `Symbol.iterator` is recognized only as a
 computed method key, and no `Symbol` value exists.
 
-The v38 declarations-and-classes review (K9 B, 2026-11-06) adds a third
-feature origin, `typescript`, whose references point into the TypeScript
-Handbook (`https://www.typescriptlang.org/docs/handbook/`), for language
-features that ECMAScript does not define. It adds eight feature rows and
+The K9 A type-level review (2026-11-06) adds a third origin,
+`typescript_handbook` (references under
+`https://www.typescriptlang.org/docs/handbook/`; tsc 5.x is the type-system
+reference), and nine feature rows with one passing case each: conditional
+types with distribution, `infer` (constrained, tuple, template and function
+patterns) and recursive aliases (`ts-conditional.ts`); mapped types with `as`
+remapping and `+/-readonly`/`+/-?` over records, tuples and arrays
+(`ts-mapped.ts`); template literal and intrinsic string types
+(`ts-templates.ts`); every built-in utility type (`ts-utilities.ts`);
+`keyof`, precise `T[K]`, `typeof`/`keyof typeof` queries and record
+intersections (`ts-queries.ts`); type predicates, assertion functions,
+`satisfies` and `never` exhaustiveness (`ts-narrowing.ts`); call and construct
+signatures, constructor types and polymorphic `this` (`ts-signatures.ts`);
+named, optional, rest and variadic tuple elements (`ts-tuples.ts`); and
+literal inference and widening (`ts-literals.ts`). Every expected output is
+Node.js v24.20.0's. These cases exercise type-level evaluation at compile
+time; they do not establish tsc's complete assignability or inference.
+
+The K9 D standard-library review (2026-11-06, selector `standard_library`)
+adds five feature rows with seven passing cases and four cases on existing
+rows: `array-copying-methods` (CORE-02) with `array-sort-comparator` (V8's
+comparator call order, `toSorted` stability, the default String order),
+`array-copying-methods` (`toReversed`, `with` and its `RangeError`,
+`toSpliced`, `Array.of`, mapped `Array.from`) and `array-splice-flat`
+(`splice`, `copyWithin`, `shift`/`unshift`, `concat`, `flat`, `flatMap`);
+`iterator-helpers` (CORE-03) over an infinite generator and an array
+iterator, including the `take` `RangeError`; `set-methods` (CORE-05);
+`grouping` (CORE-02, CORE-05) with `group-by` (`Object.groupBy`,
+`Map.groupBy`, `Object.fromEntries` of tuples and a `Map`);
+`aggregate-error` (CORE-04); `json-stringify-options` on `json-stringify`,
+`date-components` on `date` (the complete `Date` in the UTC zone),
+`string-well-formed` on `string-builtins` and `math-spread` on `math`. Their
+expected output is Node.js v24.20.0's with `TZ=UTC`. `Array.prototype.shift`,
+listed above as a rejected form, is admitted now. The `symbol-type` gap is
+unchanged: `Symbol()` is refused with the reason (a value tag awaiting an
+owner decision).
+
+The v38 declarations-and-classes review (K9 B, 2026-11-06) uses the
+`typescript_handbook` origin for language features that ECMAScript does not
+define. It adds eight feature rows and
 eleven original cases, each printing what Node.js v24.20.0 prints for the
 tsc 5.9.3 emit (strict, ES2022, `useDefineForClassFields`, `await main();`
 appended):
 
-- `enums` (typescript; CORE-01, CORE-02) with `enum-members` (auto-increment,
+- `enums` (typescript_handbook; CORE-01, CORE-02) with `enum-members` (auto-increment,
   string and bit-flag members, reverse mapping of constant and dynamic keys,
   an exhaustive `switch`, `let` widening to the enum type) and `const-enum`
   (string and computed `const enum` members in interface fields);
-- `namespaces` (typescript; CORE-02, CORE-03) with `namespace-merging`
+- `namespaces` (typescript_handbook; CORE-02, CORE-03) with `namespace-merging`
   (merged namespace declarations, a nested namespace, a namespace type and a
   function merged with a namespace);
-- `abstract-classes` (typescript; CORE-02) with `abstract-members`
+- `abstract-classes` (typescript_handbook; CORE-02) with `abstract-members`
   (abstract methods and getters dispatched through an abstract base type);
-- `overloads` (typescript; CORE-03) with `function-overloads` (function and
+- `overloads` (typescript_handbook; CORE-03) with `function-overloads` (function and
   method overloads selecting their result types);
 - `class-accessors` (ECMAScript method definitions; CORE-02, CORE-03) with
   `class-setters` (getter/setter pairs, a setter-only accessor, compound
@@ -420,7 +456,7 @@ appended):
 - `class-expressions` (ECMAScript class definitions; CORE-02, CORE-03) with
   `class-expression` (anonymous and named class expressions bound by
   `const` at module level and in a function);
-- `decorators` (typescript; CORE-02, CORE-03) with the known gap
+- `decorators` (typescript_handbook; CORE-02, CORE-03) with the known gap
   `class-decorator` (`unsupported_syntax`, for the same reason as static
   blocks).
 

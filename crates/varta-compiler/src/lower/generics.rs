@@ -203,7 +203,10 @@ fn satisfies(
     }
     let bound = with_frame(types, scope.clone(), |t| keyword_type(constraint, t))
         .map_err(|e| source.locate(e, constraint.span()))?;
-    Ok(arguments::accepts(bound, ty, types))
+    // V38 (`type_level`): constraints use TypeScript's assignability (a
+    // tuple satisfies `unknown[]`), which needs no value conversion.
+    Ok(arguments::accepts(bound, ty, types)
+        || types.profile.type_level() && type_level::extends(ty, bound, types))
 }
 
 /// The constraint of a type parameter as a contextual type for an argument,
@@ -415,6 +418,7 @@ fn instance(
     *next_function += 1;
     let signature = with_frame(types, frame.clone(), |t| {
         signature::check(&function.declaration, index, &function.source, t)
+            .and_then(|s| type_level::note_signature(&function.declaration, &s, t).map(|()| s))
     })
     .map_err(|e| function.source.locate(e, function.declaration.ident.span))?;
     types.generics.instances.insert(

@@ -326,7 +326,7 @@ impl Lower<'_> {
             },
         })
     }
-    fn array_callback_value(
+    pub(super) fn array_callback_value(
         &mut self,
         expr: &ast::Expr,
         params: &[Type],

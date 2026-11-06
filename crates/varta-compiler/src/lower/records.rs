@@ -434,6 +434,11 @@ impl Lower<'_> {
                 expression_key(&key.expr)?
             }
             ast::MemberProp::Computed(key) if read && self.types.profile.closures() => {
+                // `T[K]` for a key of a literal set of fields (v38 `type_level`).
+                if self.types.profile.type_level() {
+                    let key = self.expr_preserving(&key.expr)?;
+                    return self.keyed_record_read(member.span, value, key, index);
+                }
                 let key = self.expr(&key.expr)?;
                 if key.ty != Type::String {
                     return Err(self.source.locate(

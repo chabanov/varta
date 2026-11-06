@@ -159,13 +159,13 @@ impl Lower<'_> {
                     ast::Expr::Member(member) => {
                         let class = self.class_receiver(&member.obj, depth + 1)?;
                         let name = self.member_key(&member.prop).ok()?;
-                        self.types
-                            .classes
-                            .get(class)
-                            .methods
-                            .get(&name)?
-                            .signature
-                            .result
+                        let method = self.types.classes.get(class).methods.get(&name)?;
+                        // A polymorphic `this` result is the receiver's class (v38).
+                        if type_level::returns_this(self.types, method.owner, &name) {
+                            Type::Class(class)
+                        } else {
+                            method.signature.result
+                        }
                     }
                     ast::Expr::Ident(id) if self.binding(id.sym.as_ref()).is_err() => {
                         self.functions.get(id.sym.as_ref())?.result
@@ -532,15 +532,17 @@ impl Lower<'_> {
             ..value
         };
         if let Some(overloads) = self.types.overloads.method(method.owner, &name, false) {
-            return self.overloaded_class_call(
+            let result = self.overloaded_class_call(
                 call,
                 &method.signature,
                 &overloads,
                 target,
                 Some(receiver),
-            );
+            )?;
+            return Ok(self.polymorphic_this(result, class, method.owner, &name));
         }
-        self.class_call(call, &method.signature, target, receiver)
+        let result = self.class_call(call, &method.signature, target, receiver)?;
+        Ok(self.polymorphic_this(result, class, method.owner, &name))
     }
     fn class_call(
         &mut self,
