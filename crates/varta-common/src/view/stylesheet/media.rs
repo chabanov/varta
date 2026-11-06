@@ -299,9 +299,14 @@ impl MediaQueryList {
     }
 }
 
+/// Parenthesized nesting of a media condition (and of an `@supports`
+/// condition): the parsers recurse once per level.
+pub const MAX_CONDITION_DEPTH: usize = 32;
+
 struct Parser<'a> {
     tokens: &'a [Spanned],
     at: usize,
+    depth: usize,
 }
 type Parsed<T> = Result<T, usize>;
 
@@ -406,9 +411,15 @@ impl Parser<'_> {
     }
     /// `<media-in-parens>`: a nested condition or a feature.
     fn in_parens(&mut self) -> Parsed<Condition> {
-        if self.peek() != Some(&Token::OpenParen) {
+        if self.peek() != Some(&Token::OpenParen) || self.depth >= MAX_CONDITION_DEPTH {
             return self.fail();
         }
+        self.depth += 1;
+        let result = self.in_parens_inner();
+        self.depth -= 1;
+        result
+    }
+    fn in_parens_inner(&mut self) -> Parsed<Condition> {
         self.at += 1;
         self.skip();
         let inner = if self.peek() == Some(&Token::OpenParen) || self.keyword("not") {
@@ -559,7 +570,11 @@ impl Parser<'_> {
 /// The index of the first token outside the admitted grammar.
 pub fn parse(tokens: &[Spanned]) -> Result<(MediaQueryList, usize), usize> {
     let mut queries = Vec::new();
-    let mut parser = Parser { tokens, at: 0 };
+    let mut parser = Parser {
+        tokens,
+        at: 0,
+        depth: 0,
+    };
     parser.skip();
     if parser.at >= tokens.len() {
         // An empty prelude is the empty list, which matches all (§2.1).
@@ -654,6 +669,7 @@ mod tests {
             "screen, ",
             "(hover: hover",
             "foo(bar)",
+            &"(".repeat(64),
         ] {
             assert!(parse(&tokenize(text)).is_err(), "{text}");
         }

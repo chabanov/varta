@@ -12,6 +12,7 @@ type Parsed<T> = Result<T, usize>;
 struct Parser<'a> {
     tokens: &'a [Spanned],
     at: usize,
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -82,9 +83,13 @@ impl Parser<'_> {
                 let inner = &self.tokens[start + 1..end - 1];
                 self.at = end;
                 // A nested condition, a declaration, or general-enclosed.
+                if self.depth >= super::media::MAX_CONDITION_DEPTH {
+                    return Err(start);
+                }
                 let mut nested = Parser {
                     tokens: inner,
                     at: 0,
+                    depth: self.depth + 1,
                 };
                 nested.skip();
                 if matches!(nested.peek(), Some(Token::OpenParen)) || nested.keyword("not") {
@@ -170,7 +175,11 @@ fn compound_selector(tokens: &[Spanned]) -> bool {
 /// Evaluate an `@supports` prelude; the error is the index of the token
 /// where it stops being a `<supports-condition>`.
 pub(super) fn evaluate(tokens: &[Spanned]) -> Result<bool, usize> {
-    let mut parser = Parser { tokens, at: 0 };
+    let mut parser = Parser {
+        tokens,
+        at: 0,
+        depth: 0,
+    };
     let value = parser.condition()?;
     parser.skip();
     if parser.at == tokens.len() {
@@ -208,5 +217,7 @@ mod tests {
         assert!(holds("(a: b) and (c: d) or (e: f)").is_err());
         assert!(holds("display: grid").is_err());
         assert!(holds("(display: grid) junk").is_err());
+        let deep = format!("{}(display: grid){}", "(".repeat(40), ")".repeat(40));
+        assert!(holds(&deep).is_err());
     }
 }

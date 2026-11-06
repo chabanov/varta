@@ -14,4 +14,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 varta-style = { path = "../varta-style" }
-varta-common = { path = "../varta-common", default-features = false }
+varta-common = { path = "../varta-common", default-features = false, features = ["view"] }

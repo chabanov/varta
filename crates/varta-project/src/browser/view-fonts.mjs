@@ -1,11 +1,11 @@
-import { tokenizeValue, CssError } from './view-css.mjs';
+/** A `font-family` value outside what the namespace maps. */
+export class FontValueError extends Error {}
 
 const monospaceFamily = 'monospace';
 const generic = new Set(['serif', 'sans-serif', monospaceFamily, 'system-ui']);
-// CSS-wide keywords: the shared L0 validator refuses them in `font-family`
-// (the browser would roll back to its own font, which native hosts cannot
-// supply); custom property values keep them unchanged.
-const wide = new Set(['inherit', 'initial', 'unset', 'revert', 'revert-layer']);
+// Values reaching the namespace are the view style engine's computed
+// `font-family` lists (strings and identifiers, comma-separated), with
+// CSS-wide keywords already resolved by it (`inherit` is applied as is).
 const faceStyles = new Set(['normal', 'italic']);
 // The CSS font-weight number range a FontFace descriptor admits.
 const minFaceWeight = 1, maxFaceWeight = 1000;
@@ -25,55 +25,15 @@ export function createFontNamespace(prefix, families = [], { aliases = new Map()
     generics.set(key, names.get(target.toLowerCase()));
   }
   if (defaultFamily !== undefined && !names.has(defaultFamily.toLowerCase())) throw new TypeError('invalid default font family');
-  const family = (name, quoted = true, strict = true) => {
+  const family = (name, quoted = true) => {
     const key = name.toLowerCase();
     if (!quoted && generics.has(key)) return generics.get(key);
-    if (!quoted && wide.has(key)) {
-      if (strict) throw new CssError(`font-family: CSS-wide keyword ${name}`);
-      return name;
-    }
     if (!quoted && generic.has(key)) return name;
     return names.get(key) ?? `varta_font_${prefix}_missing`;
   };
-  // No per-turn cache: changing font/custom-property names forever must not
-  // accumulate state outside the bounded live DOM and stylesheet inventory.
-  const variable = (name) => `--varta-font-${prefix}-${Array.from(name,(unit)=>unit.charCodeAt(0).toString(16).padStart(4,'0')).join('')}`;
-  const tokens = (values, strict) => values.map((token) => {
-    switch (token.kind) {
-      case 'string': return JSON.stringify(family(token.value));
-      case 'ident': return family(token.value, false, strict);
-      case 'function': {
-        if (token.name.toLowerCase() === 'var') {
-          const [name, ...fallback] = token.args;
-          if (name?.kind !== 'ident' || !name.value.startsWith('--')) throw new TypeError('invalid font variable');
-          return `var(${variable(name.value)} ${tokens(fallback, strict)})`;
-        }
-        return `${token.name}(${tokens(token.args, strict)})`;
-      }
-      case 'number': return token.raw;
-      case 'dimension': return token.raw + token.unit;
-      case 'percentage': return token.raw + '%';
-      case 'hash': return '#' + token.value;
-      case 'comma': return ',';
-      case 'slash': return '/';
-      default: throw new TypeError('invalid font token');
-    }
-  }).join(' ');
-  /** A `font-family` value (and a variable's font value): CSS-wide keywords
-   * throw `CssError`. */
-  const value = (text) => tokens(tokenizeValue(text), true);
-  const sheet = (rules) => {
-    for (const rule of rules) {
-      if (rule.style) {
-        const declarations = [...rule.style].map((property) => [property, rule.style.getPropertyValue(property)]);
-        for (const [property, text] of declarations) {
-          if (property === 'font-family') rule.style.setProperty(property, value(text));
-          else if (property.startsWith('--')) rule.style.setProperty(variable(property), tokens(tokenizeValue(text), false));
-        }
-      }
-      if (rule.cssRules) sheet(rule.cssRules);
-    }
-  };
+  /** A computed `font-family` value with every family mapped into the
+   * namespace (CSS Syntax 3 strings and identifiers, escapes decoded). */
+  const value = (text) => familyList(text).map(([name, quoted]) => quoted ? JSON.stringify(family(name)) : family(name, false)).join(', ');
   const fallback = defaultFamily === undefined ? undefined : family(defaultFamily);
   /** Base-sheet font rules for the registry's view `defaults`, so every way
    * text reaches a family resolves as in the native shell. Only packaged
@@ -94,7 +54,7 @@ export function createFontNamespace(prefix, families = [], { aliases = new Map()
       + (mono === undefined ? '' : ` :where(${monospaceTags.join(', ')}) { font-family: ${mono}; }`)
       + ` :where(${controlFontTags.join(', ')}) { font-family: inherit; font-synthesis: inherit; }`;
   };
-  return { family, variable, value, sheet, rules, defaultFamily: fallback };
+  return { family, value, rules, defaultFamily: fallback };
 }
 
 /** Namespace arguments for font descriptors in the resource section's
@@ -119,4 +79,32 @@ export function faceDescriptors(face) {
   if (face.weight === undefined) return {};
   if (!Number.isInteger(face.weight) || face.weight < minFaceWeight || face.weight > maxFaceWeight || !faceStyles.has(face.style)) throw new TypeError('invalid font face descriptor');
   return { weight: String(face.weight), style: face.style };
+}
+
+/** The families of a computed `font-family` list: `[name, quoted]` pairs.
+ * The text is the engine's (its strings use hexadecimal escapes); anything
+ * else is refused rather than guessed. */
+function familyList(text) {
+  const out = []; let at = 0;
+  const escape = () => {
+    const hex = /^[0-9A-Fa-f]{1,6}[ \t\n]?/.exec(text.slice(at + 1));
+    if (hex) { at += 1 + hex[0].length; return String.fromCodePoint(Number.parseInt(hex[0], 16) || 0xfffd); }
+    at += 2; return text[at - 1] ?? '';
+  };
+  while (at < text.length) {
+    while (/[ \t\n]/.test(text[at] ?? '')) at++;
+    let name = '', quoted = false;
+    if (text[at] === '"' || text[at] === "'") {
+      const quote = text[at++]; quoted = true;
+      while (at < text.length && text[at] !== quote) name += text[at] === '\\' ? escape() : text[at++];
+      if (text[at++] !== quote) throw new FontValueError('unterminated font family string');
+    } else {
+      while (at < text.length && !/[, \t\n]/.test(text[at])) name += text[at] === '\\' ? escape() : text[at++];
+    }
+    if (!name && !quoted) throw new FontValueError('empty font family');
+    out.push([name, quoted]);
+    while (/[ \t\n]/.test(text[at] ?? '')) at++;
+    if (at < text.length && text[at++] !== ',') throw new FontValueError('font families must be comma-separated');
+  }
+  return out;
 }

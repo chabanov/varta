@@ -10,4 +10,4 @@ license.workspace = true
 # runs the same code compiled to wasm32 (`varta-style-wasm`, built by
 # `scripts/build-view-engine.py`).
 [dependencies]
-varta-common = { path = "../varta-common", default-features = false }
+varta-common = { path = "../varta-common", default-features = false, features = ["view"] }

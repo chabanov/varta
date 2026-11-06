@@ -3,8 +3,8 @@ import { ViewProtocolError, decodeViewEvent } from "./view-codec.mjs";
 import { createViewModel } from "./view-model.mjs";
 
 /** One commit in flight; one parent event in flight; no reentrant guest calls. */
-export function createWorkerView({ send, memory, application, linkRequested = () => false, assetRequested = () => false }) {
-  const model = createViewModel({ linkRequested, assetRequested });
+export function createWorkerView({ send, memory, application, linkRequested = () => false, assetRequested = () => false, viewEngine }) {
+  const model = createViewModel({ linkRequested, assetRequested, viewEngine });
   let committed = false, batch = 0, lastEvent=0, pending, event, wake, fault, closed = false;
   const pulse = () => { wake?.(); wake = undefined; };
   const fail = (rule) => { throw new ViewProtocolError(rule); };

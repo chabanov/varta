@@ -23,6 +23,7 @@ mod prelude {
     pub use alloc::vec::Vec;
 }
 pub mod index;
+pub mod session;
 pub mod variables;
 
 use prelude::*;
