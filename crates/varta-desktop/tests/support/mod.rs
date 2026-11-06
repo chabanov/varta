@@ -6,8 +6,9 @@
 //! would, the tests run the workspace's `varta` binary as a separate
 //! process: Cargo builds it (offline and locked, into the same target
 //! directory) and `varta build` compiles `fixtures/shell-probe`,
-//! `fixtures/consent-probe`, and `fixtures/view-probe` with its declared
-//! fonts, into portable v38 artifacts in temporary directories. Each test then writes
+//! `fixtures/consent-probe`, `fixtures/view-probe` with its declared
+//! fonts and `fixtures/image-probe` with its declared image, into portable
+//! v38 artifacts in temporary directories. Each test then writes
 //! its own packaged artifact with `varta_artifact::Artifact`, as the
 //! `varta-launcher` tests do, with the manifest (the package request) it
 //! needs.
@@ -72,6 +73,19 @@ const VIEW_PROBE_FONTS: [(&str, &str); 4] = [
 const FONT_FIXTURES: &str = "../varta-view/tests/fixtures";
 const VIEW_PROBE_FONT_DIRECTORY: &str = "fonts";
 
+/// The image probe's sources and configuration: one packaged PNG image.
+const IMAGE_PROBE_DIRECTORY: &str = "tests/fixtures/image-probe";
+const IMAGE_PROBE_IMAGE_DIRECTORY: &str = "images";
+const IMAGE_PROBE_IMAGE: &str = "red.png";
+/// A valid 1x1 opaque red RGBA PNG, the image probe's `icons/red.png`.
+pub const RED_PNG: [u8; 70] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
+    0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
 /// The consent probe's sources and configuration: a required `kv.write`,
 /// an optional `kv.read` and buttons that request it, and an optional
 /// any-HTTPS `ui.open_url` with a link longer than a native prompt shows.
@@ -81,7 +95,7 @@ const CONSENT_PROBE_DIRECTORY: &str = "tests/fixtures/consent-probe";
 /// once per test binary.
 pub fn probe() -> &'static Artifact {
     static PROBE: OnceLock<Artifact> = OnceLock::new();
-    PROBE.get_or_init(|| build(PROBE_DIRECTORY, &[]).artifact)
+    PROBE.get_or_init(|| build(PROBE_DIRECTORY, (VIEW_PROBE_FONT_DIRECTORY, &[])).artifact)
 }
 
 /// The view probe as `varta build` wrote it: Wasm, manifest and the
@@ -94,7 +108,22 @@ pub fn view_probe() -> &'static PackagedArtifact {
             .iter()
             .map(|(name, fixture)| (*name, std::fs::read(fixtures.join(fixture)).unwrap()))
             .collect();
-        build(VIEW_PROBE_DIRECTORY, &fonts)
+        build(VIEW_PROBE_DIRECTORY, (VIEW_PROBE_FONT_DIRECTORY, &fonts))
+    })
+}
+
+/// The image probe as `varta build` wrote it: Wasm, manifest and the
+/// resource section of its one image, built once per test binary.
+pub fn image_probe() -> &'static PackagedArtifact {
+    static PROBE: OnceLock<PackagedArtifact> = OnceLock::new();
+    PROBE.get_or_init(|| {
+        build(
+            IMAGE_PROBE_DIRECTORY,
+            (
+                IMAGE_PROBE_IMAGE_DIRECTORY,
+                &[(IMAGE_PROBE_IMAGE, RED_PNG.to_vec())],
+            ),
+        )
     })
 }
 
@@ -102,21 +131,21 @@ pub fn view_probe() -> &'static PackagedArtifact {
 /// `required` and `purpose`), built once per test binary.
 pub fn consent_probe() -> &'static Artifact {
     static PROBE: OnceLock<Artifact> = OnceLock::new();
-    PROBE.get_or_init(|| build(CONSENT_PROBE_DIRECTORY, &[]).artifact)
+    PROBE.get_or_init(|| build(CONSENT_PROBE_DIRECTORY, (VIEW_PROBE_FONT_DIRECTORY, &[])).artifact)
 }
 
-/// Copy a fixture project (and `fonts` into its `fonts` directory), build it
+/// Copy a fixture project (and `files` into its `subdirectory`), build it
 /// with `varta build` and read the artifact it wrote.
-fn build(directory: &str, fonts: &[(&str, Vec<u8>)]) -> PackagedArtifact {
+fn build(directory: &str, (subdirectory, files): (&str, &[(&str, Vec<u8>)])) -> PackagedArtifact {
     let temp = Temp::new("varta-shell-probe-build");
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join(directory);
     for source in PROBE_SOURCES {
         std::fs::copy(sources.join(source), temp.path(source)).unwrap();
     }
-    if !fonts.is_empty() {
-        let directory = temp.path(VIEW_PROBE_FONT_DIRECTORY);
+    if !files.is_empty() {
+        let directory = temp.path(subdirectory);
         std::fs::create_dir(&directory).unwrap();
-        for (name, bytes) in fonts {
+        for (name, bytes) in files {
             std::fs::write(directory.join(name), bytes).unwrap();
         }
     }

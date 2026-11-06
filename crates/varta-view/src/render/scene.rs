@@ -37,6 +37,8 @@ pub(crate) enum Primitive {
     Rect(Rect),
     Path(Arc<Path>, FillRule),
     Border(Arc<crate::paint::border::Border>),
+    /// A packaged image drawn into its rectangle; replayed in software only.
+    Image(crate::image::ImageDraw),
     BeginGroup {
         opacity: f32,
         additive: bool,
@@ -58,7 +60,10 @@ impl Draw {
         std::mem::size_of::<Self>()
             + self.clips.as_ref().map_or(0, |clip| clip.bytes)
             + match &self.primitive {
-                Primitive::Rect(_) | Primitive::BeginGroup { .. } | Primitive::EndGroup => 0,
+                Primitive::Rect(_)
+                | Primitive::Image(_)
+                | Primitive::BeginGroup { .. }
+                | Primitive::EndGroup => 0,
                 Primitive::Path(path, _) => {
                     std::mem::size_of_val(path.points()) + path.verbs().len()
                 }
@@ -320,6 +325,16 @@ impl Masks {
             Primitive::Path(path, rule) => {
                 image.fill_path(path, &paint, *rule, draw.transform, mask)
             }
+            Primitive::Image(source) => crate::image::draw_image(
+                image,
+                source,
+                draw.transform,
+                (0, 0),
+                dirty,
+                draw.color.alpha(),
+                blend,
+                mask,
+            ),
         }
     }
 }
@@ -378,10 +393,12 @@ impl Scene {
         // their software scene so repeated prepare() calls still reuse pixels
         // and local changes replay only their damage, like ordinary CPU frames.
         // Color fields lower to vector cells (`DrawPrimitive::ColorField`).
+        // Images have no vector form either: their frames stay software
+        // frames, with the same reuse and damage.
         let grouped = commands.iter().any(|draw| {
             matches!(
                 draw.primitive,
-                Primitive::BeginGroup { .. } | Primitive::EndGroup
+                Primitive::BeginGroup { .. } | Primitive::EndGroup | Primitive::Image(_)
             )
         });
         if self.record_only && !grouped {

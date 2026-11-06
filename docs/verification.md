@@ -24,7 +24,9 @@ any previous check whose scope includes those inputs.
   run. Neither is current evidence.
 - **Source scope:** the gate fingerprint covers every tracked and untracked
   file except the independent product examples (`examples/`), which no
-  engine input depends on (`scripts/verify.py`, `INDEPENDENT_PREFIXES`).
+  engine input depends on, and `.claude/` (local session tooling and agent
+  worktrees, each verified on its own) (`scripts/verify.py`,
+  `INDEPENDENT_PREFIXES`).
 - **Separate external acceptance:** Chrome streaming after the network
   inactivity change has not been run. Real-window/system-input checks,
   current remote CI, remaining browser/platform matrices, sustained live
@@ -43,6 +45,7 @@ its own location; these examples start at the workspace root:
 
 ```sh
 python3 scripts/verify.py local varta-bigint
+python3 scripts/verify.py local varta-tailwind
 python3 scripts/verify.py local varta-runtime --filter array_inference
 python3 scripts/verify.py feature array_inference
 python3 scripts/verify.py full
@@ -61,6 +64,17 @@ build the companion, then select matching runtime unit tests, public engine API
 tests and CLI smoke tests. Each selected suite, Cargo or Node, must execute
 passing tests; a typo that matches zero tests fails. Where names differ, run explicit Cargo commands
 with the appropriate filters instead of widening a filter until it happens to pass.
+
+## Tailwind compiler
+
+`python3 scripts/verify.py local varta-tailwind` runs the port's unit tests
+and the committed oracle conformance (`tests/oracle_subset.rs`: per-candidate
+and whole-stylesheet fixtures). The full 39,152-candidate corpus lives outside
+the repository and runs manually:
+`cargo test -p varta-tailwind --release --test oracle_full -- --ignored --nocapture`
+(and `--test canonical_oracle` for the canonical form). Project integration
+is covered by `cargo test -p varta --test tailwind --locked`, and class
+extraction by `cargo test -p varta-compiler --lib --locked tsx_tests classes`.
 
 ## View integration cases
 
@@ -835,6 +849,34 @@ cargo clippy -p varta-desktop --features fontconfig --all-targets --locked -- -D
 for scale in 1 1.5 2 3; do
   cargo run -p varta-desktop --example native_fallback_probe --locked -- "$scale" > "target/native-fallback-$scale.json"
   node scripts/test-native-inline.mjs "target/native-fallback-$scale.json"
+done
+```
+
+Native images (`img`) are compared with Chrome on the probe's own image
+files (every format, colour source, orientation and animation, generated at
+run time): geometry, hits, image roles and names, frame durations and loop
+counts (Chrome's `ImageDecoder`), and pixels of the viewport and of each
+image's box. Image sampling depends on the device scale (levels of detail,
+fractional edges), so all four scales run. Images in lines of text use the
+Parley atomic-inline patch: after changing it, regenerate
+`vendor/parley/VARTA-PATCH.diff` from the crates.io release and check that
+applying it to the release `src/` reproduces the vendored tree.
+
+```sh
+cargo test -p varta-common --lib --locked view::images
+cargo test -p varta-common --lib --locked view::attributes
+cargo test -p varta-artifact --lib --locked resources::
+cargo test -p varta-view --lib --locked image::
+cargo test -p varta-view --lib --locked layout::replaced
+cargo test -p varta-view --lib --locked inline::atoms
+cargo test -p varta-view --lib --locked text::edges
+cargo test -p varta-project --lib --locked image_tests
+cargo test -p varta-desktop --test shell --locked image
+cargo test -p varta-desktop --test binaries --locked corrupt_packaged_image
+cargo test -p varta --test smoke --locked packaged_images
+for scale in 1 1.5 2 3; do
+  cargo run -p varta-view --example native_image_probe --locked -- "$scale" > "target/native-images-$scale.json"
+  node scripts/test-native-images.mjs "target/native-images-$scale.json"
 done
 ```
 

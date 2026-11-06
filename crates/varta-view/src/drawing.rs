@@ -284,7 +284,9 @@ impl DisplayList {
                 None => None,
             };
             let primitive = match &draw.primitive {
-                Primitive::BeginGroup { .. } | Primitive::EndGroup => {
+                // Groups and images have no vector form: the frame takes
+                // the explicit software fallback (`PreparedFrame::Raster`).
+                Primitive::BeginGroup { .. } | Primitive::EndGroup | Primitive::Image(_) => {
                     return None;
                 }
                 Primitive::Border(border) => {
@@ -415,8 +417,11 @@ impl DisplayList {
             let bounds = match &primitive {
                 Primitive::Rect(r) => *r,
                 Primitive::Path(p, _) => p.bounds(),
-                Primitive::BeginGroup { .. } | Primitive::EndGroup | Primitive::Border(_) => {
-                    unreachable!("public drawing primitives exclude groups")
+                Primitive::BeginGroup { .. }
+                | Primitive::EndGroup
+                | Primitive::Border(_)
+                | Primitive::Image(_) => {
+                    unreachable!("public drawing primitives exclude groups and images")
                 }
             };
             draws.push(Draw {

@@ -247,6 +247,9 @@ pub(crate) struct Tree {
     pub modals: Vec<Modal>,
     /// The animation clock and running CSS transitions.
     pub animations: crate::transition::Animations,
+    /// The host's packaged images: what an `img` may name and draws. With
+    /// none, no `img` is laid out.
+    pub images: crate::image::Images,
     /// Shown overlay scrollbars on the same clock.
     pub scrollbars: crate::overlay_scrollbar::OverlayScrollbars,
 }
@@ -279,6 +282,7 @@ impl Default for Tree {
             pending_requests: BTreeSet::new(),
             modals: Vec::new(),
             animations: crate::transition::Animations::default(),
+            images: crate::image::Images::default(),
             scrollbars: crate::overlay_scrollbar::OverlayScrollbars::default(),
         }
     }
@@ -1211,8 +1215,25 @@ impl Apply<'_, '_, '_> {
         if !valid {
             return Err(self.fail(Violation::InvalidAttributeValue(attribute.name())));
         }
+        if matches!(attribute, Attribute::Src | Attribute::Srcset)
+            && let Some(images) = &self.tree.images.set
+        {
+            let names = match attribute {
+                Attribute::Src => crate::image::select::named(Some(value), None),
+                _ => crate::image::select::named(None, Some(value)),
+            };
+            if let Some(missing) = names.into_iter().find(|name| !images.contains(name)) {
+                return Err(self.fail(Violation::UnpackagedImage(missing.into())));
+            }
+        }
         let element = self.element(node)?;
         let changed = element.attributes.get(&attribute).map(String::as_str) != Some(value);
+        // A new image source restarts the element's animation timeline.
+        if changed && matches!(attribute, Attribute::Src | Attribute::Srcset) {
+            let now = self.tree.images.now;
+            self.tree.images.started.insert(node, now);
+        }
+        let element = self.element(node)?;
         element.attributes.insert(attribute, value.into());
         if changed && attribute == Attribute::Type {
             element.editor.text_epoch = Some(Arc::new(()));

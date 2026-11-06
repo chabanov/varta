@@ -20,6 +20,10 @@ serde_json.workspace = true
 # Bounded CPU raster fallback for native view painting; BSD-3-Clause.
 tiny-skia.workspace = true
 skrifa.workspace = true
+# Decodes packaged PNG images once, within the view image limits.
+png.workspace = true
+image.workspace = true
+moxcms.workspace = true
 unicode-segmentation.workspace = true
 icu_properties.workspace = true
 # CSS box layout shared by headless and future native rendering; MIT licensed.

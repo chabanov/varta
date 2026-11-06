@@ -145,7 +145,7 @@ unrestricted browser DOM in guest code.
 | Part | Implemented native surface |
 | --- | --- |
 | Structure/layout | Block/flex/grid, dimensions and constraints, margins/padding/gaps, admitted positioning/z-index, inline shaping/line fragments, headings/lists/pre/labels |
-| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, retained drawing/damage and mixed border colors |
+| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, packaged images (`img`), retained drawing/damage and mixed border colors |
 | CSS engine (K8 T2, T3) | CSS Syntax 3 tokens (comments, escapes), HTML class names with escaped class selectors, `@layer` with `!important` and conditional layers, `@supports`, `@property`, CSS-wide keywords, Media Queries 4/5 features as recorded host inputs (macOS reduced motion and increased contrast on the desktop), `calc()`/`min()`/`max()`/`clamp()`, every length unit, Color 4/5 colours with named colours, gamut mapping and multi-colour `color-mix()`, numeric font weights, `cubic-bezier()`/`steps()`; one Rust engine, linked natively and run by the browser host as `view-engine.wasm` |
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
@@ -165,8 +165,14 @@ The native scope still has concrete gaps:
   `<length>` values are inherited as written rather than absolutized.
   Increased-contrast and reduced-motion are read from the OS on macOS only;
   other desktops report no preference.
-- Native `<img>` is not admitted by the current layout path. Browser bundles
-  support checked static PNG resources; that does not add native image painting.
+- Native `<img>` draws packaged images (the configuration's `images`, the
+  same files the browser bundle carries) to the HTML and CSS standards:
+  PNG/APNG, JPEG, GIF, WebP, BMP and ICO converted to sRGB with EXIF
+  orientation, animations on the view clock, `srcset`/`sizes`,
+  `object-fit`/`object-position`, `image-rendering`, `aspect-ratio`, and
+  inline images in lines of text with `vertical-align`. AVIF, SVG, HDR
+  images and alternative-text rendering are refused, and the optional GPU
+  backend presents frames with images through its software fallback.
 - General transforms/scaling and scrollable overflow from translated boxes
   remain unfinished. macOS scrollbars paint natively in both system styles
   (classic gutters, and overlay bars shown while scrolling and faded on the
@@ -179,12 +185,22 @@ The native scope still has concrete gaps:
   sessions require their own acceptance. Headless pixels and semantic metadata
   do not establish those outcomes.
 
+Styling can be generated: a project's CSS-first Tailwind entry
+(`"tailwind": {"entry": …}`) is compiled at build time in Rust (a port of
+Tailwind CSS v4.3.5, oracle-checked) from the class tokens of the module
+graph, and the canonical stylesheet replaces the entry's text resource;
+`className` is an alias of `class`. Utilities over static class tokens
+apply; a full `@import "tailwindcss"` build still needs the selectors of T2
+stage S5 (Preflight and the theme's `:host`), so full Tailwind applications
+do not apply yet ([contract](architecture.md#build-time-tailwind-stylesheets-k8-t1)).
+
 Contracts: [native controls](architecture.md#native-control-defaults),
 [preserved whitespace](architecture.md#native-preserved-white-space),
 [dialogs](architecture.md#native-modal-dialogs-top-layer),
 [transitions](architecture.md#native-css-transitions),
 [transforms](architecture.md#native-css-transforms),
-[the CSS engine](architecture.md#view-css-engine-k8-t2-and-t3) and
+[the CSS engine](architecture.md#view-css-engine-k8-t2-and-t3),
+[images](architecture.md#native-images-img) and
 [the native shell](architecture.md#native-shell-varta-shell).
 
 ## GPU and application graphics

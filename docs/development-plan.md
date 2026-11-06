@@ -38,12 +38,107 @@ their current limitations and the evidence behind this checkpoint.
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
-| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). macOS overlay scrollbars are shown while scrolling, on the animation clock ([record](#native-overlay-scrollbars--2026-11-06)). Colour glyphs on Linux, scrollbar dragging and track clicks, and every Linux comparison with Chrome remain open. |
+| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). macOS overlay scrollbars are shown while scrolling, on the animation clock ([record](#native-overlay-scrollbars--2026-11-06)). Colour glyphs on Linux, scrollbar dragging and track clicks, and every Linux comparison with Chrome remain open. Packaged images (`img`) are laid out and drawn natively to the HTML, CSS and image-format standards, checked against Chrome ([record](#native-images--2026-11-06)). |
 | Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. The Showcase was removed on 2026-11-06 (owner decision); its measurements are kept in [`docs/evidence/`](evidence/). |
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
+
+### Native images — 2026-11-06
+
+Applications that show images now draw them natively, not only in the
+browser bundle, to the published standards with Chrome as the oracle
+([contract and conformance table](architecture.md#native-images-img)). The
+first increment admitted static sRGB PNG only; the owner directive of the
+same day asked for the standards instead of a PNG subset, which this record
+covers. A configuration declares its image files in a top-level `images`
+map (view name to project path); packaging decodes them with the native
+decoder and puts them into the artifact's resource section, version 2 when
+there are images (a fonts-only section keeps its version 1 bytes;
+[format](architecture.md#packaged-images-section-version-2)), and the browser
+bundle carries the same files under the same names with their media types,
+so both renderers admit the same images. `images` and `browser.resources`
+cannot be declared together.
+
+- **Formats and colour.** PNG/APNG, JPEG, GIF, WebP, BMP and ICO, told apart
+  by signature (MIME Sniffing §6.1), decoded by the image-rs decoders with
+  limits; converted to sRGB with `moxcms` from `cICP`, `iCCP`, `sRGB`,
+  `cHRM`/`gAMA` (PNG 3rd edition priority) or an embedded ICC profile; EXIF
+  orientation with `image-orientation`. JPEG converts after sampling, as
+  Skia draws it (converting at decode differed by about 5/255 when
+  upscaled). AVIF (no safe-Rust decoder), SVG (no SVG renderer) and HDR or
+  narrow-range `cICP` are refused with their own reasons.
+- **HTML.** `srcset`/`sizes` with Chromium's density selection and the
+  density-corrected natural size; `width`/`height` attributes as
+  presentational hints and the `aspect-ratio` hint; an `img` without an
+  image represents nothing, and one that would show alternative text or a
+  sized broken-image box is refused (user agent rendering); `decoding` and
+  `loading` change nothing for local images. Animations play on the view's
+  animation clock with Blink's 100 ms short-frame rule and each format's
+  loop count.
+- **CSS.** `object-fit`, `object-position`, `image-rendering` (`pixelated`
+  and `crisp-edges` as CSS Images 3 §5.2 defines them), `aspect-ratio`,
+  replaced sizing (CSS 2.1 §10.3.2, §10.4, §10.6.2).
+- **Images in lines of text.** An inline image beside text is an atomic
+  inline of the inline formatting context: a Parley `InFlow` box with a
+  soft wrap opportunity on both sides (CSS Text 3 §5.1) that keeps the
+  decoration edges next to it (a recorded Parley patch; `VARTA-PATCH.diff`
+  regenerated and checked to reproduce the vendored tree from the release),
+  and every `vertical-align` value with Chrome's shifts in layout units,
+  `top`/`bottom` growing the line box as aligned subtrees. Images alone on a
+  line keep their line box. Percentage sizes of images in text, positioned
+  or transformed images there, images under an inline box with opacity and
+  images in ellipsis or native white-space flows are refused.
+- **Paint.** A software-only scene primitive (`Primitive::Image`) samples as
+  Skia does: bilinear, and below half size linear between two `SkMipmap`
+  levels at level of detail `log2(1/s) - 0.5`; the destination snaps in
+  Blink's 1/64 layout units to whole paint pixels before DPI, a rounded
+  image takes its edge coverage from its content-box clip alone, and a clip
+  that cuts an image masks only where it cuts (a viewport clip had doubled
+  the image's own edge coverage). Frames with images take the explicit
+  software path (`PreparedFrame::Raster`) on the GPU backend.
+- **Accessibility.** `alt` names the image; an empty `alt` without a label
+  is presentational, as Chrome exposes it.
+- **Dependencies.** `png` 0.18.1, `image` 0.25.10 (PNG, JPEG, GIF, WebP,
+  BMP, ICO features only) and `moxcms` 0.8.1 (no default features), all safe
+  Rust with exact pins; `flate2` is held at 1.1.10 in the lockfile.
+
+Verification on macOS 27.0.1 with Chrome 156.0.8078.80: `native_image_probe`
+with `scripts/test-native-images.mjs`, 22 cases and 22482 checks per scale
+(geometry, hits, roles and names, frame durations and loop counts with
+Chrome's `ImageDecoder`, pixels of the viewport and of every image's box),
+pass at 1x, 1.5x, 2x and 3x; viewport RGB means at most 0.821, 0.904, 0.847
+and 0.742/255 and per-image means at most 1.095, 1.404, 1.472 and 1.000/255.
+The oracle shows a later animation frame by giving the same `img` a lossless
+PNG of the frame Chrome's decoder produced (a canvas in its place had been
+composited differently at 1.5x). Unit tests cover sniffing, the section
+encoding, selection, sizes, colour sources and refusals, orientation
+mapping, `pixelated` and nearest sampling, animation timing and loop counts,
+object sizes, the constraint table, atomic-inline breaking with decoration
+edges, every `vertical-align` and the refusals; `varta-desktop` tests decode,
+lay out, draw, hit and name a packaged image through the shell core and
+refuse a corrupt image in `varta-shell` before storage; a CLI smoke test
+packages an image into both distributions.
+
+**Owner decision (2026-11-06).** The image limits in
+`varta_common::view::images` are the extended set: 256 images, 32 MiB per
+file and 128 MiB in all, 16384 px per dimension (a common GPU texture
+maximum), 4096 frames per image, 256 MiB of decoded RGBA in all (every frame
+counted) and 512 MiB of retained pixels with their levels; a host may only
+lower them. The older `browser.resources` inventory uses the same constants.
+New dependencies, all safe Rust with exact pins, are accepted: `png` 0.18.1,
+`image` 0.25.10 (PNG, JPEG, GIF, WebP, BMP and ICO only) and `moxcms` 0.8.1.
+Known before this batch and unrelated to it: `native_inline_probe`'s
+`paint-overlap-hits` case fails its Chrome pixel bound (RGB mean 5.39) on
+`81e26b9` and later; open.
+
+**Open.** AVIF and SVG images; alternative-text and broken-image rendering;
+HDR images; Chrome draws a downscaled `pixelated` image by nearest neighbour
+and drops `crisp-edges`, so the oracle compares those cases with Chrome's
+values; Chromium's cached-candidate `srcset` heuristic; `varta dev` shows no
+packaged images; images on Linux are not compared with Chrome; the GPU
+backend presents image frames through the software path.
 
 ### Language gap ranking and the v38 iteration protocol — 2026-11-06
 
@@ -7449,6 +7544,54 @@ earlier bounds. Open: a per-stream write-idle bound for HTTP/2 streams whose
 client never opens its window, h2c, HTTP/3, certificate reload, and Linux
 and sustained-load benchmarks.
 
+### K9 — TypeScript completeness and the first release (agreed, 2026-11-06)
+
+**Owner decisions.** The first release targets **macOS (arm64) and the web**;
+Linux and Windows follow. Varta covers **the whole TypeScript language** (the
+TypeScript Handbook and ECMAScript 2025) except untyped code: `any`, implicit
+`any`, untyped JavaScript and `.d.ts`-only packages stay rejected (research
+thesis). Node 24 is the runtime oracle for expected output and tsc 5.x the
+type-system reference; everything follows the published standards, with spec
+sections cited in the contract.
+
+**Baseline.** 89 probe programs of common TypeScript constructs against v38:
+43 compile, `any` is rejected by design, 45 are not supported (type-level
+operators, enums and namespaces, overloads, setters and static fields,
+decorators, `await` inside expressions, object-literal `this`, tagged
+templates, `Symbol()`, weak collections, Proxy, local-time `Date`, `Intl`,
+RegExp backreferences, `sort` with a comparator and others).
+
+**Tracks**, in parallel on separate branches, merged one by one through the
+standard process (each branch's full gate, conflicts resolved, a combined
+gate):
+
+- **A — type level:** mapped and conditional types, `infer`, template literal
+  types, every built-in utility type, precise `keyof`/`T[K]`, `typeof` and
+  `keyof typeof` type queries, intersections, type predicates and assertion
+  functions, `satisfies`, polymorphic `this`, call and construct signatures,
+  variadic and optional tuple elements, `never` exhaustiveness.
+- **B — declarations and classes:** all `enum` forms, `namespace` and
+  declaration merging, abstract classes, function and method overloads,
+  setters, static fields and blocks, class expressions, standard decorators
+  and `accessor`.
+- **C — expressions and functions:** `await` anywhere and top-level `await`,
+  object-literal methods and accessors with `this`, computed keys, tagged
+  templates, destructuring everywhere, spread in calls, hand-written
+  iterators, `using`, structural thenables and the remaining operators.
+- **D — ECMAScript 2025 library:** complete Array/Object/String/JSON/Promise
+  APIs, iterator helpers and Set methods, `Symbol()` values (a new value tag
+  under the CLAUDE.md versioning rules), weak collections integrated with the
+  collector, local-time `Date` with the time zone as a recorded host input,
+  full RegExp with matching bounded by fuel, Proxy and Reflect where sound,
+  and `Intl` through ICU4X with deterministic data.
+
+**Release readiness** additionally needs, after K9 and K8 merge: the release
+profile frozen (v38 becomes a released profile; later admissions go to a new
+one), the macOS arm64 and web distributions built and verified from a clean
+checkout, the open Chrome acceptance runs (streaming, inline probes) repeated,
+an independent security review of the host surface, and release notes. Each is
+recorded here when it starts.
+
 ### K8 — Tailwind at compile level (agreed design, 2026-11-06)
 
 **Goal (owner).** The developer writes ordinary TSX with Tailwind classes of the
@@ -7516,6 +7659,39 @@ resources only), `@import` resolves only at build time, `image-set()`,
 matches, environment media features are recorded host inputs, and `:has()`,
 descendant matching and infinite animations are charged against work and
 frame bounds.
+
+**T1 record (2026-11-06).** Implemented in the new tooling crate
+`varta-tailwind` and wired into `check`/`dev`/`build`
+([contract](architecture.md#build-time-tailwind-stylesheets-k8-t1)):
+
+- Ported from Tailwind CSS v4.3.5: candidate and variant parsing, every
+  built-in utility and variant (and the legacy utilities of its
+  compatibility layer), theme, Preflight, `@import` of the embedded pinned
+  package, `@theme`, `@apply`, `@utility`, `@custom-variant`, `@variant`,
+  `@source inline()`, `--theme()`/`--spacing()`/`--alpha()`/`theme(--var)`,
+  `@reference`, `important`/`prefix()`/`theme()` import parameters, the
+  property sort and `optimizeAst` without polyfills; data tables stay data.
+- Varta's canonical form on top: no comments, flattened nesting (CSS
+  Nesting 1), `@supports` resolved against the L0 grammar (Conditional 3),
+  Media Queries 4 ranges as `min-`/`max-` features with `not`.
+- Classes come from the module graph (`varta_compiler::
+  scan_classes_with_profile`): literals, template text, literal types and
+  TSX values; a class composed at run time is a located error. `className`
+  is an alias of `class`.
+- Rejected with typed errors: `@plugin`, `@config`, file `@source`/`source()`,
+  non-embedded `@import`, dot-path `theme()`.
+- Oracle conformance: committed subset of 2,986 candidates and eight whole
+  stylesheets, all matching after canonicalization; the full corpus
+  (39,152 candidates, manual run) matches 39,152/39,152.
+- Waiting for T2: the generated sheet is stored and checked, but the L0
+  grammar refuses a full build at Preflight's `display: none !important`
+  (S8) and static tokens such as `w-1/2` at the TSX attribute (S1). The CLI
+  tests pin these first violations; the end-to-end test is ignored until T2.
+  (Since the T2 standards items and T3 merged: static tokens apply, and the
+  first violation of a full build is the theme's `:root, :host`, stage S5.)
+- Not in T1: JavaScript plugins/config, `@source` file globs, project-relative
+  CSS `@import` (only the embedded package is importable), source maps,
+  IntelliSense suggestions and candidate canonicalization.
 
 #### K8 T2 S1–S3 — engine tokens, sheet structure and values (2026-11-06)
 

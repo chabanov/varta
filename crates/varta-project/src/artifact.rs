@@ -1,12 +1,13 @@
 //! Tooling compatibility facade; the container protocol has one runtime-independent owner.
 //! This is also the packaging step that fills an artifact's resource section
-//! from the configuration's declared font faces.
+//! from the configuration's declared font faces and images.
 use crate::{Result, VartaConfig};
 use std::path::Path;
 pub use varta_artifact::Artifact;
 use varta_artifact::{
-    FontFace, FontStyle, GenericFamily, MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES,
-    NORMAL_FONT_WEIGHT, Resources,
+    FontFace, FontStyle, GenericFamily, ImageResource, MAX_FONT_BYTES, MAX_FONT_FACE_BYTES,
+    MAX_FONT_FACES, MAX_IMAGE_BYTES, MAX_IMAGE_TOTAL_BYTES, MAX_IMAGES, NORMAL_FONT_WEIGHT,
+    Resources,
 };
 pub(crate) use varta_artifact::{MAX_MANIFEST_BYTES, RESOURCE_SIDECAR_EXTENSION};
 use varta_common::VartaError;
@@ -99,12 +100,41 @@ pub(crate) fn validate_fonts(config: &VartaConfig) -> std::result::Result<(), Va
     Ok(())
 }
 
+/// Configuration-time checks of the `images` map: the profile, the image
+/// count, resource-grammar names and paths, and no `browser.resources`
+/// beside it. The files are checked when the project is packaged.
+pub(crate) fn validate_images(config: &VartaConfig) -> std::result::Result<(), VartaError> {
+    if config.images.is_empty() {
+        return Ok(());
+    }
+    if !config.language_profile.tsx() || config.images.len() > MAX_IMAGES {
+        return Err(invalid(
+            "images require languageProfile checked-f64-utf16-v38 and a bounded image list",
+        ));
+    }
+    if config
+        .browser
+        .as_ref()
+        .is_some_and(|browser| !browser.resources.is_empty())
+    {
+        return Err(invalid(
+            "images and browser.resources cannot both be declared; declare every image in images, which every renderer draws",
+        ));
+    }
+    for (name, path) in &config.images {
+        crate::browser::resources::validate_name(name)
+            .and_then(|()| crate::browser::resources::validate_name(path))
+            .map_err(|error| invalid(&error.to_string()))?;
+    }
+    Ok(())
+}
+
 /// The resource section the configuration declares: every face read through
 /// the project's pinned no-follow loader, bounded per face and in total,
 /// validated against its own tables and put into canonical order. Empty
 /// without declared fonts.
 pub(crate) fn resources(config: &VartaConfig, base: &Path) -> Result<Resources> {
-    if config.fonts.is_empty() {
+    if config.fonts.is_empty() && config.images.is_empty() {
         return Ok(Resources::default());
     }
     let root = base.canonicalize()?;
@@ -119,10 +149,11 @@ pub(crate) fn resources_with_loader(
     root: &Path,
     loader: &crate::modules::SourceLoader,
 ) -> Result<Resources> {
-    if config.fonts.is_empty() {
+    if config.fonts.is_empty() && config.images.is_empty() {
         return Ok(Resources::default());
     }
     validate_fonts(config)?;
+    validate_images(config)?;
     let mut faces = Vec::with_capacity(config.fonts.len());
     let mut total = 0usize;
     for font in &config.fonts {
@@ -137,7 +168,28 @@ pub(crate) fn resources_with_loader(
             data,
         });
     }
-    Ok(Resources::new(faces).map_err(VartaError::from)?)
+    let mut images = Vec::with_capacity(config.images.len());
+    let mut total = 0usize;
+    for (name, path) in &config.images {
+        let limit = MAX_IMAGE_BYTES.min(MAX_IMAGE_TOTAL_BYTES - total);
+        let data = loader.read_bytes(&root.join(path), limit)?;
+        total += data.len();
+        images.push(ImageResource {
+            name: name.clone(),
+            data,
+        });
+    }
+    let section = Resources::with_images(faces, images).map_err(VartaError::from)?;
+    // Every image decodes with the native renderer's own decoder and limits
+    // now, so the artifact always loads in the shell.
+    varta_runtime::ViewImageSet::decode(
+        section
+            .images()
+            .iter()
+            .map(|image| (image.name.as_str(), image.data.as_slice())),
+    )
+    .map_err(|error| VartaError::InvalidArtifact(format!("images: {error}")))?;
+    Ok(section)
 }
 
 #[cfg(test)]
@@ -295,3 +347,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "artifact/image_tests.rs"]
+mod image_tests;

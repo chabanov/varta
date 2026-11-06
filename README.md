@@ -293,6 +293,7 @@ TS/JS projects built on the engine's public APIs.
 | `crates/varta-artifact` | Portable Wasm/manifest and native container I/O, without VM or compiler |
 | `crates/varta-launcher` | The execution-only `varta-runtime` binary distributed with applications |
 | `crates/varta-project` | Development tooling: project configuration/source loading, packaging and policy files |
+| `crates/varta-tailwind` | Development tooling: build-time Tailwind CSS v4 compiler (Rust port, MIT) used by the project pipeline |
 | `crates/varta-cli` | Commands and output, calling the project tooling layer |
 | `crates/varta-conformance` | Developer-only pinned compatibility inventory and isolated case execution |
 | `docs`, `.github` | Implemented specifications, core roadmap and verification |

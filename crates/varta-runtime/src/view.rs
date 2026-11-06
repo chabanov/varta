@@ -119,6 +119,9 @@ impl Session {
             environment.root_font_size = size;
         }
         self.view.set_environment(environment)?;
+        if layout.images.is_some() {
+            self.view.set_images(layout.images.clone());
+        }
         self.layout = Some(layout);
         Ok(())
     }

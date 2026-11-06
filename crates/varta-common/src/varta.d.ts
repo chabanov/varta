@@ -80,6 +80,8 @@ declare namespace JSX {
   type Element = number;
   interface Attributes {
     class?: string;
+    /** Alias of `class`; an element takes one of the two. */
+    className?: string;
     style?: string;
     ref?: (node: number) => void;
     id?: string;
@@ -178,6 +180,12 @@ declare namespace JSX {
     img: Attributes & {
       src?: string;
       alt?: string;
+      width?: string;
+      height?: string;
+      srcset?: string;
+      sizes?: string;
+      decoding?: string;
+      loading?: string;
     };
     aside: Attributes;
   }

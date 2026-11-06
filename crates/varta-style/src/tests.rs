@@ -127,6 +127,18 @@ fn css_wide_keywords_follow_cascade_5() {
         computed(".t { display: unset }", &["", "t"], 800.0).remove(&CssProperty::Display),
         Some(Computed::Initial)
     );
+    // CSS Images 3 §5.1: `image-orientation` is inherited, so `unset`
+    // inherits; `object-fit` is not, so it resets.
+    let mut out = computed(
+        ".t { image-orientation: unset; object-fit: unset }",
+        &["", "t"],
+        800.0,
+    );
+    assert_eq!(
+        out.remove(&CssProperty::ImageOrientation),
+        Some(Computed::Inherit)
+    );
+    assert_eq!(out.remove(&CssProperty::ObjectFit), Some(Computed::Initial));
     assert_eq!(color(".t { color: #111 } .t.t { color: revert }"), None);
     // revert-layer rolls back to earlier layers, then unlayered to layers.
     assert_eq!(

@@ -84,6 +84,9 @@ pub(crate) struct Unit {
     /// A text resource (v38): its source is the resource text and its AST
     /// the one constant `default`.
     pub text: bool,
+    /// TSX `class`/`className` expressions that compose a class name from
+    /// parts at run time (see [`crate::classes`]).
+    pub class_compositions: Vec<Span>,
 }
 pub(crate) struct Graph {
     pub entry: PathBuf,
@@ -173,8 +176,9 @@ impl Builder<'_> {
         // profiles keep parsing every module as TypeScript.
         let tsx = self.profile.tsx() && crate::jsx::is_tsx(&input.path);
         let mut ast = parse::parse_module(&source, tsx)?;
+        let mut class_compositions = Vec::new();
         if tsx {
-            crate::jsx::desugar(&mut ast, &source)?;
+            class_compositions = crate::jsx::desugar(&mut ast, &source)?;
         }
         if self.profile.web_bytes() && !engine::is_prelude(&input.path) {
             global_members::rewrite(&mut ast);
@@ -261,6 +265,7 @@ impl Builder<'_> {
                 exports,
                 stars,
                 text: false,
+                class_compositions,
             },
         );
         Ok(())

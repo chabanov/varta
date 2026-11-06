@@ -7,6 +7,7 @@ mod corner_clip;
 pub(crate) mod corners;
 mod curve_region;
 mod groups;
+mod image;
 mod inline_decor;
 mod inline_groups;
 mod inline_outline;
@@ -556,6 +557,7 @@ impl Surface<'_> {
             Primitive::Rect(rect) => *rect,
             Primitive::Path(path, _) => path.bounds(),
             Primitive::Border(border) => border.path.bounds(),
+            Primitive::Image(image) => image.rect,
             Primitive::BeginGroup { .. } | Primitive::EndGroup => {
                 unreachable!("group markers are recorded by scope")
             }
@@ -1597,7 +1599,7 @@ fn paint_shaped_with(
             let glyph_run = match item {
                 PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,
                 // Decoration edges only advance; their boxes paint separately.
-                PositionedLayoutItem::InlineBox(edge) if decoration_edge(edge.kind) => continue,
+                PositionedLayoutItem::InlineBox(edge) if glyphless_box(edge.kind) => continue,
                 PositionedLayoutItem::InlineBox(_) => return Err(PaintError::Unsupported(id)),
             };
             let base_color = color(glyph_run.style().brush)?;
@@ -2593,7 +2595,13 @@ fn clip_scopes(
         if let Some(clip) = &surface.active_clip {
             scopes.children.insert(id, clip.clone());
         }
-        if matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select) && !radii.is_square() {
+        // A replaced image's content is clipped by its content-box curve
+        // whatever its `overflow` (CSS Backgrounds 3 §5.3), as a control's.
+        if matches!(
+            element.tag,
+            Tag::Input | Tag::Textarea | Tag::Select | Tag::Img
+        ) && !radii.is_square()
+        {
             let content = bounds.content;
             let insets = [
                 content.y - bounds.rect.y,
@@ -2645,6 +2653,7 @@ fn rasterize_inner_scoped(
     let env = Environment {
         width: f64::from(width) / f64::from(scale),
         height: f64::from(height) / f64::from(scale),
+        device_pixel_ratio: f64::from(scale),
         ..*env
     };
     let units = Units::new(&env).ok_or(layout::LayoutError::RootFont)?;
@@ -2702,7 +2711,9 @@ fn rasterize_inner_scoped(
         affines: Vec::new(),
         capture: None,
     };
-    let mut pending = order::Order::new(tree, &env, &geometry, |id| flows.contains_key(&id))?;
+    let mut pending = order::Order::new(tree, &env, &geometry, |id| {
+        flows.get(&id).map(|frame| frame.atoms.as_slice())
+    })?;
     let scopes = clip_scopes(tree, &env, &geometry, units, &pending, &mut pixmap)?;
     // Rectangular clips of the open opacity groups, innermost last.
     let mut group_clips = Vec::<(u32, BoxRect)>::new();
@@ -2984,6 +2995,14 @@ fn rasterize_inner_scoped(
                     scrolls.insert(id, scroll);
                 }
                 text_hits.insert(id, hit);
+            } else if element.tag == Tag::Img {
+                // The content scope differs from the element's own scope
+                // exactly when its content-box curve was pushed.
+                let rounded = !crate::render::clips::same(
+                    &scopes.content.get(&id).cloned(),
+                    &scopes.own.get(&id).cloned(),
+                );
+                image::paint(&mut pixmap, (tree, &env), id, (geometry[&id], rounded))?;
             }
             pixmap.active_clip = scopes.children.get(&id).cloned();
             if let Some(frame) = flows.get(&id) {
@@ -3013,6 +3032,7 @@ fn rasterize_inner_scoped(
                     &mut pending,
                     &mut inline_programs,
                 )?;
+                pending.inline_atoms(&frame.atoms);
             }
             if let Some(marker) = markers.get(&id) {
                 let color = current_color(tree, &env, id).ok_or(PaintError::Unsupported(id))?;
@@ -3055,11 +3075,13 @@ fn rasterize_inner_scoped(
             .transpose()?
             .unwrap_or(1.0);
         if phase == order::Phase::Enter
-            && (matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
-                || node.parent.is_some_and(|parent| {
-                    tree.computed_property(parent, &env, CssProperty::Display)
-                        .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"))
-                }))
+            && (matches!(
+                element.tag,
+                Tag::Input | Tag::Textarea | Tag::Select | Tag::Img
+            ) || node.parent.is_some_and(|parent| {
+                tree.computed_property(parent, &env, CssProperty::Display)
+                    .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"))
+            }))
         {
             pending.atomic(id);
             continue;
@@ -3258,7 +3280,10 @@ fn rasterize_inner_scoped(
         }
         if flows.contains_key(&id)
             || markers.contains_key(&id)
-            || matches!(element.tag, Tag::Input | Tag::Textarea | Tag::Select)
+            || matches!(
+                element.tag,
+                Tag::Input | Tag::Textarea | Tag::Select | Tag::Img
+            )
         {
             pending.content(id);
         }
@@ -3346,11 +3371,14 @@ fn rasterize_inner_scoped(
     })
 }
 
-/// Inline decoration edges contribute advance but no glyphs.
-pub(crate) fn decoration_edge(kind: parley::InlineBoxKind) -> bool {
+/// Inline decoration edges and atomic inlines contribute advance but no
+/// glyphs; an atomic inline paints as its own box.
+pub(crate) fn glyphless_box(kind: parley::InlineBoxKind) -> bool {
     matches!(
         kind,
-        parley::InlineBoxKind::InlineStart | parley::InlineBoxKind::InlineEnd
+        parley::InlineBoxKind::InlineStart
+            | parley::InlineBoxKind::InlineEnd
+            | parley::InlineBoxKind::InFlow
     )
 }
 

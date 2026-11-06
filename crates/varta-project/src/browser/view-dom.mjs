@@ -1,7 +1,7 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { createFontNamespace } from './view-fonts.mjs';
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
-import { createViewModel } from "./view-model.mjs";
+import { createViewModel, imageCandidateNames } from "./view-model.mjs";
 import { readMediaInputs, MEDIA_INPUT_QUERIES } from "./view-engine.mjs";
 
 const V = registry.view, W = V.wire, F = V.filters;
@@ -142,8 +142,13 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
     // Asset authority is a trusted, already verified blob map. A guest resource
     // name must never become an ambient URL fetch, even on an unattached node.
     const decoded = decodeViewBatch(bytes), resolved = new Map();
-    for (let i = 0; i < decoded.length; i++) if (decoded[i].name === "set_attribute" && decoded[i].attribute === "src") {
-      const url = ownedAssets.get(decoded[i].text); if (typeof url !== "string" || !url.startsWith("blob:")) throw new ViewProtocolError("unpackaged view asset", i); resolved.set(i, url);
+    const owned = (name, i) => { const url = ownedAssets.get(name); if (typeof url !== "string" || !url.startsWith("blob:")) throw new ViewProtocolError("unpackaged view asset", i); return url; };
+    for (let i = 0; i < decoded.length; i++) if (decoded[i].name === "set_attribute" && decoded[i].attribute === "src") resolved.set(i, owned(decoded[i].text, i));
+    else if (decoded[i].name === "set_attribute" && decoded[i].attribute === "srcset") {
+      // Each candidate keeps its descriptor; only its resource name becomes
+      // the owned Blob URL (a name never becomes an ambient fetch).
+      const names = imageCandidateNames(decoded[i].text); if (names === null) throw new ViewProtocolError("attribute value", i);
+      resolved.set(i, decoded[i].text.split(",").map((part, index) => part.trim().replace(names[index], owned(names[index], i))).join(", "));
     }
     const { operations, effects, skippedValues } = model.commit(bytes), current = snapshots();
     applying = true;
@@ -155,7 +160,7 @@ export function createViewDom({ container, viewEngine, onEvent = () => {}, onErr
           case "create_element": { const element = document.createElement(op.tag); nodes.set(op.node, element); ids.set(element, op.node); break; }
           case "create_text": { const text = document.createTextNode(op.text); nodes.set(op.node, text); ids.set(text, op.node); break; }
           case "set_text": node.data = op.text; break;
-          case "set_attribute": node.setAttribute(op.attribute, op.attribute === "src" ? resolved.get(i) : op.attribute === "href" ? "#" : op.text); break;
+          case "set_attribute": node.setAttribute(op.attribute, op.attribute === "src" || op.attribute === "srcset" ? resolved.get(i) : op.attribute === "href" ? "#" : op.text); break;
           case "remove_attribute": node.removeAttribute(op.attribute); break;
           case "set_class": node.className = op.text; break;
           case "insert": nodes.get(op.parent).insertBefore(node, op.before === W.noNode ? null : nodes.get(op.before)); break;

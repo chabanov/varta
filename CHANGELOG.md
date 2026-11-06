@@ -31,6 +31,20 @@
   browser host's L0 contract is unchanged. Native and Chrome match at 1x,
   1.25x and 2x (`scripts/test-native-css-engine.mjs`); the Tailwind
   application corpus's accepted class uses rise from 25.3% to 70.4%.
+- Native `img`: packaged images (a configuration's new `images` map,
+  stored in resource section version 2 and carried by the browser bundle
+  under the same names) are laid out and drawn by the native renderer to the
+  HTML and CSS standards: PNG/APNG, JPEG, GIF, WebP, BMP and ICO by
+  signature, converted to sRGB (ICC, `cICP`, `sRGB`, `cHRM`/`gAMA`) with EXIF
+  orientation and `image-orientation`, animations on the view clock,
+  `srcset`/`sizes`, `width`/`height` hints, `object-fit`, `object-position`,
+  `image-rendering`, `aspect-ratio`, replaced sizing, inline images in lines
+  of text with every `vertical-align` (a recorded Parley patch for atomic
+  inlines), Skia's sampling, rounded content clips, opacity and transforms,
+  and named by `alt`; checked against Chrome at four scales. AVIF, SVG, HDR
+  images and alternative-text rendering are refused. New dependencies `png`
+  0.18.1, `image` 0.25.10 and `moxcms` 0.8.1; the image limits await an
+  owner decision.
 - V38 iteration protocol: a class's `[Symbol.iterator]()` generator method
   makes its instances iterable by `for...of`, array spreads, `Array.from` and
   `yield*`; classes declare synchronous generator methods; array literals
@@ -42,6 +56,19 @@
   Iterable<T>` checks the method. No host ABI or value layout change; v37
   keeps rejecting every form. Conformance: 135 passed, 5 known unsupported of
   140 (new feature `iteration-protocol`).
+- K8 T1: Tailwind CSS at compile level. The new tooling crate
+  `varta-tailwind` ports the CSS-first compiler of Tailwind CSS v4.3.5 to
+  Rust (no Node or JavaScript): candidates, all built-in utilities and
+  variants, theme, Preflight, `@apply`, `@utility`, `@custom-variant`,
+  `@variant`, `@source inline()` and the theme functions, with output in a
+  canonical form (no comments or nesting, static `@supports`, `min-`/`max-`
+  media ranges). `"tailwind": {"entry": "src/app.css"}` makes `check`, `dev`
+  and `build` generate the stylesheet from the module graph's class tokens
+  and serve it as the entry's text resource, deterministically. TSX accepts
+  `className` as an alias of `class`; a class name composed at run time, and
+  `@plugin`/`@config`, are errors. It matches the official compiler on all
+  39,152 oracle candidates; applying full Tailwind output waits for the T2
+  stylesheet grammar.
 - V38 compiled JSON decoders scan string bodies and whitespace, and copy
   escaped strings, sixteen UTF-16 units per step with fixed-width WebAssembly
   SIMD (`simd128`): 0.75 fuel per scanned string byte instead of 11.5, and a

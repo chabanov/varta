@@ -1,6 +1,6 @@
-//! Preparing an application instance: the packaged artifact, its fonts, its
-//! grants within the host ceiling, its stored permission decisions and its
-//! storage.
+//! Preparing an application instance: the packaged artifact, its fonts and
+//! images, its grants within the host ceiling, its stored permission
+//! decisions and its storage.
 use super::consent::{Consent, ConsentStore, HostPrompt};
 use super::{FontSet, ShellError, storage};
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use varta_artifact::{Artifact, MAX_MANIFEST_BYTES, read_bounded};
 use varta_common::{CapabilityGrant, Manifest, VartaError};
 use varta_runtime::{Application, ApplicationOptions, RunOptions, VartaRuntime, ViewLayout};
-use varta_view::PlatformEffects;
+use varta_view::{ImageSet, PlatformEffects};
 
 /// The largest font file the shell reads from the command line: the
 /// artifact resource section's per-face limit.
@@ -46,6 +46,8 @@ pub struct Launch {
     run: RunOptions,
     identity: String,
     fonts: Option<FontSet>,
+    /// The artifact's decoded images; `None` for an unpackaged module.
+    images: Option<Arc<ImageSet>>,
     consent: Option<Consent>,
 }
 
@@ -69,6 +71,7 @@ impl Launch {
             wasm,
             run: RunOptions::default(),
             fonts: font,
+            images: None,
             consent: None,
         })
     }
@@ -76,10 +79,13 @@ impl Launch {
     /// Read and validate a packaged artifact, its fonts and its grants.
     ///
     /// The artifact's resource section (bounded, digest-checked, bound to
-    /// the Wasm, every face matching its declaration) is read with the
-    /// artifact; its faces are then parsed by the text shaper. A malformed,
-    /// tampered or oversized font fails here, before storage directories
-    /// exist and before any guest code runs.
+    /// the Wasm, every face matching its declaration, every image admitted
+    /// by its structure) is read with the artifact; its faces are then
+    /// parsed by the text shaper and its images decoded once
+    /// ([`ImageSet::decode`]). A malformed, tampered or oversized font or
+    /// image fails here, before storage directories exist and before any
+    /// guest code runs. The view is given the images (possibly none), so a
+    /// guest `img` naming another image is refused as in the browser.
     ///
     /// The manifest is the package request and the host ceiling, when
     /// given, narrows it: the runtime admits a concrete resource only when
@@ -120,6 +126,14 @@ impl Launch {
         if let Some(fonts) = &fonts {
             validate(fonts)?;
         }
+        let images = ImageSet::decode(
+            packaged
+                .resources
+                .images()
+                .iter()
+                .map(|image| (image.name.as_str(), image.data.as_slice())),
+        )
+        .map_err(ShellError::Images)?;
         let ceiling = package.policy.map(read_policy).transpose()?;
         let mut run = RunOptions::from_manifests(&artifact.manifest, ceiling.as_ref())?;
         let identity = varta_runtime::artifact_identity(&artifact.wasm);
@@ -137,6 +151,7 @@ impl Launch {
             run,
             identity,
             fonts,
+            images: Some(Arc::new(images)),
             consent: Some(consent),
         })
     }
@@ -169,6 +184,13 @@ impl Launch {
     #[must_use]
     pub fn fonts(&self) -> Option<&FontSet> {
         self.fonts.as_ref()
+    }
+
+    /// The decoded images the view draws: the artifact's, or none for an
+    /// unpackaged module.
+    #[must_use]
+    pub fn images(&self) -> Option<&ImageSet> {
+        self.images.as_deref()
     }
 
     /// Validate the module and start its application instance with the
@@ -208,9 +230,14 @@ impl Launch {
         let Self {
             wasm,
             run,
+            images,
             mut consent,
             ..
         } = self;
+        let layout = match images {
+            Some(images) => layout.with_images(images),
+            None => layout,
+        };
         let prompter = match (&consent, prompt) {
             (Some(consent), Some(prompt)) => Some(consent.prompter(prompt)),
             _ => None,

@@ -1658,7 +1658,9 @@
     ]
   },
   "tailwind-app-170": {
-    "computed": {},
+    "computed": {
+      "object-fit": "cover"
+    },
     "statuses": [
       0,
       0,
@@ -1666,7 +1668,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-171": {
@@ -1799,7 +1803,9 @@
     ]
   },
   "tailwind-app-18": {
-    "computed": {},
+    "computed": {
+      "aspect-ratio": "16 / 9"
+    },
     "statuses": [
       0,
       0,
@@ -1807,7 +1813,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "tailwind-app-180": {

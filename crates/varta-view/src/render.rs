@@ -129,6 +129,7 @@ impl Renderer {
         crate::paint::validate_dimensions(width, height, scale)?;
         let mut env = view.environment;
         env.width = f64::from(width) / f64::from(scale);
+        env.device_pixel_ratio = f64::from(scale);
         let prepared = styles::prepare(&view.tree, env, self.previous.as_ref())?;
         let (hits, misses) = self
             .font

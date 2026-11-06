@@ -192,7 +192,10 @@ impl Surface<'_> {
         for draw in &recording.commands[start + 1..] {
             if matches!(
                 draw.primitive,
-                Primitive::Rect(_) | Primitive::Path(..) | Primitive::Border(_)
+                Primitive::Rect(_)
+                    | Primitive::Path(..)
+                    | Primitive::Border(_)
+                    | Primitive::Image(_)
             ) {
                 raw = merge(raw, draw.bounds)?;
                 let mut bounds = Some(draw.bounds);

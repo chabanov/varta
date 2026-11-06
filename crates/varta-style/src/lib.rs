@@ -176,6 +176,9 @@ pub fn inherited(property: CssProperty) -> bool {
             | P::WhiteSpace
             | P::OverflowWrap
             | P::Cursor
+            // CSS Images 3 §5.1 and §5.2.
+            | P::ImageOrientation
+            | P::ImageRendering
     )
 }
 

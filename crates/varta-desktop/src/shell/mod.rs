@@ -70,6 +70,10 @@ pub enum ShellError {
     /// of `--font`.
     #[error("fonts: {0}")]
     Fonts(#[source] varta_view::TextMeasureError),
+    /// An image of the artifact's resource section did not decode within
+    /// the view image limits.
+    #[error("images: {0}")]
+    Images(#[source] varta_view::ImageError),
     /// `--font` or `--system-fonts` was given for an artifact that ships its
     /// own fonts.
     #[error(

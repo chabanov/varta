@@ -1,8 +1,12 @@
 //! Bounded rich-text formatting contexts for inline descendants of a box.
+mod atoms;
 mod ellipsis;
 use crate::layout::{self, BoxGeometry, BoxRect, LayoutError, TextShape};
 use crate::style::Environment;
-use crate::text::{TextSpan, WhiteSpaceMode, edges::TextEdge};
+use crate::text::{
+    TextSpan, WhiteSpaceMode,
+    edges::{EdgeKind, TextEdge},
+};
 use crate::tree::{Content, Tree};
 use crate::{TextMeasureError, TextMeasurer, TextMetrics};
 use parley::{InlineBoxKind, Layout, LineHeight, LineItem};
@@ -67,6 +71,10 @@ impl Vertical {
             .clusters()
             .next()
             .and_then(|cluster| line_heights.get(&cluster.first_style().brush));
+        Self::owned_by(run, owner)
+    }
+    /// A run's vertical extent with `owner`'s line height.
+    fn owned_by(run: &parley::Run<'_, u32>, owner: Option<&LineHeight>) -> Self {
         let m = run.metrics();
         let line_height = match owner {
             Some(LineHeight::Absolute(value)) => *value,
@@ -93,6 +101,8 @@ pub(crate) struct ContentFlow {
     /// left/right margin and padding of each owning element.
     edges: Vec<TextEdge>,
     spacing: BTreeMap<u32, Horizontal>,
+    /// Inline images of the flow, atomic inlines (`atoms`).
+    atoms: BTreeMap<u32, atoms::Atom>,
     /// `text-overflow: ellipsis` truncates the root's single line.
     ellipsis: bool,
 }
@@ -163,12 +173,19 @@ impl ContentFlow {
     pub(crate) fn hidden(&self, id: u32) -> bool {
         self.hidden.contains(&id)
     }
+    /// Whether `id` is an atomic inline of the flow, painted as its own box.
+    pub(crate) fn atom(&self, id: u32) -> bool {
+        self.atoms.contains_key(&id)
+    }
 }
 pub(crate) struct ShapedFlow {
     pub layout: Layout<u32>,
     pub offsets: Vec<f32>,
     /// Each line box's top and bottom, relative to the flow's content top.
     pub line_boxes: Vec<[f32; 2]>,
+    /// How far each atomic inline's margin box bottom lies below its line's
+    /// baseline.
+    pub atoms: BTreeMap<u32, f32>,
     pub metrics: TextMetrics,
 }
 #[derive(Clone, Copy)]
@@ -237,6 +254,35 @@ pub(crate) struct Frame {
     pub fragments: BTreeMap<u32, Vec<BoxRect>>,
     pub fragment_lines: BTreeMap<u32, Vec<usize>>,
     pub glyph_owners: Vec<Vec<u32>>,
+    /// The flow's laid out images, each painted as its own atomic box after
+    /// the flow's text, in tree order.
+    pub atoms: Vec<u32>,
+}
+
+/// The strut of `id`'s line boxes: the distances its first available font
+/// reaches above and below the baseline with half of its line height's
+/// leading on each side, as a rich flow's strut.
+pub(crate) fn strut(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+    font: (&mut TextMeasurer, f32),
+) -> Result<(f32, f32), LayoutError> {
+    let (measurer, size) = font;
+    let (options, families) = layout::text_style(tree, env, id, size, measurer)?;
+    let options = layout::controls::control_line_height(tree, id, measurer, &families, options)?;
+    let (_, layout) = measurer
+        .shape_styled(" ", None, &families, options)
+        .map_err(LayoutError::text(id))?;
+    let run = layout
+        .lines()
+        .next()
+        .and_then(|line| line.runs().next())
+        .ok_or(LayoutError::Unsupported(id))?;
+    // The element's own line height, as `Vertical::owned` takes a span's:
+    // a lone space's run metrics need not carry it.
+    let vertical = Vertical::owned_by(&run, Some(&options.line_height.unwrap_or_default()));
+    Ok((vertical.above, vertical.below))
 }
 
 pub(crate) fn inline_tag(tag: Tag) -> bool {
@@ -254,6 +300,10 @@ pub(crate) fn blockified(tree: &Tree, env: &Environment, id: u32) -> bool {
 fn is_inline(tree: &Tree, env: &Environment, id: u32) -> bool {
     match &tree.nodes[&id].content {
         Content::Text(_) => true,
+        // An image that does not form its own line is an atomic inline.
+        Content::Element(e) if e.tag == Tag::Img => {
+            layout::replaced::inline(tree, env, id) && !layout::replaced::alone(tree, env, id)
+        }
         Content::Element(e) => match tree.computed_property(id, env, P::Display).as_deref() {
             Some("none") => true,
             Some("inline") => {
@@ -432,6 +482,10 @@ pub(crate) fn collect(
     let mut previous_cr = false;
     let mut edges = Vec::<TextEdge>::new();
     let mut spacing = BTreeMap::<u32, Horizontal>::new();
+    let mut atoms = BTreeMap::new();
+    // The text length at the last atomic inline: a collapsible space right
+    // after it is content, even at the start of a line.
+    let mut atom_at = None;
     // Edges recorded while a collapsible space is pending follow that space
     // only if it is emitted; a forced break or the end discards it instead.
     let mut deferred = Vec::<usize>::new();
@@ -479,6 +533,38 @@ pub(crate) fn collect(
         }
         path.insert(0, id);
         let source = match &node.content {
+            Content::Element(e) if e.tag == Tag::Img => {
+                if !is_inline(tree, env, id)
+                    || path[1..].iter().any(|&ancestor| {
+                        tree.computed_property(ancestor, env, P::Opacity)
+                            .is_some_and(|raw| raw.parse::<f32>().ok() != Some(1.0))
+                    })
+                {
+                    return Err(LayoutError::Unsupported(id));
+                }
+                let atom = atoms::measure(tree, env, id, (measurer, size))?;
+                // A collapsible space before an atomic inline is content.
+                if let Some(owner) = whitespace.take() {
+                    append(&mut text, &mut spans, owner, ' ')?;
+                    for edge in deferred.drain(..) {
+                        edges[edge].index = text.len();
+                    }
+                }
+                if edges.len() >= crate::text::edges::MAX_EDGES {
+                    return Err(LayoutError::Limit);
+                }
+                edges.push(TextEdge {
+                    owner: id,
+                    index: text.len(),
+                    kind: EdgeKind::Atom,
+                    advance: atom.advance(),
+                });
+                atom_at = Some(text.len());
+                previous_cr = false;
+                paths.insert(id, path);
+                atoms.insert(id, atom);
+                continue;
+            }
             Content::Element(e) => {
                 if !is_inline(tree, env, id) {
                     return Err(LayoutError::Unsupported(id));
@@ -591,7 +677,7 @@ pub(crate) fn collect(
                 return Err(LayoutError::Unsupported(id));
             }
             if !style.white_space.preserves() && ch.is_ascii_whitespace() {
-                if !text.is_empty() && !text.ends_with('\n') {
+                if (!text.is_empty() && !text.ends_with('\n')) || atom_at == Some(text.len()) {
                     whitespace.get_or_insert(index);
                 }
                 continue;
@@ -665,6 +751,7 @@ pub(crate) fn collect(
         empty,
         edges,
         spacing,
+        atoms,
         ellipsis,
     });
     let mut shape = TextShape {
@@ -706,6 +793,14 @@ pub(crate) fn collect(
         shape.metrics = shaped.metrics;
     }
     ellipsis::admitted(root, &shape)?;
+    if ellipsis
+        && shape
+            .rich
+            .as_ref()
+            .is_some_and(|rich| !rich.atoms.is_empty())
+    {
+        return Err(LayoutError::Unsupported(root));
+    }
     // Truncation measures the untruncated line by Parley's trailing white
     // space, not by the native white-space model's extents.
     if ellipsis
@@ -743,7 +838,11 @@ fn edge(
     edges.push(TextEdge {
         owner,
         index: text.len(),
-        opening,
+        kind: if opening {
+            EdgeKind::Opening
+        } else {
+            EdgeKind::Closing
+        },
         advance,
     });
     Ok(())
@@ -786,6 +885,7 @@ impl ContentFlow {
                 layout: Layout::new(),
                 offsets: Vec::new(),
                 line_boxes: Vec::new(),
+                atoms: BTreeMap::new(),
                 metrics: shape.metrics,
             });
         }
@@ -800,6 +900,7 @@ impl ContentFlow {
         let mut y = 0.0f32;
         let mut offsets = Vec::new();
         let mut line_boxes = Vec::new();
+        let mut placed = BTreeMap::new();
         for (index, line) in layout.lines().enumerate() {
             measurer.charge_inline_work(1)?;
             if index + 1 == layout.len()
@@ -840,6 +941,26 @@ impl ContentFlow {
                     }
                 }
             }
+            let line_atoms = self.line_atoms(&line, measurer)?;
+            for atom in &line_atoms {
+                if let atoms::Align::Bottom(bottom) = atom.1.align {
+                    vertical.above = vertical.above.max(atom.1.height() - bottom);
+                    vertical.below = vertical.below.max(bottom);
+                }
+            }
+            // Line-relative images extend the line box only when taller than
+            // everything else in it (CSS 2.1 §10.8.1 `top`/`bottom`).
+            for (_, atom) in &line_atoms {
+                let excess = atom.height() - (vertical.above + vertical.below);
+                match atom.align {
+                    atoms::Align::LineTop if excess > 0.0 => vertical.below += excess,
+                    atoms::Align::LineBottom if excess > 0.0 => vertical.above += excess,
+                    _ => {}
+                }
+            }
+            for (id, atom) in line_atoms {
+                placed.insert(id, atom.bottom((vertical.above, vertical.below)));
+            }
             offsets.push(y + vertical.above - line.metrics().baseline);
             line_boxes.push([y, y + vertical.above + vertical.below]);
             y += vertical.above + vertical.below;
@@ -852,8 +973,32 @@ impl ContentFlow {
             layout,
             offsets,
             line_boxes,
+            atoms: placed,
             metrics,
         })
+    }
+
+    /// The atomic inlines on `line`.
+    fn line_atoms(
+        &self,
+        line: &parley::Line<'_, u32>,
+        measurer: &mut TextMeasurer,
+    ) -> Result<Vec<(u32, atoms::Atom)>, TextMeasureError> {
+        let mut found = Vec::new();
+        if self.atoms.is_empty() {
+            return Ok(found);
+        }
+        for item in line.items_unpositioned() {
+            measurer.charge_inline_work(1)?;
+            if let LineItem::InlineBox(atom) = item
+                && atom.kind == InlineBoxKind::InFlow
+            {
+                let id = u32::try_from(atom.id).map_err(|_| TextMeasureError::Limit)?;
+                let atom = self.atoms.get(&id).ok_or(TextMeasureError::Limit)?;
+                found.push((id, *atom));
+            }
+        }
+        Ok(found)
     }
 
     pub fn project(
@@ -897,12 +1042,24 @@ impl ContentFlow {
                 let run = match item {
                     LineItem::Run(run) => run,
                     LineItem::InlineBox(edge) => {
+                        let owner = u32::try_from(edge.id).map_err(|_| LayoutError::Limit)?;
                         let opening = match edge.kind {
                             InlineBoxKind::InlineStart => true,
                             InlineBoxKind::InlineEnd => false,
+                            InlineBoxKind::InFlow => {
+                                let bottom = *shaped.atoms.get(&owner).ok_or(LayoutError::Limit)?;
+                                self.project_atom(
+                                    owner,
+                                    [bounds.rect.x + x, top, bottom],
+                                    (index, bounds.rect.width),
+                                    measurer,
+                                    &mut sink,
+                                )?;
+                                x += edge.width;
+                                continue;
+                            }
                             _ => return Err(LayoutError::Limit),
                         };
-                        let owner = u32::try_from(edge.id).map_err(|_| LayoutError::Limit)?;
                         self.edge(
                             owner,
                             opening,
@@ -1054,7 +1211,49 @@ impl ContentFlow {
             bounds,
             fragments,
             fragment_lines,
+            atoms: self
+                .edges
+                .iter()
+                .filter(|edge| edge.kind == EdgeKind::Atom)
+                .map(|edge| edge.owner)
+                .collect(),
         })
+    }
+
+    /// Projects one atomic inline whose margin box starts at `x` on the line
+    /// with baseline `baseline`, its bottom `bottom` below it. The image
+    /// receives its border box; enclosing inline boxes receive its advance
+    /// at their own font box.
+    fn project_atom(
+        &self,
+        owner: u32,
+        origin: [f32; 3],
+        line: (usize, f32),
+        measurer: &mut TextMeasurer,
+        sink: &mut Fragments<'_>,
+    ) -> Result<(), LayoutError> {
+        let (index, containing_width) = line;
+        let [x, baseline, bottom] = origin;
+        let atom = self.atoms.get(&owner).ok_or(LayoutError::Limit)?;
+        sink.separate(owner, index, atom.border_box(x, baseline, bottom))?;
+        let path = self.paths.get(&owner).ok_or(LayoutError::Limit)?;
+        for &id in path.iter().skip(1) {
+            measurer
+                .charge_inline_work(1)
+                .map_err(|_| LayoutError::Limit)?;
+            let font = self.font_boxes.get(&id).ok_or(LayoutError::Limit)?;
+            let piece = font.padded(
+                BoxRect {
+                    x,
+                    y: baseline - font.ascent,
+                    width: atom.advance(),
+                    height: font.ascent + font.descent,
+                },
+                containing_width,
+            )?;
+            sink.push(id, index, piece)?;
+        }
+        Ok(())
     }
 
     /// Projects one decoration edge at absolute `[x, line top]`. The owner
@@ -1213,6 +1412,11 @@ pub(crate) fn frames(
                 clip
             };
             let mut content = union;
+            if let Some(atom) = rich.atoms.get(&node)
+                && pieces.is_some_and(|pieces| !pieces.is_empty())
+            {
+                content = atom.content(union);
+            }
             if !rich.hidden.contains(&node)
                 && pieces.is_some_and(|pieces| !pieces.is_empty())
                 && let Some(font) = rich.font_boxes.get(&node)

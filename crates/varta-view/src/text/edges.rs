@@ -1,14 +1,26 @@
-//! Owned decoration boundaries. Source text and byte offsets remain unchanged.
+//! Owned decoration boundaries and atomic inlines. Source text and byte
+//! offsets remain unchanged.
 use super::{MAX_INLINE_WORK, TextMeasureError};
 #[cfg(test)]
 mod tests;
 pub(crate) const MAX_EDGES: usize = crate::layout::MAX_LAYOUT_NODES * 2;
 
+/// What an edge stands for in the line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum EdgeKind {
+    /// The opening margin, border and padding of a non-replaced inline box.
+    Opening,
+    /// Its closing margin, border and padding.
+    Closing,
+    /// An atomic inline (an inline image's margin box): CSS Text 3 §5.1
+    /// puts a soft wrap opportunity before and after it.
+    Atom,
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TextEdge {
     pub owner: u32,
     pub index: usize,
-    pub opening: bool,
+    pub kind: EdgeKind,
     pub advance: f32,
 }
 impl TextEdge {
@@ -16,10 +28,10 @@ impl TextEdge {
         parley::InlineBox {
             id: u64::from(self.owner),
             index: self.index,
-            kind: if self.opening {
-                parley::InlineBoxKind::InlineStart
-            } else {
-                parley::InlineBoxKind::InlineEnd
+            kind: match self.kind {
+                EdgeKind::Opening => parley::InlineBoxKind::InlineStart,
+                EdgeKind::Closing => parley::InlineBoxKind::InlineEnd,
+                EdgeKind::Atom => parley::InlineBoxKind::InFlow,
             },
             width: self.advance,
             height: 0.0,

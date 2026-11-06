@@ -154,6 +154,7 @@ pub(crate) fn truncate(
             .collect(),
         edges: Vec::new(),
         spacing: rich.spacing.clone(),
+        atoms: std::collections::BTreeMap::new(),
         ellipsis: false,
     };
     let shape = TextShape {

@@ -148,6 +148,7 @@ pub(super) fn unit(path: &Path, text: String) -> Result<Unit, CompilerError> {
         }],
         stars: Vec::new(),
         text: true,
+        class_compositions: Vec::new(),
     })
 }
 

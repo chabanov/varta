@@ -51,7 +51,7 @@ impl Request<'_> {
         for edge in self.edges {
             edge.owner.hash(&mut h);
             edge.index.hash(&mut h);
-            edge.opening.hash(&mut h);
+            edge.kind.hash(&mut h);
             edge.advance.to_bits().hash(&mut h);
         }
         h.finish()

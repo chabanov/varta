@@ -17,7 +17,18 @@ impl<B: Brush> LayoutData<B> {
         let mut opening = 0.0;
         let mut whitespace = 0.0;
         let mut wrap = TextWrapMode::Wrap;
+        // An in-flow (atomic) box and its closing edges form a word; the
+        // next text, opening edge or box starts another.
+        let mut atom = false;
         for item in &self.items {
+            if atom
+                && !(item.kind == LayoutItemKind::InlineBox
+                    && self.inline_boxes[item.index].kind == InlineBoxKind::InlineEnd)
+            {
+                atom = false;
+                min = min.max(word);
+                word = 0.0;
+            }
             match item.kind {
                 LayoutItemKind::TextRun => {
                     let run = &self.runs[item.index];
@@ -61,15 +72,16 @@ impl<B: Brush> LayoutData<B> {
                             whitespace = 0.0;
                         }
                         InlineBoxKind::InFlow => {
-                            word += opening;
-                            opening = 0.0;
                             line += edge.width;
                             if wrap == TextWrapMode::Wrap {
-                                min = min.max(word - whitespace).max(edge.width);
-                                word = 0.0;
+                                // The opening edges right before it join it.
+                                min = min.max(word - whitespace);
+                                word = opening + edge.width;
+                                atom = true;
                             } else {
-                                word += edge.width;
+                                word += opening + edge.width;
                             }
+                            opening = 0.0;
                             whitespace = 0.0;
                         }
                         _ => {}

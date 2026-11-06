@@ -6,4 +6,6 @@
 !/crates/varta-compiler/src/link/intrinsics.wasm
 # The checked-in browser KV codec module (`scripts/build-kv-codec.py`).
 !/crates/varta-project/src/browser/kv-codec.wasm
+# The checked-in browser view style engine (`scripts/build-view-engine.py`).
+!/crates/varta-project/src/browser/view-engine.wasm
 .DS_Store

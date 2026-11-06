@@ -429,7 +429,7 @@
  }
 --- a/src/layout/inline_edges.rs
 +++ b/src/layout/inline_edges.rs
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,101 @@
 +// Copyright 2026 the Varta Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -449,7 +449,18 @@
 +        let mut opening = 0.0;
 +        let mut whitespace = 0.0;
 +        let mut wrap = TextWrapMode::Wrap;
++        // An in-flow (atomic) box and its closing edges form a word; the
++        // next text, opening edge or box starts another.
++        let mut atom = false;
 +        for item in &self.items {
++            if atom
++                && !(item.kind == LayoutItemKind::InlineBox
++                    && self.inline_boxes[item.index].kind == InlineBoxKind::InlineEnd)
++            {
++                atom = false;
++                min = min.max(word);
++                word = 0.0;
++            }
 +            match item.kind {
 +                LayoutItemKind::TextRun => {
 +                    let run = &self.runs[item.index];
@@ -493,15 +504,16 @@
 +                            whitespace = 0.0;
 +                        }
 +                        InlineBoxKind::InFlow => {
-+                            word += opening;
-+                            opening = 0.0;
 +                            line += edge.width;
 +                            if wrap == TextWrapMode::Wrap {
-+                                min = min.max(word - whitespace).max(edge.width);
-+                                word = 0.0;
++                                // The opening edges right before it join it.
++                                min = min.max(word - whitespace);
++                                word = opening + edge.width;
++                                atom = true;
 +                            } else {
-+                                word += edge.width;
++                                word += opening + edge.width;
 +                            }
++                            opening = 0.0;
 +                            whitespace = 0.0;
 +                        }
 +                        _ => {}
@@ -531,10 +543,12 @@
  use crate::style::Brush;
  use core::cmp::Ordering;
  use core::fmt;
-@@ -157,6 +158,107 @@
+@@ -155,6 +156,107 @@
+     pub fn break_lines(&mut self) -> BreakLines<'_, B> {
+         unjustify(&mut self.data);
          BreakLines::new(self)
-     }
- 
++    }
++
 +    /// Varta: visits every shaped run in logical order, before line
 +    /// breaking, with its text range, font and metrics; a returned ascent and
 +    /// descent replace the run's own for line layout, and a line height
@@ -634,11 +648,9 @@
 +                index += parts;
 +            }
 +        }
-+    }
-+
+     }
+ 
      /// Breaks all lines with the specified maximum advance.
-     pub fn break_all_lines(&mut self, max_advance: Option<f32>) {
-         self.break_lines()
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
 @@ -93,6 +93,12 @@
@@ -675,25 +687,29 @@
                      return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
-@@ -167,6 +167,9 @@
+@@ -167,6 +167,12 @@
      prev_boundary: Option<PrevBoundaryState>,
      /// Saved breaker state for the last emergency line-breaking opportunity
      emergency_boundary: Option<PrevBoundaryState>,
 +    // Snapshot before consecutive opening decoration edges. The text's next
 +    // real break opportunity belongs here, never between the edge and its text.
 +    inline_start: Option<PrevBoundaryState>,
++    // An in-flow (atomic) box was just appended: the soft wrap opportunity
++    // after it follows the closing decoration edges right after it.
++    atom_end: bool,
  }
  
  impl Default for BreakerState {
-@@ -185,6 +188,7 @@
+@@ -185,6 +191,8 @@
              line: LineState::default(),
              prev_boundary: None,
              emergency_boundary: None,
 +            inline_start: None,
++            atom_end: false,
          }
      }
  }
-@@ -192,6 +196,7 @@
+@@ -192,6 +200,7 @@
  impl BreakerState {
      /// Add the cluster(s) currently being evaluated to the current line
      pub fn append_cluster_to_line(&mut self, next_x: f32, clusters_height: f32) {
@@ -701,7 +717,7 @@
          self.line.items.end = self.item_idx + 1;
          self.line.clusters.end = self.cluster_idx + 1;
          self.cluster_idx += 1;
-@@ -218,19 +223,31 @@
+@@ -218,19 +227,32 @@
          });
      }
  
@@ -739,22 +755,43 @@
      /// Revert boundary state to prev state
      fn reset_to(&mut self, prev_state: PrevBoundaryState) {
 +        self.inline_start = None;
++        self.atom_end = false;
          self.item_idx = prev_state.item_idx;
          self.run_idx = prev_state.run_idx;
          self.cluster_idx = prev_state.cluster_idx;
-@@ -350,6 +367,7 @@
+@@ -350,6 +372,8 @@
          self.state.line.running_line_height = 0.;
          self.state.prev_boundary = None;
          self.state.emergency_boundary = None;
 +        self.state.inline_start = None;
++        self.state.atom_end = false;
  
          self.finish_line(self.lines.lines.len() - 1, line_height);
  
-@@ -493,9 +511,53 @@
-             match item.kind {
+@@ -484,6 +508,19 @@
+         while self.state.item_idx < item_count {
+             let item = &self.layout.data.items[self.state.item_idx];
+ 
++            // The opportunity after an atomic inline (CSS Text 3 §5.1) is
++            // marked before the first item that is not a closing edge.
++            if self.state.atom_end
++                && !(item.kind == LayoutItemKind::InlineBox
++                    && self.layout.data.inline_boxes[item.index].kind
++                        == InlineBoxKind::InlineEnd)
++            {
++                self.state.atom_end = false;
++                if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
++                    self.state.mark_line_break_opportunity();
++                }
++            }
++
+             // println!(
+             //     "\nitem = {} {:?}. x: {}",
+             //     self.state.item_idx, item.kind, self.state.line.x
+@@ -494,8 +531,52 @@
                  LayoutItemKind::InlineBox => {
                      let inline_box = &self.layout.data.inline_boxes[item.index];
-+
+ 
 +                    if matches!(
 +                        inline_box.kind,
 +                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd
@@ -795,7 +832,7 @@
 +                        self.state.append_inline_box_to_line(next_x, 0.0);
 +                        continue;
 +                    }
- 
++
                      let (width_contribution, height_contribution) = match inline_box.kind {
                          InlineBoxKind::InFlow => (inline_box.width, inline_box.height),
 +                        InlineBoxKind::InlineStart | InlineBoxKind::InlineEnd => {
@@ -804,7 +841,57 @@
                          InlineBoxKind::OutOfFlow => (0.0, 0.0),
                          // If the box is a `CustomOutOfFlow` box then we yield control flow back to the caller.
                          // It is then the caller's responsibility to handle placement of the box.
-@@ -577,7 +639,7 @@
+@@ -518,6 +599,49 @@
+                         return self.max_height_break_data(height_contribution);
+                     }
+ 
++                    // An in-flow box is atomic: its break opportunities lie
++                    // before the opening edges right before it and after the
++                    // closing edges right after it, which stay with it.
++                    let atom = inline_box.kind == InlineBoxKind::InFlow;
++                    let wraps = self.state.line.text_wrap_mode == TextWrapMode::Wrap;
++                    let before = if atom {
++                        self.state.inline_start.take()
++                    } else {
++                        None
++                    };
++                    if atom && (next_x <= max_advance || !wraps) {
++                        if wraps {
++                            let boundary = before.unwrap_or_else(|| PrevBoundaryState {
++                                item_idx: self.state.item_idx,
++                                run_idx: self.state.run_idx,
++                                cluster_idx: self.state.cluster_idx,
++                                state: self.state.line.clone(),
++                            });
++                            if boundary.state.x != 0.0 {
++                                self.state.prev_boundary = Some(boundary);
++                            }
++                        }
++                        self.state
++                            .append_inline_box_to_line(next_x, height_contribution);
++                        self.state.atom_end = true;
++                        continue;
++                    }
++                    if atom {
++                        let start = before.as_ref().map_or(self.state.line.x, |b| b.state.x);
++                        if start == 0.0 {
++                            // It overflows an otherwise empty line: keep it
++                            // there with its closing edges.
++                            self.state
++                                .append_inline_box_to_line(next_x, height_contribution);
++                            self.state.atom_end = true;
++                            continue;
++                        }
++                        if let Some(before) = before {
++                            self.state.reset_to(before);
++                        }
++                        return self.start_new_line(BreakReason::Regular, max_advance, line_indent);
++                    }
++
+                     // If the box fits on the current line (or we are at the start of the current line)
+                     // then simply move on to the next item
+                     if next_x <= max_advance || self.state.line.text_wrap_mode != TextWrapMode::Wrap
+@@ -577,7 +701,7 @@
                              // We also don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                              // line breaks. We should accept the overflowing fragment in that scenario.
                              if !is_ligature_continuation && self.state.line.x != 0.0 {
@@ -813,7 +900,7 @@
                                  // break_opportunity = true;
                              }
                          } else if is_newline {
-@@ -598,7 +660,7 @@
+@@ -598,7 +722,7 @@
                          // If we're at the start of the line, this particular cluster will never fit, so it's not a valid emergency break opportunity.
                          && self.state.line.x != 0.0
                          {
@@ -822,7 +909,7 @@
                          }
  
                          // If current cluster is the start of a ligature, then advance state to include
-@@ -617,13 +679,28 @@
+@@ -617,13 +741,28 @@
  
                          // Compute the x position of the content being currently processed
                          let next_x = self.state.line.x + advance;
@@ -852,7 +939,7 @@
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -641,7 +718,7 @@
+@@ -641,7 +780,7 @@
                              // Case: cluster is a space character (and wrapping is enabled)
                              //
                              // We hang any overflowing whitespace and then line-break.
@@ -861,7 +948,7 @@
                                  if max_height_exceeded {
                                      return self.max_height_break_data(line_height);
                                  }
-@@ -734,6 +811,14 @@
+@@ -734,6 +873,14 @@
                  LayoutItemKind::InlineBox => {
                      let inline_box = &self.layout.data.inline_boxes[item.index];
  
@@ -876,7 +963,7 @@
                      if inline_box.kind != InlineBoxKind::InFlow {
                          self.state.append_inline_box_to_line(self.state.line.x, 0.0);
                          continue;
-@@ -924,6 +1009,15 @@
+@@ -924,9 +1071,23 @@
              match line_item.kind {
                  LayoutItemKind::InlineBox => {
                      let item = &self.layout.data.inline_boxes[line_item.index];
@@ -892,6 +979,14 @@
  
                      // Advance is already computed in "commit line" for items
                      if item.kind == InlineBoxKind::InFlow {
++                        // An atomic box is content of its line's text range,
++                        // even on a line without text.
++                        line.text_range.start = line.text_range.start.min(item.index);
++                        line.text_range.end = line.text_range.end.max(item.index);
++
+                         // Default vertical alignment is to align the bottom of boxes with the text baseline.
+                         // This is equivalent to the entire height of the box being "ascent"
+                         line.metrics.ascent = line.metrics.ascent.max(item.height);
 --- a/src/layout/mod.rs
 +++ b/src/layout/mod.rs
 @@ -8,6 +8,7 @@

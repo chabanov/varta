@@ -58,6 +58,35 @@ function route(text) {
   return part(query < 0 ? before : before.slice(0, query), "") && part(query < 0 ? "" : before.slice(query + 1), "?") && part(fragment, "?");
 }
 
+const resource = (text) => Boolean(text) && text.split("/").every((segment) => segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment));
+// The resource names of a valid HTML `srcset` (the Rust registry's
+// `ImageCandidates` grammar), or null: each candidate a resource with an
+// optional positive density or width descriptor, never mixed or repeated.
+export function imageCandidateNames(text) {
+  const names = [], seen = new Set();
+  let kind = null;
+  for (const part of text.split(",")) {
+    const words = part.split(/[\t\n\f\r ]+/).filter(Boolean);
+    if (words.length < 1 || words.length > 2 || !resource(words[0])) return null;
+    const descriptor = words[1] ?? "1x";
+    const width = /^[1-9][0-9]*w$/.test(descriptor), density = /^[0-9]+(?:\.[0-9]+)?x$/.test(descriptor) && Number(descriptor.slice(0, -1)) > 0;
+    if (!width && !density) return null;
+    const value = width ? descriptor : `${Number(descriptor.slice(0, -1))}x`;
+    if ((kind !== null && kind !== width) || seen.has(value)) return null;
+    kind = width; seen.add(value); names.push(words[0]);
+  }
+  return names;
+}
+const sizeLength = (text) => /^[0-9]+(?:\.[0-9]+)?(?:px|rem|vw)$/.test(text);
+// A valid HTML `sizes` list (the Rust registry's `SourceSizes` grammar).
+function sourceSizes(text) {
+  const parts = text.split(",").map((part) => part.trim());
+  return parts.every((part, index) => {
+    const match = /^\((min-width|max-width)\s*:\s*([^)]*)\)\s*(.*)$/.exec(part);
+    if (!match) return index === parts.length - 1 && sizeLength(part);
+    return index < parts.length - 1 && sizeLength(match[2].trim()) && sizeLength(match[3].trim());
+  });
+}
 function attributeValue(rule, tag, text, linkRequested) {
   switch (rule.kind) {
     case "ident": return ident(text);
@@ -70,7 +99,9 @@ function attributeValue(rule, tag, text, linkRequested) {
     case "keywords": return rule.values.includes(text);
     case "elementType": return (tag === "input" ? V.inputTypes : tag === "button" ? V.buttonTypes : []).includes(text);
     case "href": return /^https?:\/\//.test(text) ? linkRequested(text) : route(text);
-    case "resource": return Boolean(text) && text.split("/").every((segment) => segment !== "." && segment !== ".." && /^[A-Za-z0-9._-]+$/.test(segment));
+    case "resource": return resource(text);
+    case "imageCandidates": return imageCandidateNames(text) !== null;
+    case "sourceSizes": return sourceSizes(text);
     default: return false;
   }
 }
@@ -149,6 +180,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (!admitted(rule.tags, node)) fail("attribute not allowed");
           if (!attributeValue(rule.grammar, node.tag, op.text, linkRequested)) fail("attribute value");
           if (op.attribute === "src" && !assetRequested(op.text)) fail("unpackaged view asset");
+          if (op.attribute === "srcset" && !imageCandidateNames(op.text).every(assetRequested)) fail("unpackaged view asset");
           const changed=node.attributes.get(op.attribute)!==op.text;
           node.attributes.set(op.attribute, op.text);
           node.attributeBytes.set(op.attribute,selectionTextBytes(op.text));

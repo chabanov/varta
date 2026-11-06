@@ -4,21 +4,22 @@ use std::collections::BTreeMap;
 use varta_artifact::{FontFace, FontStyle, Resources};
 use varta_common::view::{AttributeValue, Tag, attributes};
 
-pub const MAX_RESOURCES: usize = 64;
-pub const MAX_RESOURCE_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
-pub const MAX_DECODED_BYTES: usize = 16 * 1024 * 1024;
-const MAX_DIMENSION: u32 = 4096;
+// The same image limits as packaged `images` (one source of truth).
+pub const MAX_RESOURCES: usize = varta_common::view::images::MAX_IMAGES;
+pub const MAX_RESOURCE_BYTES: usize = varta_common::view::images::MAX_IMAGE_BYTES;
+pub const MAX_TOTAL_BYTES: usize = varta_common::view::images::MAX_IMAGE_TOTAL_BYTES;
+pub const MAX_DECODED_BYTES: usize = varta_common::view::images::MAX_IMAGE_DECODED_BYTES;
+const MAX_DIMENSION: u32 = varta_common::view::images::MAX_IMAGE_DIMENSION;
 const MAX_NAME_BYTES: usize = 1024;
 
 /// Immutable checked PNG resource, independent of any source filesystem path.
 /// Browser decoding still verifies the complete image before guest execution.
 pub struct BrowserResource {
-    pub(super) name: String,
+    pub(crate) name: String,
     pub(super) bytes: Vec<u8>,
     pub(super) media_type: &'static str,
     pub(super) extension: &'static str,
-    pub(super) font: bool,
+    pub(crate) font: bool,
     /// The descriptors of a face from the artifact's resource section
     /// (configuration `fonts`); `None` for images and `browser.fonts` faces.
     pub(super) packaged: Option<PackagedFace>,
@@ -94,6 +95,25 @@ impl BrowserResource {
             bytes,
             media_type: "image/png",
             extension: "png",
+            font: false,
+            packaged: None,
+        })
+    }
+
+    /// One image of the artifact's resource section, already admitted and
+    /// decoded at packaging: served with its own format's media type.
+    pub(crate) fn packaged_image(name: &str, bytes: Vec<u8>) -> Result<Self> {
+        validate_name(name)?;
+        let format = varta_artifact::ImageFormat::ALL
+            .into_iter()
+            .find(|format| varta_common::view::images::sniff(&bytes) == Ok(*format))
+            .ok_or_else(|| ProjectError::Usage("unknown packaged image format".into()))?;
+        Ok(Self {
+            name: name.into(),
+            decoded_bytes: 0,
+            bytes,
+            media_type: format.media_type(),
+            extension: format.extension(),
             font: false,
             packaged: None,
         })
@@ -197,7 +217,7 @@ pub(crate) fn load(
     config: &crate::VartaConfig,
     root: &std::path::Path,
 ) -> Result<Vec<BrowserResource>> {
-    if config.browser.is_none() && config.fonts.is_empty() {
+    if config.browser.is_none() && config.fonts.is_empty() && config.images.is_empty() {
         return Ok(Vec::new());
     }
     let root = root.canonicalize()?;
@@ -211,9 +231,10 @@ pub(crate) fn load_with_loader(
     loader: &crate::modules::SourceLoader,
 ) -> Result<Vec<BrowserResource>> {
     let root = root.canonicalize()?;
-    // The configuration's `fonts` are the artifact's resource section: the
-    // same validated faces the native shell loads, never a second reading.
-    let mut resources = packaged_faces(&crate::artifact::resources_with_loader(
+    // The configuration's `fonts` and `images` are the artifact's resource
+    // section: the same validated faces and images the native shell loads,
+    // never a second reading.
+    let mut resources = packaged(&crate::artifact::resources_with_loader(
         config, &root, loader,
     )?)?;
     let Some(browser) = &config.browser else {
@@ -245,13 +266,20 @@ pub(crate) fn load_with_loader(
     Ok(resources)
 }
 
-/// Browser resources for every face of a validated resource section, in its
-/// canonical order (the first family is the default family).
-pub(crate) fn packaged_faces(section: &Resources) -> Result<Vec<BrowserResource>> {
+/// Browser resources for every face and image of a validated resource
+/// section, in its canonical order (the first family is the default family).
+/// An image keeps its name: the guest's `src` names it as natively.
+pub(crate) fn packaged(section: &Resources) -> Result<Vec<BrowserResource>> {
     section
         .fonts()
         .iter()
         .map(BrowserResource::packaged)
+        .chain(
+            section
+                .images()
+                .iter()
+                .map(|image| BrowserResource::packaged_image(&image.name, image.data.clone())),
+        )
         .collect()
 }
 
@@ -278,11 +306,16 @@ mod tests {
             assert!(BrowserResource::png(name, png()).is_err(), "{name}");
         }
         let mut large = png();
-        large[16..20].copy_from_slice(&4097u32.to_be_bytes());
+        large[16..20].copy_from_slice(&(MAX_DIMENSION + 1).to_be_bytes());
         assert!(BrowserResource::png("large", large).is_err());
+        // Within the dimension bound, past the decoded total.
         let mut pixels = png();
-        pixels[16..20].copy_from_slice(&4096u32.to_be_bytes());
-        pixels[20..24].copy_from_slice(&4096u32.to_be_bytes());
+        pixels[16..20].copy_from_slice(&MAX_DIMENSION.to_be_bytes());
+        pixels[20..24].copy_from_slice(&MAX_DIMENSION.to_be_bytes());
+        assert!(
+            (MAX_DIMENSION as usize).pow(2) * varta_common::view::images::DECODED_PIXEL_BYTES
+                > MAX_DECODED_BYTES
+        );
         assert!(BrowserResource::png("decoded-limit", pixels).is_err());
         let mut bad = png();
         bad[33..37].copy_from_slice(&u32::MAX.to_be_bytes());

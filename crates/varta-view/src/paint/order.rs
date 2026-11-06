@@ -83,13 +83,15 @@ pub(super) struct Order {
     placements: BTreeMap<u32, Placement>,
 }
 impl Order {
-    /// Plan the painted element tree. `flow` elements own inline content and
-    /// select elements own their options: neither has block descendants here.
-    pub fn new(
+    /// Plan the painted element tree. `atoms` gives each flow element's
+    /// atomic inlines: a flow owns the rest of its inline content, and
+    /// select elements own their options, so neither has other painted
+    /// descendants here.
+    pub fn new<'a>(
         tree: &Tree,
         env: &Environment,
         geometry: &BTreeMap<u32, layout::BoxGeometry>,
-        flow: impl Fn(u32) -> bool,
+        atoms: impl Fn(u32) -> Option<&'a [u32]>,
     ) -> Result<Self, PaintError> {
         let mut outline_order = BTreeMap::new();
         let mut tree_order = BTreeMap::new();
@@ -138,15 +140,15 @@ impl Order {
                 },
             )]),
         };
-        order.plan(tree, env, geometry, flow)?;
+        order.plan(tree, env, geometry, atoms)?;
         Ok(order)
     }
-    fn plan(
+    fn plan<'a>(
         &mut self,
         tree: &Tree,
         env: &Environment,
         geometry: &BTreeMap<u32, layout::BoxGeometry>,
-        flow: impl Fn(u32) -> bool,
+        atoms: impl Fn(u32) -> Option<&'a [u32]>,
     ) -> Result<(), PaintError> {
         let root = Scheme::parse(
             tree.computed_read(ROOT_NODE, env)
@@ -156,18 +158,23 @@ impl Order {
         // (element, nearest real context, nearest positioned ancestor)
         let mut pending = vec![(ROOT_NODE, ROOT_NODE, root.positioned().then_some(ROOT_NODE))];
         while let Some((parent, owner, containing)) = pending.pop() {
-            if flow(parent)
-                || tree
+            // A flow's atomic inlines are its painted boxes, its in-flow
+            // children for clipping and stacking.
+            let children = match atoms(parent) {
+                Some(atoms) => atoms,
+                None if tree
                     .element(parent)
-                    .is_none_or(|element| element.tag == Tag::Select)
-            {
-                continue;
-            }
+                    .is_none_or(|element| element.tag == Tag::Select) =>
+                {
+                    continue;
+                }
+                None => tree.nodes[&parent].children.as_slice(),
+            };
             let flex_parent = tree
                 .computed_read(parent, env)
                 .get(&CssProperty::Display)
                 .is_some_and(|value| matches!(value.as_str(), "flex" | "grid"));
-            for &id in tree.nodes[&parent].children.iter().rev() {
+            for &id in children.iter().rev() {
                 if tree.element(id).is_none() || !geometry.contains_key(&id) {
                     continue;
                 }
@@ -277,6 +284,17 @@ impl Order {
         self.real_context()
             .layers
             .insert(key, (node, Phase::InlineContext));
+    }
+    /// A flow's atomic inlines paint right after its text, in tree order:
+    /// each enters as an atomic box of the current context, or takes its
+    /// place in a stacking layer.
+    pub fn inline_atoms(&mut self, nodes: &[u32]) {
+        if nodes.is_empty() {
+            return;
+        }
+        self.pending.push(Step::Content);
+        self.pending
+            .extend(nodes.iter().rev().map(|&id| Step::Visit(id, Phase::Enter)));
     }
     pub fn atomic(&mut self, node: u32) {
         self.contexts

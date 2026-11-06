@@ -81,7 +81,12 @@ formatting, BigInt) are not specified here at the bit level; see
   family, including the user-agent `monospace` of `pre` and `code`, the first
   family as the default, inherited by form controls, no synthesized bold or
   italic) or refuse the artifact; it MUST NOT silently substitute its own
-  fonts.
+  fonts. Section version 2 adds the application's packaged images
+  ([format](architecture.md#packaged-images-section-version-2)); a host that
+  renders views MUST validate and decode them before guest code runs, refuse a
+  batch whose `img` names another image, and draw them as the reference hosts
+  do ([native images](architecture.md#native-images-img)), or refuse the
+  artifact.
 - **Host ceiling** (optional): a policy owned by the embedder, never by the
   package. It uses the [manifest](#manifest) schema with its defaults, so the
   smallest valid ceiling is `{"capabilities":[]}` (deny everything). Its
@@ -3286,6 +3291,12 @@ not imply complete CSS rendering or typography acceptance.
 | 26 | `aria-invalid` | all | `true` \| `false` |
 | 27 | `aria-hidden` | all | `true` \| `false` |
 | 28 | `rows` | `textarea` | positive integer without sign or leading zeros |
+| 29 | `width` | `img` | count: `0` or a positive integer without sign or leading zeros |
+| 30 | `height` | `img` | count: `0` or a positive integer without sign or leading zeros |
+| 31 | `srcset` | `img` | image candidates: `<resource> [<number>x \| <integer>w]?`, comma-separated |
+| 32 | `sizes` | `img` | source sizes: `[(min-width: <length>) \| (max-width: <length>)] <length>`, comma-separated, the last unconditional |
+| 33 | `decoding` | `img` | `sync` \| `async` \| `auto` |
+| 34 | `loading` | `img` | `eager` \| `lazy` |
 <!-- generated:view-attributes:end -->
 
 **CSS properties.**
@@ -3367,6 +3378,12 @@ not imply complete CSS rendering or typography acceptance.
 | 72 | `border-bottom` | `none \| [<length> \|\| solid \|\| <color>]` | — |
 | 73 | `border-left` | `none \| [<length> \|\| solid \|\| <color>]` | — |
 | 74 | `resize` | `none \| vertical` | textarea only; treated as `none` with `field-sizing: content` |
+| 75 | `object-fit` | `fill \| contain \| cover \| none \| scale-down` | replaced elements (`img`) |
+| 76 | `object-position` | `[left \| center \| right \| <length-percentage>] [top \| center \| bottom \| <length-percentage>]?` | replaced elements (`img`) |
+| 77 | `image-rendering` | `auto \| smooth \| high-quality \| pixelated \| crisp-edges` | replaced elements (`img`) |
+| 78 | `aspect-ratio` | `auto \|\| [<number> [/ <number>]?]` | positive ratio terms |
+| 79 | `vertical-align` | `baseline \| sub \| super \| text-top \| text-bottom \| middle \| top \| bottom \| <length-percentage>` | inline-level boxes |
+| 80 | `image-orientation` | `from-image \| none` | inherited |
 <!-- generated:view-css-properties:end -->
 
 **Events.**

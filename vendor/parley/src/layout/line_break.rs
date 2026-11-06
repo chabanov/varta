@@ -170,6 +170,9 @@ pub struct BreakerState {
     // Snapshot before consecutive opening decoration edges. The text's next
     // real break opportunity belongs here, never between the edge and its text.
     inline_start: Option<PrevBoundaryState>,
+    // An in-flow (atomic) box was just appended: the soft wrap opportunity
+    // after it follows the closing decoration edges right after it.
+    atom_end: bool,
 }
 
 impl Default for BreakerState {
@@ -189,6 +192,7 @@ impl Default for BreakerState {
             prev_boundary: None,
             emergency_boundary: None,
             inline_start: None,
+            atom_end: false,
         }
     }
 }
@@ -248,6 +252,7 @@ impl BreakerState {
     /// Revert boundary state to prev state
     fn reset_to(&mut self, prev_state: PrevBoundaryState) {
         self.inline_start = None;
+        self.atom_end = false;
         self.item_idx = prev_state.item_idx;
         self.run_idx = prev_state.run_idx;
         self.cluster_idx = prev_state.cluster_idx;
@@ -368,6 +373,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         self.state.prev_boundary = None;
         self.state.emergency_boundary = None;
         self.state.inline_start = None;
+        self.state.atom_end = false;
 
         self.finish_line(self.lines.lines.len() - 1, line_height);
 
@@ -502,6 +508,19 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         while self.state.item_idx < item_count {
             let item = &self.layout.data.items[self.state.item_idx];
 
+            // The opportunity after an atomic inline (CSS Text 3 §5.1) is
+            // marked before the first item that is not a closing edge.
+            if self.state.atom_end
+                && !(item.kind == LayoutItemKind::InlineBox
+                    && self.layout.data.inline_boxes[item.index].kind
+                        == InlineBoxKind::InlineEnd)
+            {
+                self.state.atom_end = false;
+                if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
+                    self.state.mark_line_break_opportunity();
+                }
+            }
+
             // println!(
             //     "\nitem = {} {:?}. x: {}",
             //     self.state.item_idx, item.kind, self.state.line.x
@@ -578,6 +597,49 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     let box_will_be_appended = next_x <= max_advance || self.state.line.x == 0.0;
                     if height_contribution > self.state.line_max_height && box_will_be_appended {
                         return self.max_height_break_data(height_contribution);
+                    }
+
+                    // An in-flow box is atomic: its break opportunities lie
+                    // before the opening edges right before it and after the
+                    // closing edges right after it, which stay with it.
+                    let atom = inline_box.kind == InlineBoxKind::InFlow;
+                    let wraps = self.state.line.text_wrap_mode == TextWrapMode::Wrap;
+                    let before = if atom {
+                        self.state.inline_start.take()
+                    } else {
+                        None
+                    };
+                    if atom && (next_x <= max_advance || !wraps) {
+                        if wraps {
+                            let boundary = before.unwrap_or_else(|| PrevBoundaryState {
+                                item_idx: self.state.item_idx,
+                                run_idx: self.state.run_idx,
+                                cluster_idx: self.state.cluster_idx,
+                                state: self.state.line.clone(),
+                            });
+                            if boundary.state.x != 0.0 {
+                                self.state.prev_boundary = Some(boundary);
+                            }
+                        }
+                        self.state
+                            .append_inline_box_to_line(next_x, height_contribution);
+                        self.state.atom_end = true;
+                        continue;
+                    }
+                    if atom {
+                        let start = before.as_ref().map_or(self.state.line.x, |b| b.state.x);
+                        if start == 0.0 {
+                            // It overflows an otherwise empty line: keep it
+                            // there with its closing edges.
+                            self.state
+                                .append_inline_box_to_line(next_x, height_contribution);
+                            self.state.atom_end = true;
+                            continue;
+                        }
+                        if let Some(before) = before {
+                            self.state.reset_to(before);
+                        }
+                        return self.start_new_line(BreakReason::Regular, max_advance, line_indent);
                     }
 
                     // If the box fits on the current line (or we are at the start of the current line)
@@ -1021,6 +1083,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                     // Advance is already computed in "commit line" for items
                     if item.kind == InlineBoxKind::InFlow {
+                        // An atomic box is content of its line's text range,
+                        // even on a line without text.
+                        line.text_range.start = line.text_range.start.min(item.index);
+                        line.text_range.end = line.text_range.end.max(item.index);
+
                         // Default vertical alignment is to align the bottom of boxes with the text baseline.
                         // This is equivalent to the entire height of the box being "ascent"
                         line.metrics.ascent = line.metrics.ascent.max(item.height);

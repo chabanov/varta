@@ -34,8 +34,12 @@ jobs:
         run: cargo check -p varta-common -p varta-compiler -p varta-runtime -p varta-artifact --lib --locked
       - name: No-std value-layout core of the linked intrinsics and the KV codec
         run: cargo check -p varta-common -p varta-intrinsics -p varta-kv-codec --no-default-features --lib --locked
+      - name: No-std view style engine shared with the browser host
+        run: cargo check -p varta-style --lib --locked
       - name: Checked-in browser KV codec matches its sources
         run: python3 scripts/build-kv-codec.py --check
+      - name: Checked-in browser view style engine matches its sources
+        run: python3 scripts/build-view-engine.py --check
       - name: Independent execution runtime without source tooling
         run: cargo build -p varta-launcher --bin varta-runtime --locked
       - name: Clippy

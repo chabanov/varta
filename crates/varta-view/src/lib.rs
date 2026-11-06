@@ -22,6 +22,7 @@ mod drawing;
 mod events;
 mod geometry;
 mod glyph_raster;
+mod image;
 mod inline;
 mod layout;
 mod list;
@@ -62,6 +63,7 @@ pub use geometry::{DEFAULT_VIEWPORT_HEIGHT, GEOMETRY_KEY, GeometryRequest};
 pub use glyph_raster::{
     GlyphRasterBounds, GlyphRasterError, GlyphRasterMask, GlyphRasterRequest, GlyphRasterizer,
 };
+pub use image::{ImageError, ImageSet};
 pub use layout::{
     BoxGeometry, BoxRect, CLASSIC_SCROLLBAR_THICKNESS, LayoutError, OVERLAY_SCROLLBAR_THICKNESS,
     ScrollMetrics, ScrollbarGeometry,
@@ -167,6 +169,8 @@ pub enum Violation {
     AttributeNotAllowed(&'static str),
     #[error("invalid value for attribute `{0}`")]
     InvalidAttributeValue(&'static str),
+    #[error("`img` names {0:?}, which is not a packaged image")]
+    UnpackagedImage(String),
     #[error("duplicate `id` value {0}")]
     DuplicateIdent(String),
     #[error("invalid class list")]
@@ -411,16 +415,19 @@ impl View {
     /// a new frame should be presented.
     pub fn set_animation_time(&mut self, ms: f64) -> bool {
         let transitions = self.tree.animations.advance(ms);
-        self.tree.scrollbars.advance(ms) || transitions
+        let images = image::advance(&mut self.tree, &self.environment, ms);
+        self.tree.scrollbars.advance(ms) || transitions || images
     }
 
-    /// Whether a CSS transition runs or an overlay scrollbar waits to fade
-    /// or animates: the host keeps advancing the clock at its display rate
+    /// Whether a CSS transition runs, an animated image changes frames or an
+    /// overlay scrollbar waits to fade or animates: the host keeps advancing the clock at its display rate
     /// and presents a frame whenever [`Self::set_animation_time`] reports a
     /// change (none during an overlay bar's fade-out delay).
     #[must_use]
     pub fn animating(&self) -> bool {
-        self.tree.animations.active() || self.tree.scrollbars.animating()
+        self.tree.animations.active()
+            || self.tree.scrollbars.animating()
+            || image::animating(&self.tree, &self.environment)
     }
 
     /// Tell the view which scroll container's overlay scrollbar frame the
@@ -457,6 +464,15 @@ impl View {
     #[must_use]
     pub fn environment(&self) -> Environment {
         self.environment
+    }
+
+    /// Give the view the application's packaged images (the host sets them
+    /// before the first commit). With a set, a batch whose `img` names an
+    /// image outside it is refused as a whole, as the browser host refuses
+    /// an unpackaged asset, and admitted `img` elements are laid out and
+    /// drawn natively. Without one (the default), no `img` is laid out.
+    pub fn set_images(&mut self, images: Option<std::sync::Arc<ImageSet>>) {
+        self.tree.images.set = images;
     }
 
     /// Cancel transient IME state on the currently focused field, if any.
