@@ -12,9 +12,29 @@ pub(crate) fn lower(
     graph: &Graph,
     profile: varta_common::language::LanguageProfile,
 ) -> Result<ir::Program> {
+    lower_with(graph, profile, None)
+}
+
+/// Type-check the program for a class scan, recording the types of the
+/// tracker's watched holes (K8, [`crate::classes`]).
+pub(crate) fn lower_tracked(
+    graph: &Graph,
+    profile: varta_common::language::LanguageProfile,
+    tracker: crate::classes::HoleTracker,
+) -> Result<crate::classes::HoleTracker> {
+    let mut program = lower_with(graph, profile, Some(tracker))?;
+    Ok(program.types.class_holes.take().unwrap_or_default())
+}
+
+fn lower_with(
+    graph: &Graph,
+    profile: varta_common::language::LanguageProfile,
+    class_holes: Option<crate::classes::HoleTracker>,
+) -> Result<ir::Program> {
     let mut definitions: BTreeMap<PathBuf, Symbols> = BTreeMap::new();
     let mut types = ir::ValueTypes {
         profile,
+        class_holes,
         ..Default::default()
     };
     let mut next = 0;

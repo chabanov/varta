@@ -11732,10 +11732,10 @@ refused with an `unsupported …` diagnostic that names it (list below).
   has that literal type (a widening literal type); a `let`/`var` initialized
   by a literal or by such a binding widens to the base primitive, while
   annotated and `as const` literal types are kept; `x as const` gives readonly
-  tuples and records of literal types. A template literal whose holes all
-  have finite literal types records its values, so the [build-time Tailwind
-  scanner](#build-time-tailwind-stylesheets-k8-t1) enumerates
-  `` `text-${size}` `` instead of reporting a composition.
+  tuples and records of literal types. The [build-time Tailwind
+  scanner](#build-time-tailwind-stylesheets-k8-t1) reads these types, so
+  `` `text-${size}` `` with `const size = "sm"` is enumerated without an
+  annotation.
 
 Refused, each by name: `unique symbol` (no Symbol values in this profile),
 `import("…")` types, pattern template literal types outside an `extends`
@@ -15279,13 +15279,14 @@ configured stylesheet is never silently dropped.
    no-follow, 1 MiB).
 2. The module graph is loaded with the entry's text served as the empty
    sheet and scanned for class tokens (`varta_compiler::
-   scan_classes_with_profile`, below). A class composed at run time is a
-   located `type_error` and stops the build. Under v38 a template whose
-   holes all have finite literal types (`const size = "sm"`, a `"sm" |
-   "lg"` parameter; see [type level](#type-level-type_level)) is not a
-   composition: the scanner lowers the program and enumerates its values.
-3. The entry is compiled (`varta_tailwind::compile`) and built with the
-   tokens plus its `@source inline(…)` safelist (`Compiler::build`).
+   scan_classes_with_profile`, below). When a class position composes a
+   name, the program is type-checked to resolve it (with TypeScript's
+   literal inference, [type level](#type-level-type_level): `const size =
+   "sm"` has the type `"sm"`); a composition that cannot be enumerated is a
+   located `type_error` and stops the build.
+3. The entry is compiled (`varta_tailwind::compile_with_loader`, its
+   relative `@import`s read through the same loader, below) and built with
+   the tokens plus its `@source inline(…)` safelist (`Compiler::build`).
 4. The generated stylesheet is served as the text of the entry's text
    resource and the program is compiled as usual: it is a string constant in
    the static data, checked against the L0 stylesheet grammar where it is
@@ -15316,16 +15317,31 @@ global attribute `class`: a set of space-separated tokens). At most
 tokens is an error). Tokens that are not Tailwind candidates produce no CSS,
 as in Tailwind.
 
-**Compositions.** In a class position (a TSX `class`/`className`
-expression, the class argument of `View.setClass`/`View.bindClass`), a
-template hole whose neighbouring literal text is not whitespace
-(`` `btn-${size}` ``) or a `+` whose literal operand touches the other
-operand (`"bg-" + tone`) builds a class name that exists only at run time;
-no build-time generator can see it (Tailwind's own scanner cannot either).
-It is reported as a located `type_error` naming the remedy (complete
-literals such as `cond ? "btn-lg" : "btn-sm"`, or `@source inline(…)`).
-Holes separated by whitespace (`` `p-2 ${active ? "a" : "b"}` ``) are fine:
-their literals are tokens.
+**Compositions (Varta extension beyond Tailwind's scanner).** In a class
+position (a TSX `class`/`className` expression, the class argument of
+`View.setClass`/`View.bindClass`), a template literal or a `+`
+concatenation chain whose hole touches non-whitespace literal text or
+another hole (`` `btn-${size}` ``, `"bg-" + tone + "-500"`, `` `${a}${b}` ``)
+builds a class name at run time, which Tailwind's own scanner cannot see.
+Varta resolves it through the checker's types: the program is lowered once
+with the touching holes watched, and each hole's type is recorded where the
+expression is checked (through aliases, parameters, fields, annotated
+bindings, conditional and union types; generic instantiations are merged).
+When every touching hole has a finite union of string-literal types, every
+combination (the hole values spliced into the literal text, ECMAScript
+template and `+` string concatenation) is a token; holes separated by
+whitespace are independent tokens. More than
+`varta_compiler::MAX_CLASS_COMBINATIONS` combinations in one composition
+is a located `type_error`, as is a touching hole of any other type
+(`string`, a number, a union with non-literal members), naming the
+remedies (a literal union type, complete literals such as
+`cond ? "btn-lg" : "btn-sm"`, or `@source inline(…)`). The types are the
+v38 checker's, which follow TypeScript's literal inference ([type
+level](#type-level-type_level)): an unannotated `const x = "a"` has the
+type `"a"` and the elements of an `as const` tuple their literal types, so
+both are enumerated; a number or boolean literal type contributes its
+ECMAScript string (`const weight = 600` gives `font-600`), while a widened
+`let` (`string`) stays an error.
 
 **Supported Tailwind surface.** Candidates (variants, static and functional
 utilities, named, fractional, bare and arbitrary values, `(--var)`
@@ -15340,21 +15356,44 @@ groups), theme resolution (`theme.css` defaults, `@theme` with `default`,
 `--value()`/`--modifier()`), `@custom-variant` (selector list or `@slot`
 body), `@variant`, `@source inline(…)`/`@source not inline(…)` with brace
 expansion, `--theme()`, `--spacing()`, `--alpha()` and `theme(--var)`,
-`@reference`, and `@import` of the embedded package with `layer()`,
-`supports()`, media, `important`, `prefix()`, `theme(…)` and `source(none)`
-parameters. `@import "tailwindcss"` resolves only to the embedded pinned
+`@reference`, and `@import` with `layer()`, `supports()`, media,
+`important`, `prefix()`, `theme(…)` and `source(none)` parameters.
+
+**`@import`.** Resolved only at build time, never at run time or over a
+network. A package name (`tailwindcss`, `tailwindcss/theme`,
+`tailwindcss/preflight`, `tailwindcss/utilities`) names the embedded pinned
 copy of the published package (`index.css`, `theme.css`, `preflight.css`,
-`utilities.css` of npm `tailwindcss@4.3.5`), at build time.
+`utilities.css` of npm `tailwindcss@4.3.5`). A relative `./` or `../` path
+names a project stylesheet, resolved from the importing stylesheet and
+loaded through the host's `StylesheetLoader` (in `varta-project`, the
+project loader: the text-resource rules — inside the configuration
+directory, no URL, query or fragment syntax, backslashes or trailing `/` —
+and a read through the pinned root descriptor with no-follow at every
+component, as a bounded (1 MiB) UTF-8 regular file). Following CSS
+Cascade 5 (§2 "Importing Style Sheets"), an `@import` is valid only at the
+top level before every rule except `@charset`, `@layer` statements and
+other imports (a misplaced or nested one is an error rather than silently
+ignored), and its conditions apply to the imported sheet: `layer()` as an
+`@layer` block, media queries as `@media`, `supports()` as `@supports`
+(Tailwind's `buildImportNodes`), resolved like any written condition. An
+import cycle, a chain deeper than `MAX_IMPORT_DEPTH` (32, the module
+graph's depth), more than `MAX_IMPORTED_FILES` (256) project stylesheets or
+more than `MAX_INPUT_BYTES` (1 MiB) of entry and imported text together is
+an error; a stylesheet imported twice is inlined twice, as CSS does.
+`url()`, `data:`, `http(s):` and bare names other than the package are
+refused.
 
 **Rejected, with typed errors (`TailwindError`).** `@plugin` and `@config`
 (they load JavaScript; Varta compiles Tailwind without a JavaScript
 runtime); `@source "path"` and `source("path")` (filesystem scanning; classes
-come from the module graph); `@import` of anything but the embedded package
-(including `url()`, `data:` and remote URLs); legacy dot-path `theme()`
+come from the module graph); `@import` of a URL, an absolute path or an
+unknown package, a cycle or a misplaced import (above); legacy dot-path
+`theme()`
 (Tailwind resolves it only through the JavaScript configuration layer);
 Tailwind's own directive errors (nested or empty `@utility`, invalid names,
 `@apply` of unknown classes, circular `@apply` or `@custom-variant`). Bounds:
-`MAX_INPUT_BYTES` (1 MiB entry), `MAX_IMPORT_DEPTH` (Tailwind's 100),
+`MAX_INPUT_BYTES` (1 MiB of entry and imported text), `MAX_IMPORT_DEPTH`,
+`MAX_IMPORTED_FILES`,
 `MAX_CANDIDATES`, `MAX_CANDIDATE_BYTES`, `MAX_OUTPUT_BYTES` (1 MiB, the
 text-resource bound), parser, selector, nesting, condition, variant and
 brace-expansion depth constants in the crate.

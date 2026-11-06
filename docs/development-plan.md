@@ -32,7 +32,7 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Merged `main` with the v38 iteration protocol and macOS overlay scrollbars on top of the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **3975 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-121636-n8h8914c/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Merged `main` with the K8 T1 Tailwind compiler and its follow-ups, native `img` to the standards, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4261 Rust tests passed, 0 failures, 25 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-154451-50fltt1t/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
 | Compatibility inventory | ECMAScript 2025, checked profile v38: **135 passed, 5 known unsupported out of 140** after the iteration-protocol cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
@@ -7719,9 +7719,16 @@ frame bounds.
   grammar refuses a full build at Preflight's `display: none !important`
   (S8) and static tokens such as `w-1/2` at the TSX attribute (S1). The CLI
   tests pin these first violations; the end-to-end test is ignored until T2.
-- Not in T1: JavaScript plugins/config, `@source` file globs, project-relative
-  CSS `@import` (only the embedded package is importable), source maps,
+- Not in T1: JavaScript plugins/config, `@source` file globs, source maps,
   IntelliSense suggestions and candidate canonicalization.
+- Follow-up (owner decisions 2026-11-06): composed class names enumerate
+  through the checker's finite string-literal types (bounded by
+  `MAX_CLASS_COMBINATIONS`; other holes stay errors), and the entry may
+  `@import` project stylesheets by relative path through the project
+  loader under the module path policy (Cascade 5 placement and
+  conditions, cycle, depth, count and byte bounds). Closed by K9 A's
+  literal inference: an unannotated `const x = "a"` and `as const` tuple
+  elements have literal types and are enumerated without annotations.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

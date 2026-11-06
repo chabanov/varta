@@ -148,8 +148,9 @@ impl Lower<'_> {
             ast::Expr::New(new) if self.constructs_value(&new.callee) => self.construct_value(new),
             _ => self.expr_inner(expression),
         };
-        if result.is_ok() {
+        if let Ok(value) = &result {
             self.path_effects(expression);
+            self.observe_class_hole(expression.span(), value.ty);
         }
         self.depth -= 1;
         result

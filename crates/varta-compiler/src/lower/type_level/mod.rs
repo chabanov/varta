@@ -27,7 +27,6 @@ mod template_types;
 mod tuple_types;
 mod utilities;
 
-pub(crate) use literal_inference::composition_values;
 pub(super) use relation::extends;
 
 /// Nesting bound of type-level evaluation (conditional branches, mapped
@@ -57,9 +56,6 @@ pub(crate) struct TypeLevel {
     /// Bindings (declaring function, slot) of a `const` declared by a
     /// literal: their literal type widens in a mutable location.
     widening: BTreeSet<(usize, u32)>,
-    /// Template literal values a class composition may produce, by hole
-    /// (module, span): every combination of its holes' literal types.
-    compositions: BTreeMap<(usize, u32, u32), Vec<String>>,
     /// Current evaluation depth.
     depth: usize,
 }
@@ -137,6 +133,18 @@ pub(super) fn const_type(expression: &ast::Expr, types: &mut ir::ValueTypes) -> 
         return None;
     }
     queries::const_type(expression, types)
+}
+
+/// The ECMAScript string of a number or boolean literal value (a template
+/// literal's conversion); `None` for a string value.
+pub(super) fn literal_text(value: &literals::LiteralValue) -> Option<String> {
+    match value {
+        literals::LiteralValue::Number(bits) => {
+            Some(template_types::number_text(f64::from_bits(*bits)))
+        }
+        literals::LiteralValue::Boolean(flag) => Some(flag.to_string()),
+        literals::LiteralValue::String(_) => None,
+    }
 }
 
 /// Run one nested evaluation step under the depth bound.

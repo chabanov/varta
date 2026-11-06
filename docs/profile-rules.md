@@ -4020,12 +4020,12 @@ Contract: [architecture.md](architecture.md#type-level-type_level). K9 track A.
 - Literal inference: `declaration_type` gives an unannotated `const` of a
   constant literal its singleton type and records it as widening;
   `let`/`var` from a literal or a widening binding erases. `as const` lowers
-  against `const_type`. Template holes keep their literal type only to
-  record composition values (`note_template_values`); the template's own
+  against `const_type`. The class scanner's hole types
+  (`lower::class_holes`) see these literal types; a template literal's own
   type stays `string`.
 - Tests: `varta-runtime` `type_level_tests` with the Node 24 logs of
   `type_level_cases` (each also rejected by v37), the compiler's
-  `literal_typed_class_compositions_are_enumerated` scanner test, and the
+  `composed_class_names_follow_the_checker_types` scanner test, and the
   nine `typescript_handbook` conformance rows.
 
 ### Bytes held by unknown (`byte_values`)

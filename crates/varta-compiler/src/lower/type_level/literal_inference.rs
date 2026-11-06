@@ -9,14 +9,10 @@
 //! - array elements, object properties and other mutable locations take
 //!   the erased (widened) type, as the earlier lowering already does.
 //!
-//! The values of a template literal whose holes all have finite literal
-//! types are recorded per hole, so the build-time class scanner can
-//! enumerate a composed class name (`` `text-${size}` `` with
-//! `const size = "sm"`) instead of refusing it.
+//! The build-time class scanner reads these types (`lower::class_holes`),
+//! so a composed class name (`` `text-${size}` `` with `const size = "sm"`)
+//! is enumerated without an annotation.
 use super::*;
-
-/// The most values one template's recorded combinations may have.
-const MAX_TEMPLATE_VALUES: usize = literals::MAX_LITERAL_MEMBERS;
 
 impl Lower<'_> {
     /// The value of an unannotated declaration with its declaration type.
@@ -66,55 +62,4 @@ impl Lower<'_> {
             && scopes.all(|scope| !scope.contains_key(name))
             && queries::literal_constant(self.types, named::current(self.types), name)
     }
-
-    /// One template hole, lowered once; its literal type is kept in `holes`.
-    pub(in crate::lower) fn template_hole(
-        &mut self,
-        hole: &ast::Expr,
-        holes: &mut Vec<Type>,
-    ) -> Result<Expr> {
-        if !self.types.profile.type_level() {
-            return self.expr(hole);
-        }
-        let value = self.expr_preserving(hole)?;
-        holes.push(value.ty);
-        Ok(literals::erase(value, self.types))
-    }
-
-    /// Record every value `template` may produce when each hole's type is a
-    /// finite literal set.
-    pub(in crate::lower) fn note_template_values(&mut self, template: &ast::Tpl, holes: &[Type]) {
-        if !self.types.profile.type_level()
-            || holes.is_empty()
-            || holes.len() != template.exprs.len()
-        {
-            return;
-        }
-        let Some(values) =
-            template_types::values(&template.quasis, holes, MAX_TEMPLATE_VALUES, self.types)
-        else {
-            return;
-        };
-        let module = named::current(self.types);
-        for hole in &template.exprs {
-            let span = hole.span();
-            self.types
-                .type_level
-                .compositions
-                .insert((module, span.lo.0, span.hi.0), values.clone());
-        }
-    }
-}
-
-/// The values the template whose hole spans `span` in module `module` may
-/// produce, when its holes have finite literal types (v38).
-pub(crate) fn composition_values(
-    types: &ir::ValueTypes,
-    module: usize,
-    span: swc_common::Span,
-) -> Option<&Vec<String>> {
-    types
-        .type_level
-        .compositions
-        .get(&(module, span.lo.0, span.hi.0))
 }

@@ -386,7 +386,7 @@ export function main(size: Size): void {
 #[test]
 fn composed_class_names_are_located() {
     let result = scan(
-        "export function main(size: string): void { View.mount(<div class={`btn-${size}`}>x</div>); }",
+        "function show(size: string): void { View.mount(<div class={`btn-${size}`}>x</div>); }\nexport function main(): void { show(\"lg\"); }",
         &[],
     );
     assert_eq!(result.compositions.len(), 1);
@@ -399,40 +399,125 @@ fn composed_class_names_are_located() {
     assert_eq!(diagnostic.range.start.line, 1);
 }
 
-/// K9 A: TypeScript's literal inference makes `const size = "sm"` the
-/// literal type `"sm"`, so a class composed from holes of finite literal
-/// types is enumerated from the typed program instead of being refused; a
-/// widened `let` stays a run-time composition, and v37 keeps the syntactic
-/// rule.
+fn scan_result(text: &str) -> Result<crate::ClassScan, CompilerError> {
+    crate::scan_classes_with_profile(
+        ModuleSource {
+            path: "app.tsx".into(),
+            text: text.into(),
+        },
+        &Modules(&[]),
+        V38,
+    )
+}
+
+/// K8 (Varta extension beyond Tailwind's scanner): a composed class name
+/// whose holes have finite string-literal types enumerates every
+/// combination, through aliases, inferred constant unions and `+` chains.
 #[test]
-fn literal_typed_class_compositions_are_enumerated() {
-    let program = r#"type Tone = "red" | "blue";
-function badge(tone: Tone): void {
-  const size = "sm";
-  const weight = 600;
-  View.mount(<div class={`text-${size} font-${weight} bg-${tone}-500`}>x</div>);
+fn composed_class_names_enumerate_finite_literal_types() {
+    let result = scan(
+        r#"type Size = "sm" | "lg";
+type Tone = "red" | "blue";
+function Badge(props: { size: Size; loud: boolean }): number {
+  const weight: "bold" | "normal" = props.loud ? "bold" : "normal";
+  return <p class={`text-${props.size} font-${weight}`}>{"x"}</p>;
+}
+function paint(tone: Tone): void {
+  View.mount(<div>{Badge({ size: "sm", loud: true })}</div>);
+  const node = View.node();
+  View.setClass(node, "bg-" + tone + "-500");
+  const leading: "leading" = "leading";
+  View.setClass(node, `${leading}-6`);
 }
 export function main(): void {
-  badge("red");
-}"#;
-    let result = scan(program, &[]);
+  paint("red");
+}"#,
+        &[],
+    );
     assert!(result.compositions.is_empty(), "{:?}", result.compositions);
-    for token in ["text-sm", "font-600", "bg-red-500", "bg-blue-500"] {
+    for token in [
+        "text-sm",
+        "text-lg",
+        "font-bold",
+        "font-normal",
+        "bg-red-500",
+        "bg-blue-500",
+        "leading-6",
+    ] {
         assert!(
             result.tokens.contains(token),
             "{token}: {:?}",
             result.tokens
         );
     }
-    let widened = scan(
-        r#"export function main(): void {
-  let size = "sm";
-  size = "lg";
-  View.mount(<div class={`text-${size}`}>x</div>);
-}"#,
-        &[],
+}
+
+/// K8: a hole without a finite literal type stays a located error, and an
+/// enumeration past the bound is one too.
+#[test]
+fn composed_class_names_without_finite_types_are_located() {
+    let open = scan_result(
+        "function show(size: string): void { View.mount(<div class={`btn-${size}`}>x</div>); }\nexport function main(): void { show(\"lg\"); }",
+    )
+    .unwrap();
+    assert_eq!(open.compositions.len(), 1);
+    let diagnostic = open.compositions[0].diagnostic().unwrap();
+    assert!(
+        diagnostic
+            .message
+            .contains("not a finite union of string literals"),
+        "{}",
+        diagnostic.message
     );
-    assert_eq!(widened.compositions.len(), 1);
+    assert_eq!(diagnostic.range.start.column, 67, "{diagnostic:?}");
+
+    let letters: Vec<String> = (b'a'..=b'q')
+        .map(|c| format!("\"{}\"", c as char))
+        .collect();
+    let union = letters.join(" | ");
+    let wide = scan_result(&format!(
+        "type L = {union};\nfunction show(a: L, b: L, c: L): void {{ View.mount(<p class={{`x-${{a}}${{b}}${{c}}`}}>x</p>); }}\nexport function main(): void {{ show(\"a\", \"b\", \"c\"); }}"
+    ))
+    .unwrap();
+    assert_eq!(wide.compositions.len(), 1);
+    let message = &wide.compositions[0].diagnostic().unwrap().message;
+    assert!(message.contains("more than 4096 combinations"), "{message}");
+}
+
+/// K8 with K9 A: holes resolve with the v38 checker's types, which follow
+/// TypeScript's literal inference: an unannotated `const` string, number or
+/// boolean literal and an `as const` tuple element have literal types and
+/// enumerate; a widened `let` stays a located error, and v37 (no literal
+/// inference) keeps the compositions errors.
+#[test]
+fn composed_class_names_follow_the_checker_types() {
+    let program = r#"function paint(): void {
+  const node = View.node();
+  const leading = "leading";
+  View.setClass(node, `${leading}-6`);
+  const SIZES = ["xs", "xl"] as const;
+  View.setClass(node, `m-${SIZES[1]}`);
+  const weight = 600;
+  View.setClass(node, `font-${weight}`);
+  let loose = "a";
+  loose = "b";
+  View.setClass(node, `p-${loose}`);
+}
+export function main(): void { paint(); }"#;
+    let result = scan_result(program).unwrap();
+    let lines: Vec<usize> = result
+        .compositions
+        .iter()
+        .map(|error| error.diagnostic().unwrap().range.start.line)
+        .collect();
+    assert_eq!(lines, vec![11]);
+    for token in ["leading-6", "m-xl", "font-600"] {
+        assert!(
+            result.tokens.contains(token),
+            "{token}: {:?}",
+            result.tokens
+        );
+    }
     let v37 = crate::scan_classes_with_profile(
         ModuleSource {
             path: "app.tsx".into(),
@@ -441,8 +526,6 @@ export function main(): void {
         &Modules(&[]),
         V37,
     );
-    // V37 has no literal inference: the composition stays a diagnostic
-    // (or the profile refuses the TSX module outright).
     if let Ok(v37) = v37 {
         assert!(!v37.compositions.is_empty());
     }

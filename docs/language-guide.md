@@ -6246,21 +6246,31 @@ Tailwind CSS v4.3.5; no Node or JavaScript), with every class token of the
 program: string literals, template text, literal types (`Tone` above
 contributes both members) and TSX values. The generated stylesheet replaces
 the text of `./app.css` in the artifact; the same sources always give the
-same bytes. Build a class name from complete literals; a name composed at
-run time is a compile error, because no build-time generator can see it:
+same bytes. A class name composed from parts is enumerated when every part
+has a finite union of string-literal types (Tailwind's own scanner cannot do
+this); any other composed name is a compile error, because no build-time
+generator can see it:
 
 ```tsx
-<p class={`text-${size}`}>x</p>                          // error when size: string
-<p class={size === 'lg' ? 'text-lg' : 'text-sm'}>x</p>    // fine
+type Size = 'sm' | 'lg';
+function Label(props: { size: Size; text: string }): number {
+  return <p class={`text-${props.size}`}>{props.text}</p>; // text-sm, text-lg
+}
+function Bad(size: string): number {
+  return <p class={`text-${size}`}>x</p>;                  // error: `string` is not enumerable
+}
 ```
 
-Under v38 a template whose holes have finite literal types is enumerated
-instead: with `const size = 'sm'` (literal type `'sm'`) or a parameter
-`size: 'sm' | 'lg'`, `` `text-${size}` `` contributes `text-sm` (and
-`text-lg`).
+The checker follows TypeScript's literal inference, so an unannotated
+constant composes too: `const tone = 'red'` has the type `'red'` (a `let`
+widens to `string` and stays an error).
 
-`@plugin` and `@config` (JavaScript) and `@source "path"` (file scanning)
-are rejected; list extra classes with `@source inline(…)`. Until the engine
+The entry may import project stylesheets by relative path, at build time
+only (`@import "./components/buttons.css" layer(components);`), before its
+other rules as in CSS.
+
+`@plugin` and `@config` (JavaScript), `@source "path"` (file scanning)
+and `@import` of URLs are rejected; list extra classes with `@source inline(…)`. Until the engine
 stylesheet grammar admits Tailwind's output (track T2: class tokens such as
 `hover:bg-red-500`, `@property`, `oklch()`, `!important`, …), `varta check`
 reports the first construct the grammar refuses inside `app.css`.

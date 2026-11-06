@@ -298,6 +298,9 @@ pub(crate) struct SuspensionPoint {
 #[derive(Default)]
 pub(crate) struct ValueTypes {
     pub profile: varta_common::language::LanguageProfile,
+    /// Class-name holes a class scan resolves through their types (K8);
+    /// `None` for an ordinary compilation.
+    pub class_holes: Option<crate::classes::HoleTracker>,
     pub records: Vec<RecordShape>,
     pub arrays: Vec<Type>,
     pub unions: Vec<Vec<Type>>,

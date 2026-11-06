@@ -8,12 +8,9 @@ impl Lower<'_> {
             return Err(invalid("malformed template literal"));
         }
         let mut joined: Option<Expr> = None;
-        // V38 (`type_level`): the literal types of the holes, for the
-        // values a class composition may produce.
-        let mut holes = Vec::new();
         for (index, quasi) in template.quasis.iter().enumerate() {
             if let Some(index) = index.checked_sub(1) {
-                let value = self.template_hole(&template.exprs[index], &mut holes)?;
+                let value = self.expr(&template.exprs[index])?;
                 let text = self.template_text(value)?;
                 joined = Some(concatenate(joined, text));
             }
@@ -27,7 +24,6 @@ impl Lower<'_> {
                 joined = Some(concatenate(joined, part));
             }
         }
-        self.note_template_values(template, &holes);
         Ok(match joined {
             Some(value) => Expr {
                 span: template.span,

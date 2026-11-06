@@ -92,50 +92,6 @@ pub(super) fn evaluate(template: &ast::TsTplLitType, types: &mut ir::ValueTypes)
     literals::of_values(LiteralBase::String, values, types)
 }
 
-/// Every value of a template literal *expression* whose holes have the
-/// finite literal types `holes`; `None` when a hole is not finite or the
-/// combinations exceed `limit`.
-pub(super) fn values(
-    quasis: &[ast::TplElement],
-    holes: &[Type],
-    limit: usize,
-    types: &mut ir::ValueTypes,
-) -> Option<Vec<String>> {
-    let mut results: Vec<Vec<u16>> = vec![quasi(quasis.first()?).ok()?];
-    for (hole, next) in holes.iter().zip(quasis.get(1..)?) {
-        if !matches!(*hole, Type::Literal(..) | Type::Null | Type::Undefined)
-            && !unions::members(*hole, types)
-                .iter()
-                .all(|m| matches!(m, Type::Literal(..) | Type::Null | Type::Undefined))
-        {
-            return None;
-        }
-        let choices = texts(*hole, types).ok()?;
-        let tail = quasi(next).ok()?;
-        if choices.is_empty() || results.len().saturating_mul(choices.len()) > limit {
-            return None;
-        }
-        let (choices, tail) = (&choices, &tail);
-        results = results
-            .iter()
-            .flat_map(|prefix| {
-                choices.iter().map(move |choice| {
-                    let mut text = prefix.clone();
-                    text.extend_from_slice(choice);
-                    text.extend_from_slice(tail);
-                    text
-                })
-            })
-            .collect();
-    }
-    Some(
-        results
-            .iter()
-            .map(|units| String::from_utf16_lossy(units))
-            .collect(),
-    )
-}
-
 /// One placeholder of a template pattern.
 enum Hole<'a> {
     /// `infer X` (with an optional constraint).

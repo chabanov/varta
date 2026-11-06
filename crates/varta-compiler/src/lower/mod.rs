@@ -98,7 +98,7 @@ struct Lower<'a> {
     core: core::State,
 }
 
-pub(crate) use link::lower;
+pub(crate) use link::{lower, lower_tracked};
 
 fn annotation(ann: Option<&ast::TsTypeAnn>, types: &mut ir::ValueTypes) -> Result<Option<Type>> {
     let Some(ann) = ann else {
@@ -370,6 +370,7 @@ mod bitwise;
 mod builtin_methods;
 mod byte_values;
 mod callback_inference;
+mod class_holes;
 pub(crate) mod classes;
 mod closure_narrowing;
 mod collection_hashing;

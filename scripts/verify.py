@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import fcntl
 import hashlib
 import json
 import os
@@ -270,6 +271,32 @@ def fingerprint() -> dict[str, str]:
     return {"head": head, "sourceSha256": digest.hexdigest()}
 
 
+# Full gates run one at a time on a machine (owner decision, 2026-11-06):
+# overlapping gates of several worktrees slow every run and fail
+# time-sensitive tests. The lock file is shared by every checkout of the same
+# user; `VARTA_GATE_LOCK` names another one, and a caller that already holds
+# the lock (a queueing wrapper) sets `VARTA_GATE_LOCK_HELD=1`.
+GATE_LOCK_ENV = "VARTA_GATE_LOCK"
+GATE_LOCK_HELD_ENV = "VARTA_GATE_LOCK_HELD"
+
+
+def full_gate_lock():
+    """Wait for and hold the machine-wide full-gate lock; `None` when the
+    caller already holds it. The lock lasts while the returned file is open."""
+    if os.environ.get(GATE_LOCK_HELD_ENV) == "1":
+        return None
+    path = Path(os.environ.get(GATE_LOCK_ENV) or Path(tempfile.gettempdir()) / "varta-full-gate.lock")
+    lock = open(path, "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"waiting for another full gate to finish ({path})", flush=True)
+        started = time.monotonic()
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        print(f"full-gate lock acquired after {time.monotonic() - started:.0f} s", flush=True)
+    return lock
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", action="store_true", help="print commands only; executes no checks")
@@ -307,6 +334,9 @@ def main() -> int:
                 print(shlex.join(command))
         return 0
 
+    # Queue behind any other full gate before taking the source fingerprint;
+    # the lock is held until this function returns.
+    gate_lock = full_gate_lock() if args.scope == "full" else None
     # Reports are evidence, not a cache: no passing command is skipped automatically.
     (ROOT / output).mkdir(parents=True, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix=datetime.datetime.now().strftime("%Y%m%d-%H%M%S-"), dir=ROOT / output))
