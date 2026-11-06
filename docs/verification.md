@@ -713,6 +713,17 @@ cargo run -p varta-view --example native_transition_probe --locked > target/nati
 node scripts/test-native-transitions.mjs target/native-transitions.json
 ```
 
+Classic (always-shown) scrollbars are compared with Chrome run with macOS's
+"Show scroll bars: Always" for that process only (no system setting changes):
+
+```sh
+cargo test -p varta-view --test integration --locked scrollbars
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_scrollbar_probe --locked -- "$scale" > "target/native-scrollbars-$scale.json"
+  node scripts/test-native-positioned.mjs "target/native-scrollbars-$scale.json"
+done
+```
+
 Platform fallback faces with `--system-fonts` (macOS) are compared with
 Chrome on the same machine; the oracle carries no font bytes, so Chrome
 resolves the generic families and fallback faces itself:

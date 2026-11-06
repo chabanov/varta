@@ -35,7 +35,33 @@ pub struct BoxGeometry {
     pub scroll: Option<ScrollMetrics>,
     /// Programmatic scrolling also includes `overflow: hidden`.
     pub programmatic_scroll: Option<ScrollMetrics>,
+    /// Classic scrollbars of a scroll container ([`crate::Scrollbars::Classic`]).
+    pub scrollbars: Option<ScrollbarGeometry>,
 }
+
+/// The always-shown scrollbars of one scroll container: each bar's track
+/// in the gutter its axis reserves, inside the borders, and that axis's
+/// scroll range, in CSS pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollbarGeometry {
+    /// The vertical bar's track at the right edge, above any horizontal bar.
+    pub vertical: Option<BoxRect>,
+    /// The horizontal bar's track at the bottom edge, left of any vertical
+    /// bar.
+    pub horizontal: Option<BoxRect>,
+    /// Vertical `[visible length, maximum offset, offset]`.
+    pub vertical_range: [f32; 3],
+    /// Horizontal `[visible length, maximum offset, offset]` (native layout
+    /// scrolls only vertically, so the offset is zero).
+    pub horizontal_range: [f32; 3],
+}
+
+/// The thickness of an always-shown macOS scrollbar (the gutter it
+/// reserves), in CSS pixels: Chrome's `NSScroller` regular size.
+pub const CLASSIC_SCROLLBAR_THICKNESS: f32 = 15.0;
+/// Layout passes that may add classic scrollbar gutters after the first: a
+/// gutter can make content overflow on the other axis once more.
+pub const MAX_GUTTER_PASSES: usize = 2;
 
 /// Clamped vertical scroll offset and maximum in CSS pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1911,90 +1937,155 @@ fn boxes_inner(
         .iter()
         .map(|(&id, &node)| (u64::from(node), flow_node(tree, id)))
         .collect();
-    engine
-        .compute_layout_with_measure(
-            root,
-            Size {
-                width: AvailableSpace::Definite(width),
-                height: AvailableSpace::Definite(height),
-            },
-            |inputs, node, context, style| {
-                taffy::compute_leaf_layout(
-                    inputs,
-                    style,
-                    |_, _| 0.0,
-                    |known, available| {
-                        let shape = match context.as_deref() {
-                            Some(Measure::Text(shape)) => shape,
-                            Some(Measure::Control(size)) => return size.measure(known, available),
-                            None => {
+    // Classic scrollbars: every scroll container (`overflow: auto`) whose
+    // content overflows on an axis reserves that axis's gutter, and layout
+    // runs again; gutters are only added, so the passes converge.
+    let scrollers: Vec<(u32, taffy::NodeId)> = if env.scrollbars == style::Scrollbars::Classic {
+        ids.iter()
+            .filter(|(_, node)| {
+                engine.style(**node).is_ok_and(|style| {
+                    style.overflow.x == Overflow::Scroll || style.overflow.y == Overflow::Scroll
+                })
+            })
+            .map(|(&id, &node)| (id, node))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut gutters: BTreeMap<u32, (bool, bool)> = BTreeMap::new();
+    for pass in 0..=MAX_GUTTER_PASSES {
+        engine
+            .compute_layout_with_measure(
+                root,
+                Size {
+                    width: AvailableSpace::Definite(width),
+                    height: AvailableSpace::Definite(height),
+                },
+                |inputs, node, context, style| {
+                    taffy::compute_leaf_layout(
+                        inputs,
+                        style,
+                        |_, _| 0.0,
+                        |known, available| {
+                            let shape = match context.as_deref() {
+                                Some(Measure::Text(shape)) => shape,
+                                Some(Measure::Control(size)) => {
+                                    return size.measure(known, available);
+                                }
+                                None => {
+                                    return Size {
+                                        width: known.width.unwrap_or(0.0),
+                                        height: known.height.unwrap_or(0.0),
+                                    };
+                                }
+                            };
+                            // Taffy's measurement callback cannot return an error.
+                            // Once one is recorded, finish its traversal with cheap
+                            // fallback sizes: the whole geometry is rejected below.
+                            // Do not repeat shaping/analysis for an unusable layout
+                            // or replace its first failure with a later diagnostic.
+                            if measurement_error.is_some() {
                                 return Size {
-                                    width: known.width.unwrap_or(0.0),
-                                    height: known.height.unwrap_or(0.0),
+                                    width: known.width.unwrap_or(shape.metrics.width),
+                                    height: known.height.unwrap_or(shape.metrics.height),
                                 };
                             }
-                        };
-                        // Taffy's measurement callback cannot return an error.
-                        // Once one is recorded, finish its traversal with cheap
-                        // fallback sizes: the whole geometry is rejected below.
-                        // Do not repeat shaping/analysis for an unusable layout
-                        // or replace its first failure with a later diagnostic.
-                        if measurement_error.is_some() {
-                            return Size {
-                                width: known.width.unwrap_or(shape.metrics.width),
-                                height: known.height.unwrap_or(shape.metrics.height),
+                            let target = known.width.unwrap_or(match available.width {
+                                AvailableSpace::MinContent => shape.metrics.min_width,
+                                AvailableSpace::MaxContent => shape.metrics.width,
+                                AvailableSpace::Definite(value) => {
+                                    if shape.options.white_space == WhiteSpaceMode::PreWrap {
+                                        value.max(shape.metrics.min_width)
+                                    } else {
+                                        value.max(shape.metrics.min_width).min(shape.metrics.width)
+                                    }
+                                }
+                            });
+                            measured_bytes = measured_bytes.saturating_add(shape.text.len());
+                            let measured = if measured_bytes > 8 * 1024 * 1024 {
+                                measurement_error = Some(LayoutError::Text(
+                                    "text shaping work limit exceeded".to_owned(),
+                                ));
+                                shape.metrics
+                            } else if let Some(measurer) = text_input.as_mut() {
+                                match shape.measure(measurer, Some(target.clamp(0.01, 1_000_000.0)))
+                                {
+                                    Ok(metrics) => metrics,
+                                    Err(error) => {
+                                        measurement_error =
+                                            Some(match owners.get(&u64::from(node)) {
+                                                Some(&owner) => LayoutError::text(owner)(error),
+                                                None => LayoutError::Text(error.to_string()),
+                                            });
+                                        shape.metrics
+                                    }
+                                }
+                            } else {
+                                shape.metrics
                             };
-                        }
-                        let target = known.width.unwrap_or(match available.width {
-                            AvailableSpace::MinContent => shape.metrics.min_width,
-                            AvailableSpace::MaxContent => shape.metrics.width,
-                            AvailableSpace::Definite(value) => {
-                                if shape.options.white_space == WhiteSpaceMode::PreWrap {
-                                    value.max(shape.metrics.min_width)
+                            Size {
+                                width: if shape.rich.is_some() {
+                                    measured.width
                                 } else {
-                                    value.max(shape.metrics.min_width).min(shape.metrics.width)
-                                }
+                                    known.width.unwrap_or(measured.width)
+                                },
+                                height: if shape.rich.is_some() {
+                                    measured.height
+                                } else {
+                                    known.height.unwrap_or(measured.height)
+                                },
                             }
-                        });
-                        measured_bytes = measured_bytes.saturating_add(shape.text.len());
-                        let measured = if measured_bytes > 8 * 1024 * 1024 {
-                            measurement_error = Some(LayoutError::Text(
-                                "text shaping work limit exceeded".to_owned(),
-                            ));
-                            shape.metrics
-                        } else if let Some(measurer) = text_input.as_mut() {
-                            match shape.measure(measurer, Some(target.clamp(0.01, 1_000_000.0))) {
-                                Ok(metrics) => metrics,
-                                Err(error) => {
-                                    measurement_error = Some(match owners.get(&u64::from(node)) {
-                                        Some(&owner) => LayoutError::text(owner)(error),
-                                        None => LayoutError::Text(error.to_string()),
-                                    });
-                                    shape.metrics
-                                }
-                            }
-                        } else {
-                            shape.metrics
-                        };
-                        Size {
-                            width: if shape.rich.is_some() {
-                                measured.width
-                            } else {
-                                known.width.unwrap_or(measured.width)
-                            },
-                            height: if shape.rich.is_some() {
-                                measured.height
-                            } else {
-                                known.height.unwrap_or(measured.height)
-                            },
-                        }
-                    },
-                )
-            },
-        )
-        .map_err(|e| LayoutError::Engine(e.to_string()))?;
-    if let Some(error) = measurement_error {
-        return Err(error);
+                        },
+                    )
+                },
+            )
+            .map_err(|e| LayoutError::Engine(e.to_string()))?;
+        if let Some(error) = measurement_error.take() {
+            return Err(error);
+        }
+        let mut grown = None;
+        for &(id, node) in &scrollers {
+            let layout = engine
+                .layout(node)
+                .map_err(|e| LayoutError::Engine(e.to_string()))?;
+            let (vertical, horizontal) = gutters.get(&id).copied().unwrap_or_default();
+            let wanted = (
+                vertical || layout.scroll_height() > 0.0,
+                horizontal || layout.scroll_width() > 0.0,
+            );
+            if wanted == (vertical, horizontal) {
+                continue;
+            }
+            let mut style = engine
+                .style(node)
+                .map_err(|e| LayoutError::Engine(e.to_string()))?
+                .clone();
+            // Taffy reserves the vertical bar's width for a scrolling y
+            // axis and the horizontal bar's height for a scrolling x axis.
+            let axis = |bar| {
+                if bar {
+                    Overflow::Scroll
+                } else {
+                    Overflow::Hidden
+                }
+            };
+            style.overflow = taffy::geometry::Point {
+                x: axis(wanted.1),
+                y: axis(wanted.0),
+            };
+            style.scrollbar_width = CLASSIC_SCROLLBAR_THICKNESS;
+            engine
+                .set_style(node, style)
+                .map_err(|e| LayoutError::Engine(e.to_string()))?;
+            gutters.insert(id, wanted);
+            grown.get_or_insert(id);
+        }
+        match grown {
+            None => break,
+            // Gutters that still grow after the last pass are refused.
+            Some(id) if pass == MAX_GUTTER_PASSES => return Err(LayoutError::Unsupported(id)),
+            Some(_) => {}
+        }
     }
     let mut result = BTreeMap::new();
     let viewport = BoxRect {
@@ -2037,6 +2128,7 @@ fn boxes_inner(
         let mut own_scroll = 0.0;
         let mut scroll = None;
         let mut programmatic_scroll = None;
+        let mut scrollbars = None;
         let mut content = BoxRect {
             x: 0.0,
             y: 0.0,
@@ -2130,17 +2222,52 @@ fn boxes_inner(
                     - layout.padding.bottom)
                     .max(0.0),
             };
-            if matches!(style.overflow.y, Overflow::Hidden | Overflow::Scroll) {
+            if matches!(style.overflow.y, Overflow::Hidden | Overflow::Scroll)
+                || gutters.contains_key(&id)
+            {
                 own_scroll = tree
                     .element(id)
                     .map_or(0.0, |element| element.scroll_top as f32)
                     .clamp(0.0, layout.scroll_height());
+                // The scrollport is the padding box less the gutters of
+                // classic scrollbars (`layout.scrollbar_size`).
+                let bars = layout.scrollbar_size;
                 let scrollport = BoxRect {
                     x: rect.x + layout.border.left,
                     y: rect.y + layout.border.top,
-                    width: (rect.width - layout.border.left - layout.border.right).max(0.0),
-                    height: (rect.height - layout.border.top - layout.border.bottom).max(0.0),
+                    width: (rect.width - layout.border.left - layout.border.right - bars.width)
+                        .max(0.0),
+                    height: (rect.height - layout.border.top - layout.border.bottom - bars.height)
+                        .max(0.0),
                 };
+                if bars.width > 0.0 || bars.height > 0.0 {
+                    let track = |x: f32, y: f32, width: f32, height: f32| BoxRect {
+                        x,
+                        y,
+                        width: width.max(0.0),
+                        height: height.max(0.0),
+                    };
+                    scrollbars = Some(ScrollbarGeometry {
+                        vertical: (bars.width > 0.0).then(|| {
+                            track(
+                                scrollport.x + scrollport.width,
+                                scrollport.y,
+                                bars.width,
+                                scrollport.height,
+                            )
+                        }),
+                        horizontal: (bars.height > 0.0).then(|| {
+                            track(
+                                scrollport.x,
+                                scrollport.y + scrollport.height,
+                                scrollport.width,
+                                bars.height,
+                            )
+                        }),
+                        vertical_range: [scrollport.height, layout.scroll_height(), own_scroll],
+                        horizontal_range: [scrollport.width, layout.scroll_width(), 0.0],
+                    });
+                }
                 let metrics = ScrollMetrics {
                     top: own_scroll,
                     max: layout.scroll_height(),
@@ -2167,6 +2294,7 @@ fn boxes_inner(
                 content,
                 scroll,
                 programmatic_scroll,
+                scrollbars,
             },
         );
         if tree
@@ -2194,6 +2322,7 @@ fn boxes_inner(
                         content: zero,
                         scroll: None,
                         programmatic_scroll: None,
+                        scrollbars: None,
                     },
                 );
                 options.extend(tree.nodes[&option].children.iter().copied());

@@ -42,6 +42,30 @@ ECMAScript, Node or npm compatibility.
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
 
+### Native classic scrollbars — native backlog batch, 2026-11-06
+
+Scrollbars are painted natively when the system shows them always
+([contract](architecture.md#native-scrollbars)). `Environment::scrollbars`
+carries the style; `varta-shell` reads `NSScroller.preferredScrollerStyle`
+(through the already locked `objc2-app-kit`, a safe class method). With
+classic scrollbars an overflowing `overflow: auto` axis reserves a 15px
+gutter (Taffy's `scrollbar_width`, per axis, in up to three layout passes, so
+a vertical gutter that makes content overflow horizontally adds the
+horizontal bar as in Chrome), and the track, borders, corner and thumb are
+painted from Chromium's `NativeThemeMac` constants and Blink's thumb geometry
+in device pixels. The oracle runs Chrome with `-AppleShowScrollBars Always` in
+its own argument domain (no system setting is touched; `browser-probe.mjs`
+gains `macDefaults`), checks that Chrome's gutter is 15px, and compares seven
+cases (vertical, horizontal, both with the corner, gutter-induced overflow,
+borders and padding, the minimum thumb, content that fits): 10124 geometry and
+hit checks per scale and pixel means 0.00 to 0.02/255 (1x), 0.06 to 0.48 and
+1.13 for the bordered case (1.25x), 0.06 to 0.09 (2x). Open: the overlay thumb
+Chrome shows while scrolling (it fades about 0.6s after the scroll), thumb
+hover color, thumb dragging and track clicks, a dark `color-scheme` (outside
+the subset), rounded scroll containers with classic bars (refused), live
+changes of the system setting (read at window start) and Chrome's Linux Aura
+scrollbars (Linux keeps overlay behaviour).
+
 ### Native fallback faces and Linux system fonts — native backlog batch, 2026-11-06
 
 Closes the console's `⚙` (U+2699) `.notdef`: with `varta-shell

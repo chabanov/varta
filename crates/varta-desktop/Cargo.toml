@@ -64,6 +64,8 @@ fontconfig.workspace = true
 skrifa.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
 core-text.workspace = true
 core-graphics.workspace = true
 core-foundation.workspace = true

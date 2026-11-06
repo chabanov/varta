@@ -14,6 +14,7 @@ mod order;
 mod outline_curve;
 mod outline_union;
 mod scroll;
+mod scrollbar;
 mod select;
 mod snap;
 mod text_geometry;
@@ -1828,6 +1829,7 @@ fn paint_marker(
                     clip,
                     scroll: None,
                     programmatic_scroll: None,
+                    scrollbars: None,
                 },
                 (&underline::Style::plain(color), "", WhiteSpaceMode::Pre),
                 id,
@@ -2083,6 +2085,7 @@ fn paint_input(
             content,
             scroll: None,
             programmatic_scroll: None,
+            scrollbars: None,
         };
         let style = underline::Style::resolve(tree, env, id, true, color)?;
         paint_shaped(
@@ -2122,6 +2125,7 @@ fn paint_input(
             content,
             scroll: None,
             programmatic_scroll: None,
+            scrollbars: None,
         };
         let style = underline::Style::resolve(tree, env, id, true, theme::PLACEHOLDER.color())?;
         paint_shaped(
@@ -3005,6 +3009,14 @@ fn rasterize_inner_scoped(
                 colors,
             )?;
         }
+        if let Some(bars) = geometry[&id].scrollbars {
+            // Classic scrollbars follow the box's square border edge; a
+            // rounded scroll container would clip them.
+            if !paint_radii.is_square() {
+                return Err(PaintError::Unsupported(id));
+            }
+            scrollbar::paint(&mut pixmap, bars, geometry[&id].clip)?;
+        }
         if matches!(phase, order::Phase::Context | order::Phase::Atomic) {
             pending.finish_after_children(id, phase);
         } else {
@@ -3180,6 +3192,7 @@ mod flow_text_tests {
                 content: rect,
                 scroll: None,
                 programmatic_scroll: None,
+                scrollbars: None,
             },
             underline::Style::plain(Color::BLACK),
             (TEXT, FLOW, false),

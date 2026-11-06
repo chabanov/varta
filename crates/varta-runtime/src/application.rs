@@ -67,6 +67,7 @@ pub struct ViewLayout {
     pub(crate) font_size: f32,
     pub(crate) dark: Option<bool>,
     pub(crate) root_font_size: Option<f64>,
+    pub(crate) scrollbars: varta_view::Scrollbars,
 }
 
 impl ViewLayout {
@@ -84,6 +85,7 @@ impl ViewLayout {
             font_size,
             dark: None,
             root_font_size: None,
+            scrollbars: varta_view::Scrollbars::default(),
         })
     }
 
@@ -91,6 +93,14 @@ impl ViewLayout {
     #[must_use]
     pub fn with_dark_mode(mut self, dark: bool) -> Self {
         self.dark = Some(dark);
+        self
+    }
+
+    /// Set the platform's scrollbar style before the first guest turn (a
+    /// native host reads it from its system setting).
+    #[must_use]
+    pub fn with_scrollbars(mut self, scrollbars: varta_view::Scrollbars) -> Self {
+        self.scrollbars = scrollbars;
         self
     }
 

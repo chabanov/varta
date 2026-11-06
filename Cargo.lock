@@ -5062,6 +5062,8 @@ dependencies = [
  "core-graphics 0.24.0",
  "core-text",
  "fontconfig",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
  "pollster",
  "serde_json",
  "sha2",

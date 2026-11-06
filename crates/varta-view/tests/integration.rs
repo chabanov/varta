@@ -31,6 +31,7 @@ mod renderer;
 mod renderer_inputs;
 mod retained_text;
 mod rounded;
+mod scrollbars;
 mod selects;
 mod snapshot_export;
 mod structure;

@@ -57,6 +57,11 @@ core-foundation = "=0.10.1"
 # so cross builds need no fontconfig development files); its only new
 # package is `yeslogic-fontconfig-sys`, the rest is already locked.
 fontconfig = { version = "=0.11.0", features = ["dlopen"] }
+# Already locked through winit and arboard: AppKit's preferred scroller style
+# (`NSScroller.preferredScrollerStyle`), the system setting Chrome follows for
+# overlay or always-shown scrollbars; a safe class method on the main thread.
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSControl", "NSResponder", "NSScroller", "NSView"] }
 softbuffer = { version = "=0.4.6", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 # Apache-2.0: semantic tree and native accessibility adapters, desktop only.
 accesskit = "=0.25.2"

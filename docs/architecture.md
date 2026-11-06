@@ -13996,6 +13996,52 @@ DOM boundary reports it as an indexed `ViewProtocolError` (`font-family
 keyword` for `set_style`, `stylesheet value` for a stylesheet). Custom
 property values keep such keywords. A quoted name is an ordinary family.
 
+#### Native scrollbars
+
+`Environment::scrollbars` selects the platform's scrollbar style, as Chrome on
+macOS follows the system's "Show scroll bars" setting. `Scrollbars::Overlay`
+(the default, and headless Chrome's style on a Mac with a trackpad) reserves
+no space and paints nothing while a container is not being scrolled.
+`Scrollbars::Classic` (always shown) gives every scroll container
+(`overflow: auto`, and the top-layer dialog) whose content overflows on an
+axis that axis's bar: a gutter of `CLASSIC_SCROLLBAR_THICKNESS` inside the
+borders (the vertical bar at the right, the horizontal one at the bottom),
+which the content box, the scrollport and the content clip leave out. Layout
+runs again after adding gutters; a gutter can make content overflow on the
+other axis, so gutters are only added, for at most `MAX_GUTTER_PASSES` more
+passes, and gutters still growing after them are refused
+(`LayoutError::Unsupported`). `BoxGeometry::scrollbars` gives each bar's
+track and its axis's range. Paint follows Chrome 156's `NativeThemeMac` in
+the light scheme (the subset has no `color-scheme`, and the official host
+never sets one, so Chrome paints light scrollbars in either OS scheme), in
+device pixels: the track filled `#FAFAFA` with a one-pixel (floored when
+scaled) inner border `#E8E8E8` on the content side and outer border `#EDEDED`
+on the outer edge; the corner where both bars meet filled likewise with its
+inner square and both outer borders; and the thumb, a pill of black at alpha
+`0x3A`, whose length and position are Blink's (`round(visible / total ·
+track)`, at least 20 pixels scaled, at `trunc(offset · (track − thumb) /
+max)`, one pixel for an offset under one), inset by 3 pixels (rounded when
+scaled) on every side plus the border on the content side, the insets
+shrinking (`ConstrainInsets`) to keep a 6 by 18 pixel minimum. A bar paints
+after its container's border and before its content, clipped to the
+container's clip; a classic scroll container with rounded corners is refused
+at paint. Pointers over a bar hit the container. Native layout scrolls only
+vertically, so a horizontal thumb stays at the start. Geometry, hits and
+pixels match Chrome 156 run with `-AppleShowScrollBars Always` (its argument
+domain only) at 1x, 1.25x and 2x within the 2/255 mean bound
+(`native_scrollbar_probe` with `scripts/test-native-positioned.mjs`); at 2x
+Chrome's scrollbar layer filters the track borders over two more pixels,
+which native does not. Not implemented: the overlay thumb that Chrome shows
+while scrolling and fades out after about half a second, the hover color of
+the classic thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a
+track, and Chrome's Linux (Aura) scrollbars.
+
+`varta-shell` reads AppKit's preferred scroller style
+(`NSScroller.preferredScrollerStyle`, where "Automatically" resolves by the
+attached pointing devices) on the main thread when its window opens and hands
+it to the instance (`ViewLayout::with_scrollbars`); a later change of the
+setting applies after a restart. Other platforms keep overlay scrollbars.
+
 #### Native fallback faces
 
 A host that lays text out with the platform's own fonts may give a

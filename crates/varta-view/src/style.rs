@@ -14,6 +14,9 @@ pub struct Environment {
     /// Reference document-root font size for `rem`, independent of the view
     /// root's own font size and the shaper's default text size.
     pub root_font_size: f64,
+    /// The platform's scrollbar style, which a native host reads from its
+    /// system setting.
+    pub scrollbars: Scrollbars,
 }
 impl Default for Environment {
     fn default() -> Self {
@@ -21,8 +24,23 @@ impl Default for Environment {
             width: DEFAULT_VIEWPORT_WIDTH,
             dark: false,
             root_font_size: varta_common::view::stylesheet::REM_PIXELS,
+            scrollbars: Scrollbars::default(),
         }
     }
+}
+
+/// How scroll containers show their scrollbars, as Chrome on macOS follows
+/// the system's "Show scroll bars" setting (`NSScroller.preferredScrollerStyle`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Scrollbars {
+    /// Overlay scrollbars: no layout space, and nothing painted while the
+    /// container is not scrolled (the headless default).
+    #[default]
+    Overlay,
+    /// Always-shown (legacy) scrollbars: a scroll container whose content
+    /// overflows on an axis reserves a gutter for that axis's bar, and the
+    /// track and thumb are painted in it.
+    Classic,
 }
 impl Environment {
     /// Set the host reference font. Zero is valid for geometry; text shaping

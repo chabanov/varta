@@ -200,6 +200,23 @@ struct Pressed {
 /// application fails. `started` is the host entry time of the startup
 /// measurement. A renderer this build cannot provide ([`check_renderer`])
 /// is refused before the window opens.
+/// The scrollbar style the system asks for, as Chrome reads it on macOS:
+/// AppKit's preferred scroller style (System Settings, "Show scroll bars";
+/// "Automatically" resolves by the attached pointing devices), read on the
+/// main thread when the window opens. Overlay elsewhere.
+fn system_scrollbars() -> varta_view::Scrollbars {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSScroller, NSScrollerStyle};
+        if let Some(main) = objc2::MainThreadMarker::new()
+            && NSScroller::preferredScrollerStyle(main) == NSScrollerStyle::Legacy
+        {
+            return varta_view::Scrollbars::Classic;
+        }
+    }
+    varta_view::Scrollbars::Overlay
+}
+
 pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(), ShellError> {
     check_renderer(config.renderer)?;
     let window_error = |error: &dyn std::fmt::Display| ShellError::Window(error.to_string());
@@ -237,6 +254,7 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         gpu_active: gpu_active.clone(),
         accessibility_active,
         console: config.console,
+        scrollbars: system_scrollbars(),
         stop: Arc::new(AtomicBool::new(false)),
     };
     let stop = state.stop.clone();
