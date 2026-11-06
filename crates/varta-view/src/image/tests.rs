@@ -172,10 +172,15 @@ fn sets_are_bounded_named_and_checked_before_decoding() {
         refused(&[("a.png", &wide)]),
         ImageError::Decoded("a.png".into())
     );
-    // Each image fits alone; together they exceed the decoded total.
-    let big = solid(2048, 1024, RED);
+    // Each image fits alone; together they exceed the decoded total. The
+    // charge sums the same way whatever the total, so a small total keeps
+    // this test small (the real one is 256 MiB).
+    let big = solid(64, 32, RED);
+    let each = 64 * 32 * DECODED_PIXEL_BYTES;
+    let images = [("a.png", &big[..]), ("b.png", &big), ("c.png", &big)];
+    assert!(ImageSet::decode_within(images[..2].iter().copied(), 2 * each).is_ok());
     assert_eq!(
-        refused(&[("a.png", &big), ("b.png", &big), ("c.png", &big)]),
+        ImageSet::decode_within(images.iter().copied(), 2 * each).unwrap_err(),
         ImageError::Decoded("c.png".into())
     );
 }

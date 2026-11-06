@@ -195,6 +195,15 @@ impl ImageSet {
     pub fn decode<'a>(
         sources: impl IntoIterator<Item = (&'a str, &'a [u8])>,
     ) -> Result<Self, ImageError> {
+        Self::decode_within(sources, MAX_IMAGE_DECODED_BYTES)
+    }
+
+    /// [`Self::decode`] charging the images' decoded pixels to `decoded`
+    /// bytes (at most [`MAX_IMAGE_DECODED_BYTES`]).
+    pub(crate) fn decode_within<'a>(
+        sources: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+        decoded: usize,
+    ) -> Result<Self, ImageError> {
         let sources: Vec<_> = sources.into_iter().take(MAX_IMAGES + 1).collect();
         if sources.len() > MAX_IMAGES {
             return Err(ImageError::Count(sources.len()));
@@ -217,7 +226,7 @@ impl ImageSet {
             })?);
         }
         let mut set = Self::default();
-        let mut budget = MAX_IMAGE_DECODED_BYTES;
+        let mut budget = decoded.min(MAX_IMAGE_DECODED_BYTES);
         for (&(name, bytes), format) in sources.iter().zip(formats) {
             if set.images.contains_key(name) {
                 return Err(ImageError::Duplicate(name.to_owned()));
