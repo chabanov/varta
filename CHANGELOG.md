@@ -65,8 +65,11 @@
   media ranges). `"tailwind": {"entry": "src/app.css"}` makes `check`, `dev`
   and `build` generate the stylesheet from the module graph's class tokens
   and serve it as the entry's text resource, deterministically. TSX accepts
-  `className` as an alias of `class`; a class name composed at run time, and
-  `@plugin`/`@config`, are errors. It matches the official compiler on all
+  `className` as an alias of `class`. A class name composed from parts whose
+  types are finite string-literal unions enumerates every combination
+  (bounded); other composed names, and `@plugin`/`@config`, are errors. The
+  entry may `@import` project stylesheets by relative path at build time,
+  under the module path policy. It matches the official compiler on all
   39,152 oracle candidates; applying full Tailwind output waits for the T2
   stylesheet grammar.
 - V38 compiled JSON decoders scan string bodies and whitespace, and copy

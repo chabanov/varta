@@ -88,7 +88,7 @@ fn error(message: impl Into<String>) -> CompilerError {
 pub(crate) fn desugar(
     module: &mut ast::Module,
     source: &Source,
-) -> Result<Vec<Span>, CompilerError> {
+) -> Result<Vec<crate::classes::Composition>, CompilerError> {
     let mut reserved = Reserved(None);
     swc_ecma_visit::VisitWith::visit_with(&*module, &mut reserved);
     if let Some(span) = reserved.0 {
@@ -169,7 +169,7 @@ struct Desugar<'a> {
     templates: Vec<(String, Span)>,
     error: Option<CompilerError>,
     /// Class expressions composing a class name at run time.
-    class_compositions: Vec<Span>,
+    class_compositions: Vec<crate::classes::Composition>,
 }
 
 impl VisitMut for Desugar<'_> {

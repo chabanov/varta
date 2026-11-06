@@ -235,3 +235,75 @@ export function main(): void {
     success(project.command(&["check"]));
     success(project.command(&["dev"]));
 }
+
+/// Project stylesheets imported by the entry are read at build time through
+/// the project loader: relative paths only, inside the configuration
+/// directory, never through a symlink, never at run time.
+#[test]
+fn entry_imports_read_project_stylesheets_under_the_path_policy() {
+    let project = Project::new(
+        UTILITIES_MAIN,
+        "@import \"./parts/buttons.css\";\n@tailwind utilities;\n",
+    );
+    project.write(
+        "src/parts/buttons.css",
+        "@import \"../shared/base.css\";\n.btn {\n  @apply hidden;\n}\n",
+    );
+    project.write("src/shared/base.css", ".base {\n  display: block;\n}\n");
+    let expected = r#"varta log: ".base {\n  display: block;\n}\n.btn {\n  display: none;\n}\n.flex {\n  display: flex;\n}\n.hidden {\n  display: none;\n}\n""#;
+    let output = success(project.command(&["dev"]));
+    assert!(output.contains(expected), "{output}");
+
+    project.write(
+        "src/parts/buttons.css",
+        "@import \"../../../outside.css\";\n",
+    );
+    let output = project.command(&["check"]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+    assert!(
+        text(&output).contains("escapes project root"),
+        "{}",
+        text(&output)
+    );
+
+    #[cfg(unix)]
+    {
+        fs::remove_file(project.root.join("src/parts/buttons.css")).unwrap();
+        std::os::unix::fs::symlink(
+            project.root.join("src/shared/base.css"),
+            project.root.join("src/parts/buttons.css"),
+        )
+        .unwrap();
+        let output = project.command(&["check"]);
+        assert_eq!(output.status.code(), Some(1), "{}", text(&output));
+        assert!(
+            text(&output).contains("parts/buttons.css"),
+            "{}",
+            text(&output)
+        );
+    }
+}
+
+/// A class composed from a finite literal union enumerates every name (a
+/// Varta extension beyond Tailwind's scanner).
+#[test]
+fn composed_class_names_with_literal_types_generate_every_combination() {
+    let project = Project::new(
+        r#"import css from "./app.css" with { type: "text" };
+type Kind = "block" | "inline";
+function Box(props: { kind: Kind }): number {
+  return <p class={`${props.kind}-box`}>x</p>;
+}
+export function main(): void {
+  View.stylesheet(1, css);
+  console.log(JSON.stringify(css));
+  View.mount(Box({ kind: "block" }));
+}"#,
+        "@utility block-box {\n  display: block;\n}\n@utility inline-box {\n  display: inline;\n}\n@tailwind utilities;\n",
+    );
+    // `block` and `inline` are tokens too (the literal type's members), and
+    // Tailwind utilities, as Tailwind's own scanner would find them.
+    let expected = r#"varta log: ".block {\n  display: block;\n}\n.block-box {\n  display: block;\n}\n.inline {\n  display: inline;\n}\n.inline-box {\n  display: inline;\n}\n""#;
+    let output = success(project.command(&["dev"]));
+    assert!(output.contains(expected), "{output}");
+}

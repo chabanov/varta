@@ -7689,9 +7689,16 @@ frame bounds.
   tests pin these first violations; the end-to-end test is ignored until T2.
   (Since the T2 standards items and T3 merged: static tokens apply, and the
   first violation of a full build is the theme's `:root, :host`, stage S5.)
-- Not in T1: JavaScript plugins/config, `@source` file globs, project-relative
-  CSS `@import` (only the embedded package is importable), source maps,
+- Not in T1: JavaScript plugins/config, `@source` file globs, source maps,
   IntelliSense suggestions and candidate canonicalization.
+- Follow-up (owner decisions 2026-11-06): composed class names enumerate
+  through the checker's finite string-literal types (bounded by
+  `MAX_CLASS_COMBINATIONS`; other holes stay errors), and the entry may
+  `@import` project stylesheets by relative path through the project
+  loader under the module path policy (Cascade 5 placement and
+  conditions, cycle, depth, count and byte bounds). Open: the v38 checker
+  types an unannotated `const x = "a"` and `as const` tuple elements as
+  `string`, so those need annotations to be enumerated.
 
 #### K8 T2 S1–S3 — engine tokens, sheet structure and values (2026-11-06)
 

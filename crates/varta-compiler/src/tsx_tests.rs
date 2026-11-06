@@ -402,7 +402,7 @@ export function main(size: Size): void {
 #[test]
 fn composed_class_names_are_located() {
     let result = scan(
-        "export function main(size: string): void { View.mount(<div class={`btn-${size}`}>x</div>); }",
+        "function show(size: string): void { View.mount(<div class={`btn-${size}`}>x</div>); }\nexport function main(): void { show(\"lg\"); }",
         &[],
     );
     assert_eq!(result.compositions.len(), 1);
@@ -413,4 +413,114 @@ fn composed_class_names_are_located() {
         diagnostic.message
     );
     assert_eq!(diagnostic.range.start.line, 1);
+}
+
+fn scan_result(text: &str) -> Result<crate::ClassScan, CompilerError> {
+    crate::scan_classes_with_profile(
+        ModuleSource {
+            path: "app.tsx".into(),
+            text: text.into(),
+        },
+        &Modules(&[]),
+        V38,
+    )
+}
+
+/// K8 (Varta extension beyond Tailwind's scanner): a composed class name
+/// whose holes have finite string-literal types enumerates every
+/// combination, through aliases, inferred constant unions and `+` chains.
+#[test]
+fn composed_class_names_enumerate_finite_literal_types() {
+    let result = scan(
+        r#"type Size = "sm" | "lg";
+type Tone = "red" | "blue";
+function Badge(props: { size: Size; loud: boolean }): number {
+  const weight: "bold" | "normal" = props.loud ? "bold" : "normal";
+  return <p class={`text-${props.size} font-${weight}`}>{"x"}</p>;
+}
+function paint(tone: Tone): void {
+  View.mount(<div>{Badge({ size: "sm", loud: true })}</div>);
+  const node = View.node();
+  View.setClass(node, "bg-" + tone + "-500");
+  const leading: "leading" = "leading";
+  View.setClass(node, `${leading}-6`);
+}
+export function main(): void {
+  paint("red");
+}"#,
+        &[],
+    );
+    assert!(result.compositions.is_empty(), "{:?}", result.compositions);
+    for token in [
+        "text-sm",
+        "text-lg",
+        "font-bold",
+        "font-normal",
+        "bg-red-500",
+        "bg-blue-500",
+        "leading-6",
+    ] {
+        assert!(
+            result.tokens.contains(token),
+            "{token}: {:?}",
+            result.tokens
+        );
+    }
+}
+
+/// K8: a hole without a finite literal type stays a located error, and an
+/// enumeration past the bound is one too.
+#[test]
+fn composed_class_names_without_finite_types_are_located() {
+    let open = scan_result(
+        "function show(size: string): void { View.mount(<div class={`btn-${size}`}>x</div>); }\nexport function main(): void { show(\"lg\"); }",
+    )
+    .unwrap();
+    assert_eq!(open.compositions.len(), 1);
+    let diagnostic = open.compositions[0].diagnostic().unwrap();
+    assert!(
+        diagnostic
+            .message
+            .contains("not a finite union of string literals"),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(diagnostic.range.start.column, 67, "{diagnostic:?}");
+
+    let letters: Vec<String> = (b'a'..=b'q')
+        .map(|c| format!("\"{}\"", c as char))
+        .collect();
+    let union = letters.join(" | ");
+    let wide = scan_result(&format!(
+        "type L = {union};\nfunction show(a: L, b: L, c: L): void {{ View.mount(<p class={{`x-${{a}}${{b}}${{c}}`}}>x</p>); }}\nexport function main(): void {{ show(\"a\", \"b\", \"c\"); }}"
+    ))
+    .unwrap();
+    assert_eq!(wide.compositions.len(), 1);
+    let message = &wide.compositions[0].diagnostic().unwrap().message;
+    assert!(message.contains("more than 4096 combinations"), "{message}");
+}
+
+/// K8: holes resolve with the v38 checker's types, which give an
+/// unannotated `const` string or an `as const` tuple element the type
+/// `string` (TypeScript would infer literal types); such holes stay located
+/// errors until the checker infers them.
+#[test]
+fn composed_class_names_follow_the_checker_types() {
+    let result = scan_result(
+        r#"function paint(): void {
+  const node = View.node();
+  const leading = "leading";
+  View.setClass(node, `${leading}-6`);
+  const SIZES = ["xs", "xl"] as const;
+  View.setClass(node, `m-${SIZES[1]}`);
+}
+export function main(): void { paint(); }"#,
+    )
+    .unwrap();
+    let lines: Vec<usize> = result
+        .compositions
+        .iter()
+        .map(|error| error.diagnostic().unwrap().range.start.line)
+        .collect();
+    assert_eq!(lines, vec![4, 6]);
 }
