@@ -11,7 +11,7 @@ use varta_common::permission::{
     ApplicationDecisions, DecisionFile, DecisionRecord, DecisionSource, PermissionPrompt,
     PermissionState, PromptAnswer,
 };
-use varta_common::scheduler::{SchedulerError, TIMER_CAPABILITY};
+use varta_common::scheduler::{MAX_PROMISE_SERIALS, SchedulerError, TIMER_CAPABILITY};
 
 const V38: LanguageProfile = LanguageProfile::CheckedF64Utf16V38;
 const V37: LanguageProfile = LanguageProfile::CheckedF64Utf16V37;
@@ -807,4 +807,53 @@ fn a_lowered_memory_budget_still_ends_a_v38_instance() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// Each round awaits `__N__` promises that are still pending when awaited
+/// (one reaction serial each), then yields to a timer turn.
+const SERIALS: &str = r#"
+async function inner(n: number): Promise<number> {
+  await Promise.resolve();
+  return n + 1;
+}
+export async function main(): Promise<void> {
+  let total = 0;
+  for (let round = 0; round < __ROUNDS__; round++) {
+    for (let i = 0; i < __N__; i++) {
+      total = await inner(total);
+    }
+    await new Promise<void>((resolve) => { setTimeout(resolve, 1); });
+  }
+  console.log(`total ${total}`);
+}
+"#;
+
+/// A v38 instance issues more promise serials over its turns than an earlier
+/// profile may per execution (`scheduler::MAX_PROMISE_SERIALS`): serials have
+/// no lifetime bound, and each turn stays within its microtask allowance.
+#[test]
+fn v38_instances_issue_serials_past_the_earlier_execution_bound() {
+    let per_round = 12_000;
+    let rounds = MAX_PROMISE_SERIALS / per_round + 2;
+    let source = SERIALS
+        .replace("__ROUNDS__", &rounds.to_string())
+        .replace("__N__", &per_round.to_string());
+    // A bounded run has one deadline; this one declares the largest.
+    let longest = BudgetRequest {
+        deadline_per_turn_ms: Some(varta_common::budget::MAX_DEADLINE_PER_TURN_MS),
+        ..BudgetRequest::default()
+    };
+    let report = bounded(
+        &compile(&source),
+        RunOptions {
+            budgets: longest,
+            budget_ceiling: Some(longest),
+            ..options(timers())
+        },
+    );
+    assert!(report.failure.is_none(), "{:?}", report.failure);
+    assert_eq!(
+        report.output.lines,
+        lines(&[&format!("total {}", rounds * per_round)])
+    );
 }

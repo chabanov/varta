@@ -5,13 +5,16 @@ import vm from "node:vm";
 import { registry } from "../../../varta-common/browser/registry.mjs";
 
 const source = await readFile(new URL("./scheduler.js", import.meta.url), "utf8");
-function scheduler({ held = 8, jobs = 100, serials = 128, kept = 2, render = String } = {}) {
+function scheduler({ held = 8, jobs = 100, serials = 128, rejections = 1024, kept = 2, render = String } = {}) {
   const data = structuredClone(registry);
   Object.assign(data.scheduler, { maxJobs: jobs, maxSerials: serials, retainedReasons: kept });
   const context = vm.createContext({ registry: data });
   vm.runInContext(source + "\nglobalThis.create = createScheduler;", context);
   const profile = structuredClone(data.profiles.at(-1));
-  profile.schedulerLimits = { held, queueError: `queue ${held}` };
+  profile.schedulerLimits = {
+    held, queueError: `queue ${held}`, serials, serialError: `exceeds ${serials} promise serials`,
+    rejections, rejectionError: `more than ${rejections} outstanding`,
+  };
   const state = context.create(profile, render);
   return { state, op: state.implementations, S: data.scheduler };
 }
@@ -61,11 +64,26 @@ test("rejection diagnostics are snapshots, bounded in retention and checked afte
   assert.throws(() => state.drain({}, () => {}), /<reason not retained> \(2 rejected/);
   assert.throws(() => op.promise_handled(2), /unknown promise serial/);
 });
-test("tracking crosses bit-word boundaries and serial limits remain bounded", () => {
+test("tracking ids stay ordered and serial limits remain bounded", () => {
   const { state, op } = scheduler({ kept: 0, serials: 65 });
   for (let id = 1; id <= 65; id++) assert.equal(op.promise_unhandled(0n), id);
   for (let id = 1; id <= 65; id++) if (id !== 32) op.promise_handled(id);
   assert.throws(() => state.drain({}, () => {}), /\(1 rejected/);
   assert.throws(() => op.promise_unhandled(0n), /promise serials/);
   op.promise_handled(32); state.drain({}, () => {});
+});
+test("outstanding reports are bounded at once, not over the lifetime", () => {
+  const { op } = scheduler({ kept: 0, rejections: 2 });
+  const first = op.promise_unhandled(0n); op.promise_unhandled(0n);
+  assert.throws(() => op.promise_unhandled(0n), /more than 2 outstanding/);
+  op.promise_handled(first);
+  assert.equal(op.promise_unhandled(0n), 3);
+});
+test("v38 serials have no lifetime bound short of exact integers; earlier profiles keep theirs", () => {
+  const limits = (name) => registry.profiles.find((profile) => profile.name === name).schedulerLimits;
+  const v38 = limits("checked-f64-utf16-v38"), v37 = limits("checked-f64-utf16-v37");
+  assert.equal(v38.serials, Number.MAX_SAFE_INTEGER);
+  assert.equal(v37.serials, registry.scheduler.maxSerials);
+  assert.equal(v37.serialError, registry.scheduler.errors.serials);
+  assert.match(v38.rejectionError, /unhandled promise rejections are outstanding/);
 });

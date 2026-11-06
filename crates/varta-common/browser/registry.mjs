@@ -7534,6 +7534,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7572,6 +7576,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7610,6 +7618,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7649,6 +7661,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7688,6 +7704,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7728,6 +7748,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7768,6 +7792,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7809,6 +7837,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7850,6 +7882,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7891,6 +7927,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7935,6 +7975,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -7980,6 +8024,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8025,6 +8073,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8070,6 +8122,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8115,6 +8171,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8160,6 +8220,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8205,6 +8269,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8250,6 +8318,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8295,6 +8367,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8340,6 +8416,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8385,6 +8465,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8430,6 +8514,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8475,6 +8563,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8520,6 +8612,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8565,6 +8661,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8610,6 +8710,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8655,6 +8759,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8700,6 +8808,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8745,6 +8857,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8790,6 +8906,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8835,6 +8955,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8880,6 +9004,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8931,6 +9059,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -8982,6 +9114,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -9033,6 +9169,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -9090,6 +9230,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -9147,6 +9291,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -9205,6 +9353,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -9264,6 +9416,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -9324,6 +9480,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 64,
         "queueError": "microtask queue exceeds 64 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "execution exceeds 1048576 promise serials",
+        "serials": 1048576,
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
@@ -9384,6 +9544,10 @@ export const registry = freeze({
       "schedulerLimits": {
         "held": 131072,
         "queueError": "microtask queue exceeds 131072 pending continuations",
+        "rejectionError": "more than 1048576 unhandled promise rejections are outstanding",
+        "rejections": 1048576,
+        "serialError": "instance exceeds 9007199254740991 promise serials",
+        "serials": 9007199254740991,
         "timerError": "execution exceeds 65536 pending timers",
         "timers": 65536
       },

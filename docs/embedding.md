@@ -2049,7 +2049,10 @@ never retains a guest reference.
   tokens and tokens registered as reactions together**; registering one more is
   fatal. At most the taken tokens of that table are taken from the queue per
   execution (taking one more is fatal). Serials and tracking ids are separate
-  counters, each at most the promise serials of that table per execution.
+  counters, each at most the promise serials of that table: per execution
+  before v38; in v38 over the instance's lifetime, never reused, up to the
+  largest exact `f64` integer, so a long-lived instance never runs out, while
+  the reports outstanding at once are bounded.
 - Holding a token that is already held, a serial or id that is not an integer in
   range or was not issued, settling a serial twice, reacting to a settled serial
   and withdrawing an id twice are fatal errors. Fatal scheduler errors are never
@@ -2076,7 +2079,9 @@ The held-token and timer bounds are the declared profile's data limits
 | Timers armed or awaiting their take at once, `checked-f64-utf16-v36` – `checked-f64-utf16-v37` | 32 | `scheduler::MAX_PENDING_TIMERS` |
 | Timers armed or awaiting their take at once, `checked-f64-utf16-v38` | 65536 | `limits::V38_MAX_PENDING_TIMERS` |
 | Tokens taken from the queue per execution (v38: per turn) | 65536 | `scheduler::MAX_EXECUTION_JOBS` |
-| Promise serials, and separately tracking ids and timer ids, per execution | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
+| Promise serials, and separately tracking ids and timer ids, per execution, `checked-f64-utf16-v34` – `checked-f64-utf16-v37` | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
+| Promise serials, and separately tracking ids and timer ids, over the instance's lifetime, never reused, `checked-f64-utf16-v38` | 9007199254740991 | `limits::V38_MAX_PROMISE_SERIALS` |
+| Unhandled-rejection reports outstanding at once, `checked-f64-utf16-v38` (earlier profiles: bounded by the ids issued) | 1048576 | `limits::V38_MAX_OUTSTANDING_REJECTIONS` |
 | Unhandled-rejection reasons kept | 16 | `scheduler::MAX_RETAINED_REJECTION_REASONS` |
 | UTF-16 units per rendered reason field | 256 | `scheduler::MAX_REJECTION_REASON_UNITS` |
 | Bytes per rendered reason | 2048 | `scheduler::MAX_REJECTION_REASON_BYTES` |
@@ -2179,6 +2184,8 @@ They are never delivered to the guest.
 | `TimerBudget` | `execution exceeds 32 pending timers` |
 | `ContinuationLimit` | `microtask queue exceeds 131072 pending continuations` |
 | `TimerLimit` | `execution exceeds 65536 pending timers` |
+| `SerialLimit` | `instance exceeds 9007199254740991 promise serials` |
+| `RejectionLimit` | `more than 1048576 unhandled promise rejections are outstanding` |
 | `TimerDenied` | `<capability denied: time.timer> (setTimeout and setInterval require an exact time.timer grant)` |
 | `TimerState` | `invalid timer operation` |
 | `TimerDeadline` | `execution deadline exceeded: the next timer is due at least <due_ms> ms after the execution started, beyond the <deadline_seconds> s deadline` |
@@ -2194,7 +2201,8 @@ the bounded rejection rendering of the [microtask checkpoint](#microtask-checkpo
 
 **Which error each misuse raises.** Checks run in the order of the rows for one
 import; the first failing row decides. "Not issued" means not an integer, outside
-0 to `scheduler::MAX_PROMISE_SERIALS`, or above the last value the host issued.
+0 to the profile's promise serials (`DataLimits::promise_serials`), or above the
+last value the host issued.
 
 <!-- generated:embedding-scheduler-misuse:begin (checked by crates/varta-common/tests/embedding_documentation.rs) -->
 | Import or step | Misuse | Error |
@@ -2206,6 +2214,7 @@ import; the first failing row decides. "Not issued" means not an integer, outsid
 | `promise_react`, `scheduler_enqueue` | token already held | `DuplicateToken` |
 | `promise_settle` | serial not issued, including 0 (serials start at 1 and 0 is never issued), or settled before (a double settle) | `UnknownSerial` |
 | `promise_unhandled` | every rejection id is already issued | `SerialBudget` |
+| `promise_unhandled` | v38: the outstanding reports already reach the limit | `RejectionLimit` |
 | `promise_handled` | id not issued, never reported, or withdrawn before (a repeated withdrawal) | `UnknownSerial` |
 | `timer_start` | no `time.timer` grant | `TimerDenied` |
 | `timer_start` | flags outside interval and unref | `TimerState` |

@@ -1,18 +1,19 @@
 // One bounded FIFO checkpoint. Promise values remain entirely in guest memory.
 function createScheduler(profile, renderReason) {
   const S = registry.scheduler, E = S.errors;
-  const queue = [], held = new Set(), reactions = new Map(), reasons = new Map();
-  let outstanding = new Uint32Array(0);
+  const L = profile.schedulerLimits;
+  // Outstanding tracking ids in issue order, so the first is the earliest.
+  const queue = [], held = new Set(), reactions = new Map(), reasons = new Map(), outstanding = new Set();
   let head = 0, serial = 0, tracking = 0, unhandled = 0, jobs = 0, totalJobs = 0;
   let timerCleared = () => false;
   let timerOwned = () => false;
   const fail = (message) => { throw new Error(message); };
   const issued = (value, last) => {
-    if (!Number.isInteger(value) || value < 0 || value > S.maxSerials || value > last) fail(E.unknown);
+    if (!Number.isInteger(value) || value < 0 || value > last) fail(E.unknown);
     return value;
   };
   const hold = (token) => {
-    if (held.size >= profile.schedulerLimits.held) fail(profile.schedulerLimits.queueError);
+    if (held.size >= L.held) fail(L.queueError);
     if (held.has(token)) fail(E.duplicate);
     held.add(token);
   };
@@ -23,7 +24,7 @@ function createScheduler(profile, renderReason) {
       let id = issued(value, serial);
       if (id && !reactions.has(id) && timerCleared(id)) { hold(token); push(token); return id; }
       if (!id) {
-        if (serial >= S.maxSerials) fail(E.serials);
+        if (serial >= L.serials) fail(L.serialError);
         id = ++serial; reactions.set(id, []);
       }
       if (!reactions.has(id)) fail(E.unknown);
@@ -39,21 +40,17 @@ function createScheduler(profile, renderReason) {
     promise_unhandled(value) {
       // Validate even a reason whose text cannot be retained, like native.
       const reason = renderReason(value);
-      if (tracking >= S.maxSerials) fail(E.serials);
+      if (tracking >= L.serials) fail(L.serialError);
+      if (outstanding.size >= L.rejections) fail(L.rejectionError);
       const id = ++tracking;
-      const word = id >>> 5;
-      if (word >= outstanding.length) {
-        const next = new Uint32Array(Math.min(Math.ceil((S.maxSerials+1)/32),Math.max(word+1,outstanding.length*2)));
-        next.set(outstanding); outstanding = next;
-      }
-      outstanding[word] |= 1 << (id & 31); unhandled++;
+      outstanding.add(id); unhandled++;
       if (reasons.size < S.retainedReasons) reasons.set(id, reason);
       return id;
     },
     promise_handled(value) {
-      const id = issued(value, tracking), bit = 1 << (id & 31), word = id >>> 5;
-      if (!(outstanding[word] & bit)) fail(E.unknown);
-      outstanding[word] &= ~bit; unhandled--; reasons.delete(id);
+      const id = issued(value, tracking);
+      if (!outstanding.delete(id)) fail(E.unknown);
+      unhandled--; reasons.delete(id);
     },
   };
   const drain = (instance, checkException) => {
@@ -71,11 +68,7 @@ function createScheduler(profile, renderReason) {
       checkException();
     }
     if (unhandled) {
-      let earliest;
-      for (let word = 0; word < outstanding.length; word++) {
-        const bits = outstanding[word];
-        if (bits) { earliest = word * 32 + 31 - Math.clz32((bits & -bits) >>> 0); break; }
-      }
+      const earliest = outstanding.values().next().value;
       fail(`unhandled promise rejection: ${reasons.get(earliest) ?? S.notRetained} (${unhandled} rejected promise(s) had no handler after the microtask checkpoint)`);
     }
   };

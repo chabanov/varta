@@ -6590,9 +6590,9 @@ trap before any effect.
   rendered text keeps at most `MAX_REJECTION_REASON_BYTES` bytes; a cut
   reason ends with `REJECTION_TRUNCATION_MARKER` (` [reason truncated]`) in
   the diagnostic. At most `MAX_RETAINED_REJECTION_REASONS` outstanding
-  reports keep their rendered reason; every report keeps one tracking bit
-  per issued id (at most `MAX_PROMISE_SERIALS` bits), so withdrawal and the
-  count stay exact. When the earliest remaining report was made while the
+  reports keep their rendered reason; every outstanding report keeps its
+  tracking id in an ordered set (at most the profile's outstanding bound),
+  so withdrawal and the count stay exact. When the earliest remaining report was made while the
   retained reasons were full, the diagnostic names it as
   `<reason not retained>`. These bounds change no guest-observable behaviour
   (the same reports are made and withdrawn, and the same executions
@@ -7730,7 +7730,8 @@ diagnostic there.
   or cleared and not yet released) at once; each also holds one token
   counted against `MAX_PENDING_CONTINUATIONS` and one live frame, every
   firing is one job against `MAX_EXECUTION_JOBS`, and ids share the serial
-  bound `MAX_PROMISE_SERIALS`. A loop that clears timers without reaching a
+  bound of the profile (`MAX_PROMISE_SERIALS` per execution before v38; see
+  [v38 serials](#turn-budgets-and-application-instances-turn_budgets)). A loop that clears timers without reaching a
   checkpoint keeps their slots until the next checkpoint releases them.
   Production budgets are unchanged.
 - **`AbortSignal.timeout(delay)`.** An engine prelude
@@ -9085,7 +9086,18 @@ interrupted for fairness.
 | Microtasks (`scheduler::MAX_EXECUTION_JOBS`) | Renewed per turn | Per execution |
 | Deadline (`deadlinePerTurnMs`) | Bounded runs: one deadline for the whole execution; application instances: renewed per turn | One deadline per execution |
 | Memory (`memoryBytes`), output (`outputBytes`) | Per instance, never renewed | Per execution |
-| Serials, live frames, held tokens, pending timers and requests | Per instance | Per execution |
+| Serials, live frames, held tokens, pending timers and requests | Per instance; serials have no lifetime bound (below) | Per execution |
+
+**Serials.** Promise reaction serials, rejection-tracking ids and timer ids
+of a v38 instance count up to `limits::V38_MAX_PROMISE_SERIALS`, the largest
+integer the guest's `f64` carries exactly, and are never reused (owner
+decision 2026-11-06), so an application that runs for days never runs out of
+them; what is live at once stays bounded (held tokens, pending timers, and
+`limits::V38_MAX_OUTSTANDING_REJECTIONS` unhandled reports, beyond which the
+instance fails with `RejectionLimit`). Earlier profiles keep
+`scheduler::MAX_PROMISE_SERIALS` per execution and its `SerialBudget`
+diagnostic. The browser host follows the same per-profile bounds
+(`schedulerLimits` of the registry).
 
 **Manifest budgets.** A package manifest with `abiVersion` 34 or later may
 request budgets; the host ceiling caps them:
@@ -15078,7 +15090,9 @@ a denied exit returns a failed `VartaResult<void>`.
 | Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |
 | Pending microtask continuations (v34) | 64 | `scheduler::MAX_PENDING_CONTINUATIONS` |
 | Microtasks per execution (v34) | 65536 | `scheduler::MAX_EXECUTION_JOBS` |
-| Promise serials / rejection ids per execution (v34) | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
+| Promise serials / rejection ids per execution (v34–v37) | 1048576 | `scheduler::MAX_PROMISE_SERIALS` |
+| Promise serials / rejection ids / timer ids per instance, never reused (v38) | 9007199254740991 | `limits::V38_MAX_PROMISE_SERIALS` |
+| Unhandled rejections outstanding at once (v38) | 1048576 | `limits::V38_MAX_OUTSTANDING_REJECTIONS` |
 | Unhandled-rejection reasons kept / units per field / bytes each | 16 / 256 / 2048 | `scheduler::MAX_*REJECTION_REASON*` |
 | Pending timers (v36) | 32 | `scheduler::MAX_PENDING_TIMERS` |
 <!-- generated:limits:end -->

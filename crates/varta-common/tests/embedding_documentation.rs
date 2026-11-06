@@ -1104,6 +1104,8 @@ fn scheduler_error_name(error: &scheduler::SchedulerError) -> &'static str {
         E::TimerBudget => "TimerBudget",
         E::ContinuationLimit { .. } => "ContinuationLimit",
         E::TimerLimit { .. } => "TimerLimit",
+        E::SerialLimit { .. } => "SerialLimit",
+        E::RejectionLimit { .. } => "RejectionLimit",
         E::TimerDenied => "TimerDenied",
         E::TimerState => "TimerState",
         E::TimerDeadline { .. } => "TimerDeadline",
@@ -1146,6 +1148,13 @@ fn scheduler_misuse() -> String {
             "`promise_unhandled`",
             "every rejection id is already issued",
             budget.clone(),
+        ),
+        (
+            "`promise_unhandled`",
+            "v38: the outstanding reports already reach the limit",
+            E::RejectionLimit {
+                limit: varta_common::limits::V38_MAX_OUTSTANDING_REJECTIONS,
+            },
         ),
         (
             "`promise_handled`",
@@ -1328,6 +1337,13 @@ fn scheduler_errors() -> String {
         },
         E::TimerLimit {
             limit: varta_common::limits::V38_MAX_PENDING_TIMERS,
+        },
+        // V38: the lifetime serial bound and the outstanding reports.
+        E::SerialLimit {
+            limit: varta_common::limits::V38_MAX_PROMISE_SERIALS,
+        },
+        E::RejectionLimit {
+            limit: varta_common::limits::V38_MAX_OUTSTANDING_REJECTIONS,
         },
         E::TimerDenied,
         E::TimerState,

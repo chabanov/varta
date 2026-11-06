@@ -20,8 +20,9 @@ use crate::function::frame;
 pub const MAX_PENDING_CONTINUATIONS: usize = frame::MAX_LIVE_FRAMES;
 /// Microtasks dispatched per execution, across the whole checkpoint.
 pub const MAX_EXECUTION_JOBS: u64 = 1 << 16;
-/// Reaction serials, and separately rejection-tracking ids, allocated per
-/// execution. Zero means "none" in the guest's promise record.
+/// Reaction serials, and separately rejection-tracking ids and timer ids,
+/// allocated per execution before v38 (v38: `limits::V38_MAX_PROMISE_SERIALS`
+/// per instance). Zero means "none" in the guest's promise record.
 pub const MAX_PROMISE_SERIALS: u64 = 1 << 20;
 /// Outstanding unhandled-rejection reports whose rendered reason the runtime
 /// keeps at once. Later reports keep only their tracking bit (one bit per id
@@ -143,6 +144,14 @@ pub enum SchedulerError {
     /// [`Self::TimerBudget`].
     #[error("execution exceeds {limit} pending timers")]
     TimerLimit { limit: usize },
+    /// V38 (`data_limits`): the lifetime serial bound
+    /// (`limits::V38_MAX_PROMISE_SERIALS`) instead of [`Self::SerialBudget`].
+    #[error("instance exceeds {limit} promise serials")]
+    SerialLimit { limit: u64 },
+    /// V38 (`data_limits`): more unhandled-rejection reports outstanding at
+    /// once than `limits::V38_MAX_OUTSTANDING_REJECTIONS`.
+    #[error("more than {limit} unhandled promise rejections are outstanding")]
+    RejectionLimit { limit: usize },
     #[error(
         "<capability denied: {TIMER_CAPABILITY}> (setTimeout and setInterval require an exact {TIMER_CAPABILITY} grant)"
     )]

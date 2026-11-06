@@ -119,6 +119,10 @@ fn virtual_clock() -> bool {
 pub(crate) struct Bounds {
     continuations: usize,
     timers: usize,
+    /// Serials, tracking ids and timer ids issued over the instance.
+    serials: u64,
+    /// Unhandled-rejection reports outstanding at once.
+    rejections: usize,
 }
 impl Default for Bounds {
     fn default() -> Self {
@@ -130,10 +134,21 @@ impl From<varta_common::limits::DataLimits> for Bounds {
         Self {
             continuations: limits.pending_continuations,
             timers: limits.pending_timers,
+            serials: limits.promise_serials,
+            rejections: limits.outstanding_rejections,
         }
     }
 }
 impl Bounds {
+    fn serials_exhausted(self) -> SchedulerError {
+        if self.serials == MAX_PROMISE_SERIALS {
+            SchedulerError::SerialBudget
+        } else {
+            SchedulerError::SerialLimit {
+                limit: self.serials,
+            }
+        }
+    }
     fn queue_full(self) -> SchedulerError {
         if self.continuations == MAX_PENDING_CONTINUATIONS {
             SchedulerError::QueueFull
@@ -164,9 +179,9 @@ pub(crate) struct Scheduler {
     held: BTreeSet<i64>,
     next_serial: u64,
     dispatched: u64,
-    /// Rejections without a handler: one bit per tracking id issued, so the
-    /// bookkeeping never exceeds `MAX_PROMISE_SERIALS` bits.
-    outstanding: Vec<u64>,
+    /// Rejections without a handler, by tracking id, at most the profile's
+    /// outstanding bound.
+    outstanding: BTreeSet<u64>,
     unhandled: u64,
     /// Rendered reasons of at most `MAX_RETAINED_REJECTION_REASONS`
     /// outstanding reports, each bounded by the `RejectionReason` limits.
@@ -174,20 +189,16 @@ pub(crate) struct Scheduler {
     next_tracking: u64,
     timers: Timers,
 }
-const TRACKING_WORD_BITS: u64 = u64::BITS as u64;
 /// Loop time is kept in milliseconds, like JavaScript timer delays.
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 
-/// A guest serial must be zero or a nonnegative integer the runtime issued.
+/// A guest serial must be zero or a nonnegative integer the runtime issued
+/// (every issued value is an exact `f64` integer).
 fn serial(value: f64, issued: u64) -> Result<u64, SchedulerError> {
-    if !(0.0..=MAX_PROMISE_SERIALS as f64).contains(&value) || value.fract() != 0.0 {
+    if !(0.0..=issued as f64).contains(&value) || value.fract() != 0.0 {
         return Err(SchedulerError::UnknownSerial);
     }
-    let serial = value as u64;
-    if serial > issued {
-        return Err(SchedulerError::UnknownSerial);
-    }
-    Ok(serial)
+    Ok(value as u64)
 }
 
 impl Scheduler {
@@ -215,8 +226,8 @@ impl Scheduler {
             return Ok(serial as f64);
         }
         if serial == 0 {
-            if self.next_serial >= MAX_PROMISE_SERIALS {
-                return Err(SchedulerError::SerialBudget);
+            if self.next_serial >= self.bounds.serials {
+                return Err(self.bounds.serials_exhausted());
             }
             self.next_serial += 1;
             serial = self.next_serial;
@@ -250,16 +261,17 @@ impl Scheduler {
     /// Track a rejection without a handler. Its reason is kept only while
     /// fewer than `MAX_RETAINED_REJECTION_REASONS` reasons are kept.
     pub(crate) fn unhandled(&mut self, reason: RejectionReason) -> Result<f64, SchedulerError> {
-        if self.next_tracking >= MAX_PROMISE_SERIALS {
-            return Err(SchedulerError::SerialBudget);
+        if self.next_tracking >= self.bounds.serials {
+            return Err(self.bounds.serials_exhausted());
+        }
+        if self.outstanding.len() >= self.bounds.rejections {
+            return Err(SchedulerError::RejectionLimit {
+                limit: self.bounds.rejections,
+            });
         }
         self.next_tracking += 1;
         let id = self.next_tracking;
-        let (word, bit) = Self::tracking(id);
-        if self.outstanding.len() <= word {
-            self.outstanding.resize(word + 1, 0);
-        }
-        self.outstanding[word] |= bit;
+        self.outstanding.insert(id);
         self.unhandled += 1;
         if self.reasons.len() < MAX_RETAINED_REJECTION_REASONS {
             self.reasons.insert(id, reason);
@@ -272,28 +284,16 @@ impl Scheduler {
     }
     pub(crate) fn handled(&mut self, value: f64) -> Result<(), SchedulerError> {
         let id = serial(value, self.next_tracking)?;
-        let (word, bit) = Self::tracking(id);
-        match self.outstanding.get_mut(word) {
-            Some(bits) if *bits & bit != 0 => *bits &= !bit,
-            _ => return Err(SchedulerError::UnknownSerial),
+        if !self.outstanding.remove(&id) {
+            return Err(SchedulerError::UnknownSerial);
         }
         self.unhandled -= 1;
         self.reasons.remove(&id);
         Ok(())
     }
-    fn tracking(id: u64) -> (usize, u64) {
-        (
-            (id / TRACKING_WORD_BITS) as usize,
-            1 << (id % TRACKING_WORD_BITS),
-        )
-    }
     /// The earliest outstanding tracking id.
     fn earliest(&self) -> Option<u64> {
-        self.outstanding
-            .iter()
-            .enumerate()
-            .find(|(_, bits)| **bits != 0)
-            .map(|(word, bits)| word as u64 * TRACKING_WORD_BITS + u64::from(bits.trailing_zeros()))
+        self.outstanding.first().copied()
     }
     /// Microtasks dispatched in the current allowance.
     pub(crate) fn dispatched(&self) -> u64 {
@@ -336,8 +336,8 @@ impl Scheduler {
         if self.timers.entries.len() >= self.bounds.timers {
             return Err(self.bounds.timers_full());
         }
-        if self.timers.next_id >= MAX_PROMISE_SERIALS {
-            return Err(SchedulerError::SerialBudget);
+        if self.timers.next_id >= self.bounds.serials {
+            return Err(self.bounds.serials_exhausted());
         }
         self.timers.next_id += 1;
         let id = self.timers.next_id;
@@ -376,7 +376,7 @@ impl Scheduler {
         }
         // Released entries live under ids above every issued one and are
         // forgotten when taken, so they never collide with a timer id.
-        let key = MAX_PROMISE_SERIALS + serial;
+        let key = self.bounds.serials + serial;
         self.timers.entries.insert(
             key,
             Timer {
@@ -395,7 +395,7 @@ impl Scheduler {
     /// Clear the timer `id`: an armed timer wakes its frame for release.
     /// Ids that name no armed timer are ignored, as in JavaScript.
     pub(crate) fn timer_clear(&mut self, id: f64) -> Result<(), SchedulerError> {
-        if !(1.0..=MAX_PROMISE_SERIALS as f64).contains(&id) || id.fract() != 0.0 {
+        if !(1.0..=self.bounds.serials as f64).contains(&id) || id.fract() != 0.0 {
             return Ok(());
         }
         let Some(timer) = self.timers.entries.get_mut(&(id as u64)) else {
@@ -1109,9 +1109,68 @@ mod tests {
         assert_eq!(tracking.handled(5.0), Err(SchedulerError::UnknownSerial));
     }
 
+    /// V38 serials, tracking ids and timer ids have no lifetime bound short
+    /// of the exact `f64` integers: an instance past the earlier
+    /// per-execution count keeps issuing them, and only live state is
+    /// bounded. Earlier profiles keep their per-execution budget.
+    #[test]
+    fn v38_serials_outlive_the_earlier_execution_bound() {
+        use varta_common::limits::DataLimits;
+        let mut legacy = Scheduler {
+            next_serial: MAX_PROMISE_SERIALS,
+            next_tracking: MAX_PROMISE_SERIALS,
+            ..Scheduler::default()
+        };
+        assert_eq!(legacy.react(0.0, 1), Err(SchedulerError::SerialBudget));
+        assert_eq!(
+            legacy.unhandled(RejectionReason::NotRetained),
+            Err(SchedulerError::SerialBudget)
+        );
+
+        let mut v38 = Scheduler::default();
+        v38.set_bounds(DataLimits::V38);
+        v38.next_serial = MAX_PROMISE_SERIALS;
+        v38.next_tracking = MAX_PROMISE_SERIALS;
+        v38.timers.next_id = MAX_PROMISE_SERIALS;
+        let serial = v38.react(0.0, 1).unwrap();
+        assert_eq!(serial, (MAX_PROMISE_SERIALS + 1) as f64);
+        v38.settle(serial).unwrap();
+        let id = v38.unhandled(RejectionReason::NotRetained).unwrap();
+        assert_eq!(id, (MAX_PROMISE_SERIALS + 1) as f64);
+        v38.handled(id).unwrap();
+        let timed = v38.react(0.0, 2).unwrap();
+        let timer = v38.timer_start(timed, 5.0, 0).unwrap();
+        assert_eq!(timer, (MAX_PROMISE_SERIALS + 1) as f64);
+        v38.timer_clear(timer).unwrap();
+        assert_eq!(v38.timer_take(timed), Ok(0));
+
+        // The last exact integer is the last serial.
+        let last = DataLimits::V38.promise_serials;
+        v38.next_serial = last - 1;
+        let serial = v38.react(0.0, 3).unwrap();
+        assert_eq!(serial as u64, last);
+        assert_eq!(
+            v38.react(0.0, 4),
+            Err(SchedulerError::SerialLimit { limit: last })
+        );
+        v38.settle(serial).unwrap();
+        assert_eq!(v38.settle(serial + 1.0), Err(SchedulerError::UnknownSerial));
+
+        // Reports are bounded by how many are outstanding at once.
+        v38.bounds.rejections = 2;
+        let first = v38.unhandled(RejectionReason::NotRetained).unwrap();
+        v38.unhandled(RejectionReason::NotRetained).unwrap();
+        assert_eq!(
+            v38.unhandled(RejectionReason::NotRetained),
+            Err(SchedulerError::RejectionLimit { limit: 2 })
+        );
+        v38.handled(first).unwrap();
+        v38.unhandled(RejectionReason::NotRetained).unwrap();
+    }
+
     /// Host memory held by unhandled reports is bounded by count and bytes:
     /// at most `MAX_RETAINED_REJECTION_REASONS` rendered reasons, and one
-    /// tracking bit per id for every other report.
+    /// tracking id per other outstanding report.
     #[test]
     fn unhandled_reports_retain_bounded_reasons() {
         let mut scheduler = Scheduler::default();
@@ -1131,10 +1190,7 @@ mod tests {
             .collect();
         assert_eq!(scheduler.reasons.len(), MAX_RETAINED_REJECTION_REASONS);
         assert_eq!(scheduler.unhandled, u64::from(reports));
-        assert_eq!(
-            scheduler.outstanding.len(),
-            (u64::from(reports) / TRACKING_WORD_BITS + 1) as usize
-        );
+        assert_eq!(scheduler.outstanding.len(), reports as usize);
         // Withdrawing a kept report frees room for a later one.
         scheduler.handled(ids[1]).unwrap();
         assert!(scheduler.retains_reason());

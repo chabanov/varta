@@ -208,9 +208,19 @@ fn limits() -> String {
             "scheduler::MAX_EXECUTION_JOBS",
         ),
         (
-            "Promise serials / rejection ids per execution (v34)",
+            "Promise serials / rejection ids per execution (v34–v37)",
             scheduler::MAX_PROMISE_SERIALS.to_string(),
             "scheduler::MAX_PROMISE_SERIALS",
+        ),
+        (
+            "Promise serials / rejection ids / timer ids per instance, never reused (v38)",
+            limits::V38_MAX_PROMISE_SERIALS.to_string(),
+            "limits::V38_MAX_PROMISE_SERIALS",
+        ),
+        (
+            "Unhandled rejections outstanding at once (v38)",
+            limits::V38_MAX_OUTSTANDING_REJECTIONS.to_string(),
+            "limits::V38_MAX_OUTSTANDING_REJECTIONS",
         ),
         (
             "Unhandled-rejection reasons kept / units per field / bytes each",

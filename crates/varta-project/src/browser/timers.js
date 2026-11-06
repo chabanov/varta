@@ -34,7 +34,7 @@ function createTimers(profile, scheduler, allowed, emit, renderReason) {
   const flagsValid = (flags) => { if (flags & ~(T.interval | T.unref)) fail(); };
   const start = (value, delay, flags) => {
     flagsValid(flags); const serial = valid(value); capacity();
-    if (nextId >= S.maxSerials) throw new Error(S.errors.serials);
+    if (nextId >= profile.schedulerLimits.serials) throw new Error(profile.schedulerLimits.serialError);
     const id = ++nextId;
     const normalized = delay >= T.minimumDelay && delay <= T.maximumDelay ? Math.trunc(delay) : T.minimumDelay;
     const timer = { id, serial, interval: Boolean(flags & T.interval), delay: normalized, keepAlive: !(flags & T.unref), index: -1, fired: false, cleared: false };
@@ -51,12 +51,13 @@ function createTimers(profile, scheduler, allowed, emit, renderReason) {
       flagsValid(flags);
       if (allowed()) return start(value, delay, flags);
       const serial = valid(value); capacity();
-      const id = S.maxSerials + serial;
+      // Released entries take the negative serial: never a timer id.
+      const id = -serial;
       entries.set(id, { id, serial, interval: false, keepAlive: false, index: -1, fired: false, cleared: true });
       bySerial.set(serial, id); scheduler.wake(serial); emit(T.denialText); return 0;
     },
     timer_clear(id) {
-      if (!Number.isInteger(id) || id < 1 || id > S.maxSerials) return;
+      if (!Number.isInteger(id) || id < 1 || id > profile.schedulerLimits.serials) return;
       const timer = entries.get(id);
       if (!timer || !remove(timer)) return;
       timer.cleared = true; scheduler.release(timer.serial);

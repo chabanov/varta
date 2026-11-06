@@ -214,13 +214,22 @@ pub const V38_MAX_ALLOCATION_BYTES: usize = (1 << 31) - (1 << 16);
 /// block of the memory budget.
 pub const FRAME_BLOCK_BYTES: usize = abi::STRING_HEADER_BYTES + crate::function::FRAME_BYTES;
 /// V38 host bound on pending resume tokens (queued or awaiting a promise):
-/// the memory budget divided by [`FRAME_BLOCK_BYTES`] (131072 under the
-/// production 8 MiB budget). A correct module exhausts its memory budget,
-/// which it reports as [`Resource::Memory`], before it reaches this bound.
+/// an 8 MiB instance's memory divided by [`FRAME_BLOCK_BYTES`] (131072), so
+/// an instance of that size exhausts its memory, which it reports as
+/// [`Resource::Memory`], before it reaches this bound; an application with
+/// more memory fails with the continuation limit instead.
 pub const V38_MAX_PENDING_CONTINUATIONS: usize = abi::MAX_MEMORY_BYTES / FRAME_BLOCK_BYTES;
 /// V38 host bound on pending timers: half the continuation bound, as before
 /// v38 (each timer also holds one resume token).
 pub const V38_MAX_PENDING_TIMERS: usize = V38_MAX_PENDING_CONTINUATIONS / 2;
+/// V38 reaction serials, rejection-tracking ids and timer ids (owner decision
+/// 2026-11-06): each counts up to the largest integer a guest `f64` carries
+/// exactly and is never reused, so a long-lived instance has no lifetime
+/// bound on its promises or timers; only what is live at once is bounded.
+pub const V38_MAX_PROMISE_SERIALS: u64 = (1 << f64::MANTISSA_DIGITS) - 1;
+/// V38 unhandled-rejection reports outstanding at once (earlier profiles
+/// bound them by the ids issued per execution, the same number).
+pub const V38_MAX_OUTSTANDING_REJECTIONS: usize = 1 << 20;
 /// Nesting depth of one v38 JSON value the host serializes or parses: a host
 /// ceiling, as a JavaScript engine's native stack bounds its recursive
 /// `JSON.stringify`. The host traverses such values on a dedicated JSON
@@ -314,6 +323,11 @@ pub struct DataLimits {
     pub pending_continuations: usize,
     /// Timers armed or awaiting release at once.
     pub pending_timers: usize,
+    /// Reaction serials, and separately rejection-tracking ids and timer
+    /// ids, issued over an instance's lifetime.
+    pub promise_serials: u64,
+    /// Unhandled-rejection reports outstanding at once.
+    pub outstanding_rejections: usize,
     /// Guest linear memory a module declares as its maximum, which bounds
     /// its heap; the runtime memory budget may be lower.
     pub memory_bytes: usize,
@@ -332,6 +346,9 @@ impl DataLimits {
         amortized_growth: false,
         pending_continuations: crate::scheduler::MAX_PENDING_CONTINUATIONS,
         pending_timers: crate::scheduler::MAX_PENDING_TIMERS,
+        promise_serials: crate::scheduler::MAX_PROMISE_SERIALS,
+        // Never binding: no more ids than serials are issued.
+        outstanding_rejections: crate::scheduler::MAX_PROMISE_SERIALS as usize,
         memory_bytes: abi::MAX_MEMORY_BYTES,
     };
     /// Batch v38 (`data_limits`): Wasm-derived ceilings; the memory budget
@@ -351,6 +368,8 @@ impl DataLimits {
         amortized_growth: true,
         pending_continuations: V38_MAX_PENDING_CONTINUATIONS,
         pending_timers: V38_MAX_PENDING_TIMERS,
+        promise_serials: V38_MAX_PROMISE_SERIALS,
+        outstanding_rejections: V38_MAX_OUTSTANDING_REJECTIONS,
         memory_bytes: V38_MAX_MEMORY_BYTES,
     };
     /// Presence-bitmap bytes of a sparse backing of `capacity` slots: the
@@ -478,6 +497,11 @@ mod tests {
         assert_eq!(DataLimits::LEGACY.pending_timers, 32);
         assert_eq!(DataLimits::V38.pending_continuations, 131_072);
         assert_eq!(DataLimits::V38.pending_timers, 65_536);
+        assert_eq!(DataLimits::LEGACY.promise_serials, 1 << 20);
+        // The largest serial survives the f64 crossing exactly.
+        let largest = DataLimits::V38.promise_serials;
+        assert_eq!(largest as f64 as u64, largest);
+        assert_ne!((largest + 2) as f64 as u64, largest + 2);
     }
 
     #[test]

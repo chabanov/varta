@@ -174,16 +174,34 @@ fn scheduler_limits() -> String {
             constant,
         ));
     }
+    rows.extend([row(
+        "Tokens taken from the queue per execution (v38: per turn)",
+        scheduler::MAX_EXECUTION_JOBS,
+        "scheduler::MAX_EXECUTION_JOBS",
+    )]);
+    for (span, serials) in spans(LanguageProfile::promises, |profile| {
+        profile.data().promise_serials
+    }) {
+        let (scope, constant) = if serials == scheduler::MAX_PROMISE_SERIALS {
+            ("per execution", "scheduler::MAX_PROMISE_SERIALS")
+        } else {
+            assert_eq!(serials, limits::V38_MAX_PROMISE_SERIALS);
+            (
+                "over the instance's lifetime, never reused",
+                "limits::V38_MAX_PROMISE_SERIALS",
+            )
+        };
+        rows.push(row(
+            &format!("Promise serials, and separately tracking ids and timer ids, {scope}, {span}"),
+            serials,
+            constant,
+        ));
+    }
     rows.extend([
         row(
-            "Tokens taken from the queue per execution (v38: per turn)",
-            scheduler::MAX_EXECUTION_JOBS,
-            "scheduler::MAX_EXECUTION_JOBS",
-        ),
-        row(
-            "Promise serials, and separately tracking ids and timer ids, per execution",
-            scheduler::MAX_PROMISE_SERIALS,
-            "scheduler::MAX_PROMISE_SERIALS",
+            "Unhandled-rejection reports outstanding at once, `checked-f64-utf16-v38` (earlier profiles: bounded by the ids issued)",
+            limits::V38_MAX_OUTSTANDING_REJECTIONS,
+            "limits::V38_MAX_OUTSTANDING_REJECTIONS",
         ),
         row(
             "Unhandled-rejection reasons kept",

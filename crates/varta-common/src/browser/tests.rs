@@ -108,6 +108,12 @@ fn scheduled_profile_layouts_and_limits_match_the_native_readers() {
             row["schedulerLimits"]["held"],
             json!(profile.limits().data.pending_continuations)
         );
+        assert_eq!(
+            row["schedulerLimits"]["serials"],
+            json!(profile.limits().data.promise_serials)
+        );
+        // A serial crosses to the browser host as an exact JS number.
+        assert!(profile.limits().data.promise_serials < 1 << f64::MANTISSA_DIGITS);
     }
     for tag in 0..64 {
         if let Some(kind) = value::ValueKind::from_tag(tag) {

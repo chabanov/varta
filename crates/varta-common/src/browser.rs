@@ -98,7 +98,11 @@ fn profile(profile: LanguageProfile) -> Value {
         "schedulerLimits":{"held":profile.limits().data.pending_continuations,
             "timers":profile.limits().data.pending_timers,
             "timerError":if profile.limits().data.pending_timers==crate::scheduler::MAX_PENDING_TIMERS {crate::scheduler::SchedulerError::TimerBudget.to_string()}else{crate::scheduler::SchedulerError::TimerLimit{limit:profile.limits().data.pending_timers}.to_string()},
-            "queueError":if profile.limits().data.pending_continuations==crate::scheduler::MAX_PENDING_CONTINUATIONS {crate::scheduler::SchedulerError::QueueFull.to_string()}else{crate::scheduler::SchedulerError::ContinuationLimit{limit:profile.limits().data.pending_continuations}.to_string()}},
+            "queueError":if profile.limits().data.pending_continuations==crate::scheduler::MAX_PENDING_CONTINUATIONS {crate::scheduler::SchedulerError::QueueFull.to_string()}else{crate::scheduler::SchedulerError::ContinuationLimit{limit:profile.limits().data.pending_continuations}.to_string()},
+            "serials":profile.limits().data.promise_serials,
+            "serialError":if profile.limits().data.promise_serials==crate::scheduler::MAX_PROMISE_SERIALS {crate::scheduler::SchedulerError::SerialBudget.to_string()}else{crate::scheduler::SchedulerError::SerialLimit{limit:profile.limits().data.promise_serials}.to_string()},
+            "rejections":profile.limits().data.outstanding_rejections,
+            "rejectionError":crate::scheduler::SchedulerError::RejectionLimit{limit:profile.limits().data.outstanding_rejections}.to_string()},
         "supportedKinds":(0..=value::ValueKind::LAST as u32).filter_map(value::ValueKind::from_tag).filter(|kind|kind.supported_by(profile.value_abi())).map(|k|k as u32).collect::<Vec<_>>(),
         "admittedImports":HostOperation::ALL.iter().filter(|&&op|admits(profile,op)).count(),
         "acceptance":{
