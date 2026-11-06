@@ -241,6 +241,9 @@ pub(crate) struct Program {
     pub http: Option<(usize, varta_common::http::HttpContract)>,
     /// Pure state/value accessors of an async HTTP response promise.
     pub http_async: Option<(usize, usize)>,
+    /// A v2 streaming service's `pull` and its chunk promise's pure
+    /// state/value accessors.
+    pub http_stream: Option<[usize; 3]>,
     /// V38 view protocol: the view prelude's event dispatcher, called by the
     /// synthesized `varta.view_abi.event` export with the copied record.
     pub view_event: Option<usize>,

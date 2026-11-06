@@ -893,6 +893,25 @@ fn entry_limits() -> String {
             "`http::HEADER_SECONDS`, `http::CONNECTION_SECONDS`",
         ),
         (
+            "HTTP v1 / v2 concurrent connections",
+            format!(
+                "{} / {}",
+                http::MAX_CONNECTIONS,
+                http::MAX_CONCURRENT_CONNECTIONS
+            ),
+            "`http::MAX_CONNECTIONS`, `http::MAX_CONCURRENT_CONNECTIONS`",
+        ),
+        (
+            "HTTP v2 stream idle / lifetime / chunk bytes",
+            format!(
+                "{} s / {} s / {}",
+                http::STREAM_IDLE_SECONDS,
+                http::STREAM_LIFETIME_SECONDS,
+                http::STREAM_CHUNK_BYTES
+            ),
+            "`http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES`",
+        ),
+        (
             "Native HTTP retained request reports / total retained audit entries",
             format!(
                 "{} / {}",

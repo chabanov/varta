@@ -356,6 +356,34 @@ five-second execution budget. `main` is not rerun. A failed handler yields a gen
 32 / 4 KiB, targets to 1 KiB and encoded responses to 1 MiB. Streaming, keep-alive,
 shared guest state, general async JS, TLS and HTTP/2 remain pending.
 
+Under `checked-f64-utf16-v38` a handler may also return a Web `Response` (or a
+promise of one), and its body streams to the client: server-sent events, for
+example, or a proxy that passes an upstream body through. v38 serves up to eight
+connections at once, so other requests are answered while a stream is open.
+
+```ts
+function handle(request: VartaHttpRequest): Response {
+  let sent = 0;
+  const events = new ReadableStream<Uint8Array>({
+    pull: async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+      if (sent === 3) {
+        controller.close();
+        return;
+      }
+      sent += 1;
+      await new Promise<void>((resolve) => { setTimeout(resolve, 1000); });
+      controller.enqueue(new TextEncoder().encode("data: " + String(sent) + "\n\n"));
+    },
+  });
+  return new Response(events, { headers: { "content-type": "text/event-stream" } });
+}
+```
+
+Each chunk is pulled as its own turn with fresh budgets and at most 60 seconds to
+produce it; a stream lasts at most an hour, after which an SSE client reconnects.
+A client that disconnects ends the stream. The
+[contract](architecture.md#http-contract-v2--native-server) names the exact limits.
+
 `varta.http.stop()` in the owning handler stops acceptance after the current reply
 finishes. Embedders can use `run_observed` and the shutdown handle in
 `RuntimeEvent::Listening`. The CLI streams bounded request logs; the collecting

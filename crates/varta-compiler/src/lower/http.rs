@@ -104,7 +104,14 @@ pub(super) fn builtin(name: &str, types: &mut ir::ValueTypes) -> Result<Option<T
 pub(super) struct Service {
     pub entry: (usize, HttpContract),
     pub poll: Option<(usize, usize)>,
+    /// A streaming service's `pull` and its chunk promise's state/value
+    /// accessors (`varta_common::http::PULL`, `CHUNK_STATE`, `CHUNK_VALUE`).
+    pub stream: Option<[usize; 3]>,
 }
+
+/// The fetch prelude's function that turns a handler's `Response` into the
+/// streaming adapter's pull function.
+const RESPONSE_BODY: &str = "httpResponseBody";
 
 pub(super) fn collect(
     graph: &Graph,
@@ -190,35 +197,70 @@ pub(super) fn collect(
                     .ok_or_else(|| invalid("missing HTTP request type"))?;
                 let response = builtin("VartaHttpResponse", types)?
                     .ok_or_else(|| invalid("missing HTTP response type"))?;
-                let asynchronous = types.profile.turn_budgets()
-                    && matches!(handler.result, Type::Promise(id) if types.promises[id as usize].value == response);
+                let resolves = |ty: Type, target: Type| {
+                    matches!(ty, Type::Promise(id) if types.promises[id as usize].value == target)
+                };
+                let asynchronous =
+                    types.profile.turn_budgets() && resolves(handler.result, response);
+                // V2 streaming: a Web `Response`, synchronously or through a
+                // promise (the fetch prelude is loaded once a module names it).
+                let body = types
+                    .profile
+                    .turn_budgets()
+                    .then(|| {
+                        types
+                            .engine
+                            .function(&crate::modules::engine::FETCH, RESPONSE_BODY)
+                            .cloned()
+                    })
+                    .flatten();
+                let streaming = body.as_ref().and_then(|body| {
+                    let web = *body.params.first()?;
+                    (handler.result == web || resolves(handler.result, web))
+                        .then_some(handler.result == web)
+                });
                 if handler.index == main
                     || handler.receiver.is_some()
                     || handler.shape.extended()
                     || handler.params != [request]
-                    || handler.result != response && !asynchronous
+                    || handler.result != response && !asynchronous && streaming.is_none()
                 {
                     return Err(type_error(if types.profile.turn_budgets() {
-                        "HTTP handler must have signature (VartaHttpRequest) => VartaHttpResponse or Promise<VartaHttpResponse>"
+                        "HTTP handler must have signature (VartaHttpRequest) => VartaHttpResponse, Promise<VartaHttpResponse>, Response or Promise<Response>"
                     } else {
                         "HTTP handler must have signature (VartaHttpRequest) => VartaHttpResponse"
                     }));
                 }
                 let mut effects = tools::function_effects(handler.index, functions);
                 effects.insert(varta_common::http::LISTEN_CAPABILITY.into());
+                let version = varta_common::http::version_for(types.profile)
+                    .ok_or_else(|| unsupported("HTTP adapter for this profile"))?;
                 let contract = HttpContract {
-                    version: varta_common::http::version_for(types.profile)
-                        .ok_or_else(|| unsupported("HTTP adapter for this profile"))?,
-                    asynchronous,
+                    version,
+                    asynchronous: asynchronous || streaming.is_some(),
+                    streaming: streaming.is_some(),
                     bind: addr.to_string(),
                     export: varta_common::http::HANDLER.into(),
                     required_effects: effects.into_iter().collect(),
-                    limits: HttpLimits::default(),
+                    limits: HttpLimits::for_version(version),
                 };
                 contract.validate().map_err(|e| invalid(e.to_string()))?;
+                if let (Some(synchronous), Some(body)) = (streaming, &body) {
+                    let (index, poll, stream) =
+                        stream_adapter(handler, body, synchronous, functions, types, main)?;
+                    return Ok(Service {
+                        entry: (index, contract),
+                        poll: Some(poll),
+                        stream: Some(stream),
+                    });
+                }
                 if asynchronous {
                     let (index, poll) = async_adapter(handler, functions, types, main)?;
-                    return Ok(Service { entry: (index, contract), poll: Some(poll) });
+                    return Ok(Service {
+                        entry: (index, contract),
+                        poll: Some(poll),
+                        stream: None,
+                    });
                 }
                 let text = Expr {
                     span: call.span,
@@ -256,7 +298,11 @@ pub(super) fn collect(
                     locals: vec![Type::String],
                     body: vec![S::Return(Some(output))],
                 });
-                Ok(Service { entry: (index, contract), poll: None })
+                Ok(Service {
+                    entry: (index, contract),
+                    poll: None,
+                    stream: None,
+                })
             })()
             .map_err(|e| unit.source.locate(e, call.span))?;
             service = Some(result);
@@ -274,23 +320,68 @@ fn async_adapter(
     main: usize,
 ) -> Result<(usize, (usize, usize))> {
     const SOURCE: &str = "async function adapter(text:string):Promise<string>{const request=JSON.parse(text) as VartaHttpRequest;const response=await handler(request);return JSON.stringify(response);}";
-    let source = Source::new(std::path::Path::new("__varta_http_async.ts"), SOURCE);
+    let symbols = BTreeMap::from([("handler".into(), handler.clone())]);
+    let (index, promise, source, span) = synthesize(SOURCE, &symbols, functions, types, main)?;
+    let poll = accessors(promise, &source, span, functions, types)?;
+    Ok((index, poll))
+}
+
+/// The v2 streaming adapter: `handle` resolves to a record holding the pull
+/// function of the handler's `Response` (the fetch prelude's
+/// [`RESPONSE_BODY`]); `pull` calls it, and its `Promise<string>` has
+/// accessors of its own.
+fn stream_adapter(
+    handler: &Signature,
+    body: &Signature,
+    synchronous: bool,
+    functions: &mut Vec<ir::Function>,
+    types: &mut ir::ValueTypes,
+    main: usize,
+) -> Result<(usize, (usize, usize), [usize; 3])> {
+    // A promise holds no function value: the pull function travels in a
+    // record, which the host roots once. `pull` keeps the chunk promise it
+    // returns in that record's `current`, so the promise stays reachable
+    // until the next pull without a host root per chunk.
+    const AWAITED: &str = "async function adapter(text:string):Promise<{next:() => Promise<string>;current:Promise<string>}>{const request=JSON.parse(text) as VartaHttpRequest;const response=await handler(request);return {next:body(response),current:Promise.resolve('')};}";
+    const DIRECT: &str = "async function adapter(text:string):Promise<{next:() => Promise<string>;current:Promise<string>}>{const request=JSON.parse(text) as VartaHttpRequest;const response=handler(request);return {next:body(response),current:Promise.resolve('')};}";
+    const PULL: &str = "function pull(body:{next:() => Promise<string>;current:Promise<string>}):Promise<string>{body.current=body.next();return body.current;}";
+    let symbols = BTreeMap::from([
+        ("handler".into(), handler.clone()),
+        ("body".into(), body.clone()),
+    ]);
+    let adapter = if synchronous { DIRECT } else { AWAITED };
+    let (index, promise, source, span) = synthesize(adapter, &symbols, functions, types, main)?;
+    let poll = accessors(promise, &source, span, functions, types)?;
+    let (pull, chunk, source, span) = synthesize(PULL, &BTreeMap::new(), functions, types, main)?;
+    let (state, value) = accessors(chunk, &source, span, functions, types)?;
+    Ok((index, poll, [pull, state, value]))
+}
+
+/// Compile the one function of a synthetic `text` against `symbols`: its
+/// index, result type, source and span.
+fn synthesize(
+    text: &'static str,
+    symbols: &BTreeMap<String, Signature>,
+    functions: &mut Vec<ir::Function>,
+    types: &mut ir::ValueTypes,
+    main: usize,
+) -> Result<(usize, Type, Source, swc_common::Span)> {
+    let source = Source::new(std::path::Path::new("__varta_http_async.ts"), text);
     let module = crate::parse::parse_module(&source, false)?;
     let declaration = declarations::collect(&module, &source, types.profile)?
         .into_iter()
         .next()
-        .ok_or_else(|| invalid("missing async HTTP adapter"))?;
+        .ok_or_else(|| invalid("missing HTTP adapter function"))?;
     let index = functions.len();
     let signature = signature::check(declaration, index, &source, types)?;
-    let promise = signature.result;
+    let result = signature.result;
     let mut generated = BTreeMap::new();
     let mut next = index + 1;
     let mut impacts = BTreeMap::new();
-    let symbols = BTreeMap::from([("handler".into(), handler.clone())]);
     let function = link::body(
         declaration,
         (&signature, &Default::default()),
-        &symbols,
+        symbols,
         &source,
         main,
         types,
@@ -298,6 +389,17 @@ fn async_adapter(
     )?;
     functions.push(function);
     functions.extend(generated.into_values());
+    Ok((index, result, source.clone(), declaration.span()))
+}
+
+/// Pure state and value accessors of `promise`.
+fn accessors(
+    promise: Type,
+    source: &Source,
+    span: swc_common::Span,
+    functions: &mut Vec<ir::Function>,
+    types: &mut ir::ValueTypes,
+) -> Result<(usize, usize)> {
     let Type::Promise(id) = promise else {
         return Err(invalid("async HTTP result is not a promise"));
     };
@@ -312,16 +414,16 @@ fn async_adapter(
             .ok_or_else(|| invalid("missing HTTP promise field"))?;
         let result = field.ty;
         let record = Expr {
-            span: declaration.span(),
+            span,
             ty: Type::Record(shape),
             kind: E::Reinterpret(Box::new(Expr {
-                span: declaration.span(),
+                span,
                 ty: promise,
                 kind: E::Local(0),
             })),
         };
         let value = Expr {
-            span: declaration.span(),
+            span,
             ty: result,
             kind: E::Field(Box::new(record), slot as u32),
         };
@@ -335,12 +437,12 @@ fn async_adapter(
             environment: false,
             generator: None,
             source: source.clone(),
-            span: declaration.span(),
+            span,
             params: vec![promise],
             result,
             locals: vec![promise],
             body: vec![S::Return(Some(value))],
         });
     }
-    Ok((index, (accessors[0], accessors[1])))
+    Ok((accessors[0], accessors[1]))
 }

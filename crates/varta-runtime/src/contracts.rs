@@ -60,6 +60,14 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
     if http.as_ref().is_some_and(|contract| contract.asynchronous) {
         http_names.extend([varta_common::http::STATE, varta_common::http::VALUE]);
     }
+    let streaming = http.as_ref().is_some_and(|contract| contract.streaming);
+    if streaming {
+        http_names.extend([
+            varta_common::http::PULL,
+            varta_common::http::CHUNK_STATE,
+            varta_common::http::CHUNK_VALUE,
+        ]);
+    }
 
     if module.exports().any(|e| {
         e.name().starts_with(varta_common::http::ABI_PREFIX)
@@ -97,6 +105,17 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
                 varta_common::http::VALUE,
                 &[ValType::I64],
                 &[ValType::I64],
+            )?;
+        }
+        if streaming {
+            for name in [varta_common::http::PULL, varta_common::http::CHUNK_VALUE] {
+                signature(module, name, &[ValType::I64], &[ValType::I64])?;
+            }
+            signature(
+                module,
+                varta_common::http::CHUNK_STATE,
+                &[ValType::I64],
+                &[ValType::F64],
             )?;
         }
         bounded_memory(module, true)?;
@@ -379,15 +398,20 @@ fn check_effects(
         ));
     }
     if let Some(http) = http {
-        let index = *exports
-            .get(http.export.as_str())
-            .ok_or_else(|| invalid_value("missing HTTP handler index"))?;
-        if index < module.imports().len() {
-            return Err(invalid_value("HTTP handlers must be guest-defined"));
-        }
+        // The handler's graph and, for a streaming service, `pull`'s.
         let mut effects = BTreeSet::from(["net.listen".to_owned()]);
-        for target in reachable(index, &calls)? {
-            effects.extend(direct[target].iter().cloned());
+        let entries = std::iter::once(http.export.as_str())
+            .chain(http.streaming.then_some(varta_common::http::PULL));
+        for name in entries {
+            let index = *exports
+                .get(name)
+                .ok_or_else(|| invalid_value("missing HTTP handler index"))?;
+            if index < module.imports().len() {
+                return Err(invalid_value("HTTP handlers must be guest-defined"));
+            }
+            for target in reachable(index, &calls)? {
+                effects.extend(direct[target].iter().cloned());
+            }
         }
         if effects.into_iter().collect::<Vec<_>>() != http.required_effects {
             return Err(

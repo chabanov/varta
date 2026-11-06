@@ -1,5 +1,6 @@
 //! The emitted closed resume dispatcher can reach scheduled bodies beyond the
-//! source handler's direct calls. Describe that actual graph; hosts verify it.
+//! source handler's direct calls. Describe that actual graph (of the handler
+//! and, for a streaming service, of `pull`); hosts verify it.
 use super::*;
 use varta_common::http::HttpContract;
 use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
@@ -8,7 +9,7 @@ pub(super) fn contract(bytes: &[u8], original: &HttpContract) -> Result<HttpCont
     let parsed = |e: wasmparser::BinaryReaderError| CompilerError::Internal(e.to_string());
     let mut effects = Vec::new();
     let mut calls = Vec::new();
-    let mut entry = None;
+    let mut entries = Vec::new();
     for payload in Parser::new(0).parse_all(bytes) {
         match payload.map_err(parsed)? {
             Payload::ImportSection(reader) => {
@@ -23,8 +24,12 @@ pub(super) fn contract(bytes: &[u8], original: &HttpContract) -> Result<HttpCont
             Payload::ExportSection(reader) => {
                 for export in reader {
                     let export = export.map_err(parsed)?;
-                    if export.kind == ExternalKind::Func && export.name == original.export {
-                        entry = Some(export.index as usize);
+                    // A streaming service's pull runs guest code too.
+                    if export.kind == ExternalKind::Func
+                        && (export.name == original.export
+                            || original.streaming && export.name == varta_common::http::PULL)
+                    {
+                        entries.push(export.index as usize);
                     }
                 }
             }
@@ -46,8 +51,10 @@ pub(super) fn contract(bytes: &[u8], original: &HttpContract) -> Result<HttpCont
             _ => {}
         }
     }
-    let mut pending =
-        vec![entry.ok_or_else(|| CompilerError::Internal("missing HTTP export".into()))?];
+    if entries.len() != 1 + usize::from(original.streaming) {
+        return Err(CompilerError::Internal("missing HTTP export".into()));
+    }
+    let mut pending = entries;
     let mut seen = BTreeSet::new();
     let mut required = BTreeSet::from([varta_common::http::LISTEN_CAPABILITY.to_owned()]);
     while let Some(index) = pending.pop() {

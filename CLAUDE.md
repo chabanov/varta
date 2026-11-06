@@ -218,9 +218,14 @@ Each request owns a fresh store; do not call main again or reset one trapping
 instance. Require the varta.http metadata/feature-import pair, validate adapter
 signatures and actual effects, and keep copy/retain helpers host-free. Readiness
 and logging observers are trusted synchronous sinks and must return promptly.
-Keep one bounded active connection/worker, no unbounded task queue, parser/body/
-connection deadlines and response framing controlled by the HTTP library. No
-business routes, authentication policy or example payloads belong in runtime.
+Keep a bounded pool of connections, each with one worker and its own Store
+(contract v1: one connection; v2: `http::MAX_CONCURRENT_CONNECTIONS`), accept a
+connection only once a worker permit is free, no unbounded task queue, parser/
+body/connection deadlines and response framing controlled by the HTTP library.
+A streaming response pulls each chunk as its own turn under the idle bound and
+within the stream lifetime; a client that leaves or a shutdown cancels its
+worker. No business routes, authentication policy or example payloads belong
+in runtime.
 
 ## 8. Testing requirements
 

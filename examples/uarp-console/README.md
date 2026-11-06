@@ -301,12 +301,12 @@ Then open `http://127.0.0.1:8770/` (the exact loopback host; `localhost` is
 refused). The proxy accepts only that page origin, only `/api/v1/…` paths,
 only GET and POST (and the CORS preflight), forwards only the request headers
 the SDK sends (`authorization` carries the key, which it neither logs nor
-stores), and its `net.request` grant names the API alone. An event stream
-needs a streaming response, which a Varta HTTP handler cannot give yet: the
-proxy answers it with a named 501, so the live session does not follow
-through the proxy until streaming responses exist. Checked against the
-loopback mock (preflight, forwarding, refused origin, path, method and
-stream).
+stores), and its `net.request` grant names the API alone. Its handler
+returns a Web `Response` whose body is the API's own body stream, so the live
+session's event stream reaches the browser chunk by chunk (Varta HTTP v2
+streaming responses), while other requests are served alongside it. Checked
+against the loopback mock: preflight, forwarding with the CORS headers and the
+`long` scenario's event stream through the proxy (2026-11-05).
 
 ## SDK own test sources
 

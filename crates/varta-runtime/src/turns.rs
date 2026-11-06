@@ -34,6 +34,8 @@ pub enum TurnKind {
     /// Collection work between two turns of an application instance, under
     /// the maintenance budget (v38 `incremental_collection`); not a turn.
     Maintenance,
+    /// One pull of a v2 streaming HTTP response body.
+    Stream,
 }
 impl TurnKind {
     #[must_use]
@@ -48,6 +50,7 @@ impl TurnKind {
             Self::View => name::VIEW,
             Self::Execution => name::EXECUTION,
             Self::Maintenance => name::MAINTENANCE,
+            Self::Stream => name::STREAM,
         }
     }
 }

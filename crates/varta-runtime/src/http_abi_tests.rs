@@ -113,7 +113,9 @@ fn http_v2_is_profile_bound_and_legacy_metadata_is_not_reinterpreted() {
         .http_service
         .unwrap();
     assert_eq!(contract.version, http::UTF16_VERSION);
+    // Each version's metadata carries that version's fixed limits.
     contract.version = http::VERSION;
+    contract.limits = http::HttpLimits::for_version(http::VERSION);
     assert!(
         runtime
             .validate_module(&replace(&bytes, &contract.to_bytes().unwrap()))
@@ -123,6 +125,7 @@ fn http_v2_is_profile_bound_and_legacy_metadata_is_not_reinterpreted() {
     contract = runtime.inspect_module(&old).unwrap().http_service.unwrap();
     assert_eq!(contract.version, http::VERSION);
     contract.version = http::UTF16_VERSION;
+    contract.limits = http::HttpLimits::for_version(http::UTF16_VERSION);
     assert!(
         runtime
             .validate_module(&replace(&old, &contract.to_bytes().unwrap()))
@@ -205,6 +208,67 @@ fn async_http_v2_effects_and_completion_helpers_are_checked_before_execution() {
     assert!(
         runtime
             .validate_module(&replace(&bytes, &contract.to_bytes().unwrap()))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_streaming_service_declares_its_pull_exports_and_their_effects() {
+    use varta_common::language::LanguageProfile as P;
+    // The environment read happens only while the body is pulled.
+    let source = r#"
+function handle(r:VartaHttpRequest):Response{
+ const stream=new ReadableStream<Uint8Array>({pull:async(c:ReadableStreamDefaultController<Uint8Array>):Promise<void>=>{varta.env.get("NAME");c.close();}});
+ return new Response(stream);
+}
+export function main():void{}
+varta.http.serve({hostname:"127.0.0.1",port:0},handle);
+"#;
+    let bytes =
+        varta_compiler::compile_typescript_with_profile(source, P::CheckedF64Utf16V38).unwrap();
+    let runtime = VartaRuntime::new();
+    let mut contract = runtime
+        .inspect_module(&bytes)
+        .unwrap()
+        .http_service
+        .unwrap();
+    assert!(contract.asynchronous && contract.streaming);
+    assert_eq!(contract.required_effects, ["env.get", "net.listen"]);
+    // Without the flag, the pull exports are unknown.
+    contract.streaming = false;
+    assert!(
+        runtime
+            .validate_module(&replace(&bytes, &contract.to_bytes().unwrap()))
+            .unwrap_err()
+            .to_string()
+            .contains("unknown or unused HTTP ABI export")
+    );
+    // The pull graph's effects count.
+    contract.streaming = true;
+    contract.required_effects = vec!["net.listen".into()];
+    assert!(
+        runtime
+            .validate_module(&replace(&bytes, &contract.to_bytes().unwrap()))
+            .unwrap_err()
+            .to_string()
+            .contains("effect mismatch")
+    );
+    // A whole-response service never declares streaming.
+    let plain = varta_compiler::compile_typescript_with_profile(
+        &SOURCE.replace("varta.env.get(\"NAME\");", ""),
+        P::CheckedF64Utf16V38,
+    )
+    .unwrap();
+    let mut contract = runtime
+        .inspect_module(&plain)
+        .unwrap()
+        .http_service
+        .unwrap();
+    contract.asynchronous = true;
+    contract.streaming = true;
+    assert!(
+        runtime
+            .validate_module(&replace(&plain, &contract.to_bytes().unwrap()))
             .is_err()
     );
 }

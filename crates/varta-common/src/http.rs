@@ -26,6 +26,18 @@ pub const COPY: &str = "varta.http_abi.copy_string";
 pub const RETAIN: &str = "varta.http_abi.retain_string";
 pub const STATE: &str = "varta.http_abi.state";
 pub const VALUE: &str = "varta.http_abi.value";
+/// V2 streaming services: `handle`'s promise fulfils with a record holding
+/// the response's pull function; `pull(i64 record) -> i64` calls it and
+/// returns its `Promise<string>`, which the record keeps until the next pull;
+/// `chunk_state`/`chunk_value` are that promise's pure accessors. The first pull yields the head envelope, every later one a
+/// [`STREAM_DATA`] or [`STREAM_END`] record.
+pub const PULL: &str = "varta.http_abi.pull";
+pub const CHUNK_STATE: &str = "varta.http_abi.chunk_state";
+pub const CHUNK_VALUE: &str = "varta.http_abi.chunk_value";
+/// The first code unit of a body record: data (followed by a byte string,
+/// one code unit 0..=0xFF per byte) or the end of the body.
+pub const STREAM_DATA: char = 'D';
+pub const STREAM_END: char = 'E';
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -37,8 +49,18 @@ pub const MAX_TARGET_BYTES: usize = 1024;
 pub const HEADER_SECONDS: u64 = 2;
 pub const CONNECTION_SECONDS: u64 = 10;
 pub const HTTP_BUFFER_BYTES: usize = 8192;
-/// One bounded active connection and worker.
+/// One bounded active connection and worker (contract v1).
 pub const MAX_CONNECTIONS: usize = 1;
+/// Concurrent connections of a v2 service, each with its own worker and
+/// Store; a further connection waits in the listener's backlog.
+pub const MAX_CONCURRENT_CONNECTIONS: usize = 8;
+/// A v2 streaming response: the longest wait for the next body chunk (each
+/// chunk is one turn with fresh budgets and this deadline) and the longest
+/// whole response, after which the transport ends the body and the client
+/// reconnects. A chunk holds at most `net::MAX_CHUNK_BYTES`.
+pub const STREAM_IDLE_SECONDS: u64 = 60;
+pub const STREAM_LIFETIME_SECONDS: u64 = 3600;
+pub const STREAM_CHUNK_BYTES: usize = crate::net::MAX_CHUNK_BYTES;
 /// Request details retained by a native server report. Totals keep counting
 /// after this bound; observers can receive every completed request instead.
 pub const MAX_REPORTED_REQUESTS: usize = 32;
@@ -68,6 +90,10 @@ pub enum HttpError {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HttpLimits {
     pub connections: usize,
+    /// V2 only: [`STREAM_IDLE_SECONDS`] and [`STREAM_LIFETIME_SECONDS`] in
+    /// milliseconds and [`STREAM_CHUNK_BYTES`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<StreamLimits>,
     pub request_bytes: usize,
     pub body_bytes: usize,
     pub header_bytes: usize,
@@ -76,10 +102,40 @@ pub struct HttpLimits {
     pub response_bytes: usize,
     pub handler_deadline_ms: u64,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct StreamLimits {
+    pub idle_ms: u64,
+    pub lifetime_ms: u64,
+    pub chunk_bytes: usize,
+}
+impl HttpLimits {
+    /// The fixed limits of a contract version: v1 keeps one connection and
+    /// no streaming; v2 has the connection pool and the stream limits.
+    #[must_use]
+    pub fn for_version(version: u32) -> Self {
+        let legacy = Self::default();
+        if version == UTF16_VERSION {
+            Self {
+                connections: MAX_CONCURRENT_CONNECTIONS,
+                stream: Some(StreamLimits {
+                    idle_ms: STREAM_IDLE_SECONDS * crate::budget::MILLISECONDS_PER_SECOND,
+                    lifetime_ms: STREAM_LIFETIME_SECONDS * crate::budget::MILLISECONDS_PER_SECOND,
+                    chunk_bytes: STREAM_CHUNK_BYTES,
+                }),
+                ..legacy
+            }
+        } else {
+            legacy
+        }
+    }
+}
 impl Default for HttpLimits {
+    /// The contract v1 limits.
     fn default() -> Self {
         Self {
             connections: MAX_CONNECTIONS,
+            stream: None,
             request_bytes: abi::MAX_INPUT_BYTES,
             body_bytes: MAX_BODY_BYTES,
             header_bytes: MAX_HEADER_BYTES,
@@ -97,6 +153,10 @@ pub struct HttpContract {
     /// V2 only: handle returns a rooted Promise<string>; state/value are pure accessors.
     #[serde(default, skip_serializing_if = "is_false")]
     pub asynchronous: bool,
+    /// V2 only, with `asynchronous`: the handler returns a Web `Response`
+    /// whose body the host pulls in chunks ([`PULL`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub streaming: bool,
     pub bind: String,
     pub export: String,
     pub required_effects: Vec<String>,
@@ -110,9 +170,10 @@ impl HttpContract {
             .map_err(|_| HttpError::Contract("literal IP endpoint required".into()))?;
         if !matches!(self.version, VERSION | UTF16_VERSION)
             || self.asynchronous && self.version != UTF16_VERSION
+            || self.streaming && !self.asynchronous
             || self.export != HANDLER
             || addr.to_string() != self.bind
-            || self.limits != HttpLimits::default()
+            || self.limits != HttpLimits::for_version(self.version)
             || self.required_effects.len() > MAX_REQUIRED_EFFECTS
             || !self.required_effects.iter().any(|s| s == LISTEN_CAPABILITY)
             || self.required_effects.windows(2).any(|p| p[0] >= p[1])
@@ -145,7 +206,7 @@ impl HttpContract {
         Ok(bytes)
     }
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpHeader {
     pub name: String,
@@ -158,7 +219,7 @@ pub struct HttpRequest {
     pub body: String,
     pub headers: Vec<HttpHeader>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpResponse {
     pub status: i32,
@@ -186,10 +247,11 @@ mod tests {
         let mut contract = HttpContract {
             version: UTF16_VERSION,
             asynchronous: false,
+            streaming: false,
             bind: "127.0.0.1:0".into(),
             export: HANDLER.into(),
             required_effects: vec![LISTEN_CAPABILITY.into()],
-            limits: HttpLimits::default(),
+            limits: HttpLimits::for_version(UTF16_VERSION),
         };
         HttpContract::parse(&contract.to_bytes().unwrap()).unwrap();
         contract.version = LATEST_VERSION + 1;
@@ -251,6 +313,7 @@ mod tests {
         let mut contract = HttpContract {
             version: VERSION,
             asynchronous: false,
+            streaming: false,
             bind: "127.0.0.1:0".into(),
             export: HANDLER.into(),
             required_effects: vec!["net.listen".into()],
@@ -273,5 +336,19 @@ mod tests {
         assert!(contract.validate().is_err());
         assert!(HttpContract::parse(&vec![b' '; MAX_METADATA_BYTES + 1]).is_err());
         assert!(HttpContract::parse(br#"{"version":1,"version":1}"#).is_err());
+        // V1 keeps its one connection and no stream limits; v2 has the pool
+        // and the stream limits, and streaming needs v2's asynchronous form.
+        contract.required_effects = vec!["net.listen".into()];
+        assert!(!std::str::from_utf8(&legacy).unwrap().contains("stream"));
+        contract.streaming = true;
+        assert!(contract.validate().is_err());
+        contract.limits = HttpLimits::for_version(UTF16_VERSION);
+        contract.version = UTF16_VERSION;
+        assert!(contract.validate().is_err());
+        contract.asynchronous = true;
+        HttpContract::parse(&contract.to_bytes().unwrap()).unwrap();
+        assert_eq!(contract.limits.connections, MAX_CONCURRENT_CONNECTIONS);
+        contract.limits = HttpLimits::default();
+        assert!(contract.validate().is_err());
     }
 }

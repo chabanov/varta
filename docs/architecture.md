@@ -16657,6 +16657,50 @@ Neither path renews request budgets. V2 effects are computed from the emitted
 closed direct-call graph and independently recomputed by validation. V1 omits the
 new flag and exports and retains its previous encoding and execution behavior.
 
+**Streaming responses and the connection pool (v2).** A v38 handler may also
+return a Web `Response` (or a promise of one), as with `Deno.serve`; its body,
+text, bytes or a `ReadableStream`, reaches the client as chunked transfer
+encoding while the guest produces it. The contract then sets `streaming`
+(with `asynchronous`): `handle` resolves to a record holding the pull function
+the fetch prelude makes of the `Response` (`httpResponseBody`, unnameable by
+programs), and the additional `varta.http_abi.pull(i64)->i64` calls it and
+returns its `Promise<string>`, read through the pure
+`varta.http_abi.chunk_state(i64)->f64` and `chunk_value(i64)->i64`. The record
+keeps the current chunk promise, so the host roots it once, not per chunk.
+The first pull yields the head envelope (the v2 response schema with an empty
+body); every later one a record whose first code unit is `http::STREAM_DATA`
+followed by at most `http::STREAM_CHUNK_BYTES` bytes as a byte string (one
+code unit 0..=0xFF per byte; the prelude splits a larger chunk) or
+`http::STREAM_END`. The head is validated as a whole response's (status,
+headers, no framing headers) but has no `content-length`; HEAD and bodyless
+statuses pull nothing more. Validation requires exactly these exports, their
+signatures and the chunk accessors to be host-free, and counts the effects of
+`pull`'s graph with the handler's in `required_effects`.
+
+The head runs as the first turn under the request budgets, as an async
+handler does. Each later pull is one `stream` turn with fresh fuel, host calls
+and microtasks and `http::STREAM_IDLE_SECONDS` as its deadline (its timer and
+network sub-turns share that allowance); the whole response lives at most
+`http::STREAM_LIFETIME_SECONDS`, after which its pull fails and the body is
+aborted, and an SSE client reconnects with `Last-Event-ID`. The worker sends
+chunks through a one-chunk channel, so it never runs ahead of the client. A
+client that leaves drops the body, which cancels the worker (it stops at its
+next cancellation check); a service shutdown cancels every streaming worker;
+a failure after the head aborts the body (no terminating chunk). A streaming
+service's connection bound is `http::CONNECTION_SECONDS` plus the stream
+lifetime.
+
+V2 services serve up to `http::MAX_CONCURRENT_CONNECTIONS` connections at
+once, each with its own worker and Store (so the memory of that many requests
+at most); a connection is accepted only once a worker permit is free and its
+one request uses that permit, so further clients wait in the listener's
+backlog, never in an unbounded queue, including right after a client that left
+and whose cancelled worker still holds its permit. Shutdown stops accepting
+and waits for the open connections. HTTP contract v1 keeps one connection and
+its immediate 503. The limits travel in the contract metadata
+(`HttpLimits::for_version`): v2 metadata names the pool and the stream limits,
+so a v38 service built before them must be rebuilt.
+
 Timer/Unicode, mutable-state, forced-GC, outbound-body/denial and hostile metadata
 cases have focused verification. Every request now receives a shareable snapshot
 of startup's effective budgets/caps and artifact-scoped headless broker inputs,

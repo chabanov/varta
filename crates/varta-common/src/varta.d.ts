@@ -1200,9 +1200,12 @@ declare const varta: {
     /** One compile-time entry-module declaration; literal IP/port, named handler.
      * Starts after main completes. Each request has a fresh bounded instance.
      * V38 HTTP v2 also admits Promise<VartaHttpResponse> and owns its async work
-     * until response settlement. Earlier HTTP v1 profiles require a sync handler.
+     * until response settlement, and a Web `Response` (or a promise of one):
+     * its body (text, bytes or a `ReadableStream`) streams to the client in
+     * chunks, each pulled as its own turn within the stream's idle and
+     * lifetime bounds. Earlier HTTP v1 profiles require a sync handler.
      */
-    serve(options: { hostname: string; port: number }, handler: (request: VartaHttpRequest) => VartaHttpResponse | Promise<VartaHttpResponse>): void;
+    serve(options: { hostname: string; port: number }, handler: (request: VartaHttpRequest) => VartaHttpResponse | Promise<VartaHttpResponse> | Response | Promise<Response>): void;
     /** Stop this owned service after the current response has drained. */
     stop(): void;
   };

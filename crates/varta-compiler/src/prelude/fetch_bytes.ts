@@ -904,3 +904,60 @@ export async function fetch(input: string | URL | Request, init?: RequestInit): 
   const request = new Request(input, init);
   return send(request, request.url, request.method, request.bodySource(), 0);
 }
+
+// The body records of a v2 streaming HTTP service (`varta_common::http`
+// `STREAM_DATA`, `STREAM_END`, `STREAM_CHUNK_BYTES`); a compiler test keeps
+// them in step.
+const HTTP_STREAM_DATA = 'D';
+const HTTP_STREAM_END = 'E';
+const HTTP_STREAM_CHUNK_BYTES = 65536;
+
+// The head envelope of a streaming response (`varta_common::http::HttpResponse`
+// with an empty body).
+interface HttpHeadField {
+  name: string;
+  value: string;
+}
+interface HttpHead {
+  status: number;
+  body: string;
+  headers: HttpHeadField[];
+}
+
+// A handler's `Response` as the pull function the HTTP streaming adapter
+// returns (`varta_common::http::PULL`): its first call gives the head
+// envelope, every later call one body record, a data record holding at most
+// `HTTP_STREAM_CHUNK_BYTES` bytes as a byte string, until the end record. No
+// program binding can name it: only the compiler's adapter calls it.
+function httpResponseBody(response: Response): () => Promise<string> {
+  const fields: HttpHeadField[] = [];
+  response.headers.forEach((value: string, name: string, parent: Headers): void => {
+    fields.push({ name: name, value: value });
+  });
+  const head: HttpHead = { status: response.status, body: '', headers: fields };
+  const stream = response.body;
+  const reader = stream === null ? null : stream.getReader();
+  let started = false;
+  let ended = false;
+  let rest = '';
+  return async (): Promise<string> => {
+    if (!started) {
+      started = true;
+      return JSON.stringify(head);
+    }
+    while (rest.length === 0) {
+      if (reader === null || ended) {
+        return HTTP_STREAM_END;
+      }
+      const result = await reader.read();
+      if (result.done) {
+        ended = true;
+        return HTTP_STREAM_END;
+      }
+      rest = byteStringOf(result.value);
+    }
+    const piece = rest.slice(0, HTTP_STREAM_CHUNK_BYTES);
+    rest = rest.slice(HTTP_STREAM_CHUNK_BYTES);
+    return HTTP_STREAM_DATA + piece;
+  };
+}

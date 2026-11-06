@@ -184,6 +184,8 @@ fn run_owned(
         }),
     });
     sink.lines(output.lines)?;
+    // One worker per connection: a v1 service has one, a v2 service its pool.
+    let workers = contract.limits.connections;
     let shared = Arc::new(Shared {
         engine,
         module,
@@ -193,7 +195,7 @@ fn run_owned(
         ceiling: ceiling.map(ToOwned::to_owned),
         files,
         stop,
-        workers: Arc::new(tokio::sync::Semaphore::new(1)),
+        workers: Arc::new(tokio::sync::Semaphore::new(workers)),
         sink: sink.clone(),
     });
     // A dedicated reactor also supports embedders already running Tokio.
@@ -202,7 +204,7 @@ fn run_owned(
         .spawn(move || -> Result<(), RuntimeError> {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .max_blocking_threads(1)
+                .max_blocking_threads(workers)
                 .build()
                 .map_err(HttpError::Io)?;
             runtime.block_on(transport::serve(listener, address, shared))

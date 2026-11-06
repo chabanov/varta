@@ -53,6 +53,7 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
             .iter()
             .flat_map(|(state, value)| [*state, *value]),
     );
+    stack.extend(program.http_stream.iter().flatten().copied());
     stack.extend(program.view_event);
     stack.extend(program.initializers.iter().copied());
     // V37 keeps every suspendable function; v38 (`program_limits`) keeps only
@@ -149,6 +150,9 @@ pub(super) fn prune(program: &mut ir::Program) -> Result<()> {
         *state = remap(*state)?;
         *value = remap(*value)?;
     }
+    for index in program.http_stream.iter_mut().flatten() {
+        *index = remap(*index)?;
+    }
     if let Some(index) = &mut program.view_event {
         *index = remap(*index)?;
     }
@@ -199,6 +203,7 @@ fn unread_constants(program: &mut ir::Program) -> Result<()> {
             .iter()
             .flat_map(|(state, value)| [*state, *value]),
     );
+    stack.extend(program.http_stream.iter().flatten().copied());
     stack.extend(program.view_event);
     stack.extend(program.suspendable.keys().copied());
     let mut kept: BTreeMap<usize, Vec<bool>> = BTreeMap::new();

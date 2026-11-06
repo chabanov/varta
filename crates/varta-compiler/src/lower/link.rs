@@ -207,7 +207,9 @@ pub(crate) fn lower(
     );
     let tools = super::tools::collect(graph, &scopes, &functions, main)?;
     let service = http::collect(graph, &scopes, &mut functions, &mut types, main)?;
-    let (http, http_async) = service.map(|s| (Some(s.entry), s.poll)).unwrap_or_default();
+    let (http, http_async, http_stream) = service
+        .map(|s| (Some(s.entry), s.poll, s.stream))
+        .unwrap_or_default();
     if constants.stored > 0 && (!tools.is_empty() || http.is_some() && !profile.turn_budgets()) {
         return Err(entry.source.locate(
             unsupported("module constants with tool/HTTP entry points; only main initializes them"),
@@ -246,6 +248,7 @@ pub(crate) fn lower(
         tools,
         http,
         http_async,
+        http_stream,
         view_event,
         types,
         constants: constants.stored,

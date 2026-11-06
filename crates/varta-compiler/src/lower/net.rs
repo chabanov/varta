@@ -233,6 +233,11 @@ mod tests {
             };
             constant(name, &(kind as i32).to_string());
         }
+        // The HTTP streaming body records (`varta_common::http`).
+        use varta_common::http::{STREAM_CHUNK_BYTES, STREAM_DATA, STREAM_END};
+        constant("HTTP_STREAM_DATA", &format!("'{STREAM_DATA}'"));
+        constant("HTTP_STREAM_END", &format!("'{STREAM_END}'"));
+        constant("HTTP_STREAM_CHUNK_BYTES", &STREAM_CHUNK_BYTES.to_string());
     }
 
     /// The prelude's mirrored constants match the shared contract.

@@ -116,7 +116,7 @@ pub type Result<T> = std::result::Result<T, VartaError>;
 /// which any function they reach through direct calls calls a host import;
 /// fuel profile builds leave that call graph uninstrumented.
 #[cfg(feature = "std")]
-pub const HOST_FREE_EXPORTS: [&str; 8] = [
+pub const HOST_FREE_EXPORTS: [&str; 10] = [
     TOOL_COPY_STRING,
     TOOL_RETAIN_STRING,
     value::VALUE_ALLOCATE,
@@ -125,6 +125,8 @@ pub const HOST_FREE_EXPORTS: [&str; 8] = [
     http::RETAIN,
     http::STATE,
     http::VALUE,
+    http::CHUNK_STATE,
+    http::CHUNK_VALUE,
 ];
 
 /// Host declarations for editors; semantic checking is implemented by the compiler.

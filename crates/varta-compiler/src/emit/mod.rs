@@ -990,6 +990,22 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             exports.export(name, wasm_encoder::ExportKind::Func, helpers[&helper]);
         }
     }
+    if let Some(stream) = program.http_stream {
+        for (name, index) in [
+            varta_common::http::PULL,
+            varta_common::http::CHUNK_STATE,
+            varta_common::http::CHUNK_VALUE,
+        ]
+        .into_iter()
+        .zip(stream)
+        {
+            exports.export(
+                name,
+                wasm_encoder::ExportKind::Func,
+                functions_begin + index as u32,
+            );
+        }
+    }
     if let Some((state, value)) = program.http_async {
         exports.export(
             varta_common::http::STATE,

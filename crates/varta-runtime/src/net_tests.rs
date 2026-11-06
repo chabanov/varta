@@ -1069,15 +1069,16 @@ fn transfers_that_fail_on_their_own_close_their_connection_before_the_guest_wake
     }
 }
 
-/// How long the test's observer keeps a cancelled worker, and so the one
-/// worker permit, before the worker ends: a worker that takes a while to
-/// stop after its client left.
+/// How long the test's observer keeps a cancelled worker, and so its worker
+/// permit, before the worker ends: a worker that takes a while to stop after
+/// its client left.
 const DRAIN: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// Pilot finding F2, server side: a v2 HTTP service whose client aborted
 /// (closing the connection, so the worker is cancelled) serves the client's
-/// next request, sent at once, after the cancelled worker released the
-/// permit, instead of refusing it with the runtime's own 503. The service's
+/// next request, sent at once, instead of refusing it with the runtime's own
+/// 503: on another worker of its pool while the cancelled one still drains,
+/// so the two reports arrive in either order. The service's
 /// `/held` holds a request to the loopback server, whose gate lets the client
 /// abort only once the worker is busy with it; the cancelled worker then
 /// closes that upstream connection as well.
@@ -1154,8 +1155,10 @@ fn aborted_requests_leave_the_server_worker_free_for_the_next_request() {
         "{:?}",
         upstream.trace()
     );
+    let mut outcomes = outcomes.lock().unwrap().clone();
+    outcomes.sort_by_key(|outcome| matches!(outcome, HttpRequestOutcome::Returned { .. }));
     assert_eq!(
-        *outcomes.lock().unwrap(),
+        outcomes,
         [
             HttpRequestOutcome::Cancelled,
             HttpRequestOutcome::Returned { status: 200 }

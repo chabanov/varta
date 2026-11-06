@@ -77,6 +77,8 @@ pub mod turn_kind {
     pub const EXECUTION: &str = "execution";
     /// Collection work between two turns.
     pub const MAINTENANCE: &str = "maintenance";
+    /// One chunk of a v2 streaming HTTP response.
+    pub const STREAM: &str = "stream";
 }
 
 /// The wire form of requested (manifest) or allowed (host ceiling) budgets.
