@@ -45,6 +45,7 @@ Durable principles:
 
 | Document | Use it for |
 | --- | --- |
+| [docs/functional-overview.md](docs/functional-overview.md) | Checkpoint inventory of implemented functionality, limitations, platforms and evidence; not a normative contract |
 | [docs/architecture.md](docs/architecture.md) | Normative contracts; the generated [version matrix](docs/architecture.md#version-matrix) and limits |
 | [docs/embedding.md](docs/embedding.md) | Normative contract for third-party hosts; generated host-operation, profile, layout and name tables |
 | [docs/profile-rules.md](docs/profile-rules.md) | Implementation rules per profile and feature. **Read the relevant section before changing a feature.** |

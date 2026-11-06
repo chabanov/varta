@@ -2,43 +2,46 @@
 
 ## Status
 
-Updated 2026-11-04 after native inline painting commit `ed77739e`. It commits
-the mixed-border CPU follow-up, sliced inline backgrounds and whole-subtree
-inline opacity, static opacity context placement, paint-edge rounding, ordinary
-block/inline paint phases, vertical paragraph paint origins, host glyph
-coverage (CoreText on macOS), solid underlines, fragmented outlines and vertical
-inline spacing. The consolidated gate below verified exactly these code inputs;
-only documentation annotations changed between that gate and the commit. The
-earlier rounded clipping/composition (`54585e3f`), clipboard (`22b02d0c`),
-accessibility (`5a521250`, `2400dbfe`), retained renderer, TSX Showcase and
-optional GPU (`be85c981`) foundations are integrated. The working tree after
-`219db06` adds horizontal inline padding/margins and solid inline borders as
-shaping edges, built on the former `wip/inline-edge-shaping` prototype, with
-scoped Chrome/GPU evidence
-[below](#native-horizontal-inline-edges-and-borders--scoped-2026-11-04) and a
-passing consolidated full gate. Portable outlines
-retain their explicit platform-smoothing difference, and broader typography,
-whole-application and platform acceptance stay open. Varta is an experimental
-research project with a working typed TypeScript compiler, capability-checked
-runtime and application foundation. K1–K3 are implemented for their declared
-profiles; K4 and the platform work are integrated through v38 and remain in
-stabilization. Integration in `main` does not mean a production release or full
-ECMAScript, Node or npm compatibility.
+Updated 2026-11-05 from `main` at `10ff9ae`. The native inline painting and
+horizontal-edge packages, waves 1–3, the browser console leg and the native
+console batch are integrated. Their earlier branch names and scoped measurements
+below describe the original checkpoints, not outstanding merges. Current work
+includes the v38 HTTP streaming/keep-alive server and the recorded changes to
+application budgets, lifetime serials and network inactivity handling.
+
+The large-heap incremental-GC bitmap-clearing fix is committed in `10ff9ae`.
+Its full gate passes **3861 Rust tests and 218 browser Node tests**, with
+17 ignored Rust tests and unchanged inputs across all ten commands. The earlier
+codegen-v2 fuel comparison failure is superseded by this successful run; the
+existing cost measurements were updated for the collector change. See
+[current verification evidence](verification.md#current-verification-evidence--2026-11-05).
+
+Varta remains an experimental research project: a working compiler for an
+explicit checked TypeScript subset, a capability-checked Wasmtime runtime,
+official browser applications and an experimental native shell. K1–K3 are
+implemented for their declared profiles; K4 and platform work remain in
+stabilization. Regression counts do not establish production readiness, full
+ECMAScript/Node/npm compatibility or completion of the accepted plan.
+
+The [functional overview](functional-overview.md) collects the implemented
+language, runtime, system, network, storage, UI, GPU, packaging and tool surfaces,
+their current limitations and the evidence behind this checkpoint.
 
 | Item | Current state |
 | --- | --- |
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last committed full gate | Incremental bitmap clearing of the v38 collector (2026-11-06, macOS arm64, the commit that records it): **3861 Rust tests passed, 0 failures, 17 ignored; 218 browser Node tests passed**; conformance on `checked-f64-utf16-v38` 132/5 of 137, baseline matched; sources unchanged during the run. Report: `target/verification/20261105-225401-b9bonnxr/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Committed GC bitmap-clearing package `10ff9ae`, macOS arm64: **3861 Rust tests passed, 0 failures, 17 ignored; 218 browser Node tests passed**. All ten commands pass with unchanged inputs. Report: `target/verification/20261105-225401-b9bonnxr/report.json` (recorded HEAD `6dfb06e`, with the GC changes present). V38 conformance 132 passed/5 known unsupported of 137, baseline matched. This verifies the recorded implementation, not real-window, full-browser-matrix, other-platform or release acceptance. |
+| Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
 | Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
-| HTTP streaming | V38 HTTP v2 services may return a Web `Response` whose text, bytes or `ReadableStream` body streams as chunked encoding, each chunk a `stream` turn within the idle and lifetime bounds; v2 serves a bounded pool of connections (owner decision 2026-11-05, replacing the one-worker invariant). The console proxy streams the live session's events. Limits: [embedding registry](embedding.md#entry-point-limits); contract: [streaming responses](architecture.md#http-contract-v2--native-server). The idle bound has no timed test |
-| Pilot | Pinned uarp-sdk **0.13.2**; `examples/uarp-console/scripts/check-sdk.sh` checks **65/65** source files unmodified under v38, plus an instantiation probe of the SDK's 7 exported generic sites with a negative control (2026-11-04). The real `UarpClient` runs natively for the first time: `scripts/sdk-loopback.sh` passes **43 cases in 6 groups** (unary, problem documents, Retry-After retry, abort, timeout, finite SSE) against a loopback mock that itself runs on Varta; pilot findings F1–F3 are in the console README. V38 projects can import it as `'uarp-sdk'` (bare package specifiers). The UARP console check runs on the normal CLI stack: **249 tests in 36 groups and 10 view checks passed**. This does not establish the SDK's own-test acceptance, live-service, long-lived-stream or cross-target parity |
-| JS host | Prototype: **117 shared cases pass under Node**, unmetered. Fuel foundation: **25 native/Node and 25 native/Chrome observations match**. Console/microtask/timer/v38-network/view-session bundle: expanded real Chrome acceptance passes, including native usage parity, packaged PNGs/fonts, permission ceilings, integrity, limits and Worker termination; `build --target browser` packages checked executions/views; the local dev/reload host is covered by the consolidated gate and scoped Chrome/Firefox/WebKit observations. The complete browser/pilot matrix and broader effects remain open |
-| Native renderer | Experimental CPU preview supports the admitted controls, Unicode/inline text, editing/Undo/IME preedit, scrolling, DPI/theme and layout commands. Commit `be85c981` adds retained rendering/damage replay, RGB reuse, hover/active/cursors, input coalescing and optional Metal GPU with CPU recovery. Native console batch (`9317177`–`a5a572e`, 2026-11-05): `varta-shell --system-fonts` maps the generic families to the fonts Chrome uses on macOS; text takes automatic optical size and Chrome's synthetic-bold threshold; CSS transitions of color, background-color, opacity and translations run on a host-set animation clock; `transform` translations move boxes ([native transitions](architecture.md#native-css-transitions), [native transforms](architecture.md#native-css-transforms)). The UARP console renders its first frame, hover and pressed states for every button headlessly through the shell's launch path with system fonts; a windowed run, `scale()`, OS fallback fonts (⚙ draws `.notdef`) and scrollbar painting remain open. Native implementation includes lazy AccessKit semantics, bounded descriptions, painted field ranges, scrolling, live updates, FIFO assistive actions and asynchronous host-owned copy/cut/paste. Full L0 painting, full IME, complete accessibility, production shell and actual system clipboard/target acceptance remain open. Wave-3 package `w3-native-controls` (scoped, not merged) gives unstyled and partially styled controls Chrome's user-agent defaults, theme, disabled colors and focus ring, and admits `input type=number` with Chrome's Up/Down stepping; whether the console view renders without a control refusal is unverified, because `headless_frame` cannot load the 4273111-byte console module ([record](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05)). Its heading, `pre`, alignment and ellipsis refusals are resolved on the wave-1 branch ([triage](#native-structure-alignment-and-ellipsis--wave-1-package-w1-native-structure-text-scoped-2026-11-04)). |
-| Native white space | Wave-2 package `w2-native-whitespace` (scoped, not merged): native `pre-wrap`/`pre` tab stops at `tab-size: 8`, preserved, hanging and conditionally hanging spaces, and mixed `white-space` modes in one inline flow, checked against Chrome at 1×, 1.25× and 2× ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). Bidi text on that path, `text-overflow: ellipsis` with it and a `tab-size` property remain open |
+| HTTP streaming | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies and supports HTTP/1.1 keep-alive with separate bounded connection and worker pools. The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Modern-server H1 is partial: Web `Request` ingress/streamed request bodies and remaining host-policy work are open; H2 async Wasmtime/pooling, H3 server TLS 1.3/HTTP/2 and H4 hardening/load acceptance remain planned ([K7](#k7--modern-http-server-agreed-design-2026-11-05)). |
+| Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
+| JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
+| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures, `scale()`, OS glyph fallback and scrollbar painting remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). |
+| Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
-| GPU and games | P13a has an optional wgpu/Vello GPU UI prototype with shared bounded scenes and CPU recovery; local Metal acceptance is in progress. P13b typed Wasm graphics and P13c typed 3D library/port remain planned. There is no guest GPU API or unmodified Three.js support; no WebView fallback is adopted. [Scope](#gpu-and-game-graphics-future-direction) |
+| GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
 
@@ -405,8 +408,8 @@ working tree; see the next section.
 
 ### Native horizontal inline edges and borders — scoped 2026-11-04
 
-The working tree after `219db06` admits non-replaced inline left/right padding,
-solid borders and signed px/rem margins (`auto` is zero). The rebased
+Implemented in `cc3a94d` after `219db06`: non-replaced inline left/right padding,
+solid borders and signed px/rem margins (`auto` is zero) are admitted. The rebased
 `wip/inline-edge-shaping` prototype supplies Parley `InlineStart`/`InlineEnd`
 edges that take advance without a break opportunity; native collection records
 margin+border+padding per nonzero side, resolves edges next to a pending
@@ -1132,7 +1135,12 @@ release plan and the remaining real-font/window/input acceptance stay open.
 
 ### Current UI checkpoint and proposed continuation
 
-**Active package UI-2 — native accessibility foundation, after `be85c981`.**
+This section retains the earlier UI development records. The current merged
+surface is summarized in [Status](#status); current blockers are in the
+[integration backlog](#current-integration-backlog). UI-1/UI-2 and the optional
+GPU foundation are already implemented, rather than the next unstarted packages.
+
+**Recorded UI-2 package — native accessibility foundation, after `be85c981`.**
 Shared flat semantic snapshots, native AccessKit roles/names/states, stable
 nonrecycled platform IDs and presented-frame physical bounds are implemented
 (committed in `5a521250`). Focus, Click, string SetValue and ReplaceSelectedText route
@@ -2005,20 +2013,21 @@ Server acceptance ledger, in order:
 
 ### Next delivery batches
 
-This table preserves the broader platform queue. The immediate UI proposal is
-[UI-1, then the P13a prototype](#current-ui-checkpoint-and-proposed-continuation),
-authorized by the owner; the historical ordering below is not a claim that those
-streams are all unimplemented. It follows the accepted platform design and recorded integration gaps.
-Each batch has a concrete exit criterion; benchmark and compatibility results
-remain evidence for the measured target only.
+This table preserves the broader accepted queue. The GC/fuel comparison
+follow-up now passes its consolidated gate. Next, run the Chrome streaming
+acceptance with the new inactivity contract. Continue the agreed
+[K7 server stages](#k7--modern-http-server-agreed-design-2026-11-05) and real-window
+console acceptance from their implemented foundations. The former UI-1/P13a-first
+proposal is historical. Each batch still requires its own exit evidence; local
+benchmarks and compatibility checks establish only their measured scope.
 
 | Order | Batch | Exit criterion |
 | --- | --- | --- |
 | 1 | V38 semantic stabilization (CORE-01/02/10/15): JSON property insertion order and boolean narrowing verified in batch 1; direct discriminated-union decoding and literal/unknown overlap verified in batch 2; wider narrowing inventory remains | Differential cases preserve observable ordering and errors across compiled/linked decoders, serialization and source-free artifacts; existing profile and fuel exceptions remain explicit |
-| 2 | V38 server and asynchronous lifetime integration (CORE-08/09/11/17): native acceptance verified; broader lifecycle/replay/target work stays in its ledgers | V38 server boundary and scripted network completion cases pass with declared permissions, queue/deadline limits, late-completion cleanup and trap behavior; covered again by the consolidated browser-core gate; request isolation explicit |
-| 3 | Official browser delivery (P1/P9): bundles/views/resources/permissions/events/navigation and local memory-only dev/reload verified by the consolidated gate; scoped three-engine matrix passes; next portable matrix driver, remaining effects and pilot acceptance | Same supported artifacts and UARP session agree in Node, Chromium, Firefox and WebKit; fuel and host work are enforced, permission denials tested, bundle/startup costs measured |
+| 2 | V38 server and asynchronous lifetime integration (CORE-08/09/11/17): streaming responses and HTTP/1.1 keep-alive implemented; K7 H1 partial, H2–H4 open | Complete Web Request/body and policy admission, then async execution/pooling, server TLS 1.3/HTTP/2 and hardening/load evidence while retaining request isolation, permissions, budgets and cancellation contracts |
+| 3 | Official browser delivery (P1/P9): metered bundles/effects, OPFS KV, replay, dev/reload and the browser oracle driver integrated; remaining streaming/pilot/target acceptance | Same supported artifacts and UARP session agree in Node, Chromium, Firefox and WebKit; fuel and host work are enforced, permission denials tested, bundle/startup costs measured |
 | 4 | Native targets (P3/P10–P10d): renderer, shells, bundles and headless layout comparison | Same console artifact completes the accepted session visibly on macOS and an actual Pi 5, with layout/accessibility agreement and measured startup, memory and input latency; Windows and target metadata have independent checks |
-| 5 | Future native GPU and graphics (P13a–P13c), after the UI baseline and with independent contracts | Measured CPU/GPU Showcase prototype, then bounded game graphics and separately proven typed library/port; no Three.js or WebView compatibility inferred from GPU support |
+| 5 | Native GPU and graphics (P13a–P13c): UI prototype/color fields implemented; opacity groups, device acceptance and guest graphics/3D contracts open | Measured CPU/GPU Showcase prototype, then bounded game graphics and separately proven typed library/port; no Three.js or WebView compatibility inferred from GPU support |
 | 6 | Release acceptance (CORE-14/15/16): explicit v38 subset, package compatibility and sustained/security validation | Reproducible target matrix, documented unsupported inventory, package-own-test results, long-lived resource measurements and release/trust policy; no production or full-compatibility claim before these pass |
 
 Work on performance fast paths, wider standard APIs and KV async/watch/queues
@@ -2151,18 +2160,18 @@ inferred from the current regression suite.
 | CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
 | CORE-05 | Standard collections and binary values | Partial | Map/Set, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
 | CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, UTC Date subset and ahead-of-time RegExp | General Math object/call semantics, wider Date/Intl and remaining RegExp features |
-| CORE-07 | Garbage collection and resource lifecycle | Partial | Exact tracing, liveness frames, incremental collection and idle maintenance under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence |
-| CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and deterministic replay acceptance |
+| CORE-07 | Garbage collection and resource lifecycle | Partial; large-heap idle-work fix verified | Exact tracing, liveness frames, incremental collection/idle maintenance and bounded bitmap clearing before the root snapshot under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence remain open |
+| CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and cross-host ordering beyond supported network replay |
 | CORE-09 | Async language and cancellation | Partial | Async/await, timers, abort listeners/timeout/any, async generators, for-await, cancellable fetch and focused v38 HTTP lifecycle checks including synchronous network waits | Top-level await, wider async iterable forms, broader host-call lifecycle and sustained owned shutdown acceptance |
 | CORE-10 | JSON and Web APIs | Partial | Typed/unknown JSON with verified record insertion order, compiled decoders and direct literal-constrained assertion attempts, linked serialization, URL/Headers/Request/Response, streamed bytes | Wider Web compatibility and remaining checked conversion/narrowing semantics |
 | CORE-11 | System APIs | Partial | Capability-gated files/env/time/process operations, virtual roots, verified native v38 sync/async HTTP v2 and artifacts, async HTTP(S) client and KV | Broader filesystem/process APIs, KV async/watch/queues, portable errors and target parity |
 | CORE-12 | ES modules and packages | Partial | Typed graphs, constants/live bindings, re-exports/defaults, class/generic linking and text imports; v38 bare package specifiers resolved through `<config dir>/node_modules`, the `types` export and the `.d.ts.map` to shipped TypeScript sources ([contract](architecture.md#local-modules)); the pinned SDK checks when imported as `uarp-sdk` | Full module initialization/loading semantics, `*` export patterns and other resolution policy expansion (owner decision), SDK-own-test/package acceptance |
 | CORE-13 | ABI and capability enforcement | Implemented for admitted native profiles | Version/signature/layout/resource checks, host ceilings and permission broker | Retain fail-closed guarantees for new boundaries; official non-Wasmtime host parity remains unclosed |
-| CORE-14 | Distribution | Partial | Independent launcher, portable Wasm and source-free native executable | Official browser/native bundles, Windows/Pi/cross-target delivery, release policy and artifact authenticity |
-| CORE-15 | Conformance | Partial | Pinned ECMAScript 2025 checked-v37 inventory, isolated runner, negative/differential/artifact tests | Four known cases, eight untested feature rows, wider edition/history coverage, upstream harness and independent platform verification |
+| CORE-14 | Distribution | Partial | Independent launcher, portable Wasm, source-free native executable, official browser bundles and packaged varta-shell | Complete distribution/target acceptance, Windows/Pi/cross-target delivery, release policy and artifact authenticity |
+| CORE-15 | Conformance | Partial | Pinned ECMAScript 2025 checked-v38 inventory, isolated runner, reviewed timer grants and negative/differential/artifact tests | Five known cases, eight untested feature rows, broader granted KV/fetch cases, wider edition/history coverage, upstream harness and independent platform verification |
 | CORE-16 | Performance and production readiness | Partial | Fuel profiler, deterministic golden fuel, codegen/JSON/GC measurements and regression checks | Reproducible startup/throughput/leak/peak-memory benchmarks on supported targets, fuzzing and independent security review |
 | CORE-17 | Application lifecycle | Partial; native foundation implemented | Long-lived instances, host tasks, per-turn budgets, permission decisions, bounded scripted network waits, request cancellation, a sampled native resource lifecycle and recorded network replay (native record/replay and the browser replay transport, wave 3 `w3-network-replay`) | Cross-host ordering beyond replayed network completions, Firefox/WebKit replay runs, complete owned shutdown and broader sustained lifetime/native RSS acceptance |
-| CORE-18 | View output | Partial; L0/TSX and official browser sessions implemented | L0 batch/event protocol, headless tree/cascade/accessibility, TSX, official browser model/DOM/Worker, packaged resources, local dev/reload and experimental CPU native controls/layout | Full native L0 styling/layout, cross-renderer geometry/accessibility, pilot screens, actual Pi/other-target acceptance and measurements |
+| CORE-18 | View output | Partial; L0/TSX and official browser sessions implemented | L0 batch/event protocol, headless tree/cascade/accessibility, TSX, official browser model/DOM/Worker, packaged resources, local dev/reload and experimental CPU native controls/layout | Remaining native L0 styling/layout, real-window console sessions, complete cross-renderer geometry/accessibility, actual Pi/other-target acceptance and measurements |
 
 “Partial” means that useful checked functionality exists while the full target's
 exit criteria remain open. In particular CORE-05/08/09/17/18 are no longer
@@ -4281,25 +4290,34 @@ end-to-end deadline, whole-body bound and headers as given.
 
 ### Current integration backlog
 
-Current outstanding items, grouped by delivery boundary rather than old branches:
+Current outstanding items, grouped by acceptance boundary rather than old branches:
 
-- **Correctness/API integration:** wider checked conversion/narrowing semantics
-  remain open. JSON insertion order, required-boolean discriminants and direct
-  literal-constrained union decoding passed stabilization batch 1. V38 HTTP
-  adapters and bounded scripted network waits now have focused executable
-  acceptance; server final-gate and remaining malformed-artifact checks stay open.
-- **Runtime/storage:** collector cost and peak-memory tuning; async KV completion,
-  watch/queues and wider guest value mappings; explicit sustained shutdown and
-  late-completion ownership checks. Existing defaults stay accepted while measured.
-- **Performance:** older serializers onto the shared encoder; KV decoding path;
-  long-decimal fast paths; the recorded linked Number/BigInt cost regressions.
-  Keep measured costs and fuel goldens distinct from correctness acceptance.
-- **Platform delivery:** generated host, browser fuel, missing browser effects,
-  native renderer, headless geometry and supported-target bundles. Prototype host
-  success does not close official target acceptance.
-- **Compatibility/release:** remaining per-profile unsupported syntax/API cases,
-  package-own-test execution, conformance gaps and untested rows, target workload
-  evidence, fuzzing and independent security review.
+- **GC/lifecycle follow-up:** bounded bitmap clearing on large heaps is committed
+  and passes the full gate in `10ff9ae`; the earlier fuel comparison failure is
+  superseded. Sustained retained-root/leak/cancellation, peak-memory measurements
+  and target lifetime evidence remain open; one large-heap test does not close
+  CORE-07 or production readiness.
+- **Server:** streaming responses, keep-alive and separate connection/worker
+  pools are implemented. K7 H1 still needs Web Request ingress/streamed request
+  bodies and remaining host policy; H2 async Wasmtime/pooling, H3 server TLS
+  1.3/HTTP/2 and H4 flood/slow-client/performance acceptance remain open.
+- **Browser/pilot:** OPFS KV, host effects and native-equal SDK network replay
+  are integrated. Run the updated Chrome streaming acceptance after the read
+  inactivity change; prove sustained live sessions and the remaining browser
+  matrix. The pinned SDK own tests still need the M7 harness.
+- **Native UI:** integrated control defaults, mixed whitespace, dialogs,
+  positioned painting, transitions and translated boxes have scoped/headless
+  evidence. Real-window console/consent/clipboard/link/assistive sessions,
+  remaining glyph fallback, transforms and scrollbar painting need acceptance.
+- **Core/storage/performance:** broader checked conversion/narrowing and module
+  semantics, KV async/watch/queues, sustained cancellation/shutdown, collector
+  peak-memory measurements, JSON string scanning and remaining linked numeric
+  cost regressions. Budget and serial changes do not themselves prove those
+  workloads or full compatibility.
+- **Targets/release:** Linux/Windows/Pi5 and current CI/target evidence, wider
+  browser/pilot parity, production performance, fuzzing and independent security
+  review. GPU color fields are integrated; direct opacity groups and guest
+  graphics/3D are separate unfinished work.
 
 The four reproduced review defects are closed by `abea3ac`. Structural thenables
 are explicitly unsupported with static/runtime rejection; full adoption remains
@@ -7049,7 +7067,9 @@ Stages, each with its own full gate and record:
    per-connection idle, header and request deadlines against slow clients); a
    handler may take a Web `Request` (method, URL, `Headers`, a streaming body)
    as well as `VartaHttpRequest`; request bodies stream with a registry bound;
-   host policy may lower the server limits.
+   host policy may lower the server limits. Only the keep-alive/connection-pool
+   part is implemented; Web Request ingress, streaming request bodies and the
+   remaining policy exposure are still open.
 2. **H2 — Async execution.** `async_support`, `call_async`, fuel and epoch
    yielding, the scheduler's waits and the network completions as futures,
    pooling allocator and `InstancePre`; workers become tasks, admitted while

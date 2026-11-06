@@ -13,41 +13,38 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
-Current development checkpoint (2026-11-03): v38 is in stabilization and
-unreleased. Native async I/O, application turns, L0 headless views/TSX and KV are
-working checked subsets. The official browser host delivers metered applications
-and view sessions; the experimental native preview supports an expanding set of
-controls, Unicode text, IME and bounded rendering work. The latest scoped/full
-verification evidence is recorded in the [status summary](docs/development-plan.md#status).
-Complete browser/pilot acceptance, native styling and platform matrices, resource
-measurements and release/security acceptance remain open. See the
-[current queue](docs/development-plan.md#next-delivery-batches) and
-[CORE ledger](docs/development-plan.md#core-completion-ledger).
+Current development checkpoint (2026-11-05, `main` at `10ff9ae`): v38 remains
+unreleased and in stabilization. The application runtime, official metered
+browser host, OPFS KV storage, native/browser network replay and packaged
+`varta-shell` are integrated. The pinned uarp-sdk runs natively against the
+loopback service and its SDK groups replay in Chrome with native-equal results.
+The native renderer includes inline borders/decorations, control defaults,
+positioned painting, modal dialogs, system-font mappings and CSS transitions/
+translations; the console has headless first-frame and button-state evidence.
+The [TSX Showcase](examples/native-showcase/README.md) remains a renderer demo;
+the [UARP console](examples/uarp-console/README.md) is the application pilot.
 
-The native UI adds retained CPU rendering, hover/active feedback
-and a [TSX Showcase](examples/native-showcase/README.md) with external CSS,
-native macOS bundles and official browser dev support. Later commits add bounded
-native accessibility, host-owned clipboard, rounded clipping and inline
-decorations/opacity with host glyph coverage. Scoped checks and pinned
-frame benchmarks are recorded in the [UI checkpoint](docs/development-plan.md#current-ui-checkpoint-and-proposed-continuation);
-the latest consolidated gate is in the [status summary](docs/development-plan.md#status). Standalone browser root and
-control geometry now match the native sizing rules; bounded opt-in timing covers
-both hosts with explicitly different presentation boundaries. An optional native
-Metal/wgpu UI prototype consumes shared vector scenes and recovers to CPU without
-restarting the application. Accessibility and broader target acceptance remain
-open. Typed application graphics and 3D-library ports remain
-[planned work](docs/development-plan.md#gpu-and-game-graphics-future-direction);
-the UI backend supplies no guest GPU API or Three.js compatibility.
+HTTP v2 supports streamed response bodies and HTTP/1.1 keep-alive with separate
+connection/worker bounds. The agreed modern-server stages still include Web
+Request ingress, async Wasmtime/pooling, server TLS 1.3/HTTP/2 and load/hardening
+acceptance. See the [current status](docs/development-plan.md#status) and
+[server stages](docs/development-plan.md#k7--modern-http-server-agreed-design-2026-11-05).
 
-Native HTTP v2 acceptance covers sync/async handlers, disconnect/shutdown,
-bounded request usage/audit, scripted network waits and source-free/hostile
-artifacts. `build --target browser` now delivers metered console and v38 view
-sessions, Promise/timer/network adapters, checked DOM events and packaged PNG/fonts.
-Separate Chrome probes verify native accounting, permissions, resource integrity,
-limits and lifecycle cleanup. Generated views now have consent dialogs and stored
-choices. Browser dev now rebuilds and reloads checked revisions. Broader host
-effects, complete browser-matrix and cross-target pilot acceptance remain open. The older
-prototype host retains its separate Node checks and remains unmetered.
+The large-heap incremental-GC fix is committed and passes the latest full gate:
+3861 Rust tests, 17 ignored, 218 browser Node tests and the reviewed v38
+conformance baseline. The prior fuel comparison failure is superseded by this
+run. These are local macOS implementation checks, with browser Node tests;
+real-browser and other-target acceptance retain their separate scope.
+See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-05).
+
+Real-window/native system-input acceptance, sustained live-service sessions,
+complete browser/platform matrices and release/security/performance acceptance
+remain open. The optional wgpu/Vello UI backend has direct mixed-border color
+fields; direct GPU opacity groups and typed guest graphics/3D-library ports remain
+[planned work](docs/development-plan.md#gpu-and-game-graphics-future-direction).
+There is no guest GPU API or unmodified Three.js compatibility. The
+[CORE ledger](docs/development-plan.md#core-completion-ledger) records remaining
+scope without treating test counts as a completion percentage.
 
 [Repository](https://github.com/chabanov/varta) · [Contributing](CONTRIBUTING.md) ·
 [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE.md)
@@ -58,6 +55,7 @@ Developed by **Squad AI, Inc.** Architecture and technology by **Pavlo Chabanov*
 
 | Document | Purpose |
 | --- | --- |
+| [Functional overview](docs/functional-overview.md) | Complete implemented surface, current limitations, platforms and evidence at the latest checkpoint |
 | [Language guide](docs/language-guide.md) | Feature tour with examples, by profile |
 | [Architecture contract](docs/architecture.md) | Normative language, ABI, capability and limit contracts; [version matrix](docs/architecture.md#version-matrix) |
 | [Embedding contract](docs/embedding.md) | Normative contract for third-party hosts (JavaScript, other Wasm engines): validation, imports, layout, Tool ABI v1, security obligations |

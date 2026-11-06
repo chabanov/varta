@@ -2,12 +2,36 @@
 
 ## Unreleased
 
+- Incremental GC clears large-heap mark bitmaps in bounded work before taking
+  its root snapshot, retaining the idle-step fuel bound instead of zeroing all
+  bitmap bytes in one step.
+
+- Integrated v38 application delivery across the official metered browser host
+  and packaged native `varta-shell`, including host effects, OPFS KV storage,
+  recorded/replayed network completions and native/Chrome SDK replay checks.
+- Native painting now includes horizontal inline edges and solid borders,
+  preserved/mixed whitespace, positioned painting, user-agent control defaults,
+  number stepping, modal dialogs, native consent and extended macOS accessibility.
+- Native system-font mapping, optical size/bold synthesis, color/opacity CSS
+  transitions and translated/animated boxes support the console's headless frame
+  and button states. Real-window and other-platform acceptance remain open.
+- Mixed border color fields can remain on the optional GPU backend. GPU opacity
+  groups and typed guest graphics/3D APIs remain separate work.
+- HTTP v2 streams Web Response bodies and keeps HTTP/1.1 connections alive under
+  separate connection and worker bounds. Web Request ingress, async Wasmtime,
+  server TLS/HTTP2 and load/hardening acceptance remain planned server stages.
+- V38 application budgets, lifetime promise/timer serials and separate network
+  read inactivity handling follow recorded owner decisions; earlier profiles
+  retain their declared behavior. See the current development-plan status for
+  verification scope and the committed GC follow-up.
+
 - Native text-aware layout shares shaping across adjacent text and nested inline
   elements, preserving whitespace, breaks, semantic font styles, ancestor line
   metrics, cluster ownership and empty anchors. Painting and hits use clipped
   fragments, including overflowing bare text and scrolling. Independent Chrome
-  probes cover the bounded subset; mixed block/inline flow and inline box edges
-  remain unsupported.
+  probes cover the bounded subset; later increments add admitted inline edges
+  and borders. Mixed block/inline flow and remaining edge cases retain their
+  explicit unsupported diagnostics.
 
 - Native lengths resolve `rem` through an explicit host document-root font
   reference across box/grid layout, text, borders and outlines. The default is
