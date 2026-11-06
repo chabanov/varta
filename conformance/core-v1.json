@@ -3572,6 +3572,38 @@
         "diagnostic": "unsupported_syntax",
         "reason": "Decorators run code when the class is defined and receive the class as a value; pending the module-initialization design."
       }
+    },
+    {
+      "id": "enum-object",
+      "feature": "enums",
+      "path": "cases/enum-object.ts",
+      "sha256": "94ec5abed133884a0714a135a5e228eb6b9352910867d5b297b620eb225f1833",
+      "stdout": [
+        "varta log: [\"0\",\"1\",\"10\",\"Red\",\"Green\",\"Blue\"]",
+        "varta log: [\"UP\",\"DOWN\"]",
+        "varta log: [[\"0\",\"No\"],[\"No\",0],[\"Yes\",\"YES\"]]",
+        "varta log: UP/DOWN",
+        "varta log: 10 Red",
+        "varta log: {\"0\":\"Red\",\"1\":\"Green\",\"10\":\"Blue\",\"Red\":0,\"Green\":1,\"Blue\":10}",
+        "varta log: DOWN"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "namespace-object",
+      "feature": "namespaces",
+      "path": "cases/namespace-object.ts",
+      "sha256": "200e7a548c08edabedf3b76ecbd5b97de1d9dc379573d9232bb002fc1c744311",
+      "stdout": [
+        "varta log: [\"scale\",\"double\",\"Axis\",\"Inner\",\"unit\"]",
+        "varta log: 8cm0 1",
+        "varta log: {\"depth\":1} {\"X\":\"x\",\"Y\":\"y\"}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
     }
   ]
 }

@@ -89,6 +89,9 @@ pub(crate) struct Enum {
     /// The generated reverse-mapping function of a non-const enum with
     /// numeric members.
     pub reverse: Option<String>,
+    /// The generated module constant that is the enum object of a non-const
+    /// enum (its value when used as one: `Object.keys(E)`, `f(E)`).
+    pub object: Option<String>,
 }
 
 /// The exported and unexported members of a namespace, merged over all of
@@ -96,6 +99,11 @@ pub(crate) struct Enum {
 #[derive(Default)]
 pub(crate) struct Namespace {
     pub members: BTreeMap<String, Member>,
+    /// The generated module constant that is the namespace object, when
+    /// every exported value member has a value of its own (functions,
+    /// constants, enum and nested namespace objects; a class or a `let`
+    /// member has none).
+    pub object: Option<String>,
 }
 #[derive(Clone)]
 pub(crate) struct Member {
@@ -262,10 +270,12 @@ fn mapped(symbol: &Symbol, map: &dyn Fn(&str) -> String) -> Symbol {
             members: enumeration.members.clone(),
             is_const: enumeration.is_const,
             reverse: enumeration.reverse.as_deref().map(map),
+            object: enumeration.object.as_deref().map(map),
         }));
     }
     if let Some(namespace) = &symbol.namespace {
         symbol.namespace = Some(Rc::new(Namespace {
+            object: namespace.object.as_deref().map(map),
             members: namespace
                 .members
                 .iter()
@@ -459,7 +469,11 @@ fn generated_names(symbol: &Symbol) -> Vec<String> {
     if let Some(reverse) = symbol.enumeration.as_ref().and_then(|e| e.reverse.clone()) {
         names.push(reverse);
     }
+    if let Some(object) = symbol.enumeration.as_ref().and_then(|e| e.object.clone()) {
+        names.push(object);
+    }
     if let Some(namespace) = &symbol.namespace {
+        names.extend(namespace.object.clone());
         for member in namespace.members.values().filter(|m| m.exported) {
             names.extend(generated_names(&member.symbol));
         }

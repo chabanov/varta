@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 103 feature rows and 171 cases:
-166 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 103 feature rows and 173 cases:
+168 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -467,3 +467,8 @@ and output.
 
 Module evaluation (K9 B, 2026-11-06) runs static blocks where their class is
 defined, so the `static-block` gap passes with its pinned hash and output.
+Enum and namespace objects add `enum-object` (own keys, values and entries
+of numeric, string and heterogeneous enum objects, `typeof` and `keyof
+typeof`) and `namespace-object` (a namespace object's keys, its use as a
+`typeof NS` argument and a nested namespace object), both matching Node.js
+v24.20.0.

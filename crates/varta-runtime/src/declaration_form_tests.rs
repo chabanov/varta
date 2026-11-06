@@ -67,6 +67,16 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/declarations.expected"),
     ),
     (
+        "enum_objects",
+        include_str!("declaration_form_cases/enum_objects.ts"),
+        include_str!("declaration_form_cases/enum_objects.expected"),
+    ),
+    (
+        "namespace_objects",
+        include_str!("declaration_form_cases/namespace_objects.ts"),
+        include_str!("declaration_form_cases/namespace_objects.expected"),
+    ),
+    (
         "module_evaluation",
         include_str!("declaration_form_cases/module_evaluation.ts"),
         include_str!("declaration_form_cases/module_evaluation.expected"),
@@ -167,6 +177,12 @@ fn class_expressions_match_node() {
 #[test]
 fn declare_override_and_parameter_properties_match_node() {
     matches_node("declarations");
+}
+
+#[test]
+fn enum_and_namespace_objects_match_node() {
+    matches_node("enum_objects");
+    matches_node("namespace_objects");
 }
 
 #[test]
@@ -379,12 +395,12 @@ fn unsupported_declaration_forms_are_refused_by_name() {
             "a const enum member can only be accessed using a string literal (TS2476)",
         ),
         (
-            "enum E { A, B } function take(x: unknown): void {} export function main(): void { take(E); }",
-            "enum object E used as a value",
+            "const enum E { A, B } function take(x: unknown): void {} export function main(): void { take(E); }",
+            "const enum object (TS2475) E used as a value",
         ),
         (
-            "namespace N { export const a = 1; } function take(x: unknown): void {} export function main(): void { take(N); }",
-            "namespace object N used as a value",
+            "namespace N { export let a = 1; } function take(x: unknown): void {} export function main(): void { take(N); }",
+            "namespace object (a class or let member has no value in it) N used as a value",
         ),
         (
             "namespace N { const hidden = 1; export const a = hidden; } export function main(): void { console.log(String(N.hidden)); }",

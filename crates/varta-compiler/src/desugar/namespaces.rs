@@ -12,7 +12,7 @@ use super::{
 };
 use crate::CompilerError;
 use crate::source::Source;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use swc_common::{Span, Spanned};
 use swc_ecma_ast as ast;
@@ -30,12 +30,20 @@ struct Entry {
     kinds: Vec<Kind>,
     /// A static class field.
     field: Option<super::statics::Field>,
+    /// Creation order among the namespace's members (declaration order).
+    position: usize,
+    /// How the namespace object's type names a constant member: `Some(None)`
+    /// through `typeof` of its annotated declaration, `Some(Some(t))` as the
+    /// keyword type of its literal initializer, `None` not at all.
+    annotation: Option<Option<Box<ast::TsType>>>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Function,
     Class,
     Variable,
+    /// A `let` or `var` member: a live binding, so no namespace object.
+    Mutable,
     Interface,
     Alias,
     Enum,
@@ -64,7 +72,21 @@ pub(super) fn lower(module: &mut ast::Module, source: &Source) -> Result<Exports
     let frame = module_frame(&module.body, &structure);
     let mut body = Vec::new();
     let mut exports = Exports::default();
-    for item in std::mem::take(&mut module.body) {
+    // The last declaration of each module-level namespace, and the exported
+    // namespaces (their objects are exported too).
+    let mut last_namespace: BTreeMap<String, usize> = BTreeMap::new();
+    let mut exported_namespaces: BTreeSet<String> = BTreeSet::new();
+    for (position, item) in module.body.iter().enumerate() {
+        if let Some((ast::Decl::TsModule(decl), exported)) = declaration(item)
+            && let ast::TsModuleName::Ident(id) = &decl.id
+        {
+            last_namespace.insert(id.sym.to_string(), position);
+            if exported {
+                exported_namespaces.insert(id.sym.to_string());
+            }
+        }
+    }
+    for (position, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
         let span = item.span();
         let Some((decl, exported)) = declaration(&item) else {
             body.push(rewrite::item(item, source, &[&frame])?);
@@ -93,7 +115,17 @@ pub(super) fn lower(module: &mut ast::Module, source: &Source) -> Result<Exports
                     structure: &structure,
                     items: &mut body,
                 };
-                emitter.namespace(vec![name], inner, exported, &[&frame])?;
+                emitter.namespace(vec![name.clone()], inner, exported, &[&frame])?;
+                // After its last declaration, a namespace without a value of
+                // its own gets its object (pruned when no code reads it).
+                let pure = frame
+                    .get(&name)
+                    .is_some_and(|s| !s.value && s.enumeration.is_none());
+                if pure && last_namespace.get(&name) == Some(&position) {
+                    for decl in object_declarations(std::slice::from_ref(&name), &structure, span) {
+                        body.push(item_of(decl, exported_namespaces.contains(&name), span));
+                    }
+                }
             }
             _ => {
                 if exported
@@ -176,6 +208,7 @@ fn hoisted_statics(
             continue;
         }
         let namespace = Rc::new(Namespace {
+            object: None,
             members: class
                 .fields
                 .iter()
@@ -252,6 +285,7 @@ fn with_namespace(symbol: &Symbol, name: &str, namespace: &Rc<Namespace>) -> Sym
         symbol.namespace = Some(namespace.clone());
     } else if let Some(inner) = &symbol.namespace {
         symbol.namespace = Some(Rc::new(Namespace {
+            object: inner.object.clone(),
             members: inner
                 .members
                 .iter()
@@ -399,7 +433,18 @@ fn evaluate(
             .get(other)
             .map(|e| enum_symbol(other.to_owned(), e.clone()))
     };
-    enums::evaluate(decl, name, generated(&segments), source, &lookup).map(Rc::new)
+    let mut object = segments.clone();
+    if let Some(last) = object.last_mut() {
+        *last = "object";
+    }
+    enums::evaluate(
+        decl,
+        name,
+        (generated(&segments), generated(&object)),
+        source,
+        &lookup,
+    )
+    .map(Rc::new)
 }
 
 fn enum_symbol(name: String, enumeration: Rc<Enum>) -> Symbol {
@@ -479,7 +524,11 @@ fn collect_namespace(
         }
         if exported {
             let entry = entry(&path, &name, structure);
-            entry.value |= matches!(kind, Kind::Function | Kind::Class | Kind::Variable);
+            entry.value |= matches!(
+                kind,
+                Kind::Function | Kind::Class | Kind::Variable | Kind::Mutable
+            );
+            entry.annotation = variable_type(decl);
             check_kind(entry, kind, &name, source, decl.span())?;
         }
     }
@@ -511,7 +560,11 @@ fn remove(path: &[String], inner: &[String], structure: &mut Structure) {
 
 fn entry<'s>(path: &[String], name: &str, structure: &'s mut Structure) -> &'s mut Entry {
     let members = structure.namespaces.entry(path.to_vec()).or_default();
-    let entry = members.entry(name.to_owned()).or_default();
+    let position = members.len();
+    let entry = members.entry(name.to_owned()).or_insert_with(|| Entry {
+        position,
+        ..Entry::default()
+    });
     if entry.name.is_empty() {
         let segments: Vec<&str> = path.iter().map(String::as_str).chain([name]).collect();
         entry.name = generated(&segments);
@@ -534,7 +587,11 @@ fn add(
     if parent.is_empty() {
         // A module-level namespace keeps its own name.
         let members = structure.namespaces.entry(Vec::new()).or_default();
-        let entry = members.entry(name.clone()).or_default();
+        let position = members.len();
+        let entry = members.entry(name.clone()).or_insert_with(|| Entry {
+            position,
+            ..Entry::default()
+        });
         entry.name = name.clone();
         entry.namespace = true;
         if !entry.kinds.contains(&kind) {
@@ -602,7 +659,12 @@ fn member(decl: &ast::Decl, source: &Source) -> Result<Option<(String, Kind)>, C
                     declarator.span,
                 ));
             };
-            (binding.id.sym.to_string(), Kind::Variable)
+            let kind = if var.kind == ast::VarDeclKind::Const {
+                Kind::Variable
+            } else {
+                Kind::Mutable
+            };
+            (binding.id.sym.to_string(), kind)
         }
         ast::Decl::TsModule(_) => return Ok(None),
         other => {
@@ -626,8 +688,173 @@ fn hidden(path: &[String], name: &str) -> String {
 }
 
 /// The symbol of the namespace at `path`, with its exported members.
+/// How the type of a constant declaration is named (see `Entry::annotation`).
+fn variable_type(decl: &ast::Decl) -> Option<Option<Box<ast::TsType>>> {
+    let ast::Decl::Var(var) = decl else {
+        return None;
+    };
+    let declarator = var.decls.first()?;
+    if let ast::Pat::Ident(binding) = &declarator.name
+        && binding.type_ann.is_some()
+    {
+        return Some(None);
+    }
+    let kind = match declarator.init.as_deref()? {
+        ast::Expr::Lit(ast::Lit::Num(_)) => ast::TsKeywordTypeKind::TsNumberKeyword,
+        ast::Expr::Lit(ast::Lit::Str(_)) | ast::Expr::Tpl(_) => {
+            ast::TsKeywordTypeKind::TsStringKeyword
+        }
+        ast::Expr::Lit(ast::Lit::Bool(_)) => ast::TsKeywordTypeKind::TsBooleanKeyword,
+        _ => return None,
+    };
+    Some(Some(Box::new(ast::TsType::TsKeywordType(
+        ast::TsKeywordType {
+            span: var.span,
+            kind,
+        },
+    ))))
+}
+
+/// The generated name of the object of the namespace at `path`.
+fn object_name(path: &[String]) -> String {
+    let segments: Vec<&str> = path
+        .iter()
+        .map(String::as_str)
+        .chain(["", "object"])
+        .collect();
+    generated(&segments)
+}
+
+/// A namespace object property: its key, the identifier of its value and
+/// the type that names it (`typeof` of the identifier when absent).
+type Property = (String, String, Option<Box<ast::TsType>>);
+
+/// The properties of the namespace object at `path` (key and the value's
+/// identifier), if every exported value member has a value of its own.
+fn object_members(path: &[String], structure: &Structure) -> Option<Vec<Property>> {
+    let members = structure.namespaces.get(path)?;
+    let mut properties = Vec::new();
+    // Declaration order, as the namespace's properties are assigned.
+    let mut ordered: Vec<(&String, &Entry)> = members.iter().collect();
+    ordered.sort_by_key(|(_, entry)| entry.position);
+    for (name, entry) in ordered {
+        let value_kinds = entry
+            .kinds
+            .iter()
+            .filter(|k| !matches!(k, Kind::Interface | Kind::Alias))
+            .count();
+        if value_kinds == 0 {
+            continue;
+        }
+        let value = match entry.kinds.as_slice() {
+            [Kind::Function, ..] if entry.kinds.iter().all(|k| *k == Kind::Function) => {
+                entry.name.clone()
+            }
+            [Kind::Variable] => entry.name.clone(),
+            [Kind::Enum] => entry.enumeration.as_ref()?.object.clone()?,
+            [Kind::Namespace] => {
+                let mut inner = path.to_vec();
+                inner.push(name.clone());
+                object_members(&inner, structure)?;
+                object_name(&inner)
+            }
+            _ => return None,
+        };
+        let ty = if entry.kinds == [Kind::Variable] {
+            entry.annotation.clone()?
+        } else {
+            None
+        };
+        properties.push((name.clone(), value, ty));
+    }
+    Some(properties)
+}
+
+/// `const NS$object = { a: NS$a, f: NS$f, Inner: NS$Inner$object }` for the
+/// namespace at `path` and its nested namespaces, innermost first.
+fn object_declarations(path: &[String], structure: &Structure, span: Span) -> Vec<ast::Decl> {
+    let Some(properties) = object_members(path, structure) else {
+        return Vec::new();
+    };
+    let mut declarations = Vec::new();
+    if let Some(members) = structure.namespaces.get(path) {
+        for (name, entry) in members {
+            if entry.kinds == [Kind::Namespace] {
+                let mut inner = path.to_vec();
+                inner.push(name.clone());
+                declarations.extend(object_declarations(&inner, structure, span));
+            }
+        }
+    }
+    // `typeof NS` names the object's type member by member.
+    let annotation = ast::TsType::TsTypeLit(ast::TsTypeLit {
+        span,
+        members: properties
+            .iter()
+            .map(|(key, value, ty)| {
+                ast::TsTypeElement::TsPropertySignature(ast::TsPropertySignature {
+                    span,
+                    readonly: true,
+                    key: Box::new(ast::Expr::Lit(ast::Lit::Str(enums::string(key, span)))),
+                    computed: false,
+                    optional: false,
+                    type_ann: Some(Box::new(ast::TsTypeAnn {
+                        span,
+                        type_ann: ty.clone().unwrap_or_else(|| {
+                            Box::new(ast::TsType::TsTypeQuery(ast::TsTypeQuery {
+                                span,
+                                expr_name: ast::TsTypeQueryExpr::TsEntityName(
+                                    ast::TsEntityName::Ident(ast::Ident::new_no_ctxt(
+                                        value.as_str().into(),
+                                        span,
+                                    )),
+                                ),
+                                type_args: None,
+                            }))
+                        }),
+                    })),
+                })
+            })
+            .collect(),
+    });
+    let props = properties
+        .into_iter()
+        .map(|(key, value, _)| {
+            ast::PropOrSpread::Prop(Box::new(ast::Prop::KeyValue(ast::KeyValueProp {
+                key: ast::PropName::Str(enums::string(&key, span)),
+                value: Box::new(ast::Expr::Ident(ast::Ident::new_no_ctxt(
+                    value.into(),
+                    span,
+                ))),
+            })))
+        })
+        .collect();
+    declarations.push(ast::Decl::Var(Box::new(ast::VarDecl {
+        span,
+        ctxt: Default::default(),
+        kind: ast::VarDeclKind::Const,
+        declare: false,
+        decls: vec![ast::VarDeclarator {
+            span,
+            name: ast::Pat::Ident(ast::BindingIdent {
+                id: ast::Ident::new_no_ctxt(object_name(path).into(), span),
+                type_ann: Some(Box::new(ast::TsTypeAnn {
+                    span,
+                    type_ann: Box::new(annotation),
+                })),
+            }),
+            init: Some(Box::new(ast::Expr::Object(ast::ObjectLit { span, props }))),
+            definite: false,
+        }],
+    })));
+    declarations
+}
+
 fn namespace_symbol(path: &[String], structure: &Structure) -> Rc<Namespace> {
-    let mut namespace = Namespace::default();
+    let mut namespace = Namespace {
+        object: object_members(path, structure).map(|_| object_name(path)),
+        ..Namespace::default()
+    };
     if let Some(members) = structure.namespaces.get(path) {
         for (name, entry) in members {
             let mut inner = path.to_vec();
@@ -801,8 +1028,10 @@ impl Emitter<'_> {
                         let symbol = frame
                             .entry(name.clone())
                             .or_insert_with(|| Symbol::plain(hidden(path, &name)));
-                        symbol.value |=
-                            matches!(kind, Kind::Function | Kind::Class | Kind::Variable);
+                        symbol.value |= matches!(
+                            kind,
+                            Kind::Function | Kind::Class | Kind::Variable | Kind::Mutable
+                        );
                     }
                 }
             }

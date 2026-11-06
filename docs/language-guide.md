@@ -5879,8 +5879,10 @@ function's locals).
 Modules evaluate as in JavaScript: initializers may call functions, and static
 fields and `static { … }` blocks run where their class is defined; reading a
 binding before its declaration, which JavaScript reports as a
-`ReferenceError`, is a compile error. Decorators and enum or namespace objects
-used as values are not supported yet.
+`ReferenceError`, is a compile error. Enums and namespaces are also objects:
+`Object.keys(Color)` lists `"0"`, `"1"`, …, then the member names, and a
+namespace passes as a value of type `typeof NS`. Decorators are not supported
+yet.
 
 #### Type-level TypeScript (opt-in v38)
 

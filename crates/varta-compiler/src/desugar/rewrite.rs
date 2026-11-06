@@ -326,10 +326,19 @@ impl<'a> Rewriter<'a> {
         let span = expr.span();
         self.check_field(symbol, false, span);
         if !symbol.value {
+            // A non-const enum used as a value is its enum object.
+            if let Some(object) = symbol.enumeration.as_ref().and_then(|e| e.object.clone()) {
+                *expr = ast::Expr::Ident(self.renamed(&Symbol::plain(object), span));
+                return;
+            }
+            if let Some(object) = symbol.namespace.as_ref().and_then(|n| n.object.clone()) {
+                *expr = ast::Expr::Ident(self.renamed(&Symbol::plain(object), span));
+                return;
+            }
             let kind = if symbol.enumeration.is_some() {
-                "enum object"
+                "const enum object (TS2475)"
             } else {
-                "namespace object"
+                "namespace object (a class or let member has no value in it)"
             };
             self.fail(
                 unsupported(&format!("{kind} {original} used as a value")),
@@ -406,6 +415,14 @@ impl<'a> Rewriter<'a> {
             return;
         };
         computed.expr.visit_mut_with(self);
+        // A string-valued enum's dynamic key reads its enum object
+        // (`E[k]` with `k: keyof typeof E`).
+        if enumeration.reverse.is_none()
+            && let Some(object) = enumeration.object.clone()
+        {
+            *member.obj = ast::Expr::Ident(self.renamed(&Symbol::plain(object), member.span));
+            return;
+        }
         let Some(reverse) = enumeration.reverse.clone() else {
             let message = if enumeration.is_const {
                 "a const enum member can only be accessed using a string literal (TS2476)"
@@ -721,9 +738,21 @@ impl VisitMut for Rewriter<'_> {
             && let ast::TsTypeQueryExpr::TsEntityName(name) = &query.expr_name
             && let Some(TypeResolved::Symbol(symbol, original)) = self.type_path(name)
         {
+            if let Some(object) = symbol
+                .enumeration
+                .as_ref()
+                .and_then(|e| e.object.clone())
+                .or_else(|| symbol.namespace.as_ref().and_then(|n| n.object.clone()))
+                && !symbol.value
+            {
+                // `typeof E`: the type of the enum object.
+                let id = self.renamed(&Symbol::plain(object), query.span);
+                query.expr_name = ast::TsTypeQueryExpr::TsEntityName(ast::TsEntityName::Ident(id));
+                return;
+            }
             if symbol.structured() {
                 self.fail(
-                    unsupported("typeof of an enum or namespace object"),
+                    unsupported("typeof of a const enum or namespace object"),
                     query.span,
                 );
                 return;

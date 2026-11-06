@@ -14,7 +14,7 @@ use swc_ecma_visit::{VisitMut, VisitMutWith};
 pub(super) fn evaluate(
     decl: &ast::TsEnumDecl,
     name: &str,
-    reverse: String,
+    (reverse, object): (String, String),
     source: &Source,
     lookup: &dyn Fn(&str) -> Option<Symbol>,
 ) -> Result<Enum, CompilerError> {
@@ -94,10 +94,80 @@ pub(super) fn evaluate(
     let numeric = members.iter().any(|(_, v)| matches!(v, Value::Number(_)));
     Ok(Enum {
         name: name.to_owned(),
-        members,
         is_const: decl.is_const,
+        object: (!decl.is_const && members.iter().all(|(_, v)| object_key(v).is_some()))
+            .then_some(object),
         reverse: (numeric && !decl.is_const).then_some(reverse),
+        members,
     })
+}
+
+/// The property key a member value has in the enum object's reverse
+/// mapping (`E[E.A = 0] = "A"` stores under `ToString(0)`): exact for
+/// integers within ±2^53; other numbers have no object here.
+fn object_key(value: &Value) -> Option<String> {
+    match value {
+        Value::String(_) => Some(String::new()),
+        Value::Number(n) if n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_992.0 => {
+            Some(format!("{}", *n as i64))
+        }
+        Value::Number(_) => None,
+    }
+}
+
+/// Whether a property key is an array index, which JavaScript enumerates
+/// first, in ascending order.
+fn array_index(key: &str) -> Option<u32> {
+    let index: u32 = key.parse().ok()?;
+    (index != u32::MAX && index.to_string() == key).then_some(index)
+}
+
+/// `const E$object = { … }`: the enum object, with JavaScript's own-key
+/// order (array-index keys ascending, then the others in creation order:
+/// each member's name, then its reverse-mapping key).
+fn object(enumeration: &Enum, name: &str, span: Span) -> ast::Decl {
+    let mut entries: Vec<(String, Value)> = Vec::new();
+    let mut put = |key: String, value: Value| match entries.iter_mut().find(|(k, _)| *k == key) {
+        Some(entry) => entry.1 = value,
+        None => entries.push((key, value)),
+    };
+    for (member, value) in &enumeration.members {
+        put(member.clone(), value.clone());
+        if let Value::Number(_) = value
+            && let Some(key) = object_key(value)
+        {
+            put(key, Value::String(member.clone()));
+        }
+    }
+    let (mut indices, others): (Vec<_>, Vec<_>) = entries
+        .into_iter()
+        .partition(|(k, _)| array_index(k).is_some());
+    indices.sort_by_key(|(k, _)| array_index(k));
+    let props = indices
+        .into_iter()
+        .chain(others)
+        .map(|(key, value)| {
+            ast::PropOrSpread::Prop(Box::new(ast::Prop::KeyValue(ast::KeyValueProp {
+                key: ast::PropName::Str(string(&key, span)),
+                value: Box::new(literal(&value, span)),
+            })))
+        })
+        .collect();
+    ast::Decl::Var(Box::new(ast::VarDecl {
+        span,
+        ctxt: Default::default(),
+        kind: ast::VarDeclKind::Const,
+        declare: false,
+        decls: vec![ast::VarDeclarator {
+            span,
+            name: ast::Pat::Ident(ast::BindingIdent {
+                id: ast::Ident::new_no_ctxt(name.into(), span),
+                type_ann: None,
+            }),
+            init: Some(Box::new(ast::Expr::Object(ast::ObjectLit { span, props }))),
+            definite: false,
+        }],
+    }))
 }
 
 /// The literal expression of a member value.
@@ -175,6 +245,13 @@ pub(super) fn items(
         type_ann: Box::new(union(enumeration, span)),
     }));
     let mut items = vec![super::namespaces::item(alias, exported, span)];
+    if let Some(name) = &enumeration.object {
+        items.push(super::namespaces::item(
+            object(enumeration, name, span),
+            exported,
+            span,
+        ));
+    }
     if let Some(reverse) = &enumeration.reverse {
         items.push(super::namespaces::item(
             reverse_function(enumeration, reverse, span, source)?,

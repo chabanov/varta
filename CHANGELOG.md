@@ -90,6 +90,10 @@
   in static methods, re-exports of enums, namespaces and classes with static
   fields, static fields of classes in namespaces and writes of imported
   static fields. Conformance: `static-block` passes.
+- V38 enum and namespace objects (K9 B): a non-const enum or a namespace used
+  as a value is a generated object with JavaScript's keys and order
+  (`Object.keys(E)`, `f(NS)`, `typeof E`, `keyof typeof E`). Conformance: two
+  new cases.
 - V38 declarations and classes (K9 B, `declaration_forms`): numeric,
   string, heterogeneous and `const` enums with constant member expressions,
   enum types as literal unions and the reverse mapping `E[n]`; namespaces

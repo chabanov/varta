@@ -11901,8 +11901,13 @@ time (`new.target.name`, an Error subclass's `name`).
   computed member whose initializer is not a constant expression, a
   non-finite member value, merged enum declarations, a string member
   followed by an uninitialized one (TS1061), a dynamic key of a const enum
-  (TS2476) or of a string enum, `declare enum`, and the enum object as a
-  value (`enum object E used as a value`) or in `typeof`.
+  (TS2476), `declare enum`, and a const enum used as a value (TS2475).
+  A non-const enum used as a value (`Object.keys(E)`, `f(E)`, `typeof E`,
+  `keyof typeof E`) is its enum object: a generated module constant with
+  JavaScript's own keys and order (array-index reverse keys ascending, then
+  member names and other reverse keys in creation order), unread ones
+  pruned; a string-keyed `E[k]` reads it. An enum with a non-integer member
+  value has no object.
 - **Namespaces.** `namespace N { … }`, nested and dotted (`namespace
   A.B.C`), exported or not. Every member is hoisted to a module declaration
   under a generated name and every reference to it, unqualified inside the
@@ -11920,8 +11925,14 @@ time (`new.target.name`, an Error subclass's `name`).
   import alias and through re-exports (`export { E } from`, `export *`,
   `export { E }` of an import); generated names carry a hash of their
   module path (`__vartaDecl$m<hash>$…`), so two modules' declarations never
-  collide. Refused by name: statements in a namespace body, ambient
-  namespaces and modules, the namespace object as a value or a type, an
+  collide. A namespace without a value of its own used as a value (or in
+  `typeof`) is its namespace object, a generated module constant after its
+  last declaration whose properties are its exported functions, constants,
+  enum objects and nested namespace objects in declaration order, typed
+  member by member; a namespace with a class or `let` member, or a constant
+  without an annotation or literal initializer, has none (`namespace object
+  … used as a value`). Refused by name: statements in a namespace body, ambient
+  namespaces and modules, an
   unexported member reached qualified (`namespace N has no exported member
   …`), a type-only import of a namespace, and import aliases
   (`import x = N.y`).
@@ -11993,12 +12004,12 @@ time (`new.target.name`, an Error subclass's `name`).
   constructor parameter properties with default values (a non-literal
   default needs a type annotation).
 - **Not admitted yet.** Standard decorators (they need classes as values
-  and the decorator context objects), enum and namespace objects as values,
-  class index signatures, generic overload signatures and the tsc
-  assignability of `number` to numeric enums and nominal string enums are
-  refused by name (`decorator`, `enum object E used as a value`, `class
-  index signature`, `generic overload signature`). Legacy
-  `experimentalDecorators` are not planned.
+  and the decorator context objects), class index signatures and generic
+  overload signatures are refused by name (`decorator`, `class index
+  signature`, `generic overload signature`); a `number` is not assignable
+  to a numeric enum type and a string enum type accepts its member
+  literals (tsc decides both the other way). Legacy `experimentalDecorators`
+  are not planned.
 
 #### Module evaluation (`module_evaluation`)
 
