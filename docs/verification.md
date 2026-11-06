@@ -761,14 +761,19 @@ for scale in 1 1.25 2; do
 done
 ```
 
-Platform fallback faces with `--system-fonts` (macOS) are compared with
-Chrome on the same machine; the oracle carries no font bytes, so Chrome
-resolves the generic families and fallback faces itself:
+Platform fallback faces with `--system-fonts` (macOS), colour emoji
+included, are compared with Chrome on the same machine; the oracle carries no
+font bytes, so Chrome resolves the generic families and fallback faces itself.
+Emoji placement and CoreText's size-dependent emoji scaling differ per device
+scale, so all four scales run:
 
 ```sh
 cargo test -p varta-view --test integration --locked fallback
+cargo test -p varta-view --test integration --locked glyph_raster
 cargo test -p varta-desktop --lib --locked shell::
-for scale in 1 2; do
+cargo test -p varta-desktop --lib --locked text_raster
+cargo clippy -p varta-desktop --features fontconfig --all-targets --locked -- -D warnings
+for scale in 1 1.5 2 3; do
   cargo run -p varta-desktop --example native_fallback_probe --locked -- "$scale" > "target/native-fallback-$scale.json"
   node scripts/test-native-inline.mjs "target/native-fallback-$scale.json"
 done

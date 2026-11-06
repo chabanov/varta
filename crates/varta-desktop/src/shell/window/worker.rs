@@ -88,7 +88,10 @@ pub(super) fn worker(
             varta_view::Renderer::new(render_font, ROOT_FONT_SIZE).map_err(|e| e.to_string())?;
         #[cfg(target_os = "macos")]
         renderer.set_glyph_rasterizer(Some(Box::new(
-            crate::text_raster::CoreTextRasterizer::default(),
+            launch
+                .fonts()
+                .map(super::super::FontSet::glyph_rasterizer)
+                .unwrap_or_default(),
         )));
         let mut rgb = Vec::new();
         let initial_dark = dark.load(Ordering::Acquire);

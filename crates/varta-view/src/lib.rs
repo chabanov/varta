@@ -77,7 +77,7 @@ pub use snapshot_json::{SnapshotError, SnapshotFormat, encode_snapshot};
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment, NATIVE_UA_VERSION, Scrollbars};
 pub use text::fallback::{
     FallbackFace, FallbackRefusal, FallbackRequest, FontFallback, MAX_FALLBACK_BYTES,
-    MAX_FALLBACK_FACE_BYTES, MAX_FALLBACK_FACES, MAX_FALLBACK_PASSES,
+    MAX_FALLBACK_FACE_BYTES, MAX_FALLBACK_FACES, MAX_FALLBACK_PASSES, PlatformMetrics,
 };
 pub use text::{ENLARGED_ASCENT_FRACTION, TextFont, TextMeasureError, TextMeasurer, TextMetrics};
 pub use transform::{Affine, MAX_FUNCTIONS as MAX_TRANSFORM_FUNCTIONS};

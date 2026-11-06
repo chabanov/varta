@@ -42,7 +42,16 @@ mod probe {
     /// UI line without a fallback. The UI font has an `opsz` axis, which the
     /// CoreText rasterizer declines (its glyphs take the portable outline
     /// path), so the UI lines compare geometry only.
-    const CASES: [Case; 7] = [
+    ///
+    /// The emoji lines draw with Apple Color Emoji, whose `sbix` glyphs the
+    /// platform face draws in their own colours: single emoji, a skin-tone
+    /// modifier, a ZWJ family sequence and a regional-indicator flag (the
+    /// face's `morx` ligatures), emoji presentation selectors (with one the
+    /// emoji face draws even a character the CSS font has, without one the
+    /// heart takes a text face), a keycap, and semi-transparent text, whose
+    /// alpha applies to colour glyphs too, with bold emoji (Chrome draws
+    /// colour glyph images unemboldened).
+    const CASES: [Case; 12] = [
         (
             "ui-plain",
             "system-ui, sans-serif",
@@ -88,6 +97,39 @@ mod probe {
             &[("cfg \u{2699} \u{2192}", None)],
             true,
         ),
+        (
+            "sans-emoji",
+            "sans-serif",
+            &[("a \u{1F600} b \u{1F389}\u{1F44D}", None)],
+            true,
+        ),
+        (
+            "sans-emoji-sequences",
+            "sans-serif",
+            &[(
+                "\u{1F44D}\u{1F3FD} \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} \u{1F1FA}\u{1F1E6}",
+                None,
+            )],
+            true,
+        ),
+        (
+            "serif-presentation",
+            "serif",
+            &[("x \u{2764}\u{FE0F} \u{2764} y", None)],
+            true,
+        ),
+        (
+            "sans-presentation",
+            "sans-serif",
+            &[("\u{A9} \u{A9}\u{FE0F} 1\u{FE0F}\u{20E3} \u{2B50}", None)],
+            true,
+        ),
+        (
+            "sans-emoji-alpha",
+            "sans-serif",
+            &[("\u{1F600} z ", None), ("\u{1F680} \u{1F44D}", Some("700"))],
+            true,
+        ),
     ];
 
     struct Denied;
@@ -103,8 +145,18 @@ mod probe {
         }
     }
 
+    /// The text colour: opaque black, or half-transparent for `-alpha` cases.
+    fn line_color(name: &str) -> &'static str {
+        if name.ends_with("-alpha") {
+            "rgba(0, 0, 0, 0.5)"
+        } else {
+            "#000"
+        }
+    }
+
     fn case_view(
         family: &str,
+        color: &str,
         runs: &[(&str, Option<&str>)],
     ) -> Result<View, Box<dyn std::error::Error>> {
         let mut batch = BatchWriter::new();
@@ -113,7 +165,7 @@ mod probe {
             .insert(1, LINE, 0)
             .set_style(LINE, P::FontFamily, family)
             .set_style(LINE, P::LineHeight, "24px")
-            .set_style(LINE, P::Color, "#000");
+            .set_style(LINE, P::Color, color);
         for (index, (text, weight)) in (0u32..).zip(runs) {
             let (span, node) = (FIRST_SPAN + index, FIRST_TEXT + index);
             batch.create_element(span, Tag::Span).insert(LINE, span, 0);
@@ -133,9 +185,7 @@ mod probe {
         scale: f32,
     ) -> Result<RasterImage, Box<dyn std::error::Error>> {
         let mut renderer = Renderer::new(Some(fonts.measurer()?), MEDIUM_SIZE)?;
-        renderer.set_glyph_rasterizer(Some(Box::new(
-            varta_desktop::text_raster::CoreTextRasterizer::default(),
-        )));
+        renderer.set_glyph_rasterizer(Some(Box::new(fonts.glyph_rasterizer())));
         Ok(renderer.render(
             view,
             (VIEWPORT_WIDTH * scale).round() as u32,
@@ -161,14 +211,14 @@ mod probe {
         let mut measurer = fonts.measurer()?;
         let mut cases = Vec::new();
         for (name, family, runs, pixels) in CASES {
-            let view = case_view(family, runs)?;
+            let view = case_view(family, line_color(name), runs)?;
             let geometry = view.layout_boxes_with_text(
                 VIEWPORT_WIDTH,
                 VIEWPORT_HEIGHT,
                 &mut measurer,
                 MEDIUM_SIZE,
             )?;
-            let image = render(&view, &fonts, scale)?;
+            let image = render(&view, &fonts, scale).map_err(|error| format!("{name}: {error}"))?;
             let boxes = geometry
                 .iter()
                 .filter(|(id, _)| **id != 1)

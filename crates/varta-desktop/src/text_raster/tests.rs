@@ -48,7 +48,13 @@ fn ink(drawn: &Drawn) -> (u32, u32) {
 }
 fn draw(raster: &mut CoreTextRasterizer, r: &GlyphRasterRequest<'_>) -> Drawn {
     let bounds = raster.bounds(r).expect("native bounds");
-    let coverage = raster.coverage(r, bounds).expect("native coverage");
+    let (font, color) = raster.font(r).expect("native face");
+    assert!(!color);
+    let coverage = coverage(
+        &raster
+            .draw(&font, color, r, bounds)
+            .expect("native coverage"),
+    );
     assert!(raster.rasterize(r, bounds).is_some());
     Drawn { bounds, coverage }
 }

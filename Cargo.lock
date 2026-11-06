@@ -5238,6 +5238,7 @@ dependencies = [
 name = "varta-view"
 version = "0.1.0"
 dependencies = [
+ "icu_properties",
  "parley",
  "serde",
  "serde_json",

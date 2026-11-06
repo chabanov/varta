@@ -49,7 +49,16 @@ Original crates.io package SHA-256 (from the preceding lockfile):
   for Chrome's line metrics: a platform fallback face's run under a fixed
   line height takes its element's primary font metrics, and Chrome on macOS
   enlarges the ascent of Times, Helvetica and Courier by 15% of their height.
-  It changes no shaping, glyph or advance.
+  It changes no shaping, glyph or advance. Its callback also receives the
+  run's font size, for metrics that depend on it.
+- `src/layout/layout.rs` adds `Layout::adjust_glyph_advances`: before line
+  breaking, the caller may replace the advance of glyphs of chosen fonts at
+  their run's size. Cluster and run advances follow (a ligature's components
+  share the change) and letter/word spacing already added by
+  `LayoutData::finish` stays. Varta uses it for a platform fallback face the
+  platform lays out at its own size-dependent advances (Apple Color Emoji,
+  which CoreText and Chrome enlarge at small sizes). It changes no shaping,
+  glyph identity or offset.
 
 The original offset failure caused invalid UTF-8 slice panics. Large combining
 clusters also lost glyphs at the old inline sentinel, overflowed a character

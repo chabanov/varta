@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use varta_common::view::{CssProperty, Tag};
 use varta_view::{
     Access, BatchWriter, Broker, FallbackFace, FallbackRefusal, FallbackRequest, FontFallback,
-    MAX_FALLBACK_FACES, TextFont, TextMeasureError, TextMeasurer, View,
+    MAX_FALLBACK_FACES, PlatformMetrics, TextFont, TextMeasureError, TextMeasurer, View,
 };
 
 const WIDE: &[u8] = include_bytes!("fixtures/advance-900.ttf");
@@ -20,6 +20,8 @@ const WIDE_ADVANCE: f32 = 18.0;
 #[derive(Default)]
 struct Log {
     requests: Vec<(String, String, f32, bool)>,
+    /// Each request's emoji presentation.
+    emoji: Vec<bool>,
 }
 
 /// Answers every request with one face (or a refusal) and logs it.
@@ -38,6 +40,7 @@ impl FontFallback for Fixed {
             request.weight,
             request.italic,
         ));
+        self.log.lock().unwrap().emoji.push(request.emoji);
         self.answer.clone()
     }
 }
@@ -50,6 +53,7 @@ fn cyrillic(key: &str) -> FallbackFace {
     FallbackFace {
         key: key.into(),
         data: CYRILLIC.into(),
+        metrics: None,
     }
 }
 
@@ -142,6 +146,7 @@ fn a_refused_platform_face_refuses_the_text() {
         Ok(Some(FallbackFace {
             key: "garbage".into(),
             data: vec![0u8; 64].into(),
+            metrics: None,
         })),
     );
     assert!(matches!(
@@ -251,6 +256,7 @@ fn fallback_line_height(line_height: &str, span: bool) -> f32 {
         Ok(Some(FallbackFace {
             key: "tall".into(),
             data: TALL.into(),
+            metrics: None,
         })),
     );
     view.layout_boxes_with_text(200.0, 100.0, &mut measurer, 16.0)
@@ -280,4 +286,84 @@ fn an_enlarged_ascent_family_grows_by_fifteen_percent_of_its_height() {
     measurer.set_enlarged_ascent_families(&[WIDE_FAMILY]);
     // The ascent gains round(20 * 0.15) = 3.
     assert_eq!(measurer.measure("A", 20.0, None).unwrap().height, 23.0);
+}
+
+/// Doubles every advance and lays lines out 16 above and 14 below the
+/// baseline (13.6, rounded as Chrome rounds font metrics), whatever the size.
+#[derive(Debug)]
+struct Enlarged;
+impl PlatformMetrics for Enlarged {
+    fn advance(&self, _: u32, size: f32) -> Option<f32> {
+        Some(2.0 * NARROW_ADVANCE * size / SIZE)
+    }
+    fn vertical(&self, _: f32) -> Option<(f32, f32)> {
+        Some((16.0, 13.6))
+    }
+}
+
+#[test]
+fn platform_metrics_replace_a_fallback_faces_advances_and_line_metrics() {
+    let mut measurer = wide();
+    let plain = measurer.measure("A", SIZE, None).unwrap();
+    with(
+        &mut measurer,
+        Ok(Some(FallbackFace {
+            metrics: Some(Arc::new(Enlarged)),
+            ..cyrillic("enlarged")
+        })),
+    );
+    let text = measurer.measure("\u{410}\u{430}A", SIZE, None).unwrap();
+    // Both Cyrillic clusters take the platform advance; A keeps its own.
+    assert_eq!(text.width, 4.0 * NARROW_ADVANCE + WIDE_ADVANCE);
+    // Under `line-height: normal` the fallback run's platform ascent and
+    // descent extend the line when they exceed the primary font's.
+    assert_eq!(text.height, plain.height.max(30.0));
+    assert!(text.height > plain.height);
+}
+
+#[test]
+fn emoji_presentation_asks_for_the_emoji_face() {
+    for (text, emoji) in [
+        // Emoji_Presentation, VS16, keycap, flag and modifier sequences.
+        ("\u{2B50}", true),
+        ("\u{2764}\u{FE0F}", true),
+        ("#\u{FE0F}\u{20E3}", true),
+        ("\u{1F1FA}\u{1F1E6}", true),
+        ("\u{1F44D}\u{1F3FD}", true),
+        ("\u{1F441}\u{200D}\u{1F5E8}", true),
+        // Text presentation: a default-text emoji alone or with VS15, and
+        // an emoji-presentation character with VS15.
+        ("\u{2764}", false),
+        ("\u{2764}\u{FE0E}", false),
+        ("\u{1F600}\u{FE0E}", false),
+        ("\u{410}", false),
+    ] {
+        let mut measurer = wide();
+        let log = with(&mut measurer, Ok(Some(cyrillic("cyrillic"))));
+        measurer.measure(text, SIZE, None).unwrap();
+        let log = log.lock().unwrap();
+        assert_eq!(log.emoji.first(), Some(&emoji), "{text:?}: {:?}", log.emoji);
+    }
+}
+
+#[test]
+fn emoji_and_text_ranges_of_one_style_ask_separately() {
+    let mut measurer = wide();
+    let log = with(&mut measurer, Ok(Some(cyrillic("cyrillic"))));
+    measurer
+        .measure("\u{410}\u{2B50}\u{430}", SIZE, None)
+        .unwrap();
+    let log = log.lock().unwrap();
+    let asked: Vec<(String, bool)> = log
+        .requests
+        .iter()
+        .map(|request| request.0.clone())
+        .zip(log.emoji.iter().copied())
+        .collect();
+    // The text ranges around the star ask once for their first character,
+    // and the star, a range of its own, for the emoji face.
+    assert_eq!(
+        asked[..2],
+        [("\u{410}".to_owned(), false), ("\u{2B50}".to_owned(), true)]
+    );
 }

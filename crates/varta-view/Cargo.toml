@@ -18,6 +18,7 @@ serde_json.workspace = true
 tiny-skia.workspace = true
 skrifa.workspace = true
 unicode-segmentation.workspace = true
+icu_properties.workspace = true
 # CSS box layout shared by headless and future native rendering; MIT licensed.
 taffy = { version = "=0.15.1", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "grid", "parse", "content_size"] }
 # Explicit-font text shaping for the future shared native layout; Apache-2.0 OR MIT.

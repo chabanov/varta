@@ -395,6 +395,36 @@ impl FrameMetadata {
 // Existing native preparation allowance, shared by every text paint in a frame.
 pub(crate) const MAX_TEXT_PAINT_WORK: usize = 1_000_000;
 
+/// Tables of glyph images in their own colors: bitmaps (`sbix`, `CBDT`) and
+/// SVG documents. A platform rasterizer may draw them; the portable outline
+/// path does not.
+const COLOR_IMAGE_TABLES: [skrifa::Tag; 3] = [
+    skrifa::Tag::new(b"sbix"),
+    skrifa::Tag::new(b"CBDT"),
+    skrifa::Tag::new(b"SVG "),
+];
+
+/// Which glyphs of one face draw in their own colors: every glyph of a face
+/// with color images, otherwise the glyphs its `COLR` table paints.
+struct ColorGlyphs<'a> {
+    images: bool,
+    layers: skrifa::color::ColorGlyphCollection<'a>,
+}
+impl<'a> ColorGlyphs<'a> {
+    fn new(data: &'a [u8], index: u32) -> Option<Self> {
+        let font = FontRef::from_index(data, index).ok()?;
+        Some(Self {
+            images: COLOR_IMAGE_TABLES
+                .iter()
+                .any(|tag| font.table_data(*tag).is_some()),
+            layers: font.color_glyphs(),
+        })
+    }
+    fn has(&self, glyph: u32) -> bool {
+        self.images || self.layers.get(GlyphId::new(glyph)).is_some()
+    }
+}
+
 /// Painting rejects effects and content it cannot reproduce.
 #[derive(Debug, thiserror::Error)]
 pub enum PaintError {
@@ -1507,11 +1537,17 @@ fn paint_shaped_with(
             let base_color = color(glyph_run.style().brush)?;
             paint.set_color(base_color);
             let run = glyph_run.run();
-            if synthetic_bold(run) || run.synthesis().skew().is_some() {
+            let font_data = run.font();
+            // Chrome draws color glyph images unemboldened; it slants them.
+            if (synthetic_bold(run)
+                && !ColorGlyphs::new(font_data.data.data(), font_data.index)
+                    .is_some_and(|colors| colors.images))
+                || run.synthesis().skew().is_some()
+            {
                 return Err(PaintError::Unsupported(id));
             }
-            let font_data = run.font();
             let mut outlines: Option<skrifa::outline::OutlineGlyphCollection<'_>> = None;
+            let mut color_glyphs: Option<ColorGlyphs<'_>> = None;
             let coords: Vec<_> = run
                 .normalized_coords()
                 .iter()
@@ -1568,20 +1604,28 @@ fn paint_shaped_with(
                     .filter(|cache| flat && cache.has_provider())
                 {
                     const PHASES: f32 = 4.0;
-                    let quarter = (x * pixmap.scale * PHASES + 0.5).floor() / PHASES;
-                    let origin = (quarter.floor(), (y * pixmap.scale + 0.5).floor());
-                    let phase = ((quarter - origin.0) * PHASES) as u8;
-                    let request = crate::GlyphRasterRequest {
+                    let mut request = crate::GlyphRasterRequest {
                         font_id: font_data.data.id(),
                         font_data: font_data.data.data(),
                         font_index: font_data.index,
                         glyph: glyph.id,
                         size: run.font_size() * pixmap.scale,
                         normalized_coords: run.normalized_coords(),
-                        phase_x: phase,
+                        phase_x: 0,
                         max_pixels: MAX_TEXT_PAINT_WORK,
                         cache_bytes: glyphs::MAX_BYTES,
                     };
+                    let baseline = (y * pixmap.scale + 0.5).floor();
+                    let quarter = (x * pixmap.scale * PHASES + 0.5).floor() / PHASES;
+                    // A glyph without subpixel phases (a color image) takes
+                    // the whole pixel nearest its quarter-pixel position.
+                    let (origin, phase) = if cache.subpixel(&request) {
+                        let left = quarter.floor();
+                        ((left, baseline), ((quarter - left) * PHASES) as u8)
+                    } else {
+                        (((quarter + 0.5).floor(), baseline), 0)
+                    };
+                    request.phase_x = phase;
                     let key = glyphs::Key {
                         font: request.font_id,
                         index: request.font_index,
@@ -1611,12 +1655,19 @@ fn paint_shaped_with(
                                     span.height as f32,
                                 )
                                 .ok_or(PaintError::Unsupported(id))?;
+                                // A color glyph keeps its own colors; the
+                                // text color's alpha applies to both kinds.
+                                let unit = |value: u8| f32::from(value) / f32::from(u8::MAX);
+                                let [red, green, blue] = if coverage.colored {
+                                    span.color.map(unit)
+                                } else {
+                                    [glyph_color.red(), glyph_color.green(), glyph_color.blue()]
+                                };
                                 let color = Color::from_rgba(
-                                    glyph_color.red(),
-                                    glyph_color.green(),
-                                    glyph_color.blue(),
-                                    glyph_color.alpha() * f32::from(span.alpha)
-                                        / f32::from(u8::MAX),
+                                    red,
+                                    green,
+                                    blue,
+                                    glyph_color.alpha() * unit(span.alpha),
                                 )
                                 .ok_or(PaintError::Unsupported(id))?;
                                 paint.set_color(color);
@@ -1626,6 +1677,18 @@ fn paint_shaped_with(
                         }
                         glyphs::Outcome::Missing => {}
                     }
+                }
+                // The portable path paints outlines in the text color: a
+                // color glyph (emoji) there would lose its colors.
+                let colors = match &color_glyphs {
+                    Some(colors) => colors,
+                    None => color_glyphs.insert(
+                        ColorGlyphs::new(font_data.data.data(), font_data.index)
+                            .ok_or(PaintError::Unsupported(id))?,
+                    ),
+                };
+                if colors.has(glyph.id) {
+                    return Err(PaintError::Unsupported(id));
                 }
                 if let Some(cache) = pixmap.glyphs.as_mut() {
                     cache.outline_glyphs = cache.outline_glyphs.saturating_add(1);

@@ -151,4 +151,20 @@ impl FontSet {
         measurer.set_enlarged_ascent_families(self.enlarged_ascent);
         Ok(measurer)
     }
+
+    /// The CoreText glyph rasterizer for this set's text. A system set's
+    /// rasterizer also draws the fallback faces whose glyph images the
+    /// platform draws itself (Apple Color Emoji).
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn glyph_rasterizer(&self) -> crate::text_raster::CoreTextRasterizer {
+        self.fallback
+            .as_ref()
+            .map(|fallback| {
+                crate::text_raster::CoreTextRasterizer::with_platform_faces(
+                    fallback.platform_faces(),
+                )
+            })
+            .unwrap_or_default()
+    }
 }

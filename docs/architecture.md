@@ -13403,10 +13403,23 @@ CoreText's axis names follow the process's preferred languages and are never
 compared, so instances do not depend on the user's language. A mismatched tag,
 range or count, two axes with one name, or an instance whose read-back values
 differ from the requested ones are declined (`declined_variation`), never drawn
-at the default instance. Faces with bitmap or color glyph tables (`COLR`,
-`CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText would size it from the
-point size while the shaper keeps its default) or `avar` version 2 are
-declined, and their glyphs keep portable outlines. A face is charged its
+at the default instance. `sbix` faces draw in their own colours: the glyph is
+drawn into a premultiplied RGBA context, as Chrome's CoreText scaler draws
+colour glyphs, and the host returns it as a colour image
+(`GlyphRasterMask::color`, premultiplied RGBA validated against its alpha and
+kept unpremultiplied per pixel); the renderer keeps those colours, applies the
+text colour's alpha, and places the image at the whole pixel nearest the
+quarter-pixel position (`GlyphRasterizer::subpixel` is false), which Chrome
+does too (a position past three eighths of a pixel takes the next one). An
+`sbix` table without strikes is declined unless its exact bytes belong to a
+registered platform face ([native fallback faces](#native-fallback-faces)).
+Faces with other bitmap or color glyph tables (`COLR`, `CBDT`, `EBDT`,
+`SVG `), an `opsz` axis (CoreText would size it from the point size while the
+shaper keeps its default) or `avar` version 2 are declined, and their glyphs
+keep the portable path. That path paints outlines in the text colour, so it
+refuses a glyph a face draws in colour (every glyph of a face with `sbix`,
+`CBDT` or `SVG ` tables, and a glyph its `COLR` table paints) rather than draw
+it without its colours; it also takes over under a scaling transform. A face is charged its
 standalone bytes (a collection member's own tables, not the whole file), twice
 for a variable face whose copy CoreGraphics retains. At most 16 variation
 instances are kept per face; each is charged a fixed 32 KiB native estimate
@@ -14219,11 +14232,36 @@ charged to the view's shaping budget. A covered character never changes face.
 The measurer registers each face once (by its `FallbackFace::key`); a face of
 a family the set already loads adds nothing and that family's faces are used.
 At most `MAX_FALLBACK_FACES` faces of at most `MAX_FALLBACK_FACE_BYTES` each
-and `MAX_FALLBACK_BYTES` in all are registered per measurer. A face drawing
-colour glyphs (`COLR`, `CBDT`, `EBDT`, `sbix` or `SVG ` tables, for example
-Apple Color Emoji), a face past these limits, or one that cannot be read
-refuses the text (`TextMeasureError::Fallback { character, refusal }`, a
-layout or paint failure) rather than drawing another face. As in Blink, a
+and `MAX_FALLBACK_BYTES` in all are registered per measurer. A face past
+these limits, one that cannot be read, or one whose colour glyphs the host
+does not draw (every colour face on Linux; on macOS faces with `COLR`, `CBDT`,
+`EBDT` or `SVG ` tables) refuses the text (`TextMeasureError::Fallback {
+character, refusal }`, a layout or paint failure) rather than drawing another
+face.
+
+As Blink's emoji segmentation does, a grapheme with emoji presentation
+(Unicode TR51: an `Emoji_Presentation` character, an emoji followed by VS16, a
+keycap, regional-indicator pair, modifier or ZWJ sequence; VS15 asks for text)
+that a face without colour glyphs draws, covered or not, is a range of its
+own: it asks the host with `FallbackRequest::emoji` set, and the face comes
+before the element's families for it, so `©\u{FE0F}` draws with the emoji
+face even where the CSS font has `©`. On macOS the host answers with Apple
+Color Emoji (Chrome's `kColorEmojiFontMac`). That face's `sbix` strikes are
+about 183 MiB, so the measurer is given its own tables with an empty `sbix`
+(about 1 MiB) and the rasterizer of the same font set draws its glyphs with
+the platform face registered for exactly those bytes
+(`FontSet::glyph_rasterizer`). CoreText enlarges small emoji (by a quarter up
+to 16px, by nothing from 24px) and Chrome lays them out at that size: the
+face's `FallbackFace::metrics` (`PlatformMetrics`) give each glyph its `hmtx`
+advance scaled by CoreText's ascent over the face's own and rounded to whole
+pixels, and CoreText's ascent and descent, which the measurer rounds as
+Chrome rounds font metrics (a 16px emoji is 20px wide; a Helvetica line with
+one is 26px tall under `line-height: normal`). The advances replace the
+shaped ones before line breaking through a recorded Parley hook
+(`Layout::adjust_glyph_advances`, [patch
+record](../vendor/parley/VARTA-PATCH.md)). Chrome draws colour glyph images
+unemboldened, so synthetic bold on such a face paints them as they are;
+synthetic italic stays refused. As in Blink, a
 fallback face's run under a `line-height` other than `normal` takes its
 element's primary font ascent and descent, so it does not change the line box;
 under `normal` its own metrics take part (in an inline formatting context;
@@ -14249,7 +14287,10 @@ Chrome 156, `native_fallback_probe` with `scripts/test-native-inline.mjs`
 matches Chrome's boxes at 1x and 2x and its pixels within the 2/255 mean bound
 for lines whose primary font is Helvetica, Times or Menlo; lines in the UI
 font compare geometry only, because its `opsz` axis makes the CoreText
-rasterizer decline its glyphs (portable outlines, about 2.7/255 mean).
+rasterizer decline its glyphs (portable outlines, about 2.7/255 mean). Its
+emoji lines (single emoji, skin-tone, ZWJ family and flag sequences, emoji and
+text presentation selectors, a keycap, bold and half-transparent emoji) match
+Chrome's boxes and pixels at 1x, 1.5x, 2x and 3x (at most 0.13/255 mean).
 
 #### Native modal dialogs (top layer)
 

@@ -31,6 +31,8 @@ mod system_fonts;
 pub mod window;
 
 pub use effects::NativeEffects;
+#[cfg(target_os = "macos")]
+pub(crate) use fallback::PlatformFaces;
 pub use fonts::FontSet;
 pub use launch::{Launch, MAX_FONT_BYTES, Package, Started, read_font, read_module, revoke};
 pub use storage::{STORAGE_DIRECTORY_PREFIX, default_storage_base, storage_directory};

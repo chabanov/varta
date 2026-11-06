@@ -42,6 +42,9 @@ tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", 
 skrifa = "=0.44.0"
 # Unicode grapheme boundaries for safe native text editing.
 unicode-segmentation = "=1.13.3"
+# Unicode emoji properties (TR51) for emoji presentation; already compiled in
+# through Parley's shaping analysis.
+icu_properties = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
 # Native desktop window/input and CPU frame presentation.
 winit = "=0.30.12"
 # Safe CoreText/CoreGraphics wrappers for host-only native glyph coverage.

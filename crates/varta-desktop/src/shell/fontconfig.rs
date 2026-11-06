@@ -177,7 +177,7 @@ fn locale_of(values: impl IntoIterator<Item = Option<String>>) -> Option<CString
 
 /// The character fallback (Chrome's `gfx::GetFallbackFontForChar`).
 pub(crate) mod fallback {
-    use super::super::fallback::{COLOR_TABLES, Found, check_tables};
+    use super::super::fallback::{COLOR_TABLES, FaceData, Found, check_tables};
     use super::{CharSet, FC_LANG, MAX_CANDIDATES, Pattern, UnicodeCoverage, face, scalable};
     use skrifa::{FontRef, MetadataProvider};
     use std::ffi::CString;
@@ -239,7 +239,13 @@ pub(crate) mod fallback {
                 }
                 return Ok(Some(Found {
                     key: format!("{}\0{}", found.path.display(), found.index),
-                    data: Box::new(move || Ok(data)),
+                    data: Box::new(move || {
+                        Ok(FaceData {
+                            bytes: data,
+                            platform: None,
+                            metrics: None,
+                        })
+                    }),
                 }));
             }
             Ok(None)
@@ -301,6 +307,7 @@ mod tests {
             family: "sans-serif",
             weight: 400.0,
             italic: false,
+            emoji: false,
         }
     }
 
@@ -313,7 +320,7 @@ mod tests {
                 .face(&request(character), false, false)
                 .unwrap()
                 .expect("an installed face covers the character");
-            let data = (found.data)().unwrap();
+            let data = (found.data)().unwrap().bytes;
             assert!(
                 skrifa::MetadataProvider::charmap(&skrifa::FontRef::new(&data).unwrap())
                     .map(character)

@@ -8,12 +8,18 @@
 //! at the axis's `fvar` index, whose tag and range are checked, and every
 //! instance is read back before use. CoreText's axis names follow the
 //! process's preferred language and are never compared.
+//!
+//! `sbix` colour glyphs (emoji) draw in their own colours, premultiplied as
+//! Chrome's CoreText scaler draws them. A system fallback face whose strikes
+//! its shaping bytes leave out draws with the platform face registered for
+//! exactly those bytes ([`crate::shell::FontSet::glyph_rasterizer`]).
 use crate::sfnt;
 #[cfg(test)]
 mod tests;
+use crate::shell::PlatformFaces;
 use core_foundation::{base::CFType, dictionary::CFDictionary, number::CFNumber, string::CFString};
 use core_graphics::{
-    base::kCGImageAlphaNoneSkipLast,
+    base::{kCGImageAlphaNoneSkipLast, kCGImageAlphaPremultipliedLast},
     color_space::CGColorSpace,
     context::{CGContext, CGTextDrawingMode},
     data_provider::CGDataProvider,
@@ -33,9 +39,13 @@ use std::{
 };
 use varta_view::{GlyphRasterBounds, GlyphRasterMask, GlyphRasterRequest, GlyphRasterizer};
 
-/// Bitmap and color glyph tables. Coverage is one alpha channel, so these
-/// faces keep the portable outline path rather than lose their colors.
-const COLOR_TABLES: [[u8; 4]; 5] = [*b"COLR", *b"CBDT", *b"EBDT", *b"sbix", *b"SVG "];
+/// Bitmap and color glyph tables this rasterizer does not draw: these faces
+/// keep the portable path, which draws outlines and refuses color glyphs.
+const COLOR_TABLES: [[u8; 4]; 4] = [*b"COLR", *b"CBDT", *b"EBDT", *b"SVG "];
+/// Color bitmap glyphs drawn in their own colors.
+const COLOR_BITMAP_TABLE: [u8; 4] = *b"sbix";
+/// Bytes per pixel of the CoreGraphics bitmap contexts.
+const CONTEXT_CHANNELS: usize = 4;
 /// CoreText sizes `opsz` from the point size; Parley keeps the axis default.
 const OPTICAL_SIZE_AXIS: [u8; 4] = *b"opsz";
 /// Distinct variation instances kept per face; the oldest is replaced.
@@ -79,7 +89,8 @@ const INSTANCE_NATIVE_BYTES: usize = 32 * 1024;
 /// it created. A declined request keeps Varta's portable outline.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CoreTextCounts {
-    /// Requests for faces with bitmap or color glyph tables.
+    /// Requests for faces with bitmap or color glyph tables other than
+    /// `sbix`.
     pub declined_color: usize,
     /// Requests for faces with an optical-size axis.
     pub declined_optical_size: usize,
@@ -98,6 +109,8 @@ pub struct CoreTextCounts {
     pub collection_members: usize,
     /// Variation instances created at nondefault coordinates.
     pub variation_instances: usize,
+    /// Faces drawn by a registered platform face.
+    pub platform_faces: usize,
 }
 
 /// Shared counters, readable after the rasterizer moves into a renderer.
@@ -111,6 +124,7 @@ pub struct CoreTextStatistics {
     declined_request: AtomicUsize,
     collection_members: AtomicUsize,
     variation_instances: AtomicUsize,
+    platform_faces: AtomicUsize,
 }
 impl CoreTextStatistics {
     #[must_use]
@@ -125,6 +139,7 @@ impl CoreTextStatistics {
             declined_request: read(&self.declined_request),
             collection_members: read(&self.collection_members),
             variation_instances: read(&self.variation_instances),
+            platform_faces: read(&self.platform_faces),
         }
     }
     fn add(counter: &AtomicUsize) {
@@ -169,6 +184,8 @@ struct Graphics {
 }
 struct Face {
     base: Result<CTFont, Decline>,
+    /// Glyphs are `sbix` color bitmaps.
+    color: bool,
     variable: Option<Variable>,
     bytes: usize,
     stamp: usize,
@@ -188,23 +205,34 @@ pub struct CoreTextRasterizer {
     bytes: usize,
     stamp: usize,
     statistics: Arc<CoreTextStatistics>,
+    platform_faces: Option<PlatformFaces>,
 }
 impl CoreTextRasterizer {
+    /// A rasterizer that draws the faces of `platform_faces` with their
+    /// platform face.
+    pub(crate) fn with_platform_faces(platform_faces: PlatformFaces) -> Self {
+        Self {
+            platform_faces: Some(platform_faces),
+            ..Self::default()
+        }
+    }
     /// Counters shared with this rasterizer.
     #[must_use]
     pub fn statistics(&self) -> Arc<CoreTextStatistics> {
         self.statistics.clone()
     }
-    fn font(&mut self, r: &GlyphRasterRequest<'_>) -> Option<CTFont> {
+    /// The request's face at its size, and whether its glyphs are color
+    /// bitmaps.
+    fn font(&mut self, r: &GlyphRasterRequest<'_>) -> Option<(CTFont, bool)> {
         let result = self.instance(r);
         if let Err(reason) = &result {
             self.statistics.decline(*reason);
         }
         result
             .ok()
-            .map(|font| font.clone_with_font_size(f64::from(r.size)))
+            .map(|(font, color)| (font.clone_with_font_size(f64::from(r.size)), color))
     }
-    fn instance(&mut self, r: &GlyphRasterRequest<'_>) -> Result<CTFont, Decline> {
+    fn instance(&mut self, r: &GlyphRasterRequest<'_>) -> Result<(CTFont, bool), Decline> {
         if r.phase_x > MAX_PHASE || !r.size.is_finite() || r.size <= 0.0 {
             return Err(Decline::Request);
         }
@@ -217,8 +245,9 @@ impl CoreTextRasterizer {
         let face = self.faces.get_mut(&key).ok_or(Decline::Resource)?;
         face.stamp = stamp;
         let base = face.base.clone()?;
+        let color = face.color;
         if r.normalized_coords.iter().all(|coord| *coord == 0) {
-            return Ok(base);
+            return Ok((base, color));
         }
         let variable = face.variable.as_mut().ok_or(Decline::Unsupported)?;
         if r.normalized_coords.len() > variable.axes.len() {
@@ -226,7 +255,7 @@ impl CoreTextRasterizer {
         }
         if let Some((font, used)) = variable.variants.get_mut(r.normalized_coords) {
             *used = stamp;
-            return Ok(font.clone());
+            return Ok((font.clone(), color));
         }
         let added = added_for(r.normalized_coords);
         if self.bytes.saturating_add(added) > r.cache_bytes {
@@ -250,13 +279,36 @@ impl CoreTextRasterizer {
         face.bytes += added;
         self.bytes += added;
         CoreTextStatistics::add(&self.statistics.variation_instances);
-        Ok(font)
+        Ok((font, color))
     }
     /// Create and retain one face, evicting the least recently used faces
     /// within the shared allowance. A declined face is retained too, so a
     /// refused face is not parsed again for each glyph.
     fn insert_face(&mut self, key: (u64, u32), r: &GlyphRasterRequest<'_>) -> Result<(), Decline> {
         let overhead = std::mem::size_of::<Face>();
+        // A registered face's platform object maps its own system file; only
+        // the entry is charged.
+        if let Some(font) = self
+            .platform_faces
+            .as_ref()
+            .filter(|_| r.font_index == 0)
+            .and_then(|faces| faces.find(r.font_data))
+        {
+            self.make_room(overhead, r.cache_bytes)?;
+            CoreTextStatistics::add(&self.statistics.platform_faces);
+            self.faces.insert(
+                key,
+                Face {
+                    base: Ok(font),
+                    color: true,
+                    variable: None,
+                    bytes: overhead,
+                    stamp: self.stamp,
+                },
+            );
+            self.bytes += overhead;
+            return Ok(());
+        }
         let parsed = sfnt::Face::parse(r.font_data, r.font_index);
         let parsed_collection = parsed.as_ref().is_some_and(|face| !face.is_standalone());
         // CoreText copies the face's standalone bytes (a collection member's
@@ -269,20 +321,22 @@ impl CoreTextRasterizer {
                     .unwrap_or(r.font_data.len())
                     .saturating_mul(copies)
             });
-        if estimate > r.cache_bytes {
-            return Err(Decline::Resource);
-        }
-        while self.bytes.saturating_add(estimate) > r.cache_bytes {
-            let oldest = self
-                .faces
-                .iter()
-                .min_by_key(|(_, f)| f.stamp)
-                .map(|(key, _)| *key)
-                .ok_or(Decline::Resource)?;
-            let old = self.faces.remove(&oldest).ok_or(Decline::Resource)?;
-            self.bytes -= old.bytes;
-        }
-        let (base, variable, bytes) = match parsed.ok_or(Decline::Unsupported).and_then(create) {
+        self.make_room(estimate, r.cache_bytes)?;
+        let color = parsed
+            .as_ref()
+            .is_some_and(|face| face.has_table(COLOR_BITMAP_TABLE));
+        // An `sbix` without strikes leaves its images to a platform face;
+        // without that face nothing would be drawn.
+        let strikeless = parsed.as_ref().is_some_and(|face| {
+            face.table(COLOR_BITMAP_TABLE)
+                .is_some_and(|sbix| sbix_strikes(sbix).is_none_or(|count| count == 0))
+        });
+        let created = if strikeless {
+            Err(Decline::Color)
+        } else {
+            parsed.ok_or(Decline::Unsupported).and_then(create)
+        };
+        let (base, variable, bytes) = match created {
             Ok((font, variable)) => {
                 if parsed_collection {
                     CoreTextStatistics::add(&self.statistics.collection_members);
@@ -295,6 +349,7 @@ impl CoreTextRasterizer {
             key,
             Face {
                 base,
+                color,
                 variable,
                 bytes,
                 stamp: self.stamp,
@@ -303,6 +358,35 @@ impl CoreTextRasterizer {
         self.bytes += bytes;
         Ok(())
     }
+}
+
+impl CoreTextRasterizer {
+    /// Evicts the least recently used faces until `bytes` more fit the
+    /// shared allowance.
+    fn make_room(&mut self, bytes: usize, allowance: usize) -> Result<(), Decline> {
+        if bytes > allowance {
+            return Err(Decline::Resource);
+        }
+        while self.bytes.saturating_add(bytes) > allowance {
+            let oldest = self
+                .faces
+                .iter()
+                .min_by_key(|(_, f)| f.stamp)
+                .map(|(key, _)| *key)
+                .ok_or(Decline::Resource)?;
+            let old = self.faces.remove(&oldest).ok_or(Decline::Resource)?;
+            self.bytes -= old.bytes;
+        }
+        Ok(())
+    }
+}
+
+/// The strike count of an `sbix` table (`numStrikes` after its version and
+/// flags).
+fn sbix_strikes(sbix: &[u8]) -> Option<u32> {
+    const STRIKES_AT: usize = 4;
+    let count = sbix.get(STRIKES_AT..STRIKES_AT + 4)?;
+    Some(u32::from_be_bytes(count.try_into().ok()?))
 }
 
 /// The charge of one retained variation instance.
@@ -478,7 +562,7 @@ fn same(read: f64, expected: f64) -> bool {
 
 impl GlyphRasterizer for CoreTextRasterizer {
     fn bounds(&mut self, r: &GlyphRasterRequest<'_>) -> Option<GlyphRasterBounds> {
-        let font = self.font(r)?;
+        let (font, _) = self.font(r)?;
         let glyph = u16::try_from(r.glyph).ok()?;
         if usize::from(glyph) >= usize::try_from(font.glyph_count()).ok()? {
             return None;
@@ -524,15 +608,49 @@ impl GlyphRasterizer for CoreTextRasterizer {
         r: &GlyphRasterRequest<'_>,
         b: GlyphRasterBounds,
     ) -> Option<GlyphRasterMask> {
-        GlyphRasterMask::new(b, self.coverage(r, b)?).ok()
+        let (font, color) = self.font(r)?;
+        let pixels = self.draw(&font, color, r, b)?;
+        if color {
+            return GlyphRasterMask::color(b, &pixels).ok();
+        }
+        GlyphRasterMask::new(b, coverage(&pixels)).ok()
     }
     fn retained_bytes(&self) -> usize {
         self.bytes
     }
+    /// Color bitmap glyphs take no subpixel phase: Chrome's CoreText scaler
+    /// places them at whole pixels.
+    /// A declined face is counted when its glyphs are requested, not here.
+    fn subpixel(&mut self, r: &GlyphRasterRequest<'_>) -> bool {
+        self.instance(r).map_or(true, |(_, color)| !color)
+    }
 }
+/// One coverage byte per pixel of black drawn on opaque white. Preserve
+/// grayscale smoothing as a single coverage channel; actual text color is
+/// applied by Varta.
+fn coverage(pixels: &[u8]) -> Vec<u8> {
+    pixels
+        .as_chunks::<CONTEXT_CHANNELS>()
+        .0
+        .iter()
+        .map(|pixel| {
+            let value = (u16::from(pixel[0]) + u16::from(pixel[1]) + u16::from(pixel[2])) / 3;
+            u8::MAX - value as u8
+        })
+        .collect()
+}
+
 impl CoreTextRasterizer {
-    /// Row-major coverage for `b`, one byte per physical pixel.
-    fn coverage(&mut self, r: &GlyphRasterRequest<'_>, b: GlyphRasterBounds) -> Option<Vec<u8>> {
+    /// The glyph drawn into `b`, row-major, four bytes per physical pixel:
+    /// black on opaque white for coverage, or premultiplied RGBA on
+    /// transparent black for a color glyph.
+    fn draw(
+        &self,
+        font: &CTFont,
+        color: bool,
+        r: &GlyphRasterRequest<'_>,
+        b: GlyphRasterBounds,
+    ) -> Option<Vec<u8>> {
         let pixels = (b.width as usize).checked_mul(b.height as usize)?;
         if pixels == 0 {
             return Some(Vec::new());
@@ -540,8 +658,7 @@ impl CoreTextRasterizer {
         if pixels > r.max_pixels {
             return None;
         }
-        let row = (b.width as usize).checked_mul(4)?;
-        let font = self.font(r)?;
+        let row = (b.width as usize).checked_mul(CONTEXT_CHANNELS)?;
         let glyph = u16::try_from(r.glyph).ok()?;
         let mut context = CGContext::create_bitmap_context(
             None,
@@ -550,13 +667,19 @@ impl CoreTextRasterizer {
             8,
             row,
             &CGColorSpace::create_device_rgb(),
-            kCGImageAlphaNoneSkipLast,
+            if color {
+                kCGImageAlphaPremultipliedLast
+            } else {
+                kCGImageAlphaNoneSkipLast
+            },
         );
-        context.set_gray_fill_color(1.0, 1.0);
-        context.fill_rect(CGRect::new(
-            &CGPoint::new(0.0, 0.0),
-            &CGSize::new(f64::from(b.width), f64::from(b.height)),
-        ));
+        if !color {
+            context.set_gray_fill_color(1.0, 1.0);
+            context.fill_rect(CGRect::new(
+                &CGPoint::new(0.0, 0.0),
+                &CGSize::new(f64::from(b.width), f64::from(b.height)),
+            ));
+        }
         context.set_gray_fill_color(0.0, 1.0);
         context.set_allows_font_smoothing(true);
         context.set_should_smooth_fonts(true);
@@ -572,14 +695,12 @@ impl CoreTextRasterizer {
             f64::from(b.height) + f64::from(b.top),
         );
         font.draw_glyphs(&[glyph], &[position], context.clone());
-        let mut coverage = Vec::new();
-        coverage.try_reserve_exact(pixels).ok()?;
-        for pixel in context.data().as_chunks::<4>().0 {
-            // The source is black on opaque white. Preserve grayscale smoothing
-            // as a single coverage channel; actual text color is applied by Varta.
-            let value = (u16::from(pixel[0]) + u16::from(pixel[1]) + u16::from(pixel[2])) / 3;
-            coverage.push(u8::MAX - value as u8);
-        }
-        Some(coverage)
+        let drawn = context
+            .data()
+            .get(..pixels.checked_mul(CONTEXT_CHANNELS)?)?;
+        let mut out = Vec::new();
+        out.try_reserve_exact(drawn.len()).ok()?;
+        out.extend_from_slice(drawn);
+        Some(out)
     }
 }

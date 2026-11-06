@@ -32,13 +32,13 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Merged `main` with all four agent batches (JSON SIMD scanning, hashed `Map`/`Set`, native fallback faces/`scale()`/macOS scrollbars, K7 HTTP server H1–H4) and the v2 request header bounds, macOS arm64, 2026-11-06, the commit that records it: **3929 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-071841-50h7f6v8/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Native colour emoji batch on `main`, macOS arm64, 2026-11-06, the commit that records it: **3939 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-092949-xr26j4p7/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
 | Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP streaming | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies and supports HTTP/1.1 keep-alive with separate bounded connection and worker pools. The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Modern-server H1 is partial: Web `Request` ingress/streamed request bodies and remaining host-policy work are open; H2 async Wasmtime/pooling, H3 server TLS 1.3/HTTP/2 and H4 hardening/load acceptance remain planned ([K7](#k7--modern-http-server-agreed-design-2026-11-05)). |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
-| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji are the next step (owner decision 2026-11-06), and the overlay scrollbar shown while scrolling and every Linux comparison with Chrome remain open. |
+| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Colour glyphs on Linux, colour glyphs under a scaling transform, the overlay scrollbar shown while scrolling and every Linux comparison with Chrome remain open. |
 | Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
@@ -88,6 +88,55 @@ hover color, thumb dragging and track clicks, a dark `color-scheme` (outside
 the subset), rounded scroll containers with classic bars (refused), live
 changes of the system setting (read at window start) and Chrome's Linux Aura
 scrollbars (Linux keeps overlay behaviour).
+
+### Native colour emoji — 2026-11-06
+
+Owner decision 2026-11-06: native draws colour emoji as Chrome does, checked
+against Chrome; packaged and `--font` sets stay deterministic (no system
+fallback). With `varta-shell --system-fonts` on macOS emoji now draw in
+colour instead of refusing the text
+([contract](architecture.md#native-fallback-faces)).
+
+- **Face and bytes.** Apple Color Emoji's `sbix` strikes are 183 MiB, past
+  the accepted 32 MiB fallback face limit. The shaper gets the face's own
+  tables with an empty `sbix` (about 1 MiB, `morx` ligatures intact), and the
+  font set's CoreText rasterizer draws its glyphs with the platform face
+  registered for exactly those bytes; without that face (another rasterizer)
+  the strikeless face is declined and the portable path refuses it.
+- **Drawing.** Colour glyphs are premultiplied RGBA images
+  (`GlyphRasterMask::color`), painted as the existing bounded rectangles with
+  their own colours and the text colour's alpha, placed at the whole pixel
+  nearest the quarter-pixel position (Chrome's placement, measured over
+  sixteenth-pixel offsets at 1x and 2x). Synthetic bold paints them as they
+  are (Chrome's bold emoji are pixel-identical); synthetic italic stays
+  refused. The portable outline path now refuses colour glyphs instead of
+  painting them in the text colour.
+- **Metrics.** CoreText enlarges small emoji (a quarter up to 16px, none from
+  24px). Chrome's advance is the `hmtx` advance scaled by CoreText's ascent
+  over the face's own, rounded (checked at 33 sizes from 5 to 30px), and its
+  line metrics are CoreText's rounded ascent and descent. New Parley hook
+  `Layout::adjust_glyph_advances` ([patch
+  record](../vendor/parley/VARTA-PATCH.md)) applies the advances before line
+  breaking; `FallbackFace::metrics` carries them.
+- **Presentation.** Blink's emoji segmentation: emoji-presentation graphemes
+  (Unicode TR51) drawn by a face without colour glyphs ask the host for its
+  emoji face, which then comes before the CSS families (`©\u{FE0F}` in
+  Helvetica draws Apple Color Emoji, `❤` without VS16 Zapf Dingbats, as in
+  Chrome). New dependency edge: `icu_properties` 2.4.0 for `varta-view`
+  (already compiled in through Parley; no new package).
+
+Verification on macOS 27, Chrome 156: `native_fallback_probe` with
+`scripts/test-native-inline.mjs` passes at 1x, 1.5x, 2x and 3x (121 checks
+each); the five emoji lines match at most 0.13/255 mean, the ZWJ/flag line
+exactly. Unit tests cover the mask format, colour spans, placement, text
+alpha, portable refusal, emoji requests, platform metrics, Chrome's advances
+at nine sizes and line heights at four, and colour drawing only with the
+registered face.
+
+**Not done.** Linux still refuses colour faces (Noto Color Emoji is `CBDT` or
+`COLR`; a portable colour renderer and Chrome on Linux are needed). Colour
+glyphs under a scaling transform are refused (the host image is device pixels
+at the unscaled size). `COLR` and `SVG ` faces on macOS stay declined.
 
 ### Native fallback faces and Linux system fonts — native backlog batch, 2026-11-06
 

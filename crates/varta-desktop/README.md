@@ -488,10 +488,14 @@ ranges must equal `fvar`'s, and every instance is read back. CoreText's axis
 names follow the process's preferred language and are never compared, so the
 same instances are drawn under any user language. Duplicate axis names, a
 mismatched tag or range, or a different read-back decline to outlines
-(`declined_variation`). Faces with bitmap or color
-glyph tables (`COLR`, `CBDT`, `EBDT`, `sbix`, `SVG `), an `opsz` axis (CoreText
-sizes it from the point size) or `avar` v2 keep declining, so their glyphs keep
-the portable outline path. `CoreTextRasterizer::statistics` counts declined
+(`declined_variation`). `sbix` faces (Apple Color Emoji) draw in their own
+colours as premultiplied RGBA images placed at whole pixels, as Chrome's
+CoreText scaler draws them; a strikeless `sbix` face draws only through the
+platform face its font set registered (`FontSet::glyph_rasterizer`). Faces
+with other bitmap or color glyph tables (`COLR`, `CBDT`, `EBDT`, `SVG `), an
+`opsz` axis (CoreText sizes it from the point size) or `avar` v2 keep
+declining, so their glyphs keep the portable path, which refuses colour
+glyphs. `CoreTextRasterizer::statistics` counts declined
 glyph requests by reason, collection members and variation instances. A face
 is charged its standalone bytes (a member's own tables), twice when variable;
 each of at most 16 instances per face is charged a fixed 32 KiB native

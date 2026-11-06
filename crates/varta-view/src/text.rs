@@ -101,6 +101,8 @@ pub struct TextMeasurer {
     /// Families whose ascent the platform's browser enlarges
     /// ([`Self::set_enlarged_ascent_families`]).
     enlarged_ascent: Vec<String>,
+    /// The platform metrics of registered fallback faces, by font blob.
+    platform_metrics: BTreeMap<u64, Arc<dyn fallback::PlatformMetrics>>,
     view_shaping: Arc<ViewShapingState>,
     #[cfg(test)]
     shaping_builds: usize,
@@ -255,6 +257,9 @@ struct Shaping<'a> {
 type FamilyOverride = (std::ops::Range<usize>, Vec<String>);
 /// A family list and style: the shaping segment fallback groups by.
 type StyleKey<'a> = (&'a [String], TextOptions);
+/// The ranges of one style and presentation (emoji or text) that ask the
+/// platform for one face.
+type FallbackGroup<'a> = ((StyleKey<'a>, bool), Vec<std::ops::Range<usize>>);
 
 /// The family list and style at `offset`: the last span holding it, else
 /// the flow's own.
@@ -383,11 +388,13 @@ impl TextMeasurer {
         self.fallback = provider.map(fallback::Fallbacks::new);
     }
 
-    /// The registered family of the platform face for `character`,
-    /// registering the face on first use; `None` when the platform has none.
+    /// The registered family of the platform face for `character` (its
+    /// emoji face for `emoji`), registering the face on first use; `None`
+    /// when the platform has none.
     fn fallback_family(
         &mut self,
         character: char,
+        emoji: bool,
         families: &[String],
         options: TextOptions,
     ) -> Result<Option<String>, TextMeasureError> {
@@ -403,6 +410,7 @@ impl TextMeasurer {
                 family: primary,
                 weight: options.weight,
                 italic: options.italic,
+                emoji,
             })
             .map_err(refused)?
         else {
@@ -451,6 +459,9 @@ impl TextMeasurer {
         state.bytes = bytes;
         state.registered.insert(face.key, family.clone());
         self.blob_families.insert(blob_id, family.clone());
+        if let Some(metrics) = face.metrics {
+            self.platform_metrics.insert(blob_id, metrics);
+        }
         Ok(Some(family))
     }
 
@@ -461,6 +472,24 @@ impl TextMeasurer {
     /// counterparts). A host sets it for the platform's own faces only.
     pub fn set_enlarged_ascent_families(&mut self, families: &[&str]) {
         self.enlarged_ascent = families.iter().map(|family| (*family).to_owned()).collect();
+    }
+
+    /// A run's ascent and descent at `size`, rounded, in a platform fallback
+    /// face with its own metrics, or else in a face of an
+    /// [`Self::set_enlarged_ascent_families`] family.
+    fn platform_or_enlarged(
+        &self,
+        font: &parley::FontData,
+        size: f32,
+        metrics: &parley::RunMetrics,
+    ) -> Option<(f32, f32)> {
+        // Chrome rounds a font's ascent and descent.
+        if let Some(platform) = self.platform_metrics.get(&font.data.id()) {
+            return platform
+                .vertical(size)
+                .map(|(ascent, descent)| (ascent.round(), descent.round()));
+        }
+        self.enlarged(font, metrics)
     }
 
     /// The enlarged ascent and descent of a run in a font of an
@@ -486,10 +515,12 @@ impl TextMeasurer {
     }
 
     /// Gives runs the vertical metrics Chrome lays lines out with: an
-    /// enlarged-ascent family's runs their enlarged ascent, and a platform
+    /// enlarged-ascent family's runs their enlarged ascent, a platform
     /// fallback face's runs under a line height other than `normal` the
     /// metrics of their element's primary font (Blink adds the metrics of
-    /// other used fonts to an inline box only for `line-height: normal`).
+    /// other used fonts to an inline box only for `line-height: normal`),
+    /// and otherwise a fallback face with platform metrics its platform
+    /// ascent and descent.
     /// Returns the charged operations of shaping the primary fonts.
     fn adjust_vertical_metrics(
         &mut self,
@@ -528,7 +559,7 @@ impl TextMeasurer {
             let (mut sample, used) = self.build_once(sample_input, &[])?;
             operations = operations.saturating_add(used);
             let mut primary = None;
-            sample.adjust_run_metrics(|_, font, metrics| {
+            sample.adjust_run_metrics(|_, font, _, metrics| {
                 primary.get_or_insert_with(|| {
                     self.enlarged(font, metrics)
                         .unwrap_or((metrics.ascent, metrics.descent))
@@ -539,12 +570,15 @@ impl TextMeasurer {
                 primaries.push((range.clone(), primary));
             }
         }
-        layout.adjust_run_metrics(|range, font, metrics| {
+        // One run of a fallback face may join several adjacent ranges (an
+        // emoji sequence and the emoji after it); any of them gives its
+        // primary metrics.
+        layout.adjust_run_metrics(|range, font, size, metrics| {
             primaries
                 .iter()
-                .find(|(covered, _)| covered.start <= range.start && range.end <= covered.end)
+                .find(|(covered, _)| covered.start < range.end && range.start < covered.end)
                 .map(|(_, primary)| *primary)
-                .or_else(|| self.enlarged(font, metrics))
+                .or_else(|| self.platform_or_enlarged(font, size, metrics))
         });
         Ok(operations)
     }
@@ -736,6 +770,7 @@ impl TextMeasurer {
             fallback: None,
             blob_families,
             enlarged_ascent: Vec::new(),
+            platform_metrics: BTreeMap::new(),
             view_shaping: Arc::new(ViewShapingState {
                 remaining: AtomicUsize::new(NO_VIEW_REQUEST),
                 inline_remaining: AtomicUsize::new(NO_VIEW_REQUEST),
@@ -973,6 +1008,12 @@ impl TextMeasurer {
             layout = rebuilt;
             operations = operations.saturating_add(used);
         }
+        if !self.platform_metrics.is_empty() {
+            let platform = &self.platform_metrics;
+            layout.adjust_glyph_advances(|font, size, glyph| {
+                platform.get(&font.data.id())?.advance(glyph, size)
+            });
+        }
         let used = self.adjust_vertical_metrics(&mut layout, input, &overrides)?;
         Ok((layout, operations.saturating_add(used)))
     }
@@ -994,10 +1035,31 @@ impl TextMeasurer {
             spans,
             ..
         } = input;
-        // Ranges split where the style changes, grouped by style in the
-        // order of their first range.
-        let mut groups: Vec<(StyleKey<'_>, Vec<std::ops::Range<usize>>)> = Vec::new();
-        for range in fallback::missing_clusters(layout, text) {
+        // Ranges split where the style changes, grouped by style and
+        // presentation in the order of their first range. Emoji graphemes
+        // without a colour face are their own ranges, whether or not their
+        // face lacks them.
+        let emoji = fallback::uncolored_emoji(layout, text);
+        let mut ranges: Vec<(std::ops::Range<usize>, bool)> =
+            emoji.iter().map(|range| (range.clone(), true)).collect();
+        for missing in fallback::missing_clusters(layout, text) {
+            let mut start = missing.start;
+            for covered in emoji
+                .iter()
+                .filter(|covered| covered.start < missing.end && missing.start < covered.end)
+            {
+                if start < covered.start {
+                    ranges.push((start..covered.start, false));
+                }
+                start = start.max(covered.end);
+            }
+            if start < missing.end {
+                ranges.push((start..missing.end, false));
+            }
+        }
+        ranges.sort_by_key(|(range, _)| range.start);
+        let mut groups: Vec<FallbackGroup<'_>> = Vec::new();
+        for (range, emoji) in ranges {
             let mut start = range.start;
             while start < range.end {
                 let style = style_at(families, options, spans, start);
@@ -1008,10 +1070,11 @@ impl TextMeasurer {
                     .filter(|&boundary| style_at(families, options, spans, boundary) != style)
                     .min()
                     .unwrap_or(range.end);
-                let index = match groups.iter().position(|(key, _)| *key == style) {
+                let key = (style, emoji);
+                let index = match groups.iter().position(|(known, _)| *known == key) {
                     Some(index) => index,
                     None => {
-                        groups.push((style, Vec::new()));
+                        groups.push((key, Vec::new()));
                         groups.len() - 1
                     }
                 };
@@ -1020,7 +1083,7 @@ impl TextMeasurer {
             }
         }
         let mut added = false;
-        for ((list, style), ranges) in groups {
+        for (((list, style), emoji), ranges) in groups {
             let Some(first) = ranges.first() else {
                 continue;
             };
@@ -1028,7 +1091,7 @@ impl TextMeasurer {
                 .chars()
                 .next()
                 .ok_or(TextMeasureError::Limit)?;
-            let Some(family) = self.fallback_family(character, list, style)? else {
+            let Some(family) = self.fallback_family(character, emoji, list, style)? else {
                 continue;
             };
             for range in ranges {
@@ -1040,8 +1103,13 @@ impl TextMeasurer {
                 if current.contains(&family) {
                     continue;
                 }
+                // The emoji face draws emoji before the CSS families.
                 let mut stack = current.to_vec();
-                stack.push(family.clone());
+                if emoji {
+                    stack.insert(0, family.clone());
+                } else {
+                    stack.push(family.clone());
+                }
                 overrides.push((range, stack));
                 added = true;
             }

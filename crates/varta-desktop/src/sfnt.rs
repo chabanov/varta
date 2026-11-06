@@ -175,6 +175,80 @@ impl<'a> Face<'a> {
 #[cfg(target_os = "macos")]
 /// The `sfnt` version of a face with CFF outlines (`OTTO`), and of every
 /// other face (TrueType outlines, `0x00010000`).
+/// `head.unitsPerEm`, `hhea.ascender`, `hhea.numberOfHMetrics` and
+/// `maxp.numGlyphs` offsets.
+#[cfg(target_os = "macos")]
+const UNITS_PER_EM_AT: usize = 18;
+#[cfg(target_os = "macos")]
+const ASCENDER_AT: usize = 4;
+#[cfg(target_os = "macos")]
+const H_METRICS_AT: usize = 34;
+#[cfg(target_os = "macos")]
+const GLYPHS_AT: usize = 4;
+/// Bytes of one `hmtx` long metric (advance and left side bearing).
+#[cfg(target_os = "macos")]
+const LONG_METRIC_BYTES: usize = 4;
+
+/// A face's horizontal advances in font units (`hmtx`), with its em.
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+pub(crate) struct Advances {
+    units_per_em: u16,
+    /// `hhea.ascender`.
+    ascender: i16,
+    /// One advance per long metric; later glyphs repeat the last.
+    advances: Vec<u16>,
+    glyphs: u16,
+}
+
+#[cfg(target_os = "macos")]
+impl Advances {
+    pub(crate) fn parse(face: &Face<'_>) -> Option<Self> {
+        let u16_at = |table: &[u8], at: usize| {
+            Some(u16::from_be_bytes(table.get(at..at + 2)?.try_into().ok()?))
+        };
+        let units_per_em = u16_at(face.table(*b"head")?, UNITS_PER_EM_AT)?;
+        let hhea = face.table(*b"hhea")?;
+        let ascender = i16::from_be_bytes(u16_at(hhea, ASCENDER_AT)?.to_be_bytes());
+        let count = usize::from(u16_at(hhea, H_METRICS_AT)?);
+        let glyphs = u16_at(face.table(*b"maxp")?, GLYPHS_AT)?;
+        let hmtx = face.table(*b"hmtx")?;
+        let advances = hmtx
+            .get(..count.checked_mul(LONG_METRIC_BYTES)?)?
+            .as_chunks::<LONG_METRIC_BYTES>()
+            .0
+            .iter()
+            .map(|metric| u16::from_be_bytes([metric[0], metric[1]]))
+            .collect::<Vec<_>>();
+        (units_per_em > 0 && !advances.is_empty()).then_some(Self {
+            units_per_em,
+            ascender,
+            advances,
+            glyphs,
+        })
+    }
+
+    pub(crate) fn units_per_em(&self) -> u16 {
+        self.units_per_em
+    }
+
+    pub(crate) fn ascender(&self) -> i16 {
+        self.ascender
+    }
+
+    /// The advance of `glyph`; `None` past the face's glyphs.
+    pub(crate) fn advance(&self, glyph: u32) -> Option<u16> {
+        let glyph = usize::try_from(glyph).ok()?;
+        if glyph >= usize::from(self.glyphs) {
+            return None;
+        }
+        self.advances
+            .get(glyph)
+            .or_else(|| self.advances.last())
+            .copied()
+    }
+}
+
 const CFF_VERSION: u32 = u32::from_be_bytes(*b"OTTO");
 #[cfg(target_os = "macos")]
 const TRUETYPE_VERSION: u32 = 0x0001_0000;

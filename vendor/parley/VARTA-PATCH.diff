@@ -521,12 +521,20 @@
 +}
 --- a/src/layout/layout.rs
 +++ b/src/layout/layout.rs
-@@ -155,6 +155,38 @@
-     pub fn break_lines(&mut self) -> BreakLines<'_, B> {
-         unjustify(&mut self.data);
+@@ -4,7 +4,8 @@
+ use crate::InlineBox;
+ use crate::layout::alignment::align;
+ use crate::layout::alignment::unjustify;
+-use crate::layout::data::LayoutData;
++use crate::layout::data::{ClusterData, LayoutData};
++use crate::util::nearly_zero;
+ use crate::style::Brush;
+ use core::cmp::Ordering;
+ use core::fmt;
+@@ -157,6 +158,107 @@
          BreakLines::new(self)
-+    }
-+
+     }
+ 
 +    /// Varta: visits every shaped run in logical order, before line
 +    /// breaking, with its text range, font and metrics; a returned ascent and
 +    /// descent replace the run's own for line layout, and a line height
@@ -537,12 +545,15 @@
 +        mut adjust: impl FnMut(
 +            core::ops::Range<usize>,
 +            &crate::FontData,
++            f32,
 +            &crate::RunMetrics,
 +        ) -> Option<(f32, f32)>,
 +    ) {
 +        for run in &mut self.data.runs {
 +            let font = &self.data.fonts[run.font_index];
-+            if let Some((ascent, descent)) = adjust(run.text_range.clone(), font, &run.metrics) {
++            if let Some((ascent, descent)) =
++                adjust(run.text_range.clone(), font, run.font_size, &run.metrics)
++            {
 +                run.metrics.ascent = ascent;
 +                run.metrics.descent = descent;
 +                let style = self
@@ -557,9 +568,77 @@
 +                }
 +            }
 +        }
-     }
- 
++    }
++
++    /// Before line breaking, replaces the advance of glyphs whose font the
++    /// caller lays out with other advances: `adjust(font, font_size, glyph)`
++    /// returns the new advance, or `None` to keep the shaped one. Cluster and
++    /// run advances follow (a ligature's components share its advance), and
++    /// letter and word spacing already added to a cluster stay. Offsets and
++    /// shaping do not change.
++    pub fn adjust_glyph_advances(
++        &mut self,
++        mut adjust: impl FnMut(&crate::FontData, f32, u32) -> Option<f32>,
++    ) {
++        let data = &mut self.data;
++        for run in &mut data.runs {
++            let font = &data.fonts[run.font_index];
++            let clusters = &mut data.clusters[run.cluster_range.clone()];
++            let mut index = 0;
++            while index < clusters.len() {
++                let start = clusters[index];
++                let parts = 1 + clusters[index + 1..]
++                    .iter()
++                    .take_while(|cluster| cluster.is_ligature_component())
++                    .count();
++                // The spacing `LayoutData::finish` added to a cluster.
++                let (word, letter) = (run.word_spacing, run.letter_spacing);
++                let spacing = |cluster: &ClusterData| {
++                    if nearly_zero(word) && nearly_zero(letter) {
++                        return 0.0;
++                    }
++                    let mut spacing = letter;
++                    if !nearly_zero(word) && cluster.info.whitespace().is_space_or_nbsp() {
++                        spacing += word;
++                    }
++                    if nearly_zero(spacing) { 0.0 } else { spacing }
++                };
++                let delta = if start.glyph_len == ClusterData::INLINE_GLYPH {
++                    let old = start.advance - spacing(&start);
++                    adjust(font, run.font_size, start.glyph_offset).map_or(0.0, |new| new - old)
++                } else {
++                    let first = run.glyph_start + start.glyph_offset as usize;
++                    let glyphs = &mut data.glyphs[first..first + start.glyph_len as usize];
++                    let count = glyphs.len();
++                    let mut delta = 0.0;
++                    for (position, glyph) in glyphs.iter_mut().enumerate() {
++                        let added = if position + 1 == count {
++                            spacing(&start)
++                        } else {
++                            0.0
++                        };
++                        if let Some(new) = adjust(font, run.font_size, glyph.id) {
++                            delta += new - (glyph.advance - added);
++                            glyph.advance = new + added;
++                        }
++                    }
++                    delta
++                };
++                if delta != 0.0 {
++                    let share = delta / parts as f32;
++                    for cluster in &mut clusters[index..index + parts] {
++                        cluster.advance += share;
++                    }
++                    run.advance += delta;
++                }
++                index += parts;
++            }
++        }
++    }
++
      /// Breaks all lines with the specified maximum advance.
+     pub fn break_all_lines(&mut self, max_advance: Option<f32>) {
+         self.break_lines()
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
 @@ -93,6 +93,12 @@

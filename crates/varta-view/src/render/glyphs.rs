@@ -56,6 +56,12 @@ impl Glyphs {
     pub fn has_provider(&self) -> bool {
         self.provider.is_some()
     }
+    /// Whether the provider places the request's glyphs at subpixel phases.
+    pub fn subpixel(&mut self, request: &GlyphRasterRequest<'_>) -> bool {
+        self.provider
+            .as_mut()
+            .is_none_or(|provider| provider.subpixel(request))
+    }
     fn get_data(&mut self, key: &Key) -> Option<Data> {
         let entry = self.entries.get_mut(key)?;
         self.stamp = self.stamp.saturating_add(1);

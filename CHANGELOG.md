@@ -13,6 +13,11 @@
 - Incremental GC clears large-heap mark bitmaps in bounded work before taking
   its root snapshot, retaining the idle-step fuel bound instead of zeroing all
   bitmap bytes in one step.
+- Native `varta-shell --system-fonts` on macOS draws colour emoji as Chrome
+  does: Apple Color Emoji shaped without its bitmap strikes and drawn by the
+  platform face, Chrome's size-dependent emoji advances and line heights,
+  whole-pixel placement and emoji presentation selectors. Colour glyphs on
+  Linux and under scaling transforms remain refused.
 
 - Integrated v38 application delivery across the official metered browser host
   and packaged native `varta-shell`, including host effects, OPFS KV storage,
