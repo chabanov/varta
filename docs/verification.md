@@ -24,7 +24,9 @@ any previous check whose scope includes those inputs.
   run. Neither is current evidence.
 - **Source scope:** the gate fingerprint covers every tracked and untracked
   file except the independent product examples (`examples/`), which no
-  engine input depends on (`scripts/verify.py`, `INDEPENDENT_PREFIXES`).
+  engine input depends on, and `.claude/` (local session tooling and agent
+  worktrees, each verified on its own) (`scripts/verify.py`,
+  `INDEPENDENT_PREFIXES`).
 - **Separate external acceptance:** Chrome streaming after the network
   inactivity change has not been run. Real-window/system-input checks,
   current remote CI, remaining browser/platform matrices, sustained live

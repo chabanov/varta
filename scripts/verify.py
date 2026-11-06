@@ -234,16 +234,17 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
     ]
 
 
-# Product examples are independent applications, never inputs of the engine:
-# no crate, test or generated document depends on them, so changing or
-# removing one does not invalidate an engine run.
-INDEPENDENT_PREFIXES = (b"examples/",)
+# Not inputs of the engine, so changing them does not invalidate a run:
+# product examples are independent applications (no crate, test or generated
+# document depends on them), and `.claude/` holds local session tooling and
+# agent worktrees, each a separate checkout verified on its own.
+INDEPENDENT_PREFIXES = (b"examples/", b".claude/")
 
 
 def fingerprint() -> dict[str, str]:
     """Include staged, unstaged and untracked content, not just the HEAD commit.
 
-    Independent product examples (`INDEPENDENT_PREFIXES`) are not inputs."""
+    Independent paths (`INDEPENDENT_PREFIXES`) are not inputs."""
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
     files = subprocess.check_output(
         ["git", "ls-files", "-c", "-o", "--exclude-standard", "-z"], cwd=ROOT,
