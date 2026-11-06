@@ -22,6 +22,7 @@ pub mod optimize;
 pub mod printer;
 pub mod property_order;
 pub mod selector_parser;
+pub mod stylesheet;
 pub mod theme;
 pub mod utilities;
 pub mod utils;
