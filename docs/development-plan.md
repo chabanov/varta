@@ -7641,7 +7641,7 @@ or scheduler change, so the browser host runs every form unchanged.
 | Explicit `this` parameters (`f.call(o)`, `o.m()`) | Admitted for binding/`this` bases | `receivers` |
 | Contextually typed class-field arrows | Admitted (annotated parameters; return annotation or evident body type) | `receivers` |
 | Destructuring: parameters of arrows, functions, methods and callbacks (array methods, iterator helpers), tuples with rest, nested, defaults, assignment patterns, `for...of` heads, iterables | Admitted (iterables taken before targets run) | `destructuring`, `callback_patterns`, `iterators` |
-| Spread in calls and `new` | Admitted for static spreads (literals, tuples) and `Math.max/min` | `spreads` |
+| Spread in calls and `new` | Admitted for static spreads (literals, tuples); `Math.max(...xs)` is K9 D's | `spreads` |
 | Hand-written iterators (`{ next() }` behind `[Symbol.iterator]()`) | Admitted for classes (body runs at the first `next()`) | `iterators` |
 | `using` / `await using` with `Symbol.dispose`/`asyncDispose` | Admitted; `SuppressedError` (track D) not built | `using` |
 | `new.target` | Admitted: `new.target.name` (v32) and comparisons | `operators` |

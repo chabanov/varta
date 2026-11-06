@@ -7,7 +7,7 @@
   operators, templates, conditions, object and array literals, assignments,
   optional chains); the comma operator; `new.target === C` in constructors;
   tagged templates and `String.raw`; spreads of tuples and array literals
-  into fixed parameters and `new`, `Math.max(...xs)`; `o.m()` for functions
+  into fixed parameters and `new`; `o.m()` for functions
   with an explicit `this` parameter; class-field arrows typed from their
   parameters and body; object-literal methods that use `this` (copies of
   such objects are refused); constant computed keys; tuple parameter

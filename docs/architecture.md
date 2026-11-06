@@ -11643,9 +11643,9 @@ Node 24 is the reference for every output below.
 - **Spreads into fixed parameters.** A spread argument whose length is
   static expands in place: an array literal spreads its elements and a
   binding of a fixed-length tuple type spreads its elements (`f(...pair)`,
-  `new P(...pair)`). `Math.max(...xs)`/`Math.min(...xs)` fold each spread
-  array (`-Infinity`/`Infinity` for an empty one). Other spreads keep the
-  array-snapshot path of rest parameters, and a constructor spread of an
+  `new P(...pair)`, `Math.max(...[a, b])`). Other spreads keep the
+  array-snapshot path of rest parameters (and the standard library's
+  `Math.max(...xs)`), and a constructor spread of an
   array whose length is not static keeps its refusal (`spread to a class
   constructor`).
 - **Receivers.** A field `m` holding a function with an explicit `this`
