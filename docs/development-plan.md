@@ -7544,6 +7544,54 @@ earlier bounds. Open: a per-stream write-idle bound for HTTP/2 streams whose
 client never opens its window, h2c, HTTP/3, certificate reload, and Linux
 and sustained-load benchmarks.
 
+### K9 — TypeScript completeness and the first release (agreed, 2026-11-06)
+
+**Owner decisions.** The first release targets **macOS (arm64) and the web**;
+Linux and Windows follow. Varta covers **the whole TypeScript language** (the
+TypeScript Handbook and ECMAScript 2025) except untyped code: `any`, implicit
+`any`, untyped JavaScript and `.d.ts`-only packages stay rejected (research
+thesis). Node 24 is the runtime oracle for expected output and tsc 5.x the
+type-system reference; everything follows the published standards, with spec
+sections cited in the contract.
+
+**Baseline.** 89 probe programs of common TypeScript constructs against v38:
+43 compile, `any` is rejected by design, 45 are not supported (type-level
+operators, enums and namespaces, overloads, setters and static fields,
+decorators, `await` inside expressions, object-literal `this`, tagged
+templates, `Symbol()`, weak collections, Proxy, local-time `Date`, `Intl`,
+RegExp backreferences, `sort` with a comparator and others).
+
+**Tracks**, in parallel on separate branches, merged one by one through the
+standard process (each branch's full gate, conflicts resolved, a combined
+gate):
+
+- **A — type level:** mapped and conditional types, `infer`, template literal
+  types, every built-in utility type, precise `keyof`/`T[K]`, `typeof` and
+  `keyof typeof` type queries, intersections, type predicates and assertion
+  functions, `satisfies`, polymorphic `this`, call and construct signatures,
+  variadic and optional tuple elements, `never` exhaustiveness.
+- **B — declarations and classes:** all `enum` forms, `namespace` and
+  declaration merging, abstract classes, function and method overloads,
+  setters, static fields and blocks, class expressions, standard decorators
+  and `accessor`.
+- **C — expressions and functions:** `await` anywhere and top-level `await`,
+  object-literal methods and accessors with `this`, computed keys, tagged
+  templates, destructuring everywhere, spread in calls, hand-written
+  iterators, `using`, structural thenables and the remaining operators.
+- **D — ECMAScript 2025 library:** complete Array/Object/String/JSON/Promise
+  APIs, iterator helpers and Set methods, `Symbol()` values (a new value tag
+  under the CLAUDE.md versioning rules), weak collections integrated with the
+  collector, local-time `Date` with the time zone as a recorded host input,
+  full RegExp with matching bounded by fuel, Proxy and Reflect where sound,
+  and `Intl` through ICU4X with deterministic data.
+
+**Release readiness** additionally needs, after K9 and K8 merge: the release
+profile frozen (v38 becomes a released profile; later admissions go to a new
+one), the macOS arm64 and web distributions built and verified from a clean
+checkout, the open Chrome acceptance runs (streaming, inline probes) repeated,
+an independent security review of the host surface, and release notes. Each is
+recorded here when it starts.
+
 ### K8 — Tailwind at compile level (agreed design, 2026-11-06)
 
 **Goal (owner).** The developer writes ordinary TSX with Tailwind classes of the
