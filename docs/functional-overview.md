@@ -149,7 +149,7 @@ unrestricted browser DOM in guest code.
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
-| Animation | Color/background/opacity transitions and translations on a host-set animation clock; translated boxes update painting, hits and geometry |
+| Animation | Color/background/opacity transitions and translations on a host-set animation clock; translated boxes update painting, hits and geometry; macOS overlay scrollbar fades on the same clock |
 | Platform effects | Host-owned clipboard and external links under gesture/grant rules, with explicit denial/platform failure |
 | Accessibility | Roles/names/states/descriptions, semantic snapshots, geometry, live updates and assistive actions; macOS adapter and scrollbar-action routes |
 
@@ -159,8 +159,11 @@ The native scope still has concrete gaps:
   control layout and mixed block/inline formatting are not complete.
 - Native `<img>` is not admitted by the current layout path. Browser bundles
   support checked static PNG resources; that does not add native image painting.
-- General transforms/scaling, scrollable overflow from translated boxes and
-  visual native scrollbar painting remain unfinished.
+- General transforms/scaling and scrollable overflow from translated boxes
+  remain unfinished. macOS scrollbars paint natively in both system styles
+  (classic gutters, and overlay bars shown while scrolling and faded on the
+  animation clock); dragging a thumb, clicking a track and Linux scrollbars
+  do not.
 - OS glyph fallback and wider real-font typography remain open. Some ordinary
   bidi shaping is implemented while RTL edge ordering and bidi on preserved
   whitespace paths remain separate gaps.

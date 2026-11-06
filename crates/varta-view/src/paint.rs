@@ -13,6 +13,7 @@ mod inline_outline;
 mod order;
 mod outline_curve;
 mod outline_union;
+mod overlay_scrollbar;
 mod scroll;
 mod scrollbar;
 mod select;
@@ -86,6 +87,8 @@ pub struct FrameMetadata {
     cursors: BTreeMap<u32, PointerCursor>,
     scroll_layout: BTreeMap<u32, layout::BoxGeometry>,
     scroll_sources: BTreeMap<u32, scroll::Source>,
+    /// Overlay scrollbar frames by scroll container, in paint order.
+    overlay_scrollbars: Vec<(u32, BoxRect)>,
 }
 
 /// The four cursor values admitted by the checked CSS subset.
@@ -163,6 +166,7 @@ impl FrameMetadata {
             && self.select_menu == other.select_menu
             && self.scroll_layout == other.scroll_layout
             && self.scroll_sources == other.scroll_sources
+            && self.overlay_scrollbars == other.overlay_scrollbars
     }
     #[must_use]
     pub fn cursor_at(&self, x: f32, y: f32) -> PointerCursor {
@@ -2632,6 +2636,7 @@ fn rasterize_inner_scoped(
     let mut text_work = 0usize;
     let mut inline_programs = inline_groups::Programs::default();
     let mut hit_regions = Vec::new();
+    let mut overlay_frames = Vec::new();
     let mut backdrops = std::collections::BTreeSet::new();
     let mut rounded_regions = BTreeMap::new();
     let mut hit_clips = BTreeMap::new();
@@ -2761,6 +2766,16 @@ fn rasterize_inner_scoped(
                     [color; 4],
                 )?;
             }
+            overlay_scrollbar::paint(
+                &mut pixmap,
+                (tree, &env, id),
+                geometry[&id],
+                overlay_scrollbar::Hits {
+                    regions: &mut hit_regions,
+                    clips: &mut hit_clips,
+                    frames: &mut overlay_frames,
+                },
+            )?;
             pixmap.end_group(id)?;
             if let Some((_, start, hits, affine)) = transform_scopes.pop_if(|scope| scope.0 == id) {
                 pixmap.end_transform(start, affine);
@@ -3155,7 +3170,7 @@ fn rasterize_inner_scoped(
                 colors,
             )?;
         }
-        if let Some(bars) = geometry[&id].scrollbars {
+        if let Some(bars) = geometry[&id].scrollbars.filter(|bars| !bars.overlay) {
             // Classic scrollbars follow the box's square border edge; a
             // rounded scroll container would clip them.
             if !paint_radii.is_square() {
@@ -3201,7 +3216,7 @@ fn rasterize_inner_scoped(
             element.text_field() && !element.disabled() && !element.readonly()
         })
     });
-    for (_, rect) in &mut hit_regions {
+    for (_, rect) in hit_regions.iter_mut().chain(&mut overlay_frames) {
         *rect = scaled_rect(*rect, scale);
     }
     for hit in text_hits.values_mut() {
@@ -3253,6 +3268,7 @@ fn rasterize_inner_scoped(
             cursors,
             scroll_sources: scroll::sources(tree, &geometry, &pending),
             scroll_layout: layout::visual(tree, geometry),
+            overlay_scrollbars: overlay_frames,
         },
     })
 }

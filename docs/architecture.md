@@ -14174,7 +14174,8 @@ property values keep such keywords. A quoted name is an ordinary family.
 `Environment::scrollbars` selects the platform's scrollbar style, as Chrome on
 macOS follows the system's "Show scroll bars" setting. `Scrollbars::Overlay`
 (the default, and headless Chrome's style on a Mac with a trackpad) reserves
-no space and paints nothing while a container is not being scrolled.
+no space and shows a container's bar only while it scrolls
+([overlay scrollbars](#native-overlay-scrollbars)).
 `Scrollbars::Classic` (always shown) gives every scroll container
 (`overflow: auto`, and the top-layer dialog) whose content overflows on an
 axis that axis's bar: a gutter of `CLASSIC_SCROLLBAR_THICKNESS` inside the
@@ -14184,7 +14185,8 @@ runs again after adding gutters; a gutter can make content overflow on the
 other axis, so gutters are only added, for at most `MAX_GUTTER_PASSES` more
 passes, and gutters still growing after them are refused
 (`LayoutError::Unsupported`). `BoxGeometry::scrollbars` gives each bar's
-track and its axis's range. Paint follows Chrome 156's `NativeThemeMac` in
+track and its axis's range (`ScrollbarGeometry::overlay` false). Paint
+follows Chrome 156's `NativeThemeMac` in
 the light scheme (the subset has no `color-scheme`, and the official host
 never sets one, so Chrome paints light scrollbars in either OS scheme), in
 device pixels: the track filled `#FAFAFA` with a one-pixel (floored when
@@ -14204,16 +14206,87 @@ pixels match Chrome 156 run with `-AppleShowScrollBars Always` (its argument
 domain only) at 1x, 1.25x and 2x within the 2/255 mean bound
 (`native_scrollbar_probe` with `scripts/test-native-positioned.mjs`); at 2x
 Chrome's scrollbar layer filters the track borders over two more pixels,
-which native does not. Not implemented: the overlay thumb that Chrome shows
-while scrolling and fades out after about half a second, the hover color of
-the classic thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a
-track, and Chrome's Linux (Aura) scrollbars.
+which native does not. Not implemented: the hover color of the classic
+thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a track (with
+either style), and Chrome's Linux (Aura) scrollbars.
 
 `varta-shell` reads AppKit's preferred scroller style
 (`NSScroller.preferredScrollerStyle`, where "Automatically" resolves by the
 attached pointing devices) on the main thread when its window opens and hands
 it to the instance (`ViewLayout::with_scrollbars`); a later change of the
 setting applies after a restart. Other platforms keep overlay scrollbars.
+
+#### Native overlay scrollbars
+
+With `Scrollbars::Overlay` a scroll container (`overflow: auto`, and the
+top-layer dialog) whose content overflows on an axis has that axis's bar
+frame, `OVERLAY_SCROLLBAR_THICKNESS` thick, over the edge of its padding box:
+the vertical one at the right, above the corner a horizontal frame leaves as
+in Blink's `ScrollCornerRect`, and the horizontal one at the bottom.
+`BoxGeometry::scrollbars` gives them with `ScrollbarGeometry::overlay` true
+and the axis ranges; they take no layout space, and a hidden bar paints
+nothing and takes no pointer.
+
+When a bar shows follows Chrome 156's `ui::OverlayScrollbarAnimatorMac` as
+Blink's `MacScrollbarImplV2` drives it, on the view's animation clock
+([transitions](#native-css-transitions)), so a headless render at a given
+clock is deterministic. A scroll that changes a container's offset (wheel
+and `Scroll`/`ScrollMeasured` input, a commit's `ScrollTo` and
+`ScrollIntoView`, `View::scroll_into_view` and assistive scrolls; Chrome's
+explicit scroll types, not a clamp) shows its thumb at full opacity at once
+or keeps it, cancelling a running fade-out. The fade-out starts 500 ms
+(`kFadeOutDelay`) after the last such scroll and lasts 250 ms
+(`kAnimationDuration`), ease-in-out; the bar is then hidden. A host reports
+which container's bar frame the pointer is over (`FrameMetadata::scrollbar_at`
+of the presented frame: the last painted frame there whose container is the
+hit element or its ancestor; then `View::set_scrollbar_hover`, which
+dispatches no guest event). A
+shown bar under the pointer does not fade: its track fades in and its thumb
+box widens from 12 to 16 pixels (truncated to whole pixels), each over
+250 ms ease-in-out, and it stays wide until it has faded out; leaving the
+frame restarts the 500 ms delay, and the track fades out with the thumb. A
+hidden bar ignores the pointer, but a scroll under a resting pointer shows
+the bar and then takes the pointer at once, as Blink's hover update after
+the scroll does. `View::animating` is true while a bar waits for its fade-out
+or animates, and `View::set_animation_time` reports a change only when a bar
+paints differently, so the delay itself needs no frame.
+
+Paint follows `NativeThemeMac` with `is_overlay`. The colors are light, or
+dark when the scroller's own background color is not transparent and its HSL
+lightness is at most one half (`RecalculateOverlayScrollbarColorScheme`); a
+transparent background keeps the page's light scheme, as the subset has no
+`color-scheme`. The thumb is a pill of black (dark: white) at alpha `0x80`
+times its opacity, in the thumb box at the bar's outer edge, inset 2 pixels
+plus the 1-pixel border on the content side and kept at least 6 by 18
+(`ConstrainInsets`). Its length and offset are the compositor's: `round(visible
+/ total · track)`, at least 26 pixels, at `trunc(offset · (track − thumb) /
+max)` (an offset under one pixel leaves the thumb at the start, unlike the
+classic thumb), computed in CSS pixels and drawn scaled and anti-aliased, as
+Chrome draws them at 1.25x and 2x. The track, once shown, fills the frame in
+device pixels with one layer at the track's opacity: the gradient along the
+track (`0.973` at alpha `0.776` easing to `0.761` over the first third; dark
+`0.847` at `0.157` to `0.8` at `0.149`), the inner border `#DFDFDF` at
+`0xF9` (dark `#E5E5E5` at `0x33`) on the content side and the outer border
+`#E8E8E8` at `0xC6` (dark `#D8D8D8` at `0x28`) on the outer edge, each one
+pixel wide (floored when scaled). A bar paints in its container's outline
+phase, after the container's content and outline, clipped by its ancestors'
+clips but not by its container's rounded corners (as Chrome); while it shows,
+its frame takes the pointer for the container, so a wheel over it scrolls the
+container. Only vertical bars paint: native layout scrolls only vertically,
+and a horizontal overlay bar shows only while its axis scrolls. A textarea's
+own text scrolling shows no bar.
+
+Geometry, hits and pixels match Chrome 156 headless on macOS (overlay
+scrollbars) running the same steps in real time at 1x, 1.25x and 2x within
+the 2/255 mean bound (`native_overlay_scrollbar_probe` with
+`scripts/test-native-overlay-scrollbars.mjs`): just after a wheel or
+programmatic scroll, after the pointer rested on the bar and after the
+fade-out, on light, dark, bordered, rounded and two-axis scrollers and with
+the minimum thumb. Chrome advances its animations on a 60 Hz timer, so its
+frames can lag native's by up to one tick. `varta-shell` passes
+the frame's `scrollbar_at` for each pointer sample of the presented frame
+(`Application::view_set_scrollbar_hover`) and none when the pointer leaves the
+window, and presents frames while a bar animates.
 
 #### Native fallback faces
 
@@ -14396,9 +14469,11 @@ Native scrollable overflow does not include translated boxes.
 environment change: a scripted headless session uses its virtual loop time
 (a `wait` step moves transitions deterministically), an application
 instance the wall clock since it started. `Application::view_animating`
-tells a host that a transition runs and `view_advance_animations` moves the
-clock to now before a frame; `varta-shell` then presents a new frame each
-time the previous one was presented, and the last shows the end value.
+tells a host that a transition runs (or an overlay scrollbar waits for its
+fade-out or animates) and `view_advance_animations` moves the clock to now
+before a frame, reporting whether anything paints differently; `varta-shell`
+then presents a new frame each time the previous one was presented and that
+report is true, and the last shows the end value.
 
 #### Native positioned painting and stacking
 
