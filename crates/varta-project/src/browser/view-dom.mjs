@@ -1,9 +1,8 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { createFontNamespace } from './view-fonts.mjs';
-import { createCustomPropertyStyles } from './view-custom-properties.mjs';
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
 import { createViewModel, imageCandidateNames } from "./view-model.mjs";
-import { rewriteRootSelector, checkStylesheet, StylesheetWorkError, CssError } from "./view-css.mjs";
+import { readMediaInputs, MEDIA_INPUT_QUERIES } from "./view-engine.mjs";
 
 const V = registry.view, W = V.wire, F = V.filters;
 const field = Object.fromEntries(W.eventFields.map((entry) => [entry.name, entry]));
@@ -42,11 +41,11 @@ export function encodeViewEvent(kind, values = {}) {
 }
 
 /** A DOM boundary with no HTML parsing, ambient navigation or guest JS. */
-export function createViewDom({ container, onEvent = () => {}, onError = error => {queueMicrotask(()=>{throw error;});}, onTitle = () => {}, onVisualInput, assets = new Map(), fonts = createFontNamespace(crypto.randomUUID().replaceAll('-', '')), linkRequested = () => false, copyText = async () => V.statuses.not_allowed, openUrl = () => V.statuses.not_allowed, interactive = true } = {}) {
+export function createViewDom({ container, viewEngine, onEvent = () => {}, onError = error => {queueMicrotask(()=>{throw error;});}, onTitle = () => {}, onVisualInput, assets = new Map(), fonts = createFontNamespace(crypto.randomUUID().replaceAll('-', '')), linkRequested = () => false, copyText = async () => V.statuses.not_allowed, openUrl = () => V.statuses.not_allowed, interactive = true } = {}) {
   if(onVisualInput!==undefined&&typeof onVisualInput!=='function')throw new TypeError('invalid visual timing callback');
   if (!container?.isConnected) throw new TypeError("view container must be attached");
   if(mountedContainers.has(container))throw new TypeError("view container already hosts an active session");
-  const model = createViewModel({ linkRequested }), document = container.ownerDocument, Sheet = document.defaultView.CSSStyleSheet;
+  const model = createViewModel({ linkRequested, viewEngine }), document = container.ownerDocument, window = document.defaultView, Sheet = window.CSSStyleSheet;
   const root = document.createElement("div"); root.setAttribute(rootAttribute, "");
   const shell=document.createElement("div");shell.style.height="100%";container.replaceChildren(shell);
   const shadow = shell.attachShadow({ mode: "closed" }); shadow.append(root);
@@ -55,10 +54,41 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
   const base = new Sheet();
   const D = V.defaults;
   base.replaceSync(`:host { all: initial; display: block; } ${D.rootSelector} { ${D.rootStyle}; } ${fonts.rules(D)} button, input, textarea, select { box-sizing: border-box; margin: 0; } textarea { resize: none; } dialog { border: none; padding: 0; background-color: ${D.dialogBackground[0]}; color: ${D.dialogText[0]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[0]}; } @media (prefers-color-scheme: dark) { dialog { background-color: ${D.dialogBackground[1]}; color: ${D.dialogText[1]}; } dialog::backdrop { background-color: ${D.dialogBackdrop[1]}; } }`);
-  const sheets = new Map(), nodes = new Map([[W.root, root]]), ids = new WeakMap([[root, W.root]]), ownedAssets = new Map(assets);
-  const variables = createCustomPropertyStyles({root, shadow, nodes, ids, fonts, onError});
+  const nodes = new Map([[W.root, root]]), ids = new WeakMap([[root, W.root]]), ownedAssets = new Map(assets);
   let applying = false, closed = false;
-  const adopt = () => { shadow.adoptedStyleSheets = [base, ...[...sheets].sort(([a], [b]) => a - b).map(([, sheet]) => sheet)]; }; adopt();
+  shadow.adoptedStyleSheets = [base];
+  // Every element's style is the view style engine's computed value, set
+  // inline; guest stylesheets never reach the platform cascade. The engine's
+  // inputs are recorded here: the viewport, the media preferences and the
+  // pointer and focus states the platform reports.
+  const applied = new WeakMap(), engine = model.engine;
+  const idOf = (element) => { for (let at = element; at; at = at.parentNode) if (ids.has(at)) return ids.get(at); return W.noNode; };
+  const deepest = (selector) => { const list = shadow.querySelectorAll(selector); return list.length ? idOf(list[list.length - 1]) : W.noNode; };
+  function restyle() {
+    if (closed) return;
+    const inputs = readMediaInputs(window);
+    engine.environment(inputs.width, inputs.height, inputs.rootFontSize, inputs.flags);
+    const focused = shadow.activeElement?.matches?.(":focus-visible") ? idOf(shadow.activeElement) : W.noNode;
+    engine.state(focused, deepest(":hover"), deepest(":active"));
+    for (const [id, element] of nodes) {
+      if (element.nodeType !== 1) continue;
+      const values = engine.computed(id), previous = applied.get(element) ?? new Map();
+      for (const property of previous.keys()) if (!values.has(property)) element.style.removeProperty(property);
+      for (const [property, value] of values) {
+        if (previous.get(property) === value) continue;
+        element.style.setProperty(property, property === "font-family" && value !== "inherit" ? fonts.value(value) : value);
+      }
+      applied.set(element, values);
+    }
+  }
+  let frame;
+  const schedule = () => { if (!closed && frame === undefined) frame = window.requestAnimationFrame(() => { frame = undefined; try { restyle(); } catch (error) { onError(error); } }); };
+  const stateEvents = ["pointerover", "pointerout", "pointerdown", "pointerup", "pointercancel", "focusin", "focusout", "keydown", "keyup", "input", "change"];
+  for (const kind of stateEvents) shadow.addEventListener(kind, schedule, true);
+  const queries = MEDIA_INPUT_QUERIES.map((query) => window.matchMedia(query));
+  for (const query of queries) query.addEventListener("change", schedule);
+  window.addEventListener("resize", schedule);
+  const unobserve = () => { for (const kind of stateEvents) shadow.removeEventListener(kind, schedule, true); for (const query of queries) query.removeEventListener("change", schedule); window.removeEventListener("resize", schedule); if (frame !== undefined) window.cancelAnimationFrame(frame); };
   const snapshots = () => new Map(model.snapshot().nodes.map((node) => [node.id, node]));
   const publish = (kind, values, trusted, selectedOption) => onEvent({ ...(selectedOption===undefined?{}:{selectedOption}), bytes: encodeViewEvent(kind, values), gesture: Boolean(trusted && eventKinds.get(kind).gesture), coalescible: eventKinds.get(kind).coalescible, handler: values.handler });
 
@@ -120,26 +150,6 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
       const names = imageCandidateNames(decoded[i].text); if (names === null) throw new ViewProtocolError("attribute value", i);
       resolved.set(i, decoded[i].text.split(",").map((part, index) => part.trim().replace(names[index], owned(names[index], i))).join(", "));
     }
-    // Parsing sheets before commit catches platform allocation/parse failures
-    // without advancing either validation state or visible DOM.
-    const preparedSheets = new Map(), preparedFonts = new Map(), preparedCustom = new Map();
-    let stylesheetWork=0;
-    for (let i = 0; i < decoded.length; i++) {
-      if (decoded[i].name === "stylesheet" && decoded[i].text) {
-        let checked;try{checked=checkStylesheet(decoded[i].text,V,{workLimit:V.limits.stylesheetWork-stylesheetWork});}
-        catch(error){throw new ViewProtocolError(error instanceof StylesheetWorkError?'stylesheet work budget':'stylesheet value',i);}
-        if(checked.errors.length)throw new ViewProtocolError('stylesheet value',i);
-        stylesheetWork+=checked.work;
-        const sheet=new Sheet();sheet.replaceSync(rewriteRootSelector(decoded[i].text,D.rootSelector));
-        // The font namespace refuses CSS-wide font-family keywords (CssError);
-        // report them like any other refused value, with the operation index.
-        try{preparedCustom.set(i,variables.prepare(sheet));}catch(error){throw error instanceof CssError?new ViewProtocolError('stylesheet value',i):error;}
-        preparedSheets.set(i,sheet);
-      }
-      if (decoded[i].name === "set_style" && decoded[i].property === "font-family") {
-        try{preparedFonts.set(i, fonts.value(decoded[i].text));}catch(error){throw error instanceof CssError?new ViewProtocolError('font-family keyword',i):error;}
-      }
-    }
     const { operations, effects, skippedValues } = model.commit(bytes), current = snapshots();
     applying = true;
     try {
@@ -153,13 +163,10 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
           case "set_attribute": node.setAttribute(op.attribute, op.attribute === "src" || op.attribute === "srcset" ? resolved.get(i) : op.attribute === "href" ? "#" : op.text); break;
           case "remove_attribute": node.removeAttribute(op.attribute); break;
           case "set_class": node.className = op.text; break;
-          case "set_style": node.style.setProperty(op.property, preparedFonts.get(i) ?? op.text); break;
-          case "remove_style": node.style.removeProperty(op.property); break;
           case "insert": nodes.get(op.parent).insertBefore(node, op.before === W.noNode ? null : nodes.get(op.before)); break;
           case "remove": { const stack = [node]; while (stack.length) { const removed = stack.pop(); for (const child of removed.childNodes) stack.push(child); nodes.delete(ids.get(removed)); ids.delete(removed); } node.remove(); break; }
           case "set_value": if (current.get(op.node)?.seq === op.base_seq && node.value!==op.text) node.value = op.text; break;
           case "set_checked": if (current.get(op.node)?.seq === op.base_seq) node.checked = Boolean(op.checked); break;
-          case "stylesheet": if (op.text) sheets.set(op.sheet, preparedSheets.get(i)); else sheets.delete(op.sheet); variables.replace(op.sheet,preparedCustom.get(i));adopt(); break;
           case "set_title": onTitle(op.text); break;
           // Listener and command state is already committed in the pure model.
         }
@@ -173,7 +180,7 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
         const element=nodes.get(id);
         if(element.selectedIndex!==selected)element.selectedIndex=selected;
       }
-      variables.commit(current);
+      restyle();
     } finally { applying = false; }
     for (const op of effects) {
       const node = nodes.get(op.node);
@@ -191,12 +198,12 @@ export function createViewDom({ container, onEvent = () => {}, onError = error =
         case "close": node.close(); break;
       }
     }
-    if(effects.some(op=>['focus','blur','show_modal','close'].includes(op.command)))variables.refresh();
+    if(effects.some(op=>['focus','blur','show_modal','close'].includes(op.command)))restyle();
     return 0;
   }
   return { apply, snapshot: () => model.snapshot(), complete: (id) => model.complete(id),
-    freeze() { if(closed)return;closed=true;root.inert=true;variables.close();mountedContainers.delete(container);for(const [kind,listener,capture] of handlers)shadow.removeEventListener(kind,listener,{capture}); },
-    close() { if (closed) return; closed = true;variables.close();mountedContainers.delete(container); for (const [kind, listener, capture] of handlers) shadow.removeEventListener(kind, listener, { capture }); root.replaceChildren(); nodes.clear(); sheets.clear(); ownedAssets.clear(); model.close(); shadow.adoptedStyleSheets = []; },
+    freeze() { if(closed)return;closed=true;root.inert=true;unobserve();mountedContainers.delete(container);for(const [kind,listener,capture] of handlers)shadow.removeEventListener(kind,listener,{capture}); },
+    close() { if (closed) return; closed = true;unobserve();mountedContainers.delete(container); for (const [kind, listener, capture] of handlers) shadow.removeEventListener(kind, listener, { capture }); root.replaceChildren(); nodes.clear(); ownedAssets.clear(); model.close(); shadow.adoptedStyleSheets = []; },
     // Explicit inspection seam for host tests. The guest receives no DOM handle.
     inspectNode(id) { return nodes.get(id); },
   };

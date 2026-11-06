@@ -289,7 +289,127 @@ export function setForEach<T>(set: SetStore<T>, callback: (value: T, key: T) => 
   }
 }
 
+// ---- ES2025 Set methods (`standard_library`; ECMA-262 §24.2.4). Every
+// argument is a `Set`, whose `size`, `has` and `keys` are the built-in ones,
+// so GetSetRecord observes nothing; the iteration order follows the spec's
+// choice between this set's and the other set's elements.
+
+export function setUnion<T>(set: SetStore<T>, other: SetStore<T>): SetStore<T> {
+  const result = setCopy(set);
+  for (const value of setValues(other)) {
+    setAdd(result, value);
+  }
+  return result;
+}
+
+export function setIntersection<T>(set: SetStore<T>, other: SetStore<T>): SetStore<T> {
+  const result = setCreate<T>();
+  if (setSize(set) <= setSize(other)) {
+    for (const value of setValues(set)) {
+      if (setHas(other, value)) {
+        setAdd(result, value);
+      }
+    }
+  } else {
+    for (const value of setValues(other)) {
+      if (setHas(set, value)) {
+        setAdd(result, value);
+      }
+    }
+  }
+  return result;
+}
+
+export function setDifference<T>(set: SetStore<T>, other: SetStore<T>): SetStore<T> {
+  const result = setCopy(set);
+  if (setSize(set) <= setSize(other)) {
+    for (const value of setValues(set)) {
+      if (setHas(other, value)) {
+        setDelete(result, value);
+      }
+    }
+  } else {
+    for (const value of setValues(other)) {
+      setDelete(result, value);
+    }
+  }
+  return result;
+}
+
+export function setSymmetricDifference<T>(set: SetStore<T>, other: SetStore<T>): SetStore<T> {
+  const result = setCopy(set);
+  for (const value of setValues(other)) {
+    if (setHas(set, value)) {
+      setDelete(result, value);
+    } else {
+      setAdd(result, value);
+    }
+  }
+  return result;
+}
+
+export function setIsSubsetOf<T>(set: SetStore<T>, other: SetStore<T>): boolean {
+  if (setSize(set) > setSize(other)) {
+    return false;
+  }
+  for (const value of setValues(set)) {
+    if (!setHas(other, value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function setIsSupersetOf<T>(set: SetStore<T>, other: SetStore<T>): boolean {
+  if (setSize(set) < setSize(other)) {
+    return false;
+  }
+  for (const value of setValues(other)) {
+    if (!setHas(set, value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function setIsDisjointFrom<T>(set: SetStore<T>, other: SetStore<T>): boolean {
+  if (setSize(set) <= setSize(other)) {
+    for (const value of setValues(set)) {
+      if (setHas(other, value)) {
+        return false;
+      }
+    }
+  } else {
+    for (const value of setValues(other)) {
+      if (setHas(set, value)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // ---- Map<K, V>
+
+// Map.groupBy (ECMA-262 §24.1.2.1, GroupBy with the `zero` key coercion):
+// each group is an array of the items, in order, under the callback's key.
+export function mapGroupBy<K, T>(
+  items: T[],
+  callback: (value: T, index: number) => K,
+): MapStore<K, T[]> {
+  const groups = mapCreate<K, T[]>();
+  for (let index = 0; index < items.length; index++) {
+    const value = items[index]!;
+    const key = callback(value, index);
+    const group = mapGet(groups, key);
+    if (group === undefined) {
+      mapSet(groups, key, [value]);
+    } else {
+      group.push(value);
+    }
+  }
+  return groups;
+}
 
 export function mapCreate<K, V>(): MapStore<K, V> {
   const keys: K[] = [];

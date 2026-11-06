@@ -8,15 +8,21 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-06
 
-- **Latest successful full gate:** `target/verification/20261106-121636-n8h8914c/report.json` passes every
-  command with unchanged inputs: **3975 Rust tests, 0 failures, 21 ignored;
-  218 browser Node tests**; checked-v38 conformance (135 passed, 5 known
-  unsupported of 140) matches its baseline. It covers merged `main`: the v38
-  iteration protocol and macOS overlay scrollbars on top of the audit fixes
-  of 2026-11-06 (HTTP/2 streams and idle bound, per-stream write idle, file
-  reads off the request workers, linear emoji fallback, Parley segment
-  counting), colour emoji and text under `scale()`. The audit-fix batch alone
-  passed `20261106-114846-cule_s6v` (3949 Rust tests).
+- **Latest successful full gate:** `target/verification/20261106-164451-rnhotsbe/report.json` passes every
+  command with unchanged inputs: **4301 Rust tests, 0 failures, 25 ignored;
+  185 browser Node tests** (fewer than before because the browser host's
+  stylesheet and cascade logic moved from JavaScript into the Rust engine
+  compiled to Wasm, with its tests); checked-v38 conformance matches its
+  baseline. It covers merged `main` with the K8 T2 CSS engine stages S1–S3
+  and the Wasm style bridge, the K8 T1 Tailwind compiler and its follow-ups,
+  native `img` to the standards, the iteration protocol, overlay scrollbars
+  and the audit fixes.
+- **One full gate at a time:** `verify.py full` waits for the machine-wide
+  lock (`VARTA_GATE_LOCK`, default `varta-full-gate.lock` in the temporary
+  directory) before taking its fingerprint, so gates of several worktrees
+  queue instead of slowing each other and failing time-sensitive tests
+  (owner decision, 2026-11-06). A caller already holding the lock sets
+  `VARTA_GATE_LOCK_HELD=1`.
 - **Superseded runs of the same batch:** `20261106-112155-1m2tiy5k` passed
   every test but saw its sources change during the run (another session
   edited the tree); `20261106-113508-baj7a9l2` failed one new HTTP/2 test
@@ -24,7 +30,9 @@ any previous check whose scope includes those inputs.
   run. Neither is current evidence.
 - **Source scope:** the gate fingerprint covers every tracked and untracked
   file except the independent product examples (`examples/`), which no
-  engine input depends on (`scripts/verify.py`, `INDEPENDENT_PREFIXES`).
+  engine input depends on, and `.claude/` (local session tooling and agent
+  worktrees, each verified on its own) (`scripts/verify.py`,
+  `INDEPENDENT_PREFIXES`).
 - **Separate external acceptance:** Chrome streaming after the network
   inactivity change has not been run. Real-window/system-input checks,
   current remote CI, remaining browser/platform matrices, sustained live
@@ -43,6 +51,7 @@ its own location; these examples start at the workspace root:
 
 ```sh
 python3 scripts/verify.py local varta-bigint
+python3 scripts/verify.py local varta-tailwind
 python3 scripts/verify.py local varta-runtime --filter array_inference
 python3 scripts/verify.py feature array_inference
 python3 scripts/verify.py full
@@ -61,6 +70,17 @@ build the companion, then select matching runtime unit tests, public engine API
 tests and CLI smoke tests. Each selected suite, Cargo or Node, must execute
 passing tests; a typo that matches zero tests fails. Where names differ, run explicit Cargo commands
 with the appropriate filters instead of widening a filter until it happens to pass.
+
+## Tailwind compiler
+
+`python3 scripts/verify.py local varta-tailwind` runs the port's unit tests
+and the committed oracle conformance (`tests/oracle_subset.rs`: per-candidate
+and whole-stylesheet fixtures). The full 39,152-candidate corpus lives outside
+the repository and runs manually:
+`cargo test -p varta-tailwind --release --test oracle_full -- --ignored --nocapture`
+(and `--test canonical_oracle` for the canonical form). Project integration
+is covered by `cargo test -p varta --test tailwind --locked`, and class
+extraction by `cargo test -p varta-compiler --lib --locked tsx_tests classes`.
 
 ## View integration cases
 
@@ -743,6 +763,47 @@ every transition paused at the probe's time since its style change.
 ```sh
 cargo run -p varta-view --example native_transition_probe --locked > target/native-transitions.json
 node scripts/test-native-transitions.mjs target/native-transitions.json
+```
+
+The CSS engine (K8 T2 and T3: escaped classes, layers and importance,
+CSS-wide keywords, conditional rules, registered properties, media
+features, math, units and Color 4/5) is compared with Chrome in two modes:
+`bridge` applies each scene through the official browser host's
+`view-engine.wasm`, `platform` lets Chrome's own cascade evaluate the
+stylesheet text in a closed shadow root; in `platform` mode a scene with a
+recorded deviation (out-of-gamut colours) reports instead of failing:
+
+```sh
+cargo test -p varta-style --locked
+cargo test -p varta-view --test integration --locked css_
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_css_engine_probe --locked -- "$scale" > "target/native-css-$scale.json"
+  node scripts/test-native-css-engine.mjs "target/native-css-$scale.json" bridge
+  node scripts/test-native-css-engine.mjs "target/native-css-$scale.json" platform
+done
+```
+
+The browser host's engine is a checked-in build. After a change to
+`varta-style`, `varta-style-wasm` or `varta-common`'s view modules, rebuild
+it (offline, locked toolchain), regenerate the cross-host record from the
+native engine and renderer, and run the cross-host tests: the Rust test
+checks the Wasm module (under Wasmtime), the native `Session` and the native
+renderer against each other and the fingerprint against the sources, the
+Node test checks the browser view model against the same record:
+
+```sh
+python3 scripts/build-view-engine.py
+VARTA_UPDATE_VIEW_ENGINE_EXPECTED=1 cargo test -p varta-project --lib --locked view_engine
+cargo test -p varta-project --lib --locked view_engine
+node --test crates/varta-project/src/browser/view-engine.test.mjs
+```
+
+The desktop shell's system preferences (macOS reduced motion and increased
+contrast) are host inputs with their own tests:
+
+```sh
+cargo test -p varta-runtime --lib --locked native_layout_applies_recorded_preferences
+cargo test -p varta-desktop --lib --locked system_preferences
 ```
 
 Classic (always-shown) scrollbars are compared with Chrome run with macOS's

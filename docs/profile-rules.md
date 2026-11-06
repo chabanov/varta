@@ -3167,7 +3167,8 @@ structural subtyping (`structural_subtyping`) and code generation v2
 decoders (`json_decoders`, [rules below](#json-decoders-json_decoders))
 and hashed `Map`/`Set` tables (`collection_hashing`, [rules
 below](#collection-hashing-collection_hashing)), and the iteration
-protocol (`iteration_protocol`, [rules below](#iteration-protocol-iteration_protocol));
+protocol (`iteration_protocol`, [rules below](#iteration-protocol-iteration_protocol)), and the K9 D
+standard library (`standard_library`, [rules below](#standard-library-standard_library));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
@@ -4014,6 +4015,52 @@ Contract: [architecture.md](architecture.md#expression-forms-expression_forms).
   again in collector stress builds; refusals and v37 denials), the CLI smoke
   `v38_expression_forms_run_in_dev_and_artifacts` and the conformance
   features listed in the architecture contract.
+### Standard library (`standard_library`)
+
+Contract: [architecture.md](architecture.md#standard-library-standard_library).
+
+- Gate every admission on `standard_library()`; v37 keeps its diagnostics
+  for each form (`standard_forms_stay_refused_by_v37`). Library behaviour
+  lives in typed guest code: `prelude/standard.ts` (`STANDARD`, a builtin
+  prelude, so its classes are opaque), `prelude/aggregate.ts` (`AGGREGATE`,
+  not opaque: an `AggregateError` is an ordinary `Error` subclass), the v38
+  collections prelude (Set methods, `mapGroupBy`) and the v38 date prelude
+  (`date_v38` lifts the v37 helpers and appends `prelude/date_local.ts`).
+  `lower::standard` only chooses the prelude function, lowers callbacks with
+  their parameter types and adapts them (`adapt_callback`); keep new logic in
+  the preludes and in that module, with one-line hooks elsewhere.
+- Every new method name, static member or global that needs the standard
+  prelude goes into `STANDARD_LOADS`; a missing key shows up as `engine
+  function … is not loaded`. A program that loads the prelude without
+  calling it keeps none of its functions (`lower::prune`).
+- Sorting must keep V8's TimSort step for step (`countAndMakeRun`,
+  `binaryInsertionSort`, `gallopLeft`/`gallopRight`, `mergeLow`/`mergeHigh`,
+  the run-stack invariant of `mergeCollapse`): the comparator call sequence
+  is observable, and `sorting.ts` pins it for every size class against Node.
+  Never replace it with another stable sort.
+- Methods whose results depend on argument presence (`splice`,
+  `toSpliced`, `Date` setters and constructors) take the source argument
+  count or rest parameters; never default an optional parameter where
+  JavaScript distinguishes an explicit `undefined`.
+- Copying methods read holes through `array[i] as T`: a hole of an element
+  type without `undefined` throws like `for...of`; do not invent a value.
+- `JSON.stringify` options rewrite the compact serializer text
+  (`jsonSelect`, `jsonIndent`); the replacer and space arguments must stay
+  effect-free (`effect_free`) because they run after serialization.
+- `Date` members that `Object.prototype` or JSON reserve (`toString`,
+  `valueOf`, `toJSON`) are prelude functions reached through
+  `date_conversion`; the local time zone enters only through `zoneOffset`
+  (UTC until an owner-decided host zone exists).
+- `refusal` names the missing value-model part for `Symbol`, weak
+  collections, `Proxy`, `Reflect`, `structuredClone`, integrity levels,
+  descriptors/prototypes and `Intl`; admitting one of them replaces its row.
+- Tests: `varta-runtime` `standard_library_tests` (the
+  `standard_library_cases/*.expected` files are Node 24.20.0 output with
+  `TZ=UTC`; the collector stress builds print the same), the CLI smoke
+  `v38_standard_library_runs_in_dev_and_artifacts`, the conformance features
+  `array-copying-methods`, `iterator-helpers`, `set-methods`, `grouping`,
+  `aggregate-error` and the new cases of `json-stringify`, `date`,
+  `string-builtins` and `math`.
 
 ### Bytes held by unknown (`byte_values`)
 

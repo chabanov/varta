@@ -41,6 +41,9 @@ pub(crate) struct SourceLoader {
     package_specifiers: bool,
     packages: packages::Packages,
     watch: Option<watch::Observations>,
+    /// Text resources whose text the build generates (the Tailwind
+    /// stylesheet): `load` returns this text instead of the file's.
+    generated: std::cell::RefCell<std::collections::BTreeMap<PathBuf, String>>,
 }
 impl SourceLoader {
     pub(crate) fn new(
@@ -58,7 +61,17 @@ impl SourceLoader {
             package_specifiers: profile.package_specifiers(),
             packages: packages::Packages::default(),
             watch: None,
+            generated: Default::default(),
         })
+    }
+    /// The identity of a project file named relative to the configuration
+    /// directory, normalized like a text resource.
+    pub(crate) fn project_file(&self, relative: &str) -> Result<PathBuf> {
+        Ok(self.normalize(&self.root.join(relative))?)
+    }
+    /// Serve `text` as the contents of the text resource `path`.
+    pub(crate) fn set_generated(&self, path: PathBuf, text: String) {
+        self.generated.borrow_mut().insert(path, text);
     }
     pub(crate) fn entry(&self, path: &Path) -> Result<ModuleSource> {
         // The entry is explicit host configuration, including legacy layouts
@@ -250,6 +263,24 @@ impl SourceLoader {
         Ok(false)
     }
 }
+/// Project stylesheets imported by the Tailwind entry (K8): resolved like
+/// text resources (relative, no URL syntax, inside the configuration
+/// directory) and read through the pinned root with no-follow at every
+/// component, bounded and UTF-8, never the generated stylesheet.
+impl varta_tailwind::StylesheetLoader for SourceLoader {
+    fn resolve(
+        &self,
+        importer: &Path,
+        specifier: &str,
+    ) -> std::result::Result<PathBuf, varta_tailwind::LoadError> {
+        ModuleLoader::resolve_text(self, importer, specifier)
+            .map_err(|e| varta_tailwind::LoadError(e.to_string()))
+    }
+    fn load(&self, path: &Path) -> std::result::Result<String, varta_tailwind::LoadError> {
+        self.read(path)
+            .map_err(|e| varta_tailwind::LoadError(format!("cannot load {}: {e}", path.display())))
+    }
+}
 impl ModuleLoader for SourceLoader {
     fn resolve(
         &self,
@@ -343,6 +374,9 @@ impl ModuleLoader for SourceLoader {
         self.normalize(&parent.join(specifier))
     }
     fn load(&self, path: &Path) -> std::result::Result<String, CompilerError> {
+        if let Some(text) = self.generated.borrow().get(path) {
+            return Ok(text.clone());
+        }
         self.read(path).map_err(|e| {
             CompilerError::Module(format!("cannot load module {}: {e}", path.display()))
         })

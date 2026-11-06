@@ -9,8 +9,10 @@ use std::{
 use varta_common::{CapabilityGrant, CapabilityValue, http::HttpError};
 
 /// How long a test waits for a started service to listen: a safety net far
-/// above a normal start, so only a hung start reaches it.
-const LISTENER_READINESS: Duration = Duration::from_secs(15);
+/// above a normal start, so only a hung start reaches it. A start under a
+/// heavily loaded machine (parallel full gates) took over 15 s; this net does
+/// not depend on the machine's speed.
+const LISTENER_READINESS: Duration = Duration::from_secs(120);
 
 const HANDLER: &str = r#"
 function handle(request:VartaHttpRequest):VartaHttpResponse{

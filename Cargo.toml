@@ -14,8 +14,11 @@ members = [
   "crates/varta-intrinsics-wasm",
   "crates/varta-kv-codec",
   "crates/varta-kv-codec-wasm",
+  "crates/varta-style",
+  "crates/varta-style-wasm",
   "crates/varta-view",
   "crates/varta-desktop",
+  "crates/varta-tailwind",
 ]
 default-members = ["crates/varta-cli", "crates/varta-launcher"]
 exclude = [
@@ -77,7 +80,7 @@ fontconfig = { version = "=0.11.0", features = ["dlopen"] }
 # (`NSScroller.preferredScrollerStyle`), the system setting Chrome follows for
 # overlay or always-shown scrollbars; a safe class method on the main thread.
 objc2 = "=0.6.5"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSControl", "NSResponder", "NSScroller", "NSView"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAccessibility", "NSControl", "NSResponder", "NSScroller", "NSView", "NSWorkspace"] }
 softbuffer = { version = "=0.4.6", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 # Apache-2.0: semantic tree and native accessibility adapters, desktop only.
 accesskit = "=0.25.2"

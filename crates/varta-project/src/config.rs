@@ -65,6 +65,20 @@ pub struct VartaConfig {
     /// grants.
     #[serde(default)]
     pub images: std::collections::BTreeMap<String, String>,
+    /// The build-time Tailwind stylesheet (K8, checked-f64-utf16-v38):
+    /// `"tailwind": {"entry": "src/app.css"}`.
+    #[serde(default)]
+    pub tailwind: Option<TailwindConfig>,
+}
+
+/// `"tailwind": {"entry": "…"}`: a CSS-first Tailwind entry stylesheet
+/// inside the configuration directory. The program imports it as a text
+/// resource; every build replaces that resource's text by the stylesheet
+/// generated from the entry and the program's class tokens.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TailwindConfig {
+    pub entry: String,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -118,6 +132,16 @@ impl VartaConfig {
             ));
         }
         let grants = self.normalized_capabilities();
+        if let Some(tailwind) = &self.tailwind
+            && (!self.language_profile.text_imports()
+                || tailwind.entry.trim().is_empty()
+                || tailwind.entry.starts_with('/')
+                || tailwind.entry.contains(['\\', '?', '#']))
+        {
+            return Err(VartaError::InvalidManifest(
+                "tailwind.entry must be a relative path inside the project and requires profile checked-f64-utf16-v38".into(),
+            ));
+        }
         if let Some(browser) = &self.browser {
             if !self.language_profile.tsx()
                 || browser.resources.len() + browser.fonts.len()

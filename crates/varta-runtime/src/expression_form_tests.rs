@@ -47,6 +47,7 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("object_methods"),
     case!("computed_keys"),
     case!("destructuring"),
+    case!("callback_patterns"),
     case!("iterators"),
     case!("using"),
     case!("thenables"),
@@ -134,6 +135,14 @@ fn constant_computed_keys_match_node() {
 #[test]
 fn destructuring_everywhere_matches_node() {
     matches_node("destructuring");
+}
+
+/// Array, tuple and object patterns with defaults and rest in the
+/// parameters of arrows, functions, methods and the callbacks of array
+/// methods and iterator helpers, and the rest of a tuple pattern.
+#[test]
+fn callback_parameter_patterns_match_node() {
+    matches_node("callback_patterns");
 }
 
 #[test]

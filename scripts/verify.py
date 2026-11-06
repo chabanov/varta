@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import fcntl
 import hashlib
 import json
 import os
@@ -21,10 +22,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = (
     "varta", "varta-artifact", "varta-bigint", "varta-common", "varta-compiler",
     "varta-conformance", "varta-desktop", "varta-intrinsics", "varta-kv-codec", "varta-launcher",
-    "varta-project", "varta-runtime", "varta-view",
+    "varta-project", "varta-runtime", "varta-style", "varta-tailwind", "varta-view",
 )
 # The checked-in browser KV codec must match its sources (scripts/build-kv-codec.py).
 KV_CODEC_CHECK = [sys.executable, "scripts/build-kv-codec.py", "--check"]
+# The checked-in browser view style engine must match its sources
+# (scripts/build-view-engine.py).
+VIEW_ENGINE_CHECK = [sys.executable, "scripts/build-view-engine.py", "--check"]
 CORE = ["varta-common", "varta-compiler", "varta-runtime", "varta-artifact"]
 # The browser host's engine modules (registry, fuel, Worker, loader) run in
 # Node's built-in test runner; no npm dependency is installed.
@@ -207,6 +211,8 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
             result.append(browser_node_tests())
         if args.package == "varta-kv-codec":
             result.append(KV_CODEC_CHECK)
+        if args.package == "varta-style":
+            result.append(VIEW_ENGINE_CHECK)
         return result
     if args.scope == "feature":
         return [
@@ -225,6 +231,7 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
         cargo("check", "-p", "varta-common", "-p", "varta-intrinsics", "-p", "varta-kv-codec",
               "--no-default-features", "--lib", "--locked"),
         KV_CODEC_CHECK,
+        VIEW_ENGINE_CHECK,
         companion(),
         cargo("clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"),
         cargo("build", "--workspace", "--all-targets", "--locked"),
@@ -234,16 +241,17 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
     ]
 
 
-# Product examples are independent applications, never inputs of the engine:
-# no crate, test or generated document depends on them, so changing or
-# removing one does not invalidate an engine run.
-INDEPENDENT_PREFIXES = (b"examples/",)
+# Not inputs of the engine, so changing them does not invalidate a run:
+# product examples are independent applications (no crate, test or generated
+# document depends on them), and `.claude/` holds local session tooling and
+# agent worktrees, each a separate checkout verified on its own.
+INDEPENDENT_PREFIXES = (b"examples/", b".claude/")
 
 
 def fingerprint() -> dict[str, str]:
     """Include staged, unstaged and untracked content, not just the HEAD commit.
 
-    Independent product examples (`INDEPENDENT_PREFIXES`) are not inputs."""
+    Independent paths (`INDEPENDENT_PREFIXES`) are not inputs."""
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
     files = subprocess.check_output(
         ["git", "ls-files", "-c", "-o", "--exclude-standard", "-z"], cwd=ROOT,
@@ -267,6 +275,32 @@ def fingerprint() -> dict[str, str]:
         digest.update(kind + b"\0")
         digest.update(hashlib.sha256(content).digest())
     return {"head": head, "sourceSha256": digest.hexdigest()}
+
+
+# Full gates run one at a time on a machine (owner decision, 2026-11-06):
+# overlapping gates of several worktrees slow every run and fail
+# time-sensitive tests. The lock file is shared by every checkout of the same
+# user; `VARTA_GATE_LOCK` names another one, and a caller that already holds
+# the lock (a queueing wrapper) sets `VARTA_GATE_LOCK_HELD=1`.
+GATE_LOCK_ENV = "VARTA_GATE_LOCK"
+GATE_LOCK_HELD_ENV = "VARTA_GATE_LOCK_HELD"
+
+
+def full_gate_lock():
+    """Wait for and hold the machine-wide full-gate lock; `None` when the
+    caller already holds it. The lock lasts while the returned file is open."""
+    if os.environ.get(GATE_LOCK_HELD_ENV) == "1":
+        return None
+    path = Path(os.environ.get(GATE_LOCK_ENV) or Path(tempfile.gettempdir()) / "varta-full-gate.lock")
+    lock = open(path, "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"waiting for another full gate to finish ({path})", flush=True)
+        started = time.monotonic()
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        print(f"full-gate lock acquired after {time.monotonic() - started:.0f} s", flush=True)
+    return lock
 
 
 def main() -> int:
@@ -306,6 +340,9 @@ def main() -> int:
                 print(shlex.join(command))
         return 0
 
+    # Queue behind any other full gate before taking the source fingerprint;
+    # the lock is held until this function returns.
+    gate_lock = full_gate_lock() if args.scope == "full" else None
     # Reports are evidence, not a cache: no passing command is skipped automatically.
     (ROOT / output).mkdir(parents=True, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix=datetime.datetime.now().strftime("%Y%m%d-%H%M%S-"), dir=ROOT / output))

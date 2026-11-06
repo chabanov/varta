@@ -217,8 +217,8 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       const base = new URL("./", import.meta.url);
       // Every response is bounded and verified before Worker creation. In
       // particular, Workers do not follow an unchecked URL/import graph.
-      const [original, image, manifest, script, kvCodec, ...resourceBytes] = await Promise.all(
-        [descriptor.original, descriptor.image, descriptor.manifest, descriptor.worker, descriptor.kvCodec, ...descriptor.resources.map((resource)=>resource.file)]
+      const [original, image, manifest, script, kvCodec, viewEngineBytes, ...resourceBytes] = await Promise.all(
+        [descriptor.original, descriptor.image, descriptor.manifest, descriptor.worker, descriptor.kvCodec, descriptor.viewEngine, ...descriptor.resources.map((resource)=>resource.file)]
           .map((item) => item===undefined?undefined:verifiedFile(base, item, controller.signal)));
       if (settled) return;
       const packageManifest=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(manifest));
@@ -264,15 +264,19 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
           assetUrls.set(resource.key,URL.createObjectURL(blob));
         }
       }
+      // The view style engine (Rust `varta-style` as Wasm) decides every
+      // style input of the page's view model, like the Worker's.
+      const viewEngine=descriptor.hasView?await WebAssembly.compile(viewEngineBytes):undefined;
+      if(settled)return;
       if(descriptor.hasView){
         const ui=viewPolicy.createViewPolicy(packageManifest,permissions,broker.granted);
         if(container){
           for(const face of fontFaces)document.fonts.add(face);
-          renderer=viewDom.createViewDom({container,assets:assetUrls,fonts,interactive:mode==="application",onEvent:enqueue,onError:finish,linkRequested:ui.linkRequested,onTitle:(title)=>{document.title=title;},onVisualInput:timing===undefined?undefined:kind=>timing.visual(kind,performance.now()),
+          renderer=viewDom.createViewDom({container,viewEngine,assets:assetUrls,fonts,interactive:mode==="application",onEvent:enqueue,onError:finish,linkRequested:ui.linkRequested,onTitle:(title)=>{document.title=title;},onVisualInput:timing===undefined?undefined:kind=>timing.visual(kind,performance.now()),
             copyText:async(text)=>{if(!broker.operation(descriptor.view.capabilities.clipboard,'',!consenting&&!navigation&&ui.clipboardAllowed())||settled)return descriptor.view.statuses.not_allowed;try{await navigator.clipboard.writeText(text);return descriptor.view.statuses.ok;}catch{return descriptor.view.statuses.refused_by_platform;}},
             openUrl:(url)=>navigate(url,ui)
           });
-        }else{if(mode==="application")throw new Error("mount requires an attached container");headless=viewModel.createViewModel({linkRequested:ui.linkRequested,assetRequested:(name)=>assetUrls.has(name)});}
+        }else{if(mode==="application")throw new Error("mount requires an attached container");headless=viewModel.createViewModel({viewEngine,linkRequested:ui.linkRequested,assetRequested:(name)=>assetUrls.has(name)});}
       }
       blobUrl = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
       activeWorkerUrls.add(blobUrl);
@@ -362,7 +366,7 @@ function execute({ signal, budgetCeiling, permissionCeiling, decisions, decision
       };
       worker.onerror = () => finish(new Error("browser worker failed"));
       worker.onmessageerror = () => finish(new Error("invalid browser worker message"));
-      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), networkReplay:replayLog, original, image, manifest, kvCodec }, [original.buffer, image.buffer, manifest.buffer, ...(kvCodec?[kvCodec.buffer]:[])]);
+      worker.postMessage({ descriptor: { ...descriptor, budgets }, mode, permissions, decisions:storedDecisions,prompting, platform, environmentInputs:environmentSnapshot.entries(), networkReplay:replayLog, original, image, manifest, kvCodec, viewEngine:viewEngineBytes }, [original.buffer, image.buffer, manifest.buffer, ...(kvCodec?[kvCodec.buffer]:[]), ...(viewEngineBytes?[viewEngineBytes.buffer]:[])]);
       onControl({deliver(event){
         const E=descriptor.permissions.events;
         if(settled)return Promise.reject(new Error('browser application ended'));

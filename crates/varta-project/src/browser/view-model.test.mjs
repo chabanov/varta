@@ -5,19 +5,24 @@ import { registry } from "../../../varta-common/browser/registry.mjs";
 import { encodeViewBatch, decodeViewBatch } from "./view-codec.mjs";
 import { createViewModel } from "./view-model.mjs";
 import { encodeViewEvent } from "./view-dom.mjs";
-import { checkStyleDeclaration, checkStylesheet, StylesheetWorkError } from "./view-css.mjs";
+import { createViewEngine, ENGINE_STATUS } from "./view-engine.mjs";
 
+// The style engine's verdict on one value or stylesheet, in a fresh session.
+const engineStyle = (property, value) => { const e = createViewEngine(viewEngine); e.begin(); e.create(2, true); e.insert(1, 2, 0); return e.setStyle(2, property, value); };
+const engineSheet = (text) => { const e = createViewEngine(viewEngine); e.begin(); return e.stylesheet(1, text); };
+
+import { viewEngine } from "./view-engine.node.mjs";
 const V = registry.view;
 const batch = (...ops) => encodeViewBatch(ops);
 const create = (node, tag = "div") => ({ name: "create_element", node, tag });
 const attribute = (node, text) => ({ name: "set_attribute", node, attribute: "id", text });
 test('stylesheet transform functions preserve the registered spelling', () => {
-  const m=createViewModel();
+  const m=createViewModel({viewEngine});
   m.commit(batch({name:'stylesheet',sheet:1,text:'.x { transform: translateY(1px); }'}));
   assert.throws(()=>m.commit(batch({name:'stylesheet',sheet:2,text:'.x { transform: translateY(bad); }'})),/stylesheet value/);
 });
 test("whole-batch validation rolls back fields, attributes, listeners and new nodes", () => {
-  const m = createViewModel(); m.commit(batch(create(2), create(3, "input")));
+  const m = createViewModel({viewEngine}); m.commit(batch(create(2), create(3, "input")));
   const before = m.snapshot();
   assert.throws(() => m.commit(batch(attribute(2, "same"), attribute(3, "same"))), /duplicate id attribute/);
   assert.deepEqual(m.snapshot(), before);
@@ -35,19 +40,19 @@ test("decoder rejects hostile lengths, codes, padding, surrogates and trailing b
   assert.equal(decodeViewBatch(batch({ name: "create_text", node: 3, text: "\uFEFF😀" }))[0].text, "\uFEFF😀");
 });
 test("shared tag content rules and bit-exact zero command arguments fail closed", () => {
-  const m = createViewModel(); m.commit(batch(create(2, "input"), create(3, "select"), create(4, "option"), { name: "create_text", node: 5, text: "text" }));
+  const m = createViewModel({viewEngine}); m.commit(batch(create(2, "input"), create(3, "select"), create(4, "option"), { name: "create_text", node: 5, text: "text" }));
   for (const parent of [2, 3]) assert.throws(() => m.commit(batch({ name: "insert", parent, node: 5, before: 0 })), /child not allowed/);
   m.commit(batch({ name: "insert", parent: 3, node: 4, before: 0 }, { name: "insert", parent: 4, node: 5, before: 0 }));
   assert.throws(() => m.commit(batch({ name: "command", node: 2, command: "focus", argument: -0 })), /command argument/);
 });
 test("inspection is detached from validation authority and CSS nesting is bounded", () => {
-  const m = createViewModel(); m.commit(batch(create(2))); const snapshot = m.snapshot(); snapshot.nodes[0].children.push(999); snapshot.nodes[1].attributes.id = "injected";
+  const m = createViewModel({viewEngine}); m.commit(batch(create(2))); const snapshot = m.snapshot(); snapshot.nodes[0].children.push(999); snapshot.nodes[1].attributes.id = "injected";
   assert.deepEqual(m.snapshot().nodes[0].children, []); assert.deepEqual(m.snapshot().nodes[1].attributes, {});
-  assert.throws(() => checkStyleDeclaration(V, "width", "var(".repeat(1000) + "--x" + ")".repeat(1000)), /CSS token budget exceeded/);
+  assert.equal(engineStyle("width", "var(".repeat(1000) + "--x" + ")".repeat(1000)), ENGINE_STATUS.invalid);
 });
 
 test("command completion and close release retained host model state",()=>{
-  const m=createViewModel();m.commit(batch(create(2),{name:"copy_text",request:1,text:"copy"}));
+  const m=createViewModel({viewEngine});m.commit(batch(create(2),{name:"copy_text",request:1,text:"copy"}));
   assert.deepEqual(m.snapshot().pending,[1]);m.complete(1);assert.deepEqual(m.snapshot().pending,[]);
   assert.throws(()=>m.complete(1),/unknown command result/);
   m.close();assert.deepEqual(m.snapshot().nodes,[]);assert.deepEqual(m.snapshot().sheets,{});
@@ -55,7 +60,7 @@ test("command completion and close release retained host model state",()=>{
 });
 
 test('radio groups follow form owners, disconnected trees and nonempty names', () => {
-  const m = createViewModel();
+  const m = createViewModel({viewEngine});
   const attr = (node, attribute, text) => ({name:'set_attribute',node,attribute,text});
   const insert = (parent,node) => ({name:'insert',parent,node,before:0});
   const checked = (node) => ({name:'set_checked',node,checked:1,base_seq:0});
@@ -107,7 +112,7 @@ if (oraclePath) {
   }
   test("native view batches agree on acceptance, rollback and committed structural state", () => {
     for (const item of oracle.cases) {
-      const m = createViewModel();
+      const m = createViewModel({viewEngine});
       for (let i = 0; i < item.batches.length; i++) {
         const result = item.results[i]; let ok = true,error;
         try { m.commit(Uint8Array.from(item.batches[i])); } catch (caught) { ok = false;error=caught; }
@@ -129,13 +134,12 @@ if (oraclePath) {
       }
     }
   });
-  test('native stylesheet grammar and parsed-work units agree with the browser checker',()=>{
+  test('native stylesheet grammar and work limits agree with the browser engine',()=>{
     assert(oracle.stylesheetChecks?.length,'native stylesheet observations missing');
     for(const item of oracle.stylesheetChecks){
-      let parsed,error;try{parsed=checkStylesheet(item.source,V);}catch(caught){error=caught;}
-      assert.equal(Boolean(parsed&&!parsed.errors.length),item.valid);
-      assert.equal(error instanceof StylesheetWorkError,item.limit);
-      if(item.valid){assert.deepEqual(parsed.rules.map(rule=>rule.work),item.ruleCosts,`${item.source}: rule costs`);assert.equal(parsed.work,item.work);}
+      const status=engineSheet(item.source);
+      assert.equal(status===ENGINE_STATUS.ok,item.valid,item.source);
+      assert.equal(status===ENGINE_STATUS.sheetWork,item.limit,item.source);
     }
   });
   test("all native event record kinds encode byte-identically",()=>{
@@ -144,7 +148,7 @@ if (oraclePath) {
   test("generated CSS grammars agree with native property validation", () => {
     const mismatches = [];
     for (const item of oracle.css) {
-      let valid = true; try { checkStyleDeclaration(V, item.property, item.value); } catch { valid = false; }
+      const valid = engineStyle(item.property, item.value) === ENGINE_STATUS.ok;
       if (valid !== item.valid) mismatches.push({ ...item, browser: valid });
     }
     assert.deepEqual(mismatches, []);

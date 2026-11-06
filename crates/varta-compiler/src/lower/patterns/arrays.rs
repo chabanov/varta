@@ -298,10 +298,32 @@ impl Lower<'_> {
             let Some(entry) = entry else {
                 continue;
             };
-            if let ast::Pat::Rest(_) = entry {
-                return Err(self
-                    .source
-                    .locate(unsupported("rest element in a tuple pattern"), pattern.span));
+            if let ast::Pat::Rest(rest) = entry {
+                // V38 (`expression_forms`): the remaining elements.
+                if !self.types.profile.expression_forms() {
+                    return Err(self
+                        .source
+                        .locate(unsupported("rest element in a tuple pattern"), pattern.span));
+                }
+                let source = Expr {
+                    span: tuple.span,
+                    ty: tuple.ty,
+                    kind: match tuple.kind {
+                        E::Local(slot) => E::Local(slot),
+                        _ => return Err(invalid("tuple pattern source must be a local")),
+                    },
+                };
+                let value = self
+                    .tuple_rest(source, index)
+                    .map_err(|e| self.source.locate(e, rest.span))?;
+                if mode == Mode::Assign
+                    && let Some(target) = self.prepare_pattern_target(&rest.arg)?
+                {
+                    body.extend(self.finish_pattern_target(target, value, None, vec![])?);
+                } else {
+                    body.extend(self.binding_pattern(&rest.arg, value, None, None, mode)?);
+                }
+                break;
             }
             if index >= length {
                 return Err(self.source.locate(

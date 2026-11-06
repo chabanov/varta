@@ -28,8 +28,8 @@ defaults maintained in this overview.
 | --- | --- | --- |
 | Compiler | Shared TS parsing, resolved typed IR, Wasm emission and validation for check/dev/build; explicit profile negotiation and source-aware diagnostics | Deliberate checked subset; unsupported syntax/types produce diagnostics |
 | Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports; v38 iteration protocol: `[Symbol.iterator]()` iterable classes, generator methods, array literal spreads, `Array.from` of iterables and synchronous `yield*` ([contract](architecture.md#iteration-protocol-iteration_protocol)); v38 expression forms: `await` in every operand, object-literal methods with `this`, constant computed keys, tagged templates, destructuring of iterables, hand-written iterators, `using`, structural thenables ([contract](architecture.md#expression-forms-expression_forms)) | General dynamic properties/prototypes/descriptors, top-level `await`, object-literal accessors, wider receiver behavior and remaining type/module semantics |
-| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, ahead-of-time RegExp and a UTC Date subset | Symbol, object coercion, wrappers, Intl, wider Date/RegExp and full conversion inventory |
-| Async language | Promise chains/combinators, async/await, sync/async generators, for-await, timers, microtasks and abort support | Structural thenables, top-level await and wider async iterable forms |
+| Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, ahead-of-time RegExp; v38 standard library (K9 D): V8-order `sort`/`toSorted`, the ES2023 copying methods, `splice`/`flat`/`flatMap`, iterator helpers, Set methods, `Object.groupBy`/`Map.groupBy`/`Object.fromEntries`, `JSON.stringify` property lists and indentation, `AggregateError` and the complete `Date` in the UTC zone ([contract](architecture.md#standard-library-standard_library)) | Symbol, weak references, Proxy/Reflect, integrity levels, `structuredClone`, object coercion, wrappers, Intl, host time zones, wider RegExp and full conversion inventory |
+| Async language | Promise chains/combinators, async/await (v38: in every operand position), sync/async generators, for-await, timers, microtasks and abort support; v38 structural thenables of statically known types and `await using` | Thenables through unions or `unknown`, top-level await and wider async iterable forms |
 | Runtime | Bounded executions, isolated HTTP request instances and long-lived application instances with event turns, host tasks, permission answers and captured state | Broader sustained cancellation/shutdown, retained-resource and target evidence |
 | Collection | Exact roots/tracing across values, closures and suspension, incremental collection and idle maintenance; large-heap bitmap clearing before the root snapshot | Sustained leak/retained-root checks, collector tuning and peak-memory/RSS measurements |
 | Authority | Deny-by-default grants, exact operation/resource checks, package request intersected with a host ceiling, permission broker and validated artifact/ABI boundaries | Broader policy/permission UX, independent review and complete alternate-host acceptance |
@@ -146,6 +146,7 @@ unrestricted browser DOM in guest code.
 | --- | --- |
 | Structure/layout | Block/flex/grid, dimensions and constraints, margins/padding/gaps, admitted positioning/z-index, inline shaping/line fragments, headings/lists/pre/labels |
 | Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, packaged images (`img`), retained drawing/damage and mixed border colors |
+| CSS engine (K8 T2, T3) | CSS Syntax 3 tokens (comments, escapes), HTML class names with escaped class selectors, `@layer` with `!important` and conditional layers, `@supports`, `@property`, CSS-wide keywords, Media Queries 4/5 features as recorded host inputs (macOS reduced motion and increased contrast on the desktop), `calc()`/`min()`/`max()`/`clamp()`, every length unit, Color 4/5 colours with named colours, gamut mapping and multi-colour `color-mix()`, numeric font weights, `cubic-bezier()`/`steps()`; one Rust engine, linked natively and run by the browser host as `view-engine.wasm` |
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
@@ -157,6 +158,13 @@ The native scope still has concrete gaps:
 
 - Controls need admitted block/flex/grid placement; arbitrary atomic inline
   control layout and mixed block/inline formatting are not complete.
+- The CSS engine refuses `em`, `ex`, `ch`, `lh` and the other
+  font-relative units outside `font-size` and math mixing percentages with
+  lengths: both need the element's computed font or layout-time resolution,
+  which the engine and native layout do not provide yet. Registered
+  `<length>` values are inherited as written rather than absolutized.
+  Increased-contrast and reduced-motion are read from the OS on macOS only;
+  other desktops report no preference.
 - Native `<img>` draws packaged images (the configuration's `images`, the
   same files the browser bundle carries) to the HTML and CSS standards:
   PNG/APNG, JPEG, GIF, WebP, BMP and ICO converted to sRGB with EXIF
@@ -177,11 +185,21 @@ The native scope still has concrete gaps:
   sessions require their own acceptance. Headless pixels and semantic metadata
   do not establish those outcomes.
 
+Styling can be generated: a project's CSS-first Tailwind entry
+(`"tailwind": {"entry": …}`) is compiled at build time in Rust (a port of
+Tailwind CSS v4.3.5, oracle-checked) from the class tokens of the module
+graph, and the canonical stylesheet replaces the entry's text resource;
+`className` is an alias of `class`. Utilities over static class tokens
+apply; a full `@import "tailwindcss"` build still needs the selectors of T2
+stage S5 (Preflight and the theme's `:host`), so full Tailwind applications
+do not apply yet ([contract](architecture.md#build-time-tailwind-stylesheets-k8-t1)).
+
 Contracts: [native controls](architecture.md#native-control-defaults),
 [preserved whitespace](architecture.md#native-preserved-white-space),
 [dialogs](architecture.md#native-modal-dialogs-top-layer),
 [transitions](architecture.md#native-css-transitions),
 [transforms](architecture.md#native-css-transforms),
+[the CSS engine](architecture.md#view-css-engine-k8-t2-and-t3),
 [images](architecture.md#native-images-img) and
 [the native shell](architecture.md#native-shell-varta-shell).
 
@@ -261,8 +279,9 @@ codegen-v2 fuel comparison. Its recorded HEAD is `6dfb06e` with the GC changes
 present; `10ff9ae` commits that verified code. See
 [current verification evidence](verification.md#current-verification-evidence--2026-11-06).
 
-The checked-v38 ECMAScript 2025 inventory has 149 passing and five reviewed
-unsupported cases out of 154 after the expression-forms cases of 2026-11-06;
+The checked-v38 ECMAScript 2025 inventory has 161 passing and five reviewed
+unsupported cases out of 166 after the K9 C expression-forms and K9 D
+standard-library cases of 2026-11-06;
 eight feature rows have no executable case.
 The baseline matches. This is a bounded compatibility inventory rather than
 Test262, full language compatibility or a global completion percentage; see

@@ -84,6 +84,7 @@ crates/
   varta-artifact/        # portable artifact/container I/O; common + wasmparser, no VM/compiler
   varta-launcher/        # execution-only `varta-runtime` binary; no source tooling
   varta-project/         # tooling: project config/loader, check/dev/build, verified packaging
+  varta-tailwind/        # tooling: Rust port of the Tailwind v4 compiler (K8 T1), build-time CSS from class tokens
   varta-cli/             # the `varta` binary; thin orchestration, no domain logic
   varta-conformance/     # development tooling: pinned compatibility inventory runner
 conformance/             # inventory manifest (core-v1.json) and checked cases
@@ -351,5 +352,5 @@ One line per profile; details in [profile rules](docs/profile-rules.md) and the
 | `checked-f64-utf16-v35` | Pilot batch in development: Web types, mixed records, async methods, frame liveness |
 | `checked-f64-utf16-v36` | Pilot batch in development: checked declared fields, function fields, async generators, timers |
 | `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
-| `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage; SDK paths (Error options, `File`/`FormData` entries, collection `instanceof`); iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`); K9 C expression forms (`await` anywhere, object methods with `this`, iterable destructuring, `using`, thenables) |
+| `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage; SDK paths (Error options, `File`/`FormData` entries, collection `instanceof`); iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`); K9 D standard library (ES2025 Array/Set/iterator/JSON methods, `AggregateError`, UTC `Date`); K9 C expression forms (`await` anywhere, object methods with `this`, iterable destructuring, `using`, thenables) |
 <!-- generated:profile-index:end -->

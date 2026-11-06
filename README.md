@@ -34,8 +34,8 @@ reload and Linux/sustained-load acceptance remain open. See the
 [current status](docs/development-plan.md#status) and
 [server stages](docs/development-plan.md#k7-merged-values-approved-2026-11-06).
 
-The latest full gate passes on merged `main` of 2026-11-06: 3975 Rust tests,
-21 ignored, 218 browser Node tests and the reviewed v38 conformance baseline.
+The latest full gate passes on merged `main` of 2026-11-06: 4301 Rust tests,
+25 ignored, 185 browser Node tests and the reviewed v38 conformance baseline.
 These are local macOS implementation checks, with browser Node tests;
 real-browser and other-target acceptance retain their separate scope.
 See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-06).
@@ -176,7 +176,7 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v35` | Pilot batch in development: Web types, mixed records, async methods, frame liveness |
 | `checked-f64-utf16-v36` | Pilot batch in development: checked declared fields, function fields, async generators, timers |
 | `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
-| `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage, hashed `Map`/`Set`; iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`); K9 C expression forms (`await` anywhere, object methods with `this`, iterable destructuring, `using`, thenables) |
+| `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage, hashed `Map`/`Set`; iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`); K9 D standard library (ES2025 Array/Set/iterator/JSON methods, `AggregateError`, UTC `Date`); K9 C expression forms (`await` anywhere, object methods with `this`, iterable destructuring, `using`, thenables) |
 <!-- generated:profile-index:end -->
 
 ## Browser bundle (in development)
@@ -293,6 +293,7 @@ TS/JS projects built on the engine's public APIs.
 | `crates/varta-artifact` | Portable Wasm/manifest and native container I/O, without VM or compiler |
 | `crates/varta-launcher` | The execution-only `varta-runtime` binary distributed with applications |
 | `crates/varta-project` | Development tooling: project configuration/source loading, packaging and policy files |
+| `crates/varta-tailwind` | Development tooling: build-time Tailwind CSS v4 compiler (Rust port, MIT) used by the project pipeline |
 | `crates/varta-cli` | Commands and output, calling the project tooling layer |
 | `crates/varta-conformance` | Developer-only pinned compatibility inventory and isolated case execution |
 | `docs`, `.github` | Implemented specifications, core roadmap and verification |

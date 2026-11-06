@@ -830,7 +830,9 @@ export async function main(): Promise<void> {
 
 /// A v38 instance issues more promise serials over its turns than an earlier
 /// profile may per execution (`scheduler::MAX_PROMISE_SERIALS`): serials have
-/// no lifetime bound, and each turn stays within its microtask allowance.
+/// no lifetime bound, and each turn stays within its microtask allowance. Each
+/// round is a turn of its own (a timer separates them), so every turn keeps
+/// its own deadline and the test does not depend on the machine's speed.
 #[test]
 fn v38_instances_issue_serials_past_the_earlier_execution_bound() {
     let per_round = 12_000;
@@ -838,20 +840,15 @@ fn v38_instances_issue_serials_past_the_earlier_execution_bound() {
     let source = SERIALS
         .replace("__ROUNDS__", &rounds.to_string())
         .replace("__N__", &per_round.to_string());
-    // A bounded run has one deadline; this one declares the largest.
-    let longest = BudgetRequest {
-        deadline_per_turn_ms: Some(varta_common::budget::MAX_DEADLINE_PER_TURN_MS),
-        ..BudgetRequest::default()
-    };
-    let report = bounded(
+    let report = VartaRuntime::new().run_application(
         &compile(&source),
-        RunOptions {
-            budgets: longest,
-            budget_ceiling: Some(longest),
-            ..options(timers())
+        ApplicationOptions {
+            run: options(timers()),
+            ..ApplicationOptions::default()
         },
     );
     assert!(report.failure.is_none(), "{:?}", report.failure);
+    assert!(report.budget.unwrap().total_turns > rounds);
     assert_eq!(
         report.output.lines,
         lines(&[&format!("total {}", rounds * per_round)])

@@ -158,8 +158,9 @@ impl Lower<'_> {
             }
             _ => self.expr_inner(expression),
         };
-        if result.is_ok() {
+        if let Ok(value) = &result {
             self.path_effects(expression);
+            self.observe_class_hole(expression.span(), value.ty);
         }
         self.depth -= 1;
         result
@@ -828,6 +829,14 @@ impl Lower<'_> {
         {
             return self.function_field_call(call, callee);
         }
+        // V38 (`standard_library`): `date.toString()` and `date.valueOf()`.
+        if self.types.profile.standard_library()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let ast::Expr::Member(member) = stmt::unparen(callee)
+            && self.date_conversion(member)
+        {
+            return self.date_conversion_call(call, member);
+        }
         if self.types.profile.classes() {
             if matches!(call.callee, ast::Callee::Super(_)) {
                 return self.super_call(call);
@@ -888,6 +897,15 @@ impl Lower<'_> {
         }
         if let Some(generic) = self.generic_callee(call) {
             return self.generic_call(call, generic, expected);
+        }
+        // V38 (`standard_library`): `Array.of`, mapped `Array.from`,
+        // `Object.groupBy`, `Object.fromEntries` and `Map.groupBy`.
+        if self.types.profile.standard_library()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let Some(name) = callee_name(callee)
+            && let Some(value) = self.standard_static(call, &name, expected)?
+        {
+            return Ok(value);
         }
         if call.type_args.is_some() {
             return Err(unsupported("generic call"));
@@ -1207,6 +1225,10 @@ impl Lower<'_> {
             return self.global_parse_json(call);
         }
         if name == "JSON.stringify" {
+            // V38 (`standard_library`): replacer lists and indentation.
+            if self.types.profile.standard_library() && matches!(call.args.len(), 2 | 3) {
+                return self.json_stringify_options(call);
+            }
             if call.args.len() != 1 {
                 return Err(invalid("JSON.stringify expects one value"));
             }

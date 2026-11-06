@@ -10,7 +10,7 @@ mod modules;
 mod policy;
 mod roots;
 pub use artifact::Artifact;
-pub use config::{CapabilitySpec, VartaConfig};
+pub use config::{CapabilitySpec, TailwindConfig, VartaConfig};
 pub use invoke::{invoke_tool, invoke_tool_with_policy};
 pub use policy::{HostPolicy, authorization, run_with_policy};
 use std::{
@@ -61,6 +61,18 @@ pub enum ProjectError {
     /// A `--view-font` path that is not a regular file.
     #[error("view font {} is not a regular file", .0.display())]
     ViewFontNotFile(PathBuf),
+    /// The project's Tailwind entry stylesheet failed to compile (K8).
+    #[error("{}: {source}", path.display())]
+    Tailwind {
+        path: PathBuf,
+        source: varta_tailwind::TailwindError,
+    },
+    /// `tailwind.entry` is not imported by the program as a text resource.
+    #[error(
+        "{}: the Tailwind entry is not imported by the program; import it as text (`import css from \"./app.css\" with {{ type: \"text\" }}`) and apply it with `View.stylesheet`",
+        .0.display()
+    )]
+    TailwindUnused(PathBuf),
     #[error("invalid artifact: {0}")]
     Artifact(String),
     #[error("{0}")]
@@ -247,6 +259,9 @@ fn compile_attempt(
         }
         let entry_path = entry_path.canonicalize()?;
         let entry = loader.entry(&entry_path)?;
+        if let Some(tailwind) = &config.tailwind {
+            tailwind_stylesheet(loader, &tailwind.entry, &entry, config.language_profile)?;
+        }
         let compilation = if fuel_profile {
             varta_compiler::compile_modules_for_fuel_profile(
                 entry,
@@ -259,6 +274,45 @@ fn compile_attempt(
         Ok((config, base, compilation))
     })();
     (result, observed)
+}
+
+/// Generate the project's Tailwind stylesheet (K8 T1) and serve it as the
+/// text of the entry stylesheet's resource: scan the module graph's class
+/// tokens with the resource as an empty sheet, compile the entry (its
+/// relative `@import`s read through the same loader) with them
+/// (`varta-tailwind`, canonical form, `@supports` resolved against the L0
+/// grammar), and serve the result for the compilation that follows. The same
+/// sources always give the same stylesheet bytes.
+fn tailwind_stylesheet(
+    loader: &modules::SourceLoader,
+    entry_css: &str,
+    entry: &varta_compiler::ModuleSource,
+    profile: varta_common::language::LanguageProfile,
+) -> Result<()> {
+    let path = loader.project_file(entry_css)?;
+    let raw = varta_compiler::ModuleLoader::load(loader, &path)?;
+    loader.set_generated(path.clone(), String::new());
+    let scan = varta_compiler::scan_classes_with_profile(entry.clone(), loader, profile)?;
+    if !scan.text_resources.contains(&path) {
+        return Err(ProjectError::TailwindUnused(path));
+    }
+    if let Some(composition) = scan.compositions.into_iter().next() {
+        return Err(composition.into());
+    }
+    let tailwind = |source| ProjectError::Tailwind {
+        path: path.clone(),
+        source,
+    };
+    let mut compiler =
+        varta_tailwind::compile_with_loader(&raw, &path, loader).map_err(tailwind)?;
+    let build = compiler
+        .build(
+            scan.tokens.iter().map(String::as_str),
+            &varta_tailwind::VartaSupports,
+        )
+        .map_err(tailwind)?;
+    loader.set_generated(path, build.css);
+    Ok(())
 }
 
 pub fn run(artifact: &Artifact) -> Result<RunOutput> {
