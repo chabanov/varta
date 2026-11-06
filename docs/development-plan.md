@@ -7951,13 +7951,40 @@ Owner decision of the same day: (2) and (5) are required by the standards.
 - Chrome oracle: two new scenes (font-relative units with a registered
   length, percentage-and-length math), `bridge` 503 and `platform` 491
   checks pass at 1x, 1.25x and 2x with no new deviation.
+- **Dependency record: Taffy 0.15.1 vendored with a patch** (the dependency
+  rule of CLAUDE.md §5, as for the Parley patch). Why: upstream's `calc`
+  feature stores a `calc()` length as an opaque handle and asks the layout
+  tree to resolve it, but the high-level `TaffyTree` that native layout uses
+  hard-codes the answer zero, so no Taffy user above the low-level traits
+  can resolve `calc()`. Alternatives rejected: reimplementing Taffy's tree
+  over its low-level layout traits (a second copy of `TaffyTree` and its
+  cache, view and rounding code), and refusing sums of lengths and
+  percentages (they are required by CSS Values 4 §10.10 and the owner
+  decision). Change: one upstream file, `src/tree/taffy_tree.rs`, gains a
+  `calc_resolver` field and `TaffyTree::set_calc_resolver`; without a
+  resolver the tree answers zero as upstream. No dependency version changes;
+  the lockfile changes only Taffy's source selection (registry to
+  `vendor/taffy`), and the `calc` feature is enabled for `varta-view`.
+  Provenance: the checksum-pinned crates.io archive (SHA-256 in
+  `vendor/taffy/VARTA-PATCH.md`); a recursive comparison with the unpacked
+  release finds only the patched file, the two patch records and the
+  dropped `Cargo.lock`/`.cargo_vcs_info.json`. Safety: the handle Varta
+  passes is a table index made with `ptr::without_provenance`, never a
+  pointer, and neither Taffy nor Varta dereferences it, so no `unsafe` is
+  added to workspace code. Removal criterion: upstream exposing a resolver
+  for `TaffyTree` (or Varta moving to the low-level API), after which the
+  vendored copy is dropped and the lockfile returns to the registry source.
 - Remaining for (2): `ex`, `ch`, `cap`, `ic` (and root forms), `lh` with
   `line-height: normal` and `rlh` need the metrics of the first available
-  font. Proposed: the engine reads x-height, cap height, the `0` and `水`
-  advances and the line metrics from the packaged faces' bytes (read-fonts,
-  already in the dependency graph), so both hosts use one implementation;
-  generic system families keep the Values 4 fallbacks, a recorded Chrome
-  deviation. Sums with percentages in `border-radius`, `transform`,
+  font. Owner decision (2026-11-06), "fonts plus host": the shared engine
+  reads the first available font's metrics from packaged font bytes with
+  read-fonts (one implementation for both hosts); for system and generic
+  families the host supplies them (natively through CoreText, as the emoji
+  platform metrics are read; on the web the bridge only measures through
+  browser APIs and passes the numbers into Wasm, with no metric logic in
+  JavaScript); the Values 4 fallbacks apply only when no metrics are
+  available at all; the goal is Chrome's values with no recorded deviation
+  for system fonts. Sums with percentages in `border-radius`, `transform`,
   `object-position` and grid tracks wait for those consumers.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
