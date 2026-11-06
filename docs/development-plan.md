@@ -88,7 +88,11 @@ artifacts, both binaries) and the conformance inventory: eight feature rows
 under the new `typescript` origin and ECMAScript class sections, nine
 passing cases and two known gaps, and the `class-instance` gap promoted
 (145 passed, 6 known unsupported of 151). Fuel goldens unchanged (no
-existing program changes bytes).
+existing program changes bytes). Full gate on macOS arm64, 2026-11-06, on
+the commit that adds the stream: **4023 Rust tests passed, 0 failures, 21
+ignored; 218 browser Node tests passed**; conformance baseline matched
+(`target/verification/20261106-163846-0mggblrz/report.json`). Linux CI and
+other platforms not run.
 
 Not done, with the reason (owner decisions needed):
 
