@@ -318,6 +318,11 @@ pub(crate) struct RuntimeContext {
     /// V38: how long a network transfer may wait for bytes
     /// (`net::READ_INACTIVITY_SECONDS`, or the host's lower value).
     network_idle: std::time::Duration,
+    /// A request of a v2 Web `Request` service, whose turns renew: the
+    /// event loop's waits between turns end here (the request lifetime, or
+    /// a streaming pull's idle bound) instead of at the turn deadline, and
+    /// the task that ends a wait begins a fresh turn. `None` elsewhere.
+    idle_bound: Option<Instant>,
     budgets: varta_common::budget::Budgets,
     turns: turns::Turns,
     /// The permission broker (v37), with broker v1 states in v38.
@@ -338,6 +343,9 @@ pub(crate) struct RuntimeContext {
     /// V38 (`fair_fuel`): host imports charge the published fair fuel of
     /// their work (`fair_fuel` module).
     fair_fuel: bool,
+    /// The fair call charge of the host call in progress, refunded when the
+    /// call is the epoch libcall (`fair_fuel::CallCharge`).
+    call_charge: Option<fair_fuel::CallCharge>,
     /// The instantiated module's bounds (v38 `program_limits`): where its
     /// record descriptors, keys and JSON schemas may lie, and its profile's
     /// structural limits.
@@ -361,6 +369,11 @@ pub struct FuelProfileRun {
 
 impl RuntimeContext {
     fn tick(&mut self) -> Result<(), wasmtime::Error> {
+        // A call whose fair call charge the fuel could not cover fails
+        // before its effect.
+        if self.call_charge.is_some_and(fair_fuel::CallCharge::short) {
+            return Err(wasmtime::Error::new(wasmtime::Trap::OutOfFuel));
+        }
         self.host_calls += 1;
         self.check_budget()
     }
@@ -400,6 +413,12 @@ impl RuntimeContext {
                 .exhausted(BudgetKind::Deadline, &self.budgets, text));
         }
         Ok(())
+    }
+
+    /// When the event loop's wait for its next task ends: the turn deadline,
+    /// or the idle bound of a request whose turns renew ([`Self::idle_bound`]).
+    pub(crate) fn wait_bound(&self) -> Instant {
+        self.idle_bound.unwrap_or(self.deadline)
     }
 
     /// The error of a deadline reached while the event loop waited.
@@ -508,6 +527,43 @@ pub struct VartaRuntime {
     engine: Engine,
 }
 
+/// The settings every Varta engine shares: the runtime's and a native
+/// server's (which adds its instance pool), so fuel is the same in both.
+pub(crate) fn engine_config() -> Config {
+    let mut config = Config::new();
+    // Fuel must not depend on the host. Instantiation is not charged to
+    // the guest, except in a module with a Wasm start function (possible
+    // before the exception profiles), which pays its whole instantiation.
+    // With copy-on-write memory images (Wasmtime's default) the metered
+    // data-segment copy is skipped where the platform can map an image
+    // (memfd on Linux) and done over page-rounded images elsewhere
+    // (16 KiB pages on macOS arm64); without them every host copies
+    // exactly the module's segments. Images save no measurable time for
+    // a fresh store per execution.
+    config
+        .consume_fuel(true)
+        .epoch_interruption(true)
+        .memory_init_cow(false);
+    // Fixed-width SIMD (`simd128`) is admitted where the profile admits it
+    // (`LanguageProfile::simd128`, checked in validation); relaxed SIMD,
+    // whose results may differ between hosts, never is.
+    config.wasm_simd(true).wasm_relaxed_simd(false);
+    config
+}
+
+/// Run a blocking host operation. On a worker thread of a native server's
+/// multi-threaded runtime (K7 H2) the thread first hands its other tasks to
+/// another thread and leaves the runtime context, so the operation may drive
+/// a runtime of its own; elsewhere it runs as it is.
+pub(crate) fn blocking<T>(operation: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(operation)
+        }
+        _ => operation(),
+    }
+}
+
 impl Default for VartaRuntime {
     fn default() -> Self {
         Self::new()
@@ -517,26 +573,8 @@ impl Default for VartaRuntime {
 impl VartaRuntime {
     #[must_use]
     pub fn new() -> Self {
-        let mut config = Config::new();
-        // Fuel must not depend on the host. Instantiation is not charged to
-        // the guest, except in a module with a Wasm start function (possible
-        // before the exception profiles), which pays its whole instantiation.
-        // With copy-on-write memory images (Wasmtime's default) the metered
-        // data-segment copy is skipped where the platform can map an image
-        // (memfd on Linux) and done over page-rounded images elsewhere
-        // (16 KiB pages on macOS arm64); without them every host copies
-        // exactly the module's segments. Images save no measurable time for
-        // a fresh store per execution.
-        config
-            .consume_fuel(true)
-            .epoch_interruption(true)
-            .memory_init_cow(false);
-        // Fixed-width SIMD (`simd128`) is admitted where the profile admits
-        // it (`LanguageProfile::simd128`, checked in validation); relaxed
-        // SIMD, whose results may differ between hosts, never is.
-        config.wasm_simd(true).wasm_relaxed_simd(false);
         // This configuration only enables supported built-in engine settings.
-        let engine = Engine::new(&config).expect("valid built-in Wasmtime configuration");
+        let engine = Engine::new(&engine_config()).expect("valid built-in Wasmtime configuration");
         Self { engine }
     }
 
@@ -745,8 +783,7 @@ impl VartaRuntime {
                 let output = std::mem::take(&mut report.output);
                 let files = policy::FileMode::of(module.profile, &options.file_roots);
                 let finished = server::run(server::Start {
-                    engine: self.engine.clone(),
-                    module,
+                    bytes,
                     contract,
                     request_setup,
                     requested: &options.requested,
@@ -754,6 +791,7 @@ impl VartaRuntime {
                     files,
                     output,
                     observer: options.observer.clone(),
+                    policy: options.http.as_ref(),
                 });
                 report.http = finished.requests;
                 match finished.result {
@@ -832,6 +870,7 @@ impl VartaRuntime {
                 stored,
                 prompter,
             },
+            task: false,
         };
         let mut execution = execution::Execution::with_setup(&self.engine, setup)?;
         if let Some(idle) = options.network_idle {
@@ -897,6 +936,10 @@ pub struct RunOptions {
     /// V38: a host's lower network inactivity window; a longer value keeps
     /// `net::READ_INACTIVITY_SECONDS`.
     pub network_idle: Option<std::time::Duration>,
+    /// The host policy's HTTP settings: lower server limits of a contract
+    /// v2 service ([`varta_common::http::HttpLimits::lowered`]). A package
+    /// never supplies them.
+    pub http: Option<varta_common::http::HttpPolicy>,
 }
 impl RunOptions {
     /// The options of a package manifest and an optional host ceiling
@@ -922,6 +965,7 @@ impl RunOptions {
             observer: None,
             fuel_profile: false,
             network_idle: None,
+            http: host.and_then(|host| host.http.clone()),
         })
     }
 }

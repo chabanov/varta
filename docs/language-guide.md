@@ -385,6 +385,37 @@ produce it; a stream lasts at most an hour, after which an SSE client reconnects
 A client that disconnects ends the stream. The
 [contract](architecture.md#http-contract-v2--native-server) names the exact limits.
 
+A v38 handler may also take a Web `Request`, as with `Deno.serve`. Its URL is
+absolute, its headers are a `Headers` object, and its body streams from the
+client while the handler reads it, so an upload is never buffered whole by the
+host:
+
+```ts
+async function handle(request: Request): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("method not allowed", { status: 405 });
+  }
+  const text = await request.text();
+  const path = new URL(request.url).pathname;
+  return new Response(JSON.stringify({ path: path, bytes: text.length }), {
+    headers: { "content-type": "application/json" },
+  });
+}
+```
+
+A request body is bounded in size and in how long the client may pause; a
+read past either bound throws a `TypeError` the handler can catch. While the
+handler waits for the body, timers or `fetch`, no turn deadline runs: each
+completion starts a turn with fresh budgets, within the request's lifetime.
+A host policy may lower these limits (`"http": {"limits": {...}}`), never
+raise them.
+
+The program never handles TLS: a host that names a certificate and key in
+its policy (`"http": {"tls": {...}}`) serves the same handler over TLS 1.3,
+with HTTP/2 for clients that offer it, and the request URL starts with
+`https://`. The package then declares the listener as
+`"net": {"listen": ["https://0.0.0.0:443"]}`.
+
 `varta.http.stop()` in the owning handler stops acceptance after the current reply
 finishes. Embedders can use `run_observed` and the shutdown handle in
 `RuntimeEvent::Listening`. The CLI streams bounded request logs; the collecting

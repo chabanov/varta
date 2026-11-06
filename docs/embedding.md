@@ -122,6 +122,7 @@ engine payloads from package input.
 | grant `responseHeaders` | Optional, `net.request` only; requires the `abiVersion` of the [limits table](#manifest-limits). An array of exact lowercase header names (RFC 9110 tokens), no duplicates, never a forbidden name, within the counts of the [limits table](#manifest-limits); allowed in a package and in a host ceiling. The response headers a v38 request shows the guest ([canonical head](#canonical-head-v38)); absent shows the CORS-safelisted names, `[]` shows none. V37 requests ignore it |
 | grant `purpose` | Optional untrusted text shown as a quote in prompts, valid by the [purpose rule](#manifest-limits); requires the `abiVersion` of the [limits table](#manifest-limits); rejected in a host ceiling |
 | `fsRoots` | Optional; requires the `abiVersion` of the [limits table](#manifest-limits). In a package: an array of [root names](#root-names), no duplicates; an object is rejected. In a host ceiling: an object mapping each root name to an absolute host directory (no `..`, no control characters, at most the host root directory bytes of the [limits table](#manifest-limits), no duplicate key); an array is rejected. Either form holds at most the `fsRoots` entries of the [limits table](#manifest-limits). See [File roots](#file-roots-v38) |
+| `http` | Host ceiling only; rejected in a package. An object with an optional `limits` object that lowers the server limits of a contract v2 HTTP service: `connections`, `workers`, `memoryBytes` (the server memory ceiling; below one request's memory budget fails), `workerWaitMs`, `keepAliveIdleMs`, `keepAliveRequests`, `connectionLifetimeMs`, `streamIdleMs`, `streamLifetimeMs`, `requestBodyBytes`, `bodyIdleMs`, `requestLifetimeMs`, `writeIdleMs`, each an integer from 1 to its value in the [entry-point limits](#entry-point-limits); a larger value, 0, an unknown member or any limit for a contract v1 service fails the run before a socket is bound. An optional `tls` object, `{"certificate": "/abs/chain.pem", "key": "/abs/key.pem"}` (absolute paths of PEM files of at most the TLS file bytes of the entry-point limits), makes every contract v2 service of the host serve TLS 1.3 with ALPN `h2`/`http/1.1`; its `net.listen` grants must then use the `https://` form. Unreadable or invalid files, or TLS for a contract v1 service, fail before bind. See [native HTTP v2](architecture.md#http-contract-v2--native-server) |
 
 Unknown or duplicate fields, unknown capability ids, duplicate ids and a value of
 the wrong kind (a boolean id needs exactly `enabled`, every other id exactly
@@ -137,7 +138,7 @@ one grant kind:
 | URL patterns | `"patterns": [...]` | `net.fetch`, `net.get` |
 | Request scopes (v37) | `"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) and, v38, optional `"responseHeaders": [...]` (the only id that accepts it; exact lowercase names a v38 request shows, absent shows the CORS-safelisted names, `[]` shows none; see [canonical head](#canonical-head-v38)) | `net.request` |
 | External-link patterns (v38) | `"patterns": [...]`, `https://` admitted, plus the exact `"https://*"` (any HTTPS link, prompting on every activation; valid for this id only) | `ui.open_url` |
-| Listen endpoints | `"patterns": ["127.0.0.1:8080"]` | `net.listen` |
+| Listen endpoints | `"patterns": ["127.0.0.1:8080"]` (cleartext) or `["https://127.0.0.1:8443"]` (TLS, when the host policy names `http.tls`) | `net.listen` |
 <!-- generated:embedding-grant-kinds:end -->
 
 Policy complexity is capped by the grant and pattern counts of the
@@ -154,7 +155,7 @@ lists and `false` are explicit denials; an omitted id denies. A pattern is
 | Request methods | Not an RFC 9110 token; a method never grantable, in any case; a method a grant must spell in uppercase, spelled in any other case; a duplicate; more methods than one `net.request` grant admits (the three lists and the count are in the [limits table](#manifest-limits)) |
 | Response header names (`responseHeaders`) | Empty, not an RFC 9110 token, containing an uppercase letter, longer than the declared name bytes, a duplicate, or a name never declarable in any case (`set-cookie`, with its own diagnostic); more names than one grant admits (the counts are in the [limits table](#manifest-limits)) |
 | URLs (additionally) | Does not start with `http://` (`net.request`: `http://` or `https://`); empty authority, or an authority containing `*`, `?`, `@` or `#`; any control or whitespace character; a path containing `#`, `%` or `\`; a `.` or `..` path segment; not parseable as a URL, without a host, with a user name or password, or with `%` in the parsed path |
-| Listen endpoints | Not a literal `IP:port` socket address, or not in canonical form (for example `[::1]:8080`); listen endpoints have no wildcards |
+| Listen endpoints | Not a literal `IP:port` socket address, optionally after exactly `https://`, or not in canonical form (for example `[::1]:8080`); listen endpoints have no wildcards, paths or other schemes |
 
 #### Manifest limits
 
@@ -3713,9 +3714,15 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
 | HTTP legacy / maximum version / metadata bytes | 1 / 2 / 8192 | `http::VERSION`, `http::LATEST_VERSION`, `http::MAX_METADATA_BYTES` |
 | HTTP headers / header bytes / target bytes / body bytes | 32 / 4096 / 1024 / 8192 | `http::MAX_*` |
 | HTTP header / connection timeout | 2 s / 10 s | `http::HEADER_SECONDS`, `http::CONNECTION_SECONDS` |
-| HTTP v1 connections / v2 open connections / v2 concurrent requests | 1 / 1024 / 8 | `http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS` |
+| HTTP v1 connections / v2 open connections / v2 concurrent requests | 1 / 1024 / 1024 | `http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS` |
+| HTTP v2 request memory / server memory ceiling | 8388608 / 1073741824 | `http::REQUEST_MEMORY_BYTES`, `http::SERVER_MEMORY_BYTES` |
 | HTTP v2 worker wait / keep-alive idle / requests per connection / connection lifetime | 10 s / 5 s / 1000 / 600 s | `http::WORKER_WAIT_SECONDS`, `http::KEEP_ALIVE_IDLE_SECONDS`, `http::MAX_KEEP_ALIVE_REQUESTS`, `http::CONNECTION_LIFETIME_SECONDS` |
 | HTTP v2 stream idle / lifetime / chunk bytes | 300 s / 3600 s / 65536 | `http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES` |
+| HTTP v2 Web request body bytes / body idle / request lifetime | 16777216 / 60 s / 300 s | `http::MAX_REQUEST_BODY_BYTES`, `http::REQUEST_BODY_IDLE_SECONDS`, `http::REQUEST_LIFETIME_SECONDS` |
+| HTTP v2 response write idle | 60 s | `http::WRITE_IDLE_SECONDS` |
+| HTTP v2 TLS file bytes / handshake | 1048576 / 10 s | `http::MAX_TLS_FILE_BYTES`, `http::TLS_HANDSHAKE_SECONDS` |
+| HTTP/2 concurrent streams / header list bytes / stream window / connection window | 100 / 16384 / 262144 / 1048576 | `http::MAX_CONCURRENT_STREAMS`, `http::MAX_HEADER_LIST_BYTES`, `http::STREAM_WINDOW_BYTES`, `http::CONNECTION_WINDOW_BYTES` |
+| HTTP/2 pending resets / abandoned requests per connection / ping interval / ping timeout | 20 / 100 / 30 s / 10 s | `http::MAX_PENDING_RESET_STREAMS`, `http::MAX_ABANDONED_REQUESTS`, `http::PING_INTERVAL_SECONDS`, `http::PING_TIMEOUT_SECONDS` |
 | Native HTTP retained request reports / total retained audit entries | 32 / 256 | `http::MAX_REPORTED_REQUESTS`, `permission::MAX_AUDIT_ENTRIES` |
 | Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |
 | Catalog types / bindings | 672 / 672 | `function::MAX_CAPTURE_TYPES` |

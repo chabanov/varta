@@ -150,12 +150,14 @@ impl CapabilityGrant {
                     ));
                 }
                 for endpoint in endpoints {
-                    let addr = endpoint.parse::<std::net::SocketAddr>().map_err(|_| {
+                    // `https://IP:port` names an endpoint that serves TLS.
+                    let address = crate::http::listen_address(endpoint);
+                    let addr = address.parse::<std::net::SocketAddr>().map_err(|_| {
                         VartaError::InvalidManifest(
                             "listener grants require literal IP:port endpoints".into(),
                         )
                     })?;
-                    if addr.to_string() != *endpoint {
+                    if addr.to_string() != address {
                         return Err(VartaError::InvalidManifest(
                             "listener endpoint must be canonical".into(),
                         ));

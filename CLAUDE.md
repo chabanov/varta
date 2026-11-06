@@ -220,14 +220,33 @@ instance. Require the varta.http metadata/feature-import pair, validate adapter
 signatures and actual effects, and keep copy/retain helpers host-free. Readiness
 and logging observers are trusted synchronous sinks and must return promptly.
 Keep connections and workers bounded and separate (contract v1: one
-connection, one worker; v2: `http::MAX_OPEN_CONNECTIONS` keep-alive connections
-and `http::MAX_CONCURRENT_REQUESTS` workers, each request in its own Store, a
-bounded wait for a worker), no unbounded task queue, parser/body/idle/
+connection, one blocking worker; v2: `http::MAX_OPEN_CONNECTIONS` keep-alive
+connections and `http::MAX_CONCURRENT_REQUESTS` request tasks, admitted while
+their memory budgets fit `http::SERVER_MEMORY_BYTES`, each request in its own
+Store instantiated from the server's pooled `InstancePre`, a bounded wait
+for admission), no unbounded task queue, parser/body/idle/
 connection deadlines and response framing controlled by the HTTP library.
+Request tasks run guest code with `call_async` and yield on epoch ticks only;
+every wait awaits; a blocking host operation goes through `crate::blocking`.
+Fuel must not depend on yields or epochs: the fair call charge of a libcall
+is refunded by the epoch callback.
+TLS is TLS 1.3 only with ALPN `h2`/`http/1.1`; its certificate and key come
+only from the host policy (`http.tls`), are read by the host before bind and
+never reach a package or guest. A TLS listener needs the `https://IP:port`
+`net.listen` form in both package and ceiling, a cleartext one the bare
+form; never let one form authorize the other. HTTP/2 keeps its registry
+stream, header-list, window, reset and abandoned-request bounds.
 A streaming response pulls each chunk as its own turn under the idle bound and
 within the stream lifetime; a client that leaves or a shutdown cancels its
-worker. No business routes, authentication policy or example payloads belong
-in runtime.
+worker. A Web `Request` body streams through a transfer of the request's own
+Store, one bounded chunk per guest read, within `http::MAX_REQUEST_BODY_BYTES`,
+the body idle bound and the request lifetime; its waits between turns never
+use the turn deadline, and every turn renews only within that lifetime.
+Slow clients are bounded per connection: keep-alive idle (the head deadline),
+body idle and write idle. The registry fixes the server limits; a host policy
+may only lower them (`HttpLimits::lowered`, checked before bind), and a
+package can change none. No business routes, authentication policy or
+example payloads belong in runtime.
 
 ## 8. Testing requirements
 

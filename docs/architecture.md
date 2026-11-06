@@ -17037,9 +17037,10 @@ service's connection lifetime adds the stream lifetime.
 
 V2 services keep HTTP/1.1 connections alive: up to `http::MAX_OPEN_CONNECTIONS`
 open connections, which cost no worker while idle, and up to
-`http::MAX_CONCURRENT_REQUESTS` requests running at once, each with its own
-worker and Store (so the memory of that many requests at most). A request
-waits at most `http::WORKER_WAIT_SECONDS` for a worker, else it gets 503 with
+`http::MAX_CONCURRENT_REQUESTS` requests running at once, each a task with its
+own Store, while the memory budgets of the running requests fit
+`http::SERVER_MEMORY_BYTES` (see async execution below). A request
+waits at most `http::WORKER_WAIT_SECONDS` for a slot and its memory, else it gets 503 with
 `Retry-After: http::BUSY_RETRY_AFTER_SECONDS`; the wait is bounded by the open
 connections, never an unbounded queue. A connection's idle time between
 requests is also its client's deadline for a request head
@@ -17051,9 +17052,50 @@ A further connection waits in the listener's backlog. Shutdown stops
 accepting and waits for the open connections. HTTP contract v1 keeps one
 connection per request and its immediate 503. The limits travel in the
 contract metadata (`HttpLimits::for_version`: `connections`, `pool`,
-`stream`), so a v38 service built before them must be rebuilt. Not yet
-bounded: a client that reads a whole response slowly holds its connection
-(not a worker) until the connection's lifetime.
+`stream`, `transport`), so a v38 service built before them must be rebuilt.
+A v2 connection whose response write (or flush) makes no progress for
+`http::WRITE_IDLE_SECONDS` closes, so a client that stops reading holds its
+connection no longer than that.
+
+**Web `Request` handlers (v2).** A v38 handler may take a Web `Request`
+instead of a `VartaHttpRequest`, with any of the four result forms, as
+`Deno.serve` handlers do. The contract then sets `webRequest` (with
+`asynchronous`; v2 only), and the adapter makes the argument of a
+`WebRequestHead` envelope: the method; the absolute URL of the cleartext
+scheme, the authority the request names (an absolute-form target, an HTTP/2
+`:authority`, else the `Host` header, which must be a valid authority, else
+the listener's address) and the target's path and query; the headers as
+received; and `body`, the id of the transfer its body streams through, or 0
+for a request without one. The fetch prelude's `httpRequest` (unnameable by
+programs) builds the `Request`; its body is a `ReadableStream` whose reads
+are the network reads of a response body (`net_body_read*`), so the host
+holds at most one received frame and a slow guest applies backpressure to
+the client. `Request` gained `body`, `bodyUsed`, `text()`, `json()`,
+`arrayBuffer()`, `bytes()` and `blob()`; a `Request` made of a received one
+takes its stream over, and `fetch` of it reads the body whole (within the
+received bound) and sends it as bytes. A declared `content-length` above
+`http::MAX_REQUEST_BODY_BYTES` gets 413 before dispatch; a body that grows
+beyond it, or whose next frame takes longer than
+`http::REQUEST_BODY_IDLE_SECONDS` once the guest asked for it, fails the
+guest's read (a catchable `TypeError: terminated`). Such a request is a
+sequence of turns: the handler's first turn, then every timer, network or
+body completion begins a turn with fresh fuel, host calls, microtasks and
+the per-turn deadline (capped by the fixed handler deadline), and the waits
+between turns use no turn deadline. The request lives at most
+`http::REQUEST_LIFETIME_SECONDS` to its response head (plus the stream
+lifetime for a streaming response, whose pulls keep the stream idle bound),
+and a connection whose lifetime ends lets its current request finish within
+that bound. `VartaHttpRequest` handlers keep their whole-body envelope and
+budgets unchanged.
+
+**Host limits (v2).** A host policy's `http.limits`
+([embedding contract](embedding.md#manifest)) lowers server limits of a v2
+service: connections, workers, worker wait, keep-alive idle, requests and
+lifetime, stream idle and lifetime, request body bytes, body idle, request
+lifetime and write idle. Each value must lie between 1 and the registry's
+(`HttpLimits::lowered`); a larger one, 0, or any limit for a v1 service
+fails the run before a socket is bound. A package never carries the
+member, and the application can change no limit.
 
 Timer/Unicode, mutable-state, forced-GC, outbound-body/denial and hostile metadata
 cases have focused verification. Every request now receives a shareable snapshot
@@ -17067,18 +17109,89 @@ Lower package/host fuel, memory, host-call/output budgets, aggregate async bound
 listener consent and artifact/ceiling decisions have focused server verification.
 V1 still ignores v38-only budget/consent requests.
 
-The v2 service future owns a cancellation guard for its blocking request worker.
+**Async execution (H2).** The native server is a multi-threaded Tokio
+runtime with one worker thread per available CPU, and every v2 request is a
+task of it, never a thread of its own. Its engine shares the runtime's
+compilation settings (`engine_config`, so fuel is the embedding engine's),
+uses a pooling allocator of `http::MAX_CONCURRENT_REQUESTS` instance slots of
+`http::REQUEST_MEMORY_BYTES` each, and links the module once into an
+`InstancePre`; each request still instantiates its own Store from it. Guest
+calls are asynchronous (`call_async`) and yield to the executor at every
+epoch tick (one ticker thread per server advances the epoch every
+`server::engine::TICK`, which also meets per-turn deadlines without a
+deadline thread per Store). The fair call charge is taken around libcalls
+too, so the epoch callback refunds it: fuel never depends on when epochs
+advance, here or when another Store's deadline or cancellation advances a
+shared engine's epoch; the server does not yield on fuel intervals, whose
+libcalls would count. The scheduler's timer waits, network and request-body
+completions and cancellation are awaited (`checkpoint_until_async`,
+`Net::wait_async`, `Cancellation::cancelled`), and a request's transfers run
+on the server's runtime, so a waiting request or open stream costs no
+thread. A blocking host operation (legacy `net.get`/`net.fetch`, KV reads
+and commits) hands its thread's other tasks on first (`block_in_place`).
+A v2 request is admitted once a slot is free and its memory budget fits the
+server memory ceiling less the budgets of the running requests; the
+admission ends with its task, after its Store is dropped. A host policy may
+lower slots and ceiling (`workers`, `memoryBytes`); a ceiling below one
+request's budget fails before bind. Fuel, turn order, budgets, deadlines and
+cancellation keep their contracts. Contract v1 (frozen) keeps one blocking
+worker: its checked JSON parsing calls back into the guest from a host
+import, which an asynchronous call cannot.
+
+**TLS 1.3 and HTTP/2 (H3).** A host policy's `http.tls` names the absolute
+paths of a PEM certificate chain and private key
+([embedding contract](embedding.md#manifest)); every contract v2 service of
+that host then serves TLS 1.3 only (rustls with the ring provider, no TLS
+1.2, no 0-RTT data) and offers ALPN `h2` before `http/1.1`. The host reads
+the files (at most `http::MAX_TLS_FILE_BYTES` each) before the listener
+exists; a missing, oversized or malformed file, a relative path, or TLS for
+a contract v1 service fails the run before bind, and neither file nor key
+ever reaches a package or guest. The `net.listen` grant names whether an
+endpoint serves TLS: `"https://127.0.0.1:8443"` for TLS, the bare
+`"127.0.0.1:8080"` for cleartext, each canonical; the package and the host
+ceiling must both grant the form the host serves, so a cleartext grant
+never authorizes a TLS listener or the reverse, and `http_stop` checks the
+same form. A Web `Request`'s URL then has the `https` scheme, and the
+readiness event (`RuntimeEvent::Listening`) names the scheme.
+
+A client has `http::TLS_HANDSHAKE_SECONDS` to finish its handshake; one that
+negotiated `h2` gets HTTP/2, any other HTTP/1.1. HTTP/2 announces at most
+`http::MAX_CONCURRENT_STREAMS` concurrent streams and a header list of
+`http::MAX_HEADER_LIST_BYTES` (the request header bounds still apply to each
+request), uses receive windows of `http::STREAM_WINDOW_BYTES` per stream and
+`http::CONNECTION_WINDOW_BYTES` per connection and a send buffer of one
+stream chunk, pings its peer every `http::PING_INTERVAL_SECONDS` (closing it
+without an answer within `http::PING_TIMEOUT_SECONDS`), and ends a
+connection with `GOAWAY` after `http::MAX_PENDING_RESET_STREAMS` resets of
+streams not yet accepted or reset by the server (the rapid-reset bounds of
+`h2`). Each stream is a request of its own, with the same admission,
+budgets and reports; an HTTP/2 request's `VartaHttpRequest` target is its
+path and query. A connection whose clients abandon more than
+`http::MAX_ABANDONED_REQUESTS` requests (resets that reached the
+application) is retired with `GOAWAY` and closed within a second; its
+keep-alive request count, idle bound and lifetime retire it with `GOAWAY`
+(HTTP/2 has no `connection` header), and the write idle bound covers its
+TLS records.
+
+**Hardening (H4).** Seeded fuzz tests cover the contract metadata and host
+policies, the response envelope's framing and every adapter form with
+random requests; flood and slow-client tests cover slow heads, slow bodies,
+connection and request floods and HTTP/2 rapid resets. The load
+benchmarks (`server_tests::bench`, ignored) and their recorded acceptance
+numbers are in the [development plan](development-plan.md#k7--modern-http-server-agreed-design-2026-11-05).
+
+The v2 service future owns a cancellation guard for its request task.
 Disconnect or connection timeout drops that owner and signals its execution;
-epoch checks interrupt guest loops, while timer/network waits check the same token
-in bounded slices without advancing guest time or delivering extra guest events.
+epoch checks interrupt guest loops, while timer/network waits await the same
+token without advancing guest time or delivering extra guest events.
 Other Stores sharing the engine remain live. A completed worker disarms the guard
 and releases guest/network resources before invoking trusted output observers.
-A cancelled worker keeps the one worker permit until it stops (its next
-cancellation check, then its report and output delivery). The v2 transport
-accepts the next connection only once that permit is free, so a request sent
-right after a client disconnected waits in the listener's backlog instead of
-being refused with the transport's `503 request failed`; the wait is bounded by
-the worker's cancellation checks and its own request deadline, and shutdown
+A cancelled worker keeps its admission (slot and memory) until it stops (its
+next cancellation check, then its report and output delivery). A v2 request
+that finds no admission waits for one within the worker wait, so a request
+sent right after a client disconnected is served instead of being refused
+with the transport's `503 request failed`; the wait is bounded by the
+worker's cancellation checks and its own request deadline, and shutdown
 ends it. HTTP contract v1 is frozen: its workers are not cancelled, and its
 transport keeps the immediate 503 while the worker is busy; only v2 waits for
 the worker permit.

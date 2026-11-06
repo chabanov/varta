@@ -546,7 +546,9 @@ impl Database {
         future: impl std::future::Future<Output = Result<T, E>>,
     ) -> Result<T, Wait> {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        match runtime.block_on(async { tokio::time::timeout(remaining, future).await }) {
+        match crate::blocking(|| {
+            runtime.block_on(async { tokio::time::timeout(remaining, future).await })
+        }) {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(error)) => Err(Wait::Failed(KvError::type_error(error.to_string()))),
             Err(_) => {
@@ -630,16 +632,18 @@ impl Database {
         let sqlite = self.sqlite.clone();
         let fence = std::sync::Arc::clone(&self.fence);
         fence.set(Commit::Open(cutoff));
-        let outcome = runtime.block_on(async {
-            let mut write = std::pin::pin!(sqlite.atomic_write(write));
-            let cutoff = tokio::time::Instant::from_std(cutoff);
-            match tokio::time::timeout_at(cutoff, write.as_mut()).await {
-                Ok(outcome) => Some(outcome),
-                // Let through before the cutoff: SQLite holds the write lock
-                // and is making the commit durable; wait for it.
-                Err(_) if fence.close() => Some(write.await),
-                Err(_) => None,
-            }
+        let outcome = crate::blocking(|| {
+            runtime.block_on(async {
+                let mut write = std::pin::pin!(sqlite.atomic_write(write));
+                let cutoff = tokio::time::Instant::from_std(cutoff);
+                match tokio::time::timeout_at(cutoff, write.as_mut()).await {
+                    Ok(outcome) => Some(outcome),
+                    // Let through before the cutoff: SQLite holds the write
+                    // lock and is making the commit durable; wait for it.
+                    Err(_) if fence.close() => Some(write.await),
+                    Err(_) => None,
+                }
+            })
         });
         let Some(outcome) = outcome else {
             self.abandoned = true;

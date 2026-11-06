@@ -7249,6 +7249,159 @@ Stages, each with its own full gate and record:
 
 Later: HTTP/3, response compression (a dependency decision), WebSocket.
 
+#### H1 — Web requests, request bodies, host limits, slow clients (done 2026-11-05)
+
+- **Web `Request` handlers.** A v38 handler may take a Web `Request` with any
+  of the four result forms; the contract's `webRequest` flag (v2, with
+  `asynchronous`) selects the adapter, whose envelope (`WebRequestHead`)
+  carries the method, the absolute URL, the headers and the id of the body's
+  transfer. The fetch prelude's `httpRequest` builds the `Request`; `Request`
+  gained the body readers of `Response`, a `Request` made of a received one
+  takes its stream over and `fetch` of it sends the body as bytes.
+- **Streaming request bodies.** The body is a transfer of the request's own
+  Store (`Net::inbound`), read like a response body: one bounded chunk per
+  guest read, `http::MAX_REQUEST_BODY_BYTES` in all (413 before dispatch
+  when the declared length is larger), `http::REQUEST_BODY_IDLE_SECONDS` per
+  wait. Such a request is a sequence of renewing turns within
+  `http::REQUEST_LIFETIME_SECONDS`; its waits use no turn deadline
+  (`RuntimeContext::idle_bound`). `VartaHttpRequest` handlers are unchanged.
+- **Host limits.** A host policy's `http.limits` lowers the v2 server limits
+  (`HttpLimits::lowered`); a raised, zero or unknown limit, or any limit of a
+  v1 service, fails before bind. Packages cannot carry the member.
+- **Slow clients.** Keep-alive idle stays the head deadline; request bodies
+  have their idle bound; a response write that makes no progress for
+  `http::WRITE_IDLE_SECONDS` closes the connection (`server::io::WriteIdle`).
+- Tests: runtime `server_tests::web_request` (URL/headers/body, a body
+  slower than three turn deadlines, size and idle bounds, a client that stops
+  reading, lowered and raised limits, every result form), the HTTP ABI flag
+  and v37 rejection, contract/policy unit tests and the CLI smoke
+  `http_cli_host_policy_lowers_server_limits_and_cannot_raise_them`.
+- Gate: `python3 scripts/verify.py full` PASS (3872 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261105-233337-p4fj2lfr/report.json` (macOS only).
+
+#### H2 — Async execution (done 2026-11-06)
+
+- **Tasks, not threads.** The native server is a multi-threaded Tokio
+  runtime with one worker thread per available CPU; every v2 request is a
+  task. Its engine has the runtime's compilation settings (shared
+  `engine_config`, so fuel is identical), a pooling allocator with
+  `http::MAX_CONCURRENT_REQUESTS` slots of `http::REQUEST_MEMORY_BYTES`, and
+  the module linked once into an `InstancePre`; each request still
+  instantiates its own Store.
+- **Yielding.** Guest calls are `call_async`; a guest yields at every epoch
+  tick (one ticker thread per server, `server::engine::TICK`, which also
+  meets per-turn deadlines without a deadline thread per Store). The
+  scheduler's timer waits, network and body completions and cancellation are
+  awaited (`checkpoint_until_async`, `Net::wait_async`,
+  `Cancellation::cancelled`); a request's transfers run on the server
+  runtime (`Net::share_runtime`). Blocking host operations (legacy
+  `net.get`/`net.fetch`, KV) go through `crate::blocking` (`block_in_place`).
+- **Fuel stays exact.** Wasmtime runs the call hook around libcalls too, so
+  the v38 fair call charge counted every epoch check: with a ticker the
+  fuel of identical requests differed by up to 15%, and even before, any
+  epoch another Store's deadline or cancellation advanced on a shared engine
+  could add 50 fuel. The epoch callback now refunds that charge; fuel that
+  cannot cover a charge fails a counted host call before its effect and any
+  other call when it returns. The server does not yield on fuel intervals,
+  whose libcalls would count; the deterministic epoch yield suffices.
+- **Admission by memory.** A v2 request runs once a slot is free and its
+  memory budget fits `http::SERVER_MEMORY_BYTES` less the running requests'
+  budgets, within the worker wait (else 503 with `Retry-After`); a host may
+  lower slots and ceiling (`workers`, `memoryBytes`), and a ceiling below
+  one request fails before bind.
+- **Contract v1** keeps one blocking worker on the same engine and linked
+  module: its checked JSON parse calls back into the guest from a host
+  import, which an asynchronous call cannot.
+- Values set in the registry (open to an owner review):
+  `MAX_CONCURRENT_REQUESTS` 8 → 1024 slots and `SERVER_MEMORY_BYTES` 1 GiB
+  (128 requests of the full 8 MiB budget, more with smaller package
+  budgets). Lock: the `async` feature names an optional component-macro
+  dependency weakly, so `Cargo.lock` gains six lock-only entries that are
+  never built.
+- Tests: `server_tests::tasks` (a CPU-bound guest yields so a quick request
+  is answered while twice the worker threads spin, with identical fuel per
+  spin; 64 streams open at once; memory admission and a too-low ceiling);
+  the busy-503 test lowers the slots by host policy instead of opening 8
+  streams. Every other server test is unchanged.
+- Gate: `python3 scripts/verify.py full` PASS (3875 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261106-001950-ffibq692/report.json` (macOS only).
+
+#### H3 — TLS 1.3 and HTTP/2 (done 2026-11-06)
+
+- **TLS from the host.** A host policy's `http.tls` names absolute PEM
+  paths of the certificate chain and key; the host reads them (bounded)
+  before bind and serves TLS 1.3 only (rustls, ring, no 0-RTT) with ALPN
+  `h2` then `http/1.1`. Bad files, relative paths and TLS for a v1 service
+  fail before bind; nothing reaches a package or guest.
+- **Grant form.** `net.listen` patterns name TLS endpoints as
+  `https://IP:port` (canonical); a host that serves TLS needs that form in
+  the package and the ceiling, a cleartext host the bare form, and
+  `http_stop` checks the same. Denial tests: runtime
+  `server_tests::tls::listen_grants_name_whether_an_endpoint_serves_tls`
+  and CLI smoke
+  `http_cli_tls_listeners_need_the_tls_grant_form_in_package_and_host`
+  (positive path: the CLI announces `varta listening: https://…`).
+- **HTTP/2.** hyper's `http2` feature: at most
+  `http::MAX_CONCURRENT_STREAMS` streams, a `http::MAX_HEADER_LIST_BYTES`
+  header list, bounded windows and send buffer, keep-alive pings, the
+  rapid-reset bounds of `h2`, and the server's own: a connection whose
+  clients abandon more than `http::MAX_ABANDONED_REQUESTS` requests is
+  retired with `GOAWAY` and closed within a second. Keep-alive request
+  count, idle bound and lifetime retire HTTP/2 connections with `GOAWAY`;
+  the write idle bound covers TLS. Connection serving moved to
+  `server::connection`, TLS configuration to `server::tls`.
+- Dependencies: hyper's `http2` feature (`h2` 0.4.20 and `tokio-util`
+  0.7.20 join the lock); rustls server parts and PEM parsing come with the
+  locked rustls and pki-types; test-only: `rcgen` in the CLI smoke and
+  tokio's `io-util` in the runtime tests.
+- Tests: `server_tests::tls` (HTTP/2 and HTTP/1.1 by ALPN over TLS 1.3 with
+  a Web `Request` body and `https` URL, TLS 1.2 and cleartext refused,
+  HTTP/2 SETTINGS bounds, a 1000-stream rapid-reset flood ended with
+  `GOAWAY` while other clients are served, grant forms and file failures),
+  listen-grant validation unit tests.
+- Gate: `python3 scripts/verify.py full` PASS (3879 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261106-004103-yowuttms/report.json` (macOS only).
+
+#### H4 — Hardening and performance acceptance (done 2026-11-06)
+
+- **Fuzzing (seeded, reproducible).** Mutated contract metadata never
+  panics, and what parses is valid, keeps its version's registry limits and
+  round-trips; a mutated host policy lowers within the registry or is
+  refused (`varta-common` http tests). Random response envelopes are framed
+  with a valid status and safe headers or refused (transport tests). Random
+  requests (methods, percent-escaped targets, headers, Unicode bodies)
+  reach the v1, v2 sync, v2 async and Web `Request` adapters exactly as
+  sent, and mutated wire requests are refused before dispatch, never with a
+  500 (`server_tests::fuzz`).
+- **Floods and slow clients** (`server_tests::flood`, with the TLS
+  rapid-reset flood of H3 and the write-idle test of H1): 64 slowloris
+  clients are cut at the lowered idle bound while the service answers; a
+  connection flood waits in the backlog; a request flood beyond the slots
+  gets 503 with `Retry-After`; 32 stalled request bodies end at the body
+  idle bound; every slot is free afterwards.
+- **Load acceptance numbers** (`server_tests::bench`, ignored; run with
+  `cargo test -p varta-runtime --release --lib -- --ignored --nocapture
+  --test-threads=1 server_tests::bench`): Apple M1 Max, 10 cores, macOS 27,
+  release build, clients in the same process over loopback, the machine
+  shared with other builds (load average about 11); three runs:
+
+  | Measure | Result |
+  | --- | --- |
+  | Web `Request` handler, 32 keep-alive HTTP/1.1 clients, 16,000 requests | 43,500–45,500 requests/s |
+  | Latency p50 / p99 / max | 0.67–0.71 ms / 1.41–1.46 ms / 2.6–3.7 ms |
+  | Resident memory per idle keep-alive connection (1000 open, client buffers included) | about 36 KB |
+  | Resident memory per open event stream (100 open, each its own instance holding a timer) | 174–187 KB |
+
+  Each request instantiates its own Store from the pooled `InstancePre`.
+  These are acceptance baselines for this machine, not cross-platform
+  claims; Linux, HTTP/2 over TLS and sustained-load runs remain to record.
+- Gate: `python3 scripts/verify.py full` PASS (3888 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261106-010141-7bk6f7yq/report.json` (macOS only).
+
 ### Realistic turn budget and application memory (owner decisions, 2026-11-06)
 
 The UARP console against the live API was terminated first by a network turn

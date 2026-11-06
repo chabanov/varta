@@ -915,6 +915,15 @@ fn entry_limits() -> String {
             "`http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS`",
         ),
         (
+            "HTTP v2 request memory / server memory ceiling",
+            format!(
+                "{} / {}",
+                http::REQUEST_MEMORY_BYTES,
+                http::SERVER_MEMORY_BYTES
+            ),
+            "`http::REQUEST_MEMORY_BYTES`, `http::SERVER_MEMORY_BYTES`",
+        ),
+        (
             "HTTP v2 worker wait / keep-alive idle / requests per connection / connection lifetime",
             format!(
                 "{} s / {} s / {} / {} s",
@@ -934,6 +943,52 @@ fn entry_limits() -> String {
                 http::STREAM_CHUNK_BYTES
             ),
             "`http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES`",
+        ),
+        (
+            "HTTP v2 Web request body bytes / body idle / request lifetime",
+            format!(
+                "{} / {} s / {} s",
+                http::MAX_REQUEST_BODY_BYTES,
+                http::REQUEST_BODY_IDLE_SECONDS,
+                http::REQUEST_LIFETIME_SECONDS
+            ),
+            "`http::MAX_REQUEST_BODY_BYTES`, `http::REQUEST_BODY_IDLE_SECONDS`, `http::REQUEST_LIFETIME_SECONDS`",
+        ),
+        (
+            "HTTP v2 response write idle",
+            format!("{} s", http::WRITE_IDLE_SECONDS),
+            "`http::WRITE_IDLE_SECONDS`",
+        ),
+        (
+            "HTTP v2 TLS file bytes / handshake",
+            format!(
+                "{} / {} s",
+                http::MAX_TLS_FILE_BYTES,
+                http::TLS_HANDSHAKE_SECONDS
+            ),
+            "`http::MAX_TLS_FILE_BYTES`, `http::TLS_HANDSHAKE_SECONDS`",
+        ),
+        (
+            "HTTP/2 concurrent streams / header list bytes / stream window / connection window",
+            format!(
+                "{} / {} / {} / {}",
+                http::MAX_CONCURRENT_STREAMS,
+                http::MAX_HEADER_LIST_BYTES,
+                http::STREAM_WINDOW_BYTES,
+                http::CONNECTION_WINDOW_BYTES
+            ),
+            "`http::MAX_CONCURRENT_STREAMS`, `http::MAX_HEADER_LIST_BYTES`, `http::STREAM_WINDOW_BYTES`, `http::CONNECTION_WINDOW_BYTES`",
+        ),
+        (
+            "HTTP/2 pending resets / abandoned requests per connection / ping interval / ping timeout",
+            format!(
+                "{} / {} / {} s / {} s",
+                http::MAX_PENDING_RESET_STREAMS,
+                http::MAX_ABANDONED_REQUESTS,
+                http::PING_INTERVAL_SECONDS,
+                http::PING_TIMEOUT_SECONDS
+            ),
+            "`http::MAX_PENDING_RESET_STREAMS`, `http::MAX_ABANDONED_REQUESTS`, `http::PING_INTERVAL_SECONDS`, `http::PING_TIMEOUT_SECONDS`",
         ),
         (
             "Native HTTP retained request reports / total retained audit entries",
@@ -1013,7 +1068,10 @@ fn grant_kind(kind: GrantKind) -> (&'static str, &'static str) {
         GrantKind::Boolean => ("Boolean", r#"`"enabled": true \| false`"#),
         GrantKind::Patterns => ("Name/path patterns", r#"`"patterns": [...]`"#),
         GrantKind::Urls => ("URL patterns", r#"`"patterns": [...]`"#),
-        GrantKind::Listeners => ("Listen endpoints", r#"`"patterns": ["127.0.0.1:8080"]`"#),
+        GrantKind::Listeners => (
+            "Listen endpoints",
+            r#"`"patterns": ["127.0.0.1:8080"]` (cleartext) or `["https://127.0.0.1:8443"]` (TLS, when the host policy names `http.tls`)"#,
+        ),
         GrantKind::Requests => (
             "Request scopes (v37)",
             r#"`"patterns": [...]` plus optional `"methods": [...]` (the only id that accepts `methods`; absent admits every method, `[]` denies) and, v38, optional `"responseHeaders": [...]` (the only id that accepts it; exact lowercase names a v38 request shows, absent shows the CORS-safelisted names, `[]` shows none; see [canonical head](#canonical-head-v38))"#,

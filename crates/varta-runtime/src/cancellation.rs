@@ -20,18 +20,36 @@ pub(crate) struct Cancelled;
 #[derive(Clone)]
 pub(crate) struct Cancellation {
     state: Arc<AtomicBool>,
+    /// Wakes the async waits of a native server's request task.
+    notify: Arc<tokio::sync::Notify>,
     engine: Engine,
 }
 impl Cancellation {
     pub fn new(engine: Engine) -> Self {
         Self {
             state: Arc::new(AtomicBool::new(false)),
+            notify: Arc::new(tokio::sync::Notify::new()),
             engine,
         }
     }
     pub fn cancel(&self) {
         if !self.state.swap(true, Ordering::SeqCst) {
             self.engine.increment_epoch();
+            self.notify.notify_waiters();
+        }
+    }
+    /// Resolves once the execution is cancelled: the async waits of a
+    /// native server's request task select on it instead of polling.
+    pub async fn cancelled(&self) {
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // Registered before the check, so a cancel in between wakes it.
+            notified.as_mut().enable();
+            if self.state.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
         }
     }
     pub fn check(&self) -> Result<(), wasmtime::Error> {
@@ -46,8 +64,8 @@ impl Cancellation {
     }
 }
 
-/// Dropping an async owner does not abort a spawn_blocking worker by itself.
-/// The guard signals its execution before that worker can outlive the owner.
+/// Dropping an async owner does not abort its request task by itself. The
+/// guard signals its execution before that worker can outlive the owner.
 pub(crate) struct CancelOnDrop(pub Option<Cancellation>);
 impl CancelOnDrop {
     pub fn disarm(&mut self) {

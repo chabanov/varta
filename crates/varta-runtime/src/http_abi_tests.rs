@@ -272,3 +272,36 @@ varta.http.serve({hostname:"127.0.0.1",port:0},handle);
             .is_err()
     );
 }
+
+#[test]
+fn a_web_request_service_declares_its_flag_and_earlier_profiles_reject_it() {
+    use varta_common::language::LanguageProfile as P;
+    let source = r#"
+async function handle(r:Request):Promise<Response>{const text=await r.text();return new Response(text);}
+export function main():void{}
+varta.http.serve({hostname:"127.0.0.1",port:0},handle);
+"#;
+    let bytes =
+        varta_compiler::compile_typescript_with_profile(source, P::CheckedF64Utf16V38).unwrap();
+    let runtime = VartaRuntime::new();
+    let mut contract = runtime
+        .inspect_module(&bytes)
+        .unwrap()
+        .http_service
+        .unwrap();
+    assert!(contract.web_request && contract.asynchronous && contract.streaming);
+    assert_eq!(contract.required_effects, ["net.listen"]);
+    // The flag needs the asynchronous adapter (metadata written around the
+    // contract's own validation).
+    contract.asynchronous = false;
+    contract.streaming = false;
+    assert!(
+        runtime
+            .validate_module(&replace(&bytes, &serde_json::to_vec(&contract).unwrap()))
+            .is_err()
+    );
+    // V37 has no Web `Request` handlers: its fetch prelude has no adapter.
+    let error =
+        varta_compiler::compile_typescript_with_profile(source, P::CheckedF64Utf16V37).unwrap_err();
+    assert!(error.to_string().contains("HTTP"), "{error}");
+}

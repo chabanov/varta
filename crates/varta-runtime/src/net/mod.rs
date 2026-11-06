@@ -81,6 +81,16 @@ struct Replayed {
     released: bool,
 }
 
+/// The body of a request a v2 Web `Request` service received ([`Net::inbound`]):
+/// at most `limit` bytes, each wait for the next frame at most `idle`, and
+/// none past `deadline` (the request's lifetime).
+pub(crate) struct InboundBody {
+    pub body: hyper::body::Incoming,
+    pub limit: usize,
+    pub idle: std::time::Duration,
+    pub deadline: Instant,
+}
+
 /// Where completions come from.
 #[derive(Default)]
 enum Session {
@@ -122,9 +132,11 @@ impl Transfer {
     /// A transfer that ended on its own (its end of body or a failure) is
     /// closed the same way before its terminal completion is delivered: its
     /// request task has finished, and its cancelled connection task would
-    /// otherwise wait for the next drive as well. Without a runtime there is
-    /// no task to wait for: a transfer exists only on the runtime that
-    /// spawned it.
+    /// otherwise wait for the next drive as well. Without a runtime of its
+    /// own the execution's transfers run on a shared one (a native server's,
+    /// whose threads drive them continuously): dropping the transfer cancels
+    /// its request task, whose connection guard cancels its connection task,
+    /// and that runtime drops both without this thread blocking.
     fn close(mut self, runtime: Option<&tokio::runtime::Runtime>) {
         let Some(runtime) = runtime else {
             return;
@@ -155,6 +167,10 @@ impl Drop for Transfer {
 #[derive(Default)]
 pub(crate) struct Net {
     runtime: Option<tokio::runtime::Runtime>,
+    /// A native server's request task (H2): transfers run on that server's
+    /// runtime instead of one of their own, progressing while the request
+    /// awaits ([`Self::share_runtime`]).
+    handle: Option<tokio::runtime::Handle>,
     events: Option<(mpsc::UnboundedSender<Event>, mpsc::UnboundedReceiver<Event>)>,
     tls: Option<Arc<rustls::ClientConfig>>,
     requests: BTreeMap<u64, Request>,
@@ -376,7 +392,23 @@ impl Net {
         Ok(())
     }
     fn spawn(&mut self, id: u64, plan: client::Plan) -> Result<Transfer, wasmtime::Error> {
-        if self.runtime.is_none() {
+        let connection = client::ConnectionSlot::default();
+        let slot = connection.clone();
+        self.transfer(connection, |events, pulls| {
+            client::run(id, plan, events, pulls, slot)
+        })
+    }
+    /// A transfer task made by `task` of the completion sender and the pull
+    /// receiver, on the execution's runtime (created by the first one).
+    fn transfer<F>(
+        &mut self,
+        connection: client::ConnectionSlot,
+        task: impl FnOnce(mpsc::UnboundedSender<Event>, mpsc::Receiver<ReadMode>) -> F,
+    ) -> Result<Transfer, wasmtime::Error>
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        if self.runtime.is_none() && self.handle.is_none() {
             self.runtime = Some(
                 tokio::runtime::Builder::new_current_thread()
                     .enable_io()
@@ -389,16 +421,41 @@ impl Net {
         let events = events.clone();
         // One pull may be outstanding: the guest arms one chunk at a time.
         let (pull, pulls) = mpsc::channel(1);
-        let Some(runtime) = &self.runtime else {
-            return Err(wasmtime::Error::new(NetError::State));
+        let task = match (&self.handle, &self.runtime) {
+            (Some(handle), _) => handle.spawn(task(events, pulls)),
+            (None, Some(runtime)) => runtime.spawn(task(events, pulls)),
+            (None, None) => return Err(wasmtime::Error::new(NetError::State)),
         };
-        let connection = client::ConnectionSlot::default();
-        let task = runtime.spawn(client::run(id, plan, events, pulls, connection.clone()));
         Ok(Transfer {
             task,
             pull,
             connection,
         })
+    }
+    /// Register the body of a request a v2 Web `Request` service received
+    /// as a transfer whose head was taken: the guest reads its chunks
+    /// exactly as a response body's (`net_body_read*`), one bounded chunk
+    /// per pull, so a slow guest applies backpressure to the client. Its id
+    /// goes into the request envelope ([`varta_common::http::WebRequestHead`]).
+    pub(crate) fn inbound(&mut self, body: InboundBody) -> Result<u64, wasmtime::Error> {
+        self.full()?;
+        self.next_id += 1;
+        let id = self.next_id;
+        let transfer = self.transfer(client::ConnectionSlot::default(), |events, pulls| {
+            client::inbound(id, body, events, pulls)
+        })?;
+        self.requests.insert(
+            id,
+            Request {
+                phase: Phase::Idle,
+                watcher: None,
+                transfer: Some(transfer),
+                logged: None,
+                read: None,
+                replay: None,
+            },
+        );
+        Ok(id)
     }
     fn tls(&mut self) -> Result<Arc<rustls::ClientConfig>, String> {
         if let Some(config) = &self.tls {
@@ -431,7 +488,8 @@ impl Net {
     /// A transfer completed its armed operation. Completions of requests that
     /// were aborted or released are discarded. A terminal completion first
     /// closes the transfer's connection, so its socket is gone before the
-    /// guest can observe the end, as after an abort. A recording logs each
+    /// guest can observe the end, as after an abort (on a shared runtime,
+    /// cancelled at once and dropped by that runtime). A recording logs each
     /// completion the guest receives here, and only those.
     pub(crate) fn deliver(
         &mut self,
@@ -562,6 +620,44 @@ impl Net {
             return replayer.poll();
         }
         self.events.as_mut()?.1.try_recv().ok()
+    }
+    /// Run this execution's transfers on the runtime behind `handle`, a
+    /// native server's (H2), set before the first transfer. Its transfers
+    /// progress while the request task awaits; a closed or aborted transfer
+    /// is cancelled at once, and its tasks are dropped by that runtime.
+    pub(crate) fn share_runtime(&mut self, handle: tokio::runtime::Handle) {
+        self.handle = Some(handle);
+    }
+    /// Wait for a completion until `until` or `cancellation`, without
+    /// blocking the thread (the form of [`Self::wait`] for a request task on
+    /// a shared runtime; there is no replay there).
+    pub(crate) async fn wait_async(
+        &mut self,
+        until: Instant,
+        cancellation: Option<&crate::cancellation::Cancellation>,
+    ) -> Option<Event> {
+        let until = tokio::time::Instant::from_std(until);
+        let cancelled = async {
+            match cancellation {
+                Some(cancellation) => cancellation.cancelled().await,
+                None => std::future::pending().await,
+            }
+        };
+        let Some((_, events)) = &mut self.events else {
+            tokio::select! {
+                () = tokio::time::sleep_until(until) => {}
+                () = cancelled => {}
+            }
+            return None;
+        };
+        if let Ok(event) = events.try_recv() {
+            return Some(event);
+        }
+        tokio::select! {
+            event = events.recv() => event,
+            () = tokio::time::sleep_until(until) => None,
+            () = cancelled => None,
+        }
     }
     /// Drive the transfers until one reports a completion or `until` passes.
     /// A replay never waits for the wall clock: what it released arrives
@@ -924,6 +1020,26 @@ pub(crate) fn wait(context: &mut RuntimeContext, until: Instant) -> Result<bool,
         if slice == until || Instant::now() >= until {
             return Ok(false);
         }
+    };
+    context.net.deliver(&mut context.scheduler, event)?;
+    scheduler::observed_wall_clock(context);
+    Ok(true)
+}
+
+/// The form of [`wait`] for a native server's request task (H2): it awaits
+/// the next completion, `until` or the request's cancellation.
+pub(crate) async fn wait_async(
+    context: &mut RuntimeContext,
+    until: Instant,
+) -> Result<bool, wasmtime::Error> {
+    context.check_cancelled()?;
+    let event = context
+        .net
+        .wait_async(until, context.cancellation.as_ref())
+        .await;
+    context.check_cancelled()?;
+    let Some(event) = event else {
+        return Ok(false);
     };
     context.net.deliver(&mut context.scheduler, event)?;
     scheduler::observed_wall_clock(context);

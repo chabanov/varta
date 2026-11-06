@@ -106,7 +106,7 @@ pub(super) async fn run(
     id: u64,
     plan: Plan,
     events: mpsc::UnboundedSender<Event>,
-    mut pull: mpsc::Receiver<ReadMode>,
+    pull: mpsc::Receiver<ReadMode>,
     connection: ConnectionSlot,
 ) {
     let deadline = tokio::time::Instant::from_std(plan.deadline);
@@ -141,7 +141,18 @@ pub(super) async fn run(
         }
     }
     send(CompletionKind::Head, head(&plan.url, &parts, &plan.head));
-    let mut reader = BodyReader::new(body, plan.timing, plan.bound);
+    deliver(BodyReader::new(body, plan.timing, plan.bound), pull, send).await;
+}
+
+/// Answer each pull with the body's next chunk, until its end or failure.
+async fn deliver<B>(
+    mut reader: BodyReader<B>,
+    mut pull: mpsc::Receiver<ReadMode>,
+    send: impl Fn(CompletionKind, String),
+) where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
     loop {
         let Some(mode) = pull.recv().await else {
             return;
@@ -149,8 +160,77 @@ pub(super) async fn run(
         match reader.next(mode).await {
             Ok(Some(text)) => send(CompletionKind::Chunk, text),
             Ok(None) => return send(CompletionKind::End, String::new()),
-            Err(failure) => return fail(failure),
+            Err(failure) => return send(CompletionKind::Failed, failure.to_string()),
         }
+    }
+}
+
+/// The body transfer of a request a v2 Web `Request` service received
+/// (`Net::inbound`): its head is taken already, so each pull gets the next
+/// chunk, delivered as a response body's. Every wait for a frame lasts at
+/// most the body's idle bound and never runs past its deadline.
+pub(super) async fn inbound(
+    id: u64,
+    body: super::InboundBody,
+    events: mpsc::UnboundedSender<Event>,
+    pull: mpsc::Receiver<ReadMode>,
+) {
+    let send = |kind: CompletionKind, text: String| {
+        let _ = events.send(Event {
+            id,
+            completion: Completion { kind, text },
+            arrived: std::time::Instant::now(),
+        });
+    };
+    let timing = Timing::Inactivity(Inactivity {
+        window: body.idle,
+        bound: Some(body.deadline),
+    });
+    let limited = Limited {
+        body: body.body,
+        remaining: body.limit,
+        limit: body.limit,
+    };
+    deliver(
+        BodyReader::new(limited, timing, BodyBound::Read),
+        pull,
+        send,
+    )
+    .await;
+}
+
+/// A received request body bounded to `limit` bytes in all: a frame beyond
+/// it fails the body.
+struct Limited<B> {
+    body: B,
+    remaining: usize,
+    limit: usize,
+}
+impl<B> Body for Limited<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
+    type Data = Bytes;
+    type Error = String;
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, String>>> {
+        let frame = match std::pin::Pin::new(&mut self.body).poll_frame(context) {
+            Poll::Ready(Some(Ok(frame))) => frame,
+            Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error.to_string()))),
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => return Poll::Pending,
+        };
+        if let Some(data) = frame.data_ref() {
+            if data.len() > self.remaining {
+                let limit = self.limit;
+                return Poll::Ready(Some(Err(format!("request body exceeds {limit} bytes"))));
+            }
+            self.remaining -= data.len();
+        }
+        Poll::Ready(Some(Ok(frame)))
     }
 }
 
@@ -195,6 +275,17 @@ type Response = (hyper::http::response::Parts, Incoming, Connection);
 /// Its guest call remains synchronous; only native I/O is driven here, under
 /// the same cancellation token and without guest jobs or allowance renewal.
 pub(crate) fn fetch_cancellable(
+    url: &url::Url,
+    deadline: Instant,
+    read_body: bool,
+    cancellation: &crate::cancellation::Cancellation,
+) -> Result<(i32, Vec<u8>), crate::http::Failure> {
+    // The call drives (and drops) a runtime of its own: a native server's
+    // request task (K7 H2) hands its thread on first.
+    crate::blocking(|| fetch_blocking(url, deadline, read_body, cancellation))
+}
+
+fn fetch_blocking(
     url: &url::Url,
     deadline: Instant,
     read_body: bool,

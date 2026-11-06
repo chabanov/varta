@@ -3,15 +3,8 @@ use http_body_util::{BodyExt, Either, Full};
 use hyper::{
     Request, Response, StatusCode,
     body::{Body, Bytes, Incoming},
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::{TokioIo, TokioTimer};
-use std::{
-    convert::Infallible,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::{convert::Infallible, sync::atomic::Ordering, time::Duration};
 use varta_common::http::{self, HttpHeader, HttpRequest, HttpResponse};
 
 type Reply = Response<Either<Full<Bytes>, StreamBody>>;
@@ -126,16 +119,18 @@ fn response(
     }
     Ok(response)
 }
-async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> {
+/// The checks every request passes before dispatch: no CONNECT or upgrade,
+/// a body within `body_bytes` as far as its declared length shows, and the
+/// target and header bounds. Returns the request's header list.
+fn checked_head(req: &Request<Incoming>, body_bytes: usize) -> Result<Vec<HttpHeader>, StatusCode> {
     if req.method() == hyper::Method::CONNECT || req.headers().contains_key(hyper::header::UPGRADE)
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    if req.body().size_hint().lower() > http::MAX_BODY_BYTES as u64 {
+    if req.body().size_hint().lower() > body_bytes as u64 {
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
-    let head = req.method() == hyper::Method::HEAD;
-    let target = req.uri().to_string();
+    let target = req.uri().path_and_query().map_or("/", |path| path.as_str());
     if target.len() > http::MAX_TARGET_BYTES || req.headers().len() > http::MAX_HEADERS {
         return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }
@@ -153,6 +148,74 @@ async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> 
                 .map_err(|_| StatusCode::BAD_REQUEST)?
                 .to_owned(),
         });
+    }
+    Ok(headers)
+}
+
+/// The envelope of a v2 Web `Request` service: the method, the absolute URL
+/// (`scheme`, the authority the request names or else the listener's
+/// address, and the target's path and query), the headers and the body
+/// still unread, which the worker streams to the guest.
+fn web_request(
+    req: Request<Incoming>,
+    scheme: &str,
+    address: SocketAddr,
+    body_bytes: usize,
+) -> Result<(handler::Envelope, bool), StatusCode> {
+    let headers = checked_head(&req, body_bytes)?;
+    let head = req.method() == hyper::Method::HEAD;
+    // An absolute-form target or an HTTP/2 `:authority` names it; else the
+    // `Host` header, which must be a valid authority.
+    let authority = match req.uri().authority() {
+        Some(authority) => authority.to_string(),
+        None => match req.headers().get(hyper::header::HOST) {
+            Some(host) => host
+                .to_str()
+                .ok()
+                .and_then(|host| host.parse::<hyper::http::uri::Authority>().ok())
+                .ok_or(StatusCode::BAD_REQUEST)?
+                .to_string(),
+            None => address.to_string(),
+        },
+    };
+    let target = req.uri().path_and_query().map_or("/", |path| path.as_str());
+    let url = format!("{scheme}://{authority}{target}");
+    if url.len() > abi::MAX_INPUT_BYTES {
+        return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+    }
+    let method = req.method().to_string();
+    let incoming = req.into_body();
+    let body = (!incoming.is_end_stream()).then_some(incoming);
+    let head_record = http::WebRequestHead {
+        method,
+        url,
+        headers,
+        body: 0,
+    };
+    Ok((
+        handler::Envelope::Web {
+            head: head_record,
+            body,
+        },
+        head,
+    ))
+}
+
+async fn request(req: Request<Incoming>) -> Result<(handler::Envelope, bool), StatusCode> {
+    let headers = checked_head(&req, http::MAX_BODY_BYTES)?;
+    let head = req.method() == hyper::Method::HEAD;
+    // An HTTP/2 request's URI is absolute (its `:scheme` and `:authority`);
+    // its target is the path and query, as an HTTP/1.1 origin-form target.
+    let target = if req.version() == hyper::Version::HTTP_2 {
+        req.uri()
+            .path_and_query()
+            .map_or("/", |path| path.as_str())
+            .to_owned()
+    } else {
+        req.uri().to_string()
+    };
+    if target.len() > http::MAX_TARGET_BYTES {
+        return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }
     let method = req.method().to_string();
     let mut incoming = req.into_body();
@@ -179,7 +242,7 @@ async fn request(req: Request<Incoming>) -> Result<(Vec<u8>, bool), StatusCode> 
     if json.len() > abi::MAX_INPUT_BYTES {
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
-    Ok((json, head))
+    Ok((handler::Envelope::Text(json), head))
 }
 /// Close the connection after `reply`: always under contract v1, and on a
 /// keep-alive connection's last allowed request.
@@ -193,6 +256,69 @@ fn closing(mut reply: Reply, close: bool) -> Reply {
     reply
 }
 
+/// What a running request holds: an instance slot and, in contract v2, its
+/// memory budget's pages of the server's memory ceiling. Released when its
+/// worker task ends, after its Store was dropped.
+struct Admission {
+    _slot: tokio::sync::OwnedSemaphorePermit,
+    _memory: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+/// Admit a request: v1 takes its one worker at once or gets 503; a v2
+/// request waits at most the worker wait for a slot and its memory, else it
+/// gets 503 with `Retry-After`. Shutdown ends the wait.
+async fn admit(shared: &Shared, pool: Option<http::PoolLimits>) -> Result<Admission, Refusal> {
+    let Some(pool) = pool else {
+        return shared
+            .workers
+            .clone()
+            .try_acquire_owned()
+            .map(|slot| Admission {
+                _slot: slot,
+                _memory: None,
+            })
+            .map_err(|_| Refusal::Unavailable);
+    };
+    let admitted = async {
+        let slot = shared.workers.clone().acquire_owned().await.ok()?;
+        let memory = shared
+            .memory
+            .clone()
+            .acquire_many_owned(shared.request_pages)
+            .await
+            .ok()?;
+        Some(Admission {
+            _slot: slot,
+            _memory: Some(memory),
+        })
+    };
+    tokio::select! {
+        _ = shared.stop.cancelled() => Err(Refusal::Unavailable),
+        admitted = tokio::time::timeout(Duration::from_millis(pool.worker_wait_ms), admitted) => {
+            match admitted {
+                Ok(Some(admission)) => Ok(admission),
+                _ => Err(Refusal::Busy),
+            }
+        }
+    }
+}
+
+/// Why a request was not admitted.
+enum Refusal {
+    /// The v1 worker is busy, or the service stops: 503.
+    Unavailable,
+    /// No admission within the worker wait: 503 with `Retry-After`.
+    Busy,
+}
+impl Refusal {
+    fn reply(self) -> Reply {
+        match self {
+            Self::Unavailable => failure(StatusCode::SERVICE_UNAVAILABLE),
+            Self::Busy => busy(),
+        }
+    }
+}
+
 /// A 503 for a request that found no worker within the wait bound.
 fn busy() -> Reply {
     let mut reply = failure(StatusCode::SERVICE_UNAVAILABLE);
@@ -203,19 +329,50 @@ fn busy() -> Reply {
     reply
 }
 
-async fn handle(
+/// One request of a connection. Its connection's keep-alive request count
+/// closes an HTTP/1.1 connection (`connection: close`) or retires an HTTP/2
+/// one (`GOAWAY`; HTTP/2 has no connection header). A request whose client
+/// leaves before its response counts as abandoned.
+pub(super) async fn handle(
     req: Request<Incoming>,
     shared: Arc<Shared>,
-    served: Arc<std::sync::atomic::AtomicUsize>,
+    state: Arc<connection::State>,
 ) -> Result<Reply, Infallible> {
-    let pool = shared
-        .contract
-        .limits
-        .pool
-        .filter(|_| shared.contract.version == http::UTF16_VERSION);
-    let count = served.fetch_add(1, Ordering::AcqRel) + 1;
-    let close = pool.is_none_or(|pool| count >= pool.keep_alive_requests);
-    Ok(closing(handle_request(req, shared, pool).await, close))
+    let active = state.begin();
+    let pool = shared.pool();
+    let count = state.served.fetch_add(1, Ordering::AcqRel) + 1;
+    let last = pool.is_none_or(|pool| count >= pool.keep_alive_requests);
+    let mut reply = handle_request(req, shared, pool).await;
+    active.complete();
+    match state.protocol {
+        connection::Protocol::Http1 => reply = closing(reply, last),
+        connection::Protocol::Http2 => {
+            reply.headers_mut().remove(hyper::header::CONNECTION);
+            if last {
+                state.retire();
+            }
+        }
+    }
+    Ok(reply)
+}
+
+/// The envelope of `req`: a Web `Request` service's head, its body still
+/// streaming; otherwise the whole request, read within the header bound.
+async fn envelope(
+    req: Request<Incoming>,
+    shared: &Shared,
+) -> Result<(handler::Envelope, bool), StatusCode> {
+    match shared.limits.transport {
+        Some(transport) if shared.contract.web_request => web_request(
+            req,
+            shared.scheme,
+            shared.address,
+            transport.request_body_bytes,
+        ),
+        _ => tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req))
+            .await
+            .unwrap_or(Err(StatusCode::REQUEST_TIMEOUT)),
+    }
 }
 
 async fn handle_request(
@@ -224,47 +381,50 @@ async fn handle_request(
     pool: Option<http::PoolLimits>,
 ) -> Reply {
     let (request, head) = tokio::select! {
-        _=shared.stop.cancelled()=>return failure(StatusCode::SERVICE_UNAVAILABLE),
-        value=tokio::time::timeout(Duration::from_secs(http::HEADER_SECONDS), request(req))=> match value {
-            Ok(Ok(value))=>value,
-            Ok(Err(status))=>return failure(status),
-            Err(_)=>return failure(StatusCode::REQUEST_TIMEOUT),
+        _ = shared.stop.cancelled() => return failure(StatusCode::SERVICE_UNAVAILABLE),
+        value = envelope(req, &shared) => match value {
+            Ok(value) => value,
+            Err(status) => return failure(status),
         }
     };
     if shared.stop.stopped() {
         return failure(StatusCode::SERVICE_UNAVAILABLE);
     }
-    // V1 refuses at once while its one worker is busy; a v2 request waits a
-    // bounded time for a worker of the pool.
-    let permit = match pool {
-        None => shared.workers.clone().try_acquire_owned().ok(),
-        Some(pool) => tokio::select! {
-            _ = shared.stop.cancelled() => None,
-            permit = tokio::time::timeout(
-                Duration::from_millis(pool.worker_wait_ms),
-                shared.workers.clone().acquire_owned(),
-            ) => match permit {
-                Ok(Ok(permit)) => Some(permit),
-                _ => return busy(),
-            },
-        },
+    let admission = match admit(&shared, pool).await {
+        Ok(admission) => admission,
+        Err(refusal) => return refusal.reply(),
     };
-    let Some(permit) = permit else {
-        return failure(StatusCode::SERVICE_UNAVAILABLE);
+    let result = match (pool, request) {
+        // Contract v1 (frozen): a blocking worker that is never cancelled.
+        (None, handler::Envelope::Text(request)) => {
+            let worker = shared.clone();
+            tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                handler::execute_legacy(&worker, request)
+            })
+            .await
+        }
+        (_, request) => {
+            let cancellation = Some(crate::cancellation::Cancellation::new(
+                shared.engine.clone(),
+            ));
+            let mut owner = crate::cancellation::CancelOnDrop(cancellation.clone());
+            if shared.contract.streaming {
+                return streaming(shared, request, head, admission, cancellation, owner).await;
+            }
+            // The worker is a task of its own: a connection that goes away
+            // drops only its owner, which cancels it; its admission ends
+            // with it.
+            let worker = shared.clone();
+            let result = tokio::spawn(async move {
+                let _admission = admission;
+                handler::execute(&worker, request, cancellation, None).await
+            })
+            .await;
+            owner.disarm();
+            result
+        }
     };
-    let cancellation = (shared.contract.version == http::UTF16_VERSION)
-        .then(|| crate::cancellation::Cancellation::new(shared.engine.clone()));
-    let mut owner = crate::cancellation::CancelOnDrop(cancellation.clone());
-    if shared.contract.streaming {
-        return streaming(shared, request, head, permit, cancellation, owner).await;
-    }
-    let worker = shared.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        handler::execute(&worker, request, cancellation, None)
-    })
-    .await;
-    owner.disarm();
     let reply = match result {
         Ok(Ok(value)) => response(value, head, None),
         // The owning worker has already delivered bounded output/diagnostics.
@@ -285,9 +445,9 @@ async fn handle_request(
 /// shutdown cancels a worker still pulling.
 async fn streaming(
     shared: Arc<Shared>,
-    request: Vec<u8>,
+    request: handler::Envelope,
     head: bool,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    admission: Admission,
     cancellation: Option<crate::cancellation::Cancellation>,
     owner: crate::cancellation::CancelOnDrop,
 ) -> Reply {
@@ -304,8 +464,8 @@ async fn streaming(
         });
     }
     let worker = shared.clone();
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+    tokio::spawn(async move {
+        let _admission = admission;
         let _finished = finished;
         // The worker reports its own outcome; the transport sees its head.
         let _ = handler::execute(
@@ -317,7 +477,8 @@ async fn streaming(
                 chunks: chunk_sender,
                 bodyless: head,
             }),
-        );
+        )
+        .await;
     });
     let Ok(value) = head_receiver.await else {
         return failure(StatusCode::INTERNAL_SERVER_ERROR);
@@ -336,155 +497,84 @@ async fn streaming(
     }
 }
 
-pub(super) async fn serve(
-    listener: TcpListener,
-    address: SocketAddr,
-    shared: Arc<Shared>,
-) -> Result<(), RuntimeError> {
-    let listener = tokio::net::TcpListener::from_std(listener).map_err(HttpError::Io)?;
-    if let Some(observer) = &shared.sink.observer {
-        observer(RuntimeEvent::Listening {
-            address,
-            shutdown: shared.stop.clone(),
-        });
-    }
-    if shared.contract.version == http::UTF16_VERSION {
-        pooled(listener, shared).await
-    } else {
-        sequential(listener, shared).await
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
-/// Contract v1: one connection at a time; a busy worker refuses with 503.
-async fn sequential(
-    listener: tokio::net::TcpListener,
-    shared: Arc<Shared>,
-) -> Result<(), RuntimeError> {
-    while !shared.stop.stopped() {
-        let accepted = tokio::select! { _ = shared.stop.cancelled() => break, value = listener.accept() => value };
-        let (stream, _) = accepted.map_err(HttpError::Io)?;
-        connection(stream, shared.clone()).await;
-    }
-    Ok(())
-}
+    /// Header name pieces: tokens, framing names, separators and controls.
+    const NAMES: [&str; 10] = [
+        "content-type",
+        "x-ok",
+        "connection",
+        "content-length",
+        "transfer-encoding",
+        "X-Mixed",
+        "bad name",
+        "bad:name",
+        "",
+        "x\u{0}",
+    ];
+    const VALUES: [&str; 7] = [
+        "text/plain",
+        "",
+        "a\r\nInjected: yes",
+        "é",
+        "\u{7f}",
+        "x\u{0}y",
+        "  spaced  ",
+    ];
 
-/// Contract v2: up to `limits.connections` open keep-alive connections, which
-/// cost no worker while idle; each request waits a bounded time for one of
-/// the pool's workers. A further connection waits in the listener's backlog,
-/// never in an unbounded queue. Shutdown stops accepting and waits for the
-/// open connections, which drain or end their responses.
-async fn pooled(
-    listener: tokio::net::TcpListener,
-    shared: Arc<Shared>,
-) -> Result<(), RuntimeError> {
-    let slots = Arc::new(tokio::sync::Semaphore::new(
-        shared.contract.limits.connections,
-    ));
-    let mut open = tokio::task::JoinSet::new();
-    let result = loop {
-        while open.try_join_next().is_some() {}
-        let slot = tokio::select! {
-            _ = shared.stop.cancelled() => break Ok(()),
-            slot = slots.clone().acquire_owned() => slot,
-        };
-        // The semaphore is never closed.
-        let Ok(slot) = slot else { break Ok(()) };
-        let accepted = tokio::select! { _ = shared.stop.cancelled() => break Ok(()), value = listener.accept() => value };
-        let (stream, _) = match accepted {
-            Ok(accepted) => accepted,
-            Err(error) => break Err(HttpError::Io(error).into()),
-        };
-        let service = shared.clone();
-        open.spawn(async move {
-            let _slot = slot;
-            connection(stream, service).await;
-        });
-    };
-    while open.join_next().await.is_some() {}
-    result
-}
-
-/// Serve one connection. Contract v1: one request, then close, within the
-/// connection bound. Contract v2: keep-alive requests (the idle time is also
-/// the head deadline) within the connection lifetime, after which the
-/// connection finishes its current response and closes. A streaming
-/// service's bound adds the stream lifetime.
-async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
-    let pool = shared
-        .contract
-        .limits
-        .pool
-        .filter(|_| shared.contract.version == http::UTF16_VERSION);
-    let service = shared.clone();
-    let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let answered = served.clone();
-    let mut builder = http1::Builder::new();
-    builder
-        .keep_alive(pool.is_some())
-        .max_headers(http::MAX_HEADERS)
-        .max_buf_size(http::HTTP_BUFFER_BYTES)
-        .timer(TokioTimer::new())
-        .header_read_timeout(
-            pool.map_or(Duration::from_secs(http::HEADER_SECONDS), |pool| {
-                Duration::from_millis(pool.keep_alive_idle_ms)
-            }),
-        );
-    let entered = Arc::new(AtomicBool::new(false));
-    let request_entered = entered.clone();
-    let connection = builder.serve_connection(
-        TokioIo::new(stream),
-        service_fn(move |req| {
-            request_entered.store(true, Ordering::Release);
-            handle(req, service.clone(), served.clone())
-        }),
-    );
-    // Stop reading new requests on shutdown, without dropping an active
-    // response future. Its original connection/request deadlines still apply.
-    tokio::pin!(connection);
-    let mut bound = pool.map_or(Duration::from_secs(http::CONNECTION_SECONDS), |pool| {
-        Duration::from_millis(pool.connection_lifetime_ms)
-    });
-    if let Some(limits) = shared
-        .contract
-        .limits
-        .stream
-        .filter(|_| shared.contract.streaming)
-    {
-        bound += Duration::from_millis(limits.lifetime_ms);
-    }
-    let until = tokio::time::Instant::now() + bound;
-    let drain = Duration::from_secs(http::CONNECTION_SECONDS);
-    let result = tokio::select! {
-        result = connection.as_mut() => Some(result),
-        _ = tokio::time::sleep_until(until) => {
-            if pool.is_some() {
-                // The lifetime ends: finish the current response, then close.
-                connection.as_mut().graceful_shutdown();
-                tokio::time::timeout(drain, connection.as_mut()).await.ok()
+    /// K7 H4: any response envelope a guest returns is framed with a valid
+    /// status, safe headers and no body where none may be, or refused;
+    /// never a panic.
+    #[test]
+    fn random_response_envelopes_are_framed_safely_or_refused() {
+        let mut random = StdRng::seed_from_u64(0x6b37_6834_7265_7370);
+        let mut framed = 0;
+        for _ in 0..5000 {
+            let status = random.gen_range(-5..700);
+            // Up to the header count bound and beyond.
+            let count = if random.gen_ratio(1, 10) {
+                random.gen_range(0..=http::MAX_HEADERS + 2)
             } else {
-                None
+                random.gen_range(0..4)
+            };
+            let headers = (0..count)
+                .map(|_| HttpHeader {
+                    name: NAMES[random.gen_range(0..NAMES.len())].to_owned(),
+                    value: VALUES[random.gen_range(0..VALUES.len())].to_owned(),
+                })
+                .collect();
+            let body = "b".repeat(random.gen_range(0..3));
+            let head = random.r#gen();
+            let value = HttpResponse {
+                status,
+                body: body.clone(),
+                headers,
+            };
+            let Ok(reply) = response(value, head, None) else {
+                continue;
+            };
+            framed += 1;
+            let code = reply.status().as_u16();
+            assert!((200..=599).contains(&code), "{code}");
+            for (name, value) in reply.headers() {
+                assert!(
+                    !FRAMING_HEADERS.contains(&name.as_str()) || name == "content-length" && head
+                );
+                assert!(
+                    !value
+                        .as_bytes()
+                        .iter()
+                        .any(|byte| *byte == b'\r' || *byte == b'\n')
+                );
+            }
+            if http::BODYLESS_STATUSES.contains(&i32::from(code)) {
+                assert!(body.is_empty());
             }
         }
-        _=shared.stop.cancelled()=>{
-            if entered.load(Ordering::Acquire) {
-                // Drain the current response within the connection bound.
-                connection.as_mut().graceful_shutdown();
-                tokio::time::timeout_at(until, connection.as_mut()).await.ok()
-            } else {
-                // No request exists to drain. Closing a partial header or
-                // an idle accepted socket must not wait for its timeout.
-                Some(Ok(()))
-            }
-        }
-    };
-    match result {
-        Some(Ok(())) => {}
-        // A kept-alive connection that idled past its bound closes: not a
-        // rejection.
-        Some(Err(error)) if error.is_timeout() && answered.load(Ordering::Acquire) > 0 => {}
-        Some(Err(error)) => shared
-            .sink
-            .diagnostic(format!("HTTP connection rejected: {error}")),
-        None => shared.sink.diagnostic("HTTP connection deadline".into()),
+        // The generator reaches both outcomes.
+        assert!(framed > 100, "{framed}");
     }
 }

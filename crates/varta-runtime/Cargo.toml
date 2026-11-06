@@ -41,6 +41,9 @@ chrono.workspace = true
 
 [dev-dependencies]
 rcgen.workspace = true
+# Test-only: the TLS and HTTP/2 clients of the server tests read and write
+# their streams with the `io-util` extensions.
+tokio = { workspace = true, features = ["io-util"] }
 # The test-only hook produces v33 frame modules for runtime admission tests.
 varta-compiler = { path = "../varta-compiler", features = ["suspension-test-hook"] }
 

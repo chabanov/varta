@@ -562,9 +562,9 @@ fn execute(
 
 fn observer(budget_report: bool) -> varta_project::RuntimeObserver {
     std::sync::Arc::new(move |event| match event {
-        varta_project::RuntimeEvent::Listening { address, .. } => {
-            eprintln!("varta listening: http://{address}")
-        }
+        varta_project::RuntimeEvent::Listening {
+            address, scheme, ..
+        } => eprintln!("varta listening: {scheme}://{address}"),
         varta_project::RuntimeEvent::Output(line) => println!("{line}"),
         varta_project::RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
         varta_project::RuntimeEvent::HttpRequest(report) => {
