@@ -1,0 +1,70 @@
+{
+  "name": "svc",
+  "tags": [
+    "x",
+    "y"
+  ],
+  "nested": {
+    "a": 1,
+    "b": 2,
+    "c": []
+  },
+  "empty": [],
+  "none": {},
+  "note": "quote \" brace { comma , colon : backslash \\"
+}
+{
+	"name": "svc",
+	"tags": [
+		"x",
+		"y"
+	],
+	"nested": {
+		"a": 1,
+		"b": 2,
+		"c": []
+	},
+	"empty": [],
+	"none": {},
+	"note": "quote \" brace { comma , colon : backslash \\"
+}
+{
+--"name": "svc",
+--"tags": [
+----"x",
+----"y"
+--],
+--"nested": {
+----"a": 1,
+----"b": 2,
+----"c": []
+--},
+--"empty": [],
+--"none": {},
+--"note": "quote \" brace { comma , colon : backslash \\"
+}
+{"name":"svc","tags":["x","y"],"nested":{"a":1,"b":2,"c":[]},"empty":[],"none":{},"note":"quote \" brace { comma , colon : backslash \\"}
+          "name": "svc",
+abcdefghij"name": "svc",
+{"note":"quote \" brace { comma , colon : backslash \\","name":"svc","nested":{"a":1}}
+{
+ "nested": {
+  "b": 2
+ }
+}
+{"1":"one","b":[{"1":2}]}
+[
+  1,
+  [
+    2,
+    3
+  ]
+]
+"text"
+42
+{
+   "k": [
+      true,
+      null
+   ]
+}

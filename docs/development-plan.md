@@ -34,7 +34,7 @@ their current limitations and the evidence behind this checkpoint.
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
 | Last recorded successful full gate | Merged `main` with the v38 iteration protocol and macOS overlay scrollbars on top of the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **3975 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-121636-n8h8914c/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **135 passed, 5 known unsupported out of 140** after the iteration-protocol cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **146 passed, 5 known unsupported out of 151** after the K9 D standard-library cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -204,6 +204,80 @@ Not done, with the reason:
   linear-time by contract; these need a new matcher contract.
 - **Object wrappers and object-to-primitive coercion**: rare in typed
   library code; they need `valueOf`/`toString` dispatch on objects.
+
+### K9 D standard library — 2026-11-06
+
+Owner decision (K9, 2026-11-06): the first release covers the whole
+TypeScript language except `any`, to the published standards with Node 24 as
+the runtime oracle; track D is the ECMAScript 2025 standard library,
+prioritized by use in typed npm code. This record covers what the track
+implemented in the selector `standard_library()`
+([contract](architecture.md#standard-library-standard_library),
+[rules](profile-rules.md#standard-library-standard_library)); no host ABI,
+value layout, scheduler or browser-host change, so the official browser host
+runs the same Wasm.
+
+Implemented (priority 1 and the UTC part of priority 4):
+
+- `sort`/`toSorted` with V8's TimSort, so comparator call sequences, counts
+  (pinned for 0 to 1000 elements) and the order an inconsistent comparator
+  leaves equal Node's; `toReversed`, `with`, `toSpliced`, `splice`,
+  `copyWithin`, `concat`, `shift`, `unshift`, `flat` (literal depths),
+  `flatMap`, `keys`/`values`/`entries`, `Array.of`, mapped `Array.from`
+  and `Array.from({ length })`.
+- ES2025 iterator helpers on generators and built-in iterators and
+  `Iterator.from`; ES2025 `Set` methods; `Map.groupBy`, `Object.groupBy`,
+  `Object.fromEntries`, `Object.getOwnPropertyNames` of records and
+  dictionaries, `hasOwnProperty`.
+- `JSON.stringify` property lists and `space`; `AggregateError`; combinator
+  arrays mixing `Promise.reject`; `Math.max`/`min` spreads; `String`
+  `at`/`substr`/`isWellFormed`/`toWellFormed`/locale-free case mapping.
+- The complete `Date` with local time in the UTC zone (`Date.UTC`,
+  component constructors, local/UTC getters and setters, `toString` and the
+  other string forms, `toJSON`, `Date.parse` of the forms they produce).
+
+Evidence: `varta-runtime` `standard_library_tests` (eleven Node 24.20.0
+programs with `TZ=UTC`, collector stress builds, refusals, v37 denials), the
+CLI smoke `v38_standard_library_runs_in_dev_and_artifacts`, and eleven
+conformance cases in five new feature rows and four existing ones (146
+passed, 5 known unsupported of 151). Existing fuel goldens are unchanged.
+Full gate on macOS arm64, 2026-11-06, before the commit that records it:
+**4024 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests
+passed**; conformance baseline matched; sources unchanged during the run
+(`target/verification/20261106-165316-gtq53y0k/report.json`). Linux CI and
+other platforms not run.
+
+Not done, each refused by name with its reason:
+
+- **`Symbol()` values, `Symbol.for`/`keyFor`, symbol-keyed properties and
+  the remaining well-known symbols**: a new value tag in value layout 18
+  (extended in place, v38 is unreleased) read by every value reader in both
+  hosts, plus symbol-keyed members. Needs the owner's value-layout decision.
+- **`WeakMap`, `WeakSet`, `WeakRef`, `FinalizationRegistry`**: weak edges
+  (ephemerons) in the exact-root collector and deterministic cleanup turns
+  in both schedulers. A strong-reference stand-in would leak and is not
+  admitted.
+- **Local time zones**: the zone is a recorded host input. The owner
+  decides the grant that reveals the host zone (proposal: `time.zone`, the
+  zone recorded with the run for replay, resolved by ICU4X/TZif data in
+  guest code so both hosts agree); without it the zone is UTC.
+- **Full RegExp** (backreferences, lookaround, `\p{…}`, `d`/`v`, modifiers):
+  a backtracking matcher bounded by fuel would replace the linear-time
+  contract of v37; needs a new matcher contract.
+- **Proxy, Reflect, descriptors and prototypes**: closed checked values have
+  no exotic objects or mutable prototypes.
+- **`Object.freeze`/`seal`/`preventExtensions`**: a per-object flag checked
+  by every write (value layout 18) — owner decision.
+- **`structuredClone`, `JSON.parse` revivers, `JSON.stringify` replacer
+  functions**: need a type-directed deep copy and guest-driven
+  (de)serialization walks.
+- **Intl** (NumberFormat, DateTimeFormat, PluralRules, Collator,
+  RelativeTimeFormat, ListFormat, Segmenter) and `localeCompare`/`normalize`:
+  need ICU4X locale data shipped deterministically (size and crate pins to
+  be justified).
+- `Promise.any` still rejects with an `Error`, not an `AggregateError`;
+  object-to-primitive conversion (`String(date)`, `` `${array}` ``) stays
+  refused.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -2583,7 +2657,7 @@ inferred from the current regression suite.
 | CORE-03 | Functions and control flow | Partial | Typed functions, closures, control flow, generators, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
 | CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
 | CORE-05 | Standard collections and binary values | Partial | Map/Set, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
-| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, UTC Date subset and ahead-of-time RegExp | General Math object/call semantics, wider Date/Intl and remaining RegExp features |
+| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and ahead-of-time RegExp | General Math object/call semantics, host time zones, Intl, Symbol, weak references and remaining RegExp features |
 | CORE-07 | Garbage collection and resource lifecycle | Partial; large-heap idle-work fix verified | Exact tracing, liveness frames, incremental collection/idle maintenance and bounded bitmap clearing before the root snapshot under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence remain open |
 | CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and cross-host ordering beyond supported network replay |
 | CORE-09 | Async language and cancellation | Partial | Async/await, timers, abort listeners/timeout/any, async generators, for-await, cancellable fetch and focused v38 HTTP lifecycle checks including synchronous network waits | Top-level await, wider async iterable forms, broader host-call lifecycle and sustained owned shutdown acceptance |
@@ -3369,7 +3443,8 @@ The selectors are registered; the table records what each stream admits.
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionary call sites; fuel profiler | Implemented for codegen ([contract](architecture.md#code-generation-v2-codegen_v2)): quiet expressions without root traffic, call and frame fast paths, operand-cache collapse, plain updates, content-equality and inline literal comparisons, amortized string builders, guest `charAt`/`charCodeAt`/`%`, bounded first allocation scans and a collection threshold; `varta dev --profile-fuel` ([profile builds](architecture.md#fuel-profile-builds-varta-dev---profile-fuel)). Admits no syntax; v37 bytes frozen |
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
-| `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Array.from` with a map function, `Iterable<T>` value annotations |
+| `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
+| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks
