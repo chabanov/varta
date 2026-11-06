@@ -2,17 +2,18 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createViewModel} from './view-model.mjs';
 import {encodeViewBatch} from './view-codec.mjs';
+import { viewEngine } from "./view-engine.node.mjs";
 const create=(node,tag)=>({name:'create_element',node,tag});
 const attr=(node,attribute,text)=>({name:'set_attribute',node,attribute,text});
 const insert=(parent,node)=>({name:'insert',parent,node,before:0});
 const value=(node,text,base_seq=0)=>({name:'set_value',node,text,base_seq});
 function option(id,text,label,disabled=false){return [create(id,'option'),{name:'create_text',node:id+100,text:label},insert(id,id+100),attr(id,'value',text),...(disabled?[attr(id,'disabled','')]:[]),insert(2,id)];}
-function fixture(){const model=createViewModel();model.commit(encodeViewBatch([create(2,'select'),insert(1,2),...option(3,'a','A',true),...option(4,'same','AA'),...option(5,'same','AAA')]));return model;}
+function fixture(){const model=createViewModel({viewEngine});model.commit(encodeViewBatch([create(2,'select'),insert(1,2),...option(3,'a','A',true),...option(4,'same','AA'),...option(5,'same','AAA')]));return model;}
 const state=(model,id)=>model.snapshot().nodes.find(n=>n.id===id);
 const commit=(model,...ops)=>model.commit(encodeViewBatch(ops));
 
 test('all-disabled select and reinsertion keep explicit no-selection until a selected attribute',()=>{
-  const m=createViewModel();commit(m,create(2,'select'),...option(3,'a','A',true),...option(4,'b','B',true),insert(1,2));
+  const m=createViewModel({viewEngine});commit(m,create(2,'select'),...option(3,'a','A',true),...option(4,'b','B',true),insert(1,2));
   assert.equal(state(m,2).value,'');assert(!state(m,3).optionSelected&&!state(m,4).optionSelected);
   commit(m,{name:'remove_attribute',node:3,attribute:'disabled'});assert.equal(state(m,2).value,'');
   commit(m,attr(4,'selected',''));assert.equal(state(m,2).value,'b');
@@ -65,7 +66,7 @@ test('unchanged selected attributes preserve live selection and explicit none',(
 
 test('repeated select scans share a transaction allowance with atomic rejection',()=>{
   for(const text of ['X'.repeat(4096),'😀'.repeat(1024)]){
-    const m=createViewModel();
+    const m=createViewModel({viewEngine});
     commit(m,create(2,'select'),insert(1,2),...Array.from({length:20},(_,i)=>option(i+3,text,'A')).flat());
     const ordinary=Array.from({length:100},(_,i)=>value(2,`missing${i}`));
     commit(m,...ordinary);assert.equal(state(m,2).value,'');
@@ -77,7 +78,7 @@ test('repeated select scans share a transaction allowance with atomic rejection'
 });
 
 test('detached option inventory is charged before deriving final values',()=>{
-  const m=createViewModel(),text='😀'.repeat(16384);
+  const m=createViewModel({viewEngine}),text='😀'.repeat(16384);
   for(let group=0;group<41;group++)commit(m,...Array.from({length:3},(_,offset)=>{
     const id=2+group*3+offset;return [create(id,'option'),attr(id,'value',text)];
   }).flat());
@@ -88,7 +89,7 @@ test('detached option inventory is charged before deriving final values',()=>{
 });
 
 test('deep ownership searches consume the shared allowance without a select owner',()=>{
-  const m=createViewModel(),setup=[{name:'set_title',text:'before'}];
+  const m=createViewModel({viewEngine}),setup=[{name:'set_title',text:'before'}];
   for(let id=2;id<402;id++)setup.push(create(id,'div'),insert(id-1,id));
   commit(m,...setup,{name:'create_text',node:402,text:'A'},insert(401,402));
   const before=m.snapshot();

@@ -7687,6 +7687,8 @@ frame bounds.
   grammar refuses a full build at Preflight's `display: none !important`
   (S8) and static tokens such as `w-1/2` at the TSX attribute (S1). The CLI
   tests pin these first violations; the end-to-end test is ignored until T2.
+  (Since the T2 standards items and T3 merged: static tokens apply, and the
+  first violation of a full build is the theme's `:root, :host`, stage S5.)
 - Not in T1: JavaScript plugins/config, `@source` file globs, source maps,
   IntelliSense suggestions and candidate canonicalization.
 - Follow-up (owner decisions 2026-11-06): composed class names enumerate
@@ -7697,6 +7699,131 @@ frame bounds.
   conditions, cycle, depth, count and byte bounds). Open: the v38 checker
   types an unannotated `const x = "a"` and `as const` tuple elements as
   `string`, so those need annotations to be enumerated.
+
+#### K8 T2 S1–S3 — engine tokens, sheet structure and values (2026-11-06)
+
+Owner directive of the same day: everything by the published standards,
+Chrome only as the oracle. The engine contract with its specification
+sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3).
+
+- **S1.** CSS Syntax 3 tokenizer (`view::syntax`: preprocessing, comments,
+  escapes, numbers, url tokens, §9 serialization); stylesheets parsed on
+  tokens, forbidden constructs found after decoding; HTML class model in
+  `set_class`, TSX and selectors (`css::class_list`, 256-byte names).
+- **S2.** `@layer` (statements, blocks, nesting, anonymous; Cascade 5 order
+  across sheets, unlayered last), `@property` (syntax, inherits,
+  computationally independent initial values; reset per element when not
+  inherited; syntax mismatch computes as `unset`), comments, Media Queries
+  4/5 (`stylesheet::media`: lists, `not`/`only`/`and`/`or`, range syntax,
+  `height`, `orientation`, `hover`, `pointer`, `any-*`,
+  `prefers-reduced-motion`, `prefers-contrast`, `forced-colors`) with
+  `Environment.height` and `Environment.preferences` as recorded host inputs
+  (runtime and shell pass the viewport height).
+- **S3.** `css::math` (Values 4 §10), `css::color` (Color 4/5, CSS gamut
+  mapping), every length unit, `opacity` percentages, numeric
+  `font-weight`, `white-space: pre`, `text-align: start | end`, any
+  `transition-property` names, `cubic-bezier()`/`steps()` in transitions.
+  Values are lowered at computed-value time (`css::lower`) to the host
+  grammar the renderer reads, so `oklch()` theme colours through `var()` now
+  render natively (the recorded parity gap). Values valid in CSS that native
+  layout cannot render are refused as `Unrenderable` with their own
+  diagnostic.
+- **Browser host.** Unchanged and still rejecting exactly what it rejected:
+  its registry (`FORBIDDEN_CSS`, `MEDIA_FEATURES`, grammars) is untouched and
+  no CSS logic was added in JavaScript. Routing its stylesheet check,
+  cascade and value validation through a wasm32 shim of this engine is the
+  next step (T3): the shim needs `varta-common`'s view modules on `no_std` +
+  `alloc` (or a std wasm32 build) and the JS view model's per-rule work and
+  expansion data from Rust. A finding for it: Chrome ignores `@property` in
+  shadow trees (Properties and Values API 1 §2.8 says registrations are not
+  tree-scoped), so the bridge must register them at document level.
+- **Measured acceptance** of the five-component application's 588 class
+  uses, end to end through the native engine (each candidate's Tailwind CSS
+  flattened as T1's canonical output will be, with the referenced theme
+  variables; class token, sheet commit and every computed property): 25.3%
+  before (149 uses; 17.3% of 312 distinct candidates), 70.4% after (414
+  uses; 64.1% distinct). The design projected 72% for S1–S3; the difference
+  is the values S3 refuses because native layout lacks them (`inline-flex`,
+  `inline-block`, `sticky`, `fit-content`: 10 uses). The rest is S4–S6
+  (logical properties, selectors, shadows).
+- **Chrome oracle** (`native_css_engine_probe`, `test-native-css-engine.mjs`;
+  ten scenes: escaped classes, layers, registered properties, theme
+  colours, colour functions, out-of-gamut colours, math and units, media
+  features, reduced motion, comments and escapes): 224 checks pass at 1x,
+  1.25x and 2x; box geometry matches within 0.02 px, in-gamut colours within
+  1/255 (RGB mean ≤ 0.033, the 1.25x maxima are antialiased edges), and all
+  286 Tailwind 4 palette colours match Chrome within 1/255. Recorded
+  deviations: Chrome clips out-of-gamut colours (mean 0.58, max 81 for
+  far-out colours), ignores `@property` in shadow trees, and snaps lengths to
+  1/64 px.
+- **Open, for owner decisions:** (1) CSS-wide keywords on standard
+  properties need a native cascade that knows initial values and user-agent
+  rows; (2) `em` outside `font-size`, `ex`/`ch`/`lh`, and percentage-plus-
+  length math need layout-time resolution (taffy's `calc` handles); (3)
+  literal `opacity` above 1 and `font-weight` outside [1, 1000] stay refused
+  although CSS clamps `<alpha-value>`; (4) `@layer` inside `@media`,
+  `!important`, more than two `color-mix()` colours (Chrome refuses those
+  too) and named colours stay outside; (5) registered computed values are not
+  absolutized before inheritance; (6) the desktop shell passes default
+  preferences, not the OS settings (reduced motion, contrast); (7) gamut
+  mapping per the specification differs from Chrome's clipping for colours
+  outside sRGB.
+- Gate: `python3 scripts/verify.py full` PASS (3979 Rust tests passed, 0
+  failed, 21 ignored; 218 browser Node tests; conformance baseline), report
+  `target/verification/20261106-130906-pnr2i3f3/report.json` (macOS only).
+
+#### K8 T2 standards items and T3 browser bridge (2026-11-06)
+
+- **T3, browser bridge.** `varta-common`'s view modules build `no_std` with
+  `alloc` and `libm` behind the `view` feature (the KV codec and intrinsic
+  library bytes are unchanged); the cascade, variables and computed values
+  moved into `varta-style`, shared by the native renderer and
+  `varta-style-wasm`, which `scripts/build-view-engine.py` builds into the
+  checked-in `view-engine.wasm` (`view-engine.json` fingerprint), as the KV
+  codec is built. The browser view model mirrors each batch into the engine
+  in a transaction and takes its verdicts; the DOM bridge applies the
+  engine's computed values inline and records media features, viewport and
+  interaction states as inputs. `view-css.mjs`, `view-variables.mjs`,
+  `view-custom-properties.mjs` and the CSS parts of `view-model.mjs` are
+  removed; no CSS decision remains in JavaScript. `@property` reaches Chrome
+  no more (the engine substitutes), so its shadow-tree gap does not apply.
+  Cross-host equality: the corpus `view-engine-corpus.json` (the Tailwind
+  application's 312 candidates plus synthetic and inline cases) is decided
+  identically by the Wasm module, the native session and the native
+  renderer (Rust test), and by the browser view model (Node test).
+- **Standards items (1)–(7) of the S1–S3 record:** (1) CSS-wide keywords
+  on every property (Cascade 5 §7.3, `revert` and `revert-layer` included;
+  `font-family: initial` stays refused, its initial value being the user
+  agent's font); (3) `opacity` takes any number, clamped; literal
+  `font-weight` outside [1, 1000] is invalid and math results are clamped
+  to the property range; (4) `!important` with reversed layer order,
+  `@layer` inside `@media`/`@supports` with conditional order, `@supports`,
+  the 148 named colours and `color-mix()` of one to `MAX_MIX_COLORS` colours
+  (Color 5 §3; Chrome mixes exactly two, a recorded deviation); (6) the desktop shell reads macOS
+  "Reduce motion" and "Increase contrast" as recorded inputs, again on focus
+  and theme changes; (7) gamut mapping stays per Color 4 §14.2, Chrome's
+  clipping recorded as its deviation. Not done: (2) `em` outside
+  `font-size`, `ex`/`ch`/`lh` and percentage-plus-length math (they need the
+  element's computed font in the engine and `calc()` lengths in native
+  layout; no use of the measured application needs them) and (5) the
+  absolutization of registered values before inheritance (same
+  prerequisite: the engine computing `font-size`).
+- **Chrome oracle,** 15 scenes (new: CSS-wide keywords, importance,
+  conditional rules, named colours and two-colour mixes, multi-colour
+  mixes), now also requiring every box's centre pixel to match within
+  1/255 besides the scene mean: `bridge` 451 checks and `platform` 439
+  checks pass at 1x, 1.25x and 2x. The bridge matches the native pixels
+  exactly at 1x and, apart from 1/64 px length snapping in one scene, at
+  2x, including out-of-gamut colours and multi-colour mixes; the 1.25x
+  differences are antialiased fractional edges (scene means at most
+  0.018). Platform-mode deviations: gamut clipping (mean 0.58) and Chrome
+  dropping `color-mix()` with other than two colours.
+- **Measured acceptance** of the five-component application: unchanged at
+  70.4% of 588 uses (64.1% of 312 distinct candidates). The new admissions
+  are not what the application is missing; its refusals are selectors (S5,
+  59 distinct), logical properties (S4), shadows (S6) and the values native
+  layout lacks (`inline-flex`, `inline-block`, `sticky`, `fit-content`,
+  `-webkit-box`).
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

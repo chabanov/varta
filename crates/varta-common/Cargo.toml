@@ -9,10 +9,17 @@ license.workspace = true
 # `text`) that the linked intrinsic library builds against for wasm32.
 [features]
 default = ["std"]
-std = ["thiserror/std", "dep:url", "dep:serde", "dep:serde_json"]
+std = ["view", "thiserror/std", "dep:url", "dep:serde", "dep:serde_json"]
+# The view registry and CSS engine grammars in the `no_std` core (the
+# browser host's Wasm style engine builds them without `std`).
+view = ["dep:libm"]
 
 [dependencies]
 url = { workspace = true, optional = true }
 thiserror = { version = "2.0", default-features = false }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+# Portable binary64 functions for the CSS engine's colour and math
+# evaluation: the same bits natively and in the browser host's Wasm engine
+# (already locked through the intrinsics).
+libm = { version = "=0.2.16", optional = true }

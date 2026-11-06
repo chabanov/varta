@@ -1,35 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFontNamespace, packagedFamilies, faceDescriptors } from './view-fonts.mjs';
+import { createFontNamespace, packagedFamilies, faceDescriptors, FontValueError } from './view-fonts.mjs';
+globalThis.__fonts={FontValueError};
 test('family names are case-insensitive and isolated, including unknown ambient fonts',()=>{
   const a=createFontNamespace('one',['Brand','Two Words']),b=createFontNamespace('two',['Brand']);
   assert.equal(a.family('Brand'),a.family('bRaNd'));assert.notEqual(a.family('Brand'),b.family('Brand'));
-  assert.equal(a.value('Brand, "Two Words", sans-serif'),`${a.family('Brand')} , "${a.family('Two Words')}" , sans-serif`);
+  assert.equal(a.value('Brand, "Two Words", sans-serif'),`${a.family('Brand')}, "${a.family('Two Words')}", sans-serif`);
   assert(!a.value('Arial, serif').includes('Arial'));assert(!a.value('"serif"').includes('serif'));
   assert.throws(()=>createFontNamespace('bad prefix'));
 });
-test('CSS-wide font-family keywords are refused as in L0 validation; quoted names and variables keep them',async()=>{
-  const {CssError}=await import('./view-css.mjs');
-  const a=createFontNamespace('wide',['Brand']);
-  for(const text of ['inherit','INITIAL','Brand, unset','revert','revert-layer'])assert.throws(()=>a.value(text),CssError,text);
+test('computed family lists keep quoted names, decode escapes and refuse malformed text',()=>{
+  const {FontValueError}=globalThis.__fonts;
+  const a=createFontNamespace('wide',['Brand','A"B']);
   assert.equal(a.value('"inherit"'),JSON.stringify(a.family('inherit')));
-  const values=new Map([['--font','inherit'],['font-family','var(--font, Brand)']]);
-  const style={*[Symbol.iterator](){yield* values.keys();},getPropertyValue:(key)=>values.get(key),setProperty:(key,value)=>values.set(key,value)};
-  a.sheet([{style}]);
-  assert.equal(values.get(a.variable('--font')),'inherit');
-  assert.throws(()=>a.sheet([{style:{*[Symbol.iterator](){yield 'font-family';},getPropertyValue:()=>'initial',setProperty(){}}}]),CssError);
-});
-test('font variables have parallel names and keep other declaration values unchanged',()=>{
-  const n=createFontNamespace('scope',['red']);
-  assert.equal(n.value('var(--font, red)'),`var(${n.variable('--font')} , ${n.family('red')})`);
-  const values=new Map([['--font','red'],['--nested','var(--font, serif)'],['color','var(--font)'],['font-family','var(--nested, monospace)']]);
-  const style={*[Symbol.iterator](){yield* values.keys();},getPropertyValue:(key)=>values.get(key),setProperty:(key,value)=>values.set(key,value)};
-  n.sheet([{cssRules:[{style}]}]);
-  assert.equal(values.get('--font'),'red');assert.equal(values.get('color'),'var(--font)');
-  assert.equal(values.get(n.variable('--font')),n.family('red'));
-  assert.equal(values.get(n.variable('--nested')),`var(${n.variable('--font')} , serif)`);
-  assert.equal(values.get('font-family'),`var(${n.variable('--nested')} , monospace)`);
-  assert.throws(()=>n.value('var(123)'));
+  assert.equal(a.value('"A\\22 B", serif'),`${JSON.stringify(a.family('A"B'))}, serif`);
+  for(const text of ['"open','a b','a,,b',''])if(text)assert.throws(()=>a.value(text),FontValueError,text);
 });
 test('packaged generic families map to their family and the first family is the default, as in the native shell',()=>{
   const faces=[{key:'Sans',weight:400,style:'normal',generics:[]},{key:'Sans',weight:700,style:'normal',generics:[]},{key:'Sans',weight:400,style:'italic',generics:[]},{key:'Mono',weight:400,style:'normal',generics:['monospace']}];
@@ -37,7 +22,7 @@ test('packaged generic families map to their family and the first family is the 
   assert.deepEqual(families,['Sans','Mono']);assert.equal(options.defaultFamily,'Sans');
   const n=createFontNamespace('pack',families,options);
   assert.equal(n.value('monospace'),n.family('Mono'));assert.equal(n.value('MONOSPACE'),n.family('Mono'));
-  assert.equal(n.value('Missing, monospace'),`${n.family('Missing')} , ${n.family('Mono')}`);
+  assert.equal(n.value('Missing, monospace'),`${n.family('Missing')}, ${n.family('Mono')}`);
   // A quoted generic name is a family name, and unmapped generics pass through.
   assert.equal(n.value('"monospace"'),JSON.stringify(n.family('monospace')));assert.equal(n.value('serif'),'serif');
   assert.equal(n.defaultFamily,n.family('Sans'));

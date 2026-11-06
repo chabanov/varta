@@ -20,7 +20,7 @@ use crate::input_queue::{PendingKeys, WORKER_QUEUE_CAPACITY};
 use crate::{accessibility, timing, wake};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     mpsc::{self, SyncSender},
 };
 use std::time::{Duration, Instant};
@@ -152,6 +152,8 @@ struct Host {
     gpu_events: Option<EventLoopProxy<GuiEvent>>,
     dimensions: Arc<AtomicU64>,
     dark: Arc<AtomicBool>,
+    /// The system's user-preference media inputs (`preferences_bits`).
+    preferences: Arc<AtomicU32>,
     scale: Arc<AtomicU64>,
     sender: SyncSender<WorkerMessage>,
     frame: Option<PresentedFrame>,
@@ -204,6 +206,74 @@ struct Pressed {
 /// AppKit's preferred scroller style (System Settings, "Show scroll bars";
 /// "Automatically" resolves by the attached pointing devices), read on the
 /// main thread when the window opens. Overlay elsewhere.
+/// The user-preference media inputs (Media Queries 5 §12) as macOS states
+/// them in its accessibility display options, as Chrome reads them:
+/// "Reduce motion" (`prefers-reduced-motion: reduce`) and "Increase
+/// contrast" (`prefers-contrast: more`). Read on the main thread when the
+/// window opens and whenever it regains focus or the system theme changes.
+/// Hover and pointer stay those of a desktop with a mouse.
+fn system_preferences() -> varta_common::view::stylesheet::media::Preferences {
+    let mut preferences = varta_common::view::stylesheet::media::Preferences::default();
+    #[cfg(target_os = "macos")]
+    if objc2::MainThreadMarker::new().is_some() {
+        let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
+        preferences.reduced_motion = workspace.accessibilityDisplayShouldReduceMotion();
+        if workspace.accessibilityDisplayShouldIncreaseContrast() {
+            preferences.contrast = varta_common::view::stylesheet::media::Contrast::More;
+        }
+    }
+    preferences
+}
+
+/// Bit of the worker word: `prefers-reduced-motion: reduce`.
+const REDUCED_MOTION_BIT: u32 = 1;
+/// Shift of the two-bit `prefers-contrast` field of the worker word.
+const CONTRAST_SHIFT: u32 = 1;
+/// Mask of the `prefers-contrast` field after shifting.
+const CONTRAST_FIELD: u32 = 0b11;
+/// `prefers-contrast` values in field order.
+const CONTRASTS: [varta_common::view::stylesheet::media::Contrast; 4] = {
+    use varta_common::view::stylesheet::media::Contrast;
+    [
+        Contrast::NoPreference,
+        Contrast::More,
+        Contrast::Less,
+        Contrast::Custom,
+    ]
+};
+
+/// The preference inputs as one word for the worker.
+fn preferences_bits(preferences: varta_common::view::stylesheet::media::Preferences) -> u32 {
+    let contrast = CONTRASTS
+        .iter()
+        .position(|value| *value == preferences.contrast)
+        .and_then(|index| u32::try_from(index).ok())
+        .unwrap_or_default();
+    (if preferences.reduced_motion {
+        REDUCED_MOTION_BIT
+    } else {
+        0
+    }) | contrast << CONTRAST_SHIFT
+}
+
+/// The preference inputs of [`preferences_bits`].
+pub(super) fn preferences_of(bits: u32) -> varta_common::view::stylesheet::media::Preferences {
+    use varta_common::view::stylesheet::media::Preferences;
+    let contrast = usize::try_from((bits >> CONTRAST_SHIFT) & CONTRAST_FIELD).unwrap_or_default();
+    Preferences {
+        reduced_motion: bits & REDUCED_MOTION_BIT != 0,
+        contrast: CONTRASTS.get(contrast).copied().unwrap_or_default(),
+        ..Preferences::default()
+    }
+}
+
+/// Refresh the shared preference word from the system settings; `true`
+/// when they changed, so the window redraws with the new media inputs.
+pub(super) fn refresh_preferences(shared: &AtomicU32) -> bool {
+    let bits = preferences_bits(system_preferences());
+    shared.swap(bits, Ordering::AcqRel) != bits
+}
+
 fn system_scrollbars() -> varta_view::Scrollbars {
     #[cfg(target_os = "macos")]
     {
@@ -226,6 +296,7 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
     event_loop.set_control_flow(ControlFlow::Wait);
     let dimensions = Arc::new(AtomicU64::new(0));
     let dark = Arc::new(AtomicBool::new(false));
+    let preferences = Arc::new(AtomicU32::new(preferences_bits(system_preferences())));
     let scale = Arc::new(AtomicU64::new(1.0_f64.to_bits()));
     let frame_ack = Arc::new(AtomicU64::new(0));
     let pointer = Arc::new(Mutex::new(PointerState::default()));
@@ -247,6 +318,7 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
     let state = WorkerState {
         dimensions: dimensions.clone(),
         dark: dark.clone(),
+        preferences: preferences.clone(),
         scale: scale.clone(),
         presented: frame_ack.clone(),
         pointer: pointer.clone(),
@@ -274,6 +346,7 @@ pub fn run(launch: Launch, config: WindowConfig, started: Instant) -> Result<(),
         gpu_events,
         dimensions,
         dark,
+        preferences,
         scale,
         sender,
         frame: None,

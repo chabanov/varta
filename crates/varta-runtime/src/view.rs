@@ -109,10 +109,12 @@ impl Session {
     ) -> Result<(), varta_view::LayoutError> {
         let mut environment = self.view.environment();
         environment.width = f64::from(layout.width);
+        environment.height = f64::from(layout.height);
         if let Some(dark) = layout.dark {
             environment.dark = dark;
         }
         environment.scrollbars = layout.scrollbars;
+        environment.preferences = layout.preferences;
         if let Some(size) = layout.root_font_size {
             environment.root_font_size = size;
         }
@@ -134,6 +136,7 @@ impl Session {
         crate::ViewLayout::validate(width, height, layout.font_size)?;
         let mut environment = self.view.environment();
         environment.width = f64::from(width);
+        environment.height = f64::from(height);
         self.view.set_environment(environment)?;
         layout.width = width;
         layout.height = height;

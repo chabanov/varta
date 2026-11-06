@@ -60,9 +60,11 @@ fn nested_and_function_fallbacks_are_validated_after_selection() {
     let got = style(
         ":root{--bad:-1px;--n:10;--width:var(--n)px;--alpha:2}.target{width:9px;width:var(--width);padding:5px;padding:var(--bad,3px);opacity:.25;opacity:var(--alpha,.75)}",
     );
-    for property in ["width", "padding", "opacity"] {
+    for property in ["width", "padding"] {
         assert!(got.get(property).is_none(), "{property}: {got}");
     }
+    // Color 4 §11.2: an out-of-range `<alpha-value>` is clamped.
+    assert_eq!(got["opacity"], "1");
 }
 #[test]
 fn literal_strings_are_not_substituted_and_custom_names_remain_case_sensitive() {

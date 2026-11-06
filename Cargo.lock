@@ -5193,6 +5193,7 @@ dependencies = [
 name = "varta-common"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -5330,7 +5331,9 @@ dependencies = [
  "varta-compiler",
  "varta-kv-codec",
  "varta-runtime",
+ "varta-style",
  "varta-tailwind",
+ "varta-view",
  "wasmtime",
 ]
 
@@ -5373,6 +5376,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "varta-style"
+version = "0.1.0"
+dependencies = [
+ "varta-common",
+]
+
+[[package]]
+name = "varta-style-wasm"
+version = "0.1.0"
+dependencies = [
+ "varta-common",
+ "varta-style",
+]
+
+[[package]]
 name = "varta-tailwind"
 version = "0.1.0"
 dependencies = [
@@ -5399,6 +5417,7 @@ dependencies = [
  "tiny-skia",
  "unicode-segmentation",
  "varta-common",
+ "varta-style",
 ]
 
 [[package]]

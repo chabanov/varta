@@ -792,31 +792,32 @@ fn text_import_forms_and_attributes_fail_clearly() {
 
 #[test]
 fn stylesheet_text_imports_are_checked_with_locations_inside_the_resource() {
-    let sheet = ":root { --gap: 8px }\n.é-card { padding: 4px }\n.row { colour: #fff }\n";
+    let sheet = ":root { --gap: 8px }\n.é-card > .x { padding: 4px }\n.row { colour: #fff }\n";
     let main = "import css from './console.css' with { type: 'text' };\n\
                 export function main(): void { View.stylesheet(1, css); }";
     let error = compile_text(main, &[("console.css", sheet)]).err().unwrap();
     let diagnostic = error.diagnostic().unwrap();
     assert_eq!(diagnostic.file, "console.css");
     assert_eq!(diagnostic.code, varta_common::DiagnosticCode::TypeError);
-    // `.é-card` is not a subset class name: line 2, column 2 (after `.`),
-    // byte offset 22 (the `é` is two bytes but one column).
+    // `.é-card > .x` uses a combinator, outside the subset: line 2,
+    // column 8 (the whitespace after `.é-card`), byte offset 29 (the `é`
+    // is two bytes but one column).
     assert_eq!(diagnostic.range.start.line, 2, "{diagnostic:?}");
-    assert_eq!(diagnostic.range.start.column, 2);
-    assert_eq!(diagnostic.range.start.byte_offset, 22);
+    assert_eq!(diagnostic.range.start.column, 8);
+    assert_eq!(diagnostic.range.start.byte_offset, 29);
     assert!(
         diagnostic.message.contains("selector"),
         "{}",
         diagnostic.message
     );
-    let fixed = sheet.replace(".é-card", ".card");
+    let fixed = sheet.replace(".é-card > .x", ".é-card");
     let error = compile_text(main, &[("console.css", &fixed)])
         .err()
         .unwrap();
     let diagnostic = error.diagnostic().unwrap();
     assert_eq!(diagnostic.range.start.line, 3);
     assert_eq!(diagnostic.range.start.column, 8);
-    assert_eq!(diagnostic.range.start.byte_offset, 51);
+    assert_eq!(diagnostic.range.start.byte_offset, 54);
     assert!(diagnostic.message.contains("invalid declaration"));
     // Not a direct argument, or a shadowing name: the host validates it.
     for unchecked in [

@@ -64,8 +64,16 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             "varta-intrinsics-wasm",
             ["varta-intrinsics", "varta-common", "varta-bigint"].as_slice(),
         ),
+        // The CSS style engine reads common's `no_std` view grammars; the
+        // native renderer links it and, compiled to wasm32, the browser
+        // host runs it.
+        ("varta-style", ["varta-common"].as_slice()),
+        (
+            "varta-style-wasm",
+            ["varta-style", "varta-common"].as_slice(),
+        ),
         // The headless view renderer (v38) is engine code without a VM.
-        ("varta-view", ["varta-common"].as_slice()),
+        ("varta-view", ["varta-common", "varta-style"].as_slice()),
         // The native shell and preview are distribution hosts over the
         // public engine APIs; packaged artifacts are read as the launcher
         // reads them.
@@ -116,6 +124,19 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                 }
                 // The wasm32 intrinsic library never needs `std`: it reaches
                 // common only through its `no_std` value-layout core.
+                // The style engine enables only the `view` feature: no
+                // `std`, so its wasm32 build stays free of host code.
+                if matches!(name, "varta-style" | "varta-style-wasm") && target == "varta-common" {
+                    assert_eq!(
+                        dependency["uses_default_features"], false,
+                        "{name} must depend on varta-common without default features"
+                    );
+                    assert_eq!(
+                        dependency["features"],
+                        serde_json::json!(["view"]),
+                        "{name} must enable only varta-common's view feature"
+                    );
+                }
                 if matches!(
                     name,
                     "varta-bigint"
@@ -144,6 +165,8 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                         | "varta-intrinsics-wasm"
                         | "varta-kv-codec"
                         | "varta-kv-codec-wasm"
+                        | "varta-style"
+                        | "varta-style-wasm"
                         | "varta-view"
                         | "varta-compiler"
                         | "varta-runtime"
@@ -157,6 +180,7 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
                                 | "varta-bigint"
                                 | "varta-intrinsics"
                                 | "varta-kv-codec"
+                                | "varta-style"
                                 | "varta-view"
                                 | "varta-compiler"
                                 | "varta-runtime"
@@ -170,7 +194,11 @@ fn engine_dependencies_cannot_point_back_to_project_tooling_or_cli() {
             if !dev
                 && matches!(
                     name,
-                    "varta-runtime" | "varta-launcher" | "varta-artifact" | "varta-view"
+                    "varta-runtime"
+                        | "varta-launcher"
+                        | "varta-artifact"
+                        | "varta-view"
+                        | "varta-style"
                 )
             {
                 assert!(

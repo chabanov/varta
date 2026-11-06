@@ -11,20 +11,20 @@ const server = createServer(async (request, response) => {
   try {
     const name = new URL(request.url, "http://loopback").pathname;
     if (name === "/__view_probe") {
-      response.setHeader("Content-Type", "text/html"); response.end('<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'none\'"><main id="view"></main>'); return;
+      response.setHeader("Content-Type", "text/html"); response.end('<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\' \'wasm-unsafe-eval\'; connect-src \'self\'; style-src \'none\'"><main id="view"></main>'); return;
     }
     const path = resolve(root, `.${decodeURIComponent(name)}`); if (!path.startsWith(root + sep)) throw new Error("outside workspace");
-    const bytes = await readFile(path); response.setHeader("Content-Type", "text/javascript"); response.end(bytes);
+    const bytes = await readFile(path); response.setHeader("Content-Type", path.endsWith(".wasm") ? "application/wasm" : "text/javascript"); response.end(bytes);
   } catch { response.writeHead(404).end(); }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 try {
   await withBrowserPage(`http://127.0.0.1:${server.address().port}/__view_probe`, async (call) => {
     const result = await call("Runtime.evaluate", { awaitPromise: true, returnByValue: true, expression: `(async()=>{
-      const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+      globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
       const {encodeViewBatch}=await import('/crates/varta-project/src/browser/view-codec.mjs');
       const events=[];let title='';const host=document.querySelector('#view');
-      const app=createViewDom({container:host,onEvent:(event)=>events.push({bytes:Array.from(event.bytes),gesture:event.gesture}),onTitle:(value)=>{title=value;}});
+      const app=createViewDom({viewEngine,container:host,onEvent:(event)=>events.push({bytes:Array.from(event.bytes),gesture:event.gesture}),onTitle:(value)=>{title=value;}});
       const op=(name,fields={})=>({name,...fields}),batch=(...ops)=>encodeViewBatch(ops);
       app.apply(batch(op('create_element',{node:2,tag:'button'}),op('create_text',{node:3,text:'Привіт 😀'}),op('insert',{parent:2,node:3,before:0}),op('insert',{parent:1,node:2,before:0}),op('set_attribute',{node:2,attribute:'id',text:'button'}),op('set_style',{node:2,property:'color',text:'#123456'}),op('set_title',{text:'Varta view'}),op('listen',{node:2,event:'click',handler:1,options:1,key:0,required_modifiers:0,forbidden_modifiers:0})));
       const button=app.inspectNode(2),before=button.outerHTML;
@@ -43,7 +43,7 @@ try {
       // the batch commits, in set_style and in stylesheets.
       const refusal=(ops)=>{const html=host.firstElementChild&&button.outerHTML;try{app.apply(batch(...ops));return null;}catch(error){return {name:error.constructor.name,rule:error.rule,operation:error.operation,unchanged:button.outerHTML===html};}};
       const fontKeyword=refusal([op('set_text',{node:3,text:'must roll back'}),op('set_style',{node:2,property:'font-family',text:'serif, inherit'})]);
-      const sheetKeyword=refusal([op('set_text',{node:3,text:'must roll back'}),op('stylesheet',{sheet:1,text:'.a { font-family: unset }'})]);
+      const sheetKeyword=refusal([op('set_text',{node:3,text:'must roll back'}),op('stylesheet',{sheet:1,text:'.a { font-family: initial }'})]);
       return {fontKeyword,sheetKeyword,rollback,unchanged,closedShadow:host.firstElementChild.shadowRoot===null,title,text:button.textContent,color:getComputedStyle(button).color,events,stale,fresh,stable,assetDenied,nodes:app.snapshot().nodes.length};
     })()` });
     assert(!result.exceptionDetails, JSON.stringify(result.exceptionDetails));
@@ -57,7 +57,7 @@ try {
     if (process.env.VARTA_VIEW_ORACLE) {
       const oracle=JSON.parse(await readFile(resolve(process.env.VARTA_VIEW_ORACLE),'utf8'));
       assert(oracle.flex,'native flex projection fixture missing');
-      const comparison=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');const host=document.createElement('div');document.body.append(host);const app=createViewDom({container:host});app.apply(Uint8Array.from(${JSON.stringify(oracle.flex.batch)}));const value=getComputedStyle(app.inspectNode(3)).display;app.close();host.remove();return value;})()`});
+      const comparison=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');const host=document.createElement('div');document.body.append(host);const app=createViewDom({viewEngine,container:host});app.apply(Uint8Array.from(${JSON.stringify(oracle.flex.batch)}));const value=getComputedStyle(app.inspectNode(3)).display;app.close();host.remove();return value;})()`});
       assert(!comparison.exceptionDetails,JSON.stringify(comparison.exceptionDetails));
       const cascaded=oracle.flex.cascade.tree.children[0].children[0].style.display;
       const projected=oracle.flex.projected.tree.children[0].children[0].style.display;
@@ -65,13 +65,13 @@ try {
       const selectStates=oracle.cases.filter(item=>item.name.startsWith('select-state-'));
       assert(selectStates.length,'native select state fixtures missing');
       const stateResult=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
-        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
         let checks=0;const mismatches=[];
         const expectedFields=root=>{const fields=[],stack=[root];while(stack.length){const node=stack.pop();
           if(node.tag==='select')fields.push({id:node.id,value:node.value,seq:node.seq,selected:(node.children??[]).filter(option=>option.selected).map(option=>option.id)});
           stack.push(...node.children??[]);}return fields.sort((a,b)=>a.id-b.id);};
         for(const fixture of ${JSON.stringify(selectStates)}){
-          const host=document.createElement('div');document.body.append(host);const app=createViewDom({container:host});
+          const host=document.createElement('div');document.body.append(host);const app=createViewDom({viewEngine,container:host});
           for(let i=0;i<fixture.batches.length;i++){
             let ok=true;try{app.apply(Uint8Array.from(fixture.batches[i]));}catch{ok=false;}
             const expected=fixture.results[i];if(ok!==expected.ok)mismatches.push([fixture.name,i,'admission']);
@@ -88,11 +88,11 @@ try {
       const workCases=oracle.cases.filter(item=>/^(select|radio|css|cascade|expanded|naming)-work-|^retained-text-|^tree-depth-/.test(item.name));
       assert(workCases.some(item=>item.name.startsWith('radio-work-')),'native radio work fixtures missing');
       const work=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
-        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
         let checks=0;const mismatches=[];
         for(const fixture of ${JSON.stringify(workCases)}){
           const host=document.createElement('div');document.body.append(host);let title='';
-          const app=createViewDom({container:host,onTitle:value=>{title=value;}});
+          const app=createViewDom({viewEngine,container:host,onTitle:value=>{title=value;}});
           const signature=()=>JSON.stringify({model:app.snapshot(),text:app.inspectNode(1).textContent,
             index:app.inspectNode(2)?.selectedIndex,value:app.inspectNode(2)?.value,title});
           for(let i=0;i<fixture.batches.length;i++){
@@ -123,10 +123,10 @@ try {
       const radioCases=oracle.cases.filter(item=>item.name.startsWith('radio-'));
       assert(radioCases.length,'native radio group fixture missing');
       const radios=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
-        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
         let checks=0;const mismatches=[];
         for(const fixture of ${JSON.stringify(radioCases)}){
-          const host=document.createElement('div');document.body.append(host);const app=createViewDom({container:host});
+          const host=document.createElement('div');document.body.append(host);const app=createViewDom({viewEngine,container:host});
           for(let i=0;i<fixture.batches.length;i++){
             let ok=true;try{app.apply(Uint8Array.from(fixture.batches[i]));}catch{ok=false;}
             if(ok!==fixture.results[i].ok)mismatches.push([fixture.name,i,'acceptance']);
@@ -146,9 +146,9 @@ try {
       console.log(`Native/model/Chrome radio ownership and patch rollback: ${radios.result.value.checks} checks passed`);
       assert(oracle.checkables,'native checkbox/radio activation fixture missing');
       const setup=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
-        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
         const host=document.createElement('div');document.body.append(host);const events=[];
-        const app=createViewDom({container:host,onEvent:event=>events.push(Array.from(event.bytes))});
+        const app=createViewDom({viewEngine,container:host,onEvent:event=>events.push(Array.from(event.bytes))});
         app.apply(Uint8Array.from(${JSON.stringify(oracle.checkables.batch)}));
         window.__checkables={app,host,events};
       })()`});
@@ -178,12 +178,12 @@ try {
     if(process.env.VARTA_VIEW_ORACLE){
       const oracle=JSON.parse(await readFile(resolve(process.env.VARTA_VIEW_ORACLE),'utf8'));assert(oracle.selects,'native select fixture missing');
       const selected=await call('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{
-        const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+        globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
         const {createViewModel}=await import('/crates/varta-project/src/browser/view-model.mjs');
         const {decodeViewEvent}=await import('/crates/varta-project/src/browser/view-codec.mjs');
-        const fixture=${JSON.stringify(oracle.selects)},mirror=createViewModel(),events=[],metadata=[];
+        const fixture=${JSON.stringify(oracle.selects)},mirror=createViewModel({viewEngine}),events=[],metadata=[];
         mirror.commit(Uint8Array.from(fixture.batch));const host=document.createElement('div');document.body.append(host);
-        const app=createViewDom({container:host,onEvent:event=>{events.push(Array.from(event.bytes));metadata.push(event.selectedOption);mirror.syncEvent(decodeViewEvent(event.bytes),event.selectedOption);}});
+        const app=createViewDom({viewEngine,container:host,onEvent:event=>{events.push(Array.from(event.bytes));metadata.push(event.selectedOption);mirror.syncEvent(decodeViewEvent(event.bytes),event.selectedOption);}});
         const states=[];
         try{app.apply(Uint8Array.from(fixture.batch));
           for(const step of fixture.steps){events.length=0;metadata.length=0;

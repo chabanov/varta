@@ -11,6 +11,9 @@ path = "tests/integration.rs"
 
 [dependencies]
 varta-common = { path = "../varta-common" }
+# The shared view style engine (stylesheets, cascade, computed values),
+# which the browser host runs compiled to Wasm.
+varta-style = { path = "../varta-style" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

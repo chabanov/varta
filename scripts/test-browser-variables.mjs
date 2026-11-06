@@ -14,7 +14,7 @@ assert(['all',...engines.map(([name])=>name)].includes(selection),'unknown brows
 const root=resolve(import.meta.dirname,'..');
 async function liveVariables(page,name){
  await page.evaluate(async()=>{
-  const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+  globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
   const {encodeViewBatch}=await import('/crates/varta-project/src/browser/view-codec.mjs');
   const {createFontNamespace}=await import('/crates/varta-project/src/browser/view-fonts.mjs');
   const container=document.createElement('div');container.style.setProperty('--ambient','#f00');container.style.setProperty('--unknown','#000');document.body.append(container);
@@ -25,7 +25,7 @@ async function liveVariables(page,name){
    query.removeEventListener=(kind,listener,options)=>{if(kind==='change'){mediaLinks.get(query)?.delete(listener);if(!mediaLinks.get(query)?.size)mediaLinks.delete(query);}return remove(kind,listener,options);};
    return query;
   };
-  const view=createViewDom({container,fonts:createFontNamespace('variableLive',[':root'])});
+  const view=createViewDom({viewEngine,container,fonts:createFontNamespace('variableLive',[':root'])});
   const css=':root{--base:#123;--alias:var(--base);--a:var(--b,var(--c));--b:var(--a);--c:var(--b,#abc);--font:":root";--scheme:#111}.left{--base:#456}.right{--base:#789}.target{--state:#111;position:fixed;top:100px;left:100px;width:20px;height:20px;padding:0;margin:0;color:var(--alias);background-color:var(--state);outline-color:var(--focus,#789);opacity:var(--alpha,.25);font-family:var(--font)}.target:hover{--state:#222}.target:active{--state:#333}.target:checked{--state:#444}.target:disabled{--state:#555}.target:focus-visible{--focus:#def}.root-only{--root-only-literal:#f00;color:var(--ambient,#abc)}.focus-probe{outline-color:var(--focus,#789)}.focus-probe:focus-visible{--focus:#def}.probe{color:var(--base);border:2px solid var(--c)}.scheme{color:var(--scheme)}.ambient{--local:var(--ambient,#def);color:var(--local);background-color:var(--unknown,#abc);border:2px solid var(--ambient,#abc)}@media (min-width:700px){:root{--alpha:.5}}@media (max-width:699px){:root{--alpha:.75}}@media (prefers-color-scheme:dark){:root{--scheme:#222}}';
   const ops=[{name:'stylesheet',sheet:1,text:css}];
   for(const [node,tag,classes,parent] of [[2,'div','left',1],[4,'div','right',1],[3,'input','target',2],[5,'div','probe',2],[6,'span','scheme',4],[7,'div','left',0],[8,'span','probe',7],[9,'div','ambient',1],[10,'input','focus-probe',1]]){
@@ -89,12 +89,12 @@ async function liveVariables(page,name){
 const server=createServer(async(request,response)=>{
  try{
   const name=new URL(request.url,'http://loopback').pathname;
-  if(name==='/'){response.setHeader('Content-Type','text/html');response.end('<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'none\'"><main></main>');return;}
+  if(name==='/'){response.setHeader('Content-Type','text/html');response.end('<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\' \'wasm-unsafe-eval\'; connect-src \'self\'; style-src \'none\'"><main></main>');return;}
   if(!['/crates/varta-common/browser/','/crates/varta-project/src/browser/'].some(prefix=>name.startsWith(prefix)))throw Error('unknown asset');
   const path=resolve(root,`.${decodeURIComponent(name)}`);
   const directories=['crates/varta-common/browser','crates/varta-project/src/browser'].map(directory=>resolve(root,directory)+sep);
   if(!path.endsWith('.mjs')||!directories.some(directory=>path.startsWith(directory)))throw Error('unknown module');
-  const bytes=await readFile(path);response.setHeader('Content-Type','text/javascript');response.end(bytes);
+  const bytes=await readFile(path);response.setHeader('Content-Type',path.endsWith('.wasm')?'application/wasm':'text/javascript');response.end(bytes);
  }catch{response.writeHead(404).end();}
 });
 await new Promise(done=>server.listen(0,'127.0.0.1',done));const base=`http://127.0.0.1:${server.address().port}`;
@@ -108,7 +108,7 @@ try{
    await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
    await page.goto(base+'/');
    const result=await page.evaluate(async fixtures=>{
-    const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
+    globalThis.viewEngine??=await WebAssembly.compileStreaming(fetch('/crates/varta-project/src/browser/view-engine.wasm'));const {createViewDom}=await import('/crates/varta-project/src/browser/view-dom.mjs');
     const {encodeViewBatch}=await import('/crates/varta-project/src/browser/view-codec.mjs');
     const properties=['color','background-color','padding-top','padding-right','width','opacity','display','font-family','border-top-width','border-top-style','border-top-color'];
     const controls=[];
@@ -126,7 +126,7 @@ try{
     const mismatches=[];let checks=0;
     for(const fixture of fixtures){
      const a=document.createElement('div'),b=document.createElement('div');document.body.append(a,b);
-     const actual=createViewDom({container:a}),reference=createViewDom({container:b});
+     const actual=createViewDom({viewEngine,container:a}),reference=createViewDom({viewEngine,container:b});
      try{
       actual.apply(Uint8Array.from(fixture.batch));
       const operations=[{name:'create_element',node:2,tag:'div'},{name:'set_style',node:2,property:'width',text:'200px'},

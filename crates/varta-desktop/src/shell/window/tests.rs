@@ -21,6 +21,7 @@ fn headless_preview() -> (super::Host, std::sync::mpsc::Receiver<super::WorkerMe
             gpu_events: None,
             dimensions: Arc::new(AtomicU64::new(0)),
             dark: Arc::new(AtomicBool::new(false)),
+            preferences: Arc::new(AtomicU32::new(0)),
             scale: Arc::new(AtomicU64::new(1.0f64.to_bits())),
             sender,
             frame: None,
@@ -806,4 +807,32 @@ fn the_guest_cannot_title_its_window_like_a_prompt() {
     ] {
         assert_eq!(guest_title(&spoof), "", "{spoof}");
     }
+}
+
+#[test]
+fn system_preferences_round_trip_through_the_worker_word() {
+    use varta_common::view::stylesheet::media::{Contrast, Preferences};
+    for reduced_motion in [false, true] {
+        for contrast in [
+            Contrast::NoPreference,
+            Contrast::More,
+            Contrast::Less,
+            Contrast::Custom,
+        ] {
+            let preferences = Preferences {
+                reduced_motion,
+                contrast,
+                ..Preferences::default()
+            };
+            assert_eq!(
+                super::preferences_of(super::preferences_bits(preferences)),
+                preferences
+            );
+        }
+    }
+    // Off the main thread nothing is read: the defaults of a desktop.
+    let read = std::thread::spawn(super::system_preferences)
+        .join()
+        .unwrap();
+    assert_eq!(read, Preferences::default());
 }
