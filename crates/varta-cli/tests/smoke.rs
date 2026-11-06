@@ -17024,6 +17024,63 @@ fn v38_ports_accept_extra_optional_parameters_in_dev_and_artifacts() {
     assert!(!text.contains("varta log:"), "{text}");
 }
 
+/// V38 iteration protocol through `varta dev`, both artifacts, both
+/// binaries and the packaged executable: an iterable generic class from
+/// another module (`implements Iterable<T>`, `yield*` over its array), a
+/// generator delegating to a generator with a return value, array literal
+/// spreads of iterables, arrays and a `Set`, and `Array.from`; v37 keeps
+/// rejecting the iterator method.
+#[test]
+fn v38_iteration_protocol_runs_in_dev_and_artifacts() {
+    let source = "import {Ring} from './ring.ts';\
+         function* pairs(r:Ring<string>):Generator<string,number>{let n=0;for(const x of r){yield `${x}${x}`;n++;}return n;}\
+         function* all(r:Ring<string>):Generator<string>{const n=yield* pairs(r);yield `${n}`;}\
+         export function main():void{const r=new Ring<string>().add('a').add('b');const xs:number[]=[1,2];\
+         console.log(`${[...r,...all(r)].join(',')} ${[0,...xs,...new Set<number>([3])].join('')} ${Array.from(r).length}`);}";
+    let ring = "export class Ring<T> implements Iterable<T>{items:T[]=[];\
+         add(x:T):Ring<T>{this.items.push(x);return this;}\
+         *[Symbol.iterator]():Generator<T>{yield* this.items;}}";
+    let project = RegressionProject::new(source, serde_json::json!({}));
+    fs::write(project.0.join("src/ring.ts"), ring).unwrap();
+    project.language_profile("checked-f64-utf16-v38");
+    // Node 24 prints the same line.
+    let expected = ["varta log: a,b,aa,bb,2 0123 2"];
+    let logs = |output: &std::process::Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|s| s.starts_with("varta log:"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let dev = project.command(&["dev"]);
+    assert!(dev.status.success(), "{}", combined(&dev));
+    assert_eq!(logs(&dev), expected);
+    let build = project.command(&["build", "--single"]);
+    assert!(build.status.success(), "{}", combined(&build));
+    let mut commands = Vec::new();
+    for artifact in ["dist/app.wasm", "dist/app"] {
+        for mut command in [varta(), Command::new(runtime_path())] {
+            command.args(["run", artifact]);
+            commands.push(command);
+        }
+    }
+    commands.push(Command::new(project.0.join("dist/app")));
+    for mut command in commands {
+        let output = command.current_dir(&project.0).output().unwrap();
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(logs(&output), expected);
+    }
+    project.language_profile("checked-f64-utf16-v37");
+    let rejected = project.command(&["dev"]);
+    assert!(!rejected.status.success());
+    let text = combined(&rejected);
+    assert!(
+        text.contains("computed or numeric class member name"),
+        "{text}"
+    );
+    assert!(!text.contains("varta log:"), "{text}");
+}
+
 #[test]
 fn linked_intrinsics_v38_run_identically_through_dev_build_single_and_both_binaries() {
     use varta_common::HostOperation;

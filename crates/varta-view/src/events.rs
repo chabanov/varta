@@ -1007,11 +1007,10 @@ impl View {
             }
             Input::Scroll { target, top } => {
                 let node = self.resolve(target)?;
-                if let Some(element) = self.tree.element_mut(node) {
-                    element.scroll_top = top.max(0.0);
-                    if element.tag == Tag::Textarea {
-                        element.editor.manual_text_scroll = true;
-                    }
+                if let Some(element) = self.tree.scroll_to(node, top.max(0.0))
+                    && element.tag == Tag::Textarea
+                {
+                    element.editor.manual_text_scroll = true;
                 }
                 self.fire(node, EventKind::Scroll, true)?;
             }
@@ -1032,9 +1031,8 @@ impl View {
                 }
                 let element = self
                     .tree
-                    .element_mut(node)
+                    .scroll_to(node, *top)
                     .ok_or(InputError::ScrollGeometry)?;
-                element.scroll_top = *top;
                 if element.tag == Tag::Textarea {
                     element.editor.manual_text_scroll = true;
                 }

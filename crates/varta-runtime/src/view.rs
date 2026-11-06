@@ -145,6 +145,9 @@ impl Session {
     pub(crate) fn set_pointer_state(&mut self, hovered: Option<u32>, active: Option<u32>) -> bool {
         self.view.set_pointer_state(hovered, active)
     }
+    pub(crate) fn set_scrollbar_hover(&mut self, container: Option<u32>) -> bool {
+        self.view.set_scrollbar_hover(container)
+    }
     pub(crate) fn rasterize(
         &self,
         width: u32,

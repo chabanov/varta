@@ -1,0 +1,18 @@
+1,2,7,8
+outer start; inner finally; inner returned done
+1
+99
+7 false
+outer start; inner caught boom; inner finally; inner returned done
+early true
+outer start; inner finally
+1 2 3 4
+first
+got a
+got b
+true
+outer finally
+true The iterator does not provide a 'throw' method.
+true undefined
+1,2 sub finally; sub finally; sub returned 3
+true undefined

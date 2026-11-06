@@ -130,7 +130,7 @@ impl Value {
 
 /// A `transition-timing-function` keyword as its cubic Bézier.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Timing {
+pub(crate) struct Timing {
     x1: f64,
     y1: f64,
     x2: f64,
@@ -139,6 +139,8 @@ struct Timing {
 
 impl Timing {
     const EASE: Self = Self::new(0.25, 0.1, 0.25, 1.0);
+    /// `ease-in-out`, also the curve of Chrome's macOS scrollbar animations.
+    pub(crate) const EASE_IN_OUT: Self = Self::new(0.42, 0.0, 0.58, 1.0);
 
     const fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
         Self { x1, y1, x2, y2 }
@@ -150,13 +152,13 @@ impl Timing {
             "ease" => Self::EASE,
             "ease-in" => Self::new(0.42, 0.0, 1.0, 1.0),
             "ease-out" => Self::new(0.0, 0.0, 0.58, 1.0),
-            "ease-in-out" => Self::new(0.42, 0.0, 0.58, 1.0),
+            "ease-in-out" => Self::EASE_IN_OUT,
             _ => return None,
         })
     }
 
     /// The output progress at input progress `x` in `0..=1`.
-    fn output(self, x: f64) -> f64 {
+    pub(crate) fn output(self, x: f64) -> f64 {
         if x <= 0.0 || x >= 1.0 {
             return x.clamp(0.0, 1.0);
         }

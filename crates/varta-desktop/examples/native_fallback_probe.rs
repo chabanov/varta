@@ -11,7 +11,7 @@
 mod probe {
     use varta_common::view::{CssProperty as P, Tag};
     use varta_desktop::shell::FontSet;
-    use varta_view::{Access, BatchWriter, Broker, RasterImage, Renderer, View};
+    use varta_view::{Access, BatchWriter, BoxRect, Broker, RasterImage, Renderer, View};
 
     /// The CSS viewport in CSS pixels.
     const VIEWPORT_WIDTH: f32 = 240.0;
@@ -51,7 +51,12 @@ mod probe {
     /// heart takes a text face), a keycap, and semi-transparent text, whose
     /// alpha applies to colour glyphs too, with bold emoji (Chrome draws
     /// colour glyph images unemboldened).
-    const CASES: [Case; 12] = [
+    ///
+    /// A `-scaled` case draws its line under `transform: scale(1.5)`: the host
+    /// rasterizer draws its glyphs, colour emoji included, at the scaled size
+    /// where the transform puts them, and its boxes are the transformed ones
+    /// (`getBoundingClientRect`).
+    const CASES: [Case; 15] = [
         (
             "ui-plain",
             "system-ui, sans-serif",
@@ -125,6 +130,24 @@ mod probe {
             true,
         ),
         (
+            "sans-scaled",
+            "sans-serif",
+            &[("Scale a \u{2192} b", None)],
+            true,
+        ),
+        (
+            "sans-emoji-scaled",
+            "sans-serif",
+            &[("a \u{1F600} b \u{1F44D}\u{1F3FD}", None)],
+            true,
+        ),
+        (
+            "serif-emoji-bold-scaled",
+            "serif",
+            &[("x ", None), ("\u{2764}\u{FE0F} y", Some("700"))],
+            true,
+        ),
+        (
             "sans-emoji-alpha",
             "sans-serif",
             &[("\u{1F600} z ", None), ("\u{1F680} \u{1F44D}", Some("700"))],
@@ -154,7 +177,11 @@ mod probe {
         }
     }
 
+    /// The `transform` of a `-scaled` case's line.
+    const SCALED: &str = "scale(1.5)";
+
     fn case_view(
+        name: &str,
         family: &str,
         color: &str,
         runs: &[(&str, Option<&str>)],
@@ -166,6 +193,14 @@ mod probe {
             .set_style(LINE, P::FontFamily, family)
             .set_style(LINE, P::LineHeight, "24px")
             .set_style(LINE, P::Color, color);
+        // Scaled about its centre, the line stays inside the viewport.
+        if name.ends_with("-scaled") {
+            batch
+                .set_style(LINE, P::Transform, SCALED)
+                .set_style(LINE, P::Width, "120px")
+                .set_style(LINE, P::MarginLeft, "60px")
+                .set_style(LINE, P::MarginTop, "8px");
+        }
         for (index, (text, weight)) in (0u32..).zip(runs) {
             let (span, node) = (FIRST_SPAN + index, FIRST_TEXT + index);
             batch.create_element(span, Tag::Span).insert(LINE, span, 0);
@@ -211,7 +246,7 @@ mod probe {
         let mut measurer = fonts.measurer()?;
         let mut cases = Vec::new();
         for (name, family, runs, pixels) in CASES {
-            let view = case_view(family, line_color(name), runs)?;
+            let view = case_view(name, family, line_color(name), runs)?;
             let geometry = view.layout_boxes_with_text(
                 VIEWPORT_WIDTH,
                 VIEWPORT_HEIGHT,
@@ -219,17 +254,28 @@ mod probe {
                 MEDIUM_SIZE,
             )?;
             let image = render(&view, &fonts, scale).map_err(|error| format!("{name}: {error}"))?;
+            // The rendered boxes, mapped by any transform, in CSS pixels.
+            let rendered = image.node_bounds_map();
+            let mapped = |id: u32| {
+                rendered.get(&id).map(|r| BoxRect {
+                    x: r.x / scale,
+                    y: r.y / scale,
+                    width: r.width / scale,
+                    height: r.height / scale,
+                })
+            };
             let boxes = geometry
-                .iter()
-                .filter(|(id, _)| **id != 1)
-                .map(|(&id, r)| {
+                .keys()
+                .filter(|id| **id != 1 && (**id == LINE || **id < FIRST_TEXT))
+                .filter_map(|&id| Some((id, mapped(id)?)))
+                .map(|(id, r)| {
                     (
                         id.to_string(),
                         serde_json::json!({"x":r.x,"y":r.y,"width":r.width,"height":r.height}),
                     )
                 })
                 .collect::<serde_json::Map<_, _>>();
-            let line = geometry.get(&LINE).ok_or("the line has no box")?;
+            let line = mapped(LINE).ok_or("the line has no box")?;
             cases.push(serde_json::json!({
                 "name": name,
                 "tree": view.snapshot()["tree"],

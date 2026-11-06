@@ -539,13 +539,21 @@ impl TextMeasurer {
             return Ok(0);
         }
         let mut operations = 0usize;
-        let mut primaries: Vec<(std::ops::Range<usize>, (f32, f32))> = Vec::new();
+        let mut primaries = fallback::RangeMap::new();
+        // The primary metrics of each style, shaped once per style.
+        let mut sampled: Vec<(StyleKey<'_>, Option<(f32, f32)>)> = Vec::new();
         for (range, _) in overrides {
             let (list, style) = style_at(families, options, spans, range.start);
             if !matches!(
                 style.line_height,
                 Some(LineHeight::Absolute(_) | LineHeight::FontSizeRelative(_))
             ) {
+                continue;
+            }
+            if let Some((_, primary)) = sampled.iter().find(|(key, _)| *key == (list, style)) {
+                if let Some(primary) = *primary {
+                    primaries.insert(range.clone(), primary);
+                }
                 continue;
             }
             let sample_input = Shaping {
@@ -566,8 +574,9 @@ impl TextMeasurer {
                 });
                 None
             });
+            sampled.push(((list, style), primary));
             if let Some(primary) = primary {
-                primaries.push((range.clone(), primary));
+                primaries.insert(range.clone(), primary);
             }
         }
         // One run of a fallback face may join several adjacent ranges (an
@@ -575,9 +584,8 @@ impl TextMeasurer {
         // primary metrics.
         layout.adjust_run_metrics(|range, font, size, metrics| {
             primaries
-                .iter()
-                .find(|(covered, _)| covered.start < range.end && range.start < covered.end)
-                .map(|(_, primary)| *primary)
+                .overlapping(range)
+                .copied()
                 .or_else(|| self.platform_or_enlarged(font, size, metrics))
         });
         Ok(operations)
@@ -1039,19 +1047,30 @@ impl TextMeasurer {
         // presentation in the order of their first range. Emoji graphemes
         // without a colour face are their own ranges, whether or not their
         // face lacks them.
+        // Both lists are sorted and disjoint: one walk cuts the emoji out of
+        // the missing ranges.
         let emoji = fallback::uncolored_emoji(layout, text);
         let mut ranges: Vec<(std::ops::Range<usize>, bool)> =
             emoji.iter().map(|range| (range.clone(), true)).collect();
+        let mut next = 0;
         for missing in fallback::missing_clusters(layout, text) {
+            while emoji
+                .get(next)
+                .is_some_and(|covered| covered.end <= missing.start)
+            {
+                next += 1;
+            }
             let mut start = missing.start;
-            for covered in emoji
-                .iter()
-                .filter(|covered| covered.start < missing.end && missing.start < covered.end)
+            let mut index = next;
+            while let Some(covered) = emoji
+                .get(index)
+                .filter(|covered| covered.start < missing.end)
             {
                 if start < covered.start {
                     ranges.push((start..covered.start, false));
                 }
                 start = start.max(covered.end);
+                index += 1;
             }
             if start < missing.end {
                 ranges.push((start..missing.end, false));
@@ -1082,6 +1101,14 @@ impl TextMeasurer {
                 start = end;
             }
         }
+        // The family stack each position has after the earlier passes (a
+        // later override wins). This pass's ranges are disjoint, so none of
+        // them changes another's.
+        let mut stacks = fallback::RangeMap::new();
+        for (index, (range, _)) in overrides.iter().enumerate() {
+            stacks.insert(range.clone(), index);
+        }
+        let earlier = overrides.len();
         let mut added = false;
         for (((list, style), emoji), ranges) in groups {
             let Some(first) = ranges.first() else {
@@ -1095,11 +1122,10 @@ impl TextMeasurer {
                 continue;
             };
             for range in ranges {
-                let current = overrides
-                    .iter()
-                    .rev()
-                    .find(|(covered, _)| covered.contains(&range.start))
-                    .map_or(list, |(_, stack)| stack.as_slice());
+                let current = stacks
+                    .get(range.start)
+                    .filter(|&&index| index < earlier)
+                    .map_or(list, |&index| overrides[index].1.as_slice());
                 if current.contains(&family) {
                     continue;
                 }

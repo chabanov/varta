@@ -13,29 +13,32 @@ versioned language profiles; it is not general JavaScript, Node or npm
 compatibility yet. See the [status summary](docs/development-plan.md#status) and
 the [research thesis](docs/development-plan.md#research-thesis).
 
-Current development checkpoint (2026-11-05, `main` at `10ff9ae`): v38 remains
+Current development checkpoint (2026-11-06, `main`): v38 remains
 unreleased and in stabilization. The application runtime, official metered
 browser host, OPFS KV storage, native/browser network replay and packaged
 `varta-shell` are integrated. The pinned uarp-sdk runs natively against the
 loopback service and its SDK groups replay in Chrome with native-equal results.
 The native renderer includes inline borders/decorations, control defaults,
-positioned painting, modal dialogs, system-font mappings and CSS transitions/
+positioned painting, modal dialogs, system fonts with platform fallback faces and
+macOS colour emoji, `scale()` transforms, classic scrollbars and CSS transitions/
 translations; the console has headless first-frame and button-state evidence.
-The [TSX Showcase](examples/native-showcase/README.md) remains a renderer demo;
-the [UARP console](examples/uarp-console/README.md) is the application pilot.
+The earlier experimental examples (TSX Showcase, UARP console, web-host
+prototype) were removed on 2026-11-06; a structured developer examples package
+replaces them.
 
-HTTP v2 supports streamed response bodies and HTTP/1.1 keep-alive with separate
-connection/worker bounds. The agreed modern-server stages still include Web
-Request ingress, async Wasmtime/pooling, server TLS 1.3/HTTP/2 and load/hardening
-acceptance. See the [current status](docs/development-plan.md#status) and
-[server stages](docs/development-plan.md#k7--modern-http-server-agreed-design-2026-11-05).
+HTTP v2 streams response bodies, takes Web `Request` handlers with streamed
+request bodies and runs requests as async Wasmtime tasks with pooled instances,
+bounded admission, native TLS 1.3 and HTTP/2; the modern-server stages H1–H4 are
+merged, with per-stream write-idle and lifecycle bounds. h2c, HTTP/3, certificate
+reload and Linux/sustained-load acceptance remain open. See the
+[current status](docs/development-plan.md#status) and
+[server stages](docs/development-plan.md#k7-merged-values-approved-2026-11-06).
 
-The large-heap incremental-GC fix is committed and passes the latest full gate:
-3861 Rust tests, 17 ignored, 218 browser Node tests and the reviewed v38
-conformance baseline. The prior fuel comparison failure is superseded by this
-run. These are local macOS implementation checks, with browser Node tests;
+The latest full gate passes on the audit fixes of 2026-11-06: 3949 Rust tests,
+21 ignored, 218 browser Node tests and the reviewed v38 conformance baseline.
+These are local macOS implementation checks, with browser Node tests;
 real-browser and other-target acceptance retain their separate scope.
-See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-05).
+See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-06).
 
 Real-window/native system-input acceptance, sustained live-service sessions,
 complete browser/platform matrices and release/security/performance acceptance
@@ -173,7 +176,7 @@ inherits the one before it. Host and value ABI versions per profile are in the
 | `checked-f64-utf16-v35` | Pilot batch in development: Web types, mixed records, async methods, frame liveness |
 | `checked-f64-utf16-v36` | Pilot batch in development: checked declared fields, function fields, async generators, timers |
 | `checked-f64-utf16-v37` | Pilot batch in development: language core, class generics, collections and binary text, RegExp, net.request |
-| `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage, hashed `Map`/`Set` |
+| `checked-f64-utf16-v38` | Batch in development: program and data limits, turn budgets, linked intrinsics, view protocol and TSX, structural subtyping, codegen v2; wave 2: hashed dictionaries (value 18), strict members, Web bytes, virtual file roots, text imports; wave 3: Deno KV storage, hashed `Map`/`Set`; iteration protocol (`[Symbol.iterator]`, array spreads, `yield*`) |
 <!-- generated:profile-index:end -->
 
 ## Browser bundle (in development)

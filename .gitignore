@@ -7,7 +7,3 @@
 # The checked-in browser KV codec module (`scripts/build-kv-codec.py`).
 !/crates/varta-project/src/browser/kv-codec.wasm
 .DS_Store
-# uarp-sdk's own test sources, fetched at the pinned commit by
-# examples/uarp-console/scripts/fetch-sdk-tests.py; never vendored.
-/examples/uarp-console/pins/uarp-sdk-tests/
-/examples/uarp-console/pins/.uarp-sdk-tests.staging-*/

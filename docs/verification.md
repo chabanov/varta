@@ -6,35 +6,28 @@ gate once on the completed code batch before committing. A full pass does not ne
 to be repeated after a documentation-only edit. New code/build inputs invalidate
 any previous check whose scope includes those inputs.
 
-## Current verification evidence — 2026-11-05
+## Current verification evidence — 2026-11-06
 
-Status refreshed from `main` at `10ff9ae`. The existing full verification run
-completed before these documentation changes; this refresh adds no engine tests.
-
-- **Latest successful full gate:**
-  `target/verification/20261105-225401-b9bonnxr/report.json` passes all ten
-  commands with unchanged inputs: **3861 Rust tests, 0 failures, 17 ignored;
-  218 browser Node tests**. Checked-v38 conformance is 132 passed/5 known
-  unsupported of 137, baseline matched, with no regressions or infrastructure
-  failures. Recorded HEAD is `6dfb06e` with the GC changes in the snapshot;
-  commit `10ff9ae` records the verified collector/fuel follow-up.
-- **Superseded failure:**
-  `target/verification/20261105-224058-jqgmhs2m/report.json` failed the
-  `codegen_v2_tests::case_corpus_behaves_identically_under_v38` fuel pair on
-  `unknown_cases/assertions.ts`: `(24938,26693)` versus `(24938,26683)`.
-  The newer run passes that test and the new large-heap idle-step bound test.
-  Retain the failure as history; do not present it as an outstanding current
-  failure, or the earlier 3860-test pass as the latest evidence.
-- **Source scope:** the 1878 non-Markdown source/resource inputs captured during
-  the run still match the committed code at this refresh. Existing GC and
-  architecture changes were preserved. Only README/changelog/status/verification
-  prose changes here; test assertions and expected values are untouched by this
-  documentation task.
-- **Separate external acceptance:** Chrome streaming after the network inactivity
-  change has not been run. Real-window/system-input checks, current remote CI,
-  remaining browser/platform matrices, sustained live sessions and release/
-  security/performance acceptance remain open. A passing local full gate does
-  not close those requirements.
+- **Latest successful full gate:** `target/verification/20261106-114846-cule_s6v/report.json` passes every
+  command with unchanged inputs: **3949 Rust tests, 0 failures, 21 ignored;
+  218 browser Node tests**; checked-v38 conformance matches its baseline.
+  It covers the audit fixes of 2026-11-06 (HTTP/2 streams and idle bound,
+  per-stream write idle, file reads off the request workers, linear emoji
+  fallback, Parley segment counting) on top of colour emoji and text under
+  `scale()`.
+- **Superseded runs of the same batch:** `20261106-112155-1m2tiy5k` passed
+  every test but saw its sources change during the run (another session
+  edited the tree); `20261106-113508-baj7a9l2` failed one new HTTP/2 test
+  under load, which exposed the idle-timer race fixed before the passing
+  run. Neither is current evidence.
+- **Source scope:** the gate fingerprint covers every tracked and untracked
+  file except the independent product examples (`examples/`), which no
+  engine input depends on (`scripts/verify.py`, `INDEPENDENT_PREFIXES`).
+- **Separate external acceptance:** Chrome streaming after the network
+  inactivity change has not been run. Real-window/system-input checks,
+  current remote CI, remaining browser/platform matrices, sustained live
+  sessions and release/security/performance acceptance remain open. A
+  passing local full gate does not close those requirements.
 
 The dated sections below are historical/scoped records. Merged packages and CI
 job definitions do not establish every current target. Documentation-only edits
@@ -601,8 +594,8 @@ race was never reproduced, so it is not a verified fix.
 
 The gate does not cover `test-browser-select-bundle.mjs` (its `examples/select`
 fixture is not in the repository), the native oracles (`test-native-*.mjs`,
-`test-headless-geometry.mjs`, `test-select-work-runtime.mjs`), the fuel probe
-page or the `examples/uarp-console` drivers.
+`test-headless-geometry.mjs`, `test-select-work-runtime.mjs`) or the fuel probe
+page.
 
 The CI `browser` job runs this scope on Linux and macOS with Node.js 24, Playwright
 1.64.1 and its Firefox/WebKit builds installed outside the repository, and the
@@ -760,6 +753,29 @@ for scale in 1 1.25 2; do
   node scripts/test-native-positioned.mjs "target/native-scrollbars-$scale.json"
 done
 ```
+
+Overlay scrollbars (macOS "Show scroll bars" automatic or when scrolling,
+headless Chrome's style on this Mac) are compared with Chrome running the
+probe's steps in real time: a wheel or programmatic scroll, the pointer on the
+bar or away, and waits. Captures are taken where both are steady (just after a
+scroll, after the pointer rested on the bar, after the fade-out); the oracle
+checks that the bar reserves no space, the hits on and beside the bar and the
+pixels around it. The state machine, paint and shell feed have their own
+tests:
+
+```sh
+cargo test -p varta-view --lib --locked overlay_scrollbar
+cargo test -p varta-view --test integration --locked scrollbars
+cargo test -p varta-view --test integration --locked accessibility_scroll
+cargo test -p varta-runtime --lib --locked a_native_scroll_shows_the_overlay_scrollbar
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_overlay_scrollbar_probe --locked -- "$scale" > "target/native-overlay-scrollbars-$scale.json"
+  node scripts/test-native-overlay-scrollbars.mjs "target/native-overlay-scrollbars-$scale.json"
+done
+```
+
+Scrolled cases of `native_positioned_probe` show the overlay thumb on both
+sides; rerun it at 1x and 2x after changing overlay paint.
 
 Platform fallback faces with `--system-fonts` (macOS), colour emoji
 included, are compared with Chrome on the same machine; the oracle carries no
@@ -1280,18 +1296,7 @@ cargo test -p varta-common --test embedding_documentation --locked
 ```
 
 The Chrome probe compares native admission, failure operation and DOM rollback;
-the Worker test compares admission before/after a deferred local radio edit. The
-application-owned mockup driver also exercises radio work refusal and a later
-successful patch on each selected engine:
-
-```sh
-node --test examples/uarp-console/scripts/serve-mockups.test.mjs
-node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs chrome
-node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs webkit
-```
-
-Use `firefox` or omit the final selector for the complete three-engine attempt.
-A browser launch failure is an unverified engine, not a passing matrix. These
+the Worker test compares admission before/after a deferred local radio edit. These
 focused checks do not establish local-input radio work limits, aggregate
 retained-text/cascade limits, complete
 cross-target radio behavior, compiled pilot acceptance or release readiness.
@@ -1321,25 +1326,6 @@ also check that hidden source-size caches cannot poison future admission.
 Native and browser payload accounting excludes actual live values already
 covered by sticky reservations, preserving admission while their event is queued.
 This is a payload contract, not a measurement of process RSS or complete CSS work.
-
-For normal-stack application acceptance after rebuilding the CLI/companion and
-projection example, run from the repository root:
-
-```sh
-cargo build -p varta -p varta-launcher --locked
-cargo build -p varta-view --example project_flex_snapshot --locked
-VARTA_BIN="$PWD/target/debug/varta" examples/uarp-console/scripts/test.sh
-node examples/uarp-console/scripts/test-browser-sdk.mjs target/debug/varta
-node examples/uarp-console/scripts/test-browser-settings.mjs target/debug/varta
-node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs chrome
-node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs webkit
-```
-
-The optional engine selector keeps a focused run local; omit it for all three
-engines. A selected engine pass does not establish Firefox or the full matrix.
-The mockup driver separately checks retained-capacity refusal, unchanged DOM and
-successful reclamation; the live chat probe checks trusted interactions, the
-native ordered tree, selected accessibility and sampled style declarations.
 
 
 ## Stylesheet expansion and packaged resource failures
@@ -2006,7 +1992,7 @@ builds and the Showcase passes its 12 trusted-input script
 (`target/clipboard-showcase.log`). App selection through Cua times out after
 60 s with kernel reset; current launch and actual system clipboard behavior
 remain unconfirmed. Bundle hashes and scope are recorded in
-`examples/native-showcase/clipboard-checkpoint-2026-11-04.json`. These scoped
+`docs/evidence/clipboard-checkpoint-2026-11-04.json`. These scoped
 results do not constitute the final package gate.
 
 The first full-gate attempt stopped at formatting before engine checks

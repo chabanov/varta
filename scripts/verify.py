@@ -234,14 +234,24 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
     ]
 
 
+# Product examples are independent applications, never inputs of the engine:
+# no crate, test or generated document depends on them, so changing or
+# removing one does not invalidate an engine run.
+INDEPENDENT_PREFIXES = (b"examples/",)
+
+
 def fingerprint() -> dict[str, str]:
-    """Include staged, unstaged and untracked content, not just the HEAD commit."""
+    """Include staged, unstaged and untracked content, not just the HEAD commit.
+
+    Independent product examples (`INDEPENDENT_PREFIXES`) are not inputs."""
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
     files = subprocess.check_output(
         ["git", "ls-files", "-c", "-o", "--exclude-standard", "-z"], cwd=ROOT,
     ).split(b"\0")
     digest = hashlib.sha256()
     for name in sorted(set(files) - {b""}):
+        if name.startswith(INDEPENDENT_PREFIXES):
+            continue
         path = ROOT / os.fsdecode(name)
         digest.update(len(name).to_bytes(8, "little"))
         digest.update(name)

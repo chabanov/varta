@@ -296,7 +296,7 @@ mod tests {
             groups: Vec::new(),
             relative_clips: BTreeMap::new(),
             isolation_required: false,
-            transforms: 0,
+            affines: Vec::new(),
             capture: None,
         };
         let bounds = BoxRect {

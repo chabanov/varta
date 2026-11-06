@@ -1,6 +1,6 @@
 # Varta functional overview
 
-Checkpoint: 2026-11-05, implementation on `main` at `10ff9ae`.
+Checkpoint: 2026-11-06, implementation on `main` (audit fixes of that day).
 
 Varta compiles strictly typed TypeScript ahead of time into portable WebAssembly.
 Native applications execute in Wasmtime through a capability-checked host;
@@ -27,7 +27,7 @@ defaults maintained in this overview.
 | Area | Implemented surface | Remaining boundary |
 | --- | --- | --- |
 | Compiler | Shared TS parsing, resolved typed IR, Wasm emission and validation for check/dev/build; explicit profile negotiation and source-aware diagnostics | Deliberate checked subset; unsupported syntax/types produce diagnostics |
-| Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports | General dynamic properties/prototypes/descriptors, wider receiver/iteration behavior and remaining type/module semantics |
+| Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports; v38 iteration protocol: `[Symbol.iterator]()` iterable classes, generator methods, array literal spreads, `Array.from` of iterables and synchronous `yield*` ([contract](architecture.md#iteration-protocol-iteration_protocol)) | General dynamic properties/prototypes/descriptors, hand-written iterator objects and iterable destructuring, wider receiver behavior and remaining type/module semantics |
 | Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, ahead-of-time RegExp and a UTC Date subset | Symbol, object coercion, wrappers, Intl, wider Date/RegExp and full conversion inventory |
 | Async language | Promise chains/combinators, async/await, sync/async generators, for-await, timers, microtasks and abort support | Structural thenables, top-level await and wider async iterable forms |
 | Runtime | Bounded executions, isolated HTTP request instances and long-lived application instances with event turns, host tasks, permission answers and captured state | Broader sustained cancellation/shutdown, retained-resource and target evidence |
@@ -35,7 +35,7 @@ defaults maintained in this overview.
 | Authority | Deny-by-default grants, exact operation/resource checks, package request intersected with a host ceiling, permission broker and validated artifact/ABI boundaries | Broader policy/permission UX, independent review and complete alternate-host acceptance |
 | System access | Text file reads/printing under virtual roots, environment access, clock/timers, logging and guest exit | General filesystem writes, arbitrary subprocess spawning and a broader standard system API |
 | Client networking | Capability-gated async HTTP(S) fetch, headers, streamed response reads, cancellation/timeout and admitted Web request/response values | Complete Web compatibility and all cross-host network behavior |
-| Server networking | Sync/async HTTP v2 handlers, JSON and streamed Web Response bodies, HTTP/1.1 keep-alive, bounded separate connection/worker pools | Web Request ingress/streamed request bodies, async Wasmtime/pooling, server TLS/HTTP2 and hardening/load acceptance |
+| Server networking | Sync/async HTTP v2 handlers, JSON and streamed Web Response bodies, Web Request ingress with streamed request bodies, HTTP/1.1 keep-alive, async Wasmtime with pooled instances and admission, TLS 1.3 with HTTP/2, fuzz/flood tests and local benchmarks | Per-stream HTTP/2 write idle, h2c, HTTP/3, certificate reload, Linux and sustained-load acceptance |
 | Persistent data | Native Deno-KV-compatible files; browser OPFS backend with the shared Rust value codec; typed reads, lists and atomic updates | Async storage completion, watch/queues and complete Deno KV compatibility |
 | UI | TSX, checked tree/style/event batches, native layout/paint/input and official browser view sessions | Complete native L0/HTML/CSS/IME/accessibility and cross-renderer acceptance |
 | GPU UI | Optional wgpu/Vello backend, shared bounded display scenes, CPU recovery and direct mixed-border color fields | Direct GPU opacity groups, other devices and full presentation/performance acceptance |
@@ -123,14 +123,14 @@ keep-alive, worker waiting, stream idle/lifetime and disconnect/shutdown behavio
 The UARP proxy uses the streaming response path for upstream session events.
 
 The agreed [modern HTTP server stages](development-plan.md#k7--modern-http-server-agreed-design-2026-11-05)
-remain partially implemented:
+are merged ([record](development-plan.md#k7-merged-values-approved-2026-11-06)):
 
 | Stage | Implemented | Still open |
 | --- | --- | --- |
-| H1 | HTTP/1.1 keep-alive and separate bounded connection/worker pools | Web Request ingress, streamed incoming bodies and remaining host-policy exposure |
-| H2 | Current language scheduler and owned network completions | Async Wasmtime calls/yielding, pooling/InstancePre and task/memory admission |
-| H3 | HTTP(S) client transport | Server TLS 1.3, ALPN and HTTP/2 with their resource/security limits |
-| H4 | Existing boundary, denial, lifecycle and regression checks | Fuzzing, flood/slow-client tests and reproducible throughput/p50/p99/memory acceptance |
+| H1 | HTTP/1.1 keep-alive, separate bounded connection/worker pools, Web `Request` ingress with streamed incoming bodies and host-lowered limits | — |
+| H2 | Async Wasmtime calls yielding on epochs, pooled `InstancePre`, task/memory admission | — |
+| H3 | Native TLS 1.3 with ALPN `h2`/`http/1.1`, HTTP/2 stream/header/reset bounds; a connection stays open while a body streams | Per-stream write idle, h2c, certificate reload |
+| H4 | Fuzzing, flood and slow-client tests, local throughput/p50/p99/memory benchmarks (macOS arm64) | Linux and sustained-load benchmarks |
 
 HTTP/3, WebSocket and response compression remain later work. The implemented
 pool limits are safety bounds, not measured production capacity.
@@ -149,7 +149,7 @@ unrestricted browser DOM in guest code.
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
-| Animation | Color/background/opacity transitions and translations on a host-set animation clock; translated boxes update painting, hits and geometry |
+| Animation | Color/background/opacity transitions and translations on a host-set animation clock; translated boxes update painting, hits and geometry; macOS overlay scrollbar fades on the same clock |
 | Platform effects | Host-owned clipboard and external links under gesture/grant rules, with explicit denial/platform failure |
 | Accessibility | Roles/names/states/descriptions, semantic snapshots, geometry, live updates and assistive actions; macOS adapter and scrollbar-action routes |
 
@@ -164,8 +164,11 @@ The native scope still has concrete gaps:
   element, `object-fit`/`aspect-ratio`, other formats, animated and
   colour-managed images are refused, and the optional GPU backend presents
   frames with images through its software fallback.
-- General transforms/scaling, scrollable overflow from translated boxes and
-  visual native scrollbar painting remain unfinished.
+- General transforms/scaling and scrollable overflow from translated boxes
+  remain unfinished. macOS scrollbars paint natively in both system styles
+  (classic gutters, and overlay bars shown while scrolling and faded on the
+  animation clock); dragging a thumb, clicking a track and Linux scrollbars
+  do not.
 - OS glyph fallback and wider real-font typography remain open. Some ordinary
   bidi shaping is implemented while RTL edge ordering and bidi on preserved
   whitespace paths remain separate gaps.
@@ -228,9 +231,10 @@ integration remain future work.
 | Raspberry Pi 5 | Earlier aarch64 launcher cross-build/run probe | Actual Pi hardware, kernel/page-size, UI/GPU/input and package metadata acceptance |
 | Browser Worker | Metered applications/views, OPFS, effects and recorded SDK/settings checks in Chrome; selected other-engine evidence | Updated streaming probe, current complete Chromium/Firefox/WebKit and pilot matrices |
 
-The [TSX Showcase](../examples/native-showcase/README.md) is a renderer demo.
-The [UARP console](../examples/uarp-console/README.md) is the cross-target pilot,
-kept outside engine crates. Recorded pilot evidence includes:
+The TSX Showcase and the UARP console pilot application were removed from the
+repository on 2026-11-06 (owner decision); a structured developer examples package
+replaces them. Their recorded evidence is historical and cannot be reproduced from
+the current tree. It included:
 
 - Pinned uarp-sdk 0.13.2: 65/65 source files checked and exported generic sites
   instantiated under the admitted profile.
@@ -254,10 +258,11 @@ on unchanged inputs: **3861 Rust tests, zero failures, 17 ignored, and 218 brows
 Node tests**. It includes the large-heap idle-work test and the corrected
 codegen-v2 fuel comparison. Its recorded HEAD is `6dfb06e` with the GC changes
 present; `10ff9ae` commits that verified code. See
-[current verification evidence](verification.md#current-verification-evidence--2026-11-05).
+[current verification evidence](verification.md#current-verification-evidence--2026-11-06).
 
-The checked-v38 ECMAScript 2025 inventory has 132 passing and five reviewed
-unsupported cases out of 137; eight feature rows have no executable case.
+The checked-v38 ECMAScript 2025 inventory has 135 passing and five reviewed
+unsupported cases out of 140 after the iteration-protocol cases of 2026-11-06;
+eight feature rows have no executable case.
 The baseline matches. This is a bounded compatibility inventory rather than
 Test262, full language compatibility or a global completion percentage; see
 [the inventory](../conformance/README.md).

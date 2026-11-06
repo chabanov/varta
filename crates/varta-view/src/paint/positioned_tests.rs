@@ -411,6 +411,10 @@ fn scrolled_fixed() -> View {
         None,
     )
     .unwrap();
+    // The scroll's overlay scrollbar has faded out by then.
+    view.set_animation_time(
+        crate::overlay_scrollbar::FADE_OUT_DELAY_MS + crate::overlay_scrollbar::ANIMATION_MS,
+    );
     view
 }
 
@@ -575,8 +579,8 @@ fn retained_and_vector_frames_match_the_reference() {
     }
 }
 
-/// The console mockup's toast stack and narrow-viewport context panel
-/// (`examples/uarp-console/mockups/console.css`), with its light colors.
+/// A toast stack and narrow-viewport context panel taken from the former UARP
+/// console mockup stylesheet, with its light colors.
 const CONSOLE_LAYERS: &str = ":root { --border: #e2e4e9; --bg-subtle: #f5f6f8; --toast-bg: #16181d; --toast-fg: #ffffff }
 .page { height: 600px; background-color: #ffffff; font-family: system-ui, sans-serif; font-size: 15px; line-height: 1.5 }
 .panel { display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow: auto; padding: 16px; border-left: 1px solid var(--border); background-color: var(--bg-subtle) }

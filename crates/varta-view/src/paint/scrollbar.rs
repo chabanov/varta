@@ -36,15 +36,15 @@ enum Axis {
 
 /// A rectangle in device pixels.
 #[derive(Clone, Copy)]
-struct Device {
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+pub(super) struct Device {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 impl Device {
-    fn of(rect: BoxRect, scale: f32) -> Self {
+    pub(super) fn of(rect: BoxRect, scale: f32) -> Self {
         let left = (rect.x * scale).round();
         let top = (rect.y * scale).round();
         Self {
@@ -54,7 +54,7 @@ impl Device {
             height: ((rect.y + rect.height) * scale).round() - top,
         }
     }
-    fn css(self, scale: f32) -> BoxRect {
+    pub(super) fn css(self, scale: f32) -> BoxRect {
         BoxRect {
             x: self.x / scale,
             y: self.y / scale,
@@ -68,7 +68,7 @@ fn color([r, g, b]: [u8; 3]) -> Color {
     Color::from_rgba8(r, g, b, u8::MAX)
 }
 
-fn fill(surface: &mut Surface, rect: Device, clip: BoxRect, color: Color) {
+pub(super) fn fill(surface: &mut Surface, rect: Device, clip: BoxRect, color: Color) {
     let scale = surface.scale;
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return;
@@ -118,7 +118,7 @@ fn track(surface: &mut Surface, rect: Device, axis: Option<Axis>, clip: BoxRect)
 }
 
 /// Native `ConstrainInsets`: shrink the insets so the extent keeps `min`.
-fn constrain(extent: f32, min: f32, start: &mut f32, end: &mut f32) {
+pub(super) fn constrain(extent: f32, min: f32, start: &mut f32, end: &mut f32) {
     let requested = *start + *end;
     if requested == 0.0 {
         return;

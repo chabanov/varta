@@ -612,6 +612,15 @@ pub(super) fn body(
             statements,
         );
     }
+    // V38 (`iteration_protocol`): a synchronous generator method is split
+    // into a wrapper method and a receiver-free generator body.
+    if let Some(id) = generator
+        && signature.receiver.is_some()
+        && lower.types.profile.iteration_protocol()
+        && lower.types.generators[id as usize].asynchronous.is_none()
+    {
+        return lower.split_generator_method(signature, id, statements, declaration.span());
+    }
 
     Ok(ir::Function {
         shape: signature.shape.clone(),

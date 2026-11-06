@@ -113,7 +113,15 @@ impl Lower<'_> {
         // remain in TDZ; assignment heads do not introduce bindings.
         let value = self.expr(&statement.right)?;
         let value = self.headers_iteration(value)?;
+        // V38 (`iteration_protocol`): an iterable class instance iterates
+        // the generator its `[Symbol.iterator]()` returns; `for await`
+        // keeps the async iterator method.
         let value = self.match_array_values(value)?;
+        let value = if statement.is_await {
+            value
+        } else {
+            self.iterable_instance(value, "for...of")?
+        };
         // V37: a Map/Set iterates its live entries through a prelude
         // generator; a Uint8Array and a tuple iterate their dense storage.
         let (value, packed) = self.collection_iteration(value)?;

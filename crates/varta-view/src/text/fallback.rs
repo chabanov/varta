@@ -195,7 +195,9 @@ pub(super) fn uncolored_emoji(layout: &mut parley::Layout<u32>, text: &str) -> V
     }
     layout.break_all_lines(None);
     let mut colored: BTreeMap<(u64, u32), bool> = BTreeMap::new();
-    let mut uncolored: Vec<Range<usize>> = Vec::new();
+    // The starts of clusters drawn without colour glyphs, sorted, then
+    // walked once with the sorted graphemes.
+    let mut starts: Vec<usize> = Vec::new();
     for line in layout.lines() {
         for run in line.runs() {
             let font = run.font();
@@ -210,18 +212,83 @@ pub(super) fn uncolored_emoji(layout: &mut parley::Layout<u32>, text: &str) -> V
             if color {
                 continue;
             }
-            for cluster in run.clusters() {
-                let start = cluster.text_range().start;
-                if let Some(grapheme) = graphemes
-                    .iter()
-                    .find(|grapheme| grapheme.start <= start && start < grapheme.end)
-                {
-                    uncolored.push(grapheme.clone());
-                }
-            }
+            starts.extend(run.clusters().map(|cluster| cluster.text_range().start));
+        }
+    }
+    starts.sort_unstable();
+    let mut uncolored: Vec<Range<usize>> = Vec::new();
+    let mut graphemes = graphemes.into_iter().peekable();
+    for start in starts {
+        while graphemes
+            .next_if(|grapheme| grapheme.end <= start)
+            .is_some()
+        {}
+        if let Some(grapheme) = graphemes.next_if(|grapheme| grapheme.start <= start) {
+            uncolored.push(grapheme);
         }
     }
     merge(uncolored)
+}
+
+/// Disjoint ranges of text, each holding the value of the last insertion
+/// that covered it: the family stack (or metrics) of a position after every
+/// fallback pass, found in logarithmic time.
+pub(super) struct RangeMap<T> {
+    /// Segment start: its end and value.
+    segments: BTreeMap<usize, (usize, T)>,
+}
+
+impl<T: Clone> RangeMap<T> {
+    pub fn new() -> Self {
+        Self {
+            segments: BTreeMap::new(),
+        }
+    }
+
+    /// Covers `range` with `value`, cutting the segments it overlaps.
+    pub fn insert(&mut self, range: Range<usize>, value: T) {
+        if range.is_empty() {
+            return;
+        }
+        if let Some((&start, (end, kept))) = self.segments.range(..range.start).next_back()
+            && *end > range.start
+        {
+            let (end, kept) = (*end, kept.clone());
+            self.segments.insert(start, (range.start, kept.clone()));
+            if end > range.end {
+                self.segments.insert(range.end, (end, kept));
+            }
+        }
+        let inside: Vec<usize> = self
+            .segments
+            .range(range.start..range.end)
+            .map(|(&start, _)| start)
+            .collect();
+        for start in inside {
+            if let Some((end, kept)) = self.segments.remove(&start)
+                && end > range.end
+            {
+                self.segments.insert(range.end, (end, kept));
+            }
+        }
+        self.segments.insert(range.start, (range.end, value));
+    }
+
+    /// The value covering `at`.
+    pub fn get(&self, at: usize) -> Option<&T> {
+        let (_, (end, value)) = self.segments.range(..=at).next_back()?;
+        (*end > at).then_some(value)
+    }
+
+    /// The value of the first segment overlapping `range`.
+    pub fn overlapping(&self, range: Range<usize>) -> Option<&T> {
+        self.get(range.start).or_else(|| {
+            self.segments
+                .range(range.start..range.end)
+                .next()
+                .map(|(_, (_, value))| value)
+        })
+    }
 }
 
 /// Sorted, deduplicated ranges with adjacent ranges joined.
@@ -265,4 +332,67 @@ pub(super) fn missing_clusters(layout: &mut parley::Layout<u32>, text: &str) -> 
         }
     }
     merge(ranges)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn range_maps_keep_the_last_value_of_each_position() {
+        let mut map = RangeMap::new();
+        map.insert(0..10, 'a');
+        map.insert(3..5, 'b');
+        map.insert(8..12, 'c');
+        map.insert(4..4, 'x');
+        let values: Vec<_> = (0..13).map(|at| map.get(at).copied()).collect();
+        assert_eq!(
+            values,
+            [
+                Some('a'),
+                Some('a'),
+                Some('a'),
+                Some('b'),
+                Some('b'),
+                Some('a'),
+                Some('a'),
+                Some('a'),
+                Some('c'),
+                Some('c'),
+                Some('c'),
+                Some('c'),
+                None
+            ]
+        );
+        // A later range covering several segments replaces them all.
+        map.insert(2..9, 'd');
+        assert_eq!(map.get(1), Some(&'a'));
+        assert_eq!(map.get(2), Some(&'d'));
+        assert_eq!(map.get(8), Some(&'d'));
+        assert_eq!(map.get(9), Some(&'c'));
+        assert_eq!(map.overlapping(12..20), None);
+        assert_eq!(map.overlapping(11..20), Some(&'c'));
+        assert_eq!(map.overlapping(0..1), Some(&'a'));
+    }
+
+    #[test]
+    fn emoji_presentation_follows_tr51() {
+        for (text, emoji) in [
+            ("\u{1F600}", true),
+            ("\u{A9}\u{FE0F}", true),
+            ("1\u{FE0F}\u{20E3}", true),
+            ("1\u{20E3}", true),
+            ("\u{1F1FA}\u{1F1E6}", true),
+            ("\u{1F44D}\u{1F3FD}", true),
+            ("\u{1F441}\u{200D}\u{1F5E8}", true),
+            ("\u{A9}", false),
+            ("1", false),
+            ("\u{2764}\u{FE0E}", false),
+            ("\u{1F600}\u{FE0E}", false),
+            ("A", false),
+            ("", false),
+        ] {
+            assert_eq!(emoji_presentation(text), emoji, "{text:?}");
+        }
+    }
 }

@@ -6068,7 +6068,8 @@ need no event loop and no new host import; every resumption is a guest call.
   `undefined` (a `void` `TNext` is also `undefined`), which can only reject
   programs that would need `any`. `T` is not `void`, and no type argument is a
   generator, `any` or `VartaResult`. Parameters are fixed: optional and rest
-  parameters, a `this` parameter, generator methods, generator function
+  parameters, a `this` parameter, generator methods (admitted by v38's
+  [iteration protocol](#iteration-protocol-iteration_protocol)), generator function
   expressions, async generators and a generator function used as a value are
   rejected with construct-specific diagnostics. Calling a generator function
   binds its arguments into a new frame and returns the generator object without
@@ -6079,7 +6080,8 @@ need no event loop and no new host import; every resumption is a guest call.
   return on every path. `yield` may appear in every normalized expression
   position of the [suspension foundation](#suspension-foundation-k44-block-1),
   inside `try`, `catch` and `finally` bodies, loops, labelled statements and
-  `switch` case bodies. `yield*` fails as `unsupported yield* delegation`;
+  `switch` case bodies. `yield*` fails as `unsupported yield* delegation`
+  (v38 admits it with the [iteration protocol](#iteration-protocol-iteration_protocol));
   `yield` inside an intrinsic value block (for example a `String(...)` call, a
   template literal or a generator method call), in a `switch` case test or in a
   `do-while` condition fails as `unsupported suspension point inside
@@ -11497,6 +11499,103 @@ import, value layout or ABI changes; v1–v37 keep rejecting every form below.
   SDK's byte parts are the wave-3
   [bytes stream](#bytes-held-by-unknown-byte_values).
 
+#### Iteration protocol (`iteration_protocol`)
+
+Additions to v38 (2026-11-06) that make program classes iterable and let
+array literals, `Array.from` and generators consume every synchronous
+iterable the checked subset has, under the selector
+`LanguageProfile::iteration_protocol()`. No host import, value layout, frame
+catalog, scheduler or ABI changes: the forms below lower to guest code over
+the existing generator frames, so the native runtime and every JavaScript
+host run them unchanged. V1–v37 keep rejecting every form below with their
+old diagnostics (`computed or numeric class member name`, `generator method`,
+`array spread`, `yield* delegation`, `Array.from of a value other than a Map,
+Set, Uint8Array or their iterators`). No `Symbol` value exists: `Symbol.iterator`
+and `Symbol.asyncIterator` are recognized only as the spelled-out computed
+keys below.
+
+- **Iterable classes.** An instance method declared with the computed key
+  `[Symbol.iterator]` (a generator method `*[Symbol.iterator]()` or a plain
+  method returning a generator object) makes the class's instances
+  iterable, inherited and overridden like any other method (an override
+  dispatches through the root's dispatcher). `for...of`, an array literal
+  spread, `Array.from` and `yield*` call it once and iterate the generator
+  it returns; the method must have no parameters, must not be a getter and
+  must return a synchronous generator (`unsupported … over a class
+  instance: [Symbol.iterator]() must be a method without parameters
+  returning a synchronous generator`), and a class instance without one is
+  refused by name (`… the class declares no [Symbol.iterator]() method`).
+  `x[Symbol.iterator]()` and `x[Symbol.asyncIterator]()` call the methods
+  explicitly. A static or string-keyed `[Symbol.iterator]` and other
+  computed keys stay refused. `RegExp` match arrays, `Headers`, `FormData`
+  and collections keep their own iteration.
+- **Generator methods.** Every synchronous generator instance method is
+  admitted (`*entries(from: number): Generator<…>`): the method keeps its
+  index, receiver and shape and returns the object of a receiver-free
+  generator body that takes the receiver as its first parameter, so the
+  frames, liveness and resume rules of [synchronous
+  generators](#synchronous-generators-generators) apply unchanged. Optional
+  and rest parameters stay refused (`generator method with optional or rest
+  parameters`).
+- **Annotations.** `Iterator<T, TReturn?, TNext?>` and
+  `IterableIterator<T, TReturn?, TNext?>` denote synchronous generator
+  objects with `Generator`'s defaults, as the async iteration interfaces
+  denote async generator objects. `implements Iterable<T, TReturn?, TNext?>`
+  checks that the class declares a `[Symbol.iterator]()` method without
+  parameters returning a synchronous generator that yields exactly `T` (and
+  has the given `TReturn` and `TNext`). `Iterable<T>` as a value annotation
+  is refused by name: an iterable parameter would also have to accept
+  arrays, which a generator type does not.
+- **Array literal spreads.** `[a, ...xs, b, ...source]` spreads checked
+  arrays and tuples, strings (their code points, as the String iterator
+  yields them: a surrogate pair is one element, a lone surrogate one
+  element of its own), synchronous generators (whose `TNext` accepts
+  `undefined`), `Map`, `Set` and `Uint8Array` values and their
+  `keys()`/`values()`/`entries()` iterators, and iterable class instances.
+  Elements and sources evaluate in source order, and each source is iterated
+  to completion where it appears, before the next element is evaluated; a
+  generator source is resumed with `undefined` until it completes and is
+  never closed (no abrupt exit can leave a spread). An array source is read
+  at its live length; a hole of an element type without `undefined` throws
+  `TypeError: array element is a hole`, as in `for...of`, and reads as
+  `undefined` when the element type includes it. The result is a fresh
+  array whose element type is the context's array element type, or else the
+  union of every element and source element type. A hole beside a spread
+  element and async generators are refused by name. The v37 form
+  `[...collection]` keeps its own lowering.
+- **`Array.from(source)`.** One argument: the same fresh array as
+  `[...source]` for every source above, besides the v37 collection forms. A
+  map function, more arguments or a spread argument stay refused.
+- **`yield*`.** In a synchronous generator body, `yield* source` over a
+  generator, an array (or tuple, string, collection or `RegExp` match array)
+  or an iterable class instance yields each value the source produces (widened to
+  this generator's `T`). The delegating point observes how this generator is
+  resumed instead of throwing or returning at it (`Suspend::observe`):
+  `next(v)` resumes a generator source with `v` (the first resumption sends
+  `undefined`, so the source's `TNext` accepts `undefined` and this
+  generator's `TNext` converts to it), `throw(e)` is forwarded to the
+  source's `throw` (a not-started or completed source rethrows `e`), and
+  `return(v)` to its `return`: a completed source makes this generator return
+  the source's completion value, a source that yields again from a `finally`
+  block keeps the delegation going. An array source has no `throw` or
+  `return` method: a forwarded `throw` throws `TypeError: The iterator does
+  not provide a 'throw' method.` and a forwarded `return(v)` returns `v`
+  from this generator. The expression's value is the source generator's
+  return value (`undefined` for an array). Conversions are checked at
+  compile time (`yield* source yields …`, `yield* forwards what this
+  generator receives from return() to its source`); a generator whose
+  `TReturn` is `void` returns `undefined` after a forwarded `return()`, and
+  closes a source whose `TReturn` excludes `undefined` with a placeholder
+  the source cannot observe. This is the one deviation: if the source's
+  `finally` block returns a value of its own, JavaScript would return that
+  value from this `void` generator; Varta returns `undefined`. Async
+  generators keep their own `yield*` rules.
+- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`) and
+  iterator helpers, `Symbol()` values and symbol-keyed properties,
+  destructuring of generators, strings and iterable instances,
+  `Array.from` with a map function or an array-like, and `Iterable<T>`
+  value annotations.
+
 #### Bytes held by unknown (`byte_values`)
 
 Wave 3 of v38, selector `LanguageProfile::byte_values()` (owner decision of
@@ -13419,7 +13518,7 @@ shaper keeps its default) or `avar` version 2 are declined, and their glyphs
 keep the portable path. That path paints outlines in the text colour, so it
 refuses a glyph a face draws in colour (every glyph of a face with `sbix`,
 `CBDT` or `SVG ` tables, and a glyph its `COLR` table paints) rather than draw
-it without its colours; it also takes over under a scaling transform. A face is charged its
+it without its colours; it also takes over under a non-uniform scale. A face is charged its
 standalone bytes (a collection member's own tables, not the whole file), twice
 for a variable face whose copy CoreGraphics retains. At most 16 variation
 instances are kept per face; each is charged a fixed 32 KiB native estimate
@@ -14174,7 +14273,8 @@ property values keep such keywords. A quoted name is an ordinary family.
 `Environment::scrollbars` selects the platform's scrollbar style, as Chrome on
 macOS follows the system's "Show scroll bars" setting. `Scrollbars::Overlay`
 (the default, and headless Chrome's style on a Mac with a trackpad) reserves
-no space and paints nothing while a container is not being scrolled.
+no space and shows a container's bar only while it scrolls
+([overlay scrollbars](#native-overlay-scrollbars)).
 `Scrollbars::Classic` (always shown) gives every scroll container
 (`overflow: auto`, and the top-layer dialog) whose content overflows on an
 axis that axis's bar: a gutter of `CLASSIC_SCROLLBAR_THICKNESS` inside the
@@ -14184,7 +14284,8 @@ runs again after adding gutters; a gutter can make content overflow on the
 other axis, so gutters are only added, for at most `MAX_GUTTER_PASSES` more
 passes, and gutters still growing after them are refused
 (`LayoutError::Unsupported`). `BoxGeometry::scrollbars` gives each bar's
-track and its axis's range. Paint follows Chrome 156's `NativeThemeMac` in
+track and its axis's range (`ScrollbarGeometry::overlay` false). Paint
+follows Chrome 156's `NativeThemeMac` in
 the light scheme (the subset has no `color-scheme`, and the official host
 never sets one, so Chrome paints light scrollbars in either OS scheme), in
 device pixels: the track filled `#FAFAFA` with a one-pixel (floored when
@@ -14204,16 +14305,87 @@ pixels match Chrome 156 run with `-AppleShowScrollBars Always` (its argument
 domain only) at 1x, 1.25x and 2x within the 2/255 mean bound
 (`native_scrollbar_probe` with `scripts/test-native-positioned.mjs`); at 2x
 Chrome's scrollbar layer filters the track borders over two more pixels,
-which native does not. Not implemented: the overlay thumb that Chrome shows
-while scrolling and fades out after about half a second, the hover color of
-the classic thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a
-track, and Chrome's Linux (Aura) scrollbars.
+which native does not. Not implemented: the hover color of the classic
+thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a track (with
+either style), and Chrome's Linux (Aura) scrollbars.
 
 `varta-shell` reads AppKit's preferred scroller style
 (`NSScroller.preferredScrollerStyle`, where "Automatically" resolves by the
 attached pointing devices) on the main thread when its window opens and hands
 it to the instance (`ViewLayout::with_scrollbars`); a later change of the
 setting applies after a restart. Other platforms keep overlay scrollbars.
+
+#### Native overlay scrollbars
+
+With `Scrollbars::Overlay` a scroll container (`overflow: auto`, and the
+top-layer dialog) whose content overflows on an axis has that axis's bar
+frame, `OVERLAY_SCROLLBAR_THICKNESS` thick, over the edge of its padding box:
+the vertical one at the right, above the corner a horizontal frame leaves as
+in Blink's `ScrollCornerRect`, and the horizontal one at the bottom.
+`BoxGeometry::scrollbars` gives them with `ScrollbarGeometry::overlay` true
+and the axis ranges; they take no layout space, and a hidden bar paints
+nothing and takes no pointer.
+
+When a bar shows follows Chrome 156's `ui::OverlayScrollbarAnimatorMac` as
+Blink's `MacScrollbarImplV2` drives it, on the view's animation clock
+([transitions](#native-css-transitions)), so a headless render at a given
+clock is deterministic. A scroll that changes a container's offset (wheel
+and `Scroll`/`ScrollMeasured` input, a commit's `ScrollTo` and
+`ScrollIntoView`, `View::scroll_into_view` and assistive scrolls; Chrome's
+explicit scroll types, not a clamp) shows its thumb at full opacity at once
+or keeps it, cancelling a running fade-out. The fade-out starts 500 ms
+(`kFadeOutDelay`) after the last such scroll and lasts 250 ms
+(`kAnimationDuration`), ease-in-out; the bar is then hidden. A host reports
+which container's bar frame the pointer is over (`FrameMetadata::scrollbar_at`
+of the presented frame: the last painted frame there whose container is the
+hit element or its ancestor; then `View::set_scrollbar_hover`, which
+dispatches no guest event). A
+shown bar under the pointer does not fade: its track fades in and its thumb
+box widens from 12 to 16 pixels (truncated to whole pixels), each over
+250 ms ease-in-out, and it stays wide until it has faded out; leaving the
+frame restarts the 500 ms delay, and the track fades out with the thumb. A
+hidden bar ignores the pointer, but a scroll under a resting pointer shows
+the bar and then takes the pointer at once, as Blink's hover update after
+the scroll does. `View::animating` is true while a bar waits for its fade-out
+or animates, and `View::set_animation_time` reports a change only when a bar
+paints differently, so the delay itself needs no frame.
+
+Paint follows `NativeThemeMac` with `is_overlay`. The colors are light, or
+dark when the scroller's own background color is not transparent and its HSL
+lightness is at most one half (`RecalculateOverlayScrollbarColorScheme`); a
+transparent background keeps the page's light scheme, as the subset has no
+`color-scheme`. The thumb is a pill of black (dark: white) at alpha `0x80`
+times its opacity, in the thumb box at the bar's outer edge, inset 2 pixels
+plus the 1-pixel border on the content side and kept at least 6 by 18
+(`ConstrainInsets`). Its length and offset are the compositor's: `round(visible
+/ total · track)`, at least 26 pixels, at `trunc(offset · (track − thumb) /
+max)` (an offset under one pixel leaves the thumb at the start, unlike the
+classic thumb), computed in CSS pixels and drawn scaled and anti-aliased, as
+Chrome draws them at 1.25x and 2x. The track, once shown, fills the frame in
+device pixels with one layer at the track's opacity: the gradient along the
+track (`0.973` at alpha `0.776` easing to `0.761` over the first third; dark
+`0.847` at `0.157` to `0.8` at `0.149`), the inner border `#DFDFDF` at
+`0xF9` (dark `#E5E5E5` at `0x33`) on the content side and the outer border
+`#E8E8E8` at `0xC6` (dark `#D8D8D8` at `0x28`) on the outer edge, each one
+pixel wide (floored when scaled). A bar paints in its container's outline
+phase, after the container's content and outline, clipped by its ancestors'
+clips but not by its container's rounded corners (as Chrome); while it shows,
+its frame takes the pointer for the container, so a wheel over it scrolls the
+container. Only vertical bars paint: native layout scrolls only vertically,
+and a horizontal overlay bar shows only while its axis scrolls. A textarea's
+own text scrolling shows no bar.
+
+Geometry, hits and pixels match Chrome 156 headless on macOS (overlay
+scrollbars) running the same steps in real time at 1x, 1.25x and 2x within
+the 2/255 mean bound (`native_overlay_scrollbar_probe` with
+`scripts/test-native-overlay-scrollbars.mjs`): just after a wheel or
+programmatic scroll, after the pointer rested on the bar and after the
+fade-out, on light, dark, bordered, rounded and two-axis scrollers and with
+the minimum thumb. Chrome advances its animations on a 60 Hz timer, so its
+frames can lag native's by up to one tick. `varta-shell` passes
+the frame's `scrollbar_at` for each pointer sample of the presented frame
+(`Application::view_set_scrollbar_hover`) and none when the pointer leaves the
+window, and presents frames while a bar animates.
 
 #### Native fallback faces
 
@@ -14367,8 +14539,12 @@ in-flow siblings it overlaps. A list that scales (positive factors, at most
 origin) keeps every box where layout put it: its stacking context paints
 untransformed into the recorded scene and its draws and hit regions (and
 rounded hit regions) are then mapped through the transform in device
-pixels, nested scales composing; text under a scale draws its portable
-outlines (host glyph coverage is device pixels at the unscaled size). The
+pixels, nested scales composing. Under a uniform scale a host glyph
+rasterizer draws the text at the scaled size (the font size times the device
+and transform scales) where the transforms put each glyph, and the glyph is
+recorded through their inverse, which mapping undoes; Chrome rasterizes such
+text at the scaled size too, colour emoji included. Under a non-uniform scale
+text draws its portable outlines (which refuse colour glyphs). The
 context's ancestors' clip is taken back through the inverse transform, so
 the same pixels clip. `BoxGeometry::transform` carries the element's own
 scaling transform; the public geometry (`layout_boxes`, `layout_geometry`,
@@ -14396,9 +14572,11 @@ Native scrollable overflow does not include translated boxes.
 environment change: a scripted headless session uses its virtual loop time
 (a `wait` step moves transitions deterministically), an application
 instance the wall clock since it started. `Application::view_animating`
-tells a host that a transition runs and `view_advance_animations` moves the
-clock to now before a frame; `varta-shell` then presents a new frame each
-time the previous one was presented, and the last shows the end value.
+tells a host that a transition runs (or an overlay scrollbar waits for its
+fade-out or animates) and `view_advance_animations` moves the clock to now
+before a frame, reporting whether anything paints differently; `varta-shell`
+then presents a new frame each time the previous one was presented and that
+report is true, and the last shows the end value.
 
 #### Native positioned painting and stacking
 
@@ -16308,8 +16486,7 @@ full cross-host corpus, other fair host charges, overhead and delivery acceptanc
 remain open; long-lived application turns and the Firefox/WebKit/Chrome effect
 matrix are compared with native by the browser effect acceptance
 ([verification](verification.md#browser-registry-and-fuel-probe-development)), not
-by these probes. The prototype third-party host (`examples/varta-web-host`) remains
-unmetered. The value layouts and view protocol facts the official host reads are
+by these probes. The value layouts and view protocol facts the official host reads are
 generated from Rust by `varta_common::browser::registry()` and checked by its drift
 test; that registry is not a copy of every generated table of the
 [embedding contract](embedding.md).
@@ -17259,7 +17436,13 @@ contract metadata (`HttpLimits::for_version`: `connections`, `pool`,
 `stream`, `transport`), so a v38 service built before them must be rebuilt.
 A v2 connection whose response write (or flush) makes no progress for
 `http::WRITE_IDLE_SECONDS` closes, so a client that stops reading holds its
-connection no longer than that.
+connection no longer than that. The same bound applies to each streamed
+body on its own: a chunk the transport does not take within it (an HTTP/2
+stream whose client keeps its window closed while the connection still
+moves other streams) aborts the stream, so its worker and admission are
+released then; the client sees the stream reset once it reads again. A
+failure after the head reaches the body through a flag set before its chunks
+close, never through its full chunk buffer.
 
 **Web `Request` handlers (v2).** A v38 handler may take a Web `Request`
 instead of a `VartaHttpRequest`, with any of the four result forms, as
@@ -17331,8 +17514,12 @@ libcalls would count. The scheduler's timer waits, network and request-body
 completions and cancellation are awaited (`checkpoint_until_async`,
 `Net::wait_async`, `Cancellation::cancelled`), and a request's transfers run
 on the server's runtime, so a waiting request or open stream costs no
-thread. A blocking host operation (legacy `net.get`/`net.fetch`, KV reads
-and commits) hands its thread's other tasks on first (`block_in_place`).
+thread. A blocking host operation (legacy `net.get`/`net.fetch`,
+`fs.read`/`fs.print` file reads, KV reads and commits) hands its thread's
+other tasks on first (`block_in_place`), within the server's blocking-thread
+bound (one per request slot). An operating-system read cannot be
+interrupted: it is bounded by the result size limit, and the request's
+deadline and cancellation take effect as soon as it returns.
 A v2 request is admitted once a slot is free and its memory budget fits the
 server memory ceiling less the budgets of the running requests; the
 admission ends with its task, after its Store is dropped. A host policy may
@@ -17375,7 +17562,10 @@ path and query. A connection whose clients abandon more than
 application) is retired with `GOAWAY` and closed within a second; its
 keep-alive request count, idle bound and lifetime retire it with `GOAWAY`
 (HTTP/2 has no `connection` header), and the write idle bound covers its
-TLS records.
+TLS records. A request counts as running for the idle bound until its
+response body ends (streamed, aborted, or reset by its client), not only
+until its head is sent, and the bound measures quiet since the last request
+or body started or ended.
 
 **Hardening (H4).** Seeded fuzz tests cover the contract metadata and host
 policies, the response envelope's framing and every adapter form with

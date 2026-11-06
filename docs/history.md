@@ -410,7 +410,7 @@ GPU all-target Clippy, formatting and a GPU-capable Debug build. Overlaps are no
 additional unique cases. The new Debug bundle's UI query timed out after 20
 seconds. Launch and OS range behavior remain unconfirmed; VoiceOver, assistive
 scrolling/announcements and other targets are still open. No new full gate is
-claimed. [Pinned inputs and evidence](../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
+claimed. [Pinned inputs and evidence](evidence/accessibility-text-geometry-2026-11-03.json).
 
 ## 2026-11-03 — Native logical text runs and checked directional selection
 
@@ -444,7 +444,7 @@ type-transition assertions; they are not additional unique cases. The prepared
 CPU Debug bundle and the preceding Release bundle both timed out while being
 queried through the UI tool. Launch and current native range behavior remain
 unconfirmed; no platform success is inferred from the unit tests.
-[Pinned scope and source digest](../examples/native-showcase/accessibility-text-ranges-2026-11-03.json).
+[Pinned scope and source digest](evidence/accessibility-text-ranges-2026-11-03.json).
 
 ## 2026-11-03 — Native descriptions and bounded text-alternative observer
 
@@ -475,7 +475,7 @@ refusal and unchanged process identity. Scoped checks pass 237 view cases,
 GPU all-target Clippy and the 12-input Showcase scenario. Native observations
 precede the final semantic FIFO refinement; the repeated native retry timed out
 in the UI tool, so no passing post-refinement native result is claimed.
-[Exact scope and hosts](../examples/native-showcase/accessibility-descriptions-2026-11-03.json).
+[Exact scope and hosts](evidence/accessibility-descriptions-2026-11-03.json).
 The earlier
 3215-test source reconciliation belongs to the prior code inputs; this increment
 uses scoped checks, with the full workspace gate reserved for the code-commit
@@ -499,7 +499,7 @@ Scoped checks pass six core semantic/action cases, one runtime event-turn case,
 Clippy. Real macOS accessibility API observations pass on CPU Debug and Metal GPU
 Release, including reactive edits and option actions; Debug also covers Undo,
 radio/checkbox and zoom/restore. Release guest JSON/generator/await output is
-observed. [Pinned record](../examples/native-showcase/accessibility-checkpoint-2026-11-03.json).
+observed. [Pinned record](evidence/accessibility-checkpoint-2026-11-03.json).
 All eight consolidated verification commands pass, including **3215 tests,
 0 failures, 16 ignored** and the unchanged conformance baseline. The wrapper
 report remains failed: a separate native password-fixture build created an
@@ -534,7 +534,7 @@ select and JSON/generator/async output. A 56-sample Release window observation
 records preparation median/p95 1.65/4.46 ms and queue-to-present-return
 6.13/19.80 ms. One first-presentation sample is 1.89 s. Release bundles are
 24,065,252 bytes CPU and 28,574,180 bytes GPU. These local measurements are
-[hash-pinned](../examples/native-showcase/gpu-ui-checkpoint-2026-11-03.json);
+[hash-pinned](evidence/gpu-ui-checkpoint-2026-11-03.json);
 readback timings are diagnostic and not window latency. Default backend remains
 CPU; broader target/device acceptance, total GPU memory and guest graphics remain
 open. Focused checks include 162 browser Node tests, 12 Showcase assertions,
@@ -575,7 +575,8 @@ the pre-TSX CPU baseline has 384 reference-equal frames; the later TSX/pointer r
 has 192. Both reports predate subsequent example changes and exclude presentation.
 At 2× the latter's Debug/Release medians are 8.58/1.66 ms for pointer feedback,
 6.68/1.38 ms for the counter and 16.85/10.23 ms for scrolling. Original hashes and
-limitations are retained in the [Showcase](../examples/native-showcase/README.md).
+limitations were retained in the Showcase README (`examples/native-showcase`,
+removed on 2026-11-06; see git history).
 
 The official browser dev host was opened alongside native preview. Chrome
 interaction checks cover Ukrainian editing/Undo/Redo, Tab, counter/radio/checkbox,

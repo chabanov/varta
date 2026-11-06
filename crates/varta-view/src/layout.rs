@@ -36,7 +36,8 @@ pub struct BoxGeometry {
     pub scroll: Option<ScrollMetrics>,
     /// Programmatic scrolling also includes `overflow: hidden`.
     pub programmatic_scroll: Option<ScrollMetrics>,
-    /// Classic scrollbars of a scroll container ([`crate::Scrollbars::Classic`]).
+    /// The scrollbars of a scroll container whose content overflows: classic
+    /// gutters, or overlay bar frames that take no space.
     pub scrollbars: Option<ScrollbarGeometry>,
     /// The element's own transform when it scales, around its border box
     /// as laid out: paint maps the element and its subtree through it. The
@@ -44,11 +45,16 @@ pub struct BoxGeometry {
     pub transform: Option<crate::transform::Affine>,
 }
 
-/// The always-shown scrollbars of one scroll container: each bar's track
-/// in the gutter its axis reserves, inside the borders, and that axis's
-/// scroll range, in CSS pixels.
+/// The scrollbars of one scroll container, in CSS pixels: each bar's track
+/// inside the borders and that axis's scroll range. Classic bars fill the
+/// gutter their axis reserves; overlay bars ([`ScrollbarGeometry::overlay`])
+/// are frames of [`OVERLAY_SCROLLBAR_THICKNESS`] over the padding box's
+/// edge, painted only while shown.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScrollbarGeometry {
+    /// Overlay bar frames ([`crate::Scrollbars::Overlay`]) rather than
+    /// classic gutters.
+    pub overlay: bool,
     /// The vertical bar's track at the right edge, above any horizontal bar.
     pub vertical: Option<BoxRect>,
     /// The horizontal bar's track at the bottom edge, left of any vertical
@@ -64,9 +70,46 @@ pub struct ScrollbarGeometry {
 /// The thickness of an always-shown macOS scrollbar (the gutter it
 /// reserves), in CSS pixels: Chrome's `NSScroller` regular size.
 pub const CLASSIC_SCROLLBAR_THICKNESS: f32 = 15.0;
+/// The frame thickness of a macOS overlay scrollbar, in CSS pixels: Chrome's
+/// overlay `NSScroller` regular track box width. It takes no layout space.
+pub const OVERLAY_SCROLLBAR_THICKNESS: f32 = 16.0;
 /// Layout passes that may add classic scrollbar gutters after the first: a
 /// gutter can make content overflow on the other axis once more.
 pub const MAX_GUTTER_PASSES: usize = 2;
+
+/// The overlay bar frames of a scroll container (`overflow: auto`) whose
+/// content overflows `scrollport` by `[vertical, horizontal]` maximum
+/// offsets: each at its edge of the padding box, the vertical one above the
+/// corner a horizontal bar leaves, as Blink's `ScrollCornerRect`.
+fn overlay_scrollbars(
+    scrollport: BoxRect,
+    [vertical, horizontal]: [f32; 2],
+    offset: f32,
+) -> Option<ScrollbarGeometry> {
+    let (has_vertical, has_horizontal) = (vertical > 0.0, horizontal > 0.0);
+    if !has_vertical && !has_horizontal {
+        return None;
+    }
+    let thickness = OVERLAY_SCROLLBAR_THICKNESS;
+    let corner = |other: bool| if other { thickness } else { 0.0 };
+    Some(ScrollbarGeometry {
+        overlay: true,
+        vertical: has_vertical.then(|| BoxRect {
+            x: scrollport.x + scrollport.width - thickness,
+            y: scrollport.y,
+            width: thickness.min(scrollport.width),
+            height: (scrollport.height - corner(has_horizontal)).max(0.0),
+        }),
+        horizontal: has_horizontal.then(|| BoxRect {
+            x: scrollport.x,
+            y: scrollport.y + scrollport.height - thickness,
+            width: (scrollport.width - corner(has_vertical)).max(0.0),
+            height: thickness.min(scrollport.height),
+        }),
+        vertical_range: [scrollport.height, vertical, offset],
+        horizontal_range: [scrollport.width, horizontal, 0.0],
+    })
+}
 
 /// Clamped vertical scroll offset and maximum in CSS pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2409,6 +2452,7 @@ fn boxes_inner(
                         height: height.max(0.0),
                     };
                     scrollbars = Some(ScrollbarGeometry {
+                        overlay: false,
                         vertical: (bars.width > 0.0).then(|| {
                             track(
                                 scrollport.x + scrollport.width,
@@ -2428,6 +2472,14 @@ fn boxes_inner(
                         vertical_range: [scrollport.height, layout.scroll_height(), own_scroll],
                         horizontal_range: [scrollport.width, layout.scroll_width(), 0.0],
                     });
+                } else if env.scrollbars == style::Scrollbars::Overlay
+                    && style.overflow.y == Overflow::Scroll
+                {
+                    scrollbars = overlay_scrollbars(
+                        scrollport,
+                        [layout.scroll_height(), layout.scroll_width()],
+                        own_scroll,
+                    );
                 }
                 let metrics = ScrollMetrics {
                     top: own_scroll,

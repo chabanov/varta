@@ -261,6 +261,8 @@ pub(crate) struct Tree {
     /// The host's packaged images: what an `img` may name and draws. With
     /// none, no `img` is laid out.
     pub images: crate::image::Images,
+    /// Shown overlay scrollbars on the same clock.
+    pub scrollbars: crate::overlay_scrollbar::OverlayScrollbars,
 }
 
 /// A modal dialog in the top layer and the element focused before it was
@@ -295,6 +297,7 @@ impl Default for Tree {
             modals: Vec::new(),
             animations: crate::transition::Animations::default(),
             images: crate::image::Images::default(),
+            scrollbars: crate::overlay_scrollbar::OverlayScrollbars::default(),
         }
     }
 }
@@ -547,6 +550,22 @@ impl Tree {
             Some(Content::Element(element)) => Some(element),
             _ => None,
         }
+    }
+    /// Set an element's scroll offset; a change shows its overlay scrollbar
+    /// as an explicit (user, programmatic or assistive) scroll does in
+    /// Chrome. Returns the element, or `None` for no element.
+    pub(crate) fn scroll_to(&mut self, id: u32, top: f64) -> Option<&mut Element> {
+        let node = self.nodes.get(&id)?;
+        let identity = crate::NodeIdentity {
+            id,
+            token: node.identity.clone(),
+        };
+        let element = self.element_mut(id)?;
+        let before = std::mem::replace(&mut element.scroll_top, top);
+        if before != top {
+            self.scrollbars.scrolled(identity);
+        }
+        self.element_mut(id)
     }
     pub(crate) fn element_mut(&mut self, id: u32) -> Option<&mut Element> {
         match self.nodes.get_mut(&id).map(|node| &mut node.content) {
@@ -1750,7 +1769,8 @@ impl Apply<'_, '_, '_> {
                     )
                     .map_err(|_| self.fail(Violation::ScrollLayout))?;
                     for (id, top) in plan {
-                        self.element(id)?.scroll_top = top;
+                        self.element(id)?;
+                        self.tree.scroll_to(id, top);
                         let scroll = geometry[&id]
                             .programmatic_scroll
                             .ok_or_else(|| self.fail(Violation::ScrollLayout))?;
@@ -1794,7 +1814,8 @@ impl Apply<'_, '_, '_> {
                     {
                         let top = argument.clamp(0.0, f64::from(scroll.max));
                         if top != f64::from(scroll.top) {
-                            self.element(node)?.scroll_top = top;
+                            self.element(node)?;
+                            self.tree.scroll_to(node, top);
                             let mut record =
                                 crate::EventRecord::occurrence(EventKind::Scroll, node);
                             record.scroll_top = top;
@@ -1812,7 +1833,8 @@ impl Apply<'_, '_, '_> {
                     .get(&CssProperty::Overflow)
                     .is_some_and(|overflow| overflow == "auto");
                 if scrolls {
-                    self.element(node)?.scroll_top = argument;
+                    self.element(node)?;
+                    self.tree.scroll_to(node, argument);
                 }
             }
             Command::ShowModal => {

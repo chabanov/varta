@@ -367,3 +367,44 @@ fn emoji_and_text_ranges_of_one_style_ask_separately() {
         [("\u{410}".to_owned(), false), ("\u{2B50}".to_owned(), true)]
     );
 }
+
+/// Long text alternating emoji and covered letters asks for the emoji face
+/// once per pass for all its emoji (each scan walks sorted ranges once; a
+/// scan per cluster made 8000 pairs take seconds).
+#[test]
+fn long_alternating_emoji_text_asks_once_per_presentation() {
+    const PAIRS: usize = 8000;
+    let mut measurer = wide();
+    let log = with(&mut measurer, Ok(Some(cyrillic("cyrillic"))));
+    let text = "\u{2B50}A".repeat(PAIRS);
+    let metrics = measurer.measure(&text, SIZE, None).unwrap();
+    // Every A keeps the wide face.
+    assert!(metrics.width >= PAIRS as f32 * WIDE_ADVANCE);
+    // One request per pass for all 8000 emoji: the second pass asks again
+    // (the test face has no colour glyphs), gets the face it has and stops.
+    let log = log.lock().unwrap();
+    assert_eq!(log.emoji, [true, true]);
+}
+
+/// Right-to-left text: its runs list clusters in visual order, yet every
+/// emoji grapheme is found once, among them one the CSS font draws without
+/// colour (U+1F642, an outline in the unicode fixture) and a modifier
+/// sequence; the covered Hebrew asks for nothing.
+#[test]
+fn right_to_left_text_finds_each_emoji_grapheme_once() {
+    let mut measurer = TextMeasurer::new(TALL.to_vec(), "Varta Unicode Fixture").unwrap();
+    let log = with(&mut measurer, Ok(Some(cyrillic("cyrillic"))));
+    measurer
+        .measure(
+            "\u{5D0}\u{5D1} \u{1F642} \u{5D1} \u{2B50}\u{1F44D}\u{1F3FD} \u{5D0}",
+            SIZE,
+            None,
+        )
+        .unwrap();
+    let log = log.lock().unwrap();
+    // One emoji request per pass (the test face has no colour glyphs, so
+    // the second pass asks again and stops), for the first emoji in text
+    // order; no text request.
+    assert_eq!(log.emoji, [true, true]);
+    assert!(log.requests.iter().all(|request| request.0 == "\u{1F642}"));
+}

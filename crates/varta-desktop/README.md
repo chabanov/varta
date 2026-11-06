@@ -268,7 +268,7 @@ On observer refusal, the app keeps rendering and accepting ordinary input; the
 native tree exposes a static-text explanation and clears old guest actions.
 Valid subsequent state restores native content with fresh IDs. Caller-owned
 copies and total backend memory remain the embedder's responsibility.
-[Current description/observer checks and native limitations](../../examples/native-showcase/accessibility-descriptions-2026-11-03.json).
+[Current description/observer checks and native limitations](../../docs/evidence/accessibility-descriptions-2026-11-03.json).
 
 Text fields now project logical text runs, Unicode word starts, hard lines and
 directional selections. Runs contain at most 255 scalar/CRLF units, with linked
@@ -283,7 +283,7 @@ positions/widths and caret affinity. Exact source-range keys preserve native IDs
 only while their character positions retain the same meaning after wrapping.
 The auxiliary-run ceiling includes visual spans; refusal still leaves the guest
 running. Native geometry/caret checks are separate from platform acceptance.
-[Current geometry checks, artifact hashes and native timeout](../../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
+[Current geometry checks, artifact hashes and native timeout](../../docs/evidence/accessibility-text-geometry-2026-11-03.json).
 
 Assistive scrolling. On every AccessKit platform a scroll area also publishes a
 geometry-free vertical `ScrollBar` child whose value is its 0..1 scroll
@@ -307,7 +307,7 @@ and real Metal GPU Release: names/controls, buttons, Ukrainian SetValue and
 concrete option selection. Debug also covers radio/checkbox, Undo and resize
 with preserved state and working subsequent input. The Release async example
 completes through its accessible button. This is API-level evidence, not a
-VoiceOver audio test. [Pinned inputs and scope](../../examples/native-showcase/accessibility-checkpoint-2026-11-03.json).
+VoiceOver audio test. [Pinned inputs and scope](../../docs/evidence/accessibility-checkpoint-2026-11-03.json).
 
 ## UI diagnostics and GPU prototype
 

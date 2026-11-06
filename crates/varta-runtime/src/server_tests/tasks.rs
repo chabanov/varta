@@ -190,3 +190,66 @@ fn admission_follows_the_memory_ceiling() {
         report.failure
     );
 }
+
+/// Reads its slow file at `/slow`, answers at once elsewhere.
+const SLOW_DISK: &str = r#"
+function handle(request: VartaHttpRequest): Response {
+  if (request.target == "/slow") {
+    return new Response(varta.fs.read("/data/varta-slow-disk.txt"));
+  }
+  return new Response("fast");
+}
+export function main(): void {}
+varta.http.serve({ hostname: "127.0.0.1", port: 0 }, handle);
+"#;
+
+/// A file read blocks its thread, not the server: with a slow read on every
+/// worker thread at once, an independent request is still answered before
+/// any read completes.
+#[test]
+fn slow_file_reads_do_not_hold_the_request_workers() {
+    use crate::policy::slow_disk;
+    let directory = std::env::temp_dir().join(format!(
+        "varta-slow-disk-{}-{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join(slow_disk::NAME), "slow").unwrap();
+    let mut roots = crate::FileRoots::new();
+    roots.open("data", &directory).unwrap();
+    let bytes =
+        varta_compiler::compile_typescript_with_profile(SLOW_DISK, P::CheckedF64Utf16V38).unwrap();
+    let server = Arc::new(Server::start_options(
+        bytes,
+        RunOptions {
+            requested: vec![CapabilityGrant {
+                id: "fs.read".into(),
+                value: CapabilityValue::PathGlobs(vec!["/data/**".into()]),
+            }],
+            file_roots: roots,
+            ..RunOptions::default()
+        },
+    ));
+    let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let started = Instant::now();
+    let slow: Vec<_> = (0..workers)
+        .map(|_| {
+            let server = server.clone();
+            thread::spawn(move || server.request("GET", "/slow", b""))
+        })
+        .collect();
+    // Let every slow read begin, then ask for something else.
+    thread::sleep(Duration::from_millis(300));
+    let (status, _, body) = server.request("GET", "/fast", b"");
+    let answered = started.elapsed();
+    // A streamed v2 body arrives chunked.
+    assert_eq!((status, body.as_str()), (200, "4\r\nfast\r\n0\r\n\r\n"));
+    assert!(answered < slow_disk::DELAY, "{answered:?}");
+    for read in slow {
+        let (status, _, body) = read.join().unwrap();
+        assert_eq!((status, body.as_str()), (200, "4\r\nslow\r\n0\r\n\r\n"));
+    }
+    Arc::into_inner(server).unwrap().finish();
+    std::fs::remove_dir_all(directory).unwrap();
+}

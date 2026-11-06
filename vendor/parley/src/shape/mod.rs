@@ -392,6 +392,10 @@ fn shape_item<'a, B: Brush>(
 
     let mut current_font = font_selector.select_font(char_cluster, analysis_data_sources);
 
+    // Characters before `counted_bytes` of the item: segments advance in
+    // order, so each segment counts only the characters since the last one
+    // (counting from the item start for every segment is quadratic).
+    let (mut counted_bytes, mut counted_chars) = (0usize, 0usize);
     // Main segmentation loop (based on swash shape_clusters) - only within current item
     while let Some(font) = current_font.take() {
         // Collect all clusters for this font segment
@@ -553,7 +557,9 @@ fn shape_item<'a, B: Brush>(
         scx.glyphs_remaining -= glyph_buffer.len();
 
         // Extract relevant CharInfo slice for this segment
-        let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
+        counted_chars += item_text[counted_bytes..segment_start_offset].chars().count();
+        counted_bytes = segment_start_offset;
+        let char_start = char_range.start + counted_chars;
         let segment_char_start = char_start - char_range.start;
         let segment_char_count = segment_text.chars().count();
         let segment_infos =

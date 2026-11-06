@@ -280,3 +280,40 @@ fn the_portable_path_refuses_color_glyph_faces() {
         ));
     }
 }
+
+#[test]
+fn uniform_scales_draw_host_glyphs_at_the_scaled_size_and_others_keep_outlines() {
+    let mut v = fixture();
+    // Scaled about its centre, the box's glyph stays inside the viewport.
+    let mut b = B::new();
+    b.set_style(2, P::Transform, "scale(2)")
+        .set_style(2, P::MarginLeft, "20px")
+        .set_style(2, P::MarginTop, "20px");
+    commit(&mut v, b);
+    let (mut r, calls) = renderer(Mode::Coverage);
+    let image = r.render(&v, 80, 80, 1.0).unwrap();
+    assert_eq!(r.stats().raster_glyphs, 1);
+    assert_eq!(r.stats().outline_glyphs, 0);
+    // The host draws at the scaled size, at a device scale too.
+    assert_eq!(
+        calls.lock().unwrap().phases.last().unwrap().0,
+        40f32.to_bits()
+    );
+    r.render(&v, 160, 160, 2.0).unwrap();
+    assert_eq!(
+        calls.lock().unwrap().phases.last().unwrap().0,
+        80f32.to_bits()
+    );
+    let PreparedFrame::Vector { metadata, scene } = r.prepare(&v, 80, 80, 1.0).unwrap() else {
+        panic!("scaled coverage uses bounded vector commands")
+    };
+    assert_eq!(scene.rasterize(metadata).unwrap(), image);
+    // A non-uniform scale keeps the portable outlines, which it maps.
+    let mut b = B::new();
+    b.set_style(2, P::Transform, "scale(1, 2)");
+    commit(&mut v, b);
+    let (mut r, _) = renderer(Mode::Coverage);
+    r.render(&v, 80, 80, 1.0).unwrap();
+    assert_eq!(r.stats().raster_glyphs, 0);
+    assert_eq!(r.stats().outline_glyphs, 1);
+}
