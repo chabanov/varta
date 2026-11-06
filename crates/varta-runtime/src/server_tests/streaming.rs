@@ -276,6 +276,7 @@ fn a_request_that_finds_no_worker_in_time_gets_503_with_retry_after() {
                     worker_wait_ms: Some(wait.as_millis() as u64),
                     ..Default::default()
                 }),
+                tls: None,
             }),
             ..RunOptions::default()
         },

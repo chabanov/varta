@@ -88,7 +88,9 @@ sha2 = "=0.10.9"
 base64 = "=0.22.1"
 
 # Server framing/timers use maintained HTTP and async I/O implementations.
-hyper = { version = "=1.12.0", default-features = false, features = ["server", "client", "http1"] }
+# `http2` (K7 H3): the native server's HTTP/2 over TLS ALPN `h2`, from the
+# HTTP library already in use (its `h2` crate, with the rapid-reset bounds).
+hyper = { version = "=1.12.0", default-features = false, features = ["server", "client", "http1", "http2"] }
 hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
 http-body-util = "=0.1.5"
 # `rt-multi-thread` (K7 H2): the native server's request tasks share a few

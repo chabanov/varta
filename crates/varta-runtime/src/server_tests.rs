@@ -69,12 +69,33 @@ impl Server {
             },
         )
     }
-    fn start_options(bytes: Vec<u8>, mut options: RunOptions) -> Self {
+    /// A service the host serves over TLS (K7 H3), with its TLS grant.
+    fn start_tls(bytes: Vec<u8>, policy: varta_common::http::HttpPolicy) -> Self {
+        let tls = policy.tls.is_some();
+        Self::start_listening(
+            bytes,
+            RunOptions {
+                http: Some(policy),
+                ..RunOptions::default()
+            },
+            tls,
+        )
+    }
+    fn start_options(bytes: Vec<u8>, options: RunOptions) -> Self {
+        let tls = options
+            .http
+            .as_ref()
+            .is_some_and(|policy| policy.tls.is_some());
+        Self::start_listening(bytes, options, tls)
+    }
+    fn start_listening(bytes: Vec<u8>, mut options: RunOptions, tls: bool) -> Self {
         let runtime = VartaRuntime::new();
         let inspection = runtime.inspect_module(&bytes).unwrap();
         assert!(inspection.tool_catalog.is_none());
         let endpoint = inspection.http_service.unwrap().bind;
-        options.requested.push(grant(endpoint));
+        options
+            .requested
+            .push(grant(varta_common::http::listen_endpoint(&endpoint, tls)));
         let (sender, receiver) = mpsc::channel();
         let lines = Arc::new(Mutex::new(Vec::new()));
         let recorded = lines.clone();
@@ -85,7 +106,9 @@ impl Server {
         let report = Arc::new(Mutex::new(None));
         let recorded_report = report.clone();
         options.observer = Some(Arc::new(move |event| match event {
-            RuntimeEvent::Listening { address, shutdown } => {
+            RuntimeEvent::Listening {
+                address, shutdown, ..
+            } => {
                 sender.send((address, shutdown)).unwrap();
             }
             RuntimeEvent::Output(line) => recorded.lock().unwrap().push(line),
@@ -761,4 +784,5 @@ mod cancellation;
 mod reports;
 mod streaming;
 mod tasks;
+mod tls;
 mod web_request;

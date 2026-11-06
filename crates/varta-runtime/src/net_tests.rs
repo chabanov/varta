@@ -1135,7 +1135,9 @@ fn aborted_requests_leave_the_server_worker_free_for_the_next_request() {
     let outcomes = Arc::new(Mutex::new(Vec::new()));
     let recorded = outcomes.clone();
     let observer: RuntimeObserver = Arc::new(move |event| match event {
-        RuntimeEvent::Listening { address, shutdown } => {
+        RuntimeEvent::Listening {
+            address, shutdown, ..
+        } => {
             let _ = listening.send((address, shutdown));
         }
         RuntimeEvent::HttpRequest(report) => {

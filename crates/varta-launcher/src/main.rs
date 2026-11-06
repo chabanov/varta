@@ -75,9 +75,9 @@ fn execute(args: Args) -> Result<i32, Error> {
                 .transpose()?;
             let request_budgets = args.budget_report;
             options.observer = Some(Arc::new(move |event| match event {
-                RuntimeEvent::Listening { address, .. } => {
-                    eprintln!("varta listening: http://{address}")
-                }
+                RuntimeEvent::Listening {
+                    address, scheme, ..
+                } => eprintln!("varta listening: {scheme}://{address}"),
                 RuntimeEvent::Output(line) => println!("{line}"),
                 RuntimeEvent::Diagnostic(message) => eprintln!("varta HTTP: {message}"),
                 RuntimeEvent::HttpRequest(report) => {

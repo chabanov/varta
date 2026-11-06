@@ -7145,6 +7145,43 @@ Later: HTTP/3, response compression (a dependency decision), WebSocket.
   Node tests, conformance baseline), report
   `target/verification/20261106-001950-ffibq692/report.json` (macOS only).
 
+#### H3 — TLS 1.3 and HTTP/2 (done 2026-11-06)
+
+- **TLS from the host.** A host policy's `http.tls` names absolute PEM
+  paths of the certificate chain and key; the host reads them (bounded)
+  before bind and serves TLS 1.3 only (rustls, ring, no 0-RTT) with ALPN
+  `h2` then `http/1.1`. Bad files, relative paths and TLS for a v1 service
+  fail before bind; nothing reaches a package or guest.
+- **Grant form.** `net.listen` patterns name TLS endpoints as
+  `https://IP:port` (canonical); a host that serves TLS needs that form in
+  the package and the ceiling, a cleartext host the bare form, and
+  `http_stop` checks the same. Denial tests: runtime
+  `server_tests::tls::listen_grants_name_whether_an_endpoint_serves_tls`
+  and CLI smoke
+  `http_cli_tls_listeners_need_the_tls_grant_form_in_package_and_host`
+  (positive path: the CLI announces `varta listening: https://…`).
+- **HTTP/2.** hyper's `http2` feature: at most
+  `http::MAX_CONCURRENT_STREAMS` streams, a `http::MAX_HEADER_LIST_BYTES`
+  header list, bounded windows and send buffer, keep-alive pings, the
+  rapid-reset bounds of `h2`, and the server's own: a connection whose
+  clients abandon more than `http::MAX_ABANDONED_REQUESTS` requests is
+  retired with `GOAWAY` and closed within a second. Keep-alive request
+  count, idle bound and lifetime retire HTTP/2 connections with `GOAWAY`;
+  the write idle bound covers TLS. Connection serving moved to
+  `server::connection`, TLS configuration to `server::tls`.
+- Dependencies: hyper's `http2` feature (`h2` 0.4.20 and `tokio-util`
+  0.7.20 join the lock); rustls server parts and PEM parsing come with the
+  locked rustls and pki-types; test-only: `rcgen` in the CLI smoke and
+  tokio's `io-util` in the runtime tests.
+- Tests: `server_tests::tls` (HTTP/2 and HTTP/1.1 by ALPN over TLS 1.3 with
+  a Web `Request` body and `https` URL, TLS 1.2 and cleartext refused,
+  HTTP/2 SETTINGS bounds, a 1000-stream rapid-reset flood ended with
+  `GOAWAY` while other clients are served, grant forms and file failures),
+  listen-grant validation unit tests.
+- Gate: `python3 scripts/verify.py full` PASS (3879 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261106-004103-yowuttms/report.json` (macOS only).
+
 ### Realistic turn budget and application memory (owner decisions, 2026-11-06)
 
 The UARP console against the live API was terminated first by a network turn

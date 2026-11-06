@@ -229,6 +229,12 @@ Request tasks run guest code with `call_async` and yield on epoch ticks only;
 every wait awaits; a blocking host operation goes through `crate::blocking`.
 Fuel must not depend on yields or epochs: the fair call charge of a libcall
 is refunded by the epoch callback.
+TLS is TLS 1.3 only with ALPN `h2`/`http/1.1`; its certificate and key come
+only from the host policy (`http.tls`), are read by the host before bind and
+never reach a package or guest. A TLS listener needs the `https://IP:port`
+`net.listen` form in both package and ceiling, a cleartext one the bare
+form; never let one form authorize the other. HTTP/2 keeps its registry
+stream, header-list, window, reset and abandoned-request bounds.
 A streaming response pulls each chunk as its own turn under the idle bound and
 within the stream lifetime; a client that leaves or a shutdown cancels its
 worker. A Web `Request` body streams through a transfer of the request's own

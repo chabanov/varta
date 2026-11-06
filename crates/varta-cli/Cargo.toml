@@ -16,3 +16,5 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 varta-common = { path = "../varta-common" }
+# Test-only: the certificate of the TLS listener smoke test.
+rcgen.workspace = true

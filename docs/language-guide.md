@@ -410,6 +410,12 @@ completion starts a turn with fresh budgets, within the request's lifetime.
 A host policy may lower these limits (`"http": {"limits": {...}}`), never
 raise them.
 
+The program never handles TLS: a host that names a certificate and key in
+its policy (`"http": {"tls": {...}}`) serves the same handler over TLS 1.3,
+with HTTP/2 for clients that offer it, and the request URL starts with
+`https://`. The package then declares the listener as
+`"net": {"listen": ["https://0.0.0.0:443"]}`.
+
 `varta.http.stop()` in the owning handler stops acceptance after the current reply
 finishes. Embedders can use `run_observed` and the shutdown handle in
 `RuntimeEvent::Listening`. The CLI streams bounded request logs; the collecting

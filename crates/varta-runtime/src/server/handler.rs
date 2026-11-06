@@ -126,7 +126,8 @@ async fn execute_owned(
     )?;
     let context = execution.store.data_mut();
     context.cancellation = cancellation;
-    context.http_control = Some((shared.contract.bind.clone(), shared.stop.clone()));
+    // `http_stop` checks the grant form the service listens with.
+    context.http_control = Some((shared.listen.clone(), shared.stop.clone()));
     // Its transfers run on the server's runtime, progressing while it awaits.
     context.net.share_runtime(tokio::runtime::Handle::current());
     if let Some(lifetime) = web {
@@ -316,8 +317,7 @@ fn legacy_owned(shared: &Shared, request: Vec<u8>) -> Result<HttpResponse, Runti
             task: false,
         },
     )?;
-    execution.store.data_mut().http_control =
-        Some((shared.contract.bind.clone(), shared.stop.clone()));
+    execution.store.data_mut().http_control = Some((shared.listen.clone(), shared.stop.clone()));
     let response = invoke_legacy(shared, &mut execution, &request);
     let logs = std::mem::take(&mut execution.store.data_mut().output.lines);
     drop(execution);

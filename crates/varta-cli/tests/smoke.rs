@@ -4298,7 +4298,12 @@ fn binary64_json_preserves_status_and_cannot_turn_parsed_names_into_permission()
     }
 }
 impl HttpChild {
-    fn start(mut command: Command) -> Self {
+    fn start(command: Command) -> Self {
+        Self::start_scheme(command, "http")
+    }
+    /// A service listening with `scheme` (`https` when the host serves TLS).
+    fn start_scheme(mut command: Command, scheme: &str) -> Self {
+        let ready = format!("varta listening: {scheme}://");
         use std::{io::BufRead, process::Stdio};
         let mut child = command
             .stdout(Stdio::piped())
@@ -4311,7 +4316,7 @@ impl HttpChild {
             let mut output = String::new();
             for line in std::io::BufReader::new(stderr).lines() {
                 let line = line.unwrap();
-                if let Some(address) = line.strip_prefix("varta listening: http://") {
+                if let Some(address) = line.strip_prefix(ready.as_str()) {
                     let _ = sender.send(address.parse::<std::net::SocketAddr>().unwrap());
                 }
                 output.push_str(&line);
@@ -4525,6 +4530,65 @@ fn http_cli_listener_denials_precede_bind_and_host_policy_cannot_expand_requests
         "{}",
         combined(&output)
     );
+}
+
+#[test]
+fn http_cli_tls_listeners_need_the_tls_grant_form_in_package_and_host() {
+    let project = RegressionProject::new(
+        "async function handle(r:Request):Promise<Response>{const text=await r.text();return new Response(r.url+' '+text);}export function main():void{}varta.http.serve({hostname:'127.0.0.1',port:0},handle);",
+        serde_json::json!({"net":{"listen":["127.0.0.1:0"]}}),
+    );
+    project.language_profile("checked-f64-utf16-v38");
+    let certified = rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+    fs::write(project.0.join("cert.pem"), certified.cert.pem()).unwrap();
+    fs::write(
+        project.0.join("key.pem"),
+        certified.key_pair.serialize_pem(),
+    )
+    .unwrap();
+    let tls = serde_json::json!({
+        "certificate": project.0.join("cert.pem").display().to_string(),
+        "key": project.0.join("key.pem").display().to_string(),
+    });
+    let policy = |ceiling: &str, tls: Option<&serde_json::Value>| {
+        let mut policy = serde_json::json!({
+            "schemaVersion": 1,
+            "abiVersion": 1,
+            "capabilities": [{"id": "net.listen", "patterns": [ceiling]}],
+        });
+        if let Some(tls) = tls {
+            policy["http"] = serde_json::json!({"tls": tls});
+        }
+        fs::write(
+            project.0.join("host-policy.json"),
+            serde_json::to_vec(&policy).unwrap(),
+        )
+        .unwrap();
+    };
+    let denied = |label: &str| {
+        let output = project.command(&["dev", "--policy", "host-policy.json"]);
+        assert!(!output.status.success(), "{label}");
+        let text = combined(&output);
+        assert!(text.contains("HTTP listener denied"), "{label}: {text}");
+    };
+    // The host serves TLS: a cleartext grant in the package or the ceiling
+    // denies before bind.
+    policy("127.0.0.1:0", Some(&tls));
+    denied("cleartext package and ceiling");
+    policy("https://127.0.0.1:0", Some(&tls));
+    denied("cleartext package");
+    project.set_capabilities(serde_json::json!({"net":{"listen":["https://127.0.0.1:0"]}}));
+    policy("127.0.0.1:0", Some(&tls));
+    denied("cleartext ceiling");
+    // A host without TLS needs the cleartext form.
+    policy("https://127.0.0.1:0", None);
+    denied("TLS grant without TLS");
+    // Both TLS forms and the host's files: the service listens on https.
+    policy("https://127.0.0.1:0", Some(&tls));
+    let mut dev = varta();
+    dev.current_dir(&project.0)
+        .args(["dev", "--policy", "host-policy.json"]);
+    drop(HttpChild::start_scheme(dev, "https"));
 }
 
 #[test]

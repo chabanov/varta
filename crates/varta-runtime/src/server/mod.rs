@@ -1,8 +1,10 @@
 //! Host-driven HTTP lifetime. Every request gets a fresh bounded guest store.
+mod connection;
 mod engine;
 mod handler;
 mod io;
 mod report;
+mod tls;
 mod transport;
 use crate::{RunOutput, RuntimeError, policy};
 pub use report::{HttpReport, HttpRequestOutcome, HttpRequestReport};
@@ -38,6 +40,8 @@ pub enum RuntimeEvent {
     Listening {
         address: SocketAddr,
         shutdown: HttpShutdown,
+        /// `https` when the host serves TLS (K7 H3), else `http`.
+        scheme: &'static str,
     },
     Output(String),
     Diagnostic(String),
@@ -107,6 +111,11 @@ struct Shared {
     address: SocketAddr,
     /// The scheme of a Web `Request`'s URL.
     scheme: &'static str,
+    /// The `net.listen` pattern the service holds (its TLS form when the
+    /// host serves TLS), checked again by `http_stop`.
+    listen: String,
+    /// The host's TLS 1.3 configuration (K7 H3); `None` serves cleartext.
+    tls: Option<tokio_rustls::TlsAcceptor>,
     request_setup: crate::execution::RequestSetup,
     requested: Vec<CapabilityGrant>,
     ceiling: Option<Vec<CapabilityGrant>>,
@@ -132,8 +141,9 @@ impl Shared {
             .filter(|_| self.contract.version == varta_common::http::UTF16_VERSION)
     }
 }
-/// The scheme of a cleartext listener.
+/// The scheme of a cleartext listener, and of a TLS one.
 const HTTP_SCHEME: &str = "http";
+const HTTPS_SCHEME: &str = "https";
 
 pub(super) struct Start<'a> {
     /// The validated module, compiled again for the server's engine.
@@ -189,9 +199,23 @@ fn run_owned(
         &mut bind_policy,
         std::time::Instant::now(),
     )?;
-    if !bind_policy.listen(&contract.bind) {
-        return Err(HttpError::Denied(contract.bind).into());
+    // A host that configures TLS serves it; the grant must name the TLS
+    // endpoint in the package and in the ceiling (and a cleartext endpoint
+    // otherwise). Contract v1 is frozen without TLS.
+    let tls_files = policy.and_then(|policy| policy.tls.as_ref());
+    if tls_files.is_some() && contract.version != varta_common::http::UTF16_VERSION {
+        return Err(HttpError::Policy("TLS requires an HTTP contract v2 service".into()).into());
     }
+    let listen = varta_common::http::listen_endpoint(&contract.bind, tls_files.is_some());
+    if !bind_policy.listen(&listen) {
+        return Err(HttpError::Denied(listen).into());
+    }
+    // The host reads its certificate and key before any socket exists; they
+    // never reach the guest.
+    let tls = tls_files
+        .map(tls::config)
+        .transpose()?
+        .map(tokio_rustls::TlsAcceptor::from);
     // A raised application deadline cannot raise the fixed HTTP contract limit.
     let maximum_deadline = std::time::Duration::from_millis(contract.limits.handler_deadline_ms);
     if request_setup.budgets.deadline_per_turn > maximum_deadline {
@@ -262,7 +286,13 @@ fn run_owned(
         contract,
         limits,
         address,
-        scheme: HTTP_SCHEME,
+        scheme: if tls.is_some() {
+            HTTPS_SCHEME
+        } else {
+            HTTP_SCHEME
+        },
+        listen,
+        tls,
         request_setup,
         requested: requested.to_vec(),
         ceiling: ceiling.map(ToOwned::to_owned),
@@ -289,7 +319,7 @@ fn run_owned(
                 .enable_all()
                 .build()
                 .map_err(HttpError::Io)?;
-            runtime.block_on(transport::serve(listener, address, shared))
+            runtime.block_on(connection::serve(listener, address, shared))
         })
         .map_err(HttpError::Io)?
         .join()

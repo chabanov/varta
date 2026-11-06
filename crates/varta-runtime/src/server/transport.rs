@@ -3,15 +3,8 @@ use http_body_util::{BodyExt, Either, Full};
 use hyper::{
     Request, Response, StatusCode,
     body::{Body, Bytes, Incoming},
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::{TokioIo, TokioTimer};
-use std::{
-    convert::Infallible,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::{convert::Infallible, sync::atomic::Ordering, time::Duration};
 use varta_common::http::{self, HttpHeader, HttpRequest, HttpResponse};
 
 type Reply = Response<Either<Full<Bytes>, StreamBody>>;
@@ -211,7 +204,16 @@ fn web_request(
 async fn request(req: Request<Incoming>) -> Result<(handler::Envelope, bool), StatusCode> {
     let headers = checked_head(&req, http::MAX_BODY_BYTES)?;
     let head = req.method() == hyper::Method::HEAD;
-    let target = req.uri().to_string();
+    // An HTTP/2 request's URI is absolute (its `:scheme` and `:authority`);
+    // its target is the path and query, as an HTTP/1.1 origin-form target.
+    let target = if req.version() == hyper::Version::HTTP_2 {
+        req.uri()
+            .path_and_query()
+            .map_or("/", |path| path.as_str())
+            .to_owned()
+    } else {
+        req.uri().to_string()
+    };
     if target.len() > http::MAX_TARGET_BYTES {
         return Err(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }
@@ -327,15 +329,31 @@ fn busy() -> Reply {
     reply
 }
 
-async fn handle(
+/// One request of a connection. Its connection's keep-alive request count
+/// closes an HTTP/1.1 connection (`connection: close`) or retires an HTTP/2
+/// one (`GOAWAY`; HTTP/2 has no connection header). A request whose client
+/// leaves before its response counts as abandoned.
+pub(super) async fn handle(
     req: Request<Incoming>,
     shared: Arc<Shared>,
-    served: Arc<std::sync::atomic::AtomicUsize>,
+    state: Arc<connection::State>,
 ) -> Result<Reply, Infallible> {
+    let active = state.begin();
     let pool = shared.pool();
-    let count = served.fetch_add(1, Ordering::AcqRel) + 1;
-    let close = pool.is_none_or(|pool| count >= pool.keep_alive_requests);
-    Ok(closing(handle_request(req, shared, pool).await, close))
+    let count = state.served.fetch_add(1, Ordering::AcqRel) + 1;
+    let last = pool.is_none_or(|pool| count >= pool.keep_alive_requests);
+    let mut reply = handle_request(req, shared, pool).await;
+    active.complete();
+    match state.protocol {
+        connection::Protocol::Http1 => reply = closing(reply, last),
+        connection::Protocol::Http2 => {
+            reply.headers_mut().remove(hyper::header::CONNECTION);
+            if last {
+                state.retire();
+            }
+        }
+    }
+    Ok(reply)
 }
 
 /// The envelope of `req`: a Web `Request` service's head, its body still
@@ -476,164 +494,5 @@ async fn streaming(
             shared.sink.diagnostic(error.to_string());
             failure(StatusCode::INTERNAL_SERVER_ERROR)
         }
-    }
-}
-
-pub(super) async fn serve(
-    listener: TcpListener,
-    address: SocketAddr,
-    shared: Arc<Shared>,
-) -> Result<(), RuntimeError> {
-    let listener = tokio::net::TcpListener::from_std(listener).map_err(HttpError::Io)?;
-    if let Some(observer) = &shared.sink.observer {
-        observer(RuntimeEvent::Listening {
-            address,
-            shutdown: shared.stop.clone(),
-        });
-    }
-    if shared.contract.version == http::UTF16_VERSION {
-        pooled(listener, shared).await
-    } else {
-        sequential(listener, shared).await
-    }
-}
-
-/// Contract v1: one connection at a time; a busy worker refuses with 503.
-async fn sequential(
-    listener: tokio::net::TcpListener,
-    shared: Arc<Shared>,
-) -> Result<(), RuntimeError> {
-    while !shared.stop.stopped() {
-        let accepted = tokio::select! { _ = shared.stop.cancelled() => break, value = listener.accept() => value };
-        let (stream, _) = accepted.map_err(HttpError::Io)?;
-        connection(stream, shared.clone()).await;
-    }
-    Ok(())
-}
-
-/// Contract v2: up to `limits.connections` open keep-alive connections, which
-/// cost no worker while idle; each request waits a bounded time for one of
-/// the pool's workers. A further connection waits in the listener's backlog,
-/// never in an unbounded queue. Shutdown stops accepting and waits for the
-/// open connections, which drain or end their responses.
-async fn pooled(
-    listener: tokio::net::TcpListener,
-    shared: Arc<Shared>,
-) -> Result<(), RuntimeError> {
-    let slots = Arc::new(tokio::sync::Semaphore::new(shared.limits.connections));
-    let mut open = tokio::task::JoinSet::new();
-    let result = loop {
-        while open.try_join_next().is_some() {}
-        let slot = tokio::select! {
-            _ = shared.stop.cancelled() => break Ok(()),
-            slot = slots.clone().acquire_owned() => slot,
-        };
-        // The semaphore is never closed.
-        let Ok(slot) = slot else { break Ok(()) };
-        let accepted = tokio::select! { _ = shared.stop.cancelled() => break Ok(()), value = listener.accept() => value };
-        let (stream, _) = match accepted {
-            Ok(accepted) => accepted,
-            Err(error) => break Err(HttpError::Io(error).into()),
-        };
-        let service = shared.clone();
-        open.spawn(async move {
-            let _slot = slot;
-            connection(stream, service).await;
-        });
-    };
-    while open.join_next().await.is_some() {}
-    result
-}
-
-/// Serve one connection. Contract v1: one request, then close, within the
-/// connection bound. Contract v2: keep-alive requests (the idle time is also
-/// the head deadline) within the connection lifetime, after which the
-/// connection finishes its current response and closes. A streaming
-/// service's bound adds the stream lifetime. A v2 connection whose response
-/// write makes no progress for the write idle bound closes.
-async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
-    let pool = shared.pool();
-    let write_idle = shared
-        .limits
-        .transport
-        .filter(|_| pool.is_some())
-        .map(|transport| Duration::from_millis(transport.write_idle_ms));
-    let service = shared.clone();
-    let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let answered = served.clone();
-    let mut builder = http1::Builder::new();
-    builder
-        .keep_alive(pool.is_some())
-        .max_headers(http::MAX_HEADERS)
-        .max_buf_size(http::HTTP_BUFFER_BYTES)
-        .timer(TokioTimer::new())
-        .header_read_timeout(
-            pool.map_or(Duration::from_secs(http::HEADER_SECONDS), |pool| {
-                Duration::from_millis(pool.keep_alive_idle_ms)
-            }),
-        );
-    let entered = Arc::new(AtomicBool::new(false));
-    let request_entered = entered.clone();
-    let connection = builder.serve_connection(
-        TokioIo::new(io::WriteIdle::new(stream, write_idle)),
-        service_fn(move |req| {
-            request_entered.store(true, Ordering::Release);
-            handle(req, service.clone(), served.clone())
-        }),
-    );
-    // Stop reading new requests on shutdown, without dropping an active
-    // response future. Its original connection/request deadlines still apply.
-    tokio::pin!(connection);
-    let stream_lifetime = shared
-        .limits
-        .stream
-        .filter(|_| shared.contract.streaming)
-        .map_or(Duration::ZERO, |limits| {
-            Duration::from_millis(limits.lifetime_ms)
-        });
-    let bound = pool.map_or(Duration::from_secs(http::CONNECTION_SECONDS), |pool| {
-        Duration::from_millis(pool.connection_lifetime_ms)
-    }) + stream_lifetime;
-    let until = tokio::time::Instant::now() + bound;
-    // The current response of a connection whose lifetime ended may finish
-    // within its own bound: a Web `Request` service's request lifetime.
-    let drain = match shared.limits.transport {
-        Some(transport) if shared.contract.web_request => {
-            Duration::from_millis(transport.request_lifetime_ms) + stream_lifetime
-        }
-        _ => Duration::from_secs(http::CONNECTION_SECONDS),
-    };
-    let result = tokio::select! {
-        result = connection.as_mut() => Some(result),
-        _ = tokio::time::sleep_until(until) => {
-            if pool.is_some() {
-                // The lifetime ends: finish the current response, then close.
-                connection.as_mut().graceful_shutdown();
-                tokio::time::timeout(drain, connection.as_mut()).await.ok()
-            } else {
-                None
-            }
-        }
-        _=shared.stop.cancelled()=>{
-            if entered.load(Ordering::Acquire) {
-                // Drain the current response within the connection bound.
-                connection.as_mut().graceful_shutdown();
-                tokio::time::timeout_at(until, connection.as_mut()).await.ok()
-            } else {
-                // No request exists to drain. Closing a partial header or
-                // an idle accepted socket must not wait for its timeout.
-                Some(Ok(()))
-            }
-        }
-    };
-    match result {
-        Some(Ok(())) => {}
-        // A kept-alive connection that idled past its bound closes: not a
-        // rejection.
-        Some(Err(error)) if error.is_timeout() && answered.load(Ordering::Acquire) > 0 => {}
-        Some(Err(error)) => shared
-            .sink
-            .diagnostic(format!("HTTP connection rejected: {error}")),
-        None => shared.sink.diagnostic("HTTP connection deadline".into()),
     }
 }

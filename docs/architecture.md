@@ -16839,6 +16839,41 @@ cancellation keep their contracts. Contract v1 (frozen) keeps one blocking
 worker: its checked JSON parsing calls back into the guest from a host
 import, which an asynchronous call cannot.
 
+**TLS 1.3 and HTTP/2 (H3).** A host policy's `http.tls` names the absolute
+paths of a PEM certificate chain and private key
+([embedding contract](embedding.md#manifest)); every contract v2 service of
+that host then serves TLS 1.3 only (rustls with the ring provider, no TLS
+1.2, no 0-RTT data) and offers ALPN `h2` before `http/1.1`. The host reads
+the files (at most `http::MAX_TLS_FILE_BYTES` each) before the listener
+exists; a missing, oversized or malformed file, a relative path, or TLS for
+a contract v1 service fails the run before bind, and neither file nor key
+ever reaches a package or guest. The `net.listen` grant names whether an
+endpoint serves TLS: `"https://127.0.0.1:8443"` for TLS, the bare
+`"127.0.0.1:8080"` for cleartext, each canonical; the package and the host
+ceiling must both grant the form the host serves, so a cleartext grant
+never authorizes a TLS listener or the reverse, and `http_stop` checks the
+same form. A Web `Request`'s URL then has the `https` scheme, and the
+readiness event (`RuntimeEvent::Listening`) names the scheme.
+
+A client has `http::TLS_HANDSHAKE_SECONDS` to finish its handshake; one that
+negotiated `h2` gets HTTP/2, any other HTTP/1.1. HTTP/2 announces at most
+`http::MAX_CONCURRENT_STREAMS` concurrent streams and a header list of
+`http::MAX_HEADER_LIST_BYTES` (the request header bounds still apply to each
+request), uses receive windows of `http::STREAM_WINDOW_BYTES` per stream and
+`http::CONNECTION_WINDOW_BYTES` per connection and a send buffer of one
+stream chunk, pings its peer every `http::PING_INTERVAL_SECONDS` (closing it
+without an answer within `http::PING_TIMEOUT_SECONDS`), and ends a
+connection with `GOAWAY` after `http::MAX_PENDING_RESET_STREAMS` resets of
+streams not yet accepted or reset by the server (the rapid-reset bounds of
+`h2`). Each stream is a request of its own, with the same admission,
+budgets and reports; an HTTP/2 request's `VartaHttpRequest` target is its
+path and query. A connection whose clients abandon more than
+`http::MAX_ABANDONED_REQUESTS` requests (resets that reached the
+application) is retired with `GOAWAY` and closed within a second; its
+keep-alive request count, idle bound and lifetime retire it with `GOAWAY`
+(HTTP/2 has no `connection` header), and the write idle bound covers its
+TLS records.
+
 The v2 service future owns a cancellation guard for its request task.
 Disconnect or connection timeout drops that owner and signals its execution;
 epoch checks interrupt guest loops, while timer/network waits await the same

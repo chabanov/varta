@@ -80,6 +80,7 @@ fn lowered(limits: HostLimits) -> RunOptions {
     RunOptions {
         http: Some(HttpPolicy {
             limits: Some(limits),
+            tls: None,
         }),
         ..RunOptions::default()
     }

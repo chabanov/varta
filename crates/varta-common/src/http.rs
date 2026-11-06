@@ -105,6 +105,48 @@ pub const REQUEST_LIFETIME_SECONDS: u64 = 300;
 /// closed, so a client that stops reading holds its connection no longer
 /// (nginx's `send_timeout`).
 pub const WRITE_IDLE_SECONDS: u64 = 60;
+/// The scheme prefix of a `net.listen` endpoint that serves TLS
+/// (`"https://127.0.0.1:8443"`, K7 H3); a bare `IP:port` serves cleartext.
+pub const LISTEN_TLS_PREFIX: &str = "https://";
+/// The largest certificate chain or private key file a host policy names.
+pub const MAX_TLS_FILE_BYTES: usize = 1024 * 1024;
+/// A TLS client must complete its handshake within this time.
+pub const TLS_HANDSHAKE_SECONDS: u64 = 10;
+/// HTTP/2: the streams one connection may have open at once
+/// (`SETTINGS_MAX_CONCURRENT_STREAMS`).
+pub const MAX_CONCURRENT_STREAMS: u32 = 100;
+/// HTTP/2: the largest decoded request header list
+/// (`SETTINGS_MAX_HEADER_LIST_SIZE`); the request header bounds still apply.
+pub const MAX_HEADER_LIST_BYTES: u32 = 16 * 1024;
+/// HTTP/2 flow control: the receive window of a stream and of a connection.
+pub const STREAM_WINDOW_BYTES: u32 = 256 * 1024;
+pub const CONNECTION_WINDOW_BYTES: u32 = 1024 * 1024;
+/// HTTP/2 rapid reset (CVE-2023-44487): the streams a client may reset
+/// before the server accepted them, and those the server may reset for
+/// errors, before the connection ends with `GOAWAY`.
+pub const MAX_PENDING_RESET_STREAMS: usize = 20;
+/// The requests a client may abandon on one connection (a rapid reset that
+/// reached the application) before the server retires it.
+pub const MAX_ABANDONED_REQUESTS: usize = 100;
+/// HTTP/2 keep-alive pings: how often, and how long a peer has to answer.
+pub const PING_INTERVAL_SECONDS: u64 = 30;
+pub const PING_TIMEOUT_SECONDS: u64 = 10;
+
+/// The `net.listen` pattern of `bind` served with TLS (`tls`) or without.
+#[must_use]
+pub fn listen_endpoint(bind: &str, tls: bool) -> String {
+    if tls {
+        format!("{LISTEN_TLS_PREFIX}{bind}")
+    } else {
+        bind.to_owned()
+    }
+}
+
+/// The socket address a `net.listen` pattern names, its TLS prefix removed.
+#[must_use]
+pub fn listen_address(pattern: &str) -> &str {
+    pattern.strip_prefix(LISTEN_TLS_PREFIX).unwrap_or(pattern)
+}
 /// Request details retained by a native server report. Totals keep counting
 /// after this bound; observers can receive every completed request instead.
 pub const MAX_REPORTED_REQUESTS: usize = 32;
@@ -346,6 +388,21 @@ pub struct HttpPolicy {
     /// Lower server limits ([`HttpLimits::lowered`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<HostLimits>,
+    /// The certificate chain and key every service of this host serves
+    /// over TLS 1.3 (K7 H3); its `net.listen` grants must then name the
+    /// endpoint with [`LISTEN_TLS_PREFIX`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<TlsFiles>,
+}
+
+/// Absolute paths of the PEM files the host reads before binding: the
+/// certificate chain (leaf first) and its private key. Neither ever reaches
+/// a package or guest code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TlsFiles {
+    pub certificate: String,
+    pub key: String,
 }
 
 /// Server limits a host policy lowers: each present value replaces the
@@ -565,10 +622,30 @@ mod tests {
             Some((Some(1), Some(1000)))
         );
         assert!(serde_json::from_str::<HttpPolicy>(r#"{"limits":{"chunkBytes":1}}"#).is_err());
+        // TLS files and the grant form that names a TLS endpoint.
+        let policy: HttpPolicy =
+            serde_json::from_str(r#"{"tls":{"certificate":"/etc/c.pem","key":"/etc/k.pem"}}"#)
+                .unwrap();
+        assert_eq!(policy.tls.map(|tls| tls.key), Some("/etc/k.pem".into()));
+        assert!(serde_json::from_str::<HttpPolicy>(r#"{"tls":{"certificate":"/c"}}"#).is_err());
+        assert_eq!(
+            listen_endpoint("127.0.0.1:443", true),
+            "https://127.0.0.1:443"
+        );
+        assert_eq!(listen_endpoint("127.0.0.1:80", false), "127.0.0.1:80");
+        assert_eq!(listen_address("https://[::1]:443"), "[::1]:443");
+        assert_eq!(listen_address("[::1]:80"), "[::1]:80");
     }
     #[test]
     fn listener_grants_are_exact_endpoints_with_no_outbound_or_boolean_fallback() {
-        for endpoint in ["127.0.0.1:0", "[::1]:8080", "0.0.0.0:8080"] {
+        // A bare endpoint serves cleartext; the `https://` form serves TLS.
+        for endpoint in [
+            "127.0.0.1:0",
+            "[::1]:8080",
+            "0.0.0.0:8080",
+            "https://127.0.0.1:8443",
+            "https://[::1]:443",
+        ] {
             let grant = CapabilityGrant {
                 id: "net.listen".into(),
                 value: CapabilityValue::ListenEndpoints(vec![endpoint.into()]),
@@ -592,6 +669,12 @@ mod tests {
             "*:80",
             "127.0.0.1:*",
             "[0:0:0:0:0:0:0:1]:80",
+            "https://localhost:443",
+            "https://127.0.0.1:8443/",
+            "http://127.0.0.1:8080",
+            "tls://127.0.0.1:8443",
+            "HTTPS://127.0.0.1:8443",
+            "https://https://127.0.0.1:8443",
         ] {
             assert!(
                 CapabilityGrant {
