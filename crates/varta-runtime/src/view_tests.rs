@@ -2305,6 +2305,47 @@ export function main():void {{
 }
 
 #[test]
+fn a_native_scroll_shows_the_overlay_scrollbar_on_the_instance_clock() {
+    let source = r##"
+export function main():void {
+ View.stylesheet(1,'.pane {width:60px; height:60px; overflow:auto; background-color:#fff} .tall {height:180px}');
+ const pane=View.node(); View.createElement(pane,1); View.setClass(pane,'pane');
+ const tall=View.node(); View.createElement(tall,1); View.setClass(tall,'tall');
+ View.insert(pane,tall,0); View.mount(pane);
+}
+"##;
+    let mut app = instance(source, vec![], None);
+    let commits = app.view_commits();
+    let mut renderer = varta_view::Renderer::new(None, 16.0).unwrap();
+    let before = app.view_render(&mut renderer, 80, 80, 1.0).unwrap();
+    let pane = before
+        .scrollbar_at(55.0, 30.0)
+        .expect("the pane's bar frame");
+    assert!(!app.view_animating());
+    app.view_input(&varta_view::Input::ScrollMeasured {
+        target: varta_view::Target::Node(pane),
+        top: 60.0,
+        scroll_height: 180.0,
+        client_height: 60.0,
+    })
+    .unwrap();
+    // The thumb shows at once and the host keeps advancing the clock.
+    assert!(app.view_animating());
+    let shown = app.view_render(&mut renderer, 80, 80, 1.0).unwrap();
+    let at = |image: &varta_view::RasterImage, x: usize, y: usize| {
+        image.pixels[(y * 80 + x) * 4..(y * 80 + x + 1) * 4].to_vec()
+    };
+    // 60 of 180 at 60: thumb box [48, 60) by [20, 40), pill [51, 58) by [22, 38).
+    assert_eq!(at(&before, 54, 30), [255, 255, 255, 255]);
+    assert_eq!(at(&shown, 54, 30), [127, 127, 127, 255]);
+    assert_eq!(shown.hit_test(54.5, 30.5), Some(pane));
+    // The pointer over the bar holds it; no guest turn runs.
+    assert!(app.view_set_scrollbar_hover(Some(pane)));
+    assert!(!app.view_set_scrollbar_hover(Some(pane)));
+    assert_eq!(app.view_commits(), commits);
+}
+
+#[test]
 fn native_pointer_styles_do_not_run_guest_turns_or_activate_controls() {
     let source = r##"
 export function main():void {

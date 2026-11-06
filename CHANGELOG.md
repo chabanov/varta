@@ -33,6 +33,16 @@
   whole-pixel placement and emoji presentation selectors. Text and emoji
   under a uniform `scale()` draw through CoreText at the scaled size. Colour
   glyphs on Linux remain refused.
+- Native scroll containers show macOS overlay scrollbars as Chrome does under
+  the default "Show scroll bars" setting: a scroll (wheel, programmatic,
+  scroll-into-view or assistive) shows the thumb, which fades out 500 ms
+  later over 250 ms; the pointer on the bar widens the thumb and shows the
+  track until it leaves. The bar runs on the view's animation clock, so
+  headless renders are deterministic, takes the pointer while shown and
+  follows a dark scroller background. `View::set_scrollbar_hover` and
+  `FrameMetadata::scrollbar_at` carry the pointer; `varta-shell` presents
+  frames only while a bar animates. Compared with Chrome at 1x, 1.25x and 2x.
+  Thumb dragging and track clicks remain open.
 
 - Integrated v38 application delivery across the official metered browser host
   and packaged native `varta-shell`, including host effects, OPFS KV storage,

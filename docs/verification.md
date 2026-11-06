@@ -754,6 +754,29 @@ for scale in 1 1.25 2; do
 done
 ```
 
+Overlay scrollbars (macOS "Show scroll bars" automatic or when scrolling,
+headless Chrome's style on this Mac) are compared with Chrome running the
+probe's steps in real time: a wheel or programmatic scroll, the pointer on the
+bar or away, and waits. Captures are taken where both are steady (just after a
+scroll, after the pointer rested on the bar, after the fade-out); the oracle
+checks that the bar reserves no space, the hits on and beside the bar and the
+pixels around it. The state machine, paint and shell feed have their own
+tests:
+
+```sh
+cargo test -p varta-view --lib --locked overlay_scrollbar
+cargo test -p varta-view --test integration --locked scrollbars
+cargo test -p varta-view --test integration --locked accessibility_scroll
+cargo test -p varta-runtime --lib --locked a_native_scroll_shows_the_overlay_scrollbar
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_overlay_scrollbar_probe --locked -- "$scale" > "target/native-overlay-scrollbars-$scale.json"
+  node scripts/test-native-overlay-scrollbars.mjs "target/native-overlay-scrollbars-$scale.json"
+done
+```
+
+Scrolled cases of `native_positioned_probe` show the overlay thumb on both
+sides; rerun it at 1x and 2x after changing overlay paint.
+
 Platform fallback faces with `--system-fonts` (macOS), colour emoji
 included, are compared with Chrome on the same machine; the oracle carries no
 font bytes, so Chrome resolves the generic families and fallback faces itself.

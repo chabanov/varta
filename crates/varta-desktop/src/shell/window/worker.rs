@@ -320,7 +320,7 @@ pub(super) fn worker(
                     if changed {
                         timing.accept(sample.trace);
                     }
-                    pointer_changed |= changed;
+                    pointer_changed |= changed | app.view_set_scrollbar_hover(None);
                 } else if in_flight.is_none()
                     && revision == rendered_revision
                     && dimensions == rendered_dimensions
@@ -338,13 +338,17 @@ pub(super) fn worker(
                     if changed {
                         timing.accept(sample.trace);
                     }
-                    pointer_changed |= changed;
+                    // An overlay scrollbar under the pointer stays and widens.
+                    pointer_changed |=
+                        changed | app.view_set_scrollbar_hover(image.scrollbar_at(x, y));
                 }
                 let current_gpu = gpu_active.load(Ordering::Acquire);
                 let current_accessibility = accessibility_active.load(Ordering::Acquire);
-                // A running CSS transition paints a new frame whenever the
-                // previous one was presented: frames follow the display, and
-                // the transition's last frame shows its end value.
+                // A running CSS transition or overlay scrollbar animation
+                // paints a new frame whenever the previous one was presented:
+                // frames follow the display, and the last one shows the end
+                // value. An overlay bar waiting for its fade-out changes
+                // nothing, so the clock advances without a frame until then.
                 let animated =
                     in_flight.is_none() && app.view_animating() && app.view_advance_animations();
                 if in_flight.is_none()

@@ -38,7 +38,7 @@ their current limitations and the evidence behind this checkpoint.
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
-| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). Colour glyphs on Linux, the overlay scrollbar shown while scrolling and every Linux comparison with Chrome remain open. |
+| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). macOS overlay scrollbars are shown while scrolling, on the animation clock ([record](#native-overlay-scrollbars--2026-11-06)). Colour glyphs on Linux, scrollbar dragging and track clicks, and every Linux comparison with Chrome remain open. |
 | Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. The Showcase was removed on 2026-11-06 (owner decision); its measurements are kept in [`docs/evidence/`](evidence/). |
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
@@ -148,12 +148,68 @@ gains `macDefaults`), checks that Chrome's gutter is 15px, and compares seven
 cases (vertical, horizontal, both with the corner, gutter-induced overflow,
 borders and padding, the minimum thumb, content that fits): 10124 geometry and
 hit checks per scale and pixel means 0.00 to 0.02/255 (1x), 0.06 to 0.48 and
-1.13 for the bordered case (1.25x), 0.06 to 0.09 (2x). Open: the overlay thumb
-Chrome shows while scrolling (it fades about 0.6s after the scroll), thumb
-hover color, thumb dragging and track clicks, a dark `color-scheme` (outside
-the subset), rounded scroll containers with classic bars (refused), live
-changes of the system setting (read at window start) and Chrome's Linux Aura
-scrollbars (Linux keeps overlay behaviour).
+1.13 for the bordered case (1.25x), 0.06 to 0.09 (2x). Open: thumb hover
+color, thumb dragging and track clicks, a dark `color-scheme` (outside the
+subset), rounded scroll containers with classic bars (refused), live changes
+of the system setting (read at window start) and Chrome's Linux Aura
+scrollbars (Linux keeps overlay behaviour). The overlay thumb shown while
+scrolling followed the same day
+([record](#native-overlay-scrollbars--2026-11-06)).
+
+### Native overlay scrollbars — 2026-11-06
+
+With macOS's default "Show scroll bars" setting (automatic, or when
+scrolling) native scroll containers now show Chrome's overlay scrollbar while
+they scroll ([contract](architecture.md#native-overlay-scrollbars)); classic
+bars are unchanged.
+
+- **Constants from Chromium.** `ui::OverlayScrollbarAnimatorMac`
+  (`kFadeOutDelay` 500 ms, `kAnimationDuration` 250 ms, ease-in-out, integer
+  thumb width), `MacScrollbarImplV2` (thumb box 12, expanded 16),
+  `ScrollbarThemeMac` (overlay frame 16, minimum thumb 26, track 28 for a
+  thumb), `NativeThemeMac` with `is_overlay` (thumb `0x80`, inset 2, track
+  gradient and border colors for both schemes) and Blink's
+  `RecalculateOverlayScrollbarColorScheme` (dark when the scroller's
+  background lightness is at most one half).
+- **Measured in Chrome 156 on this Mac** (CDP wheel, `scrollTop` and
+  `mouseMoved`, screenshots every 30 to 60 ms): a programmatic scroll before
+  the first paint also shows the thumb, so the positioned oracle's scrolled
+  cases now match with the bar on both sides; the fade starts 500 to 520 ms
+  after the scroll and ends by 750 to 800 ms; the pointer on the bar widens
+  the thumb 7 to 11 pixels and fades the track in over about 250 ms, and the
+  bar stays until 500 ms after the pointer leaves; a wheel under a resting
+  pointer first shows the narrow thumb and widens it a frame later; the bar
+  is not clipped by the scroller's rounded corners; with a horizontal
+  overflow the vertical track stops 16 pixels short. Two places where Chrome
+  differs from Blink's classic geometry: the thumb is computed in CSS pixels
+  and drawn scaled (fractional edges at 1.25x), and an offset under one pixel
+  leaves it at the start (the compositor's truncation).
+- **Model.** The view keeps each shown bar's event times (`overlay_scrollbar`):
+  every visual state is a function of them and the animation clock, so
+  headless renders are deterministic. Every write of a scroll offset goes
+  through `Tree::scroll_to`, which shows the bar when the offset changes. The
+  bar paints in its container's outline phase and, while shown, adds a hit
+  region for the container. `FrameMetadata::scrollbar_at` and
+  `View::set_scrollbar_hover` carry the pointer; `varta-shell` feeds them from
+  each pointer sample. `View::animating` stays true during the fade-out delay
+  but `set_animation_time` reports no change then, so the shell advances its
+  clock on its idle wake without presenting frames until the fade runs.
+- **Evidence.** `native_overlay_scrollbar_probe` with
+  `scripts/test-native-overlay-scrollbars.mjs` runs seven cases' steps (wheel,
+  wheel under the resting pointer, programmatic scroll, bordered, dark,
+  two-axis, rounded, minimum thumb) natively on the clock and in Chrome in
+  real time, and compares content width, hits and pixels around the bar at
+  each capture (shown, hovered, faded): 55 checks per scale pass at 1x, 1.25x
+  and 2x; pixel means 0.00 to 0.34/255 (1x), 0.03 to 1.17 (1.25x, where the
+  bordered and dark cases also carry the existing fractional box-edge
+  differences outside the bar), 0.00 to 0.58 (2x). The classic and positioned
+  probes still pass at 1x and 2x.
+- **Open.** Dragging a thumb and clicking a track (neither style has them
+  natively), horizontal overlay bars (native layout scrolls only
+  vertically), textarea bars, Chrome's `kFadeInScrollbarWhenMouseWheelMayBegin`
+  (a trackpad touch that has not scrolled yet shows the bar; not modelled),
+  live changes of the system setting, and a real-window session (only the
+  headless view and the shell's code path are exercised).
 
 ### Review fixes — 2026-11-06
 
