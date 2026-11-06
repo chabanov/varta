@@ -103,7 +103,7 @@ try {
   const nativeChunks=JSON.parse(await readFile(join(root,"chunks.golden.json"),"utf8"));
   assert.equal(chunks.status,"ok");
   assert.equal(chunks.text,nativeChunks.logs.join("\n"));
-  for(const name of ["async","fifo","handled","unhandled","reject-string","reject-number","reject-bigint","reject-class","reject-exponent","reject-retention","reject-long-error","reject-long-class","pending","async-calls","async-budget","timer-order","timer-cancel","timer-interval","timer-denied","timer-optional","timer-throw","timer-deadline","timer-calls","timer-unref","timer-normalize","timer-v36","timer-v37","timer-unref-alive","timer-long-throw"]) {
+  for(const name of ["async","fifo","handled","unhandled","reject-string","reject-number","reject-bigint","reject-class","reject-exponent","reject-retention","reject-long-error","reject-long-class","pending","async-calls","async-budget","timer-order","timer-cancel","timer-interval","timer-denied","timer-optional","timer-throw","timer-deadline","timer-calls","timer-unref","timer-normalize","timer-v36","timer-v37","timer-unref-alive","timer-long-throw","collections"]) {
     const result=await run(name);
     const golden=JSON.parse(await readFile(join(root,`${name}.golden.json`),"utf8"));
     assert.equal(result.status,golden.status,`${name}: ${result.text}`);

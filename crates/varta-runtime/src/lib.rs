@@ -1134,6 +1134,8 @@ mod class_tests;
 #[cfg(test)]
 mod closure_narrowing_tests;
 #[cfg(test)]
+mod collection_hashing_tests;
+#[cfg(test)]
 mod collection_tests;
 #[cfg(test)]
 mod declared_field_tests;

@@ -5326,6 +5326,41 @@ as for the data limits). A dictionary holds at most 2^26 entries under v38
 Inserting an array-index key below an existing one (for example numeric ids
 in descending order) still moves the entries behind it.
 
+#### Hashed Map and Set (v38)
+
+`Map` and `Set` find, insert and delete their keys through a hash table of
+every key type under v38 (strings, numbers, booleans, BigInts and object
+identity), so `get`, `has`, `set`, `add` and `delete` cost about the same at
+any size, and taking the first key of a collection that is used as a queue
+stays cheap after many deletions. Behaviour is exactly v37's: insertion
+order, SameValueZero keys (`NaN` equals `NaN`, `-0` is stored as `+0`) and
+live iteration that visits entries added during the loop and skips deleted
+ones:
+
+```typescript
+export function main(): void {
+  const index = new Map<string, number>();
+  const seen = new Set<bigint>();
+  for (let i = 0; i < 100000; i++) {
+    index.set(`row${i}`, i);
+    seen.add(BigInt(i % 1000));
+  }
+  for (let i = 0; i < 100000; i += 2) {
+    index.delete(`row${i}`);
+  }
+  let first = "";
+  for (const key of index.keys()) {
+    first = key;
+    break;
+  }
+  console.log(`${index.size} ${index.get("row99999")} ${first} ${seen.size} ${index.has("row4")}`);
+}
+```
+
+prints `50000 99999 row1 1000 false` within the default turn fuel. A map or
+set holds at most 2^26 entries under v38; the memory budget is reached far
+earlier.
+
 #### Virtual file roots (opt-in v38)
 
 A v38 program never names a host path. Its configuration declares **roots**,

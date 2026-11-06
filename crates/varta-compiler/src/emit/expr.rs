@@ -253,8 +253,12 @@ impl Emitter<'_> {
                 self.string_helper(strings::Helper::text_units(*op))?;
             }
             E::Intrinsic(op, args) => {
-                for arg in args {
+                for (at, arg) in args.iter().enumerate() {
                     self.expr(arg)?;
+                    if op.key_slot() == Some(at) {
+                        // A number or boolean key travels as its slot bits.
+                        self.pack_slot(arg.ty.erased());
+                    }
                 }
                 match op {
                     ir::Intrinsic::HasCallableThen => {
@@ -320,6 +324,9 @@ impl Emitter<'_> {
                     }
                     ir::Intrinsic::DictionaryInsertAt => {
                         self.string_helper(strings::Helper::DictionaryInsertAt)?;
+                    }
+                    ir::Intrinsic::Collection(probe, hash) => {
+                        self.string_helper(strings::Helper::Collection(*probe, *hash))?;
                     }
                     ir::Intrinsic::Units => {
                         self.string_helper(strings::Helper::Units(args.len() as u8))?;

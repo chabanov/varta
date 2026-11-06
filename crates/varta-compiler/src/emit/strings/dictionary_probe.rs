@@ -7,7 +7,13 @@
 //! FNV-1a hash (`value::dictionary_hash`) masked by the capacity and steps
 //! linearly, at most once around the table. None of these helpers allocates,
 //! so no handle moves or dies while they run.
+//!
+//! V38 `Map`/`Set` tables (`collection_hashing`) share the encoding and the
+//! probe loops: string and BigInt keys use the dictionary helpers, and the
+//! [`KeyHash`] helpers hash a number or identity key slot with the murmur3
+//! `fmix32` finalizer and compare it by SameValueZero or identity.
 use super::*;
+use crate::ir::{CollectionProbe, KeyHash};
 use varta_common::value::{
     ARRAY_LENGTH_OFFSET, ARRAY_META_BYTES, ARRAY_SLOT_BYTES, DICTIONARY_HASH_OFFSET,
     DICTIONARY_HASH_PRIME, VECTOR_STORAGE_OFFSET,
@@ -28,6 +34,42 @@ const BYTE: MemArg = MemArg {
     memory_index: MEMORY,
 };
 const NOT_FOUND: f64 = -1.0;
+/// The murmur3 `fmix32` finalizer: shift, multiply, shift, multiply, shift.
+const MIX_SHIFTS: [i32; 3] = [16, 13, 16];
+const MIX_FACTORS: [u32; 2] = [0x85eb_ca6b, 0xc2b2_ae35];
+/// The binary64 bits every NaN key slot hashes as.
+const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+const WORD_SHIFT: i64 = u32::BITS as i64;
+
+/// How a lookup compares its keys: code-unit payloads by content through
+/// the `StringEquals` helper at this index, other key slots by their
+/// [`KeyHash`] class.
+#[derive(Clone, Copy)]
+enum Equality {
+    Content(u32),
+    Slot(KeyHash),
+}
+impl Equality {
+    fn keys(self) -> KeyHash {
+        match self {
+            Self::Content(_) => KeyHash::Units,
+            Self::Slot(hash) => hash,
+        }
+    }
+}
+/// What a probe does with the slot it finds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// `(keys, table, key)`: the position of the key's entry, or -1.
+    Find,
+    /// As [`Self::Find`], tombstoning the found slot.
+    Unlink,
+    /// `(keys, table, key, position)`: the position of the key's entry, or
+    /// -1 after referencing `position` from the first empty slot of the
+    /// probe. The caller keeps the table below half load, so an empty slot
+    /// exists (a probe that finds none traps).
+    Insert,
+}
 
 /// Locals of the probe helpers (after their parameters): the i64 key, then
 /// i32 scratch.
@@ -95,8 +137,73 @@ fn open(f: &mut Function, table: u32, p: &Probe) {
         ],
     );
 }
-/// `AT = fnv1a(KEY) & MASK`, the key's home slot.
-fn home(f: &mut Function, p: &Probe) {
+/// `AT = hash(KEY) & MASK`, the key's home slot.
+fn home(f: &mut Function, p: &Probe, keys: KeyHash) {
+    if keys == KeyHash::Units {
+        units_home(f, p);
+        return;
+    }
+    if keys == KeyHash::Number {
+        // KEY becomes the canonical slot of its SameValueZero class: `+0`
+        // for `-0` (x + 0) and one NaN for every NaN.
+        instructions(
+            f,
+            [
+                I::LocalGet(p.key),
+                I::F64ReinterpretI64,
+                I::LocalGet(p.key),
+                I::F64ReinterpretI64,
+                I::F64Ne,
+                I::If(BlockType::Result(ValType::I64)),
+                I::I64Const(CANONICAL_NAN as i64),
+                I::Else,
+                I::LocalGet(p.key),
+                I::F64ReinterpretI64,
+                I::F64Const(0.0.into()),
+                I::F64Add,
+                I::I64ReinterpretF64,
+                I::End,
+                I::LocalTee(p.key),
+                I::I32WrapI64,
+                I::LocalGet(p.key),
+                I::I64Const(WORD_SHIFT),
+                I::I64ShrU,
+                I::I32WrapI64,
+                I::I32Xor,
+            ],
+        );
+    } else {
+        instructions(f, [I::LocalGet(p.key), I::I32WrapI64]);
+    }
+    f.instruction(&I::LocalSet(p.hash));
+    for (step, shift) in MIX_SHIFTS.iter().enumerate() {
+        instructions(
+            f,
+            [
+                I::LocalGet(p.hash),
+                I::LocalGet(p.hash),
+                I::I32Const(*shift),
+                I::I32ShrU,
+                I::I32Xor,
+            ],
+        );
+        if let Some(factor) = MIX_FACTORS.get(step) {
+            instructions(f, [I::I32Const(*factor as i32), I::I32Mul]);
+        }
+        f.instruction(&I::LocalSet(p.hash));
+    }
+    instructions(
+        f,
+        [
+            I::LocalGet(p.hash),
+            I::LocalGet(p.mask),
+            I::I32And,
+            I::LocalSet(p.at),
+        ],
+    );
+}
+/// `AT = fnv1a(KEY) & MASK` over the code units of a payload key.
+fn units_home(f: &mut Function, p: &Probe) {
     instructions(
         f,
         [
@@ -216,15 +323,30 @@ fn store(f: &mut Function, p: &Probe, reference: &[I<'static>]) {
 /// `(keys, table, key) -> f64`: the position of `key`'s live entry, or -1.
 /// With `unlink`, the entry's slot also becomes a tombstone.
 pub(super) fn find(equals: u32, unlink: bool) -> Function {
+    probe(
+        Equality::Content(equals),
+        if unlink { Mode::Unlink } else { Mode::Find },
+    )
+}
+fn probe(equality: Equality, mode: Mode) -> Function {
     const KEYS: u32 = 0;
     const TABLE: u32 = 1;
-    let p = Probe::from(2, 3);
-    let entries = 3 + Probe::SCRATCH;
+    const POSITION: u32 = 3;
+    let parameters = if mode == Mode::Insert { 4 } else { 3 };
+    let p = Probe::from(2, parameters);
+    let entries = parameters + Probe::SCRATCH;
     let steps = entries + 1;
     let reference = steps + 1;
-    let mut f = Function::new([(Probe::SCRATCH + 2, ValType::I32), (1, ValType::F64)]);
+    // A number key compares the entry key twice (SameValueZero).
+    let entry = reference + 1;
+    let floats = if equality.keys() == KeyHash::Number {
+        2
+    } else {
+        1
+    };
+    let mut f = Function::new([(Probe::SCRATCH + 2, ValType::I32), (floats, ValType::F64)]);
     open(&mut f, TABLE, &p);
-    home(&mut f, &p);
+    home(&mut f, &p, equality.keys());
     instructions(
         &mut f,
         [
@@ -244,18 +366,18 @@ pub(super) fn find(equals: u32, unlink: bool) -> Function {
             I::Loop(BlockType::Empty),
         ],
     );
-    // An empty slot ends the probe.
+    // An empty slot ends the probe; an insertion references its position
+    // there.
     instructions(&mut f, present(&p));
-    instructions(
-        &mut f,
-        [
-            I::I32Eqz,
-            I::If(BlockType::Empty),
-            I::F64Const(NOT_FOUND.into()),
-            I::Return,
-            I::End,
-        ],
-    );
+    instructions(&mut f, [I::I32Eqz, I::If(BlockType::Empty)]);
+    if mode == Mode::Insert {
+        store(
+            &mut f,
+            &p,
+            &[I::LocalGet(POSITION), I::F64Const(1.0.into()), I::F64Add],
+        );
+    }
+    instructions(&mut f, [I::F64Const(NOT_FOUND.into()), I::Return, I::End]);
     instructions(&mut f, slot(&p));
     instructions(
         &mut f,
@@ -275,12 +397,11 @@ pub(super) fn find(equals: u32, unlink: bool) -> Function {
             I::I32Shl,
             I::I32Add,
             I::I64Load(SLOT),
-            I::LocalGet(p.key),
-            I::Call(equals),
-            I::If(BlockType::Empty),
         ],
     );
-    if unlink {
+    equal(&mut f, equality, p.key, entry);
+    f.instruction(&I::If(BlockType::Empty));
+    if mode == Mode::Unlink {
         instructions(&mut f, slot(&p));
         instructions(&mut f, [I::F64Const(0.0.into()), I::F64Store(SLOT)]);
     }
@@ -305,11 +426,70 @@ pub(super) fn find(equals: u32, unlink: bool) -> Function {
             I::LocalTee(steps),
             I::BrIf(0),
             I::End,
-            I::F64Const(NOT_FOUND.into()),
-            I::End,
         ],
     );
+    // A full circle without an empty slot: a lookup misses, while an
+    // insertion has broken the load bound.
+    f.instruction(&if mode == Mode::Insert {
+        I::Unreachable
+    } else {
+        I::F64Const(NOT_FOUND.into())
+    });
+    f.instruction(&I::End);
     f
+}
+
+/// Consume the entry key slot pushed by the probe; push whether it holds
+/// the same key as local `key` (an f64 local `entry` is the scratch of a
+/// number comparison).
+fn equal(f: &mut Function, equality: Equality, key: u32, entry: u32) {
+    match equality {
+        Equality::Content(equals) => {
+            instructions(f, [I::LocalGet(key), I::Call(equals)]);
+        }
+        Equality::Slot(KeyHash::Identity | KeyHash::Units) => {
+            instructions(f, [I::LocalGet(key), I::I64Eq]);
+        }
+        // SameValueZero: entry == key (+0 equals -0), or both are NaN, whose
+        // bits may differ.
+        Equality::Slot(KeyHash::Number) => instructions(
+            f,
+            [
+                I::F64ReinterpretI64,
+                I::LocalTee(entry),
+                I::LocalGet(key),
+                I::F64ReinterpretI64,
+                I::F64Eq,
+                I::LocalGet(entry),
+                I::LocalGet(entry),
+                I::F64Ne,
+                I::LocalGet(key),
+                I::F64ReinterpretI64,
+                I::LocalGet(key),
+                I::F64ReinterpretI64,
+                I::F64Ne,
+                I::I32And,
+                I::I32Or,
+            ],
+        ),
+    }
+}
+
+/// The `Map`/`Set` probe `probe` for keys hashed as `hash`
+/// (`collection_hashing`); `equals` is the `StringEquals` helper, which
+/// code-unit keys compare with.
+pub(super) fn collection(probe: CollectionProbe, hash: KeyHash, equals: u32) -> Function {
+    let equality = if hash == KeyHash::Units {
+        Equality::Content(equals)
+    } else {
+        Equality::Slot(hash)
+    };
+    match probe {
+        CollectionProbe::Find => self::probe(equality, Mode::Find),
+        CollectionProbe::Unlink => self::probe(equality, Mode::Unlink),
+        CollectionProbe::Insert => self::probe(equality, Mode::Insert),
+        CollectionProbe::Index => indexed(hash),
+    }
 }
 
 /// `(table, key, position) -> f64`: reference entry `position` from the
@@ -320,7 +500,7 @@ pub(super) fn place() -> Function {
     let p = Probe::from(1, 3);
     let mut f = Function::new([(Probe::SCRATCH, ValType::I32)]);
     open(&mut f, TABLE, &p);
-    home(&mut f, &p);
+    home(&mut f, &p, KeyHash::Units);
     store(
         &mut f,
         &p,
@@ -334,6 +514,9 @@ pub(super) fn place() -> Function {
 /// from a fresh table of empty slots; returns 0. Callers index only
 /// dictionaries without holes (unindexed or just compacted).
 pub(super) fn index() -> Function {
+    indexed(KeyHash::Units)
+}
+fn indexed(keys: KeyHash) -> Function {
     const KEYS: u32 = 0;
     const TABLE: u32 = 1;
     const KEY: u32 = 2;
@@ -378,7 +561,7 @@ pub(super) fn index() -> Function {
             I::LocalSet(KEY),
         ],
     );
-    home(&mut f, &p);
+    home(&mut f, &p, keys);
     store(
         &mut f,
         &p,

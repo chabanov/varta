@@ -749,6 +749,16 @@ impl LanguageProfile {
     pub fn dictionary_hashing(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, wave-3 collection-hashing stream: `Map` and `Set` find,
+    /// insert and delete through an open-addressing table of entry positions
+    /// probed by allocation-free guest helpers selected by the key type, and
+    /// compact their deleted entries, so every operation costs amortized
+    /// constant time. Admits no syntax and changes no value layout (their
+    /// storage is private to the engine prelude).
+    #[must_use]
+    pub fn collection_hashing(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, strict-members stream: a static read, write, compound or
     /// update, optional chain or destructuring of a name that a closed record,
     /// interface, view, class instance or narrowed union member does not
@@ -3239,6 +3249,7 @@ mod tests {
                 profile.codegen_v2(),
                 profile.incremental_collection(),
                 profile.dictionary_hashing(),
+                profile.collection_hashing(),
                 profile.strict_members(),
                 profile.web_bytes(),
                 profile.sdk_paths(),

@@ -166,6 +166,41 @@ export function main(): void {
 }"#,
     ),
     (
+        "hashed Map and Set tables",
+        r#"class Node { constructor(public label: string) {} }
+export function main(): void {
+  // Growth rebuilds, deletion compactions and clears of tables keyed by
+  // strings, numbers, references and BigInts while cycles mark; keys and
+  // values are fresh objects whose only edges are the entry vectors.
+  const byName = new Map<string, Node>();
+  const byNode = new Map<Node, string[]>();
+  const numbers = new Set<number>();
+  const bigs = new Map<bigint, Node>();
+  let kept: Node[] = [];
+  for (let i = 0; i < 600; i++) {
+    const node = new Node(`n${i}`);
+    byName.set(node.label, node);
+    byNode.set(node, [`a${i}`, `b${i}`]);
+    numbers.add(i * 0.5);
+    bigs.set(BigInt(i % 97), node);
+    if (i % 3 === 0) { kept.push(node); }
+    if (i % 5 === 4) {
+      for (let j = i - 4; j < i; j++) { byName.delete(`n${j}`); numbers.delete(j * 0.5); }
+    }
+    if (i % 7 === 0) {
+      for (const [key, list] of byNode) { if (key.label.length % 2 === 0) { byNode.delete(key); } list.push(`c${i}`); break; }
+    }
+    if (i === 300) { byName.clear(); kept = []; }
+  }
+  let text = 0;
+  byName.forEach((node, name) => { text += name.length + node.label.length; });
+  byNode.forEach((list, node) => { text += node.label.length + list.join('').length; });
+  for (const [key, node] of bigs) { text += Number(key) + node.label.length; }
+  for (const node of kept) { text += byNode.get(node)?.length ?? 0; }
+  console.log(`${byName.size} ${byNode.size} ${numbers.size} ${bigs.size} ${text}`);
+}"#,
+    ),
+    (
         "async frames and promises",
         r#"async function produce(label: string, n: number): Promise<string[]> {
   const out: string[] = [];

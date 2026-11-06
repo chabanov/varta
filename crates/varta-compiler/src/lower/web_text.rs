@@ -145,6 +145,9 @@ impl Lower<'_> {
         if let Some(value) = self.collection_intrinsic(call, name)? {
             return Ok(Some(value));
         }
+        if let Some(value) = self.collection_table(call, name)? {
+            return Ok(Some(value));
+        }
         if name == "varta.text.units" && self.types.profile.web_bytes() {
             return self.text_units_array(call, name).map(Some);
         }
