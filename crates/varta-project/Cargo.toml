@@ -9,6 +9,8 @@ varta-artifact = { path = "../varta-artifact" }
 varta-common = { path = "../varta-common" }
 varta-compiler = { path = "../varta-compiler" }
 varta-runtime = { path = "../varta-runtime" }
+# K8 T1: build-time Tailwind stylesheets from the project's entry CSS.
+varta-tailwind = { path = "../varta-tailwind" }
 serde_json.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -29,3 +31,7 @@ varta-kv-codec = { path = "../varta-kv-codec" }
 # Runs the checked-in wasm32 KV codec beside the native build of the same
 # crate (`browser::kv_codec_tests`); already locked through varta-runtime.
 wasmtime.workspace = true
+# The shared view style engine and the native renderer, which the
+# checked-in wasm32 view engine must agree with (`browser::view_engine_tests`).
+varta-style = { path = "../varta-style" }
+varta-view = { path = "../varta-view" }

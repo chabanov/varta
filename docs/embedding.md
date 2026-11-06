@@ -3020,6 +3020,23 @@ values:
 | Forbidden in `set_style` values | `;`, `{`, `}` |
 <!-- generated:view-stylesheet-tokens:end -->
 
+This grammar and these tables are the host contract for a third-party host
+that implements it on its own, and are unchanged. The Varta engine (the
+native renderer, the compiler's static stylesheet and class checks and,
+since K8 T3, the official browser host through `view-engine.wasm`) admits a
+standards-based superset: CSS Syntax 3 tokenization (comments, escapes,
+`!important`), HTML class names and escaped class selectors, `@layer` with
+importance and conditional layers, `@supports`, `@property`, the CSS-wide
+keywords, Media Queries 4/5 and CSS Values 4 / Color 4–5 values
+([view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3)). A batch
+that uses the superset is invalid for a host that implements only this
+contract, which rejects it as before. A host that wants the superset runs
+the engine's Rust implementation through Wasm, as the official browser host
+does, instead of extending a grammar of its own: it mirrors each batch into
+the engine's session, takes its verdicts, and applies the computed values it
+returns, with the media features, viewport and interaction states as
+recorded inputs.
+
 **Variable values.** `var()` function names are ASCII case-insensitive; custom-property
 names remain case-sensitive. The fallback is a balanced component list, including nested references or
 functions; a bare comma specifies an empty fallback. Unbalanced functions, empty hashes and malformed references also reject

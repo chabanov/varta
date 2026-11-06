@@ -2,6 +2,8 @@
 //! resource section: the native text shaper (`varta-view`) loads at most
 //! these faces and bytes, and packaging (`varta-artifact`) refuses a section
 //! that exceeds them, so a packaged artifact always loads in the shell.
+#[allow(unused_imports)]
+use crate::view::prelude::*;
 
 /// At most this many faces in one font collection.
 pub const MAX_FONT_FACES: usize = 16;

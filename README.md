@@ -34,8 +34,8 @@ reload and Linux/sustained-load acceptance remain open. See the
 [current status](docs/development-plan.md#status) and
 [server stages](docs/development-plan.md#k7-merged-values-approved-2026-11-06).
 
-The latest full gate passes on merged `main` of 2026-11-06: 3975 Rust tests,
-21 ignored, 218 browser Node tests and the reviewed v38 conformance baseline.
+The latest full gate passes on merged `main` of 2026-11-06: 4261 Rust tests,
+25 ignored, 218 browser Node tests and the reviewed v38 conformance baseline.
 These are local macOS implementation checks, with browser Node tests;
 real-browser and other-target acceptance retain their separate scope.
 See [current verification evidence](docs/verification.md#current-verification-evidence--2026-11-06).
@@ -293,6 +293,7 @@ TS/JS projects built on the engine's public APIs.
 | `crates/varta-artifact` | Portable Wasm/manifest and native container I/O, without VM or compiler |
 | `crates/varta-launcher` | The execution-only `varta-runtime` binary distributed with applications |
 | `crates/varta-project` | Development tooling: project configuration/source loading, packaging and policy files |
+| `crates/varta-tailwind` | Development tooling: build-time Tailwind CSS v4 compiler (Rust port, MIT) used by the project pipeline |
 | `crates/varta-cli` | Commands and output, calling the project tooling layer |
 | `crates/varta-conformance` | Developer-only pinned compatibility inventory and isolated case execution |
 | `docs`, `.github` | Implemented specifications, core roadmap and verification |

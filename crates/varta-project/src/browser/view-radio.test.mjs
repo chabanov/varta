@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createViewModel} from './view-model.mjs';
 import {encodeViewBatch} from './view-codec.mjs';
+import { viewEngine } from "./view-engine.node.mjs";
 const create=(node,tag)=>({name:'create_element',node,tag});
 const attr=(node,attribute,text)=>({name:'set_attribute',node,attribute,text});
 const insert=(parent,node)=>({name:'insert',parent,node,before:0});
@@ -9,7 +10,7 @@ const checked=(node,base_seq=0)=>({name:'set_checked',node,checked:1,base_seq});
 const commit=(model,...ops)=>model.commit(encodeViewBatch(ops));
 const name='Ж'.repeat(512);
 function setup(){
-  const model=createViewModel(),ops=[create(2,'div'),insert(1,2),create(1000,'div'),insert(1,1000),{name:'set_title',text:'before'}];
+  const model=createViewModel({viewEngine}),ops=[create(2,'div'),insert(1,2),create(1000,'div'),insert(1,1000),{name:'set_title',text:'before'}];
   for(let node=3;node<103;node++)ops.push(create(node,'input'),attr(node,'type','radio'),attr(node,'name',name),insert(2,node));
   commit(model,...ops,checked(3));return model;
 }
@@ -36,7 +37,7 @@ test('radio subtree scans include unchecked members and roll back reparenting',(
 
 test('radio scans admit the exact work allowance and reject one additional scan',async()=>{
   const {registry}=await import('../../../varta-common/browser/registry.mjs');
-  const {radioWork,radioNodeWork}=registry.view.limits,model=createViewModel();
+  const {radioWork,radioNodeWork}=registry.view.limits,model=createViewModel({viewEngine});
   commit(model,create(2,'input'),attr(2,'type','radio'),attr(2,'name','X'.repeat(1024-4*radioNodeWork)),insert(1,2));
   const count=radioWork/1024,ops=Array.from({length:count},()=>checked(2));
   commit(model,...ops);const before=model.snapshot();assert.equal(before.nodes.find(n=>n.id===2).checked,true);

@@ -1,0 +1,24 @@
+[package]
+name = "varta-tailwind"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Build-time Tailwind CSS compiler (K8 T1): a Rust port of the CSS-first
+# Tailwind CSS v4.3.5 compiler (MIT, Tailwind Labs; see LICENSE-TAILWIND)
+# that turns class candidates and a project's Tailwind entry stylesheet into
+# one deterministic stylesheet. Tooling layer: varta-project uses it at build
+# time; no engine crate or runtime depends on it.
+[dependencies]
+# Static `@supports` resolution asks Varta's own stylesheet grammar whether it
+# accepts a declaration (CSS Conditional 3 §2.1: a UA "supports" a declaration
+# when it would accept it), so the answer is the engine's, not a guess.
+varta-common = { path = "../varta-common" }
+thiserror.workspace = true
+# ECMAScript Number::toString (already locked through the runtime): Tailwind
+# formats computed numbers (opacity percentages, fractions) with JavaScript
+# semantics, and the output must be byte-identical.
+ryu-js.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

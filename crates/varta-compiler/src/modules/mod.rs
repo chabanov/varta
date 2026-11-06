@@ -87,6 +87,9 @@ pub(crate) struct Unit {
     /// The enums, namespaces and classes with static fields the module
     /// exports (v38 `declaration_forms`), lowered by [`crate::desugar`].
     pub declarations: crate::desugar::Exports,
+    /// TSX `class`/`className` expressions that compose a class name from
+    /// parts at run time (see [`crate::classes`]).
+    pub class_compositions: Vec<crate::classes::Composition>,
 }
 pub(crate) struct Graph {
     pub entry: PathBuf,
@@ -176,8 +179,9 @@ impl Builder<'_> {
         // profiles keep parsing every module as TypeScript.
         let tsx = self.profile.tsx() && crate::jsx::is_tsx(&input.path);
         let mut ast = parse::parse_module_with(&source, tsx, self.profile.declaration_forms())?;
+        let mut class_compositions = Vec::new();
         if tsx {
-            crate::jsx::desugar(&mut ast, &source)?;
+            class_compositions = crate::jsx::desugar(&mut ast, &source)?;
         }
         // V38 (`declaration_forms`): enums, namespaces, static fields, class
         // expressions and overload signatures lower to the checked subset
@@ -282,6 +286,7 @@ impl Builder<'_> {
                 stars,
                 text: false,
                 declarations,
+                class_compositions,
             },
         );
         Ok(())

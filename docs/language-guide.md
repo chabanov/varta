@@ -6199,3 +6199,79 @@ Only a default import is allowed, the file must be inside the project
 directory and is never transformed (a byte order mark is an error). An
 editor's TypeScript needs an ambient `declare module '*.css' { const text:
 string; export default text; }` for the import.
+
+#### Tailwind stylesheets (opt-in v38)
+
+Write ordinary TSX with Tailwind CSS classes and no hand-written CSS: name a
+CSS-first Tailwind entry in the configuration, import it as text and apply
+it like any stylesheet. `className` is accepted as an alias of `class` (one
+of the two per element).
+
+```json
+{
+  "entry": "src/main.tsx",
+  "languageProfile": "checked-f64-utf16-v38",
+  "tailwind": { "entry": "src/app.css" }
+}
+```
+
+```css
+/* src/app.css */
+@import "tailwindcss";
+@theme {
+  --color-brand-500: oklch(0.6 0.2 250);
+}
+@custom-variant hocus (&:hover, &:focus);
+@utility content-auto {
+  content-visibility: auto;
+}
+@source inline("bg-brand-{100..900..100}");
+```
+
+```tsx
+import css from './app.css' with { type: 'text' };
+
+type Tone = 'bg-brand-500' | 'bg-red-500';
+
+function Badge(props: { tone: Tone; label: string }): number {
+  return <span className={props.tone}>{props.label}</span>;
+}
+
+export function main(): void {
+  View.stylesheet(1, css);
+  View.mount(<Badge tone="bg-red-500" label="New" />);
+}
+```
+
+`varta check`, `dev` and `build` compile the entry in Rust (a port of
+Tailwind CSS v4.3.5; no Node or JavaScript), with every class token of the
+program: string literals, template text, literal types (`Tone` above
+contributes both members) and TSX values. The generated stylesheet replaces
+the text of `./app.css` in the artifact; the same sources always give the
+same bytes. A class name composed from parts is enumerated when every part
+has a finite union of string-literal types (Tailwind's own scanner cannot do
+this); any other composed name is a compile error, because no build-time
+generator can see it:
+
+```tsx
+type Size = 'sm' | 'lg';
+function Label(props: { size: Size; text: string }): number {
+  return <p class={`text-${props.size}`}>{props.text}</p>; // text-sm, text-lg
+}
+function Bad(size: string): number {
+  return <p class={`text-${size}`}>x</p>;                  // error: `string` is not enumerable
+}
+```
+
+Annotate a constant you compose with (`const tone: 'red' = 'red'`): an
+unannotated `const` string is `string` in the v38 checker.
+
+The entry may import project stylesheets by relative path, at build time
+only (`@import "./components/buttons.css" layer(components);`), before its
+other rules as in CSS.
+
+`@plugin` and `@config` (JavaScript), `@source "path"` (file scanning)
+and `@import` of URLs are rejected; list extra classes with `@source inline(…)`. Until the engine
+stylesheet grammar admits Tailwind's output (track T2: class tokens such as
+`hover:bg-red-500`, `@property`, `oklch()`, `!important`, …), `varta check`
+reports the first construct the grammar refuses inside `app.css`.

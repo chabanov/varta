@@ -1,0 +1,13 @@
+[package]
+name = "varta-style"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The view style engine (`no_std` + `alloc`): stylesheet admission, the
+# cascade, custom and registered properties, computed values and cascade
+# budgets. The native renderer (`varta-view`) links it, and the browser host
+# runs the same code compiled to wasm32 (`varta-style-wasm`, built by
+# `scripts/build-view-engine.py`).
+[dependencies]
+varta-common = { path = "../varta-common", default-features = false, features = ["view"] }

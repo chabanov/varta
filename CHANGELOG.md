@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- K8 T2 standards items and K8 T3: the browser host runs the Rust CSS engine
+  as `view-engine.wasm` (built by `scripts/build-view-engine.py`) and applies
+  its computed values, so browser and native hosts accept, refuse and
+  compute the same styles; the JavaScript CSS checker, variable resolver and
+  custom-property code are removed. The engine adds the CSS-wide keywords on
+  every property, `!important` with Cascade 5 layer order, `@layer` inside
+  `@media` and `@supports`, `@supports`, named colours, multi-colour
+  `color-mix()`, clamped `opacity` and math results, and the desktop shell
+  passes macOS reduced-motion and increased-contrast settings as media
+  inputs.
+- K8 T2 S1–S3, the view CSS engine, by the specifications: stylesheets and
+  values are tokenized by CSS Syntax 3 (comments, escapes decoded before any
+  check, so no escape hides `url()`, `@import` or `!important`); class names
+  follow the HTML class model and escaped class selectors (`.sm\:flex`,
+  `.w-1\/2`) match them in `set_class`, TSX and stylesheets; `@layer`
+  (Cascade 5 order across sheets), `@property` (initial values, non-inherited
+  and syntax-checked registrations) and Media Queries 4/5 (range syntax,
+  `not`/`or`, `hover`, `pointer`, `orientation`, `prefers-reduced-motion`,
+  `prefers-contrast`, `forced-colors`) as recorded host inputs; math
+  functions, every CSS length unit, Color 4/5 colours (`oklch()`, `oklab()`,
+  `lab()`, `lch()`, `hwb()`, modern `rgb()`/`hsl()`, `color-mix()`) with CSS
+  gamut mapping, `opacity` percentages, numeric font weights, `white-space:
+  pre`, `text-align: start | end`, any `transition-property` names and
+  `cubic-bezier()`/`steps()`. Values are lowered at computed-value time to
+  the grammar the native renderer paints, which fixes Tailwind theme colours
+  in `oklch()` through `var()` rendering in Chrome but not natively. The
+  browser host's L0 contract is unchanged. Native and Chrome match at 1x,
+  1.25x and 2x (`scripts/test-native-css-engine.mjs`); the Tailwind
+  application corpus's accepted class uses rise from 25.3% to 70.4%.
 - Native `img`: packaged images (a configuration's new `images` map,
   stored in resource section version 2 and carried by the browser bundle
   under the same names) are laid out and drawn by the native renderer to the
@@ -44,6 +73,22 @@
   Iterable<T>` checks the method. No host ABI or value layout change; v37
   keeps rejecting every form. Conformance: 135 passed, 5 known unsupported of
   140 (new feature `iteration-protocol`).
+- K8 T1: Tailwind CSS at compile level. The new tooling crate
+  `varta-tailwind` ports the CSS-first compiler of Tailwind CSS v4.3.5 to
+  Rust (no Node or JavaScript): candidates, all built-in utilities and
+  variants, theme, Preflight, `@apply`, `@utility`, `@custom-variant`,
+  `@variant`, `@source inline()` and the theme functions, with output in a
+  canonical form (no comments or nesting, static `@supports`, `min-`/`max-`
+  media ranges). `"tailwind": {"entry": "src/app.css"}` makes `check`, `dev`
+  and `build` generate the stylesheet from the module graph's class tokens
+  and serve it as the entry's text resource, deterministically. TSX accepts
+  `className` as an alias of `class`. A class name composed from parts whose
+  types are finite string-literal unions enumerates every combination
+  (bounded); other composed names, and `@plugin`/`@config`, are errors. The
+  entry may `@import` project stylesheets by relative path at build time,
+  under the module path policy. It matches the official compiler on all
+  39,152 oracle candidates; applying full Tailwind output waits for the T2
+  stylesheet grammar.
 - V38 compiled JSON decoders scan string bodies and whitespace, and copy
   escaped strings, sixteen UTF-16 units per step with fixed-width WebAssembly
   SIMD (`simd128`): 0.75 fuel per scanned string byte instead of 11.5, and a

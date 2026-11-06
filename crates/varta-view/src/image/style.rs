@@ -23,11 +23,14 @@ pub(crate) struct Shown {
     pub natural: (f32, f32),
 }
 
-/// The value of an inherited property on `id` or its nearest ancestor.
+/// The value of an inherited property on `id` or its nearest ancestor that
+/// declares one other than `inherit` (Cascade 5 §7.3.2).
 fn inherited(tree: &Tree, env: &Environment, id: u32, property: CssProperty) -> Option<String> {
     let mut node = Some(id);
     while let Some(current) = node {
-        if let Some(value) = tree.computed_property(current, env, property) {
+        if let Some(value) = tree.computed_property(current, env, property)
+            && value != crate::style::INHERIT
+        {
             return Some(value);
         }
         node = tree.nodes.get(&current).and_then(|n| n.parent);

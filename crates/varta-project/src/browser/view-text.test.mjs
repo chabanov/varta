@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {registry} from '../../../varta-common/browser/registry.mjs';
 import {createViewModel} from './view-model.mjs';
 import {encodeViewBatch} from './view-codec.mjs';
+import { viewEngine } from "./view-engine.node.mjs";
 const {retainedTextBytes,fieldValueReservationBytes,valueBytes}=registry.view.limits;
 const create=(node,tag='input')=>({name:'create_element',node,tag});
 const text=(node,text)=>({name:'create_text',node,text});
@@ -10,7 +11,7 @@ const insert=(parent,node)=>({name:'insert',parent,node,before:0});
 const attr=(node,attribute,text)=>({name:'set_attribute',node,attribute,text});
 const commit=(model,...ops)=>model.commit(encodeViewBatch(ops));
 function nearLimit(){
-  const model=createViewModel(),fields=Math.floor(retainedTextBytes/fieldValueReservationBytes),ops=[];
+  const model=createViewModel({viewEngine}),fields=Math.floor(retainedTextBytes/fieldValueReservationBytes),ops=[];
   for(let node=2;node<2+fields;node++)ops.push(create(node),insert(1,node));
   const remaining=retainedTextBytes-fields*fieldValueReservationBytes;
   commit(model,...ops,text(1000,'X'.repeat(remaining)),insert(1,1000));return {model,remaining};
@@ -40,13 +41,13 @@ test('field capacity covers UTF-8 local edits and stays reserved across type cha
   commit(model,{name:'remove',node:2},create(1001),insert(1,1001),{name:'set_title',text:'12345678'});
 });
 test('static payload accumulation is bounded across batches including detached nodes',()=>{
-  const model=createViewModel(),unit='X'.repeat(valueBytes/2),count=retainedTextBytes/unit.length;
+  const model=createViewModel({viewEngine}),unit='X'.repeat(valueBytes/2),count=retainedTextBytes/unit.length;
   for(let start=0;start<count;start+=3){const ops=[];for(let i=start;i<Math.min(start+3,count);i++)ops.push(text(i+2,unit),insert(1,i+2));commit(model,...ops);}
   rejected(model,text(1000,'x'));
   commit(model,{name:'set_text',node:2,text:''},text(1000,unit));
 });
 test('a value written before a checkable type change retains its capacity',()=>{
-  const model=createViewModel(),ops=[];for(let node=2;node<87;node++)ops.push(create(node));
+  const model=createViewModel({viewEngine}),ops=[];for(let node=2;node<87;node++)ops.push(create(node));
   commit(model,...ops,{name:'set_value',node:2,text:'kept',base_seq:0},attr(2,'type','checkbox'));
   rejected(model,create(1000));commit(model,{name:'remove',node:2},create(1000));
 });

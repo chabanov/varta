@@ -255,7 +255,9 @@ self.onmessage = async ({ data }) => {
     Object.assign(implementations, network.implementations);
     const uiPolicy = viewPolicy.createViewPolicy(manifest, permissions,broker.granted);
     const assetNames=new Set(descriptor.resources.filter((resource)=>!resource.font).map((resource)=>resource.key));
-    view = viewWorker.createWorkerView({ send: (message, transfer) => self.postMessage(message, transfer), memory: () => instance.exports[descriptor.memoryExport], application, linkRequested:uiPolicy.linkRequested,assetRequested:(name)=>assetNames.has(name) });
+    if (descriptor.hasView && !(data.viewEngine instanceof Uint8Array)) throw new Error("missing view engine module");
+    const viewEngine = descriptor.hasView ? await WebAssembly.compile(data.viewEngine) : undefined;
+    view = viewWorker.createWorkerView({ viewEngine, send: (message, transfer) => self.postMessage(message, transfer), memory: () => instance.exports[descriptor.memoryExport], application, linkRequested:uiPolicy.linkRequested,assetRequested:(name)=>assetNames.has(name) });
     let checkpoint,checkpointId=0,controlId=0,deliveryId=0,pauseId=0,pause,protocolFailure;
     const protocolFault=(error)=>{protocolFailure=error;checkpoint?.resolve();pause?.resolve();view.pulse();};
     incoming = (message) => {

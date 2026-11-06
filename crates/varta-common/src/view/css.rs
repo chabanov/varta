@@ -6,21 +6,59 @@
 //! Grammars are the static value definitions of [`super::CssProperty::grammar`]
 //! (`a | b` choice, `a{1,4}` repetition, `a || b` any order, `a#` comma list,
 //! `[ … ]` grouping, `name( … )` functions) over the [`super::CssValue`] types.
-//! Values come from guest memory: the lexer rejects any character outside the
-//! value syntax, and a value longer than [`MAX_VALUE_TOKENS`] tokens fails
-//! closed, which bounds the matcher's work.
-use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE};
+//! Values are tokenized by CSS Syntax 3 ([`super::syntax`]): comments are
+//! dropped and escapes decoded before any check, and a value longer than
+//! [`MAX_VALUE_TOKENS`] tokens fails closed, which bounds the matcher's work.
+//!
+//! Two semantics share the grammar engine:
+//!
+//! - [`matches`] is the host contract of the L0 browser host (the registry's
+//!   grammars over the registry's leaf types, unchanged until the browser
+//!   host runs this engine through Wasm);
+//! - [`property_value`] is the engine: the [`grammar`] of each property
+//!   (the registry grammar plus the values the native renderer supports),
+//!   whose leaf types follow CSS Values 4 (every length unit of §6, math
+//!   functions of §10 wherever a numeric type is allowed) and CSS Color 4/5
+//!   ([`color`]). A valid engine value is then lowered ([`lower`]) at
+//!   computed-value time to the host grammar the renderer's consumers read.
+use super::{CssProperty, CssValue, FORBIDDEN_CSS, FORBIDDEN_STYLE_VALUE, syntax};
+#[allow(unused_imports)]
+use crate::view::prelude::*;
+
+pub mod color;
+pub mod math;
 
 /// Tokens of one property value (placeholder budget, like the `DRAFT_*`
 /// limits): every subset grammar needs far fewer.
 pub const MAX_VALUE_TOKENS: usize = 128;
-/// Hexadecimal digits a `<hex>` colour admits: `#rgb`, `#rrggbb`, `#rrggbbaa`.
+/// Hexadecimal digits a `<hex>` colour of the host grammar admits: `#rgb`,
+/// `#rrggbb`, `#rrggbbaa`. The engine also admits `#rgba` (Color 4 §5.2).
 pub const HEX_COLOR_DIGITS: [usize; 3] = [3, 6, 8];
 /// CSS-wide keywords, shared by every keyword check of the subset. A family
 /// name is a custom identifier, which excludes them, and the subset does not
 /// admit them as `font-family` values: the browser would roll back to its own
 /// font, which no native host can supply.
 pub const CSS_WIDE_KEYWORDS: &[&str] = &["inherit", "initial", "unset", "revert", "revert-layer"];
+/// The longest class name (UTF-8 bytes) of the HTML class model the engine
+/// admits in `set_class`, TSX and selectors.
+pub const MAX_CLASS_NAME_BYTES: usize = 256;
+/// Functions that never appear in an engine stylesheet or value, wherever
+/// they occur and however their names are escaped: fetches (`url()` and the
+/// url token, `image-set()`), legacy script (`expression()`) and document
+/// reads (`attr()`, `element()`).
+pub const FORBIDDEN_FUNCTIONS: &[&str] = &[
+    "url",
+    "image-set",
+    "-webkit-image-set",
+    "expression",
+    "attr",
+    "element",
+    "-moz-element",
+];
+/// The magnitude to which an infinite or overlarge lowered length or number
+/// is clamped (CSS Values 4 §10.12 leaves the finite range to the UA); it is
+/// the native renderer's length range.
+pub const MAX_LOWERED_MAGNITUDE: f64 = 1_000_000.0;
 
 /// The CSS-wide keyword an unquoted `font-family` component of `value`
 /// names (ASCII case-insensitively), if any: the diagnostic for a value
@@ -29,12 +67,31 @@ pub const CSS_WIDE_KEYWORDS: &[&str] = &["inherit", "initial", "unset", "revert"
 #[must_use]
 pub fn font_family_css_wide_keyword(value: &str) -> Option<&'static str> {
     lex_value(value)?.iter().find_map(|token| match token {
-        V::Word(word) => CSS_WIDE_KEYWORDS
+        V::Ident(word) => CSS_WIDE_KEYWORDS
             .iter()
             .copied()
             .find(|keyword| word.eq_ignore_ascii_case(keyword)),
         _ => None,
     })
+}
+
+/// Whether `token` is a class name of the HTML class model: one
+/// space-separated token, any code points but ASCII whitespace and
+/// controls, at most [`MAX_CLASS_NAME_BYTES`] bytes.
+#[must_use]
+pub fn class_name(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= MAX_CLASS_NAME_BYTES
+        && !token
+            .chars()
+            .any(|c| c.is_ascii_whitespace() || c.is_control())
+}
+
+/// Whether a `class` attribute value is a list of [`class_name`] tokens
+/// separated by ASCII whitespace.
+#[must_use]
+pub fn class_list(value: &str) -> bool {
+    value.split_ascii_whitespace().all(class_name)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -190,75 +247,103 @@ fn parse(text: &str) -> Option<G> {
     (parser.at == parser.tokens.len()).then_some(grammar)
 }
 
-/// One token of a value.
+/// The unit of a numeric value token.
 #[derive(Debug, Clone, PartialEq)]
-enum V {
-    Word(String),
+pub(crate) enum NumUnit {
+    None,
+    Percent,
+    Dimension(String),
+}
+
+/// One component token of a value (CSS Syntax 3 tokens without
+/// whitespace; a `( … )` simple block is a function with an empty name).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum V {
+    Ident(String),
+    Num {
+        /// The source text: representation plus unit or `%`.
+        text: String,
+        value: f64,
+        integer: bool,
+        unit: NumUnit,
+    },
     Function(String),
     Close,
     Comma,
     Slash,
     Hash(String),
-    Str,
+    Str(String),
+    /// `+`, `-` or `*` (only meaningful inside math functions).
+    Delim(char),
 }
 
-/// Lex a value; `None` for any character outside the value syntax or an
-/// unterminated string.
-fn lex_value(text: &str) -> Option<Vec<V>> {
-    let chars: Vec<char> = text.chars().collect();
+/// Lex a value with the CSS Syntax 3 tokenizer; `None` for a token outside
+/// the value syntax (`;`, braces, brackets, `!`, at-keywords, bad strings
+/// and urls), a forbidden function or url, unbalanced parentheses or more
+/// than [`MAX_VALUE_TOKENS`] tokens.
+pub(crate) fn lex_value(text: &str) -> Option<Vec<V>> {
+    use syntax::Token as T;
     let mut out = Vec::new();
-    let mut i = 0;
     let mut nesting = 0usize;
-    while i < chars.len() {
-        if out.len() > MAX_VALUE_TOKENS {
+    for spanned in syntax::tokenize(text) {
+        if spanned.token == syntax::Token::Whitespace {
+            continue;
+        }
+        if out.len() >= MAX_VALUE_TOKENS {
             return None;
         }
-        let c = chars[i];
-        if c.is_whitespace() {
-            i += 1;
-        } else if c == ',' {
-            out.push(V::Comma);
-            i += 1;
-        } else if c == '/' {
-            out.push(V::Slash);
-            i += 1;
-        } else if c == ')' {
-            nesting = nesting.checked_sub(1)?;
-            out.push(V::Close);
-            i += 1;
-        } else if c == '"' {
-            let end = i + 1 + chars[i + 1..].iter().position(|&d| d == '"')?;
-            out.push(V::Str);
-            i = end + 1;
-        } else if c == '#' {
-            let start = i + 1;
-            i = start;
-            while i < chars.len() && chars[i].is_ascii_hexdigit() {
-                i += 1;
-            }
-            if start == i {
-                return None;
-            }
-            out.push(V::Hash(chars[start..i].iter().collect()));
-        } else {
-            let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || "-_.%".contains(chars[i])) {
-                i += 1;
-            }
-            if i == start {
-                return None;
-            }
-            let word: String = chars[start..i].iter().collect();
-            if chars.get(i) == Some(&'(') {
+        let number = |n: &syntax::Numeric, unit: NumUnit, suffix: &str| V::Num {
+            text: format!("{}{suffix}", n.repr),
+            value: n.value,
+            integer: n.integer,
+            unit,
+        };
+        out.push(match spanned.token {
+            T::Ident(name) => V::Ident(name),
+            T::Function(name) => {
+                if FORBIDDEN_FUNCTIONS
+                    .iter()
+                    .any(|forbidden| name.eq_ignore_ascii_case(forbidden))
+                {
+                    return None;
+                }
                 nesting += 1;
-                out.push(V::Function(word));
-                i += 1;
-            } else {
-                out.push(V::Word(word));
+                V::Function(name)
             }
-        }
+            T::OpenParen => {
+                nesting += 1;
+                V::Function(String::new())
+            }
+            T::CloseParen => {
+                nesting = nesting.checked_sub(1)?;
+                V::Close
+            }
+            T::Comma => V::Comma,
+            T::Delim('/') => V::Slash,
+            T::Delim(c @ ('+' | '-' | '*')) => V::Delim(c),
+            T::Hash { value, .. } => V::Hash(value),
+            T::String(value) => V::Str(value),
+            T::Number(n) => number(&n, NumUnit::None, ""),
+            T::Percentage(n) => number(&n, NumUnit::Percent, "%"),
+            T::Dimension(n, unit) => {
+                let suffix = unit.clone();
+                number(&n, NumUnit::Dimension(unit), &suffix)
+            }
+            _ => return None,
+        });
     }
-    (nesting == 0 && out.len() <= MAX_VALUE_TOKENS).then_some(out)
+    (nesting == 0).then_some(out)
+}
+
+/// Format a number without an exponent (Rust's `Display` of `f64`), with
+/// negative zero as `0`.
+#[must_use]
+pub fn format_number(value: f64) -> String {
+    if value == 0.0 {
+        "0".into()
+    } else {
+        value.to_string()
+    }
 }
 
 fn number(word: &str) -> bool {
@@ -295,27 +380,109 @@ pub fn composite(name: &str) -> Option<&'static str> {
     }
 }
 
-fn leaf(name: &str, token: &V) -> bool {
-    let V::Word(word) = token else {
-        return match (name, token) {
-            ("<hex>", V::Hash(hex)) => HEX_COLOR_DIGITS.contains(&hex.len()),
-            ("<string>", V::Str) => true,
-            _ => false,
-        };
-    };
-    match name {
-        "<number>" => number(word),
-        "<integer>" => {
-            let digits = word.strip_prefix('-').unwrap_or(word);
-            !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+/// Which semantics the leaf types have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// The registry's host contract.
+    Host,
+    /// CSS Values 4 and Color 4/5 leaf types.
+    Engine,
+}
+
+fn host_leaf(name: &str, token: &V) -> bool {
+    match (name, token) {
+        ("<hex>", V::Hash(hex)) => {
+            HEX_COLOR_DIGITS.contains(&hex.len()) && hex.chars().all(|c| c.is_ascii_hexdigit())
         }
-        "<length>" => word == "0" || unit(word, &["px", "rem"]),
-        "<percentage>" => unit(word, &["%"]),
-        "<flex>" => unit(word, &["fr"]),
-        "<time>" => unit(word, &["ms", "s"]),
-        "<ident>" => ident(word),
+        ("<string>", V::Str(_)) => true,
+        ("<ident>", V::Ident(word)) => ident(word),
+        ("<custom-ident>", V::Ident(_)) => true,
+        (_, V::Num { text, .. }) => match name {
+            "<number>" => number(text),
+            "<integer>" => {
+                let digits = text.strip_prefix('-').unwrap_or(text);
+                !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+            }
+            "<length>" => text == "0" || unit(text, &["px", "rem"]),
+            "<percentage>" => unit(text, &["%"]),
+            "<flex>" => unit(text, &["fr"]),
+            "<time>" => unit(text, &["ms", "s"]),
+            _ => false,
+        },
         _ => false,
     }
+}
+
+/// The math base a numeric leaf type resolves to, with its percent hint.
+fn math_target(name: &str) -> Option<(math::Type, Option<math::Base>)> {
+    use math::{Base, Type};
+    Some(match name {
+        "<number>" | "<integer>" => (Type::NUMBER, None),
+        "<length>" => (Type::of(Base::Length), None),
+        "<percentage>" => (Type::of(Base::Percent), None),
+        "<length-percentage>" => (Type::of(Base::Length), Some(Base::Length)),
+        "<time>" => (Type::of(Base::Time), None),
+        "<angle>" => (Type::of(Base::Angle), None),
+        _ => return None,
+    })
+}
+
+/// Engine leaf types: CSS Values 4 numerics and math functions, Color 4/5
+/// colours. Returns the ends of every match at `at`.
+fn engine_leaf(name: &str, tokens: &[V], at: usize) -> Option<Vec<usize>> {
+    let token = tokens.get(at)?;
+    if math::is_math(Some(token)) {
+        let (target, percent_as) = math_target(name)?;
+        let (expression, end) = math::parse(tokens, at)?;
+        return (expression.resolved_type(percent_as) == Some(target)).then(|| vec![end]);
+    }
+    let numeric = |token: &V| match token {
+        V::Num {
+            value,
+            integer,
+            unit,
+            ..
+        } if value.is_finite() => Some((*value, *integer, unit.clone())),
+        _ => None,
+    };
+    let found = match name {
+        "<color>" => return color::parse(tokens, at).map(|(_, end)| vec![end]),
+        "<hex>" => {
+            matches!(token, V::Hash(hex) if color::HEX_DIGITS.contains(&hex.len()) && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        }
+        "<number>" => matches!(numeric(token), Some((_, _, NumUnit::None))),
+        "<integer>" => matches!(numeric(token), Some((_, true, NumUnit::None))),
+        "<length>" => match numeric(token) {
+            Some((value, _, NumUnit::None)) => value == 0.0,
+            Some((_, _, NumUnit::Dimension(unit))) => math::length_unit(&unit).is_some(),
+            _ => false,
+        },
+        "<percentage>" => matches!(numeric(token), Some((_, _, NumUnit::Percent))),
+        "<length-percentage>" => {
+            return Some(
+                ["<length>", "<percentage>"]
+                    .iter()
+                    .filter_map(|leaf| engine_leaf(leaf, tokens, at))
+                    .flatten()
+                    .collect(),
+            );
+        }
+        "<time>" => {
+            matches!(numeric(token), Some((_, _, NumUnit::Dimension(unit))) if math::time_unit(&unit).is_some())
+        }
+        "<angle>" => {
+            matches!(numeric(token), Some((_, _, NumUnit::Dimension(unit))) if math::angle_unit(&unit).is_some())
+        }
+        "<flex>" => {
+            matches!(numeric(token), Some((_, _, NumUnit::Dimension(unit))) if unit.eq_ignore_ascii_case("fr"))
+        }
+        "<ident>" => matches!(token, V::Ident(word) if ident(word)),
+        // CSS Values 4 §3.2: any identifier; callers exclude reserved words.
+        "<custom-ident>" => matches!(token, V::Ident(_)),
+        "<string>" => matches!(token, V::Str(_)),
+        _ => return None,
+    };
+    Some(if found { vec![at + 1] } else { vec![] })
 }
 
 /// `[A-Za-z_][A-Za-z0-9_-]*`
@@ -351,18 +518,21 @@ fn function_end(tokens: &[V], at: usize) -> Option<usize> {
     }
     None
 }
+fn is_var(token: Option<&V>) -> bool {
+    matches!(token, Some(V::Function(name)) if name.eq_ignore_ascii_case("var"))
+}
 fn valid_variables(tokens: &[V]) -> bool {
-    tokens.iter().enumerate().all(|(at, token)| {
-        !matches!(token,V::Function(name) if name.eq_ignore_ascii_case("var"))
-            || !var(tokens, at).is_empty()
-    })
+    tokens
+        .iter()
+        .enumerate()
+        .all(|(at, token)| !is_var(Some(token)) || !var(tokens, at).is_empty())
 }
 /// A reference or a reference with a balanced component fallback.
 fn var(tokens: &[V], at: usize) -> Vec<usize> {
-    if !matches!(tokens.get(at),Some(V::Function(name)) if name.eq_ignore_ascii_case("var")) {
+    if !is_var(tokens.get(at)) {
         return vec![];
     }
-    let Some(V::Word(name)) = tokens.get(at + 1) else {
+    let Some(V::Ident(name)) = tokens.get(at + 1) else {
         return vec![];
     };
     if !name.strip_prefix("--").is_some_and(ident) {
@@ -378,7 +548,7 @@ fn var(tokens: &[V], at: usize) -> Vec<usize> {
     }
 }
 
-fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
+fn ends(grammar: &G, tokens: &[V], at: usize, mode: Mode) -> Vec<usize> {
     let mut out = match grammar {
         G::Token(separator) => {
             let want = match separator {
@@ -393,27 +563,43 @@ fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
         }
         G::Keyword(word) => {
             let mut out = var(tokens, at);
-            if matches!(tokens.get(at),Some(V::Word(found)) if found.eq_ignore_ascii_case(word)) {
+            let found = match tokens.get(at) {
+                Some(V::Ident(found)) => found.eq_ignore_ascii_case(word),
+                Some(V::Num {
+                    text,
+                    unit: NumUnit::None,
+                    ..
+                }) => text == word,
+                _ => false,
+            };
+            if found {
                 out.push(at + 1);
             }
             out
         }
         G::Type(name) => {
             let mut out = var(tokens, at);
-            if let Some(definition) = composite(name) {
+            let engine = (mode == Mode::Engine)
+                .then(|| engine_leaf(name, tokens, at))
+                .flatten();
+            if let Some(found) = engine {
+                out.extend(found);
+            } else if let Some(definition) = composite(name) {
                 if let Some(grammar) = parse(definition) {
-                    out.extend(ends(&grammar, tokens, at));
+                    out.extend(ends(&grammar, tokens, at, mode));
                 }
-            } else if tokens.get(at).is_some_and(|token| leaf(name, token)) {
+            } else if tokens.get(at).is_some_and(|token| host_leaf(name, token)) {
                 out.push(at + 1);
             }
             out
         }
         G::Function(name, inner) => {
-            if tokens.get(at) != Some(&V::Function(name.clone())) {
+            if !matches!(tokens.get(at), Some(V::Function(found)) if found == name
+                || (mode == Mode::Engine && found.eq_ignore_ascii_case(name)))
+            {
                 return vec![];
             }
-            ends(inner, tokens, at + 1)
+            ends(inner, tokens, at + 1, mode)
                 .into_iter()
                 .filter(|&end| tokens.get(end) == Some(&V::Close))
                 .map(|end| end + 1)
@@ -422,7 +608,7 @@ fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
         G::Seq(items) => items.iter().fold(vec![at], |starts, item| {
             let mut next: Vec<usize> = starts
                 .into_iter()
-                .flat_map(|start| ends(item, tokens, start))
+                .flat_map(|start| ends(item, tokens, start, mode))
                 .collect();
             next.sort_unstable();
             next.dedup();
@@ -430,9 +616,9 @@ fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
         }),
         G::Alt(items) => items
             .iter()
-            .flat_map(|item| ends(item, tokens, at))
+            .flat_map(|item| ends(item, tokens, at, mode))
             .collect(),
-        G::AnyOrder(items) => any_order(items, &mut vec![false; items.len()], tokens, at),
+        G::AnyOrder(items) => any_order(items, &mut vec![false; items.len()], tokens, at, mode),
         G::Repeat(inner, min, max, comma) => {
             let mut out = if *min == 0 { vec![at] } else { vec![] };
             let mut frontier = vec![at];
@@ -449,7 +635,7 @@ fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
                         start
                     };
                     next.extend(
-                        ends(inner, tokens, start)
+                        ends(inner, tokens, start, mode)
                             .into_iter()
                             .filter(|&e| e > start),
                     );
@@ -470,29 +656,38 @@ fn ends(grammar: &G, tokens: &[V], at: usize) -> Vec<usize> {
     out
 }
 
-fn any_order(items: &[G], used: &mut [bool], tokens: &[V], at: usize) -> Vec<usize> {
+fn any_order(items: &[G], used: &mut [bool], tokens: &[V], at: usize, mode: Mode) -> Vec<usize> {
     let mut out = Vec::new();
     for index in 0..items.len() {
         if used[index] {
             continue;
         }
-        for end in ends(&items[index], tokens, at) {
+        for end in ends(&items[index], tokens, at, mode) {
             out.push(end);
             used[index] = true;
-            out.extend(any_order(items, used, tokens, end));
+            out.extend(any_order(items, used, tokens, end, mode));
             used[index] = false;
         }
     }
     out
 }
 
-/// Whether `value` matches the value-definition `grammar` exactly.
+fn matches_tokens(grammar: &str, tokens: &[V], mode: Mode) -> bool {
+    parse(grammar).is_some_and(|grammar| ends(&grammar, tokens, 0, mode).contains(&tokens.len()))
+}
+
+/// Whether `value` matches the value-definition `grammar` exactly, with the
+/// host contract's leaf types (the registry's [`CssValue`] definitions).
 #[must_use]
 pub fn matches(grammar: &str, value: &str) -> bool {
-    let (Some(grammar), Some(tokens)) = (parse(grammar), lex_value(value)) else {
-        return false;
-    };
-    ends(&grammar, &tokens, 0).contains(&tokens.len())
+    lex_value(value).is_some_and(|tokens| matches_tokens(grammar, &tokens, Mode::Host))
+}
+
+/// Whether `value` matches `grammar` with the engine's leaf types (CSS
+/// Values 4 numerics and math functions, Color 4/5 colours, `<angle>`).
+#[must_use]
+pub fn matches_engine(grammar: &str, value: &str) -> bool {
+    lex_value(value).is_some_and(|tokens| matches_tokens(grammar, &tokens, Mode::Engine))
 }
 
 /// Whether every grammar of the registry parses (checked by the unit tests).
@@ -501,64 +696,513 @@ pub fn grammar_parses(grammar: &str) -> bool {
     parse(grammar).is_some()
 }
 
-/// Whether `text` contains a forbidden CSS token, ASCII case-insensitively.
+/// Whether `text` contains a forbidden CSS token of the host contract's
+/// raw-text check, ASCII case-insensitively.
 #[must_use]
 pub fn forbidden(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     FORBIDDEN_CSS.iter().any(|token| lower.contains(token))
 }
 
-/// Whether `value` is a valid value of `property`: no forbidden token or
-/// structural character, the property grammar, and the restriction of its
-/// note (nonnegative values; opacity between 0 and 1).
+/// The engine's value grammar of `property`: the registry grammar, plus the
+/// values of the CSS specifications the native renderer supports.
 #[must_use]
-pub fn property_value(property: CssProperty, value: &str) -> bool {
-    if forbidden(value) || FORBIDDEN_STYLE_VALUE.iter().any(|c| value.contains(c)) {
-        return false;
-    }
-    let Some(tokens) = lex_value(value) else {
-        return false;
-    };
-    // A reference may substitute an empty or multiple-component sequence.
-    // Its presence defers the whole property grammar, not just one atom.
-    if tokens
-        .iter()
-        .any(|token| matches!(token,V::Function(name) if name.eq_ignore_ascii_case("var")))
-    {
-        return valid_variables(&tokens);
-    }
-    if !matches(property.grammar(), value) {
-        return false;
-    }
-    let words = || {
-        tokens.iter().filter_map(|token| match token {
-            V::Word(word) if !word.starts_with("--") => Some(word.as_str()),
-            _ => None,
-        })
-    };
+pub fn grammar(property: CssProperty) -> &'static str {
+    use CssProperty as P;
     match property {
-        CssProperty::Padding
-        | CssProperty::PaddingTop
-        | CssProperty::PaddingRight
-        | CssProperty::PaddingBottom
-        | CssProperty::PaddingLeft
-        | CssProperty::FlexGrow
-        | CssProperty::FlexShrink => words().all(|word| !word.starts_with('-')),
-        CssProperty::Opacity => {
-            words().all(|word| word.parse::<f64>().is_ok_and(|n| (0.0..=1.0).contains(&n)))
+        // CSS Fonts 4 §2.2: `<font-weight-absolute>`; numbers in [1, 1000].
+        P::FontWeight => "normal | bold | <number>",
+        // CSS Color 4 §11.2: `<alpha-value>`.
+        P::Opacity => "<number> | <percentage>",
+        // CSS Text 3 §3: `pre` is the user-agent default of `pre` elements.
+        P::WhiteSpace => "normal | nowrap | pre | pre-wrap",
+        // CSS Text 3 §7.1: `start`/`end` (the renderer is left-to-right).
+        P::TextAlign => "left | center | right | start | end",
+        // CSS Transitions 1 §2.1: any property name; unknown ones are kept
+        // and ignored.
+        P::TransitionProperty => "none | [all | <custom-ident>]#",
+        // CSS Easing 1 §2.2 and §2.3.
+        P::TransitionTimingFunction => {
+            "[linear | ease | ease-in | ease-out | ease-in-out | step-start | step-end | cubic-bezier(<number>, <number>, <number>, <number>) | steps(<integer> [, [jump-start | jump-end | jump-none | jump-both | start | end]]?)]#"
         }
-        CssProperty::FontFamily => font_family_css_wide_keyword(value).is_none(),
+        _ => property.grammar(),
+    }
+}
+
+/// Values of the CSS specifications the native layout does not support yet
+/// (CSS Display 3 §2, Positioned Layout 3 §2, Sizing 3 §3.2, Overflow 3
+/// §3, Text 3 §3 and §7.1, Backgrounds 3 §4.2): refused as unrenderable, with
+/// a clearer diagnostic than an unknown value.
+fn unrendered(property: CssProperty) -> Option<&'static str> {
+    use CssProperty as P;
+    Some(match property {
+        P::Display => {
+            "contents | list-item | inline-block | inline-flex | inline-grid | inline-table | flow-root | table | table-row-group | table-header-group | table-footer-group | table-row | table-cell | table-column-group | table-column | table-caption | -webkit-box"
+        }
+        P::Position => "sticky",
+        P::Width | P::Height | P::MinWidth | P::MinHeight | P::MaxWidth | P::MaxHeight => {
+            "min-content | max-content | fit-content | fit-content(<length-percentage>) | stretch"
+        }
+        P::Overflow => "[visible | hidden | clip | scroll | auto]{1,2}",
+        P::WhiteSpace => "pre-line | break-spaces",
+        P::TextAlign => "justify | match-parent",
+        P::BorderStyle | P::OutlineStyle => {
+            "[none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset]{1,4}"
+        }
+        _ => return None,
+    })
+}
+
+/// Why the engine refuses a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Outside the property's grammar (or the specification).
+    Invalid,
+    /// Valid CSS the native renderer cannot render yet (for example `em`
+    /// outside `font-size`, `ch`/`lh`, a sum of a percentage and a length,
+    /// or `currentcolor` inside `color-mix()`).
+    Unrenderable,
+}
+
+/// The reference metrics of [`lower`]: the root font size for `rem` and the
+/// viewport for viewport-percentage units, in CSS pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Context {
+    pub root_font_size: f64,
+    pub viewport_width: f64,
+    pub viewport_height: f64,
+}
+impl Context {
+    /// Nominal metrics for a parse-time renderability check: whether a
+    /// value lowers does not depend on them.
+    pub const NOMINAL: Self = Self {
+        root_font_size: super::stylesheet::REM_PIXELS,
+        viewport_width: 1024.0,
+        viewport_height: 768.0,
+    };
+}
+
+/// Properties whose numeric slots are nonnegative (CSS Box 3, Sizing 3,
+/// Flexbox 1, Fonts 4, Backgrounds 3): a math result is clamped to zero
+/// (Values 4 §10.12); a negative literal is refused where the host grammar's
+/// note says so.
+fn nonnegative(property: CssProperty) -> bool {
+    use CssProperty as P;
+    matches!(
+        property,
+        P::Width
+            | P::Height
+            | P::MinWidth
+            | P::MinHeight
+            | P::MaxWidth
+            | P::MaxHeight
+            | P::Padding
+            | P::PaddingTop
+            | P::PaddingRight
+            | P::PaddingBottom
+            | P::PaddingLeft
+            | P::Gap
+            | P::RowGap
+            | P::ColumnGap
+            | P::FlexGrow
+            | P::FlexShrink
+            | P::FlexBasis
+            | P::BorderWidth
+            | P::OutlineWidth
+            | P::BorderRadius
+            | P::FontSize
+            | P::LineHeight
+            | P::TransitionDuration
+    )
+}
+/// Properties whose numbers are integers (Values 4 §10.12 rounds math).
+fn integer_property(property: CssProperty) -> bool {
+    matches!(
+        property,
+        CssProperty::ZIndex | CssProperty::GridColumn | CssProperty::GridRow
+    )
+}
+
+/// Literal restrictions the grammar does not express, over the tokens that
+/// are not inside a math function.
+fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
+    let mut depth = 0usize;
+    let mut math_depth = None;
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            V::Function(_) => {
+                if math_depth.is_none() && math::is_math(Some(token)) {
+                    math_depth = Some(depth);
+                }
+                depth += 1;
+                continue;
+            }
+            V::Close => {
+                depth = depth.saturating_sub(1);
+                if math_depth == Some(depth) {
+                    math_depth = None;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if math_depth.is_some() {
+            continue;
+        }
+        let ok = match (property, token) {
+            (
+                CssProperty::Padding
+                | CssProperty::PaddingTop
+                | CssProperty::PaddingRight
+                | CssProperty::PaddingBottom
+                | CssProperty::PaddingLeft
+                | CssProperty::FlexGrow
+                | CssProperty::FlexShrink,
+                V::Num { value, text, .. },
+            ) => *value >= 0.0 && !text.starts_with('-'),
+            // Color 4 §11.2: an `<alpha-value>` outside [0, 1] is valid and
+            // clamped at computed-value time; the host grammar refuses it.
+            (CssProperty::Opacity, V::Num { value, unit, .. }) => match (unit, mode) {
+                (NumUnit::Percent | NumUnit::None, Mode::Engine) => value.is_finite(),
+                (NumUnit::None, Mode::Host) => (0.0..=1.0).contains(value),
+                _ => false,
+            },
+            (CssProperty::FontWeight, V::Num { value, .. }) => (1.0..=1000.0).contains(value),
+            (CssProperty::TransitionProperty, V::Ident(word)) => {
+                (tokens.len() == 1 || !word.eq_ignore_ascii_case("none"))
+                    && !CSS_WIDE_KEYWORDS
+                        .iter()
+                        .any(|keyword| word.eq_ignore_ascii_case(keyword))
+                    && !word.eq_ignore_ascii_case("default")
+            }
+            (CssProperty::TransitionTimingFunction, V::Num { value, .. }) => {
+                timing_argument(tokens, index, *value)
+            }
+            _ => true,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    property != CssProperty::FontFamily || !tokens.iter().any(|token| matches!(token, V::Ident(word) if CSS_WIDE_KEYWORDS.iter().any(|k| word.eq_ignore_ascii_case(k))))
+}
+
+/// CSS Easing 1: the x coordinates of `cubic-bezier()` lie in [0, 1]; a
+/// `steps()` count is positive (at least 2 with `jump-none`).
+fn timing_argument(tokens: &[V], index: usize, value: f64) -> bool {
+    let mut open = index;
+    while open > 0 && !matches!(tokens[open], V::Function(_)) {
+        open -= 1;
+    }
+    let position = index - open;
+    match &tokens[open] {
+        V::Function(name) if name.eq_ignore_ascii_case("cubic-bezier") => {
+            !matches!(position, 1 | 5) || (0.0..=1.0).contains(&value)
+        }
+        V::Function(name) if name.eq_ignore_ascii_case("steps") => {
+            let jump_none = matches!(tokens.get(index + 2), Some(V::Ident(word)) if word.eq_ignore_ascii_case("jump-none"));
+            position != 1 || value >= if jump_none { 2.0 } else { 1.0 }
+        }
         _ => true,
     }
 }
 
-/// Whether `value` is a valid custom-property value: one or more lexable
-/// value tokens, without forbidden text or structural characters.
+/// The engine's verdict on `value` for `property`: forbidden text and
+/// structural characters, the engine [`grammar`], literal restrictions and
+/// whether the native renderer can render it ([`lower`]). A value with a
+/// `var()` reference defers the whole grammar to computed-value time (CSS
+/// Variables 1 §3).
+///
+/// # Errors
+/// Why the value is refused.
+pub fn check(property: CssProperty, value: &str) -> Result<(), Refusal> {
+    if FORBIDDEN_STYLE_VALUE.iter().any(|c| value.contains(c)) {
+        return Err(Refusal::Invalid);
+    }
+    let tokens = lex_value(value).ok_or(Refusal::Invalid)?;
+    // A reference may substitute an empty or multiple-component sequence.
+    // Its presence defers the whole property grammar, not just one atom.
+    if tokens.iter().any(|token| is_var(Some(token))) {
+        return valid_variables(&tokens)
+            .then_some(())
+            .ok_or(Refusal::Invalid);
+    }
+    // Cascade 5 §7.3: every property takes the CSS-wide keywords as its
+    // whole value. `font-family: initial` names the user agent's own initial
+    // font, which no native host can supply.
+    if let [V::Ident(word)] = tokens.as_slice()
+        && CSS_WIDE_KEYWORDS
+            .iter()
+            .any(|keyword| word.eq_ignore_ascii_case(keyword))
+    {
+        return if property == CssProperty::FontFamily && word.eq_ignore_ascii_case("initial") {
+            Err(Refusal::Invalid)
+        } else {
+            Ok(())
+        };
+    }
+    if !matches_tokens(grammar(property), &tokens, Mode::Engine) {
+        let specified = unrendered(property)
+            .is_some_and(|values| matches_tokens(values, &tokens, Mode::Engine));
+        return Err(if specified {
+            Refusal::Unrenderable
+        } else {
+            Refusal::Invalid
+        });
+    }
+    if !literal_notes(property, &tokens, Mode::Engine) {
+        return Err(Refusal::Invalid);
+    }
+    lower(property, value, &Context::NOMINAL)
+        .map(|_| ())
+        .ok_or(Refusal::Unrenderable)
+}
+
+/// Whether `value` is a valid engine value of `property` that the native
+/// renderer can render ([`check`]).
+#[must_use]
+pub fn property_value(property: CssProperty, value: &str) -> bool {
+    check(property, value).is_ok()
+}
+
+/// Whether `value` is a valid custom-property value (CSS Variables 1 §2:
+/// any declaration value, here the value tokens of the subset, possibly
+/// empty), without forbidden functions or structural characters.
 #[must_use]
 pub fn custom_value(value: &str) -> bool {
-    !forbidden(value)
-        && !FORBIDDEN_STYLE_VALUE.iter().any(|c| value.contains(c))
-        && lex_value(value).is_some_and(|tokens| !tokens.is_empty() && valid_variables(&tokens))
+    !FORBIDDEN_STYLE_VALUE.iter().any(|c| value.contains(c))
+        && lex_value(value).is_some_and(|tokens| valid_variables(&tokens))
+}
+
+/// The stored form of a source value: the source text, or its CSS Syntax 3
+/// serialization when it has comments or escapes, so that later text scans
+/// (`var()` substitution) never see either.
+#[must_use]
+pub fn normalize(value: &str) -> String {
+    let value = value.trim_matches(|c: char| syntax::whitespace(c));
+    if syntax::needs_serialization(value) {
+        let tokens = syntax::tokenize(value);
+        let first = tokens
+            .iter()
+            .position(|t| t.token != syntax::Token::Whitespace);
+        let last = tokens
+            .iter()
+            .rposition(|t| t.token != syntax::Token::Whitespace);
+        match (first, last) {
+            (Some(first), Some(last)) => syntax::serialize(&tokens[first..=last]),
+            _ => String::new(),
+        }
+    } else {
+        value.to_owned()
+    }
+}
+
+/// Serialize lowered tokens for the renderer's consumers.
+fn join(parts: &[String]) -> String {
+    let mut out = String::new();
+    for (index, part) in parts.iter().enumerate() {
+        let previous = index.checked_sub(1).map(|i| parts[i].as_str());
+        let glue = !(previous.is_none_or(|p| p.ends_with('(')) || part == ")" || part == ",");
+        if glue {
+            out.push(' ');
+        }
+        out.push_str(part);
+    }
+    out
+}
+
+fn clamp_magnitude(value: f64) -> f64 {
+    value.clamp(-MAX_LOWERED_MAGNITUDE, MAX_LOWERED_MAGNITUDE)
+}
+
+/// Lower one math function to a host-grammar component.
+fn lower_math(
+    property: CssProperty,
+    tokens: &[V],
+    at: usize,
+    context: &Context,
+) -> Option<(String, usize)> {
+    use math::{Base, Type};
+    let (expression, end) = math::parse(tokens, at)?;
+    let font_size = property == CssProperty::FontSize;
+    let resolution = math::Resolution {
+        // In `font-size`, `em` is the parent's size: a percentage.
+        em: None,
+        rem: context.root_font_size,
+        viewport_width: context.viewport_width,
+        viewport_height: context.viewport_height,
+    };
+    let percent_as = Some(Base::Length);
+    let kind = expression
+        .resolved_type(None)
+        .or_else(|| expression.resolved_type(percent_as))?;
+    let mut evaluated = if font_size {
+        expression.evaluate_font_size(&resolution)?
+    } else {
+        expression.evaluate(&resolution)?
+    };
+    if evaluated.mixed {
+        return None;
+    }
+    if nonnegative(property) {
+        evaluated.value = evaluated.value.max(0.0);
+    }
+    let value = clamp_magnitude(evaluated.value);
+    let text = if kind == Type::NUMBER {
+        let value = if integer_property(property) {
+            (value + 0.5).libm_floor()
+        } else if property == CssProperty::Opacity {
+            value.clamp(0.0, 1.0)
+        } else if property == CssProperty::FontWeight {
+            // Fonts 4 §2.2: a math result is clamped to [1, 1000].
+            value.clamp(1.0, 1000.0)
+        } else {
+            value
+        };
+        format_number(value)
+    } else if kind == Type::of(Base::Percent) {
+        if property == CssProperty::Opacity {
+            format_number((value / 100.0).clamp(0.0, 1.0))
+        } else {
+            format!("{}%", format_number(value))
+        }
+    } else if kind == Type::of(Base::Length) {
+        if evaluated.percent {
+            format!("{}%", format_number(value))
+        } else {
+            format!("{}px", format_number(value))
+        }
+    } else if kind == Type::of(Base::Time) {
+        format!("{}ms", format_number(value))
+    } else if kind == Type::of(Base::Angle) {
+        format!("{}deg", format_number(value))
+    } else {
+        return None;
+    };
+    Some((text, end))
+}
+
+/// Lower one numeric token whose unit the host grammar lacks.
+fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<String> {
+    let V::Num {
+        text, value, unit, ..
+    } = token
+    else {
+        return None;
+    };
+    match unit {
+        NumUnit::Percent if property == CssProperty::Opacity => {
+            Some(format_number((value / 100.0).clamp(0.0, 1.0)))
+        }
+        NumUnit::None if property == CssProperty::Opacity => {
+            Some(format_number(value.clamp(0.0, 1.0)))
+        }
+        NumUnit::Dimension(name) => {
+            let lower = name.to_ascii_lowercase();
+            if matches!(lower.as_str(), "px" | "rem" | "fr" | "ms" | "s") {
+                let repr = &text[..text.len() - name.len()];
+                return Some(format!("{repr}{lower}"));
+            }
+            match math::length_unit(&lower)? {
+                math::LengthUnit::Em if property == CssProperty::FontSize => {
+                    Some(format!("{}%", format_number(value * 100.0)))
+                }
+                math::LengthUnit::Em | math::LengthUnit::Unresolved => None,
+                math::LengthUnit::Rem => Some(format!("{}rem", format_number(*value))),
+                unit => {
+                    let vw = context.viewport_width / 100.0;
+                    let vh = context.viewport_height / 100.0;
+                    let factor = match unit {
+                        math::LengthUnit::Absolute(factor) => factor,
+                        math::LengthUnit::ViewportWidth => vw,
+                        math::LengthUnit::ViewportHeight => vh,
+                        math::LengthUnit::ViewportMin => vw.min(vh),
+                        _ => vw.max(vh),
+                    };
+                    Some(format!(
+                        "{}px",
+                        format_number(clamp_magnitude(value * factor))
+                    ))
+                }
+            }
+        }
+        _ => Some(text.clone()),
+    }
+}
+
+/// Lower a valid engine value of `property` (after `var()` substitution) to
+/// the host grammar the native renderer's consumers read: math functions
+/// are evaluated (CSS Values 4 §10.10) with lengths in `px` and the results
+/// range-checked (§10.12), absolute and viewport units become `px`, `em`
+/// in `font-size` a percentage, colours `rgba()` after gamut mapping, and
+/// `opacity` percentages numbers. `None` when the native renderer cannot
+/// render the value. A value already in the host grammar is returned as is.
+#[must_use]
+pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<String> {
+    let tokens = lex_value(value)?;
+    let target = grammar(property);
+    if matches_tokens(target, &tokens, Mode::Host) && literal_notes(property, &tokens, Mode::Host) {
+        return Some(value.to_owned());
+    }
+    let mut parts = Vec::with_capacity(tokens.len());
+    let mut at = 0;
+    while let Some(token) = tokens.get(at) {
+        if math::is_math(Some(token)) {
+            let (text, end) = lower_math(property, &tokens, at, context)?;
+            parts.push(text);
+            at = end;
+            continue;
+        }
+        let colour = match token {
+            V::Hash(hex) => !HEX_COLOR_DIGITS.contains(&hex.len()),
+            // Color 4 §6.1 named colours, where the property takes a colour.
+            V::Ident(name) => grammar(property).contains("<color>") && color::named(name).is_some(),
+            V::Function(name) => [
+                "rgb",
+                "rgba",
+                "hsl",
+                "hsla",
+                "hwb",
+                "lab",
+                "lch",
+                "oklab",
+                "oklch",
+                "color-mix",
+            ]
+            .iter()
+            .any(|f| name.eq_ignore_ascii_case(f)),
+            _ => false,
+        };
+        if colour {
+            let (parsed, end) = color::parse(&tokens, at)?;
+            let color::Parsed::Color(color) = parsed else {
+                return None;
+            };
+            parts.push(color::to_legacy(color));
+            at = end;
+            continue;
+        }
+        parts.push(match token {
+            V::Ident(word) => word.to_ascii_lowercase(),
+            V::Num { .. } => lower_numeric(property, token, context)?,
+            V::Function(name) => format!("{}(", name.to_ascii_lowercase()),
+            V::Close => ")".into(),
+            V::Comma => ",".into(),
+            V::Slash => "/".into(),
+            V::Hash(hex) => format!("#{hex}"),
+            V::Str(text) => {
+                let mut out = String::new();
+                syntax::serialize_string(text, &mut out);
+                out
+            }
+            V::Delim(c) => c.to_string(),
+        });
+        at += 1;
+    }
+    let lowered = join(&parts);
+    let tokens = lex_value(&lowered)?;
+    (matches_tokens(target, &tokens, Mode::Host) && literal_notes(property, &tokens, Mode::Host))
+        .then_some(lowered)
 }
 
 #[cfg(test)]
@@ -570,28 +1214,48 @@ mod tests {
         for value in ["\"open", "#", "!", "a +", "", "var(--)", "var(--a,)", "（"] {
             let _ = matches("<string> | <ident>", value);
         }
-        assert!(!matches("<string>", "\"open"));
-        let long = "1px ".repeat(MAX_VALUE_TOKENS + 1);
-        assert!(!matches("<length>+", &long));
+        assert!(!matches("<length>+", &"1px ".repeat(MAX_VALUE_TOKENS + 1)));
         assert!(matches("<length>+", &"1px ".repeat(MAX_VALUE_TOKENS)));
         assert!(!property_value(CssProperty::Padding, "-1px"));
         assert!(property_value(CssProperty::Padding, "var(--gap)"));
         assert!(property_value(CssProperty::Display, "var(--mode)"));
         assert!(property_value(CssProperty::Display, "var(--mode, none)"));
         assert!(property_value(CssProperty::Display, "var(--mode,)"));
-        assert!(!property_value(CssProperty::Opacity, "1.5"));
+        assert!(property_value(CssProperty::Opacity, "1.5"));
+        assert_eq!(
+            lower(CssProperty::Opacity, "1.5", &Context::NOMINAL).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            lower(CssProperty::Opacity, "-20%", &Context::NOMINAL).as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            lower(CssProperty::Color, "Red", &Context::NOMINAL).as_deref(),
+            Some("rgba(255, 0, 0, 1)")
+        );
+        assert_eq!(
+            lower(CssProperty::Border, "1px solid tomato", &Context::NOMINAL).as_deref(),
+            Some("1px solid rgba(255, 99, 71, 1)")
+        );
+        assert_eq!(
+            lower(CssProperty::FontWeight, "calc(2000)", &Context::NOMINAL).as_deref(),
+            Some("1000")
+        );
         assert!(property_value(CssProperty::Opacity, "0.5"));
         assert!(!property_value(CssProperty::Color, "#fff;"));
         assert!(!property_value(CssProperty::Color, "URL(x)"));
-        for value in [
-            "inherit",
-            "INITIAL",
-            "\"A\", unset",
-            "revert",
-            "revert-layer, serif",
-        ] {
+        assert!(!property_value(CssProperty::Color, "\\75 rl(x)"));
+        assert!(!property_value(CssProperty::Color, "#fff !important"));
+        // Cascade 5 §7.3: a CSS-wide keyword is a whole value; inside a
+        // family list it is invalid, and `initial` names the user agent's
+        // own font, which no native host can supply.
+        for value in ["INITIAL", "\"A\", unset", "revert-layer, serif"] {
             assert!(!property_value(CssProperty::FontFamily, value), "{value}");
             assert!(font_family_css_wide_keyword(value).is_some(), "{value}");
+        }
+        for value in ["inherit", "unset", "revert", "Revert-Layer"] {
+            assert!(property_value(CssProperty::FontFamily, value), "{value}");
         }
         // A quoted name is a family; a keyword inside a longer name is not one.
         for value in ["\"inherit\"", "inheritance, serif", "monospace"] {
@@ -599,7 +1263,161 @@ mod tests {
             assert_eq!(font_family_css_wide_keyword(value), None, "{value}");
         }
         assert!(custom_value("#0a0a0a"));
+        assert!(custom_value(""));
         assert!(!custom_value("a; b"));
-        assert!(!custom_value(" "));
+        assert!(custom_value("calc(var(--spacing) * 4)"));
+    }
+
+    #[test]
+    fn class_names_follow_the_html_class_model() {
+        for name in [
+            "sm:flex",
+            "w-1/2",
+            "p-0.5",
+            "[mask:url(x)]",
+            "!",
+            "é",
+            "2xl:x",
+        ] {
+            assert!(class_name(name), "{name}");
+        }
+        for name in ["", "a b", "a\u{7}", &"x".repeat(MAX_CLASS_NAME_BYTES + 1)] {
+            assert!(!class_name(name), "{name:?}");
+        }
+        assert!(class_list(" sm:flex  hover:bg-x/50 "));
+    }
+
+    #[test]
+    fn engine_values_follow_values_4_and_color_4() {
+        use CssProperty as P;
+        for (property, value) in [
+            (P::Width, "calc(var(--spacing) * 4)"),
+            (P::Width, "calc(0.25rem * 4)"),
+            (P::Width, "50vw"),
+            (P::Width, "calc(1/2 * 100%)"),
+            (P::Width, "1in"),
+            (P::Padding, "calc(1px - 4px) 2PX"),
+            (P::MarginTop, "calc(1px * -1)"),
+            (P::LineHeight, "calc(1.25 / 0.875)"),
+            (P::FontSize, "1.5em"),
+            (P::FontSize, "calc(2em * 0.5)"),
+            (P::Color, "oklch(51.1% 0.262 276.966)"),
+            (P::Color, "color-mix(in oklab, #000 50%, transparent)"),
+            (P::BackgroundColor, "rgb(0 0 0 / 0.5)"),
+            (P::BorderColor, "#0f08"),
+            (P::Opacity, "50%"),
+            (P::FontWeight, "350"),
+            (P::ZIndex, "calc(1.5)"),
+            (P::BorderRadius, "calc(infinity * 1px)"),
+            (P::TransitionTimingFunction, "cubic-bezier(0.4, 0, 0.2, 1)"),
+            (P::TransitionTimingFunction, "steps(4, jump-end)"),
+            (
+                P::TransitionProperty,
+                "color, background-color, --tw-gradient-from, fill",
+            ),
+            (P::TransitionDuration, "calc(0.1s * 2)"),
+            (P::WhiteSpace, "pre"),
+            (P::TextAlign, "start"),
+        ] {
+            assert_eq!(
+                check(property, value),
+                Ok(()),
+                "{}: {value}",
+                property.name()
+            );
+        }
+        for (property, value, refusal) in [
+            (P::Width, "calc(1px + 1)", Refusal::Invalid),
+            (P::Width, "calc(100% - 1rem)", Refusal::Unrenderable),
+            (P::Width, "2em", Refusal::Unrenderable),
+            (P::Width, "2ch", Refusal::Unrenderable),
+            (P::Width, "2lh", Refusal::Unrenderable),
+            (P::Width, "round(1px, 2px)", Refusal::Invalid),
+            (
+                P::Color,
+                "color-mix(in oklab, currentcolor 50%, transparent)",
+                Refusal::Unrenderable,
+            ),
+            (P::Color, "notacolor", Refusal::Invalid),
+            (P::Opacity, "150%x", Refusal::Invalid),
+            (P::FontWeight, "1001", Refusal::Invalid),
+            (P::TransitionProperty, "a, none", Refusal::Invalid),
+            (
+                P::TransitionTimingFunction,
+                "cubic-bezier(2, 0, 0, 1)",
+                Refusal::Invalid,
+            ),
+            (
+                P::TransitionTimingFunction,
+                "steps(1, jump-none)",
+                Refusal::Invalid,
+            ),
+            (P::Display, "inline-block", Refusal::Unrenderable),
+            (P::Display, "inline-blocks", Refusal::Invalid),
+            (P::Position, "sticky", Refusal::Unrenderable),
+            (P::Width, "fit-content", Refusal::Unrenderable),
+        ] {
+            assert_eq!(
+                check(property, value),
+                Err(refusal),
+                "{}: {value}",
+                property.name()
+            );
+        }
+    }
+
+    #[test]
+    fn lowering_produces_the_host_grammar() {
+        use CssProperty as P;
+        let context = Context::NOMINAL;
+        let lower = |property, value| lower(property, value, &context);
+        assert_eq!(lower(P::Width, "12px").as_deref(), Some("12px"));
+        assert_eq!(
+            lower(P::Width, "calc(0.25rem * 4)").as_deref(),
+            Some("16px")
+        );
+        assert_eq!(lower(P::Width, "calc(1/2 * 100%)").as_deref(), Some("50%"));
+        assert_eq!(lower(P::Width, "10vw").as_deref(), Some("102.4px"));
+        assert_eq!(lower(P::Height, "100dvh").as_deref(), Some("768px"));
+        assert_eq!(
+            lower(P::Padding, "calc(1px - 4px) 2PX").as_deref(),
+            Some("0px 2px")
+        );
+        assert_eq!(
+            lower(P::MarginTop, "calc(4px * -1)").as_deref(),
+            Some("-4px")
+        );
+        assert_eq!(lower(P::FontSize, "1.5em").as_deref(), Some("150%"));
+        assert_eq!(lower(P::Opacity, "50%").as_deref(), Some("0.5"));
+        assert_eq!(lower(P::ZIndex, "calc(1.5)").as_deref(), Some("2"));
+        assert_eq!(
+            lower(P::BorderRadius, "calc(infinity * 1px)").as_deref(),
+            Some("1000000px")
+        );
+        assert_eq!(
+            lower(P::Color, "color-mix(in oklab, #ff0000 50%, transparent)").as_deref(),
+            Some("rgba(255, 0, 0, 0.5)")
+        );
+        assert_eq!(
+            lower(P::Border, "1px solid oklch(100% 0 0)").as_deref(),
+            Some("1px solid rgba(255, 255, 255, 1)")
+        );
+        assert_eq!(
+            lower(P::TransitionDuration, "calc(0.1s * 2)").as_deref(),
+            Some("200ms")
+        );
+    }
+
+    #[test]
+    fn host_grammar_keeps_the_registry_semantics() {
+        assert!(!matches("<length>", "1em"));
+        assert!(!matches("<length>", "calc(1px)"));
+        assert!(!matches("<color>", "oklch(0.5 0.1 10)"));
+        assert!(!matches("<length>", "1PX"));
+        assert!(!matches("<number>", "1e3"));
+        assert!(matches("<color>", "rgba(0, 0, 0, 0.4)"));
+        assert!(matches_engine("<length>", "1PX"));
+        assert!(matches_engine("<number>", "1e3"));
+        assert!(matches_engine("<angle>", "0.5turn"));
     }
 }

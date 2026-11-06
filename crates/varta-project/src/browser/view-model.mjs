@@ -1,8 +1,7 @@
 import { registry } from "../../../varta-common/browser/registry.mjs";
 import { decodeViewBatch, ViewProtocolError } from "./view-codec.mjs";
-import { potentialExpandedValues } from './view-expansion.mjs';
 import { potentialNamingWork } from './view-naming.mjs';
-import { checkStylesheet, checkStyleDeclaration, createValueMatcher, StylesheetWorkError } from "./view-css.mjs";
+import { createViewEngine, ENGINE_STATUS } from "./view-engine.mjs";
 
 import {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork} from './view-select.mjs';
 
@@ -107,50 +106,24 @@ function attributeValue(rule, tag, text, linkRequested) {
   }
 }
 
-// Private immutable rule records and copied anchor sets make rejected sheet
-// updates unable to poison later admission. No media or local input state is read.
-function cascadeIndex(source) {
-  return { roots:new Set(source?.roots), classes:new Map(source?[...source.classes].map(([key,rules])=>[key,new Set(rules)]):[]), custom:source?.custom??0 };
-}
-function updateCascade(index,rules,adding) {
-  for(const rule of rules){
-    if(rule.custom)index.custom+=adding?1:-1;
-    const anchors=new Set(rule.selectors.map(s=>s===':root'?null:s.match(/^\.[A-Za-z_][A-Za-z0-9_-]*/)[0].slice(1)));
-    for(const anchor of anchors){
-      let set=anchor===null?index.roots:index.classes.get(anchor);
-      if(adding){if(!set){set=new Set();index.classes.set(anchor,set);}set.add(rule);}
-      else if(set){set.delete(rule);if(anchor!==null&&!set.size)index.classes.delete(anchor);}
-    }
-  }
-}
-function potentialCascadeRead(nodes,index,charge) {
-  const weight=V.limits.stylesheetNodeWork,pending=[];
-  for(const [id,node] of nodes)if(node.parent===W.noNode)pending.push([id,0]);
-  while(pending.length){
-    const [id,ancestors]=pending.pop(),node=nodes.get(id);charge(weight);
-    let own=weight,variables=false;
-    if(node.kind==='element'){
-      charge(node.classBytes);own+=node.classBytes;
-      for(const [property,value] of node.style){const work=weight+node.styleBytes.get(property);charge(work);own+=work;variables ||= value.toLowerCase().includes('var(');}
-      let candidates=index.roots;
-      if(id!==W.root){
-        candidates=new Set();
-        for(const className of new Set(node.class.split(/[\t\n\f\r ]+/).filter(Boolean)))
-          for(const rule of index.classes.get(className)??[])candidates.add(rule);
-      }
-      for(const rule of candidates){charge(rule.work);own+=rule.work;variables ||= rule.variables;}
-    }
-    const scope=ancestors+own;if(variables&&index.custom)charge(scope);
-    for(const child of node.children)pending.push([child,scope]);
-  }
-}
-
 /** Pure transaction validator shared by the Worker and DOM adapter. */
-export function createViewModel({ linkRequested = () => false, assetRequested = () => true } = {}) {
-  const checkValue = createValueMatcher(Object.fromEntries(V.css.map((row) => [row.name, row.grammar])), Object.fromEntries(V.css.map((row) => [row.name, row.note ?? ""])));
-  let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), sheetBytes = new Map(), sheetWork = new Map(), stylesheetBytes=0, installedStylesheetWork=0, pending = new Set(), title = "", titleBytes = 0, focus = W.noNode;
-  let cascade=cascadeIndex(), sheetRules=new Map();
+// Stylesheets, classes, style values, the cascade and its budgets are the
+// view style engine's (`view-engine.mjs`, the Rust `varta-style` crate as
+// Wasm), which mirrors the tree inside each transaction.
+const engineFailure = new Map([
+  [ENGINE_STATUS.cascadeWork, "cascade work budget"], [ENGINE_STATUS.expandedValues, "expanded value budget"],
+  [ENGINE_STATUS.sheetWork, "stylesheet work budget"], [ENGINE_STATUS.sheetBytes, "stylesheet budget"],
+  [ENGINE_STATUS.sheetId, "stylesheet id"], [ENGINE_STATUS.fontFamilyKeyword, "font-family keyword"],
+]);
+const flagsOf = (node) => [node.attributes.has("disabled"), Boolean(node.checked)];
+
+export function createViewModel({ linkRequested = () => false, assetRequested = () => true, viewEngine } = {}) {
+  // A program without a view has no engine module and never commits.
+  const engine = viewEngine === undefined ? undefined : createViewEngine(viewEngine);
+  let nodes = new Map([[W.root, element("div")]]), sheets = new Map(), sheetBytes = new Map(), pending = new Set(), title = "", titleBytes = 0, focus = W.noNode;
   let closed = false;
+  // The engine's `:disabled`/`:checked` inputs follow the committed tree.
+  const syncFlags = (tree) => { if (!engine) return; for (const [id, node] of tree) if (node.kind === "element") { const [disabled, checked] = flagsOf(node); engine.setFlags(id, disabled, checked); } };
   const validateChoice = (record, choice) => {
     const MAX_NODE_ID=0xffff_ffff;
     if(choice!==undefined&&(!Number.isSafeInteger(choice)||choice<0||choice>MAX_NODE_ID||!['input','change'].includes(record.kind)))throw new ViewProtocolError('invalid select option envelope');
@@ -158,20 +131,20 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
   const commit = (bytes) => {
     if (closed) throw new ViewProtocolError("closed view");
     const operations = decodeViewBatch(bytes);
+    if (!engine) throw new ViewProtocolError("view engine unavailable");
+    engine.begin();
+    try { return transaction(operations); } catch (error) { engine.abort(); throw error; }
+  };
+  const transaction = (operations) => {
     // Copy every mutable container. A failed last operation cannot affect a
     // previously committed tree, listener, field, stylesheet or command request.
     const next = new Map([...nodes].map(([id, node]) => [id, { ...node, children: [...node.children], listeners: [...node.listeners], ...(node.kind === "element" ? { attributes: new Map(node.attributes), style: new Map(node.style), attributeBytes: new Map(node.attributeBytes), styleBytes: new Map(node.styleBytes) } : {}) }]));
-    const nextCascade=cascadeIndex(cascade),nextRules=new Map(sheetRules);
-    const nextSheets = new Map(sheets), nextSheetBytes = new Map(sheetBytes), nextSheetWork=new Map(sheetWork), copies = new Set(pending), effects = [];
+    const nextSheets = new Map(sheets), nextSheetBytes = new Map(sheetBytes), copies = new Set(pending), effects = [];
     const handlers = new Set([...nodes.values()].flatMap((node) => node.listeners.map((listener) => listener.handler)));
     let index, nextTitle = title, nextTitleBytes = titleBytes, nextFocus = focus;
-    let parsedStylesheetWork=0,nextStylesheetBytes=stylesheetBytes,nextInstalledStylesheetWork=installedStylesheetWork;
     const fail = (rule) => { throw new ViewProtocolError(rule, index); };
-    let cascadeWork=0,expandedValueBytes=0;
-    const chargeCascade=()=>{
-      potentialCascadeRead(next,nextCascade,work=>{cascadeWork+=work;if(cascadeWork>V.limits.cascadeWork)fail('cascade work budget');});
-      potentialExpandedValues(next,nextCascade,W.root,bytes=>{expandedValueBytes+=bytes;if(expandedValueBytes>V.limits.expandedValueBytes)fail('expanded value budget');});
-    };
+    const engineCall = (status, rule) => { if (status !== ENGINE_STATUS.ok) fail(engineFailure.get(status) ?? rule); };
+    const chargeCascade=()=>engineCall(engine.charge(),'cascade work budget');
     let selectionWork=0;
     let lastSelectValue;
     const skippedValues=new Set();
@@ -199,7 +172,8 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         case "create_element": case "create_text":
           if (!op.node || next.has(op.node)) fail("duplicate node");
           if (next.size >= V.limits.nodes) fail("node budget");
-          next.set(op.node, op.name === "create_element" ? element(op.tag) : textNode(op.text)); break;
+          next.set(op.node, op.name === "create_element" ? element(op.tag) : textNode(op.text));
+          engineCall(engine.create(op.node, op.name === "create_element"), "unknown node"); break;
         case "set_text": { const node = live(op.node); if (node.kind !== "text") fail("not a text"); node.text = op.text; node.textBytes=selectionTextBytes(op.text); syncSelectFor(next,op.node); break; }
         case "set_attribute": {
           const node = asElement(op.node), rule = attributes.get(op.attribute);
@@ -216,12 +190,12 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           break;
         }
         case "remove_attribute": { const node = asElement(op.node); if (!admitted(attributes.get(op.attribute).tags, node)) fail("attribute not allowed"); if(node.attributes.delete(op.attribute)){node.attributeBytes.delete(op.attribute);optionAttribute(next,op.node,op.attribute,false);} break; }
-        case "set_class": { const node = asElement(op.node); if (op.text.split(/[\t\n\f\r ]+/).filter(Boolean).some((value) => !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(value))) fail("class value"); node.class = op.text; node.classBytes=selectionTextBytes(op.text); break; }
+        case "set_class": { const node = asElement(op.node); engineCall(engine.setClass(op.node, op.text), "class value"); node.class = op.text; node.classBytes=selectionTextBytes(op.text); break; }
         case "set_style": {
           const node = asElement(op.node); if (["field-sizing", "resize"].includes(op.property) && node.tag !== "textarea") fail("property not allowed");
-          try { checkStyleDeclaration(V, op.property, op.text, checkValue); } catch { fail("style value"); } node.style.set(op.property, op.text); node.styleBytes.set(op.property,selectionTextBytes(op.text)); break;
+          engineCall(engine.setStyle(op.node, op.property, op.text), "style value"); node.style.set(op.property, op.text); node.styleBytes.set(op.property,selectionTextBytes(op.text)); break;
         }
-        case "remove_style": {const node=asElement(op.node);node.style.delete(op.property);node.styleBytes.delete(op.property);break;}
+        case "remove_style": {const node=asElement(op.node);node.style.delete(op.property);node.styleBytes.delete(op.property);engine.removeStyle(op.node,op.property);break;}
         case "insert": {
           if (op.node === W.root) fail("root not movable");
           const parent = asElement(op.parent), node = live(op.node), rule = tags.get(parent.tag);
@@ -231,6 +205,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
           if (op.before !== W.noNode && (op.before === op.node || live(op.before).parent !== op.parent)) fail("before is not a sibling");
           const oldSelect=selectOwner(next,op.node);
           detach(op.node); parent.children.splice(op.before === W.noNode ? parent.children.length : parent.children.indexOf(op.before), 0, op.node); node.parent = op.parent;
+          engine.insert(op.parent, op.node, op.before);
           const stack = [[op.node,depth]];
           while (stack.length) {
             const [id,depth] = stack.pop(), child = live(id);
@@ -247,7 +222,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         case "remove": {
           if (op.node === W.root) fail("root not movable");
           const owner=selectOwner(next,op.node),option=live(op.node).tag==='option';
-          detach(op.node); const stack = [op.node];
+          detach(op.node); engine.remove(op.node); const stack = [op.node];
           while (stack.length) { const id = stack.pop(), node = live(id); for (const listener of node.listeners) handlers.delete(listener.handler); for (const child of node.children) stack.push(child); next.delete(id); if (nextFocus === id) nextFocus = W.noNode; }
           if(owner!==undefined){if(option)normalizeSelect(next,owner);else syncSelect(next,owner);}break;
         }
@@ -282,19 +257,9 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         }
         case "stylesheet": {
           if(!op.sheet)fail('stylesheet id');
-          let work=0,rules=[];
-          if(op.text){
-            let checked;try{checked=checkStylesheet(op.text,V,{workLimit:V.limits.stylesheetWork-parsedStylesheetWork});}
-            catch(error){fail(error instanceof StylesheetWorkError?'stylesheet work budget':'stylesheet value');}
-            if(checked.errors.length)fail('stylesheet value');work=checked.work;rules=checked.rules;parsedStylesheetWork+=work;
-          }
-          nextStylesheetBytes=nextStylesheetBytes-(nextSheets.get(op.sheet)?.length??0)*2+op.text.length*2;
-          nextInstalledStylesheetWork=nextInstalledStylesheetWork-(nextSheetWork.get(op.sheet)??0)+work;
-          if(nextStylesheetBytes>V.limits.stylesheetBytes)fail('stylesheet budget');
-          if(nextInstalledStylesheetWork>V.limits.stylesheetWork)fail('stylesheet work budget');
-          updateCascade(nextCascade,nextRules.get(op.sheet)??[],false);
-          if(op.text){nextRules.set(op.sheet,rules);updateCascade(nextCascade,rules,true);nextSheets.set(op.sheet,op.text);nextSheetBytes.set(op.sheet,selectionTextBytes(op.text));nextSheetWork.set(op.sheet,work);}
-          else{nextRules.delete(op.sheet);nextSheets.delete(op.sheet);nextSheetBytes.delete(op.sheet);nextSheetWork.delete(op.sheet);}
+          engineCall(engine.stylesheet(op.sheet, op.text), 'stylesheet value');
+          if(op.text){nextSheets.set(op.sheet,op.text);nextSheetBytes.set(op.sheet,selectionTextBytes(op.text));}
+          else{nextSheets.delete(op.sheet);nextSheetBytes.delete(op.sheet);}
           break;
         }
         case "set_title": nextTitle = op.text; nextTitleBytes=selectionTextBytes(op.text); break;
@@ -322,17 +287,18 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
     for (const node of next.values()) if (node.kind === "element" && node.attributes.has("id")) { const id = node.attributes.get("id"); if (ids.has(id)) fail("duplicate id attribute"); ids.add(id); }
     for(const [id,node] of next)if((node.tag==='select'&&node.value.length*2>V.limits.valueBytes)||(node.tag==='option'&&optionValue(next,id).length*2>V.limits.valueBytes))fail('select value budget');
     if(potentialNamingWork(next)>V.limits.namingWork)fail('accessible name work budget');
-    cascade=nextCascade;sheetRules=nextRules;
-    nodes = next; sheets = nextSheets; sheetBytes=nextSheetBytes; sheetWork=nextSheetWork; stylesheetBytes=nextStylesheetBytes; installedStylesheetWork=nextInstalledStylesheetWork; pending = copies; title = nextTitle; titleBytes=nextTitleBytes; focus = nextFocus;
+    syncFlags(next);
+    engine.commit();
+    nodes = next; sheets = nextSheets; sheetBytes=nextSheetBytes; pending = copies; title = nextTitle; titleBytes=nextTitleBytes; focus = nextFocus;
     return { operations, effects, skippedValues };
   };
-  return { commit,
+  return { commit, engine,
     // Clone inspection so an adapter cannot mutate the validation authority.
     snapshot() { return { nodes: [...nodes].map(([id, node]) => {
       const {attributeBytes,styleBytes,...state}=node;
       return { id, ...state, children: [...node.children], listeners: node.listeners.map((listener) => ({ ...listener })), ...(node.kind === "element" ? { attributes: Object.fromEntries(node.attributes), style: Object.fromEntries(node.style) } : {}) };
     }), sheets: Object.fromEntries(sheets), title, focus, pending: [...pending] }; },
-    close() { closed = true; nodes.clear(); sheets.clear(); sheetBytes.clear(); sheetWork.clear();sheetRules.clear();cascade=cascadeIndex(); stylesheetBytes=0; installedStylesheetWork=0; pending.clear(); title = ""; titleBytes=0; focus = W.noNode; },
+    close() { closed = true; nodes.clear(); sheets.clear(); sheetBytes.clear(); pending.clear(); title = ""; titleBytes=0; focus = W.noNode; },
     complete(request) { if (!pending.delete(request)) throw new ViewProtocolError("unknown command result"); },
     validateChoice,
     syncEvent(record, selectedOption) {
@@ -348,6 +314,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         syncSelectChoice(nodes,record.target,record.value,selectedOption);
       }else node.value = record.value;
       if (node.checked && inputType(node) === "radio") uncheckRadio(nodes, record.target);
+      syncFlags(nodes);
     },
     input(id, value, checked, advance = true, selectedOption) {
       const node = nodes.get(id);
@@ -361,6 +328,7 @@ export function createViewModel({ linkRequested = () => false, assetRequested = 
         syncSelectChoice(nodes,id,value,selectedOption);
       }else node.value = value;
       if (node.checked && inputType(node) === "radio") uncheckRadio(nodes, id);
+      syncFlags(nodes);
       return node.seq;
     },
   };

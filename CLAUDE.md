@@ -84,6 +84,7 @@ crates/
   varta-artifact/        # portable artifact/container I/O; common + wasmparser, no VM/compiler
   varta-launcher/        # execution-only `varta-runtime` binary; no source tooling
   varta-project/         # tooling: project config/loader, check/dev/build, verified packaging
+  varta-tailwind/        # tooling: Rust port of the Tailwind v4 compiler (K8 T1), build-time CSS from class tokens
   varta-cli/             # the `varta` binary; thin orchestration, no domain logic
   varta-conformance/     # development tooling: pinned compatibility inventory runner
 conformance/             # inventory manifest (core-v1.json) and checked cases
