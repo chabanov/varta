@@ -7,15 +7,16 @@ import { createViewQueue } from "./view-queue.mjs";
 import { encodeViewBatch, decodeViewEvent } from "./view-codec.mjs";
 import { encodeViewEvent } from "./view-dom.mjs";
 
+import { viewEngine } from "./view-engine.node.mjs";
 function state() {
   const memory = new WebAssembly.Memory({ initial: 1 }), messages = [];
-  const view = createWorkerView({ send: (message) => messages.push(message), memory: () => memory, application: true });
+  const view = createWorkerView({viewEngine, send: (message) => messages.push(message), memory: () => memory, application: true });
   const commit = (operations) => { const bytes = encodeViewBatch(operations); new Uint8Array(memory.buffer).set(bytes); return view.commit(0, bytes.length, false); };
   return { view, messages, commit };
 }
 test('naming work admission agrees before and after a deferred local field edit',async()=>{
- const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
- const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+ const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel({viewEngine});
+ const worker=createWorkerView({viewEngine,send:message=>messages.push(message),memory:()=>memory,application:true});
  const commitWorker=ops=>{const bytes=encodeViewBatch(ops);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
  const references=count=>({name:'set_attribute',node:2,attribute:'aria-labelledby',text:Array(count).fill('field').join(' ')});
  const setup=[{name:'create_element',node:2,tag:'button'},{name:'set_attribute',node:2,attribute:'aria-hidden',text:'true'},references(80),
@@ -31,7 +32,7 @@ test('naming work admission agrees before and after a deferred local field edit'
 });
 test('expanded component quota rejects in the Worker before a parent batch is sent',async()=>{
  const memory=new WebAssembly.Memory({initial:4}),messages=[];
- const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+ const worker=createWorkerView({viewEngine,send:message=>messages.push(message),memory:()=>memory,application:true});
  const commit=operations=>{const bytes=encodeViewBatch(operations);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
  const seed='"'+'a'.repeat(registry.view.limits.valueBytes/2-3)+'"';
  const setup=[{name:'stylesheet',sheet:1,text:`:root{--seed:${seed}}.a{--copy:var(--seed)/}`}];
@@ -71,8 +72,8 @@ test('select identity is deferred with its checked envelope and malformed metada
 });
 
 test('select work admission agrees while the local edit is deferred in the Worker',async()=>{
-  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
-  const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel({viewEngine});
+  const worker=createWorkerView({viewEngine,send:message=>messages.push(message),memory:()=>memory,application:true});
   const commitWorker=operations=>{const bytes=encodeViewBatch(operations);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
   const setup=[{name:'create_element',node:2,tag:'select'},{name:'insert',parent:1,node:2,before:0}],text='X'.repeat(4096);
   for(let node=3;node<23;node++)setup.push({name:'create_element',node,tag:'option'},
@@ -127,8 +128,8 @@ test("invalid arrival clocks and duplicate transport ids fail closed",async()=>{
 });
 
 test('radio work admission is independent of deferred checked state and edit counters',async()=>{
-  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
-  const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel({viewEngine});
+  const worker=createWorkerView({viewEngine,send:message=>messages.push(message),memory:()=>memory,application:true});
   const commitWorker=ops=>{const bytes=encodeViewBatch(ops);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
   const setup=[],name='Ж'.repeat(512);
   for(let node=2;node<102;node++)setup.push({name:'create_element',node,tag:'input'},
@@ -153,8 +154,8 @@ test('radio work admission is independent of deferred checked state and edit cou
 });
 
 test('retained text admission and field capacity agree across a deferred local edit',async()=>{
-  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel();
-  const worker=createWorkerView({send:message=>messages.push(message),memory:()=>memory,application:true});
+  const memory=new WebAssembly.Memory({initial:4}),messages=[],main=createViewModel({viewEngine});
+  const worker=createWorkerView({viewEngine,send:message=>messages.push(message),memory:()=>memory,application:true});
   const commitWorker=ops=>{const bytes=encodeViewBatch(ops);new Uint8Array(memory.buffer).set(bytes);return worker.commit(0,bytes.length,false);};
   const {retainedTextBytes,fieldValueReservationBytes,valueBytes}=registry.view.limits;
   const fields=Math.floor(retainedTextBytes/fieldValueReservationBytes),remaining=retainedTextBytes-fields*fieldValueReservationBytes,setup=[];

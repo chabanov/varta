@@ -111,9 +111,10 @@ const COMMON_CORE: &[&str] = &[
 #[test]
 fn the_fingerprint_covers_every_compiled_common_core_file() {
     // Every common module the core build compiles is fingerprinted: a module
-    // declared without `#[cfg(feature = "std")]` (or `#[cfg(test)]`) in
-    // lib.rs, value.rs, function.rs or json/mod.rs must be listed, as
-    // `name.rs` or `name/mod.rs`.
+    // declared without `#[cfg(feature = "std")]`, `#[cfg(feature = "view")]`
+    // (the view engine, which the intrinsics build does not enable) or
+    // `#[cfg(test)]` in lib.rs, value.rs, function.rs or json/mod.rs must be
+    // listed, as `name.rs` or `name/mod.rs`.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../varta-common/src");
     for (file, prefix) in [
         ("lib.rs", ""),
@@ -139,7 +140,10 @@ fn the_fingerprint_covers_every_compiled_common_core_file() {
                 assert!(COMMON_CORE.contains(&module.as_str()), "{module}");
             }
             if !line.starts_with("///") {
-                gated = matches!(line, "#[cfg(feature = \"std\")]" | "#[cfg(test)]");
+                gated = matches!(
+                    line,
+                    "#[cfg(feature = \"std\")]" | "#[cfg(feature = \"view\")]" | "#[cfg(test)]"
+                );
             }
         }
     }

@@ -11593,11 +11593,121 @@ keys below.
   `finally` block returns a value of its own, JavaScript would return that
   value from this `void` generator; Varta returns `undefined`. Async
   generators keep their own `yield*` rules.
-- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`) and
-  iterator helpers, `Symbol()` values and symbol-keyed properties,
-  destructuring of generators, strings and iterable instances,
-  `Array.from` with a map function or an array-like, and `Iterable<T>`
-  value annotations.
+- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`),
+  `Symbol()` values and symbol-keyed properties, destructuring of
+  generators, strings and iterable instances, and `Iterable<T>` value
+  annotations. Iterator helpers and `Array.from` with a map function or an
+  array-like are admitted by the [standard library](#standard-library-standard_library).
+
+#### Standard library (`standard_library`)
+
+Additions to v38 (K9 D, 2026-11-06) that complete the ECMAScript 2025
+library forms typed npm code uses most, under the selector
+`LanguageProfile::standard_library()`. Everything is typed guest code of the
+engine preludes (`<varta>/builtins/standard.ts`, `<varta>/builtins/aggregate.ts`,
+the v38 collections prelude and the v38 date prelude) called by
+`lower::standard`, so there is no host import, value layout, frame catalog
+or ABI change, and the native runtime and every JavaScript host run the same
+Wasm. V1–v37 keep rejecting every form below with their old diagnostics; the
+prelude loads only for programs that name one of its methods
+(`modules::engine::STANDARD_LOADS`).
+
+- **Sorting.** `array.sort(compare?)` and `array.toSorted(compare?)`
+  (§23.1.3.30, §23.1.3.34) run V8's TimSort (`array-sort.tq`, CPython's
+  listsort: run detection, binary insertion below the minimum run, galloping
+  merges with the adaptive `minGallop`), so every comparator is called with
+  the same arguments in the same order as in Node and an inconsistent
+  comparator leaves V8's order. A comparator result of NaN counts as 0.
+  Holes and `undefined` are taken out first; the sorted values, then the
+  `undefined`s, then the holes are written back (`sort` returns its
+  receiver). Without a comparator the elements' String forms compare by
+  code units; elements other than primitives are refused by name
+  (object-to-string conversion is not modelled). A readonly (`as const`)
+  receiver is refused for `sort`, `splice`, `copyWithin`, `shift` and
+  `unshift`.
+- **Copying and mutating methods.** `toReversed`, `with` (`RangeError:
+  Invalid index : n` outside the array), `toSpliced`, `splice` (the argument
+  count decides the delete count, as in §23.1.3.31), `copyWithin`,
+  `shift`, `unshift`, `concat` (an argument of the receiver's array type
+  spreads, one of its element type is appended; holes stay holes; a receiver
+  whose elements are arrays only takes arguments of its own type, since
+  JavaScript spreads every array argument), `keys`, `values` and `entries`
+  (live generators that read the length at every step) and `at` on strings.
+  Mutations keep holes as holes (`Object.hasOwn`/`delete` semantics). A
+  copying method that reads a hole of an element type without `undefined`
+  throws `TypeError` (`array element is missing`), as `for...of` does,
+  because such an array cannot hold the `undefined` JavaScript would copy;
+  with `undefined` in the element type the hole reads as `undefined`.
+- **Flattening.** `flat(depth?)` with a number literal, `Infinity` or no
+  depth (the result type depends on it): each level flattens `T[][]` or
+  `(T | T[])[]`, skipping holes; depth 0 is a hole-free copy.
+  `flatMap(callback)` flattens a callback returning arrays one level, maps
+  one returning other values, and refuses a callback returning both.
+- **Constructors.** `Array.of(...)` (the same fresh array as the literal,
+  `Array.of<T>()` typed by its argument), `Array.from(source, map)` (the
+  source is collected as one-argument `Array.from` collects it, then mapped
+  with `(value, index)`), `Array.from({ length: n }, map)` (ToLength, then
+  `RangeError: Invalid array length` above 2³²−1).
+- **Iterator helpers.** On a synchronous generator that returns `void` and
+  takes no `next` input (every built-in iterator: array, `Map` and `Set`
+  `keys`/`values`/`entries`, and the helpers themselves): `map`, `filter`,
+  `take`, `drop`, `flatMap` (array results), `reduce` (with or without an
+  initial value: `TypeError: Reduce of a done iterator with no initial
+  value`), `toArray`, `forEach`, `some`, `every`, `find`, and
+  `Iterator.from` of a generator, array, `Set` or `Map`. Helpers are lazy
+  guest generators over the source; `take`/`drop` validate their limit when
+  the helper is created (`RangeError: -1 must be positive`), a `break` or
+  `return()` closes the source through the helper's `for...of`, and
+  `take(0)` closes it without pulling. The one difference: `return()` on a
+  helper that has not started does not close the source (a JavaScript
+  helper does; a generator body that never ran has nothing to close).
+- **Sets and grouping.** `union`, `intersection`, `difference`,
+  `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`
+  (§24.2.4) of two `Set`s with the same element type, iterating the receiver
+  or the argument exactly as the specification chooses by size; other
+  set-like arguments are refused. `Map.groupBy(items, callback)`,
+  `Object.groupBy(items, callback)` (string and number keys, a dictionary in
+  JavaScript key order) and `Object.fromEntries` of `[key, value]` tuples or
+  a `Map`. `Object.getOwnPropertyNames` of a record or dictionary is its
+  `Object.keys`; `value.hasOwnProperty(key)` is `Object.hasOwn(value, key)`.
+- **JSON.** `JSON.stringify(value, replacer, space)` with a `null` or
+  `undefined` replacer or a property list (an array of strings and numbers,
+  deduplicated, selecting and ordering every object's members), and a number
+  (clamped to 10 spaces) or string (its first 10 code units) `space`: both
+  are deterministic rewrites of the compact text the engine serializer
+  produces. Replacer functions are refused (the host serializer cannot call
+  guest code). The replacer and space arguments must be free of effects
+  (literals, bindings, field reads), since they are evaluated after the
+  value is serialized.
+- **Errors and promises.** `AggregateError(errors, message?, { cause })`
+  is an `Error` subclass of typed guest code (`errors: unknown[]`,
+  `instanceof`, `cause`, `toString`). `Promise.all`/`allSettled`/`any`/`race`
+  over an array literal that mixes `Promise.reject(...)` with promises of one
+  type give the rejections that type (TypeScript's `Promise<never>`).
+  `Promise.any` still rejects with an `Error` named `Error`, not an
+  `AggregateError`.
+- **Math and strings.** `Math.max(...xs)`/`Math.min(...xs)` with spread
+  `number[]` arguments (NaN wins, +0 above −0). `String.prototype.at`,
+  `substr` (Annex B), `isWellFormed`, `toWellFormed` and locale-free
+  `toLocaleUpperCase`/`toLocaleLowerCase`.
+- **Date.** The v38 date prelude replaces the v37 class with the complete
+  `Date` (§21.4): `Date.UTC`, the component constructor (local time,
+  years 0–99 as 1900–1999), every local and UTC getter and setter (with
+  rest parameters, so an omitted argument and an explicit `undefined` never
+  meet), `getTimezoneOffset`, `getYear`, `toString`, `toDateString`,
+  `toTimeString`, `toUTCString`/`toGMTString`, `toJSON`, `valueOf`, and
+  `Date.parse` of the forms `toString`, `toDateString`, `toUTCString` and
+  `toISOString` produce. The time zone is a recorded host input; without a
+  host-granted zone (none is defined yet, an owner decision) it is UTC, so
+  every output equals Node's with `TZ=UTC`. `toString`, `valueOf` and
+  `toJSON` are prelude functions the compiler calls for `Date` receivers (a
+  class cannot declare them); `JSON.stringify` of a `Date`, `String(date)`
+  and the `toLocale*String` forms stay refused.
+- **Refused by name.** `Symbol()`/`Symbol.for`/`Symbol.keyFor`, `WeakMap`,
+  `WeakSet`, `WeakRef`, `FinalizationRegistry`, `Proxy`, `Reflect.*`,
+  `structuredClone`, `Object.freeze`/`seal`/`preventExtensions` and their
+  predicates, descriptor and prototype functions, and `Intl` fail with the
+  missing value-model part in the diagnostic.
 
 #### Type level (`type_level`)
 
@@ -12716,8 +12826,8 @@ and `stopPropagation`; and serializes a deterministic JSON snapshot: the
 tree (tags, attributes, classes, computed styles, field values and edit
 counters, listeners), the accessibility tree (roles, names, states), title,
 focus, stylesheets and the simulated clipboard, opened URLs and prompt count.
-The cascade orders by specificity, sheet id, then source order; inline
-styles win; custom properties resolve through an iterative dependency graph at
+The cascade orders by cascade layer, specificity, sheet id, then source
+order; inline styles win ([view CSS engine](#view-css-engine-k8-t2-and-t3)); custom properties resolve through an iterative dependency graph at
 each element before inheritance. The native resolver invalidates active dependency
 cycles, evaluates only selected fallbacks, freezes inherited aliases, preserves token
 boundaries/quoted text and revalidates selected values for geometry and paint.
@@ -14734,6 +14844,227 @@ moves the box exactly but its edges are snapped with it, while Chrome draws
 the snapped box at the fraction; its edges then differ by under one pixel.
 Native scrollable overflow does not include translated boxes.
 
+#### View CSS engine (K8 T2 and T3)
+
+One Rust implementation decides stylesheets, `set_style` values, class
+names, the cascade and computed values for every host: the grammars in
+`varta-common` (`view::syntax`, `view::css`, `view::stylesheet`, behind the
+`view` feature, `no_std` with `alloc` and `libm` so every target computes
+the same bits) and the cascade, custom-property substitution and computed
+values in `varta-style`. The native renderer and the compiler's static
+checks link it directly; the official browser host runs the same code as
+`view-engine.wasm` (below). It follows the published specifications; an
+admitted construct behaves as its specification says, and anything outside
+the subset is a violation with a typed diagnostic (the subset fails closed
+rather than ignoring what it does not admit). Chrome is the verification
+oracle, not the definition.
+
+- **Tokens (CSS Syntax 3).** Stylesheets and values are tokenized by §4:
+  input preprocessing (§3.3: CR, CR LF and FF are newlines, NUL is U+FFFD),
+  comments dropped (§4.3.2), escapes decoded (§4.3.7, at most six hex
+  digits, NUL, surrogates and values above U+10FFFF become U+FFFD), numbers
+  with exponents (§4.3.12), dimensions, percentages and `url(` (§4.3.6). The
+  rule list is parsed by §5.4, and `!` followed by `important` (whitespace
+  and comments between them allowed) ends a declaration as important
+  (§5.4.6). A stored value that had comments or escapes is its §9
+  serialization (an empty comment keeps two tokens apart), so a later
+  `var()` scan sees neither; other values keep their source text.
+- **Forbidden constructs** are found on decoded tokens, so no escape or
+  comment hides them: a url token, the functions of `css::FORBIDDEN_FUNCTIONS`
+  (`url`, `image-set`, `-webkit-image-set`, `expression`, `attr`, `element`,
+  `-moz-element`), the at-rule `@import` and the HTML comment tokens
+  `<!--`/`-->`. Inline `set_style` values cannot be important.
+- **Class names (HTML class model).** `set_class`, TSX `class` literals and
+  selectors take any token without ASCII whitespace or control characters,
+  at most `css::MAX_CLASS_NAME_BYTES` UTF-8 bytes. A class selector is
+  `.` and an ident token (Selectors 4 §6.6), so Tailwind's escaped classes
+  (`.sm\:flex`, `.w-1\/2`, `.p-0\.5`, `.\[…\]`, `.\!p-1`, `.\32 xl\:…`)
+  match the decoded names; class names are case-sensitive.
+- **Selectors (Selectors 4).** Compound selectors (§3.1) of class
+  selectors and the pseudo-classes `:hover` (§9.1), `:active` (§9.2),
+  `:focus-visible` (§9.4), `:disabled` (§12.1.1) and `:checked` (§12.2.1), in
+  any order, with at least one class, or `:root` alone (§13.1); pseudo-class
+  names are ASCII case-insensitive. Specificity is §15 (every admitted
+  simple selector is in the B component). Combinators, type, id,
+  attribute, functional pseudo-classes and pseudo-elements are K8 S5.
+- **Cascade (Cascade 5 §6).** Declarations are sorted by importance
+  (§6.1): normal author declarations by layer, then specificity, then sheet
+  id and source order, with inline `set_style` values (element-attached,
+  §6.3) above them; important author declarations above inline ones, with
+  their layers in reverse order, so an earlier layer's important
+  declaration wins (§6.4.4). Unlayered declarations win over every layer
+  when normal and lose to every layer when important.
+- **Cascade layers (Cascade 5 §6.4).** `@layer` statements and blocks at
+  the top level and nested in `@layer`, `@media` and `@supports` blocks,
+  with dotted names (§6.4.2; CSS-wide keywords are invalid names) and
+  anonymous blocks (§6.4.2.1, each distinct). The layer order is the order
+  of first declaration across the document's sheets in ascending sheet id
+  (§6.4.3); a layer's own rules form an implicit final sublayer after its
+  sublayers. A declaration inside a conditional group rule counts only
+  while its condition holds (§6.4.3), so the order is decided per media
+  environment; a false `@supports` block declares nothing.
+- **CSS-wide keywords (Cascade 5 §7.3).** Every property takes `initial`
+  (the property's initial value, §7.3.1), `inherit` (the parent's computed
+  value, also for non-inherited properties, §7.3.2), `unset` (§7.3.3),
+  `revert` (§7.3.4: author declarations roll back to the user agent's own
+  style) and `revert-layer` (§7.3.5: the value of earlier layers, then of
+  the user-agent origin) as its whole value. `font-family: initial` is
+  refused: its initial value is the user agent's own font (Fonts 4 §2.1),
+  which no native host can name; `inherit`, `unset` and `revert` on it are
+  admitted.
+- **Registered custom properties (Properties and Values API 1 §3).**
+  `@property --name { syntax; inherits; initial-value }` at the top level:
+  `syntax` (§3.1, §5) is `"*"` or `|`-separated components of `<length>`,
+  `<number>`, `<percentage>`, `<length-percentage>`, `<color>`, `<integer>`,
+  `<angle>`, `<time>`, `<custom-ident>`, `<string>` or an identifier, each
+  with an optional `+` or `#`; `inherits` (§3.2) is required; `initial-value`
+  (§3.3) is required unless the syntax is universal and must be
+  computationally independent (§4.1: no `var()`, font- or viewport-relative
+  unit or `currentcolor`). Registrations are document-wide, the last one in
+  sheet order winning (§2.1, §2.8), and at most
+  `stylesheet::MAX_REGISTERED_PROPERTIES` across all sheets. A registered
+  property starts at its initial value, a non-inheriting one is reset to it
+  at every element, and a value that does not match the syntax after
+  substitution is invalid at computed-value time and computes as `unset`
+  (§2.7): the parent's value for an inheriting registration, the initial
+  value otherwise. Computed values keep the substituted text: the
+  absolutization of §2.4 (a registered `<length>` given in `em` inherits as
+  pixels) is not implemented, because the engine does not compute
+  `font-size` yet (see Lowering).
+- **Conditional rules.** `@supports` (Conditional 3 §6.1) with declaration
+  conditions, `not`, `and`, `or`, parentheses and `selector()`
+  (Conditional 4 §6.1) is decided statically by this engine's own
+  grammars: a declaration is supported when the engine admits it, a
+  selector when it is in the selector subset, and `<general-enclosed>` is
+  false. Conditions nest at most `stylesheet::media::MAX_CONDITION_DEPTH`
+  deep; `@media`, `@supports` and `@layer` blocks nest up to
+  `stylesheet::MAX_NESTING`.
+- **Media queries (Media Queries 4/5).** Query lists (§2.1), `not`/`only`
+  with the media types `all`, `screen` and `print` (§2.3; the renderer is
+  `screen`), conditions with `not`, `and`, `or` and parentheses (§2.5, no
+  mixing of `and` and `or` at one level), boolean context (§2.4.2) and the
+  range syntax with `<`, `<=`, `>`, `>=`, `=` (§2.4.3), and the features
+  `width`, `height` (§4.1, §4.2, also `min-`/`max-`), `orientation` (§4.4),
+  `pointer`, `hover`, `any-pointer`, `any-hover` (§7.1–§7.3),
+  `prefers-reduced-motion`, `prefers-contrast`, `forced-colors` and
+  `prefers-color-scheme` (§12.1, §12.3–§12.5). Lengths are `0`, absolute
+  units, `em` and `rem`, relative units being based on the initial font size
+  (§1.3, 16px). The environment features are recorded host inputs, so
+  rendering stays deterministic: the native `Environment` (`height`, `dark`
+  and `preferences`, by default a desktop with a mouse and no stated
+  preference, which is what headless Chrome reports) is filled by the
+  desktop shell from the system's accessibility display options on macOS
+  ("Reduce motion" and "Increase contrast", read again when the window
+  regains focus or the theme changes) and by an embedder through
+  `ViewLayout::with_preferences`; the browser host records the same
+  features from `matchMedia` and its change events. An unknown feature,
+  value or `<general-enclosed>` is a violation, not the `unknown` of §3.2.
+- **Values (CSS Values 4).** Wherever a property grammar has a numeric type,
+  the engine admits every length unit of §6 (`px`, `cm`, `mm`, `Q`, `in`,
+  `pt`, `pc`, `em`, `rem`, `ex`, `ch`, `lh`, …, the viewport units with
+  their `s`/`l`/`d` forms of §6.1.2), angles and times, and the math
+  functions `calc()`, `min()`, `max()` and `clamp()` (§10) with `+`, `-`,
+  `*`, `/`, nested parentheses and the constants `e`, `pi`, `infinity`,
+  `-infinity` and `NaN`. `+` and `-` need whitespace on both sides, which the
+  tokenizer enforces (`1px +2px` is two operands). Types follow §10.7, with
+  percentages typed by the property's percentage basis. A top-level NaN is
+  0 and infinities are clamped (§10.12) to `css::MAX_LOWERED_MAGNITUDE`, the
+  native length range; a math result is clamped to the property's allowed
+  range (§10.12: 0 in nonnegative properties, [1, 1000] in `font-weight`),
+  and in integer properties (`z-index`, grid lines) rounded to the nearest
+  integer, halves towards +∞ (§5.2). Other math functions are outside the
+  subset.
+- **Colours (CSS Color 4 and 5).** Hexadecimal colours with 3, 4, 6 or 8
+  digits (§5.2), the 148 named colours (§6.1, ASCII case-insensitive),
+  `transparent`, `currentcolor`, `rgb()`/`rgba()` (§5.1) and
+  `hsl()`/`hsla()` (§7) in the legacy comma and the modern space syntax with
+  `/ alpha`, `hwb()` (§8), `lab()`/`lch()` (§9.3), `oklab()`/`oklch()` (§9.4),
+  `none` components (§4.4) and `color-mix()` (Color 5 §3) of one to
+  `css::color::MAX_MIX_COLORS` colours with an optional interpolation method
+  (Oklab by default) in `srgb`, `srgb-linear`, `lab`, `oklab`, `xyz`,
+  `xyz-d50`, `xyz-d65`, `hsl`, `hwb`, `lch` or `oklch` and any hue method
+  (Color 4 §13.4), premultiplied interpolation (§13.3) and missing
+  components carried forward. Percentages are normalized by Values 5 §6.1
+  with forced normalization: omitted percentages share what the specified
+  ones leave, a total above 100% scales down, and a total below 100%
+  multiplies the result's alpha by the total (Color 5 §3.3), so a zero total
+  is transparent. Conversions use the sample code's matrices (§18); a
+  colour outside sRGB is mapped by the CSS gamut mapping algorithm (§14.2,
+  binary search, JND 0.02 ΔEOK, ε 0.0001). System colours, `color()`,
+  relative colours and `currentcolor` inside `color-mix()` are outside the
+  subset.
+- **Other values.** `opacity` takes any number or percentage
+  (`<opacity-value>`, Color 4 §15.1), clamped to [0, 1] at computed-value
+  time; `font-weight` literal numbers must be in [1, 1000] (Fonts 4 §2.2);
+  `white-space: pre`, `text-align: start | end` (Text 3 §7.1; the renderer is
+  left-to-right), `transition-property` any property names (Transitions 1
+  §2.1; unknown ones are ignored), and `transition-timing-function`
+  `cubic-bezier()` (x in [0, 1]), `steps()` with every jump position,
+  `step-start` and `step-end` (Easing 1 §2.2, §2.3).
+- **Lowering.** After `var()` substitution (Variables 1 §3), a valid value
+  is lowered to the host grammar the renderer's consumers read
+  (`css::lower`): math functions are evaluated, absolute and viewport units
+  become `px`, `em` in `font-size` a percentage of the parent's size, named
+  colours and colour functions `rgba()` with 8-bit channels after gamut
+  mapping, `opacity` clamped numbers. A value the native renderer cannot
+  render yet is refused at parse time with `Unrenderable` and, when it only
+  appears after substitution, is invalid at computed-value time natively:
+  `em` outside `font-size`, `ex`/`ch`/`lh` and the other font-relative units
+  (they need the element's computed font and its metrics, Values 4 §6.1.1),
+  a math result that mixes a percentage with a length (Values 4 §10.7
+  resolves it at layout time against the percentage basis, which native
+  layout does not carry through `calc()` yet), and values of the
+  specifications that native layout lacks (`display: inline-block` and the
+  other inner/outer display types, `position: sticky`, intrinsic sizes,
+  `overflow: scroll | clip`, `white-space: pre-line | break-spaces`,
+  `text-align: justify`, border styles other than `solid`).
+- **Not yet admitted:** `@keyframes`, `@container`, nesting, and the
+  selector, layout and paint stages S4–S8.
+
+**Browser bridge (K8 T3).** The official browser host runs the engine as
+`view-engine.wasm`: `varta-style-wasm`, a `wasm32` shim of `varta-style`
+built by `scripts/build-view-engine.py` with the locked toolchain and the
+`intrinsics` profile and checked in under `crates/varta-project/src/browser/`
+with `view-engine.json` (source fingerprint, target, compiler and size; a
+test fails when the sources change without a rebuild), as
+`varta-kv-codec-wasm` is. Its only `unsafe` code reads and writes its
+arguments in linear memory. The view model mirrors every batch into an
+engine `Session` inside a transaction (`begin`, then `commit` or `abort`,
+so a refused batch changes nothing), and the engine checks each class,
+style value and stylesheet with the native verdicts. The DOM bridge keeps
+only DOM calls: it asks the engine for each element's computed values
+(cascade with layers and importance, `@property` registrations, `var()`
+substitution and lowering) and sets them as inline styles, and it records
+the media features, the viewport and the `:hover`, `:active` and
+`:focus-visible` states as host inputs for the engine. No stylesheet text
+reaches the DOM, so Chrome's own handling of `@property` in shadow trees
+and its colour clipping do not apply. The L0 grammar tables of
+[embedding.md](embedding.md#view-protocol-draft-v0-unstable) remain the
+contract for third-party hosts that do not run the engine. Cross-host
+equality is a test: `browser::view_engine_tests` runs the corpus
+`view-engine-corpus.json` through the Wasm module (under Wasmtime), the
+native `Session` and the native renderer, requires the same acceptance,
+refusal and computed values and records them in
+`view-engine-expected.json`, which the Node test of the browser view model
+must reproduce.
+
+Chrome comparisons (`native_css_engine_probe` with
+`scripts/test-native-css-engine.mjs` at 1x, 1.25x and 2x) run in two modes:
+`bridge`, the official browser host applying the scenes through its engine,
+and `platform`, Chrome's own cascade over the stylesheet text as the
+specification oracle. Each scene must match within a mean of 2/255 and
+each box's centre pixel within 1/255. Deviations of Chrome recorded by the platform mode:
+Chrome clips out-of-gamut colours per channel instead of gamut mapping (all
+286 Tailwind 4 palette colours lie in sRGB within rounding and match to
+1/255; the bridge, which applies the engine's mapped colours, matches
+exactly); Chrome ignores `@property` rules in shadow trees, although
+registrations are not scoped to a tree scope (§2.8), so the platform mode
+registers them in the document; Chrome accepts `color-mix()` with exactly
+two colours and drops a declaration with one or more than two, which
+Color 5 §3 admits; and Chrome snaps lengths to its 1/64 px
+layout unit, which native layout does not (pre-existing, not specific to
+these values).
+
 `varta-runtime` sets the clock before each view commit, input, pointer and
 environment change: a scripted headless session uses its virtual loop time
 (a `wait` step moves transitions deterministically), an application
@@ -15452,11 +15783,12 @@ imports, `theme(static)`, `@reference`, utilities only). Both sides are put
 in canonical form before comparison; every case must match. The full corpus
 of 39,152 candidates runs as a manual test (`oracle_full`, ignored).
 
-**Application status.** Track T2 widens the engine grammar; until then the
-L0 grammar rejects most Tailwind output. The CLI tests assert the precise
-first violation of a full `@import "tailwindcss"` build (Preflight's
-`display: none !important`, stage S8) and of a static Tailwind class token
-(`w-1/2`, stage S1); the end-to-end application test is ignored until T2.
+**Application status.** Track T2 widens the engine grammar
+([view CSS engine](#view-css-engine-k8-t2-and-t3)). Static Tailwind class
+tokens (`w-1/2`) and utilities built from them apply since T2 S1–S3; a full
+`@import "tailwindcss"` build is still refused, and the CLI tests assert its
+precise first violation (the theme layer's `:root, :host` selector list,
+stage S5). The end-to-end application test is ignored until S5.
 
 ## Source diagnostics
 

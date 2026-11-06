@@ -131,6 +131,17 @@ impl Lower<'_> {
         })
     }
     pub(super) fn new_error(&mut self, new: &ast::NewExpr) -> Result<Expr> {
+        // V38 (`standard_library`): ES2025 constructors not admitted yet are
+        // refused with the reason.
+        if self.types.profile.standard_library()
+            && let Some(name) = expr::callee_name(&new.callee)
+            && let Some(reason) = standard::refusal(&name)
+            && self
+                .binding(name.split('.').next().unwrap_or_default())
+                .is_err()
+        {
+            return Err(unsupported(reason));
+        }
         let class = self.error_callee(&new.callee).ok_or_else(|| {
             unsupported("constructor other than an unshadowed supported error class")
         })?;

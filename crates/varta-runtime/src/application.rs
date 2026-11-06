@@ -68,6 +68,7 @@ pub struct ViewLayout {
     pub(crate) dark: Option<bool>,
     pub(crate) root_font_size: Option<f64>,
     pub(crate) scrollbars: varta_view::Scrollbars,
+    pub(crate) preferences: varta_common::view::stylesheet::media::Preferences,
     pub(crate) images: Option<std::sync::Arc<varta_view::ImageSet>>,
 }
 
@@ -87,8 +88,22 @@ impl ViewLayout {
             dark: None,
             root_font_size: None,
             scrollbars: varta_view::Scrollbars::default(),
+            preferences: varta_common::view::stylesheet::media::Preferences::default(),
             images: None,
         })
+    }
+
+    /// Set the recorded user-preference media inputs (Media Queries 5 §12:
+    /// reduced motion, contrast, forced colors, hover and pointer) before
+    /// the first guest turn; a native host reads them from its system
+    /// settings.
+    #[must_use]
+    pub fn with_preferences(
+        mut self,
+        preferences: varta_common::view::stylesheet::media::Preferences,
+    ) -> Self {
+        self.preferences = preferences;
+        self
     }
 
     /// Give the view the application's decoded packaged images before the

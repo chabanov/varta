@@ -110,6 +110,7 @@ mod tests {
     const NODE_24: &[(&str, &str)] = &[
         ("AbortController", "function"),
         ("AbortSignal", "function"),
+        ("AggregateError", "function"),
         ("Array", "function"),
         ("ArrayBuffer", "function"),
         ("BigInt", "function"),

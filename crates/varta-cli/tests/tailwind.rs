@@ -162,10 +162,10 @@ export function main(): void {
 
 /// The full `@import "tailwindcss"` stylesheet (layers, `@property`,
 /// theme variables, Preflight, escaped class selectors) is generated and
-/// stored, but today's L0 grammar rejects it. Its first violation is
-/// Preflight's `[hidden]:where(:not([hidden="until-found"])) { display: none
-/// !important; }`: `!important` belongs to T2 stage S8. This asserts that
-/// precise violation (it moves as T2 stages land); afterwards
+/// stored, but the engine's selector subset rejects it. Since T2 S1–S3 and
+/// `!important` landed, its first violation is the theme layer's
+/// `:root, :host` selector list: `:host` is a selector of T2 stage S5. This
+/// asserts that precise violation (it moves as T2 stages land); afterwards
 /// `full_tailwind_application_applies_after_t2` takes over.
 #[test]
 fn full_tailwind_output_waits_for_t2_sheet_structure() {
@@ -184,43 +184,45 @@ export function main(): void {
         diagnostic["file"].as_str().unwrap().ends_with("app.css"),
         "{diagnostic}"
     );
-    assert_eq!(
-        diagnostic["message"], "invalid stylesheet for View.stylesheet: forbidden CSS token",
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("invalid stylesheet for View.stylesheet: expected a selector"),
         "{diagnostic}"
     );
     assert_eq!(
-        diagnostic["snippet"]["text"], "    display: none !important;",
+        diagnostic["snippet"]["text"], "  :root, :host {",
         "{diagnostic}"
     );
-    assert_eq!(diagnostic["range"]["start"]["column"], 19, "{diagnostic}");
+    assert_eq!(diagnostic["range"]["start"]["column"], 10, "{diagnostic}");
 }
 
-/// Static Tailwind class tokens such as `hover:bg-red-500` or `w-1/2` need
-/// T2 stage S1 (class tokens and escapes); today the L0 class grammar
-/// rejects them where the TSX attribute is checked.
+/// Static Tailwind class tokens such as `w-1/2` follow the HTML class
+/// model (T2 stage S1), and their escaped selectors and math (S3) apply.
 #[test]
-fn tailwind_class_tokens_wait_for_t2_class_grammar() {
+fn tailwind_class_tokens_apply_with_the_t2_class_grammar() {
     let project = Project::new(
         r#"import css from "./app.css" with { type: "text" };
 export function main(): void {
   View.stylesheet(1, css);
+  console.log(JSON.stringify(css));
   View.mount(<p className="w-1/2">x</p>);
 }"#,
         "@tailwind utilities;\n",
     );
-    let diagnostic = project.diagnostic();
-    assert_eq!(
-        diagnostic["message"], "invalid value `w-1/2` for attribute `className`",
-        "{diagnostic}"
-    );
+    success(project.command(&["check"]));
+    let output = success(project.command(&["dev"]));
+    assert!(output.contains(r".w-1\\/2"), "{output}");
 }
 
 /// The end-to-end goal of K8: ordinary TSX with Tailwind classes, no
-/// hand-written CSS. Needs T2 stages S1 (class tokens), S2 (`@property`),
-/// S3 (`calc`, `oklch`, `color-mix`), S5 (Preflight's selectors) and S8
-/// (`!important`) at least; run with `--ignored` once they land.
+/// hand-written CSS. T2 stages S1 (class tokens), S2 (`@property`), S3
+/// (`calc`, `oklch`, `color-mix`) and `!important` have landed; it still
+/// needs S5 (Preflight's and the theme's selectors) at least; run with
+/// `--ignored` once it lands.
 #[test]
-#[ignore = "waits for T2 stages S1, S2, S3, S5 and S8 of the L0 stylesheet grammar"]
+#[ignore = "waits for T2 stage S5 (selectors) of the stylesheet engine"]
 fn full_tailwind_application_applies_after_t2() {
     let project = Project::new(
         r#"import css from "./app.css" with { type: "text" };

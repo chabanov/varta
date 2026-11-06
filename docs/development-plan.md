@@ -32,9 +32,9 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Merged `main` with the K8 T1 Tailwind compiler and its follow-ups, native `img` to the standards, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4261 Rust tests passed, 0 failures, 25 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-154451-50fltt1t/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Merged `main` with the K8 T2 CSS engine (S1–S3) and its Wasm bridge for the browser host, the K8 T1 Tailwind compiler, native `img` to the standards, the iteration protocol, overlay scrollbars and the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **4301 Rust tests passed, 0 failures, 25 ignored; 185 browser Node tests passed** (the stylesheet logic moved from JS into Wasm with its tests); conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-164451-rnhotsbe/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **135 passed, 5 known unsupported out of 140** after the iteration-protocol cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **146 passed, 5 known unsupported out of 151** after the K9 D standard-library cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
@@ -204,6 +204,80 @@ Not done, with the reason:
   linear-time by contract; these need a new matcher contract.
 - **Object wrappers and object-to-primitive coercion**: rare in typed
   library code; they need `valueOf`/`toString` dispatch on objects.
+
+### K9 D standard library — 2026-11-06
+
+Owner decision (K9, 2026-11-06): the first release covers the whole
+TypeScript language except `any`, to the published standards with Node 24 as
+the runtime oracle; track D is the ECMAScript 2025 standard library,
+prioritized by use in typed npm code. This record covers what the track
+implemented in the selector `standard_library()`
+([contract](architecture.md#standard-library-standard_library),
+[rules](profile-rules.md#standard-library-standard_library)); no host ABI,
+value layout, scheduler or browser-host change, so the official browser host
+runs the same Wasm.
+
+Implemented (priority 1 and the UTC part of priority 4):
+
+- `sort`/`toSorted` with V8's TimSort, so comparator call sequences, counts
+  (pinned for 0 to 1000 elements) and the order an inconsistent comparator
+  leaves equal Node's; `toReversed`, `with`, `toSpliced`, `splice`,
+  `copyWithin`, `concat`, `shift`, `unshift`, `flat` (literal depths),
+  `flatMap`, `keys`/`values`/`entries`, `Array.of`, mapped `Array.from`
+  and `Array.from({ length })`.
+- ES2025 iterator helpers on generators and built-in iterators and
+  `Iterator.from`; ES2025 `Set` methods; `Map.groupBy`, `Object.groupBy`,
+  `Object.fromEntries`, `Object.getOwnPropertyNames` of records and
+  dictionaries, `hasOwnProperty`.
+- `JSON.stringify` property lists and `space`; `AggregateError`; combinator
+  arrays mixing `Promise.reject`; `Math.max`/`min` spreads; `String`
+  `at`/`substr`/`isWellFormed`/`toWellFormed`/locale-free case mapping.
+- The complete `Date` with local time in the UTC zone (`Date.UTC`,
+  component constructors, local/UTC getters and setters, `toString` and the
+  other string forms, `toJSON`, `Date.parse` of the forms they produce).
+
+Evidence: `varta-runtime` `standard_library_tests` (eleven Node 24.20.0
+programs with `TZ=UTC`, collector stress builds, refusals, v37 denials), the
+CLI smoke `v38_standard_library_runs_in_dev_and_artifacts`, and eleven
+conformance cases in five new feature rows and four existing ones (146
+passed, 5 known unsupported of 151). Existing fuel goldens are unchanged.
+Full gate on macOS arm64, 2026-11-06, before the commit that records it:
+**4024 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests
+passed**; conformance baseline matched; sources unchanged during the run
+(`target/verification/20261106-165316-gtq53y0k/report.json`). Linux CI and
+other platforms not run.
+
+Not done, each refused by name with its reason:
+
+- **`Symbol()` values, `Symbol.for`/`keyFor`, symbol-keyed properties and
+  the remaining well-known symbols**: a new value tag in value layout 18
+  (extended in place, v38 is unreleased) read by every value reader in both
+  hosts, plus symbol-keyed members. Needs the owner's value-layout decision.
+- **`WeakMap`, `WeakSet`, `WeakRef`, `FinalizationRegistry`**: weak edges
+  (ephemerons) in the exact-root collector and deterministic cleanup turns
+  in both schedulers. A strong-reference stand-in would leak and is not
+  admitted.
+- **Local time zones**: the zone is a recorded host input. The owner
+  decides the grant that reveals the host zone (proposal: `time.zone`, the
+  zone recorded with the run for replay, resolved by ICU4X/TZif data in
+  guest code so both hosts agree); without it the zone is UTC.
+- **Full RegExp** (backreferences, lookaround, `\p{…}`, `d`/`v`, modifiers):
+  a backtracking matcher bounded by fuel would replace the linear-time
+  contract of v37; needs a new matcher contract.
+- **Proxy, Reflect, descriptors and prototypes**: closed checked values have
+  no exotic objects or mutable prototypes.
+- **`Object.freeze`/`seal`/`preventExtensions`**: a per-object flag checked
+  by every write (value layout 18) — owner decision.
+- **`structuredClone`, `JSON.parse` revivers, `JSON.stringify` replacer
+  functions**: need a type-directed deep copy and guest-driven
+  (de)serialization walks.
+- **Intl** (NumberFormat, DateTimeFormat, PluralRules, Collator,
+  RelativeTimeFormat, ListFormat, Segmenter) and `localeCompare`/`normalize`:
+  need ICU4X locale data shipped deterministically (size and crate pins to
+  be justified).
+- `Promise.any` still rejects with an `Error`, not an `AggregateError`;
+  object-to-primitive conversion (`String(date)`, `` `${array}` ``) stays
+  refused.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -2583,7 +2657,7 @@ inferred from the current regression suite.
 | CORE-03 | Functions and control flow | Partial | Typed functions, closures, control flow, generators, async functions and async generators | Complete receiver/binding/call behavior, general iterables and remaining generator forms |
 | CORE-04 | Exceptions | Partial | Typed exceptions, Error subclasses, unknown catches and rooted propagation across suspension/finally | General thrown-value admission and complete error-family/propagation inventory |
 | CORE-05 | Standard collections and binary values | Partial | Map/Set, tuples, Uint8Array, encoding/base64 and v38 Web byte APIs | Full typed-array/ArrayBuffer/DataView contracts and ownership/interop inventory; general tagged collection values |
-| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, UTC Date subset and ahead-of-time RegExp | General Math object/call semantics, wider Date/Intl and remaining RegExp features |
+| CORE-06 | Math and remaining language built-ins | Partial | Checked Math inventory, the v38 complete Date in the UTC zone, ES2025 Array/Set/iterator/JSON library methods (K9 D) and ahead-of-time RegExp | General Math object/call semantics, host time zones, Intl, Symbol, weak references and remaining RegExp features |
 | CORE-07 | Garbage collection and resource lifecycle | Partial; large-heap idle-work fix verified | Exact tracing, liveness frames, incremental collection/idle maintenance and bounded bitmap clearing before the root snapshot under v38 | Sustained retained-root/leak/cancellation validation, collector tuning and target peak-memory evidence remain open |
 | CORE-08 | Event loop and promise jobs | Partial; implemented checked scheduler | Bounded FIFO Promise jobs, adoption, microtask checkpoints, timer/network tasks and generation-checked tokens | Structural thenable support (currently rejected), remaining scheduling semantics and cross-host ordering beyond supported network replay |
 | CORE-09 | Async language and cancellation | Partial | Async/await, timers, abort listeners/timeout/any, async generators, for-await, cancellable fetch and focused v38 HTTP lifecycle checks including synchronous network waits | Top-level await, wider async iterable forms, broader host-call lifecycle and sustained owned shutdown acceptance |
@@ -3369,7 +3443,8 @@ The selectors are registered; the table records what each stream admits.
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionary call sites; fuel profiler | Implemented for codegen ([contract](architecture.md#code-generation-v2-codegen_v2)): quiet expressions without root traffic, call and frame fast paths, operand-cache collapse, plain updates, content-equality and inline literal comparisons, amortized string builders, guest `charAt`/`charCodeAt`/`%`, bounded first allocation scans and a collection threshold; `varta dev --profile-fuel` ([profile builds](architecture.md#fuel-profile-builds-varta-dev---profile-fuel)). Admits no syntax; v37 bytes frozen |
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
-| `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Array.from` with a map function, `Iterable<T>` value annotations |
+| `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Iterable<T>` value annotations (`Array.from` with a map function: `standard_library()`) |
+| `standard_library()` | K9 D standard library (2026-11-06): ES2025 Array/Set/Object/JSON/String/Math methods, iterator helpers, `AggregateError`, complete UTC `Date` | Implemented ([contract](architecture.md#standard-library-standard_library), [record](#k9-d-standard-library--2026-11-06)): typed guest code of the standard, aggregate, v38 collections and v38 date preludes; V8's TimSort comparator order. No ABI, value-layout or host change. Pending owner decisions: `Symbol` value tag, integrity flag, host time-zone grant; pending work: weak references, full RegExp, Proxy/Reflect, `structuredClone`, Intl |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks
@@ -7719,6 +7794,8 @@ frame bounds.
   grammar refuses a full build at Preflight's `display: none !important`
   (S8) and static tokens such as `w-1/2` at the TSX attribute (S1). The CLI
   tests pin these first violations; the end-to-end test is ignored until T2.
+  (Since the T2 standards items and T3 merged: static tokens apply, and the
+  first violation of a full build is the theme's `:root, :host`, stage S5.)
 - Not in T1: JavaScript plugins/config, `@source` file globs, source maps,
   IntelliSense suggestions and candidate canonicalization.
 - Follow-up (owner decisions 2026-11-06): composed class names enumerate
@@ -7729,6 +7806,131 @@ frame bounds.
   conditions, cycle, depth, count and byte bounds). Closed by K9 A's
   literal inference: an unannotated `const x = "a"` and `as const` tuple
   elements have literal types and are enumerated without annotations.
+
+#### K8 T2 S1–S3 — engine tokens, sheet structure and values (2026-11-06)
+
+Owner directive of the same day: everything by the published standards,
+Chrome only as the oracle. The engine contract with its specification
+sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3).
+
+- **S1.** CSS Syntax 3 tokenizer (`view::syntax`: preprocessing, comments,
+  escapes, numbers, url tokens, §9 serialization); stylesheets parsed on
+  tokens, forbidden constructs found after decoding; HTML class model in
+  `set_class`, TSX and selectors (`css::class_list`, 256-byte names).
+- **S2.** `@layer` (statements, blocks, nesting, anonymous; Cascade 5 order
+  across sheets, unlayered last), `@property` (syntax, inherits,
+  computationally independent initial values; reset per element when not
+  inherited; syntax mismatch computes as `unset`), comments, Media Queries
+  4/5 (`stylesheet::media`: lists, `not`/`only`/`and`/`or`, range syntax,
+  `height`, `orientation`, `hover`, `pointer`, `any-*`,
+  `prefers-reduced-motion`, `prefers-contrast`, `forced-colors`) with
+  `Environment.height` and `Environment.preferences` as recorded host inputs
+  (runtime and shell pass the viewport height).
+- **S3.** `css::math` (Values 4 §10), `css::color` (Color 4/5, CSS gamut
+  mapping), every length unit, `opacity` percentages, numeric
+  `font-weight`, `white-space: pre`, `text-align: start | end`, any
+  `transition-property` names, `cubic-bezier()`/`steps()` in transitions.
+  Values are lowered at computed-value time (`css::lower`) to the host
+  grammar the renderer reads, so `oklch()` theme colours through `var()` now
+  render natively (the recorded parity gap). Values valid in CSS that native
+  layout cannot render are refused as `Unrenderable` with their own
+  diagnostic.
+- **Browser host.** Unchanged and still rejecting exactly what it rejected:
+  its registry (`FORBIDDEN_CSS`, `MEDIA_FEATURES`, grammars) is untouched and
+  no CSS logic was added in JavaScript. Routing its stylesheet check,
+  cascade and value validation through a wasm32 shim of this engine is the
+  next step (T3): the shim needs `varta-common`'s view modules on `no_std` +
+  `alloc` (or a std wasm32 build) and the JS view model's per-rule work and
+  expansion data from Rust. A finding for it: Chrome ignores `@property` in
+  shadow trees (Properties and Values API 1 §2.8 says registrations are not
+  tree-scoped), so the bridge must register them at document level.
+- **Measured acceptance** of the five-component application's 588 class
+  uses, end to end through the native engine (each candidate's Tailwind CSS
+  flattened as T1's canonical output will be, with the referenced theme
+  variables; class token, sheet commit and every computed property): 25.3%
+  before (149 uses; 17.3% of 312 distinct candidates), 70.4% after (414
+  uses; 64.1% distinct). The design projected 72% for S1–S3; the difference
+  is the values S3 refuses because native layout lacks them (`inline-flex`,
+  `inline-block`, `sticky`, `fit-content`: 10 uses). The rest is S4–S6
+  (logical properties, selectors, shadows).
+- **Chrome oracle** (`native_css_engine_probe`, `test-native-css-engine.mjs`;
+  ten scenes: escaped classes, layers, registered properties, theme
+  colours, colour functions, out-of-gamut colours, math and units, media
+  features, reduced motion, comments and escapes): 224 checks pass at 1x,
+  1.25x and 2x; box geometry matches within 0.02 px, in-gamut colours within
+  1/255 (RGB mean ≤ 0.033, the 1.25x maxima are antialiased edges), and all
+  286 Tailwind 4 palette colours match Chrome within 1/255. Recorded
+  deviations: Chrome clips out-of-gamut colours (mean 0.58, max 81 for
+  far-out colours), ignores `@property` in shadow trees, and snaps lengths to
+  1/64 px.
+- **Open, for owner decisions:** (1) CSS-wide keywords on standard
+  properties need a native cascade that knows initial values and user-agent
+  rows; (2) `em` outside `font-size`, `ex`/`ch`/`lh`, and percentage-plus-
+  length math need layout-time resolution (taffy's `calc` handles); (3)
+  literal `opacity` above 1 and `font-weight` outside [1, 1000] stay refused
+  although CSS clamps `<alpha-value>`; (4) `@layer` inside `@media`,
+  `!important`, more than two `color-mix()` colours (Chrome refuses those
+  too) and named colours stay outside; (5) registered computed values are not
+  absolutized before inheritance; (6) the desktop shell passes default
+  preferences, not the OS settings (reduced motion, contrast); (7) gamut
+  mapping per the specification differs from Chrome's clipping for colours
+  outside sRGB.
+- Gate: `python3 scripts/verify.py full` PASS (3979 Rust tests passed, 0
+  failed, 21 ignored; 218 browser Node tests; conformance baseline), report
+  `target/verification/20261106-130906-pnr2i3f3/report.json` (macOS only).
+
+#### K8 T2 standards items and T3 browser bridge (2026-11-06)
+
+- **T3, browser bridge.** `varta-common`'s view modules build `no_std` with
+  `alloc` and `libm` behind the `view` feature (the KV codec and intrinsic
+  library bytes are unchanged); the cascade, variables and computed values
+  moved into `varta-style`, shared by the native renderer and
+  `varta-style-wasm`, which `scripts/build-view-engine.py` builds into the
+  checked-in `view-engine.wasm` (`view-engine.json` fingerprint), as the KV
+  codec is built. The browser view model mirrors each batch into the engine
+  in a transaction and takes its verdicts; the DOM bridge applies the
+  engine's computed values inline and records media features, viewport and
+  interaction states as inputs. `view-css.mjs`, `view-variables.mjs`,
+  `view-custom-properties.mjs` and the CSS parts of `view-model.mjs` are
+  removed; no CSS decision remains in JavaScript. `@property` reaches Chrome
+  no more (the engine substitutes), so its shadow-tree gap does not apply.
+  Cross-host equality: the corpus `view-engine-corpus.json` (the Tailwind
+  application's 312 candidates plus synthetic and inline cases) is decided
+  identically by the Wasm module, the native session and the native
+  renderer (Rust test), and by the browser view model (Node test).
+- **Standards items (1)–(7) of the S1–S3 record:** (1) CSS-wide keywords
+  on every property (Cascade 5 §7.3, `revert` and `revert-layer` included;
+  `font-family: initial` stays refused, its initial value being the user
+  agent's font); (3) `opacity` takes any number, clamped; literal
+  `font-weight` outside [1, 1000] is invalid and math results are clamped
+  to the property range; (4) `!important` with reversed layer order,
+  `@layer` inside `@media`/`@supports` with conditional order, `@supports`,
+  the 148 named colours and `color-mix()` of one to `MAX_MIX_COLORS` colours
+  (Color 5 §3; Chrome mixes exactly two, a recorded deviation); (6) the desktop shell reads macOS
+  "Reduce motion" and "Increase contrast" as recorded inputs, again on focus
+  and theme changes; (7) gamut mapping stays per Color 4 §14.2, Chrome's
+  clipping recorded as its deviation. Not done: (2) `em` outside
+  `font-size`, `ex`/`ch`/`lh` and percentage-plus-length math (they need the
+  element's computed font in the engine and `calc()` lengths in native
+  layout; no use of the measured application needs them) and (5) the
+  absolutization of registered values before inheritance (same
+  prerequisite: the engine computing `font-size`).
+- **Chrome oracle,** 15 scenes (new: CSS-wide keywords, importance,
+  conditional rules, named colours and two-colour mixes, multi-colour
+  mixes), now also requiring every box's centre pixel to match within
+  1/255 besides the scene mean: `bridge` 451 checks and `platform` 439
+  checks pass at 1x, 1.25x and 2x. The bridge matches the native pixels
+  exactly at 1x and, apart from 1/64 px length snapping in one scene, at
+  2x, including out-of-gamut colours and multi-colour mixes; the 1.25x
+  differences are antialiased fractional edges (scene means at most
+  0.018). Platform-mode deviations: gamut clipping (mean 0.58) and Chrome
+  dropping `color-mix()` with other than two colours.
+- **Measured acceptance** of the five-component application: unchanged at
+  70.4% of 588 uses (64.1% of 312 distinct candidates). The new admissions
+  are not what the application is missing; its refusals are selectors (S5,
+  59 distinct), logical properties (S4), shadows (S6) and the values native
+  layout lacks (`inline-flex`, `inline-block`, `sticky`, `fit-content`,
+  `-webkit-box`).
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

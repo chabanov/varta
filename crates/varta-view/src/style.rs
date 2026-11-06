@@ -10,7 +10,14 @@ use std::collections::BTreeMap;
 pub struct Environment {
     /// Viewport width in CSS pixels.
     pub width: f64,
+    /// Viewport height in CSS pixels: the `height` and `orientation` media
+    /// features and the viewport-percentage units (`vh`, `dvh`, …).
+    pub height: f64,
     pub dark: bool,
+    /// Recorded user-preference and interaction media inputs
+    /// (`prefers-reduced-motion`, `prefers-contrast`, `forced-colors`,
+    /// `hover`, `pointer` and their `any-` forms).
+    pub preferences: varta_common::view::stylesheet::media::Preferences,
     /// Reference document-root font size for `rem`, independent of the view
     /// root's own font size and the shaper's default text size.
     pub root_font_size: f64,
@@ -25,7 +32,9 @@ impl Default for Environment {
     fn default() -> Self {
         Self {
             width: DEFAULT_VIEWPORT_WIDTH,
+            height: f64::from(crate::geometry::DEFAULT_VIEWPORT_HEIGHT),
             dark: false,
+            preferences: varta_common::view::stylesheet::media::Preferences::default(),
             root_font_size: varta_common::view::stylesheet::REM_PIXELS,
             scrollbars: Scrollbars::default(),
             device_pixel_ratio: 1.0,
@@ -47,6 +56,31 @@ pub enum Scrollbars {
     Classic,
 }
 impl Environment {
+    /// The media query environment (Media Queries 4/5) of these inputs.
+    #[must_use]
+    pub fn media(&self) -> varta_common::view::stylesheet::Media {
+        varta_common::view::stylesheet::Media {
+            width: self.width,
+            height: self.height,
+            dark: self.dark,
+            preferences: self.preferences,
+        }
+    }
+    /// The shared style engine's inputs.
+    pub(crate) fn style(&self) -> varta_style::Environment {
+        varta_style::Environment {
+            media: self.media(),
+            context: self.lowering(),
+        }
+    }
+    /// The reference metrics of computed-value lowering.
+    pub(crate) fn lowering(&self) -> varta_common::view::css::Context {
+        varta_common::view::css::Context {
+            root_font_size: self.root_font_size,
+            viewport_width: self.width,
+            viewport_height: self.height,
+        }
+    }
     /// Set the host reference font. Zero is valid for geometry; text shaping
     /// still applies its independent minimum font size. No OS lookup occurs.
     pub fn with_root_font_size(mut self, size: f64) -> Result<Self, crate::LayoutError> {
@@ -57,81 +91,78 @@ impl Environment {
 }
 /// Default headless viewport width in CSS pixels.
 pub const DEFAULT_VIEWPORT_WIDTH: f64 = 1024.0;
-pub(crate) use varta_common::view::stylesheet::{Name, Rule, Subject};
+pub(crate) use varta_common::view::stylesheet::Name;
 
-/// Whether `rule`'s media conditions hold in `environment`.
-pub(crate) fn applies(rule: &Rule, environment: &Environment) -> bool {
-    rule.applies(environment.width, environment.dark)
-}
+/// The computed-value marker of `inherit` on an inherited property: its
+/// consumers take the parent's value and skip the element's own
+/// user-agent row (Cascade 5 §7.3.2).
+pub(crate) const INHERIT: &str = "inherit";
 
-/// Parse a whole stylesheet with the shared grammar
-/// (`varta_common::view::stylesheet`), retaining its typed work-limit error.
-pub(crate) fn parse(
-    text: &str,
-    allowance: usize,
-) -> Result<
-    varta_common::view::stylesheet::ParsedStylesheet,
-    varta_common::view::stylesheet::StylesheetError,
-> {
-    varta_common::view::stylesheet::parse_with_work_limit(text, allowance)
-}
-
-/// Rule anchors preserve the shared matcher's semantics, including comma
-/// specificity. Each rule is considered once even with duplicate class names.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct RuleIndex {
-    roots: Vec<usize>,
-    classes: BTreeMap<String, Vec<usize>>,
-    pub has_custom: bool,
-    pub costs: Vec<RuleCost>,
-    pub expansion: Vec<Vec<(Name, varta_common::view::expansion::Value)>>,
-}
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct RuleCost {
-    pub work: usize,
-    pub variables: bool,
-}
-impl RuleIndex {
-    pub fn new(rules: &[Rule]) -> Self {
-        let mut out = Self::default();
-        for (index, rule) in rules.iter().enumerate() {
-            out.expansion.push(
-                rule.declarations
-                    .iter()
-                    .map(|(name, value)| {
-                        (
-                            name.clone(),
-                            varta_common::view::expansion::Value::new(value),
-                        )
-                    })
-                    .collect(),
-            );
-            out.costs.push(RuleCost {
-                work: rule.cascade_work(),
-                variables: rule
-                    .declarations
-                    .iter()
-                    .any(|(_, value)| varta_common::view::css::contains_variable(value)),
-            });
-            out.has_custom |= rule
-                .declarations
-                .iter()
-                .any(|(name, _)| matches!(name, Name::Custom(_)));
-            for selector in &rule.selectors {
-                let list = if selector.root {
-                    &mut out.roots
-                } else {
-                    let Some(class) = selector.classes.first() else {
-                        continue;
-                    };
-                    out.classes.entry(class.clone()).or_default()
-                };
-                if list.last() != Some(&index) {
-                    list.push(index);
+/// The initial value (each property definition's "Initial" line) that a
+/// computed `initial` must state explicitly natively: for an inherited
+/// property, to stop inheritance; for another, where the native user-agent
+/// origin gives this element a value. Elsewhere no value is the initial
+/// value. The texts are in the grammar the consumers read; `font-size`
+/// takes the keyword `medium`, `color` the light scheme's `CanvasText`.
+pub(crate) fn initial_override(
+    tree: &crate::tree::Tree,
+    id: u32,
+    property: varta_common::view::CssProperty,
+) -> Option<String> {
+    use varta_common::view::CssProperty as P;
+    let text = match property {
+        P::Color => "#000000",
+        P::FontSize => "medium",
+        P::FontWeight | P::FontStyle | P::LineHeight | P::WhiteSpace | P::OverflowWrap => "normal",
+        P::TextAlign => "start",
+        P::Cursor => "auto",
+        _ => {
+            let element = tree.element(id)?;
+            let ua = ua_defaults(element.tag).is_some() || ControlKind::of(element).is_some();
+            if !ua {
+                return None;
+            }
+            match property {
+                P::Display => "inline",
+                P::Width | P::Height => "auto",
+                P::Margin
+                | P::MarginTop
+                | P::MarginRight
+                | P::MarginBottom
+                | P::MarginLeft
+                | P::Padding
+                | P::PaddingTop
+                | P::PaddingRight
+                | P::PaddingBottom
+                | P::PaddingLeft
+                | P::BorderRadius => "0",
+                P::Border | P::BorderTop | P::BorderRight | P::BorderBottom | P::BorderLeft => {
+                    "none"
                 }
+                P::BorderStyle => "none",
+                P::BackgroundColor => "transparent",
+                _ => return None,
             }
         }
-        out
+    };
+    Some(text.into())
+}
+
+/// The native user-agent origin's value of a non-inherited `property` for
+/// element `id`, where `inherit` reads it from a parent without an author
+/// value: the outer display type of the user-agent table.
+pub(crate) fn ua_value(
+    tree: &crate::tree::Tree,
+    id: u32,
+    property: varta_common::view::CssProperty,
+) -> Option<String> {
+    let element = tree.element(id)?;
+    match property {
+        varta_common::view::CssProperty::Display => {
+            let row = ua_defaults(element.tag)?;
+            row.block.then(|| "block".into())
+        }
+        _ => None,
     }
 }
 
@@ -140,7 +171,7 @@ pub(crate) struct Variables<'a> {
     tree: &'a crate::tree::Tree,
     id: u32,
     environment: &'a Environment,
-    custom: std::cell::OnceCell<crate::variables::Scope<'a>>,
+    custom: std::cell::OnceCell<varta_style::Scope<'a>>,
 }
 impl<'a> Variables<'a> {
     pub fn new(tree: &'a crate::tree::Tree, id: u32, environment: &'a Environment) -> Self {
@@ -157,10 +188,43 @@ impl<'a> Variables<'a> {
         value: &str,
     ) -> Option<String> {
         let result = self.substitute(value)?;
-        self.tree
+        // Cascade 5 §7.3: a CSS-wide keyword resolves against the native
+        // user-agent origin; `revert` drops this declaration.
+        let keyword = result.trim();
+        let computed = if keyword.eq_ignore_ascii_case("initial") {
+            Some(varta_style::Computed::Initial)
+        } else if keyword.eq_ignore_ascii_case("inherit") {
+            Some(varta_style::Computed::Inherit)
+        } else if keyword.eq_ignore_ascii_case("unset") {
+            Some(if varta_style::inherited(property) {
+                varta_style::Computed::Inherit
+            } else {
+                varta_style::Computed::Initial
+            })
+        } else if keyword.eq_ignore_ascii_case("revert")
+            || keyword.eq_ignore_ascii_case("revert-layer")
+        {
+            return None;
+        } else {
+            None
+        };
+        if let Some(computed) = computed {
+            return self
+                .tree
+                .keyword(self.id, self.environment, property, computed);
+        }
+        // CSS Variables 1 §3.1: an invalid substituted value is invalid at
+        // computed-value time. A valid one is lowered to the host grammar the
+        // renderer's consumers read; one the renderer cannot render is
+        // treated the same way.
+        if !self
+            .tree
             .render_reads
             .validate(self.environment, property, &result)
-            .then_some(result)
+        {
+            return None;
+        }
+        varta_common::view::css::lower(property, &result, &self.environment.lowering())
     }
     pub fn substitute(&self, value: &str) -> Option<String> {
         if !self
@@ -586,65 +650,6 @@ pub(crate) fn themed(properties: &BTreeMap<varta_common::view::CssProperty, Stri
         .any(|property| properties.contains_key(property))
 }
 
-/// Incremental cross-sheet anchors avoid scanning unrelated (or empty) sheets.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct CascadeIndex {
-    roots: std::collections::BTreeSet<(u32, usize)>,
-    classes: BTreeMap<String, std::collections::BTreeSet<(u32, usize)>>,
-    custom_sheets: usize,
-}
-impl CascadeIndex {
-    pub fn insert(&mut self, sheet: u32, index: &RuleIndex) {
-        self.custom_sheets += usize::from(index.has_custom);
-        self.roots
-            .extend(index.roots.iter().map(|rule| (sheet, *rule)));
-        for (class, rules) in &index.classes {
-            self.classes
-                .entry(class.clone())
-                .or_default()
-                .extend(rules.iter().map(|rule| (sheet, *rule)));
-        }
-    }
-    pub fn remove(&mut self, sheet: u32, index: &RuleIndex) {
-        self.custom_sheets -= usize::from(index.has_custom);
-        for rule in &index.roots {
-            self.roots.remove(&(sheet, *rule));
-        }
-        for (class, rules) in &index.classes {
-            let empty = if let Some(entries) = self.classes.get_mut(class) {
-                for rule in rules {
-                    entries.remove(&(sheet, *rule));
-                }
-                entries.is_empty()
-            } else {
-                false
-            };
-            if empty {
-                self.classes.remove(class);
-            }
-        }
-    }
-    pub fn has_custom(&self) -> bool {
-        self.custom_sheets != 0
-    }
-    pub fn candidates(
-        &self,
-        root: bool,
-        classes: &std::collections::BTreeSet<&str>,
-    ) -> Vec<(u32, usize)> {
-        if root {
-            return self.roots.iter().copied().collect();
-        }
-        let mut candidates = std::collections::BTreeSet::new();
-        for class in classes {
-            if let Some(rules) = self.classes.get(*class) {
-                candidates.extend(rules);
-            }
-        }
-        candidates.into_iter().collect()
-    }
-}
-
 #[cfg(test)]
 mod ua_tests {
     use super::*;
@@ -795,36 +800,5 @@ mod ua_tests {
         assert!(close(fixed, 24.0) && fixed.is_absolute());
         assert!(sole_monospace(" Monospace ") && !sole_monospace("monospace, monospace"));
         assert!(!sole_monospace("\"monospace\""));
-    }
-}
-
-#[cfg(test)]
-mod index_tests {
-    use super::*;
-    use std::collections::BTreeSet;
-    #[test]
-    fn unrelated_and_duplicate_anchors_do_not_expand_candidate_lists() {
-        let mut index = CascadeIndex::default();
-        for sheet in 1..1001 {
-            let parsed = parse(&format!(".unrelated{sheet} {{ color:#abc }}"), usize::MAX).unwrap();
-            index.insert(sheet, &RuleIndex::new(&parsed.rules));
-        }
-        let rules = parse(".a, .a.b, .b, :root { color:#fff }", usize::MAX)
-            .unwrap()
-            .rules;
-        let anchors = RuleIndex::new(&rules);
-        index.insert(2000, &anchors);
-        assert_eq!(
-            index.candidates(false, &BTreeSet::from(["a", "b"])),
-            vec![(2000, 0)]
-        );
-        assert_eq!(index.candidates(true, &BTreeSet::new()), vec![(2000, 0)]);
-        index.remove(2000, &anchors);
-        assert!(
-            index
-                .candidates(false, &BTreeSet::from(["a", "b"]))
-                .is_empty()
-        );
-        assert!(index.candidates(true, &BTreeSet::new()).is_empty());
     }
 }

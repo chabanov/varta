@@ -806,6 +806,20 @@ impl LanguageProfile {
     pub fn iteration_protocol(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 D standard-library stream: the ECMAScript 2025
+    /// `Array.prototype` copying and reordering methods (`sort` and
+    /// `toSorted` with V8's TimSort comparator order, `flat`, `flatMap`,
+    /// `with`, `toReversed`, `toSpliced`, `splice`, `copyWithin`,
+    /// `concat`, `shift`, `unshift`, `keys`, `values`, `entries`),
+    /// `Array.of`, `Array.from` with a map function or an array-like
+    /// length, the ES2025 `Set` methods, `Object.groupBy`, `Map.groupBy`,
+    /// `Object.fromEntries` and the remaining `String.prototype` methods,
+    /// all in typed guest code of the standard prelude. Changes no host ABI
+    /// or value layout.
+    #[must_use]
+    pub fn standard_library(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
     /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
     /// in-development value layout 18) in record fields, array elements,
@@ -3285,6 +3299,7 @@ mod tests {
                 profile.json_decoders(),
                 profile.iteration_protocol(),
                 profile.type_level(),
+                profile.standard_library(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }

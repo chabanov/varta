@@ -22,10 +22,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = (
     "varta", "varta-artifact", "varta-bigint", "varta-common", "varta-compiler",
     "varta-conformance", "varta-desktop", "varta-intrinsics", "varta-kv-codec", "varta-launcher",
-    "varta-project", "varta-runtime", "varta-tailwind", "varta-view",
+    "varta-project", "varta-runtime", "varta-style", "varta-tailwind", "varta-view",
 )
 # The checked-in browser KV codec must match its sources (scripts/build-kv-codec.py).
 KV_CODEC_CHECK = [sys.executable, "scripts/build-kv-codec.py", "--check"]
+# The checked-in browser view style engine must match its sources
+# (scripts/build-view-engine.py).
+VIEW_ENGINE_CHECK = [sys.executable, "scripts/build-view-engine.py", "--check"]
 CORE = ["varta-common", "varta-compiler", "varta-runtime", "varta-artifact"]
 # The browser host's engine modules (registry, fuel, Worker, loader) run in
 # Node's built-in test runner; no npm dependency is installed.
@@ -208,6 +211,8 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
             result.append(browser_node_tests())
         if args.package == "varta-kv-codec":
             result.append(KV_CODEC_CHECK)
+        if args.package == "varta-style":
+            result.append(VIEW_ENGINE_CHECK)
         return result
     if args.scope == "feature":
         return [
@@ -226,6 +231,7 @@ def commands(args: argparse.Namespace, run: Path) -> list[list[str] | NotRun | M
         cargo("check", "-p", "varta-common", "-p", "varta-intrinsics", "-p", "varta-kv-codec",
               "--no-default-features", "--lib", "--locked"),
         KV_CODEC_CHECK,
+        VIEW_ENGINE_CHECK,
         companion(),
         cargo("clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"),
         cargo("build", "--workspace", "--all-targets", "--locked"),

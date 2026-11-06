@@ -971,6 +971,60 @@ export function main(): void {
 }
 
 #[test]
+fn native_layout_applies_recorded_preferences_and_updates_them() {
+    use varta_common::view::stylesheet::media::{Contrast, Preferences};
+    let bytes = compile(
+        r##"
+export function main(): void {
+  View.stylesheet(1, '.box { width:20px; height:20px; background-color:#f00 } @media (prefers-reduced-motion: reduce) and (prefers-contrast: more) { .box { background-color:#0f0 } }');
+  const root = View.node(); View.createElement(root, 1); View.setClass(root, 'box'); View.mount(root);
+}
+"##,
+    );
+    let system = Preferences {
+        reduced_motion: true,
+        contrast: Contrast::More,
+        ..Preferences::default()
+    };
+    let mut app = VartaRuntime::new()
+        .start_application(
+            &bytes,
+            crate::ApplicationOptions {
+                view_layout: Some(
+                    crate::ViewLayout::new(100.0, 100.0, None, 16.0)
+                        .unwrap()
+                        .with_preferences(system),
+                ),
+                ..crate::ApplicationOptions::default()
+            },
+        )
+        .unwrap();
+    assert!(app.failure().is_none(), "{:?}", app.failure());
+    assert_eq!(
+        &app.view_rasterize(100, 100, None).unwrap().pixels[..4],
+        &[0, 255, 0, 255]
+    );
+    app.view_set_layout_size(200.0, 100.0).unwrap();
+    assert_eq!(
+        &app.view_rasterize(200, 100, None).unwrap().pixels[..4],
+        &[0, 255, 0, 255]
+    );
+    app.view_set_environment(varta_view::Environment {
+        width: 200.0,
+        preferences: Preferences {
+            contrast: Contrast::NoPreference,
+            ..system
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        &app.view_rasterize(200, 100, None).unwrap().pixels[..4],
+        &[255, 0, 0, 255]
+    );
+}
+
+#[test]
 fn a_style_change_starts_a_transition_on_the_instance_clock() {
     // A minute-long transition: the frame right after the change is still at
     // its start, and the host keeps presenting frames while it runs.

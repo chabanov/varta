@@ -720,9 +720,7 @@ impl Desugar<'_> {
                         fixed,
                         template,
                         |value| {
-                            value
-                                .split_ascii_whitespace()
-                                .all(css::ident)
+                            css::class_list(value)
                                 .then(|| format!("{VIEW}.setClass({node}, {})", literal(value)))
                         },
                         &format!("{VIEW}.bindClass({node}, {{}})"),

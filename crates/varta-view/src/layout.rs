@@ -493,17 +493,12 @@ pub(crate) fn border_widths(
     let variables = style::Variables::new(tree, id, env);
     let mut widths = [3.0; 4];
     let mut solid = [false; 4];
-    for (name, raw) in tree.cascade_refs(id, env) {
-        let Name::Property(property) = name else {
-            continue;
-        };
-        let property = *property;
-        let components = border_components(property);
-        if components.is_empty() {
-            continue;
-        }
+    let mut apply = |property: CssProperty, raw: &str, only: Option<(u8, bool)>| {
         let value = variables.property(property, raw);
-        for (side, is_style) in components {
+        for (side, is_style) in border_components(property) {
+            if only.is_some_and(|only| only != (side, is_style)) {
+                continue;
+            }
             let (width, present) = match &value {
                 Some(value) => border_component(property, value, units, |p, v| {
                     tree.render_reads.validate(env, p, v)
@@ -517,19 +512,21 @@ pub(crate) fn border_widths(
                 widths[side as usize] = width;
             }
         }
+        Ok(())
+    };
+    // Cascade 5 §6.1: rule declarations, inline values, important rules.
+    let cascade = tree.cascade_refs(id, env);
+    for declared in &cascade.normal {
+        if let Name::Property(property) = declared.name {
+            apply(*property, declared.value, None)?;
+        }
     }
     for (&(side, is_style), (property, raw)) in &element.border_inline {
-        let (width, present) = match variables.property(*property, raw) {
-            Some(value) => border_component(*property, &value, units, |p, v| {
-                tree.render_reads.validate(env, p, v)
-            })
-            .ok_or(LayoutError::Unsupported(id))?,
-            None => (3.0, false),
-        };
-        if is_style {
-            solid[side as usize] = present;
-        } else {
-            widths[side as usize] = width;
+        apply(*property, raw, Some((side, is_style)))?;
+    }
+    for declared in &cascade.important {
+        if let Name::Property(property) = declared.name {
+            apply(*property, declared.value, None)?;
         }
     }
     for i in 0..4 {
@@ -571,20 +568,27 @@ fn layout_properties(
     }
     let element = tree.element(id).ok_or(LayoutError::Unsupported(id))?;
     let variables = style::Variables::new(tree, id, env);
-    let declarations = tree
-        .cascade_refs(id, env)
+    // Cascade 5 §6.1: rule declarations, inline values, important rules.
+    let cascade = tree.cascade_refs(id, env);
+    fn rules<'a>(list: &[varta_style::Declared<'a>]) -> Vec<(CssProperty, &'a str)> {
+        list.iter()
+            .filter_map(|declared| match declared.name {
+                Name::Property(property) => Some((*property, declared.value)),
+                Name::Custom(_) => None,
+            })
+            .collect()
+    }
+    let (normal, important) = (rules(&cascade.normal), rules(&cascade.important));
+    let declarations = normal
         .into_iter()
-        .filter_map(|(name, value)| match name {
-            Name::Property(property) => Some((*property, value)),
-            Name::Custom(_) => None,
-        })
         .chain(
             element
                 .style
                 .iter()
                 .filter(|(property, _)| geometry_sides(**property).is_none())
                 .map(|(property, value)| (*property, value.as_str())),
-        );
+        )
+        .chain(important);
     let mut result = BTreeMap::new();
     for (property, value) in declarations {
         let Some(value) = variables.property(property, value) else {
@@ -951,6 +955,9 @@ pub(crate) fn text_style(
     Ok((resolved.options, families))
 }
 
+/// The range of numeric font weights (CSS Fonts 4 §2.2).
+const MIN_FONT_WEIGHT: f32 = 1.0;
+const MAX_FONT_WEIGHT: f32 = 1000.0;
 /// Admitted computed font sizes in CSS pixels.
 const MIN_FONT_SIZE: f32 = 0.01;
 const MAX_FONT_SIZE: f32 = 4096.0;
@@ -1057,47 +1064,71 @@ pub(crate) fn resolve_text(
                 align = value;
             }
         }
-        if let Some(value) = properties.get(&CssProperty::TextAlign) {
+        // Cascade 5 §7.3.2: `inherit` keeps the inherited value and, being
+        // present, skips the element's own user-agent row above.
+        let declared = |property: CssProperty| {
+            properties
+                .get(&property)
+                .filter(|value| value.as_str() != style::INHERIT)
+        };
+        if let Some(value) = declared(CssProperty::TextAlign) {
             align = TextAlign::parse(value).ok_or(LayoutError::Unsupported(ancestor))?;
         }
-        if let Some(value) = properties.get(&CssProperty::OverflowWrap) {
+        if let Some(value) = declared(CssProperty::OverflowWrap) {
             break_anywhere = match value.as_str() {
                 "normal" => false,
                 "anywhere" => true,
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
-        if let Some(value) = properties.get(&CssProperty::WhiteSpace) {
+        if let Some(value) = declared(CssProperty::WhiteSpace) {
             white_space = match value.as_str() {
                 "normal" => WhiteSpaceMode::Normal,
                 "nowrap" => WhiteSpaceMode::NoWrap,
                 "pre-wrap" => WhiteSpaceMode::PreWrap,
+                "pre" => WhiteSpaceMode::Pre,
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
-        if let Some(value) = properties.get(&CssProperty::FontFamily) {
+        if let Some(value) = declared(CssProperty::FontFamily) {
             family = Some((ancestor, value.clone()));
         }
-        if let Some(value) = properties.get(&CssProperty::FontWeight) {
+        if let Some(value) = declared(CssProperty::FontWeight) {
+            // CSS Fonts 4 §2.2: `normal`, `bold` or a number in [1, 1000].
             weight = match value.as_str() {
-                "normal" => 400.0,
-                "bold" => 700.0,
-                "400" => 400.0,
-                "500" => 500.0,
-                "600" => 600.0,
-                "700" => 700.0,
-                _ => return Err(LayoutError::Unsupported(ancestor)),
+                "normal" => style::NORMAL_FONT_WEIGHT,
+                "bold" => style::UA_BOLD_WEIGHT,
+                number => number
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|weight| (MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(weight))
+                    .ok_or(LayoutError::Unsupported(ancestor))?,
             };
         }
-        if let Some(value) = properties.get(&CssProperty::FontStyle) {
+        if let Some(value) = declared(CssProperty::FontStyle) {
             italic = match value.as_str() {
                 "normal" => false,
                 "italic" => true,
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
-        if let Some(value) = properties.get(&CssProperty::FontSize) {
-            author_font_size(&mut size, units, value).ok_or(LayoutError::Unsupported(ancestor))?;
+        if let Some(value) = declared(CssProperty::FontSize) {
+            if value == "medium" {
+                // Fonts 4 §2.5: the initial `medium`, of the generic family
+                // in effect.
+                let monospace = base.fixed_monospace
+                    && family
+                        .as_ref()
+                        .is_some_and(|(_, value)| style::sole_monospace(value));
+                size = style::FontSize::medium(if monospace && parent_monospace {
+                    base.px * style::UA_MONOSPACE_RATIO
+                } else {
+                    base.px
+                });
+            } else {
+                author_font_size(&mut size, units, value)
+                    .ok_or(LayoutError::Unsupported(ancestor))?;
+            }
         }
         // Chrome re-derives the size where the generic family switches to or
         // from monospace, before a line-height percentage resolves against it.
@@ -1113,7 +1144,7 @@ pub(crate) fn resolve_text(
         {
             return Err(LayoutError::Unsupported(ancestor));
         }
-        if let Some(value) = properties.get(&CssProperty::LineHeight) {
+        if let Some(value) = declared(CssProperty::LineHeight) {
             line_height = if value == "normal" {
                 None
             } else if value.ends_with("px") || value.ends_with("rem") {

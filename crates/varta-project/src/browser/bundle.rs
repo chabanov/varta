@@ -21,7 +21,7 @@ const NETWORK: &str = include_str!("network.js");
 const TRANSPORT: &str = include_str!("network-transport.js");
 const TIMERS: &str = include_str!("timers.js");
 const VIEW_CODEC: &str = include_str!("view-codec.mjs");
-const VIEW_CSS: &str = include_str!("view-css.mjs");
+const VIEW_ENGINE_MODULE: &str = include_str!("view-engine.mjs");
 const VIEW_MODEL: &str = include_str!("view-model.mjs");
 const VIEW_SELECT: &str = include_str!("view-select.mjs");
 const VIEW_DOM: &str = include_str!("view-dom.mjs");
@@ -30,10 +30,7 @@ const VIEW_QUEUE: &str = include_str!("view-queue.mjs");
 const VIEW_WORKER: &str = include_str!("view-worker.mjs");
 const VIEW_POLICY: &str = include_str!("view-policy.mjs");
 const VIEW_FONTS: &str = include_str!("view-fonts.mjs");
-const VIEW_VARIABLES: &str = include_str!("view-variables.mjs");
-const VIEW_EXPANSION: &str = include_str!("view-expansion.mjs");
 const VIEW_NAMING: &str = include_str!("view-naming.mjs");
-const VIEW_CUSTOM_PROPERTIES: &str = include_str!("view-custom-properties.mjs");
 const PERMISSIONS: &str = include_str!("permission-broker.mjs");
 const PERMISSION_STORE: &str = include_str!("permission-store.mjs");
 const PERMISSION_PROMPT: &str = include_str!("permission-prompt.mjs");
@@ -45,6 +42,11 @@ const KV_STORE: &str = include_str!("kv-store.mjs");
 /// `scripts/build-kv-codec.py`; served beside a program that imports KV.
 const KV_CODEC: &[u8] = include_bytes!("kv-codec.wasm");
 const KV_CODEC_FILE: &str = "varta-kv-codec.wasm";
+/// The view style engine (`varta-style`) compiled to wasm32 by
+/// `scripts/build-view-engine.py`; served beside a program with a view, and
+/// instantiated by the Worker's and the page's view models.
+const VIEW_ENGINE: &[u8] = include_bytes!("view-engine.wasm");
+const VIEW_ENGINE_FILE: &str = "varta-view-engine.wasm";
 const FUEL: &str = include_str!("../../../varta-common/browser/fuel.mjs");
 const ORIGINAL: &str = "app.wasm";
 const IMAGE: &str = "app.private.wasm";
@@ -170,22 +172,10 @@ fn embedded_sources(dom: bool) -> String {
             "ViewProtocolError,decodeViewBatch,encodeViewBatch,decodeViewEvent",
         ),
         (
-            "viewVariables",
+            "viewEngine",
             "",
-            VIEW_VARIABLES,
-            "compileVariableValue,createVariableScope",
-        ),
-        (
-            "viewExpansion",
-            "const {compileVariableValue}=viewVariables;",
-            VIEW_EXPANSION,
-            "compileExpansionValue,createExpansionScope,potentialExpandedValues",
-        ),
-        (
-            "viewCss",
-            "const {compileExpansionValue}=viewExpansion;",
-            VIEW_CSS,
-            "createValueMatcher,checkStyleDeclaration,checkStylesheet,rewriteRootSelector,tokenizeValue,CssError,StylesheetWorkError",
+            VIEW_ENGINE_MODULE,
+            "createViewEngine,readMediaInputs,ENGINE_STATUS,ENGINE_INPUTS,MEDIA_INPUT_QUERIES",
         ),
         (
             "viewSelect",
@@ -196,7 +186,7 @@ fn embedded_sources(dom: bool) -> String {
         ("viewNaming", "", VIEW_NAMING, "potentialNamingWork"),
         (
             "viewModel",
-            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {checkStylesheet,checkStyleDeclaration,createValueMatcher,StylesheetWorkError}=viewCss;const {potentialExpandedValues}=viewExpansion;const {potentialNamingWork}=viewNaming;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
+            "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewEngine,ENGINE_STATUS}=viewEngine;const {potentialNamingWork}=viewNaming;const {selectOwner,optionAttribute,normalizeSelect,syncSelect,syncSelectFor,setSelectValue,syncSelectChoice,optionValue,selectionTextBytes,selectOperationWork,selectInventoryWork}=viewSelect;",
             VIEW_MODEL,
             "createViewModel",
         ),
@@ -243,12 +233,11 @@ fn embedded_sources(dom: bool) -> String {
         ));
         source.push_str(&module(
             "viewFonts",
-            "const {tokenizeValue}=viewCss;",
+            "",
             VIEW_FONTS,
-            "createFontNamespace,packagedFamilies,faceDescriptors",
+            "createFontNamespace,packagedFamilies,faceDescriptors,FontValueError",
         ));
-        source.push_str(&module("viewCustomProperties", "const {CssError}=viewCss;const {compileVariableValue,createVariableScope}=viewVariables;", VIEW_CUSTOM_PROPERTIES, "createCustomPropertyStyles"));
-        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {rewriteRootSelector,checkStylesheet,StylesheetWorkError}=viewCss;const {createFontNamespace}=viewFonts;const {createCustomPropertyStyles}=viewCustomProperties;", VIEW_DOM, "createViewDom,encodeViewEvent"));
+        source.push_str(&module("viewDom", "const {decodeViewBatch,ViewProtocolError}=viewCodec;const {createViewModel}=viewModel;const {readMediaInputs,MEDIA_INPUT_QUERIES}=viewEngine;const {createFontNamespace}=viewFonts;", VIEW_DOM, "createViewDom,encodeViewEvent"));
     } else {
         // The Worker's KV imports; the parent page never handles KV.
         source.push_str(&module(
@@ -454,6 +443,10 @@ impl BrowserArtifact {
         if uses_kv {
             descriptor["kvCodec"] = file(KV_CODEC_FILE, KV_CODEC);
             resource_files.insert(KV_CODEC_FILE.to_owned(), KV_CODEC.to_vec());
+        }
+        if descriptor["hasView"] == true {
+            descriptor["viewEngine"] = file(VIEW_ENGINE_FILE, VIEW_ENGINE);
+            resource_files.insert(VIEW_ENGINE_FILE.to_owned(), VIEW_ENGINE.to_vec());
         }
         let descriptor = serde_json::to_string(&descriptor)
             .map_err(|e| ProjectError::Artifact(e.to_string()))?;
