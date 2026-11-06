@@ -2601,6 +2601,7 @@ fn rasterize_inner_scoped(
     validate_dimensions(width, height, scale)?;
     let env = Environment {
         width: f64::from(width) / f64::from(scale),
+        height: f64::from(height) / f64::from(scale),
         ..*env
     };
     let units = Units::new(&env).ok_or(layout::LayoutError::RootFont)?;

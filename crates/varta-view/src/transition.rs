@@ -128,35 +128,123 @@ impl Value {
     }
 }
 
-/// A `transition-timing-function` keyword as its cubic Bézier.
+/// Where a step easing function jumps (CSS Easing 1 §2.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Jump {
+    Start,
+    End,
+    None,
+    Both,
+}
+
+/// A step easing function: its number of intervals and jump position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Steps {
+    count: u32,
+    jump: Jump,
+}
+impl Steps {
+    /// The step easing function's output (CSS Easing 1 §2.3.1), for an
+    /// input progress in `0..=1` (no before flag: transitions never have one
+    /// at negative progress here).
+    fn output(self, x: f64) -> f64 {
+        let count = f64::from(self.count);
+        let mut step = (x * count).floor();
+        if matches!(self.jump, Jump::Start | Jump::Both) {
+            step += 1.0;
+        }
+        let jumps = match self.jump {
+            Jump::Start | Jump::End => count,
+            Jump::None => count - 1.0,
+            Jump::Both => count + 1.0,
+        };
+        step.clamp(0.0, jumps) / jumps
+    }
+}
+
+/// A `transition-timing-function` entry: a cubic Bézier (CSS Easing 1
+/// §2.2, its keywords included) or a step function (§2.3).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Timing {
     x1: f64,
     y1: f64,
     x2: f64,
     y2: f64,
+    steps: Option<Steps>,
 }
 
 impl Timing {
     const EASE: Self = Self::new(0.25, 0.1, 0.25, 1.0);
 
     const fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
-        Self { x1, y1, x2, y2 }
+        Self {
+            x1,
+            y1,
+            x2,
+            y2,
+            steps: None,
+        }
+    }
+    const fn steps(count: u32, jump: Jump) -> Self {
+        Self {
+            steps: Some(Steps { count, jump }),
+            ..Self::new(0.0, 0.0, 1.0, 1.0)
+        }
     }
 
-    fn parse(keyword: &str) -> Option<Self> {
-        Some(match keyword {
+    fn parse(entry: &str) -> Option<Self> {
+        let entry = entry.trim().to_ascii_lowercase();
+        let arguments = |name: &str| -> Option<Vec<String>> {
+            let inner = entry
+                .strip_prefix(name)?
+                .strip_prefix('(')?
+                .strip_suffix(')')?;
+            Some(
+                inner
+                    .split(',')
+                    .map(|part| part.trim().to_owned())
+                    .collect(),
+            )
+        };
+        if let Some(points) = arguments("cubic-bezier") {
+            let [x1, y1, x2, y2]: [f64; 4] = points
+                .iter()
+                .map(|point| point.parse::<f64>().ok().filter(|v| v.is_finite()))
+                .collect::<Option<Vec<_>>>()?
+                .try_into()
+                .ok()?;
+            return ((0.0..=1.0).contains(&x1) && (0.0..=1.0).contains(&x2))
+                .then_some(Self::new(x1, y1, x2, y2));
+        }
+        if let Some(parts) = arguments("steps") {
+            let count = parts.first()?.parse::<u32>().ok()?;
+            let jump = match parts.get(1).map(String::as_str) {
+                None | Some("jump-end" | "end") => Jump::End,
+                Some("jump-start" | "start") => Jump::Start,
+                Some("jump-none") => Jump::None,
+                Some("jump-both") => Jump::Both,
+                Some(_) => return None,
+            };
+            let minimum = if jump == Jump::None { 2 } else { 1 };
+            return (parts.len() <= 2 && count >= minimum).then_some(Self::steps(count, jump));
+        }
+        Some(match entry.as_str() {
             "linear" => Self::new(0.0, 0.0, 1.0, 1.0),
             "ease" => Self::EASE,
             "ease-in" => Self::new(0.42, 0.0, 1.0, 1.0),
             "ease-out" => Self::new(0.0, 0.0, 0.58, 1.0),
             "ease-in-out" => Self::new(0.42, 0.0, 0.58, 1.0),
+            "step-start" => Self::steps(1, Jump::Start),
+            "step-end" => Self::steps(1, Jump::End),
             _ => return None,
         })
     }
 
     /// The output progress at input progress `x` in `0..=1`.
     fn output(self, x: f64) -> f64 {
+        if let Some(steps) = self.steps {
+            return steps.output(x.clamp(0.0, 1.0));
+        }
         if x <= 0.0 || x >= 1.0 {
             return x.clamp(0.0, 1.0);
         }
@@ -226,6 +314,27 @@ fn time(value: &str) -> Option<f64> {
     }
 }
 
+/// The comma-separated items of a list value, ignoring commas inside
+/// function arguments.
+fn top_level_items(list: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, c) in list.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                items.push(list[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(list[start..].trim());
+    items
+}
+
 /// The declared transition of `property` among an element's computed values:
 /// the last `transition-property` entry naming it or `all` (its initial
 /// value), with the duration,
@@ -247,7 +356,7 @@ fn declared(values: &BTreeMap<CssProperty, String>, property: CssProperty) -> Op
     }
     let pick = |property: CssProperty, initial: &str| -> String {
         let list = values.get(&property).map_or(initial, String::as_str);
-        let items: Vec<&str> = list.split(',').map(str::trim).collect();
+        let items = top_level_items(list);
         items[index % items.len()].to_owned()
     };
     Some(Declared {
@@ -483,7 +592,31 @@ mod tests {
         assert!((linear.output(0.3) - 0.3).abs() < 1e-6);
         // ease at 0.5: 0.8024033877399112 (the cubic-bezier(.25,.1,.25,1) value).
         assert!((Timing::EASE.output(0.5) - 0.802_403_387_739_911_2).abs() < 1e-6);
-        assert!(Timing::parse("steps(2)").is_none());
+        // CSS Easing 1 §2.2 and §2.3.
+        let curve = Timing::parse("cubic-bezier(0.4, 0, 0.2, 1)").unwrap();
+        assert_eq!((curve.output(0.0), curve.output(1.0)), (0.0, 1.0));
+        assert!(curve.output(0.5) > 0.5);
+        assert!(Timing::parse("cubic-bezier(1.5, 0, 0, 1)").is_none());
+        let end = Timing::parse("steps(4)").unwrap();
+        assert_eq!(
+            [end.output(0.0), end.output(0.3), end.output(1.0)],
+            [0.0, 0.25, 1.0]
+        );
+        let start = Timing::parse("steps(4, jump-start)").unwrap();
+        assert_eq!([start.output(0.0), start.output(0.3)], [0.25, 0.5]);
+        let none = Timing::parse("steps(3, jump-none)").unwrap();
+        assert_eq!(
+            [none.output(0.0), none.output(0.5), none.output(1.0)],
+            [0.0, 0.5, 1.0]
+        );
+        let both = Timing::parse("steps(1, jump-both)").unwrap();
+        assert_eq!([both.output(0.0), both.output(0.99)], [0.5, 0.5]);
+        assert_eq!(Timing::parse("STEP-START").unwrap().output(0.0), 1.0);
+        assert!(Timing::parse("steps(1, jump-none)").is_none());
+        assert_eq!(
+            top_level_items("cubic-bezier(0.4, 0, 0.2, 1), ease"),
+            ["cubic-bezier(0.4, 0, 0.2, 1)", "ease"]
+        );
     }
 
     #[test]

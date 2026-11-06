@@ -7,6 +7,7 @@ mod border_colors;
 mod cascade_work;
 mod checkables;
 mod clipboard;
+mod css_engine;
 mod dialog;
 mod expansion_work;
 mod fallback;

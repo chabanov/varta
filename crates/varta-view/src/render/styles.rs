@@ -207,9 +207,10 @@ pub(crate) fn prepare(
     };
     let layout_environment = (layout_env != env
         && tree.sheets.values().all(|sheet| {
-            sheet.rules.iter().all(|rule| {
-                rule.applies(env.width, env.dark) == rule.applies(layout_env.width, layout_env.dark)
-            })
+            sheet
+                .rules
+                .iter()
+                .all(|rule| rule.applies(&env.media()) == rule.applies(&layout_env.media()))
         }))
     .then_some(layout_env);
     prepared.render_reads = ReadCache(Some(Arc::new(Prepared {

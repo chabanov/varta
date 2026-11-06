@@ -17,6 +17,7 @@ pub mod css;
 pub mod expansion;
 pub mod fonts;
 pub mod stylesheet;
+pub mod syntax;
 
 /// Draft protocol version carried in every batch and event record header.
 pub const DRAFT_VERSION: u16 = 0;
@@ -1044,7 +1045,8 @@ pub const ROOT_SELECTOR_IN_BROWSER: &str = "[data-l0-root]";
 /// window's content box natively) and resizes with it.
 pub const ROOT_BASE_STYLE: &str = "display: block; height: 100%";
 
-/// Pseudo-classes a stylesheet selector may use.
+/// Pseudo-classes a stylesheet selector may use (ASCII case-insensitive in
+/// the engine, Selectors 4 §3.1).
 pub const PSEUDO_CLASSES: &[&str] = &[
     ":hover",
     ":active",
@@ -1052,10 +1054,16 @@ pub const PSEUDO_CLASSES: &[&str] = &[
     ":disabled",
     ":checked",
 ];
-/// Media features of `@media` conditions.
+/// Media features of `@media` conditions in the L0 browser host's contract.
+/// The engine ([`stylesheet::media`]) admits Media Queries 4/5 beyond them;
+/// the browser host keeps this list until it runs the engine through Wasm.
 pub const MEDIA_FEATURES: &[&str] = &["prefers-color-scheme", "min-width", "max-width"];
 /// Text that invalidates a stylesheet or a `set_style` value wherever it occurs
-/// (ASCII case-insensitive), besides any function the grammar does not name.
+/// (ASCII case-insensitive), besides any function the grammar does not name:
+/// the L0 browser host's raw-text check. The engine tokenizes first (CSS
+/// Syntax 3, so comments and escapes are admitted) and refuses the decoded
+/// constructs instead ([`css::FORBIDDEN_FUNCTIONS`], url tokens, `@import`,
+/// `!important`, HTML comment tokens).
 pub const FORBIDDEN_CSS: &[&str] = &[
     "\\",
     "<",

@@ -120,6 +120,18 @@ fn a_v38_program_without_views_has_no_view_import_or_export() {
     );
 }
 
+/// K8 T2 S1: class names follow the HTML class model (Tailwind's
+/// `sm:flex`, `w-1/2`, `[mask:none]`, `!p-1`) beside their escaped
+/// selectors.
+#[test]
+fn html_class_tokens_and_escaped_selectors_compile() {
+    valid(
+        "export function main(): void {\n\
+         View.stylesheet(1, '.sm\\\\:flex{display:flex} .w-1\\\\/2{width:calc(1/2 * 100%)}');\n\
+         View.mount(<div class=\"sm:flex w-1/2 [mask:none] !p-1 é\">x</div>);\n}",
+    );
+}
+
 #[test]
 fn template_errors_name_the_construct_and_its_rule() {
     for (source, expected) in [
@@ -169,8 +181,9 @@ fn template_errors_name_the_construct_and_its_rule() {
             "applies to `<textarea>` only",
         ),
         (
-            "<div class=\"a.b\">x</div>",
-            "invalid value `a.b` for attribute `class`",
+            // A control character is outside the HTML class model.
+            "<div class=\"a\u{1}b\">x</div>",
+            "for attribute `class`",
         ),
         (
             "<div onClick:Enter={() => {}}>x</div>",

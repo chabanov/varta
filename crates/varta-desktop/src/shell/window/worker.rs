@@ -269,6 +269,8 @@ pub(super) fn worker(
                     app.view_set_environment(varta_view::Environment {
                         width: f64::from((environment_dimensions >> 32) as u32)
                             / f64::from_bits(environment_scale),
+                        height: f64::from(environment_dimensions as u32)
+                            / f64::from_bits(environment_scale),
                         dark: current_dark,
                         scrollbars,
                         ..Default::default()

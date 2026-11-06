@@ -447,6 +447,25 @@ impl Tree {
                 Ok(())
             }
         };
+        // Registered initial values (Properties and Values API 1 §3.3) are
+        // the outermost definitions of every scope.
+        let initial: Vec<(&str, Value)> = self
+            .rule_index
+            .registered()
+            .values()
+            .filter_map(|registration| {
+                let value = registration.initial.as_deref()?;
+                Some((registration.name.as_str(), Value::new(value)))
+            })
+            .collect();
+        if !initial.is_empty() {
+            let base: BTreeMap<&str, Vec<&Value>> = initial
+                .iter()
+                .map(|(name, value)| (*name, vec![value]))
+                .collect();
+            let (_, fresh) = scope.extend(&base);
+            charge(fresh)?;
+        }
         while let Some(task) = pending.pop() {
             let id = match task {
                 Work::Leave(checkpoint) => {
@@ -797,9 +816,15 @@ impl Tree {
         id: u32,
         environment: &Environment,
     ) -> crate::variables::Scope<'a> {
-        let mut scope = crate::variables::Scope::default();
+        let registered = self.rule_index.registered();
+        let mut scope = if registered.is_empty() {
+            crate::variables::Scope::default()
+        } else {
+            crate::variables::Scope::registered(registered)
+        };
         if self.rule_index.has_custom() {
             for ancestor in self.path(id).into_iter().rev() {
+                scope.enter();
                 let raw = self
                     .cascade_refs(ancestor, environment)
                     .into_iter()
@@ -844,13 +869,17 @@ impl Tree {
                 && let Some(specificity) =
                     rule.matching_with_classes(&subject, |class| classes.contains(class))
             {
-                matched.push((specificity, sheet, index, rule));
+                let layer = self.rule_index.layer_rank(sheet, rule.layer);
+                matched.push((layer, specificity, sheet, index, rule));
             }
         }
-        matched.sort_by_key(|(specificity, sheet, index, _)| (*specificity, *sheet, *index));
+        // Cascade 5 §6.1: layer, then specificity, then order of appearance.
+        matched.sort_by_key(|(layer, specificity, sheet, index, _)| {
+            (*layer, *specificity, *sheet, *index)
+        });
         matched
             .into_iter()
-            .flat_map(|(_, _, _, rule)| {
+            .flat_map(|(_, _, _, _, rule)| {
                 rule.declarations
                     .iter()
                     .map(|(name, value)| (name, value.as_str()))
@@ -1171,10 +1200,9 @@ impl Apply<'_, '_, '_> {
             }
             Opcode::SetClass => {
                 let class = operation.text();
-                if !class
-                    .split_ascii_whitespace()
-                    .all(varta_common::view::css::ident)
-                {
+                // The HTML class model: whitespace-separated tokens without
+                // controls, each bounded.
+                if !varta_common::view::css::class_list(class) {
                     return Err(self.fail(Violation::InvalidClass));
                 }
                 self.element(node)?.class = class.into();
@@ -1200,30 +1228,38 @@ impl Apply<'_, '_, '_> {
                         keyword.map_or(Violation::InvalidStyleValue, Violation::FontFamilyKeyword),
                     ));
                 }
+                // Comments and escapes are stored serialized (CSS Syntax 3 §9),
+                // so that later `var()` scans never see either.
+                let stored: String =
+                    if varta_common::view::syntax::needs_serialization(operation.text()) {
+                        varta_common::view::css::normalize(operation.text())
+                    } else {
+                        operation.text().into()
+                    };
                 let element = self.element(node)?;
-                element.style.insert(*property, operation.text().into());
+                element.style.insert(*property, stored.clone());
                 if let Some(sides) = geometry_sides(*property) {
                     for (index, side) in sides.iter().enumerate() {
                         element
                             .layout_inline
-                            .insert(*side, (*property, operation.text().into(), index));
+                            .insert(*side, (*property, stored.clone(), index));
                     }
                 }
                 for component in border_components(*property) {
                     element
                         .border_inline
-                        .insert(component, (*property, operation.text().into()));
+                        .insert(component, (*property, stored.clone()));
                 }
                 for side in border_color_sides(*property) {
                     element
                         .border_color_inline
-                        .insert(*side, (*property, operation.text().into()));
+                        .insert(*side, (*property, stored.clone()));
                 }
                 for component in outline_components(*property) {
                     element
                         .outline_inline
                         .values
-                        .insert(*component, (*property, operation.text().into()));
+                        .insert(*component, (*property, stored.clone()));
                 }
                 Ok(())
             }
@@ -1875,7 +1911,7 @@ impl Apply<'_, '_, '_> {
         if work > varta_common::view::DRAFT_MAX_STYLESHEET_WORK {
             return Err(self.fail(Violation::StylesheetWorkLimit));
         }
-        let index = style::RuleIndex::new(&parsed.rules);
+        let index = style::RuleIndex::parsed(&parsed);
         if let Some(old) = self.tree.sheets.get(&sheet) {
             self.tree.rule_index.remove(sheet, &old.index);
         }

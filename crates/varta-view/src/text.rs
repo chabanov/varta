@@ -207,6 +207,9 @@ impl TextAlign {
             "left" => Self::Left,
             "center" => Self::Center,
             "right" => Self::Right,
+            // CSS Text 3 §7.1; the renderer lays out left-to-right only.
+            "start" => Self::Start,
+            "end" => Self::Right,
             _ => return None,
         })
     }

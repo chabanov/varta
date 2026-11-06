@@ -10,7 +10,14 @@ use std::collections::BTreeMap;
 pub struct Environment {
     /// Viewport width in CSS pixels.
     pub width: f64,
+    /// Viewport height in CSS pixels: the `height` and `orientation` media
+    /// features and the viewport-percentage units (`vh`, `dvh`, …).
+    pub height: f64,
     pub dark: bool,
+    /// Recorded user-preference and interaction media inputs
+    /// (`prefers-reduced-motion`, `prefers-contrast`, `forced-colors`,
+    /// `hover`, `pointer` and their `any-` forms).
+    pub preferences: varta_common::view::stylesheet::media::Preferences,
     /// Reference document-root font size for `rem`, independent of the view
     /// root's own font size and the shaper's default text size.
     pub root_font_size: f64,
@@ -22,7 +29,9 @@ impl Default for Environment {
     fn default() -> Self {
         Self {
             width: DEFAULT_VIEWPORT_WIDTH,
+            height: f64::from(crate::geometry::DEFAULT_VIEWPORT_HEIGHT),
             dark: false,
+            preferences: varta_common::view::stylesheet::media::Preferences::default(),
             root_font_size: varta_common::view::stylesheet::REM_PIXELS,
             scrollbars: Scrollbars::default(),
         }
@@ -43,6 +52,24 @@ pub enum Scrollbars {
     Classic,
 }
 impl Environment {
+    /// The media query environment (Media Queries 4/5) of these inputs.
+    #[must_use]
+    pub fn media(&self) -> varta_common::view::stylesheet::Media {
+        varta_common::view::stylesheet::Media {
+            width: self.width,
+            height: self.height,
+            dark: self.dark,
+            preferences: self.preferences,
+        }
+    }
+    /// The reference metrics of computed-value lowering.
+    pub(crate) fn lowering(&self) -> varta_common::view::css::Context {
+        varta_common::view::css::Context {
+            root_font_size: self.root_font_size,
+            viewport_width: self.width,
+            viewport_height: self.height,
+        }
+    }
     /// Set the host reference font. Zero is valid for geometry; text shaping
     /// still applies its independent minimum font size. No OS lookup occurs.
     pub fn with_root_font_size(mut self, size: f64) -> Result<Self, crate::LayoutError> {
@@ -57,7 +84,7 @@ pub(crate) use varta_common::view::stylesheet::{Name, Rule, Subject};
 
 /// Whether `rule`'s media conditions hold in `environment`.
 pub(crate) fn applies(rule: &Rule, environment: &Environment) -> bool {
-    rule.applies(environment.width, environment.dark)
+    rule.applies(&environment.media())
 }
 
 /// Parse a whole stylesheet with the shared grammar
@@ -81,6 +108,10 @@ pub(crate) struct RuleIndex {
     pub has_custom: bool,
     pub costs: Vec<RuleCost>,
     pub expansion: Vec<Vec<(Name, varta_common::view::expansion::Value)>>,
+    /// The sheet's cascade layers in declaration order (Cascade 5 §6.4.3).
+    pub layers: Vec<Vec<varta_common::view::stylesheet::LayerName>>,
+    /// The sheet's `@property` registrations in sheet order.
+    pub properties: Vec<varta_common::view::stylesheet::Registration>,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RuleCost {
@@ -88,6 +119,14 @@ pub(crate) struct RuleCost {
     pub variables: bool,
 }
 impl RuleIndex {
+    /// The index of a parsed sheet: its rules, layers and registrations.
+    pub fn parsed(parsed: &varta_common::view::stylesheet::ParsedStylesheet) -> Self {
+        let mut index = Self::new(&parsed.rules);
+        index.layers.clone_from(&parsed.layers);
+        index.properties.clone_from(&parsed.properties);
+        index.has_custom |= !index.properties.is_empty();
+        index
+    }
     pub fn new(rules: &[Rule]) -> Self {
         let mut out = Self::default();
         for (index, rule) in rules.iter().enumerate() {
@@ -153,10 +192,18 @@ impl<'a> Variables<'a> {
         value: &str,
     ) -> Option<String> {
         let result = self.substitute(value)?;
-        self.tree
+        // CSS Variables 1 §3.1: an invalid substituted value is invalid at
+        // computed-value time. A valid one is lowered to the host grammar the
+        // renderer's consumers read; one the renderer cannot render is
+        // treated the same way.
+        if !self
+            .tree
             .render_reads
             .validate(self.environment, property, &result)
-            .then_some(result)
+        {
+            return None;
+        }
+        varta_common::view::css::lower(property, &result, &self.environment.lowering())
     }
     pub fn substitute(&self, value: &str) -> Option<String> {
         if !self
@@ -582,15 +629,117 @@ pub(crate) fn themed(properties: &BTreeMap<varta_common::view::CssProperty, Stri
         .any(|property| properties.contains_key(property))
 }
 
+/// A layer path across sheets: named segments are shared by every sheet of
+/// the document, anonymous ones belong to their sheet (Cascade 5 §6.4.2).
+type LayerKey = Vec<(Option<u32>, varta_common::view::stylesheet::LayerName)>;
+
+/// The cascade rank of every sheet-local layer (Cascade 5 §6.4.3): layers
+/// in order of first declaration across sheets by ascending id, a layer's
+/// own rules after its sublayers, unlayered rules after every layer.
+fn layer_ranks(
+    sheets: &BTreeMap<u32, Vec<Vec<varta_common::view::stylesheet::LayerName>>>,
+) -> BTreeMap<(u32, usize), usize> {
+    use varta_common::view::stylesheet::LayerName;
+    #[derive(Default)]
+    struct Node {
+        children: Vec<((Option<u32>, LayerName), Node)>,
+    }
+    let key = |sheet: u32, path: &[LayerName]| -> LayerKey {
+        path.iter()
+            .map(|segment| match segment {
+                LayerName::Anonymous(_) => (Some(sheet), segment.clone()),
+                LayerName::Named(_) => (None, segment.clone()),
+            })
+            .collect()
+    };
+    let mut root = Node::default();
+    for (sheet, layers) in sheets {
+        for path in layers {
+            let mut node = &mut root;
+            for segment in key(*sheet, path) {
+                let position = match node.children.iter().position(|(s, _)| *s == segment) {
+                    Some(position) => position,
+                    None => {
+                        node.children.push((segment, Node::default()));
+                        node.children.len() - 1
+                    }
+                };
+                node = &mut node.children[position].1;
+            }
+        }
+    }
+    // Post-order numbering without recursion.
+    let mut ranks: BTreeMap<LayerKey, usize> = BTreeMap::new();
+    let mut stack: Vec<(&Node, LayerKey, usize)> = vec![(&root, Vec::new(), 0)];
+    let mut next = 0usize;
+    while let Some((node, path, child)) = stack.pop() {
+        if let Some((segment, inner)) = node.children.get(child) {
+            stack.push((node, path.clone(), child + 1));
+            let mut inner_path = path;
+            inner_path.push(segment.clone());
+            stack.push((inner, inner_path, 0));
+        } else if !path.is_empty() {
+            ranks.insert(path, next);
+            next += 1;
+        }
+    }
+    let mut out = BTreeMap::new();
+    for (sheet, layers) in sheets {
+        for (local, path) in layers.iter().enumerate() {
+            if let Some(rank) = ranks.get(&key(*sheet, path)) {
+                out.insert((*sheet, local), *rank);
+            }
+        }
+    }
+    out
+}
+
 /// Incremental cross-sheet anchors avoid scanning unrelated (or empty) sheets.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct CascadeIndex {
     roots: std::collections::BTreeSet<(u32, usize)>,
     classes: BTreeMap<String, std::collections::BTreeSet<(u32, usize)>>,
     custom_sheets: usize,
+    layers: BTreeMap<u32, Vec<Vec<varta_common::view::stylesheet::LayerName>>>,
+    ranks: BTreeMap<(u32, usize), usize>,
+    registrations: BTreeMap<u32, Vec<varta_common::view::stylesheet::Registration>>,
+    registered: BTreeMap<String, varta_common::view::stylesheet::Registration>,
 }
 impl CascadeIndex {
+    /// The cascade rank of a rule's layer; unlayered rules outrank every
+    /// layer (Cascade 5 §6.4.4, normal declarations).
+    pub fn layer_rank(&self, sheet: u32, layer: Option<usize>) -> usize {
+        layer.map_or(usize::MAX, |local| {
+            self.ranks
+                .get(&(sheet, local))
+                .copied()
+                .unwrap_or(usize::MAX)
+        })
+    }
+    /// The registered custom properties of the document (Properties and
+    /// Values API 1 §3: the last registration in sheet order wins).
+    pub fn registered(&self) -> &BTreeMap<String, varta_common::view::stylesheet::Registration> {
+        &self.registered
+    }
+    fn rebuild(&mut self) {
+        self.ranks = layer_ranks(&self.layers);
+        self.registered = self
+            .registrations
+            .values()
+            .flatten()
+            .map(|registration| (registration.name.clone(), registration.clone()))
+            .collect();
+    }
     pub fn insert(&mut self, sheet: u32, index: &RuleIndex) {
+        if !index.layers.is_empty() {
+            self.layers.insert(sheet, index.layers.clone());
+        }
+        if !index.properties.is_empty() {
+            self.registrations.insert(sheet, index.properties.clone());
+        }
+        if !index.layers.is_empty() || !index.properties.is_empty() {
+            self.rebuild();
+        }
         self.custom_sheets += usize::from(index.has_custom);
         self.roots
             .extend(index.roots.iter().map(|rule| (sheet, *rule)));
@@ -602,6 +751,9 @@ impl CascadeIndex {
         }
     }
     pub fn remove(&mut self, sheet: u32, index: &RuleIndex) {
+        if self.layers.remove(&sheet).is_some() | self.registrations.remove(&sheet).is_some() {
+            self.rebuild();
+        }
         self.custom_sheets -= usize::from(index.has_custom);
         for rule in &index.roots {
             self.roots.remove(&(sheet, *rule));

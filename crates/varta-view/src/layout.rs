@@ -899,6 +899,9 @@ pub(crate) fn text_style(
     Ok((resolved.options, families))
 }
 
+/// The range of numeric font weights (CSS Fonts 4 §2.2).
+const MIN_FONT_WEIGHT: f32 = 1.0;
+const MAX_FONT_WEIGHT: f32 = 1000.0;
 /// Admitted computed font sizes in CSS pixels.
 const MIN_FONT_SIZE: f32 = 0.01;
 const MAX_FONT_SIZE: f32 = 4096.0;
@@ -1020,6 +1023,7 @@ pub(crate) fn resolve_text(
                 "normal" => WhiteSpaceMode::Normal,
                 "nowrap" => WhiteSpaceMode::NoWrap,
                 "pre-wrap" => WhiteSpaceMode::PreWrap,
+                "pre" => WhiteSpaceMode::Pre,
                 _ => return Err(LayoutError::Unsupported(ancestor)),
             };
         }
@@ -1027,14 +1031,15 @@ pub(crate) fn resolve_text(
             family = Some((ancestor, value.clone()));
         }
         if let Some(value) = properties.get(&CssProperty::FontWeight) {
+            // CSS Fonts 4 §2.2: `normal`, `bold` or a number in [1, 1000].
             weight = match value.as_str() {
-                "normal" => 400.0,
-                "bold" => 700.0,
-                "400" => 400.0,
-                "500" => 500.0,
-                "600" => 600.0,
-                "700" => 700.0,
-                _ => return Err(LayoutError::Unsupported(ancestor)),
+                "normal" => style::NORMAL_FONT_WEIGHT,
+                "bold" => style::UA_BOLD_WEIGHT,
+                number => number
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|weight| (MIN_FONT_WEIGHT..=MAX_FONT_WEIGHT).contains(weight))
+                    .ok_or(LayoutError::Unsupported(ancestor))?,
             };
         }
         if let Some(value) = properties.get(&CssProperty::FontStyle) {

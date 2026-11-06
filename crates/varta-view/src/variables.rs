@@ -1,12 +1,22 @@
 //! Computed custom-property scopes. References use arena indices, so neither
 //! dependency depth nor dropping a long alias chain consumes the native stack.
 use std::collections::BTreeMap;
-use varta_common::view::{DRAFT_MAX_VALUE_BYTES, css};
+use varta_common::view::{DRAFT_MAX_VALUE_BYTES, css, stylesheet::Registration};
+
+/// Registered custom properties by name (Properties and Values API 1).
+pub(crate) type Registered = BTreeMap<String, Registration>;
 
 #[derive(Default)]
 pub(crate) struct Scope<'a> {
     values: BTreeMap<&'a str, Option<usize>>,
     nodes: Vec<Value<'a>>,
+    registered: Option<&'a Registered>,
+    /// The initial value node of each registered property (`None`: the
+    /// guaranteed-invalid value).
+    initial: BTreeMap<&'a str, Option<usize>>,
+    /// The parent's values of the registered properties that do not
+    /// inherit, saved by [`Scope::enter`] for `inherit`.
+    parent: BTreeMap<&'a str, Option<usize>>,
 }
 #[derive(Clone)]
 enum Piece<'a> {
@@ -25,6 +35,9 @@ enum Token {
     Blank,
     Initial,
     Inherited,
+    /// `unset`, `revert` or `revert-layer`: inherit for an inheriting
+    /// property, the initial value otherwise (Cascade 4 §7.5).
+    Unset,
     Other,
 }
 impl Token {
@@ -34,11 +47,13 @@ impl Token {
             Self::Blank
         } else if text.eq_ignore_ascii_case("initial") {
             Self::Initial
+        } else if text.eq_ignore_ascii_case("inherit") {
+            Self::Inherited
         } else if varta_common::view::css::CSS_WIDE_KEYWORDS
             .iter()
             .any(|word| text.eq_ignore_ascii_case(word))
         {
-            Self::Inherited
+            Self::Unset
         } else {
             Self::Other
         }
@@ -205,6 +220,72 @@ impl<'a> Template<'a> {
     }
 }
 impl<'a> Scope<'a> {
+    /// A scope whose registered properties start at their initial values
+    /// (Properties and Values API 1 §3.3).
+    pub(crate) fn registered(registered: &'a Registered) -> Self {
+        let mut scope = Self {
+            registered: Some(registered),
+            ..Self::default()
+        };
+        for (name, registration) in registered {
+            let node = registration.initial.as_deref().and_then(|initial| {
+                let mut value = Value::new();
+                value.text(initial)?;
+                scope.nodes.push(value);
+                Some(scope.nodes.len() - 1)
+            });
+            scope.initial.insert(name.as_str(), node);
+            scope.values.insert(name.as_str(), node);
+        }
+        scope
+    }
+    /// Enter an element: a registered property that does not inherit takes
+    /// its initial value (§3.2), keeping the parent's for `inherit`.
+    pub(crate) fn enter(&mut self) {
+        let Some(registered) = self.registered else {
+            return;
+        };
+        self.parent.clear();
+        for (name, registration) in registered {
+            if !registration.inherits {
+                let name = name.as_str();
+                let parent = self.values.get(name).copied().flatten();
+                self.parent.insert(name, parent);
+                self.values
+                    .insert(name, self.initial.get(name).copied().flatten());
+            }
+        }
+    }
+    /// The inherited value of `name`: the parent's.
+    fn inherited(&self, name: &str) -> Option<usize> {
+        match self.parent.get(name) {
+            Some(parent) => *parent,
+            None => self.values.get(name).copied().flatten(),
+        }
+    }
+    /// The value of `unset` (Cascade 4 §7.5): inherited for an inheriting
+    /// or unregistered property, the initial value otherwise. It is also
+    /// what an invalid-at-computed-value-time value computes to (Variables
+    /// 1 §3.1).
+    fn unset(&self, name: &str) -> Option<usize> {
+        match self.registered.and_then(|r| r.get(name)) {
+            Some(registration) if !registration.inherits => {
+                self.initial.get(name).copied().flatten()
+            }
+            _ => self.inherited(name),
+        }
+    }
+    fn materialize(&self, pieces: &[Piece<'_>]) -> String {
+        let mut out = String::new();
+        let mut pending: Vec<&Piece<'_>> = pieces.iter().rev().collect();
+        while let Some(piece) = pending.pop() {
+            match piece {
+                Piece::Text(text) => out.push_str(text),
+                Piece::Reference(id) => pending.extend(self.nodes[*id].pieces.iter().rev()),
+            }
+        }
+        out.trim().to_owned()
+    }
     /// Resolve this element's declarations before making them inherited values.
     pub(crate) fn extend(&mut self, raw: BTreeMap<&'a str, &'a str>) {
         if raw.is_empty() {
@@ -255,16 +336,25 @@ impl<'a> Scope<'a> {
                     }
                     Work::FinishDefinition(i) => {
                         let value = results.pop().flatten();
+                        let registration = self.registered.and_then(|r| r.get(names[i]));
                         if !cyclic[i]
                             && let Some(value) = value
                         {
                             match value.token {
-                                Token::Initial => {}
-                                Token::Inherited => {
-                                    resolved[i] = self.values.get(names[i]).copied().flatten()
+                                Token::Initial => {
+                                    resolved[i] = self.initial.get(names[i]).copied().flatten();
                                 }
+                                Token::Inherited => resolved[i] = self.inherited(names[i]),
+                                Token::Unset => resolved[i] = self.unset(names[i]),
                                 _ => {
-                                    if let [Piece::Reference(id)] = value.pieces.as_slice() {
+                                    // A registered syntax is checked on the
+                                    // substituted value (Properties and
+                                    // Values API 1 §2.4).
+                                    if registration.is_some_and(|registration| {
+                                        !registration.admits(&self.materialize(&value.pieces))
+                                    }) {
+                                        resolved[i] = self.unset(names[i]);
+                                    } else if let [Piece::Reference(id)] = value.pieces.as_slice() {
                                         resolved[i] = Some(*id);
                                     } else {
                                         resolved[i] = Some(self.nodes.len());
@@ -272,6 +362,9 @@ impl<'a> Scope<'a> {
                                     }
                                 }
                             }
+                        } else if registration.is_some() {
+                            // Invalid at computed-value time: `unset`.
+                            resolved[i] = self.unset(names[i]);
                         }
                         debug_assert_eq!(active.pop(), Some(i));
                         positions[i] = None;
@@ -395,18 +488,7 @@ impl<'a> Scope<'a> {
     pub(crate) fn substitute(&self, source: &str) -> Option<String> {
         let template = Template::parse(source)?;
         let value = self.evaluate(&template, &|name| self.values.get(name).copied().flatten())?;
-        let mut out = String::new();
-        let mut pending: Vec<_> = value.pieces.iter().rev().collect();
-        while let Some(piece) = pending.pop() {
-            match piece {
-                Piece::Text(text) => out.push_str(text),
-                Piece::Reference(id) => pending.extend(self.nodes[*id].pieces.iter().rev()),
-            }
-        }
-        if out.len() != out.trim().len() {
-            return Some(out.trim().to_owned());
-        }
-        Some(out)
+        Some(self.materialize(&value.pieces))
     }
 }
 
