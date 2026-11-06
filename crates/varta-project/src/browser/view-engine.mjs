@@ -16,7 +16,10 @@ export const ENGINE_STATUS = Object.freeze({
 export const ENGINE_INPUTS = Object.freeze({
   dark: 1, reducedMotion: 1 << 1, forcedColors: 1 << 2, contrastShift: 3,
   noHover: 1 << 5, noAnyHover: 1 << 6, pointerShift: 7, anyPointerShift: 9,
+  packagedMonospace: 1 << 11,
 });
+/** The tag argument of `create` for a text node. */
+const TEXT_NODE = 0xffffffff;
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
 const propertyCodes = new Map(registry.view.css.map((row) => [row.name, row.code]));
 const propertyNames = new Map(registry.view.css.map((row) => [row.code, row.name]));
@@ -39,7 +42,8 @@ export function createViewEngine(module) {
     begin: () => exports.view_engine_begin(),
     commit: () => exports.view_engine_commit(),
     abort: () => exports.view_engine_abort(),
-    create: (id, element) => exports.view_engine_create(id, element ? 1 : 0),
+    /** `tag` is an element's tag code, or `null` for a text node. */
+    create: (id, tag) => exports.view_engine_create(id, tag ?? TEXT_NODE),
     insert: (parent, child, before) => exports.view_engine_insert(parent, child, before),
     remove: (id) => exports.view_engine_remove(id),
     setClass(id, text) { input(text); return exports.view_engine_class(id); },
@@ -48,7 +52,7 @@ export function createViewEngine(module) {
     setFlags: (id, disabled, checked) => exports.view_engine_flags(id, disabled ? 1 : 0, checked ? 1 : 0),
     stylesheet(id, text) { input(text); return exports.view_engine_sheet(id); },
     charge: () => exports.view_engine_charge(),
-    environment: (width, height, rootFontSize, flags) => exports.view_engine_environment(width, height, rootFontSize, flags),
+    environment: (width, height, rootFontSize, mediumFontSize, flags) => exports.view_engine_environment(width, height, rootFontSize, mediumFontSize, flags),
     state: (focus, hovered, active) => exports.view_engine_state(focus, hovered, active),
     /** The committed computed values of element `id`: property name to CSS text. */
     computed(id) {

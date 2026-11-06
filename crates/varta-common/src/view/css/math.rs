@@ -88,8 +88,13 @@ pub enum LengthUnit {
     ViewportHeight,
     ViewportMin,
     ViewportMax,
-    /// Font-relative units the native renderer cannot resolve yet
-    /// (`ex`, `ch`, `lh`, …): valid CSS, refused when lowered.
+    /// `lh` and `rlh` (§6.1.1): the element's and the root element's
+    /// computed line height.
+    Lh,
+    Rlh,
+    /// Font-relative units that need the font's own metrics (`ex`, `ch`,
+    /// `cap`, `ic` and their root forms): valid CSS, refused when lowered
+    /// without them.
     Unresolved,
 }
 
@@ -117,7 +122,9 @@ pub fn length_unit(unit: &str) -> Option<LengthUnit> {
         "vh" | "svh" | "lvh" | "dvh" => L::ViewportHeight,
         "vmin" | "svmin" | "lvmin" | "dvmin" => L::ViewportMin,
         "vmax" | "svmax" | "lvmax" | "dvmax" => L::ViewportMax,
-        "ex" | "rex" | "cap" | "rcap" | "ch" | "rch" | "ic" | "ric" | "lh" | "rlh" => L::Unresolved,
+        "lh" => L::Lh,
+        "rlh" => L::Rlh,
+        "ex" | "rex" | "cap" | "rcap" | "ch" | "rch" | "ic" | "ric" => L::Unresolved,
         _ => return None,
     })
 }
@@ -188,6 +195,9 @@ pub struct Expression {
 pub struct Resolution {
     pub em: Option<f64>,
     pub rem: f64,
+    /// The line heights of `lh` and `rlh`; `None` leaves them unresolved.
+    pub lh: Option<f64>,
+    pub rlh: Option<f64>,
     pub viewport_width: f64,
     pub viewport_height: f64,
 }
@@ -422,6 +432,8 @@ fn evaluate(node: &Node, resolution: &Resolution, flags: &mut Flags) -> Option<f
                         LengthUnit::Absolute(factor) => *factor,
                         LengthUnit::Em => resolution.em?,
                         LengthUnit::Rem => resolution.rem,
+                        LengthUnit::Lh => resolution.lh?,
+                        LengthUnit::Rlh => resolution.rlh?,
                         LengthUnit::ViewportWidth => vw,
                         LengthUnit::ViewportHeight => vh,
                         LengthUnit::ViewportMin => vw.min(vh),
@@ -494,6 +506,8 @@ mod tests {
     const RESOLUTION: Resolution = Resolution {
         em: Some(10.0),
         rem: 16.0,
+        lh: Some(12.0),
+        rlh: Some(20.0),
         viewport_width: 800.0,
         viewport_height: 600.0,
     };
@@ -554,6 +568,13 @@ mod tests {
                 .unwrap()
                 .mixed
         );
-        assert!(expression("calc(1lh)").evaluate(&RESOLUTION).is_none());
+        assert_eq!(
+            expression("calc(2lh + 1rlh)")
+                .evaluate(&RESOLUTION)
+                .unwrap()
+                .value,
+            44.0
+        );
+        assert!(expression("calc(1ch)").evaluate(&RESOLUTION).is_none());
     }
 }

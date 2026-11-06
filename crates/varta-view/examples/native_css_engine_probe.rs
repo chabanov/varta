@@ -250,6 +250,21 @@ const SCENES: &[Scene] = &[
             "CSS Color 5 §3 mixes one or more colours; Chrome mixes exactly two and drops the declaration",
         ),
     },
+    Scene {
+        name: "font-relative-units",
+        sheet: "@property --gap { syntax: \"<length>\"; inherits: true; initial-value: 0px } .r { display: flex; flex-wrap: wrap; align-items: flex-start; font-size: 20px; line-height: 1.5; --gap: 1em } .a { width: 2em; height: 1lh; background-color: #c00 } .b { font-size: 0.5em; width: 4em; height: 2lh; margin-left: var(--gap); background-color: #0a0 } .c { font-size: calc(1em + 4px); line-height: calc(1lh - 6px); width: 1em; height: 1lh; padding: 0.25em; background-color: #00c } .d { font-size: 150%; width: 1em; height: 0.5em; border: 0.1em solid #000; background-color: #cc0 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+    },
 ];
 
 fn append(batch: &mut B, parent: u32, nodes: &[Node], next: &mut u32) {

@@ -116,6 +116,12 @@ pub struct Registration {
     pub initial: Option<String>,
 }
 impl Registration {
+    /// Whether the syntax has length components, whose computed values are
+    /// absolute lengths (Properties and Values API 1 §2.4).
+    #[must_use]
+    pub fn has_lengths(&self) -> bool {
+        matches!(&self.syntax, Syntax::Grammar(grammar) if grammar.contains("<length"))
+    }
     /// Whether a computed value matches the registered syntax.
     #[must_use]
     pub fn admits(&self, value: &str) -> bool {

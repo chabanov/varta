@@ -758,19 +758,23 @@ fn unrendered(property: CssProperty) -> Option<&'static str> {
 pub enum Refusal {
     /// Outside the property's grammar (or the specification).
     Invalid,
-    /// Valid CSS the native renderer cannot render yet (for example `em`
-    /// outside `font-size`, `ch`/`lh`, a sum of a percentage and a length,
-    /// or `currentcolor` inside `color-mix()`).
+    /// Valid CSS the native renderer cannot render yet (for example `ch`
+    /// without font metrics, a sum of a percentage and a length, or
+    /// `currentcolor` inside `color-mix()`).
     Unrenderable,
 }
 
-/// The reference metrics of [`lower`]: the root font size for `rem` and the
-/// viewport for viewport-percentage units, in CSS pixels.
+/// The reference metrics of [`lower`]: the root font size for `rem`, the
+/// viewport for viewport-percentage units and the element's font for the
+/// other font-relative units, in CSS pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Context {
     pub root_font_size: f64,
     pub viewport_width: f64,
     pub viewport_height: f64,
+    /// The element's font metrics; `None` leaves `em` and `lh` outside
+    /// `font-size` unresolved.
+    pub font: Option<FontContext>,
 }
 impl Context {
     /// Nominal metrics for a parse-time renderability check: whether a
@@ -779,7 +783,31 @@ impl Context {
         root_font_size: super::stylesheet::REM_PIXELS,
         viewport_width: 1024.0,
         viewport_height: 768.0,
+        font: Some(FontContext {
+            em: super::stylesheet::REM_PIXELS,
+            parent_em: super::stylesheet::REM_PIXELS,
+            lh: Some(super::stylesheet::REM_PIXELS),
+            parent_lh: Some(super::stylesheet::REM_PIXELS),
+            rlh: Some(super::stylesheet::REM_PIXELS),
+        }),
     };
+}
+
+/// The font-relative references of one element (CSS Values 4 §6.1.1), in
+/// CSS pixels. In `font-size` and `line-height`, `em` (in `font-size`) and
+/// `lh` refer to the parent element's metrics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontContext {
+    /// The element's computed font size.
+    pub em: f64,
+    /// The parent element's computed font size.
+    pub parent_em: f64,
+    /// The element's computed line height; `None` where it is `normal`,
+    /// which needs the metrics of the first available font.
+    pub lh: Option<f64>,
+    pub parent_lh: Option<f64>,
+    /// The root element's computed line height.
+    pub rlh: Option<f64>,
 }
 
 /// Properties whose numeric slots are nonnegative (CSS Box 3, Sizing 3,
@@ -1025,10 +1053,21 @@ fn lower_math(
     use math::{Base, Type};
     let (expression, end) = math::parse(tokens, at)?;
     let font_size = property == CssProperty::FontSize;
+    // Values 4 §6.1.1: in `font-size` and `line-height`, `lh` is the
+    // parent's line height; in `font-size`, `em` is the parent's size.
+    let parent_metrics = matches!(property, CssProperty::FontSize | CssProperty::LineHeight);
+    let font = context.font;
     let resolution = math::Resolution {
-        // In `font-size`, `em` is the parent's size: a percentage.
-        em: None,
+        em: font.map(|font| if font_size { font.parent_em } else { font.em }),
         rem: context.root_font_size,
+        lh: font.and_then(|font| {
+            if parent_metrics {
+                font.parent_lh
+            } else {
+                font.lh
+            }
+        }),
+        rlh: font.and_then(|font| font.rlh),
         viewport_width: context.viewport_width,
         viewport_height: context.viewport_height,
     };
@@ -1037,7 +1076,12 @@ fn lower_math(
         .resolved_type(None)
         .or_else(|| expression.resolved_type(percent_as))?;
     let mut evaluated = if font_size {
-        expression.evaluate_font_size(&resolution)?
+        // A sum of `em` and other lengths is an absolute size of the
+        // parent's; `em` alone keeps the relative form (a percentage).
+        match expression.evaluate_font_size(&resolution)? {
+            mixed if mixed.mixed => expression.evaluate(&resolution)?,
+            relative => relative,
+        }
     } else {
         expression.evaluate(&resolution)?
     };
@@ -1082,6 +1126,107 @@ fn lower_math(
     Some((text, end))
 }
 
+/// The computed value of a registered custom property's value whose
+/// syntax has length components (Properties and Values API 1 §2.4): every
+/// length becomes an absolute length in `px` (`em`, `rem`, `lh`, viewport
+/// and absolute units, and math functions over lengths alone); a math
+/// function that sums lengths with percentages stays as written, and every
+/// other component is kept. `None` where a length cannot be resolved.
+#[must_use]
+pub fn absolutize_lengths(value: &str, context: &Context) -> Option<String> {
+    let tokens = lex_value(value)?;
+    let mut parts = Vec::with_capacity(tokens.len());
+    let mut at = 0;
+    while let Some(token) = tokens.get(at) {
+        if math::is_math(Some(token)) {
+            let (expression, end) = math::parse(&tokens, at)?;
+            let font = context.font;
+            let resolution = math::Resolution {
+                em: font.map(|font| font.em),
+                rem: context.root_font_size,
+                lh: font.and_then(|font| font.lh),
+                rlh: font.and_then(|font| font.rlh),
+                viewport_width: context.viewport_width,
+                viewport_height: context.viewport_height,
+            };
+            let length = expression.resolved_type(Some(math::Base::Length))
+                == Some(math::Type::of(math::Base::Length));
+            match expression.evaluate(&resolution) {
+                Some(evaluated) if length && !evaluated.percent => {
+                    parts.push(format!(
+                        "{}px",
+                        format_number(clamp_magnitude(evaluated.value))
+                    ));
+                }
+                _ => parts.extend(tokens[at..end].iter().map(token_text)),
+            }
+            at = end;
+            continue;
+        }
+        let lowered = match token {
+            V::Num {
+                value,
+                unit: NumUnit::Dimension(name),
+                ..
+            } => match math::length_unit(name) {
+                Some(unit) => Some(absolute_length(*value, unit, context)?),
+                None => None,
+            },
+            _ => None,
+        };
+        parts.push(lowered.unwrap_or_else(|| token_text(token)));
+        at += 1;
+    }
+    Some(join(&parts))
+}
+
+/// One value token as the renderer's consumers read it (numbers as written).
+fn token_text(token: &V) -> String {
+    match token {
+        V::Ident(word) => word.to_ascii_lowercase(),
+        V::Num { text, .. } => text.clone(),
+        V::Function(name) => format!("{}(", name.to_ascii_lowercase()),
+        V::Close => ")".into(),
+        V::Comma => ",".into(),
+        V::Slash => "/".into(),
+        V::Hash(hex) => format!("#{hex}"),
+        V::Str(text) => {
+            let mut out = String::new();
+            syntax::serialize_string(text, &mut out);
+            out
+        }
+        V::Delim(c) => c.to_string(),
+    }
+}
+
+/// One length in CSS pixels, outside `font-size` and `line-height`.
+fn absolute_length(value: f64, unit: math::LengthUnit, context: &Context) -> Option<String> {
+    use math::LengthUnit as L;
+    let vw = context.viewport_width / 100.0;
+    let vh = context.viewport_height / 100.0;
+    let factor = match unit {
+        L::Absolute(factor) => factor,
+        L::Em => context.font?.em,
+        L::Rem => context.root_font_size,
+        L::Lh => context.font?.lh?,
+        L::Rlh => context.font?.rlh?,
+        L::ViewportWidth => vw,
+        L::ViewportHeight => vh,
+        L::ViewportMin => vw.min(vh),
+        L::ViewportMax => vw.max(vh),
+        L::Unresolved => return None,
+    };
+    font_length(value, factor)
+}
+
+/// A font-relative length in CSS pixels.
+fn font_length(value: f64, reference: f64) -> Option<String> {
+    Some(format!(
+        "{}px",
+        format_number(clamp_magnitude(value * reference))
+    ))
+}
+
 /// Lower one numeric token whose unit the host grammar lacks.
 fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<String> {
     let V::Num {
@@ -1103,11 +1248,26 @@ fn lower_numeric(property: CssProperty, token: &V, context: &Context) -> Option<
                 let repr = &text[..text.len() - name.len()];
                 return Some(format!("{repr}{lower}"));
             }
+            let parent_metrics =
+                matches!(property, CssProperty::FontSize | CssProperty::LineHeight);
             match math::length_unit(&lower)? {
                 math::LengthUnit::Em if property == CssProperty::FontSize => {
                     Some(format!("{}%", format_number(value * 100.0)))
                 }
-                math::LengthUnit::Em | math::LengthUnit::Unresolved => None,
+                math::LengthUnit::Em => font_length(*value, context.font?.em),
+                math::LengthUnit::Lh => {
+                    let font = context.font?;
+                    font_length(
+                        *value,
+                        if parent_metrics {
+                            font.parent_lh?
+                        } else {
+                            font.lh?
+                        },
+                    )
+                }
+                math::LengthUnit::Rlh => font_length(*value, context.font?.rlh?),
+                math::LengthUnit::Unresolved => None,
                 math::LengthUnit::Rem => Some(format!("{}rem", format_number(*value))),
                 unit => {
                     let vw = context.viewport_width / 100.0;
@@ -1183,19 +1343,8 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
             continue;
         }
         parts.push(match token {
-            V::Ident(word) => word.to_ascii_lowercase(),
             V::Num { .. } => lower_numeric(property, token, context)?,
-            V::Function(name) => format!("{}(", name.to_ascii_lowercase()),
-            V::Close => ")".into(),
-            V::Comma => ",".into(),
-            V::Slash => "/".into(),
-            V::Hash(hex) => format!("#{hex}"),
-            V::Str(text) => {
-                let mut out = String::new();
-                syntax::serialize_string(text, &mut out);
-                out
-            }
-            V::Delim(c) => c.to_string(),
+            token => token_text(token),
         });
         at += 1;
     }
@@ -1318,6 +1467,10 @@ mod tests {
             (P::TransitionDuration, "calc(0.1s * 2)"),
             (P::WhiteSpace, "pre"),
             (P::TextAlign, "start"),
+            // Values 4 §6.1.1: `em` and `lh` resolve from the element's font.
+            (P::Width, "2em"),
+            (P::Padding, "0.5em 1em"),
+            (P::Height, "calc(2lh + 1em)"),
         ] {
             assert_eq!(
                 check(property, value),
@@ -1329,9 +1482,7 @@ mod tests {
         for (property, value, refusal) in [
             (P::Width, "calc(1px + 1)", Refusal::Invalid),
             (P::Width, "calc(100% - 1rem)", Refusal::Unrenderable),
-            (P::Width, "2em", Refusal::Unrenderable),
             (P::Width, "2ch", Refusal::Unrenderable),
-            (P::Width, "2lh", Refusal::Unrenderable),
             (P::Width, "round(1px, 2px)", Refusal::Invalid),
             (
                 P::Color,
@@ -1419,5 +1570,52 @@ mod tests {
         assert!(matches_engine("<length>", "1PX"));
         assert!(matches_engine("<number>", "1e3"));
         assert!(matches_engine("<angle>", "0.5turn"));
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::*;
+
+    #[test]
+    fn font_relative_units_lower_from_the_font_context() {
+        let context = Context {
+            font: Some(FontContext {
+                em: 20.0,
+                parent_em: 10.0,
+                lh: Some(30.0),
+                parent_lh: Some(12.0),
+                rlh: None,
+            }),
+            ..Context::NOMINAL
+        };
+        let lower = |property, value| lower(property, value, &context);
+        assert_eq!(lower(CssProperty::Width, "2em").as_deref(), Some("40px"));
+        assert_eq!(lower(CssProperty::Width, "1lh").as_deref(), Some("30px"));
+        // In `font-size` `em` is the parent's size; alone it stays relative.
+        assert_eq!(
+            lower(CssProperty::FontSize, "1.5em").as_deref(),
+            Some("150%")
+        );
+        assert_eq!(
+            lower(CssProperty::FontSize, "calc(1em + 2px)").as_deref(),
+            Some("12px")
+        );
+        // In `line-height`, `lh` is the parent's; `em` the element's own.
+        assert_eq!(
+            lower(CssProperty::LineHeight, "2lh").as_deref(),
+            Some("24px")
+        );
+        assert_eq!(
+            lower(CssProperty::LineHeight, "calc(1em)").as_deref(),
+            Some("20px")
+        );
+        // Without the root's line height or a font context, nothing lowers.
+        assert_eq!(lower(CssProperty::Width, "1rlh"), None);
+        let bare = Context {
+            font: None,
+            ..Context::NOMINAL
+        };
+        assert_eq!(super::lower(CssProperty::Width, "2em", &bare), None);
     }
 }
