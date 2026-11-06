@@ -187,6 +187,9 @@ Every project command loads and validates `varta.config.json`, resolves the entr
 and output relative to that configuration file, checks the supported language and
 its types, emits Wasm, and validates both bytecode and host ABI. Deno is not a
 prerequisite and its presence cannot change whether a project is accepted.
+With `"tailwind": {"entry": …}` (v38), the pipeline first generates the
+project's stylesheet and serves it as that entry's text resource
+([build-time Tailwind stylesheets](#build-time-tailwind-stylesheets-k8-t1)).
 
 The pipeline is:
 
