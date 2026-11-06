@@ -86,7 +86,7 @@ pub(crate) struct Unit {
     pub text: bool,
     /// TSX `class`/`className` expressions that compose a class name from
     /// parts at run time (see [`crate::classes`]).
-    pub class_compositions: Vec<Span>,
+    pub class_compositions: Vec<crate::classes::Composition>,
 }
 pub(crate) struct Graph {
     pub entry: PathBuf,

@@ -136,8 +136,9 @@ impl Lower<'_> {
             }
             _ => self.expr_inner(expression),
         };
-        if result.is_ok() {
+        if let Ok(value) = &result {
             self.path_effects(expression);
+            self.observe_class_hole(expression.span(), value.ty);
         }
         self.depth -= 1;
         result
