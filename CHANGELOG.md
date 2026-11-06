@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- V38 K9 type level (selector `type_level`): conditional types with
+  distribution, `infer` (constrained, tuple, function, object and template
+  patterns) and recursive generic aliases; mapped types with `as` remapping
+  and `+/-readonly`/`+/-?` over records, tuples and arrays; template literal
+  types and `Uppercase`/`Lowercase`/`Capitalize`/`Uncapitalize`; every
+  built-in utility type; `keyof` and precise `T[K]` (also for computed
+  record reads); `typeof`/`keyof typeof` queries of module constants,
+  functions and classes; record intersections; call and construct
+  signatures, `new (…) => T` constructor types and class values for them;
+  named, optional, rest and variadic tuple elements and `[]`; type
+  predicates and assertion functions (predicate-narrowed reference reads are
+  checked at run time); `satisfies`; polymorphic `this`; `never`
+  exhaustiveness over literal sets; and tsc's literal inference (`const x =
+  "a"` is `"a"`, `let` widens, `as const` readonly literal tuples and
+  records), which also lets the Tailwind scanner enumerate literal-typed
+  class compositions. Refused by name: `unique symbol`, pattern template
+  types outside `extends`, function and branded-primitive intersections,
+  overloaded signatures, `typeof` of locals. No host ABI or value layout
+  change; v37 keeps rejecting every form. Conformance (with K9 D): 155
+  passed, 5 known unsupported of 160 (new origin `typescript_handbook`, nine
+  feature rows).
 - K8 T2 standards items and K8 T3: the browser host runs the Rust CSS engine
   as `view-engine.wasm` (built by `scripts/build-view-engine.py`) and applies
   its computed values, so browser and native hosts accept, refuse and

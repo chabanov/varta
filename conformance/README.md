@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 86 feature rows and 151 cases:
-146 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 95 feature rows and 160 cases:
+155 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -372,7 +372,7 @@ nothing of the parent environment.
 `A | B` of record interfaces where `{ n: number }` is expected (Node prints
 `1 2`), while v38 views only a single record or class instance as a narrower
 record. Writing the cases also met forms v38 rejects that are not inventory
-cases yet: a `this` return type, `Array.prototype.shift`, a union of `Map` and
+cases yet: `Array.prototype.shift`, a union of `Map` and
 `Set`, template-literal computed keys in object literals, `await` inside a
 template literal or inside a call argument such as `String((await g()).n)`
 (an awaited property base in a declaration, `const n = (await g()).n`, is
@@ -389,6 +389,24 @@ over a generator with `throw`/`return` forwarding and over an array
 (`yield-delegation.ts`). Their expected output is Node.js v24.20.0's. The
 `symbol-type` gap is unchanged: `Symbol.iterator` is recognized only as a
 computed method key, and no `Symbol` value exists.
+
+The K9 A type-level review (2026-11-06) adds a third origin,
+`typescript_handbook` (references under
+`https://www.typescriptlang.org/docs/handbook/`; tsc 5.x is the type-system
+reference), and nine feature rows with one passing case each: conditional
+types with distribution, `infer` (constrained, tuple, template and function
+patterns) and recursive aliases (`ts-conditional.ts`); mapped types with `as`
+remapping and `+/-readonly`/`+/-?` over records, tuples and arrays
+(`ts-mapped.ts`); template literal and intrinsic string types
+(`ts-templates.ts`); every built-in utility type (`ts-utilities.ts`);
+`keyof`, precise `T[K]`, `typeof`/`keyof typeof` queries and record
+intersections (`ts-queries.ts`); type predicates, assertion functions,
+`satisfies` and `never` exhaustiveness (`ts-narrowing.ts`); call and construct
+signatures, constructor types and polymorphic `this` (`ts-signatures.ts`);
+named, optional, rest and variadic tuple elements (`ts-tuples.ts`); and
+literal inference and widening (`ts-literals.ts`). Every expected output is
+Node.js v24.20.0's. These cases exercise type-level evaluation at compile
+time; they do not establish tsc's complete assignability or inference.
 
 The K9 D standard-library review (2026-11-06, selector `standard_library`)
 adds five feature rows with seven passing cases and four cases on existing

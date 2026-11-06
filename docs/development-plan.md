@@ -7660,6 +7660,38 @@ gate):
   full RegExp with matching bounded by fuel, Proxy and Reflect where sound,
   and `Intl` through ICU4X with deterministic data.
 
+**K9 A record (2026-11-06, type level).** Admitted in v38 under the
+selector `type_level` ([contract](architecture.md#type-level-type_level),
+[rules](profile-rules.md#type-level-type_level)), all evaluated at compile
+time over resolved types: conditional types (distribution, `infer` with
+constraints, recursive generic aliases), mapped types (`as`, `+/-readonly`,
+`+/-?`, homomorphic over records, tuples and arrays), template literal and
+intrinsic string types, every built-in utility type, `keyof`/precise
+`T[K]` (also for computed record reads), `typeof`/`keyof typeof` queries of
+module values, record intersections, call and construct signatures and
+constructor types (class values become constructing closures), named,
+optional, rest and variadic tuple elements and `[]`, type predicates and
+assertion functions (predicate-narrowed reference reads are checked at run
+time), `satisfies`, polymorphic `this`, `never` exhaustiveness over literal
+sets, and tsc's literal inference (`const` literal types, `let` widening,
+`as const` literal tuples and records), which also lets the Tailwind scanner
+enumerate literal-typed class compositions. Of the A probe programs, every
+one compiles except `a50_symbol` (track D: `Symbol()` values). Refused by
+name (sound static layout missing, or owned by another track): `unique
+symbol` (needs track D's Symbol values), pattern template literal types
+outside `extends`, intersections of function types and branded primitives,
+overloaded call/construct signatures and callable objects with properties,
+mapped types and `keyof` over class instances, `typeof` of function-local
+bindings, `infer` over declared generic types and optional tuple elements,
+`this is T` method predicates and predicate narrowing of `unknown` to object
+types. Evidence: `varta-runtime` `type_level_tests` (ten Node 24 logs,
+v37 rejection of each), the compiler scanner test and nine new conformance
+rows under the new `typescript_handbook` origin (conformance 135 → 144
+passing of 140 → 149 cases). Owner decisions open: whether a lying type
+predicate should keep its `TypeError` (Node continues with the wrong type)
+and whether branded primitives (`string & { __brand: … }`) may be admitted
+as their primitive.
+
 **Release readiness** additionally needs, after K9 and K8 merge: the release
 profile frozen (v38 becomes a released profile; later admissions go to a new
 one), the macOS arm64 and web distributions built and verified from a clean
@@ -7771,9 +7803,9 @@ frame bounds.
   `MAX_CLASS_COMBINATIONS`; other holes stay errors), and the entry may
   `@import` project stylesheets by relative path through the project
   loader under the module path policy (Cascade 5 placement and
-  conditions, cycle, depth, count and byte bounds). Open: the v38 checker
-  types an unannotated `const x = "a"` and `as const` tuple elements as
-  `string`, so those need annotations to be enumerated.
+  conditions, cycle, depth, count and byte bounds). Closed by K9 A's
+  literal inference: an unannotated `const x = "a"` and `as const` tuple
+  elements have literal types and are enumerated without annotations.
 
 #### K8 T2 S1–S3 — engine tokens, sheet structure and values (2026-11-06)
 

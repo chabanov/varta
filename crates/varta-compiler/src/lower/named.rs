@@ -426,7 +426,8 @@ pub(super) fn instantiate(
     if let Some(ty) = types.named.resolved.get(&memo) {
         return Ok(*ty);
     }
-    if types.named.resolving.contains(&key) {
+    let recursive = type_level::enter_recursive(&key, &memo.1, types)?;
+    if types.named.resolving.contains(&key) && !recursive {
         if types.profile.recursive_types() && memo.1.is_empty() && params.is_none() {
             return recursive::placeholder(&key, declaration.as_ref(), types)
                 .map_err(|e| source.locate(e, span));
@@ -435,6 +436,7 @@ pub(super) fn instantiate(
     }
     let caller = types.named.current;
     types.named.resolving.push(key.clone());
+    type_level::push_instantiation(&key, &memo.1, types);
     types.named.current = key.0;
     let result = match &declaration {
         Some(Declaration::Interface(interface)) => {
@@ -450,6 +452,7 @@ pub(super) fn instantiate(
     };
     types.named.current = caller;
     types.named.resolving.pop();
+    type_level::pop_instantiation(types);
     let placeholder = types.named.placeholders.remove(&key);
     let ty = result?;
     let ty = match placeholder {

@@ -847,6 +847,18 @@ impl LanguageProfile {
     pub fn kv(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 type-level stream: conditional types (distributive,
+    /// `infer`), mapped types with `as` and modifiers, template literal and
+    /// intrinsic string types, the built-in utility types, `typeof` queries,
+    /// record intersections, call/construct signatures and constructor types,
+    /// variadic/optional/rest tuple elements, type predicates, assertion
+    /// functions, `satisfies` and polymorphic `this`. Every type resolves at
+    /// compile time to an existing closed type; no host ABI or value layout
+    /// changes.
+    #[must_use]
+    pub fn type_level(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Named interface/alias annotations and type-only module bindings (v31).
     #[must_use]
     pub fn named_types(self) -> bool {
@@ -3286,6 +3298,7 @@ mod tests {
                 profile.file_roots(),
                 profile.json_decoders(),
                 profile.iteration_protocol(),
+                profile.type_level(),
                 profile.standard_library(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");

@@ -525,6 +525,10 @@ impl Lower<'_> {
         if self.path_guard(test, yes)? {
             return Ok(());
         }
+        // A call of a type predicate function (v38 `type_level`).
+        if self.predicate_guard(test, yes)? {
+            return Ok(());
+        }
         // A truthy optional chain `x?.p` (v36) proves `x` is not nullish.
         if yes
             && self.types.profile.function_fields()

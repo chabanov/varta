@@ -21,11 +21,23 @@ impl Lower<'_> {
 }
 
 /// The members of a finite union of string literals (a literal set, or a
-/// union whose every member is one).
+/// union whose every member is one). Under v38 (`type_level`) number and
+/// boolean literal types contribute their ECMAScript strings, as a template
+/// literal converts them.
 fn finite_strings(ty: Type, types: &ir::ValueTypes) -> Option<std::collections::BTreeSet<String>> {
     let mut values = std::collections::BTreeSet::new();
     for member in unions::members(ty, types) {
-        values.extend(literals::string_members(member, types)?);
+        match member {
+            Type::Literal(ir::LiteralBase::String, _) => {
+                values.extend(literals::string_members(member, types)?);
+            }
+            Type::Literal(_, id) if types.profile.type_level() => {
+                for value in types.literals.values(id) {
+                    values.insert(type_level::literal_text(value)?);
+                }
+            }
+            _ => return None,
+        }
     }
     (!values.is_empty()).then_some(values)
 }

@@ -3167,8 +3167,9 @@ structural subtyping (`structural_subtyping`) and code generation v2
 decoders (`json_decoders`, [rules below](#json-decoders-json_decoders))
 and hashed `Map`/`Set` tables (`collection_hashing`, [rules
 below](#collection-hashing-collection_hashing)), and the iteration
-protocol (`iteration_protocol`, [rules below](#iteration-protocol-iteration_protocol)), and the K9 D
-standard library (`standard_library`, [rules below](#standard-library-standard_library));
+protocol (`iteration_protocol`, [rules below](#iteration-protocol-iteration_protocol)), the K9 D
+standard library (`standard_library`, [rules below](#standard-library-standard_library))
+and the K9 type level (`type_level`, [rules below](#type-level-type_level));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
