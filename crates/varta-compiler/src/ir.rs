@@ -726,6 +726,17 @@ impl Function {
     }
 }
 
+/// The locals a delegating suspension point (`yield*`, v38) sets when it
+/// resumes: the completion kind (`Completion as i32`, a Number) and the
+/// thrown or returned input, which the delegation forwards to its iterator
+/// instead of throwing or returning at the point.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct SuspendObserver {
+    pub kind: u32,
+    pub thrown: u32,
+    pub returned: u32,
+}
+
 #[derive(Clone)]
 pub(crate) struct Expr {
     pub span: swc_common::Span,
@@ -1127,6 +1138,9 @@ pub(crate) enum Expression {
     Suspend {
         value: Box<Expr>,
         state: u32,
+        /// A delegating `yield*` point (v38 `iteration_protocol`) observes
+        /// its resumption instead of throwing or returning at it.
+        observe: Option<SuspendObserver>,
     },
     /// Resume a generator (v33) by its frame's closed per-type step function;
     /// evaluates to a `lower::generators` step outcome code.

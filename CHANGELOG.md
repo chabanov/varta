@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- V38 iteration protocol: a class's `[Symbol.iterator]()` generator method
+  makes its instances iterable by `for...of`, array spreads, `Array.from` and
+  `yield*`; classes declare synchronous generator methods; array literals
+  spread arrays, strings (code points), generators, `Map`/`Set`/`Uint8Array`
+  values and iterable instances in source order; `Array.from` copies the same sources;
+  synchronous `yield*` delegates to generators, arrays and iterable instances
+  and forwards `next`/`throw`/`return` as Node does; `Iterator<T>` and
+  `IterableIterator<T>` annotate generator objects and `implements
+  Iterable<T>` checks the method. No host ABI or value layout change; v37
+  keeps rejecting every form. Conformance: 135 passed, 5 known unsupported of
+  140 (new feature `iteration-protocol`).
 - V38 compiled JSON decoders scan string bodies and whitespace, and copy
   escaped strings, sixteen UTF-16 units per step with fixed-width WebAssembly
   SIMD (`simd128`): 0.75 fuel per scanned string byte instead of 11.5, and a

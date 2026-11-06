@@ -16,8 +16,8 @@ cargo run -p varta-conformance --locked -- --require-supported
 
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
-executable cases. The current inventory has 80 feature rows and 137 cases:
-132 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
+executable cases. The current inventory has 81 feature rows and 140 cases:
+135 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -379,3 +379,13 @@ template literal or inside a call argument such as `String((await g()).n)`
 admitted), `===` between two `Uint8Array` values, `Request` body
 readers such as `arrayBuffer()`, a local binding
 named `log`, and function members read through `globalThis.globalThis`.
+
+The v38 iteration-protocol review (2026-11-06) adds the `iteration-protocol`
+feature row with three passing cases: an iterable class with an overridden
+`[Symbol.iterator]()` generator method and an explicit iterator call
+(`iterable-class.ts`), array literal spreads and `Array.from` over arrays,
+generators, a `Set` and an iterable instance (`array-spread.ts`), and `yield*`
+over a generator with `throw`/`return` forwarding and over an array
+(`yield-delegation.ts`). Their expected output is Node.js v24.20.0's. The
+`symbol-type` gap is unchanged: `Symbol.iterator` is recognized only as a
+computed method key, and no `Symbol` value exists.

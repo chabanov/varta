@@ -14,11 +14,12 @@
 //! order. The hidden names start with `#`, which no source identifier can.
 use super::*;
 
-/// The UTF-16 surrogate ranges.
-const HIGH_FIRST: f64 = 55296.0;
-const HIGH_LAST: f64 = 56319.0;
-const LOW_FIRST: f64 = 56320.0;
-const LOW_LAST: f64 = 57343.0;
+/// The UTF-16 surrogate ranges (shared with the v38 string spreads of
+/// `iteration`).
+pub(super) const HIGH_FIRST: f64 = 55296.0;
+pub(super) const HIGH_LAST: f64 = 56319.0;
+pub(super) const LOW_FIRST: f64 = 56320.0;
+pub(super) const LOW_LAST: f64 = 57343.0;
 
 fn ident(name: &str, span: swc_common::Span) -> ast::Ident {
     ast::Ident::new(name.into(), span, Default::default())

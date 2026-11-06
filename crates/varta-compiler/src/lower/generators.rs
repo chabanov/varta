@@ -35,7 +35,7 @@ fn boolean(span: swc_common::Span, value: bool) -> Expr {
         kind: E::Integer(i32::from(value)),
     }
 }
-fn is(span: swc_common::Span, slot: u32, outcome: Outcome) -> Expr {
+pub(super) fn is(span: swc_common::Span, slot: u32, outcome: Outcome) -> Expr {
     Expr {
         span,
         ty: Type::Boolean,
@@ -69,6 +69,25 @@ pub(super) fn opaque(container: &str) -> CompilerError {
 /// rejects programs that would need `any`. A `void` `TNext` is `undefined`.
 pub(super) fn annotation(reference: &ast::TsTypeRef, types: &mut ir::ValueTypes) -> Result<Type> {
     let (yielded, returned, next) = arguments(reference, "Generator", types)?;
+    intern(yielded, returned, next, types)
+}
+
+/// The iteration interface names that denote synchronous generator objects
+/// (v38 `iteration_protocol`), as their async counterparts denote async
+/// generator objects. `Iterable<T>` is not one of them: an iterable
+/// parameter must also accept arrays, which a generator type does not.
+pub(super) fn iterator_name(name: &str) -> bool {
+    matches!(name, "Iterator" | "IterableIterator")
+}
+
+/// `Iterator<T, TReturn, TNext>` or `IterableIterator<T, TReturn, TNext>`
+/// (v38): a synchronous generator object, with `Generator`'s defaults.
+pub(super) fn iterator_annotation(
+    reference: &ast::TsTypeRef,
+    name: &str,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    let (yielded, returned, next) = arguments(reference, name, types)?;
     intern(yielded, returned, next, types)
 }
 
@@ -223,6 +242,84 @@ pub(super) fn field(types: &ir::ValueTypes, result: Type, name: &str) -> Result<
 }
 
 impl Lower<'_> {
+    /// Split a lowered synchronous generator method (v38
+    /// `iteration_protocol`) into the method, which keeps its index,
+    /// receiver and shape and returns the generator object that calling the
+    /// body creates, and the body: a generator function without a receiver
+    /// that takes the method's physical parameters (receiver first), so the
+    /// suspension machinery sees a plain module generator. The body's
+    /// statements, locals and cells are the method's own.
+    pub(super) fn split_generator_method(
+        &mut self,
+        signature: &Signature,
+        generator: u32,
+        statements: Vec<S>,
+        span: swc_common::Span,
+    ) -> Result<ir::Function> {
+        if signature.shape.extended() {
+            return Err(self.source.locate(
+                rejected("generator method with optional or rest parameters"),
+                span,
+            ));
+        }
+        let incoming: Vec<Type> = signature
+            .receiver
+            .into_iter()
+            .chain(signature.params.iter().copied())
+            .collect();
+        let index = *self.next_function;
+        if index >= self.types.function_limit() {
+            return Err(invalid(
+                "too many functions including generator method bodies",
+            ));
+        }
+        *self.next_function += 1;
+        let locals: Vec<Type> = (0..self.next)
+            .map(|slot| self.local_types.get(&slot).copied().unwrap_or(Type::Number))
+            .collect();
+        self.generated.insert(
+            index,
+            ir::Function {
+                shape: ir::ParameterShape::fixed(incoming.len()),
+                self_slot: None,
+                receiver: None,
+                cells: std::mem::take(&mut self.cells),
+                captures: Vec::new(),
+                environment: false,
+                generator: Some(generator),
+                source: self.source.clone(),
+                span,
+                params: incoming.clone(),
+                result: signature.result,
+                locals,
+                body: statements,
+            },
+        );
+        let args = incoming
+            .iter()
+            .enumerate()
+            .map(|(slot, ty)| local(span, slot as u32, *ty))
+            .collect();
+        Ok(ir::Function {
+            shape: signature.shape.clone(),
+            self_slot: None,
+            receiver: signature.receiver,
+            cells: Default::default(),
+            captures: Vec::new(),
+            environment: false,
+            generator: None,
+            source: self.source.clone(),
+            span,
+            params: incoming.clone(),
+            result: signature.result,
+            locals: incoming,
+            body: vec![S::Return(Some(Expr {
+                span,
+                ty: signature.result,
+                kind: E::Call(index, args),
+            }))],
+        })
+    }
     fn generator_type(&self, id: u32) -> GeneratorType {
         self.types.generators[id as usize]
     }
@@ -250,6 +347,9 @@ impl Lower<'_> {
         if generator.asynchronous.is_some() {
             return self.async_yield(expression, generator);
         }
+        if expression.delegate && self.types.profile.iteration_protocol() {
+            return self.delegate(expression, generator);
+        }
         if expression.delegate {
             return Err(self
                 .source
@@ -266,6 +366,7 @@ impl Lower<'_> {
             kind: E::Suspend {
                 value: Box::new(value),
                 state: 0,
+                observe: None,
             },
         })
     }
