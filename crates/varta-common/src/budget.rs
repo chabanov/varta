@@ -27,20 +27,23 @@ use std::time::Duration;
 
 /// Engine maxima no request or ceiling may exceed.
 pub const MAX_FUEL_PER_TURN: u64 = 1_000_000_000;
-/// The production fuel of one v38 turn (owner decision, from the measured
-/// v38 console turns at the fair host-fuel rates: a turn that parses a 20 KB
-/// response and updates a 50-row view needs about 5.6 million). Every earlier
-/// profile keeps [`abi::FUEL`] per execution.
-pub const TURN_FUEL: u64 = 8_000_000;
+/// The production fuel of one v38 turn: the engine maximum, about half a
+/// second to a second of CPU (owner decision 2026-11-06, replacing 8 million,
+/// which a real 276 KB session transcript already exceeded; modern platforms
+/// bound a request's CPU at a similar scale). Determinism is unchanged, the
+/// per-turn deadline still bounds wall time, and a host may only lower it.
+/// Every earlier profile keeps [`abi::FUEL`] per execution.
+pub const TURN_FUEL: u64 = MAX_FUEL_PER_TURN;
 pub const MAX_DEADLINE_PER_TURN_MS: u64 = 60_000;
 pub const MAX_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_HOST_CALLS_PER_TURN: u32 = 1 << 20;
 pub const MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 /// The maintenance fuel of one idle period of a v38 application instance:
 /// collection work the runtime runs between turns, when no task is runnable
-/// (`collector::IDLE_EXPORT`): half the per-turn fuel, enough for several
-/// complete cycles of the console's heap (wave 3 (f) measurement).
-pub const MAINTENANCE_FUEL: u64 = TURN_FUEL / 2;
+/// (`collector::IDLE_EXPORT`): enough for several complete cycles of the
+/// console's heap (wave 3 (f) measurement); it stays at its measured size
+/// when the turn fuel grows.
+pub const MAINTENANCE_FUEL: u64 = 4_000_000;
 pub const MAX_MAINTENANCE_FUEL: u64 = MAX_FUEL_PER_TURN;
 /// The wall-clock bound of one idle period's maintenance; a hard bound only
 /// (the work done is set by fuel, so scripted sessions stay deterministic).
@@ -234,11 +237,14 @@ impl Budgets {
         maintenance_deadline: Duration::ZERO,
     };
     /// The production budgets of a v38 (`turn_budgets`) instance, per turn:
-    /// [`TURN_FUEL`] fuel and, per idle period, [`MAINTENANCE_FUEL`] and
-    /// [`MAINTENANCE_DEADLINE_MS`]; the other budgets as
+    /// [`TURN_FUEL`] fuel, the v38 memory maximum
+    /// (`limits::V38_MAX_MEMORY_BYTES`; an HTTP request caps it at
+    /// `abi::MAX_MEMORY_BYTES`) and, per idle period, [`MAINTENANCE_FUEL`]
+    /// and [`MAINTENANCE_DEADLINE_MS`]; the other budgets as
     /// [`Self::PRODUCTION`].
     pub const TURN: Self = Self {
         fuel_per_turn: TURN_FUEL,
+        memory_bytes: crate::limits::V38_MAX_MEMORY_BYTES,
         maintenance_fuel: MAINTENANCE_FUEL,
         maintenance_deadline: Duration::from_millis(MAINTENANCE_DEADLINE_MS),
         ..Self::PRODUCTION
@@ -326,11 +332,12 @@ mod tests {
         assert_eq!(resolved.budgets, Budgets::TURN);
         assert!(resolved.capped.is_empty());
         assert_eq!(BudgetKind::Fuel.production(), TURN_FUEL);
-        // Only the per-turn fuel and the maintenance budget differ from the
-        // frozen production budgets, which run no maintenance.
+        // Only the per-turn fuel, the memory and the maintenance budget differ
+        // from the frozen production budgets, which run no maintenance.
         assert_eq!(
             Budgets {
                 fuel_per_turn: abi::FUEL,
+                memory_bytes: abi::MAX_MEMORY_BYTES,
                 maintenance_fuel: 0,
                 maintenance_deadline: Duration::ZERO,
                 ..Budgets::TURN
@@ -360,31 +367,38 @@ mod tests {
         );
         assert!(resolved.capped.is_empty());
 
+        // The turn fuel is the engine maximum, so a raise is shown on the
+        // host calls, whose production value lies below theirs.
+        let production = abi::MAX_HOST_CALLS;
         let raise = BudgetRequest {
-            fuel_per_turn: Some(40_000_000),
+            host_calls_per_turn: Some(production * 4),
             ..BudgetRequest::default()
         };
         // Without a ceiling value the production default caps the request.
         let capped = Budgets::resolve(&raise, None);
-        assert_eq!(capped.budgets.fuel_per_turn, TURN_FUEL);
+        assert_eq!(capped.budgets.host_calls_per_turn, production);
         assert_eq!(
             capped.capped,
             [CappedBudget {
-                kind: BudgetKind::Fuel,
-                requested: 40_000_000,
-                allowed: TURN_FUEL
+                kind: BudgetKind::HostCalls,
+                requested: u64::from(production * 4),
+                allowed: u64::from(production)
             }]
         );
         let ceiling = BudgetRequest {
-            fuel_per_turn: Some(30_000_000),
-            memory_bytes: Some(16 * 1024 * 1024),
+            host_calls_per_turn: Some(production * 2),
+            memory_bytes: Some(2 * crate::limits::V38_MAX_MEMORY_BYTES as u64),
             ..BudgetRequest::default()
         };
         let resolved = Budgets::resolve(&raise, Some(&ceiling));
-        assert_eq!(resolved.budgets.fuel_per_turn, 30_000_000);
+        assert_eq!(resolved.budgets.host_calls_per_turn, production * 2);
         // A raised ceiling grants nothing the package did not request.
-        assert_eq!(resolved.budgets.memory_bytes, abi::MAX_MEMORY_BYTES);
-        assert_eq!(resolved.capped[0].allowed, 30_000_000);
+        assert_eq!(
+            resolved.budgets.memory_bytes,
+            crate::limits::V38_MAX_MEMORY_BYTES
+        );
+        assert_eq!(resolved.capped[0].allowed, u64::from(production * 2));
+        assert_eq!(TURN_FUEL, MAX_FUEL_PER_TURN);
         // A ceiling below the default also lowers an omitted request.
         let tight = BudgetRequest {
             host_calls_per_turn: Some(8),

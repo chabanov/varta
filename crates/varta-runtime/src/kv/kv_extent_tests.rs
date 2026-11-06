@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use varta_common::{
     CapabilityGrant, CapabilityValue,
-    budget::{BudgetKind, BudgetRequest, MAX_DEADLINE_PER_TURN_MS, MAX_FUEL_PER_TURN, TURN_FUEL},
+    budget::{BudgetKind, BudgetRequest, MAX_DEADLINE_PER_TURN_MS, MAX_FUEL_PER_TURN},
     limits::Resource,
 };
 use varta_kv_codec::v8::{Key, Object, Value};
@@ -43,6 +43,20 @@ fn largest_budgets() -> BudgetRequest {
         fuel_per_turn: Some(MAX_FUEL_PER_TURN),
         deadline_per_turn_ms: Some(MAX_DEADLINE_PER_TURN_MS),
         ..BudgetRequest::default()
+    }
+}
+
+/// The memory these expansions were sized against (the instance memory
+/// before the v38 application memory was raised on 2026-11-06), declared as
+/// a test budget with the largest turn: a value within the value bound may
+/// still expand past the memory one instance is given.
+const METERED_MEMORY_BYTES: u64 = 8 * 1024 * 1024;
+
+/// [`largest_budgets`] with the memory of [`METERED_MEMORY_BYTES`].
+fn metered_memory() -> BudgetRequest {
+    BudgetRequest {
+        memory_bytes: Some(METERED_MEMORY_BYTES),
+        ..largest_budgets()
     }
 }
 
@@ -84,15 +98,28 @@ fn logs(source: &str, tree: &Tree, budgets: Option<BudgetRequest>) -> Vec<String
     run(source, tree, budgets).unwrap_or_else(|e| panic!("{e}\n{source}"))
 }
 
-/// The run ended with the ordinary fatal exhaustion of a production turn's
-/// fuel.
+/// The turn fuel these reads were sized against (the v38 production turn
+/// fuel before 2026-11-06), declared as a test budget: a read whose host
+/// work exceeds one turn's fuel ends the instance whatever the production
+/// value.
+const METERED_TURN_FUEL: u64 = 8_000_000;
+
+/// The test budget of [`METERED_TURN_FUEL`].
+fn metered() -> Option<BudgetRequest> {
+    Some(BudgetRequest {
+        fuel_per_turn: Some(METERED_TURN_FUEL),
+        ..BudgetRequest::default()
+    })
+}
+
+/// The run ended with the ordinary fatal exhaustion of its turn's fuel.
 fn assert_turn_fuel_exhausted(result: Result<Vec<String>, RuntimeError>) {
     match result {
         Err(RuntimeError::Budget(BudgetExhausted {
             budget: BudgetKind::Fuel,
             limit,
             ..
-        })) => assert_eq!(limit, TURN_FUEL),
+        })) => assert_eq!(limit, METERED_TURN_FUEL),
         other => panic!("{other:?}"),
     }
 }
@@ -409,8 +436,8 @@ fn shared_parts_expand_within_the_value_bound() {
     );
     for step in ["get", "planted"] {
         let source = program(DIAMOND, &diamond_body(&[(step, fits)]));
-        assert_turn_fuel_exhausted(run(&source, &tree, None));
-        match run(&source, &tree, Some(largest_budgets())) {
+        assert_turn_fuel_exhausted(run(&source, &tree, metered()));
+        match run(&source, &tree, Some(metered_memory())) {
             Err(RuntimeError::Resource(failure)) => {
                 assert_eq!(failure.resource, Resource::Memory);
             }
@@ -498,6 +525,6 @@ fn reads_past_their_turns_fuel_end_with_fatal_fuel_exhaustion() {
         "    for await (const e of kv.list<number[]>({ prefix: ['big', 6000] })) { console.log(e.versionstamp); }",
     ];
     for body in together {
-        assert_turn_fuel_exhausted(run(&program("", body), &tree, None));
+        assert_turn_fuel_exhausted(run(&program("", body), &tree, metered()));
     }
 }

@@ -417,6 +417,7 @@ async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
         .filter(|_| shared.contract.version == http::UTF16_VERSION);
     let service = shared.clone();
     let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let answered = served.clone();
     let mut builder = http1::Builder::new();
     builder
         .keep_alive(pool.is_some())
@@ -478,6 +479,9 @@ async fn connection(stream: tokio::net::TcpStream, shared: Arc<Shared>) {
     };
     match result {
         Some(Ok(())) => {}
+        // A kept-alive connection that idled past its bound closes: not a
+        // rejection.
+        Some(Err(error)) if error.is_timeout() && answered.load(Ordering::Acquire) > 0 => {}
         Some(Err(error)) => shared
             .sink
             .diagnostic(format!("HTTP connection rejected: {error}")),

@@ -53,9 +53,19 @@ fn limits() -> String {
     let kib = |bytes: usize| format!("{} KiB", bytes / 1024);
     let rows: Vec<(&str, String, &str)> = vec![
         (
-            "Guest linear memory",
+            "Guest linear memory, v1–v37",
             mib(abi::MAX_MEMORY_BYTES),
             "abi::MAX_MEMORY_BYTES",
+        ),
+        (
+            "Guest linear memory, v38 (module maximum and default budget)",
+            mib(limits::V38_MAX_MEMORY_BYTES),
+            "limits::V38_MAX_MEMORY_BYTES",
+        ),
+        (
+            "Guest linear memory, one HTTP request instance (cap)",
+            mib(varta_common::http::REQUEST_MEMORY_BYTES),
+            "http::REQUEST_MEMORY_BYTES",
         ),
         (
             "Linked intrinsic stack in memory 0 (v38 `linked_intrinsics`)",

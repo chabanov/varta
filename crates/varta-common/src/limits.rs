@@ -279,6 +279,13 @@ pub struct ResourceExhausted {
     pub requested: u32,
 }
 
+/// V38 guest linear memory maximum (owner decision 2026-11-06): what a
+/// long-lived application instance may use, as a modern web page does; a
+/// module declares it and its heap grows up to it. The runtime memory budget
+/// may be lower (an HTTP request keeps `abi::MAX_MEMORY_BYTES`). Earlier
+/// profiles keep `abi::MAX_MEMORY_BYTES`.
+pub const V38_MAX_MEMORY_BYTES: usize = 256 * 1024 * 1024;
+
 /// Per-value data limits of a language profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataLimits {
@@ -307,6 +314,9 @@ pub struct DataLimits {
     pub pending_continuations: usize,
     /// Timers armed or awaiting release at once.
     pub pending_timers: usize,
+    /// Guest linear memory a module declares as its maximum, which bounds
+    /// its heap; the runtime memory budget may be lower.
+    pub memory_bytes: usize,
 }
 impl DataLimits {
     /// The frozen ceilings of every profile before v38.
@@ -322,6 +332,7 @@ impl DataLimits {
         amortized_growth: false,
         pending_continuations: crate::scheduler::MAX_PENDING_CONTINUATIONS,
         pending_timers: crate::scheduler::MAX_PENDING_TIMERS,
+        memory_bytes: abi::MAX_MEMORY_BYTES,
     };
     /// Batch v38 (`data_limits`): Wasm-derived ceilings; the memory budget
     /// bounds data in practice. Visited JSON values are bounded by the
@@ -340,6 +351,7 @@ impl DataLimits {
         amortized_growth: true,
         pending_continuations: V38_MAX_PENDING_CONTINUATIONS,
         pending_timers: V38_MAX_PENDING_TIMERS,
+        memory_bytes: V38_MAX_MEMORY_BYTES,
     };
     /// Presence-bitmap bytes of a sparse backing of `capacity` slots: the
     /// fixed 128-byte bitmap of value layout 12 up to 1024 slots (so every

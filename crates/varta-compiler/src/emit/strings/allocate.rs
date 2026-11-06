@@ -230,7 +230,7 @@ pub(super) fn function(
             I::GlobalGet(collect_at),
             I::I32GtU,
             I::LocalGet(END),
-            I::I32Const(abi::MAX_MEMORY_BYTES as i32),
+            I::I32Const(globals.memory_bytes as i32),
             I::I32GtU,
             I::I32Or,
             I::I32And,
@@ -256,8 +256,7 @@ pub(super) fn function(
             I::I32Or,
             I::LocalGet(END),
             I::I32Const(
-                (abi::MAX_MEMORY_BYTES / varta_common::collector::INCREMENTAL_HEAP_DIVISOR as usize)
-                    as i32,
+                (globals.memory_bytes / varta_common::collector::INCREMENTAL_HEAP_DIVISOR) as i32,
             ),
             I::I32LeU,
             I::I32And,
@@ -284,7 +283,7 @@ pub(super) fn function(
         I::Br(RETRY_FROM_IF),
         I::End,
         I::LocalGet(END),
-        I::I32Const(abi::MAX_MEMORY_BYTES as i32),
+        I::I32Const(globals.memory_bytes as i32),
         I::I32GtU,
         I::If(BlockType::Empty),
     ]);

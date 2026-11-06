@@ -170,6 +170,20 @@ fn run_owned(
             });
         request_setup.budgets.deadline_per_turn = maximum_deadline;
     }
+    // Each request of the pool keeps the per-request memory bound.
+    let request_memory = varta_common::http::REQUEST_MEMORY_BYTES;
+    if request_setup.budgets.memory_bytes > request_memory {
+        request_setup
+            .capped
+            .push(varta_common::budget::CappedBudget {
+                kind: varta_common::budget::BudgetKind::Memory,
+                requested: request_setup
+                    .budgets
+                    .value(varta_common::budget::BudgetKind::Memory),
+                allowed: request_memory as u64,
+            });
+        request_setup.budgets.memory_bytes = request_memory;
+    }
     let listener = TcpListener::bind(&contract.bind).map_err(HttpError::Io)?;
     listener.set_nonblocking(true).map_err(HttpError::Io)?;
     let address = listener.local_addr().map_err(HttpError::Io)?;

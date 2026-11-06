@@ -474,9 +474,14 @@ fn layout() -> String {
                 "`exceptions::ROOT`, `exceptions::RESERVED_ROOT_BYTES`",
             ),
             (
-                "Managed string/record/array heap",
+                "Managed string/record/array heap (`checked-f64-utf16-v37` and earlier)",
                 range(abi::OWNED_STRING_BASE, abi::MAX_MEMORY_BYTES),
                 "`abi::OWNED_STRING_BASE`, `abi::MAX_MEMORY_BYTES`",
+            ),
+            (
+                "V38 managed heap, after any static extension and intrinsic region",
+                format!("[…, {})", varta_common::limits::V38_MAX_MEMORY_BYTES),
+                "`limits::V38_MAX_MEMORY_BYTES`",
             ),
             (
                 "V38 static extension of `n` pages (`varta.static`), heap after it",

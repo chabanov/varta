@@ -245,6 +245,17 @@ fn a_kept_alive_connection_serves_several_requests_and_closes_when_idle() {
     let waited = started.elapsed();
     assert!(waited >= idle - Duration::from_millis(500), "{waited:?}");
     assert!(waited < idle + Duration::from_secs(3), "{waited:?}");
+    // An idle close is no rejection: nothing is reported.
+    assert!(
+        !server
+            .diagnostics
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("rejected")),
+        "{:?}",
+        server.diagnostics.lock().unwrap()
+    );
     server.finish();
 }
 
@@ -270,5 +281,41 @@ fn a_request_that_finds_no_worker_in_time_gets_503_with_retry_after() {
     let wait = Duration::from_secs(varta_common::http::WORKER_WAIT_SECONDS);
     assert!(waited >= wait - Duration::from_millis(500), "{waited:?}");
     drop(open);
+    server.finish();
+}
+
+/// A handler that keeps `count` distinct strings of 64 Ki code units alive:
+/// four fit one request's memory, 256 need far more.
+const RETAINING: &str = r#"
+function handle(request: VartaHttpRequest): Response {
+  const count = request.target == "/large" ? 256 : 4;
+  const block = "x".repeat(65536);
+  const kept: string[] = [];
+  for (let i = 0; i < count; i++) {
+    kept.push(`${block}${i}`);
+  }
+  return new Response(`kept ${kept.length}`);
+}
+export function main(): void {}
+varta.http.serve({ hostname: "127.0.0.1", port: 0 }, handle);
+"#;
+
+/// The chunked body of a request that kept four strings.
+const KEPT_FOUR: &str = "6\r\nkept 4\r\n0\r\n\r\n";
+
+#[test]
+fn a_request_keeps_the_request_memory_under_the_v38_application_memory() {
+    let server = Server::start_with_grants(RETAINING, P::CheckedF64Utf16V38, Vec::new());
+    let (status, _, body) = server.request("GET", "/small", b"");
+    assert_eq!((status, body.as_str()), (200, KEPT_FOUR));
+    let (status, _, _) = server.request("GET", "/large", b"");
+    assert_eq!(status, 500);
+    let (status, _, body) = server.request("GET", "/small", b"");
+    assert_eq!((status, body.as_str()), (200, KEPT_FOUR));
+    let diagnostics = server.diagnostics.lock().unwrap().join("\n");
+    assert!(
+        diagnostics.contains("resource limit: memory budget exhausted"),
+        "{diagnostics}"
+    );
     server.finish();
 }

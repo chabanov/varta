@@ -13,7 +13,7 @@
 // first, each prepended before the segments already shown; so every history
 // segment is older than every segment below it. A closed session's transcript
 // is gone (404): its segment shows a note instead of entries.
-import { NotFoundError, type GetSessionMessagesResponse, type ListSessionsParams, type ListSessionsResponse, type ListSessionsResponseItem } from "uarp-sdk";
+import { NotFoundError, type ConversationEntry, type GetSessionMessagesParams, type GetSessionMessagesResponse, type ListSessionsParams, type ListSessionsResponse, type ListSessionsResponseItem } from "uarp-sdk";
 import { signal, untracked, type Signal } from "../l1/reactive.js";
 import { loadTranscript } from "./history.js";
 import { addNote, dayOf } from "./timeline.js";
@@ -23,7 +23,28 @@ import type { ChatStore } from "./store.js";
 /** The part of the client's `sessions` stitching reads. */
 export interface HistoryApi {
   list(params: ListSessionsParams): Promise<ListSessionsResponse>;
-  getSessionMessages(sessionId: string): Promise<GetSessionMessagesResponse>;
+  getSessionMessages(sessionId: string, params?: GetSessionMessagesParams): Promise<GetSessionMessagesResponse>;
+}
+
+/**
+ * Transcript entries per page. A long session's tool outputs are large, and
+ * each page is decoded in one network turn, so the transcript comes page by
+ * page (oldest first) rather than as one body.
+ */
+export const TRANSCRIPT_PAGE_SIZE = 10;
+
+/** A session's whole transcript, read page by page; only the canonical `items`. */
+export async function readTranscript(api: HistoryApi, sessionId: string): Promise<ConversationEntry[]> {
+  const entries: ConversationEntry[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const params: GetSessionMessagesParams = cursor === null ? { limit: TRANSCRIPT_PAGE_SIZE } : { limit: TRANSCRIPT_PAGE_SIZE, cursor: cursor };
+    const page = await api.getSessionMessages(sessionId, params);
+    for (const entry of page.items) entries.push(entry);
+    const next = page.cursor;
+    if (page.has_more !== true || next === undefined) return entries;
+    cursor = next;
+  }
 }
 
 /** Sessions per page of the list (the API clamps `limit` to 1–100). */
@@ -103,9 +124,9 @@ export class Stitcher {
 
   /** One session as a history segment; it leaves the queue only once shown. */
   async load(item: ListSessionsResponseItem): Promise<void> {
-    let entries: GetSessionMessagesResponse | null = null;
+    let entries: ConversationEntry[] | null = null;
     try {
-      entries = await this.api.getSessionMessages(item.session_id);
+      entries = await readTranscript(this.api, item.session_id);
     } catch (error) {
       if (!(error instanceof NotFoundError)) throw error;
     }
@@ -113,7 +134,7 @@ export class Stitcher {
     const note = this.goneNote;
     this.store.prepend(item.session_id, dayOf(item.created_at), (s) => {
       if (transcript === null) addNote(s, note);
-      else loadTranscript(s, transcript.items);
+      else loadTranscript(s, transcript);
     });
     this.next += 1;
   }

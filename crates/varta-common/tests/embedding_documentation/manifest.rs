@@ -9,7 +9,7 @@ use varta_common::{
     budget::{self, BudgetKind, Budgets},
     files, kv,
     language::{self, LanguageProfile},
-    net, permission,
+    limits, net, permission,
 };
 
 /// The one contiguous run of supported profiles for which `admits` holds.
@@ -52,7 +52,10 @@ fn budget_constants(kind: BudgetKind) -> [(u64, &'static str); 3] {
         ],
         BudgetKind::Memory => [
             (budget::MAX_MEMORY_BYTES, "budget::MAX_MEMORY_BYTES"),
-            (abi::MAX_MEMORY_BYTES as u64, "abi::MAX_MEMORY_BYTES"),
+            (
+                limits::V38_MAX_MEMORY_BYTES as u64,
+                "limits::V38_MAX_MEMORY_BYTES",
+            ),
             (abi::MAX_MEMORY_BYTES as u64, "abi::MAX_MEMORY_BYTES"),
         ],
         BudgetKind::HostCalls => [

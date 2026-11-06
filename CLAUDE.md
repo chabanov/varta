@@ -159,7 +159,7 @@ set on Linux and macOS without the redundant second CLI run.
 Changes to shared ABI/layouts, GC/roots, capability enforcement, dependencies or
 artifact/distribution contracts need broad affected-boundary tests before a batch
 is considered complete; a single feature filter cannot prove those invariants.
-Keep production budgets unchanged. On failure, fix and rerun the relevant tests;
+Keep production budgets unless the owner decided otherwise. On failure, fix and rerun the relevant tests;
 run the final full gate after the last code fix, not between every attempted fix.
 
 Record actual scope and results. The helper writes logs and a source fingerprint
@@ -275,8 +275,9 @@ in runtime.
   both native binaries (`varta` and the `varta-runtime` companion) and update the
   generated documentation blocks.
 - Production budgets (fuel, deadline, memory, host calls, array/record/source
-  limits) are never raised to admit a feature or a test; tests that need more
-  declare test-only budgets explicitly.
+  limits) change only by an explicit, recorded owner decision (the v38 turn
+  fuel was raised to the engine maximum on 2026-11-06), never to admit one
+  feature or a test; tests that need more declare test-only budgets explicitly.
 
 ## 12. Profile index
 

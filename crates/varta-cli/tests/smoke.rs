@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use varta_common::budget::TURN_FUEL;
 #[path = "smoke/browser_build.rs"]
 mod browser_build;
 #[path = "smoke/browser_dev.rs"]
@@ -12519,7 +12520,8 @@ fn v38_data_limits_run_past_1024_elements_and_report_resources_through_both_bina
         "{}",
         combined(&output)
     );
-    let exhausted = "export function main():void{const big:number[]=[];big.length=4000000;\
+    // Past the v38 application memory (`limits::V38_MAX_MEMORY_BYTES`).
+    let exhausted = "export function main():void{const big:number[]=[];big.length=40000000;\
         console.log(String(big.length));}";
     everywhere(exhausted, &|output| {
         let text = combined(output);
@@ -16333,7 +16335,10 @@ fn budget_reports_list_every_turn_in_dev_run_and_both_binaries() {
             budget[0].starts_with("varta budget: turn 1 main: fuel "),
             "{stderr}"
         );
-        assert!(budget[0].contains("/8000000, host calls "), "{stderr}");
+        assert!(
+            budget[0].contains(&format!("/{TURN_FUEL}, host calls ")),
+            "{stderr}"
+        );
         assert!(budget[0].contains("ms (5000 ms per execution)"), "{stderr}");
         assert!(
             budget[1].starts_with("varta budget: turn 2 timer: fuel "),
@@ -16406,24 +16411,30 @@ fn manifest_budgets_need_v38_and_are_capped_by_the_host_policy() {
         let check = project.command(&["check"]);
         assert!(!check.status.success(), "{bad}: {}", combined(&check));
     }
-    // A raise is capped at the production default unless the host allows it.
-    project.configure("budgets", serde_json::json!({"fuelPerTurn": 40000000}));
+    // A raise is capped at the production default unless the host allows it
+    // (host calls: the production turn fuel is already the engine maximum);
+    // a host ceiling also lowers a request below the production default.
+    project.configure(
+        "budgets",
+        serde_json::json!({"fuelPerTurn": 40000000, "hostCallsPerTurn": 4096}),
+    );
     let build = project.command(&["build"]);
     assert!(build.status.success(), "{}", combined(&build));
     let inspect = project.command(&["inspect", "dist/app.wasm", "--json"]);
     let info: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
     assert_eq!(info["budgets"]["fuelPerTurn"], 40_000_000);
+    assert_eq!(info["budgets"]["hostCallsPerTurn"], 4096);
     let capped = project.command(&["run", "dist/app.wasm", "--budget-report"]);
     assert!(capped.status.success(), "{}", combined(&capped));
     assert!(
         combined(&capped)
-            .contains("varta budget: capped fuelPerTurn: requested 40000000, allowed 8000000"),
+            .contains("varta budget: capped hostCallsPerTurn: requested 4096, allowed 1024"),
         "{}",
         combined(&capped)
     );
     fs::write(
         project.0.join("host-policy.json"),
-        br#"{"abiVersion":34,"budgets":{"fuelPerTurn":30000000},"capabilities":[]}"#,
+        br#"{"abiVersion":34,"budgets":{"fuelPerTurn":30000000,"hostCallsPerTurn":2048},"capabilities":[]}"#,
     )
     .unwrap();
     let allowed = project.command(&[
@@ -16436,8 +16447,13 @@ fn manifest_budgets_need_v38_and_are_capped_by_the_host_policy() {
     assert!(allowed.status.success(), "{}", combined(&allowed));
     let text = combined(&allowed);
     assert!(text.contains("/30000000, host calls"), "{text}");
+    assert!(text.contains("/2048, microtasks"), "{text}");
     assert!(
         text.contains("capped fuelPerTurn: requested 40000000, allowed 30000000"),
+        "{text}"
+    );
+    assert!(
+        text.contains("capped hostCallsPerTurn: requested 4096, allowed 2048"),
         "{text}"
     );
     // A host policy never carries consent metadata.
@@ -16653,7 +16669,7 @@ fn dev_profile_fuel_reports_functions_without_changing_artifacts() {
     assert!(String::from_utf8_lossy(&plain.stdout).contains("varta log: 20540 40 5"));
     let report = String::from_utf8_lossy(&profiled.stderr);
     assert!(report.contains("varta fuel profile: "), "{report}");
-    assert!(report.contains("of 8000000 fuel"), "{report}");
+    assert!(report.contains(&format!("of {TURN_FUEL} fuel")), "{report}");
     let row = |name: &str| {
         report
             .lines()

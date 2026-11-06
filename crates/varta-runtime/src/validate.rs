@@ -316,7 +316,9 @@ fn preflight(bytes: &[u8]) -> Result<Preflight, RuntimeError> {
                     let memory = memory.map_err(|e| error(&e.to_string()))?;
                     if memory.memory64
                         || memory.shared
-                        || memory.initial > (abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64
+                        || memory.initial
+                            > (language.profile.unwrap_or_default().data().memory_bytes
+                                / abi::WASM_PAGE_BYTES) as u64
                     {
                         return Err(error("unsupported memory type or initial size"));
                     }

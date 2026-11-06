@@ -4,7 +4,7 @@
 // stays in creation order), older sessions load one per request, newest first,
 // each prepended with its date, the closed one as a note, the second page only
 // once the first is used up; a failed load is reported and can be retried.
-import { NotFoundError, ServiceUnavailableError, type GetSessionMessagesResponse, type ListSessionsParams, type ListSessionsResponse, type ProblemDocument } from "uarp-sdk";
+import { NotFoundError, ServiceUnavailableError, type GetSessionMessagesParams, type GetSessionMessagesResponse, type ListSessionsParams, type ListSessionsResponse, type ProblemDocument } from "uarp-sdk";
 import { Runtime, untracked } from "../l1/reactive.js";
 import { ChatStore } from "../chat/store.js";
 import { Stitcher, type HistoryApi, type HistoryState } from "../chat/stitch.js";
@@ -37,7 +37,7 @@ class RecordedHistory implements HistoryApi {
     return JSON.parse(page) as ListSessionsResponse;
   }
 
-  async getSessionMessages(sessionId: string): Promise<GetSessionMessagesResponse> {
+  async getSessionMessages(sessionId: string, params?: GetSessionMessagesParams): Promise<GetSessionMessagesResponse> {
     this.calls.push("messages " + sessionId);
     if (this.failNext) {
       this.failNext = false;

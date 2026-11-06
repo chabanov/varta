@@ -66,7 +66,7 @@ export function main(): void {
 // (`budget::TURN_FUEL`) and the three together do not, under the v38 code
 // generator (`codegen_v2`); with `V37_ITERATIONS` the three exceed the v37
 // per-execution fuel (`abi::FUEL`) under the v37 code generator.
-const ITERATIONS: &str = "240000";
+const ITERATIONS: &str = "32000000";
 const V37_ITERATIONS: &str = "6000";
 
 #[test]
@@ -175,23 +175,22 @@ fn manifest_budgets_are_capped_by_the_host_ceiling() {
         report.failure
     );
     // A raise beyond the default needs the ceiling; otherwise it is capped.
+    // The turn fuel is the engine maximum, so the raise is on host calls.
+    let production = varta_common::abi::MAX_HOST_CALLS;
     let mut raised = options(timers());
-    raised.budgets.fuel_per_turn = Some(40_000_000);
+    raised.budgets.host_calls_per_turn = Some(production * 4);
     let report = bounded(&bytes, raised.clone());
     let budget = report.budget.unwrap();
-    assert_eq!(
-        budget.budgets.fuel_per_turn,
-        varta_common::budget::TURN_FUEL
-    );
+    assert_eq!(budget.budgets.host_calls_per_turn, production);
     assert_eq!(budget.capped.len(), 1);
-    assert_eq!(budget.capped[0].requested, 40_000_000);
+    assert_eq!(budget.capped[0].requested, u64::from(production * 4));
     raised.budget_ceiling = Some(BudgetRequest {
-        fuel_per_turn: Some(30_000_000),
+        host_calls_per_turn: Some(production * 2),
         ..BudgetRequest::default()
     });
     let budget = bounded(&bytes, raised).budget.unwrap();
-    assert_eq!(budget.budgets.fuel_per_turn, 30_000_000);
-    assert_eq!(budget.capped[0].allowed, 30_000_000);
+    assert_eq!(budget.budgets.host_calls_per_turn, production * 2);
+    assert_eq!(budget.capped[0].allowed, u64::from(production * 2));
     // A tight host-call ceiling applies per turn.
     let mut tight = options(timers());
     tight.budget_ceiling = Some(BudgetRequest {
@@ -731,5 +730,81 @@ fn instance_imports_need_host_abi_34() {
             varta_compiler::compile_typescript_with_profile(source, V38).is_err(),
             "{source}"
         );
+    }
+}
+
+/// Keeps `__N__` distinct strings of 64 Ki code units alive at once.
+const RETAINED: &str = r#"
+export function main(): void {
+  const block = "x".repeat(65536);
+  const kept: string[] = [];
+  for (let i = 0; i < __N__; i++) {
+    kept.push(`${block}${i}`);
+  }
+  console.log(`kept ${kept.length}`);
+}
+"#;
+/// Enough retained strings to need more than the earlier profiles' memory
+/// (`abi::MAX_MEMORY_BYTES`) and far less than the v38 application memory.
+const RETAINED_COUNT: &str = "256";
+
+/// The memory maximum a module declares, in bytes.
+fn declared_memory(bytes: &[u8]) -> u64 {
+    let module = wasmtime::Module::new(&wasmtime::Engine::default(), bytes).unwrap();
+    let maximum = module
+        .exports()
+        .find_map(|export| match export.ty() {
+            wasmtime::ExternType::Memory(memory) => memory.maximum(),
+            _ => None,
+        })
+        .unwrap();
+    maximum * abi::WASM_PAGE_BYTES as u64
+}
+
+#[test]
+fn v38_applications_get_the_application_memory_and_earlier_profiles_keep_theirs() {
+    let source = RETAINED.replace("__N__", RETAINED_COUNT);
+    let bytes = compile(&source);
+    assert_eq!(
+        declared_memory(&bytes),
+        varta_common::limits::V38_MAX_MEMORY_BYTES as u64
+    );
+    assert_eq!(
+        declared_memory(&compile_with(&source, V37)),
+        abi::MAX_MEMORY_BYTES as u64
+    );
+    let report = bounded(&bytes, options(Vec::new()));
+    assert!(report.failure.is_none(), "{:?}", report.failure);
+    assert_eq!(report.output.lines, lines(&["kept 256"]));
+    let budget = report.budget.unwrap();
+    assert_eq!(
+        budget.budgets.memory_bytes,
+        varta_common::limits::V38_MAX_MEMORY_BYTES
+    );
+    assert!(
+        budget.peak_memory_bytes > abi::MAX_MEMORY_BYTES,
+        "{}",
+        budget.peak_memory_bytes
+    );
+}
+
+#[test]
+fn a_lowered_memory_budget_still_ends_a_v38_instance() {
+    let source = RETAINED.replace("__N__", RETAINED_COUNT);
+    let report = bounded(
+        &compile(&source),
+        RunOptions {
+            budgets: BudgetRequest {
+                memory_bytes: Some(abi::MAX_MEMORY_BYTES as u64),
+                ..BudgetRequest::default()
+            },
+            ..RunOptions::default()
+        },
+    );
+    match report.failure {
+        Some(RuntimeError::Resource(failure)) => {
+            assert_eq!(failure.resource, varta_common::limits::Resource::Memory);
+        }
+        other => panic!("{other:?}"),
     }
 }

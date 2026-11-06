@@ -118,7 +118,7 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
                 &[ValType::F64],
             )?;
         }
-        bounded_memory(module, true)?;
+        bounded_memory(module, bytes, true)?;
     }
     let parses = module.imports().any(|i| {
         matches!(
@@ -174,7 +174,7 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
             return Err(invalid("tool exports require a catalog"));
         }
         if parses || http.is_some() {
-            bounded_memory(module, true)?;
+            bounded_memory(module, bytes, true)?;
             check_effects(module, bytes, None, http.as_ref())?;
         } else if module.get_export(IDLE_EXPORT).is_some() {
             check_effects(module, bytes, None, None)?;
@@ -224,7 +224,7 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
         ]);
     }
     if strings || parses {
-        bounded_memory(module, parses)?;
+        bounded_memory(module, bytes, parses)?;
     }
 
     if module
@@ -236,15 +236,21 @@ pub(super) fn validate(module: &Module, bytes: &[u8]) -> Result<Option<ToolCatal
     check_effects(module, bytes, Some(&catalog), http.as_ref())?;
     Ok(Some(catalog))
 }
-fn bounded_memory(module: &Module, values: bool) -> Result<(), RuntimeError> {
+fn bounded_memory(module: &Module, bytes: &[u8], values: bool) -> Result<(), RuntimeError> {
+    // The profile's declared maximum: 8 MiB before v38, the v38 maximum after.
+    let limit = crate::language::inspect(bytes)?
+        .profile
+        .unwrap_or_default()
+        .data()
+        .memory_bytes;
     match module.get_export(varta_common::abi::MEMORY_EXPORT) {
         Some(ExternType::Memory(memory))
             if !memory.is_64()
                 && !memory.is_shared()
                 && memory.minimum() >= (abi::OWNED_STRING_BASE / abi::WASM_PAGE_BYTES) as u64
-                && memory.maximum().is_some_and(|max| {
-                    max <= (abi::MAX_MEMORY_BYTES / abi::WASM_PAGE_BYTES) as u64
-                }) =>
+                && memory
+                    .maximum()
+                    .is_some_and(|max| max <= (limit / abi::WASM_PAGE_BYTES) as u64) =>
         {
             Ok(())
         }

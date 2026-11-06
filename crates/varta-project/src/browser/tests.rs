@@ -47,14 +47,18 @@ fn prepared_browser_image_owns_original_and_policies_without_rewriting_them() {
 
 #[test]
 fn validated_host_budget_caps_request_and_no_host_keeps_production_cap() {
+    // A request above the v38 production memory is capped to it without a
+    // host; a host ceiling narrows it further.
+    let production = varta_common::limits::V38_MAX_MEMORY_BYTES;
+    let requested = 2 * production as u64;
     let mut source = artifact(LanguageProfile::CheckedF64Utf16V38);
     source.manifest.budgets = Some(BudgetRequest {
-        memory_bytes: Some(16 * 1024 * 1024),
+        memory_bytes: Some(requested),
         ..Default::default()
     });
     let plain = BrowserArtifact::prepare(&source, None).unwrap();
     assert!(plain.ceiling().is_none());
-    assert_eq!(plain.budgets().budgets.memory_bytes, abi::MAX_MEMORY_BYTES);
+    assert_eq!(plain.budgets().budgets.memory_bytes, production);
     assert!(
         plain
             .budgets()
@@ -73,7 +77,7 @@ fn validated_host_budget_caps_request_and_no_host_keeps_production_cap() {
     assert_eq!(capped.budgets().budgets.memory_bytes, 12 * 1024 * 1024);
     assert_eq!(
         capped.original().manifest.budget_request().memory_bytes,
-        Some(16 * 1024 * 1024)
+        Some(requested)
     );
 }
 

@@ -9112,9 +9112,24 @@ production budgets whatever a ceiling declares. The v38 defaults
 (`Budgets::TURN`) are the production values in the [limits
 table](#resource-limits), per turn: `budget::TURN_FUEL` fuel per turn (owner
 decision, from the measured v38 console turns with host work at the [fair
-rates](#fair-host-fuel-fair_fuel)) and the earlier profiles' deadline, memory,
-host-call and output values. A manifest can only lower them and only a host
-ceiling can raise them; v1–v37 keep `abi::FUEL` per execution.
+rates](#fair-host-fuel-fair_fuel), raised to the engine maximum by owner
+decision once real console transcripts exceeded the earlier value),
+`limits::V38_MAX_MEMORY_BYTES` of memory (below) and the earlier profiles'
+deadline, host-call and output values. A manifest can only lower them and only
+a host ceiling can raise them; v1–v37 keep `abi::FUEL` per execution.
+
+**Application memory.** A v38 module declares a linear-memory maximum of
+`DataLimits::memory_bytes` (`limits::V38_MAX_MEMORY_BYTES`, owner decision)
+pages and the default `memoryBytes` budget is the same value, so a long-lived
+application keeps a long conversation history or large documents in one
+instance. The memory budget remains the binding bound: Wasmtime refuses a
+`memory.grow` beyond it, the allocator collects and retries, and only then
+the instance fails with the memory resource error. Validation rejects a v38
+module whose declared maximum or initial memory exceeds the profile's value,
+and earlier profiles keep `abi::MAX_MEMORY_BYTES` byte for byte. Each HTTP
+request instance is capped at `http::REQUEST_MEMORY_BYTES` whatever its
+package or ceiling requests (the budget report lists the cap), so the memory
+of a server's concurrent workers stays a predictable sum.
 
 **Exhaustion.** A v38 turn that exhausts a budget fails with `BudgetExhausted`
 (`turn N (kind) exhausted its fuel budget (… instructions per turn); the
@@ -9537,9 +9552,9 @@ may lie there) nor heap; validation admits a data segment there
   constant offset and lies wholly inside the declared region, and a declared
   extension lies inside the initial memory: the memory minimum is
   `heap_base / 65536` pages whenever the module has a managed heap or an
-  extension, within the module's maximum (the 8 MiB memory budget, so the
-  compiler rejects static data beyond it with `static data exceeds the memory
-  budget`). Validation rejects any other segment before compilation.
+  extension, within the module's maximum (the profile's
+  `DataLimits::memory_bytes`, so the compiler rejects static data beyond it
+  with `static data exceeds the memory budget`). Validation rejects any other segment before compilation.
 - The guest heap starts at `heap_base`: the allocator's initial bump pointer,
   the collector's sweep and edge tracing and the root push treat a handle
   below `heap_base` as static and never mark it. Host results, the root stack
@@ -9574,8 +9589,9 @@ registry of [program limits](#program-limits-program_limits): the `data` field
 for every profile before v38 (its values are exactly the frozen constants) and
 `DataLimits::V38` in `limits::WASM`. Runtime value readers take a module's
 limits with its static region through the one `value::ModuleBounds`
-parameter. Production budgets are unchanged:
-8 MiB memory, 1M fuel, 1024 host calls, 5 s deadline. Modules of v37 and
+parameter. Program limits left the production budgets unchanged; the v38
+per-turn fuel and application memory were later raised by owner decision
+([application memory](#turn-budgets-and-application-instances-turn_budgets)). Modules of v37 and
 earlier compile byte-identically (pinned by FNV digests of 14 v37 modules in
 `varta-runtime` `data_limit_tests`, and by the earlier frozen-digest tests).
 
@@ -15032,10 +15048,12 @@ a denied exit returns a failed `VartaResult<void>`.
 <!-- generated:limits:begin (checked by crates/varta-common/tests/documentation.rs) -->
 | Resource | Limit | Source constant |
 | --- | --- | --- |
-| Guest linear memory | 8 MiB | `abi::MAX_MEMORY_BYTES` |
+| Guest linear memory, v1–v37 | 8 MiB | `abi::MAX_MEMORY_BYTES` |
+| Guest linear memory, v38 (module maximum and default budget) | 256 MiB | `limits::V38_MAX_MEMORY_BYTES` |
+| Guest linear memory, one HTTP request instance (cap) | 8 MiB | `http::REQUEST_MEMORY_BYTES` |
 | Linked intrinsic stack in memory 0 (v38 `linked_intrinsics`) | 16 KiB | `abi::INTRINSIC_STACK_BYTES` |
 | Guest instructions (fuel), v1–v37 per execution | 1000000 | `abi::FUEL` |
-| Guest instructions (fuel), v38 per turn (`turn_budgets`) | 8000000 | `budget::TURN_FUEL` |
+| Guest instructions (fuel), v38 per turn (`turn_budgets`) | 1000000000 | `budget::TURN_FUEL` |
 | Execution/HTTP deadline | 5 s | `abi::DEADLINE_SECONDS` |
 | Host calls per execution | 1024 | `abi::MAX_HOST_CALLS` |
 | Captured output | 1 MiB | `abi::MAX_OUTPUT_BYTES` |

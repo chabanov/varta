@@ -87,6 +87,9 @@ pub(super) struct Globals {
     /// V38 (`incremental_collection`): the first of the collector's state
     /// globals ([`incremental::State`]).
     pub collector: Option<incremental::State>,
+    /// The module's declared memory maximum
+    /// (`varta_common::limits::DataLimits::memory_bytes`): the heap's bound.
+    pub memory_bytes: u32,
 }
 impl Globals {
     /// Trap, first recording `resource` and the amount in local `amount` when

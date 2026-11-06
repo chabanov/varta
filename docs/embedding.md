@@ -170,9 +170,9 @@ runs with the fixed values once per execution.
 <!-- generated:embedding-manifest-budgets:begin (checked by crates/varta-common/tests/embedding_documentation/manifest.rs) -->
 | `budgets` member | Accepted request or ceiling value | `checked-f64-utf16-v38`: default, and cap without a ceiling (per turn; maintenance per idle period) | `checked-i32-utf8-v1` – `checked-f64-utf16-v37`: fixed (per execution) | Source constants |
 | --- | --- | --- | --- | --- |
-| `fuelPerTurn` | 1 to 1000000000 | 8000000 | 1000000 | `budget::MAX_FUEL_PER_TURN`, `budget::TURN_FUEL`, `abi::FUEL` |
+| `fuelPerTurn` | 1 to 1000000000 | 1000000000 | 1000000 | `budget::MAX_FUEL_PER_TURN`, `budget::TURN_FUEL`, `abi::FUEL` |
 | `deadlinePerTurnMs` | 1 to 60000 | 5000 | 5000 | `budget::MAX_DEADLINE_PER_TURN_MS`, `abi::DEADLINE_SECONDS` |
-| `memoryBytes` | 1 to 1073741824 | 8388608 | 8388608 | `budget::MAX_MEMORY_BYTES`, `abi::MAX_MEMORY_BYTES` |
+| `memoryBytes` | 1 to 1073741824 | 268435456 | 8388608 | `budget::MAX_MEMORY_BYTES`, `limits::V38_MAX_MEMORY_BYTES`, `abi::MAX_MEMORY_BYTES` |
 | `hostCallsPerTurn` | 1 to 1048576 | 1024 | 1024 | `budget::MAX_HOST_CALLS_PER_TURN`, `abi::MAX_HOST_CALLS` |
 | `outputBytes` | 1 to 67108864 | 1048576 | 1048576 | `budget::MAX_OUTPUT_BYTES`, `abi::MAX_OUTPUT_BYTES` |
 | `maintenanceFuel` | 1 to 1000000000 | 4000000 | 0 | `budget::MAX_MAINTENANCE_FUEL`, `budget::MAINTENANCE_FUEL`, `Budgets::PRODUCTION` |
@@ -530,7 +530,8 @@ keep the 1 MiB limit.
 | Reusable host result buffer | [65536, 1114112) | `abi::RESULT_BASE`, `abi::MAX_RESULT_BYTES` |
 | Exact reference root stack | [1114112, 1179648) | `abi::STRING_ROOT_BASE`, `abi::STRING_ROOT_END` |
 | Exception root slot (start of the root stack) | [1114112, 1114120) | `exceptions::ROOT`, `exceptions::RESERVED_ROOT_BYTES` |
-| Managed string/record/array heap | [1179648, 8388608) | `abi::OWNED_STRING_BASE`, `abi::MAX_MEMORY_BYTES` |
+| Managed string/record/array heap (`checked-f64-utf16-v37` and earlier) | [1179648, 8388608) | `abi::OWNED_STRING_BASE`, `abi::MAX_MEMORY_BYTES` |
+| V38 managed heap, after any static extension and intrinsic region | […, 268435456) | `limits::V38_MAX_MEMORY_BYTES` |
 | V38 static extension of `n` pages (`varta.static`), heap after it | [1179648, 1179648 + n·65536), n ≤ 65518 | `abi::StaticRegion`, `abi::MAX_STATIC_EXTENSION_PAGES` |
 | V38 intrinsic region of `m` pages (`varta.intrinsics`) after the extension: linked stack, linked data, then the reserved arena; heap after it | [1179648 + n·65536, 1179648 + (n + m)·65536), stack 16384 bytes, arena 16384 bytes, n + m ≤ 65518 | `abi::StaticRegion::intrinsic_base`, `abi::INTRINSIC_STACK_BYTES`, `abi::INTRINSIC_ARENA_BYTES` |
 | Wasm page | 65536 | `abi::WASM_PAGE_BYTES` |

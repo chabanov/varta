@@ -231,6 +231,8 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         }
     };
     let limits = program.types.profile.limits();
+    // The module's memory maximum: 8 MiB before v38, the v38 maximum after.
+    let memory_limit = program.types.profile.data().memory_bytes;
     let collected = collect::Collected::gather(program);
     let reserved_roots = if program.types.profile.exceptions() {
         varta_common::exceptions::RESERVED_ROOT_BYTES
@@ -490,8 +492,8 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
             .with_intrinsic_pages(intrinsic_pages)
             .filter(|region| {
                 region.minimum_pages()
-                    <= (varta_common::abi::MAX_MEMORY_BYTES / varta_common::abi::WASM_PAGE_BYTES)
-                        as u64
+                    <= (program.types.profile.data().memory_bytes
+                        / varta_common::abi::WASM_PAGE_BYTES) as u64
             })
             .ok_or_else(|| CompilerError::Invalid("static data exceeds the memory budget".into()))?
     };
@@ -656,9 +658,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         } else {
             1
         },
-        maximum: Some(
-            (varta_common::abi::MAX_MEMORY_BYTES / varta_common::abi::RESULT_BASE) as u64,
-        ),
+        maximum: Some((memory_limit / varta_common::abi::WASM_PAGE_BYTES) as u64),
         memory64: false,
         shared: false,
         page_size_log2: None,
@@ -699,6 +699,7 @@ fn emit_named(program: &ir::Program, mut names: Option<&mut Vec<String>>) -> Res
         collect_at: collect_policy.then_some(globals.len() + 3),
         classes: collect_policy.then_some(globals.len() + 4),
         collector: None,
+        memory_bytes: memory_limit as u32,
     };
     if needs_arena {
         for initial in [

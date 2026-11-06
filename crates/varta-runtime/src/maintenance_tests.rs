@@ -178,12 +178,13 @@ fn maintenance_budgets_are_requested_and_capped_like_turn_budgets() {
     assert_eq!(report.budgets.maintenance_fuel, MAINTENANCE_FUEL);
     assert_eq!(report.capped.len(), 1);
     assert_eq!(report.capped[0].kind, BudgetKind::MaintenanceFuel);
+    // A ceiling at the turn fuel admits the raised request.
     options.budget_ceiling = Some(BudgetRequest {
         maintenance_fuel: Some(TURN_FUEL),
         ..BudgetRequest::default()
     });
     let (_, report, _) = session(&bytes, options, 1);
-    assert_eq!(report.budgets.maintenance_fuel, TURN_FUEL);
+    assert_eq!(report.budgets.maintenance_fuel, 2 * MAINTENANCE_FUEL);
     assert!(report.capped.is_empty());
 }
 

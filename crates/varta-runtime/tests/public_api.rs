@@ -5344,7 +5344,8 @@ fn public_engine_reports_v38_data_limits_and_typed_resource_failures() {
             .run_wasm_bytes(&compile(large, LanguageProfile::CheckedF64Utf16V37), &[])
             .is_err()
     );
-    let exhausted = "export function main():void{const xs:number[]=[];xs.length=4000000;}";
+    // Past the v38 application memory (`limits::V38_MAX_MEMORY_BYTES`).
+    let exhausted = "export function main():void{const xs:number[]=[];xs.length=40000000;}";
     match runtime.run_wasm_bytes(
         &compile(exhausted, LanguageProfile::CheckedF64Utf16V38),
         &[],

@@ -23,7 +23,7 @@ import { Requests, type SessionStarter } from "../chat/requests.js";
 import { SessionFollower, type FollowEnd, type FollowOptions } from "../chat/follow.js";
 import { describeFailure } from "../chat/failure.js";
 import { loadTranscript } from "../chat/history.js";
-import { Stitcher, type HistoryState } from "../chat/stitch.js";
+import { readTranscript, Stitcher, type HistoryState } from "../chat/stitch.js";
 import { addNote, dayOf, type Segment } from "../chat/timeline.js";
 import type { Toasts } from "../ui/notices.js";
 import {
@@ -234,9 +234,9 @@ export class ConsoleApp {
       if (live === null) return { state: { kind: "ready" }, api: api, stitcher: stitcher, agentId: agentId };
       // The live session's transcript alone has the person's messages; the
       // stream's replay of the runs it holds is dropped (history.ts).
-      const transcript = await api.sessions.getSessionMessages(live.session_id);
+      const transcript = await readTranscript(api.sessions, live.session_id);
       const segment = this.store.openAt(live.session_id, dayOf(live.created_at));
-      this.store.change(segment, null, () => loadTranscript(segment, transcript.items));
+      this.store.change(segment, null, () => loadTranscript(segment, transcript));
       this.session = this.follow(api, segment);
       return { state: { kind: "following", sessionId: live.session_id }, api: api, stitcher: stitcher, agentId: agentId };
     } catch (error) {

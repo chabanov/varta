@@ -11,7 +11,7 @@ import {
   type ApproveRunResponse,
   type CreateSessionRequest,
   type EventStream,
-  type GetSessionMessagesResponse,
+  type GetSessionMessagesParams, type GetSessionMessagesResponse,
   type ListSessionsParams,
   type ListSessionsResponse,
   type ProblemDocument,
@@ -139,7 +139,7 @@ class RecordedSessions implements ConsoleSessionsApi {
     return JSON.parse(page) as ListSessionsResponse;
   }
 
-  async getSessionMessages(sessionId: string): Promise<GetSessionMessagesResponse> {
+  async getSessionMessages(sessionId: string, params?: GetSessionMessagesParams): Promise<GetSessionMessagesResponse> {
     const recorded = transcriptOf(sessionId);
     if (recorded === null) throw new Error("no session " + sessionId);
     if (recorded.status === NOT_FOUND) throw new NotFoundError(NOT_FOUND, recorded.body as ProblemDocument, new Headers());

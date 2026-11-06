@@ -806,7 +806,7 @@ fn bump(globals: Globals, bytes: u32, size: u32, end: u32, ptr: u32) -> Vec<I<'s
         I::LocalTee(size),
         I::I32Add,
         I::LocalTee(end),
-        I::I32Const(abi::MAX_MEMORY_BYTES as i32),
+        I::I32Const(globals.memory_bytes as i32),
         I::I32LeU,
         I::LocalGet(end),
         I::GlobalGet(globals.heap),

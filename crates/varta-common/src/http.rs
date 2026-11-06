@@ -61,6 +61,10 @@ pub const MAX_CONCURRENT_REQUESTS: usize = 8;
 pub const WORKER_WAIT_SECONDS: u64 = 10;
 /// The `Retry-After` of a 503 for a request that found no worker in time.
 pub const BUSY_RETRY_AFTER_SECONDS: u64 = 1;
+/// The memory one request's Store may use: the pool runs
+/// [`MAX_CONCURRENT_REQUESTS`] of them, so a request keeps the pre-v38 bound
+/// while a long-lived application instance gets the v38 maximum.
+pub const REQUEST_MEMORY_BYTES: usize = crate::abi::MAX_MEMORY_BYTES;
 /// A keep-alive connection's idle time between requests, which is also the
 /// time a client has to send a request's head (Node's keep-alive default).
 pub const KEEP_ALIVE_IDLE_SECONDS: u64 = 5;

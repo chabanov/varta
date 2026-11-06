@@ -8,6 +8,7 @@ import {
   type ApproveRunResponse,
   type CreateSessionRequest,
   type EventStream,
+  type GetSessionMessagesParams,
   type GetSessionMessagesResponse,
   type ListSessionsParams,
   type ListSessionsResponse,
@@ -78,8 +79,8 @@ export class ClientSessions implements ConsoleSessionsApi {
     return this.client.sessions.list(params);
   }
 
-  getSessionMessages(sessionId: string): Promise<GetSessionMessagesResponse> {
-    return this.client.sessions.getSessionMessages(sessionId);
+  getSessionMessages(sessionId: string, params?: GetSessionMessagesParams): Promise<GetSessionMessagesResponse> {
+    return this.client.sessions.getSessionMessages(sessionId, params);
   }
 
   sendSessionMessage(sessionId: string, body: SendSessionMessageRequest): Promise<SendSessionMessageResponse> {

@@ -100,7 +100,12 @@ fn execute_owned(
         .data()
         .check_cancelled()
         .map_err(RuntimeError::from)
-        .and_then(|()| invoke(shared, &mut execution, request, streaming, &mut instance));
+        .and_then(|()| invoke(shared, &mut execution, request, streaming, &mut instance))
+        // A guest's resource trap reads as it does in an application.
+        .map_err(|error| match instance.as_ref() {
+            Some(instance) => crate::resources::classify(instance, &mut execution.store, error),
+            None => error,
+        });
     if shared.contract.version == http::UTF16_VERSION {
         crate::turns::close(instance.as_ref(), &mut execution.store);
         let context = execution.store.data();
