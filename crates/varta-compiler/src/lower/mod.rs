@@ -424,6 +424,7 @@ mod math_hypot;
 mod missing;
 mod mixed_records;
 mod module_constants;
+mod module_evaluation;
 pub(crate) mod named;
 mod net;
 mod number_format;

@@ -5876,9 +5876,12 @@ constant initializer rules, `this` in a static method is the class it is
 called through, and a class expression is admitted as the initializer of its
 own `const`, like a class declared inside a function (neither may capture the
 function's locals).
-Static blocks, static initializers with calls and decorators, which run code
-when a class is defined, are not supported yet; neither are enum or namespace
-objects used as values.
+Modules evaluate as in JavaScript: initializers may call functions, and static
+fields and `static { … }` blocks run where their class is defined; reading a
+binding before its declaration, which JavaScript reports as a
+`ReferenceError`, is a compile error. Decorators and enum or namespace objects
+used as values are not supported yet.
+
 #### Type-level TypeScript (opt-in v38)
 
 Conditional, mapped and template literal types, every utility type, type

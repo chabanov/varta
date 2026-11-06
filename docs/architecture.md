@@ -11917,7 +11917,10 @@ time (`new.target.name`, an Error subclass's `name`).
   class or enum of the same name (`f.helper`, `C.create()`, `E.parse()`);
   interfaces merge with interfaces. An exported namespace or enum is used
   from other modules through its generated declarations, also under an
-  import alias. Refused by name: statements in a namespace body, ambient
+  import alias and through re-exports (`export { E } from`, `export *`,
+  `export { E }` of an import); generated names carry a hash of their
+  module path (`__vartaDecl$m<hash>$…`), so two modules' declarations never
+  collide. Refused by name: statements in a namespace body, ambient
   namespaces and modules, the namespace object as a value or a type, an
   unexported member reached qualified (`namespace N has no exported member
   …`), a type-only import of a namespace, and import aliases
@@ -11953,23 +11956,31 @@ time (`new.target.name`, an Error subclass's `name`).
   updates of setter-only accessors. `accessor x = v` (an ECMAScript
   auto-accessor) is a private storage field with a get/set pair; `static
   accessor x` is a static field.
-- **Static fields.** `static x: T = v` of a module-level class is the
-  module variable `__vartaDecl$C$x` declared right after the class, so its
-  initializer runs in the module initializer sequence at the class's
-  position (it follows the module initializer subset: no calls other than
-  `new Map`/`new Set`, …). `C.x`, and `this.x` in static code, read and
-  write it; a subclass reads an inherited static field through the same
-  variable, and writing it through the subclass (which creates an own
-  property of the subclass in JavaScript) is refused. `private`,
-  `protected` (TS2341) and `readonly` (TS2540) are checked. Imported
-  classes expose their static fields read-only, like every imported module
-  variable.
-- **Static methods and `this`.** In static methods and static field
-  initializers `this` is the class. A static method that uses `this` is
-  copied into each module-level subclass that inherits it and is named
-  through that subclass (or that is exported), with `this` naming the
-  subclass, so `Derived.create()` calls `Derived.kind()` as in JavaScript.
-  `super` in static code is refused.
+- **Static fields and static blocks.** `static x: T = v` of a class (at
+  module level or in a namespace) is the module variable `__vartaDecl$C$x`
+  declared right after the class, and `static { … }` is a module variable
+  initialized by calling the block as an arrow, so both run in the module
+  initializer sequence at the class's position, as ECMAScript evaluates
+  them at class definition ([module evaluation](#module-evaluation-module_evaluation)).
+  `C.x`, and `this.x` in static code, read and write the field; a subclass
+  reads an inherited static field through the same variable, and writing
+  it through the subclass (which creates an own property of the subclass in
+  JavaScript) is refused. `private`, `protected` (TS2341) and `readonly`
+  (TS2540) are checked. Another module writes an exported class's static
+  field through a setter function the declaring module exports
+  (`C.x = v`, `op=`, `++`/`--`); a field without an annotation or literal
+  initializer has none.
+- **Static methods, `this` and `super`.** In static methods, static field
+  initializers and static blocks `this` is the class. A static method that
+  uses `this` or `super` is copied into each module-level subclass that
+  inherits it and is named through that subclass (or that is exported),
+  with `this` naming the subclass, so `Derived.create()` calls
+  `Derived.kind()` as in JavaScript. `super.m()` in static code calls the
+  parent's `m` with the calling class as `this` (a copy of `m` in the
+  calling class when `m` uses `this`), and `super.x` reads the parent's
+  static field. A `this`-using static method inherited from a class of
+  another module, and `super.m()` of such a method from a static field
+  initializer or block, are refused by name.
 - **Class expressions and local classes.** `const X = class [N] { … }` at
   module level or in a function body, and a class declaration in a function
   body, is a module class declaration (named `X`, or the class's own name
@@ -11981,15 +11992,41 @@ time (`new.target.name`, an Error subclass's `name`).
   field redeclarations, `implements` of several interfaces, and
   constructor parameter properties with default values (a non-literal
   default needs a type annotation).
-- **Not admitted (owner decision).** Static blocks, static field
-  initializers outside the module initializer subset and standard
-  decorators all run code when a class is defined; that needs a
-  module-initialization design for effects at class definition (and for
-  tool and HTTP entries), which the module constant rules reserve. They are
-  refused by name (`static class block`, `call in a module constant
-  initializer`, `decorator (a decorator runs code when its class is
-  defined, …)`). Class index signatures stay refused (`class index
-  signature`). Legacy `experimentalDecorators` are not planned.
+- **Not admitted yet.** Standard decorators (they need classes as values
+  and the decorator context objects), enum and namespace objects as values,
+  class index signatures, generic overload signatures and the tsc
+  assignability of `number` to numeric enums and nominal string enums are
+  refused by name (`decorator`, `enum object E used as a value`, `class
+  index signature`, `generic overload signature`). Legacy
+  `experimentalDecorators` are not planned.
+
+#### Module evaluation (`module_evaluation`)
+
+V38 (2026-11-06, K9 B, owner decision) evaluates modules as ECMAScript
+does: each instance evaluates its module graph once, in dependency order and
+in source order within a module, before `main`; an HTTP v2 request's fresh
+Store is its own instance, so module code runs again for each request (as
+the call-free initializers already did). Tool entries keep refusing stored
+module values (`module constants with tool/HTTP entry points`). A module
+initializer may call functions and construct objects (`const registry =
+load()`, `static instance = new C()`, static blocks); only a top-level
+`await` stays refused. A primitive `const` whose initializer runs code is
+stored like a module variable that no code may assign. Initializers that
+run code are never pruned as unread (`program_limits`).
+
+JavaScript throws `ReferenceError` when code reads a binding before its
+initialization. Varta refuses such a read at compile time whenever an
+effectful initializer can reach it: the reachable code is the initializer
+plus, transitively, every module function, function-valued binding and
+class it names (a class with its constructor, instance fields and instance
+methods; a static method through `C.m`), and no binding of the module
+declared at or after the initializer may be read by it (`binding used
+before initialization: X is read by code this initializer runs`). The
+analysis over-approximates calls (a program that only names a later
+binding on a path it never takes is refused too); other modules cannot
+reach this module's bindings early, since imports are acyclic and
+initialized first. A module variable whose type is `undefined` or `null`
+alone is refused (it has no boxed form).
 
 #### Bytes held by unknown (`byte_values`)
 

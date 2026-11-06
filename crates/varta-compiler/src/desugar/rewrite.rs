@@ -88,6 +88,7 @@ pub(super) fn module(
 ) -> Result<BTreeSet<String>, CompilerError> {
     let frames = [frame];
     let mut rewriter = Rewriter::new(source, &frames);
+    rewriter.imported = true;
     module.visit_mut_with(&mut rewriter);
     rewriter.finish()
 }
@@ -101,6 +102,9 @@ struct Rewriter<'a> {
     /// The module-level classes whose bodies enclose the current node.
     classes: Vec<String>,
     parents: &'a BTreeMap<String, String>,
+    /// Rewriting another module's declarations: their static fields are
+    /// written through their setters.
+    imported: bool,
 }
 
 /// What a member path denotes.
@@ -122,7 +126,115 @@ impl<'a> Rewriter<'a> {
             error: None,
             classes: Vec::new(),
             parents: NO_PARENTS,
+            imported: false,
         }
+    }
+    /// The imported static field `member` resolves to, with its setter.
+    fn imported_field(&mut self, member: &ast::MemberExpr) -> Option<(Symbol, String)> {
+        if !self.imported {
+            return None;
+        }
+        let mut expr = ast::Expr::Member(member.clone());
+        let Resolved::Symbol(symbol) = self.path(&mut expr) else {
+            return None;
+        };
+        let setter = symbol.field.as_ref()?.setter.clone()?;
+        Some((symbol, setter))
+    }
+    /// A write of an imported static field through its setter:
+    /// `C.x = v` is `set(v)`, `C.x op= v` is `set(x op v)`, `++C.x` is
+    /// `set(x + 1)` and `C.x++` is `set(x + 1) - 1`.
+    fn imported_write(&mut self, expr: &mut ast::Expr) -> bool {
+        let span = expr.span();
+        let (member, value) = match expr {
+            ast::Expr::Assign(assign) => {
+                let ast::AssignTarget::Simple(ast::SimpleAssignTarget::Member(member)) =
+                    &assign.left
+                else {
+                    return false;
+                };
+                let op = match assign.op {
+                    ast::AssignOp::Assign => None,
+                    ast::AssignOp::AddAssign => Some(ast::BinaryOp::Add),
+                    ast::AssignOp::SubAssign => Some(ast::BinaryOp::Sub),
+                    ast::AssignOp::MulAssign => Some(ast::BinaryOp::Mul),
+                    ast::AssignOp::DivAssign => Some(ast::BinaryOp::Div),
+                    ast::AssignOp::ModAssign => Some(ast::BinaryOp::Mod),
+                    ast::AssignOp::ExpAssign => Some(ast::BinaryOp::Exp),
+                    ast::AssignOp::LShiftAssign => Some(ast::BinaryOp::LShift),
+                    ast::AssignOp::RShiftAssign => Some(ast::BinaryOp::RShift),
+                    ast::AssignOp::ZeroFillRShiftAssign => Some(ast::BinaryOp::ZeroFillRShift),
+                    ast::AssignOp::BitOrAssign => Some(ast::BinaryOp::BitOr),
+                    ast::AssignOp::BitXorAssign => Some(ast::BinaryOp::BitXor),
+                    ast::AssignOp::BitAndAssign => Some(ast::BinaryOp::BitAnd),
+                    _ => return false,
+                };
+                (member.clone(), Some((op, assign.right.clone(), None)))
+            }
+            ast::Expr::Update(update) => {
+                let ast::Expr::Member(member) = &*update.arg else {
+                    return false;
+                };
+                let op = match update.op {
+                    ast::UpdateOp::PlusPlus => ast::BinaryOp::Add,
+                    ast::UpdateOp::MinusMinus => ast::BinaryOp::Sub,
+                };
+                let one = Box::new(ast::Expr::Lit(ast::Lit::Num(ast::Number {
+                    span,
+                    value: 1.0,
+                    raw: None,
+                })));
+                let undo = (!update.prefix).then_some(match op {
+                    ast::BinaryOp::Add => ast::BinaryOp::Sub,
+                    _ => ast::BinaryOp::Add,
+                });
+                (member.clone(), Some((Some(op), one, undo)))
+            }
+            _ => return false,
+        };
+        let Some((symbol, setter)) = self.imported_field(&member) else {
+            return false;
+        };
+        let Some((op, mut right, undo)) = value else {
+            return false;
+        };
+        self.check_field(&symbol, true, span);
+        right.visit_mut_with(self);
+        let current = ast::Expr::Ident(self.renamed(&symbol, span));
+        let value = match op {
+            Some(op) => Box::new(ast::Expr::Bin(ast::BinExpr {
+                span,
+                op,
+                left: Box::new(current),
+                right,
+            })),
+            None => right,
+        };
+        let callee = ast::Expr::Ident(self.renamed(&Symbol::plain(setter), span));
+        let call = ast::Expr::Call(ast::CallExpr {
+            span,
+            ctxt: Default::default(),
+            callee: ast::Callee::Expr(Box::new(callee)),
+            args: vec![ast::ExprOrSpread {
+                spread: None,
+                expr: value,
+            }],
+            type_args: None,
+        });
+        *expr = match undo {
+            Some(op) => ast::Expr::Bin(ast::BinExpr {
+                span,
+                op,
+                left: Box::new(call),
+                right: Box::new(ast::Expr::Lit(ast::Lit::Num(ast::Number {
+                    span,
+                    value: 1.0,
+                    raw: None,
+                }))),
+            }),
+            None => call,
+        };
+        true
     }
     /// TypeScript's accessibility check of a static field reference.
     fn check_field(&mut self, symbol: &Symbol, write: bool, span: Span) {
@@ -537,7 +649,7 @@ impl VisitMut for Rewriter<'_> {
         self.classes.pop();
     }
     fn visit_mut_expr(&mut self, expr: &mut ast::Expr) {
-        if self.error.is_some() {
+        if self.error.is_some() || self.imported_write(expr) {
             return;
         }
         match expr {

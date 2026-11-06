@@ -830,6 +830,16 @@ impl LanguageProfile {
     pub fn standard_library(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 B module evaluation: a module initializer may run
+    /// program code (calls, `new`), as ECMAScript evaluates a module body once
+    /// per instance in source order, so static field initializers and static
+    /// blocks run where their class is defined. A read of a binding before
+    /// its initialization that the initializer can reach is refused at
+    /// compile time. Earlier profiles keep the call-free initializer subset.
+    #[must_use]
+    pub fn module_evaluation(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
     /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
     /// in-development value layout 18) in record fields, array elements,
@@ -3309,6 +3319,7 @@ mod tests {
                 profile.json_decoders(),
                 profile.iteration_protocol(),
                 profile.declaration_forms(),
+                profile.module_evaluation(),
                 profile.type_level(),
                 profile.standard_library(),
             ] {

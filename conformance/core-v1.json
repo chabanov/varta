@@ -3556,9 +3556,7 @@
         "varta log: header"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Static blocks run code when the class is defined; v38 admits static fields with module initializer semantics only, pending the module-initialization design."
+        "status": "supported"
       }
     },
     {

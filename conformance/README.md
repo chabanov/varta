@@ -17,7 +17,7 @@ cargo run -p varta-conformance --locked -- --require-supported
 The first command checks the reviewed baseline and emits a standalone JSON report.
 The second additionally fails for known unsupported cases and features without
 executable cases. The current inventory has 103 feature rows and 171 cases:
-165 pass, 6 are known unsupported, and 8 feature rows have no case. These counts
+166 pass, 5 are known unsupported, and 8 feature rows have no case. These counts
 are inventory observations, not a percentage of ECMAScript or total kernel work.
 The strict command currently exits 1 even when the baseline matches.
 
@@ -464,3 +464,6 @@ Classes declared inside functions are hoisted to module classes like class
 expressions (a class that would capture the function's locals is refused),
 so the `class-instance` gap is promoted to supported with its pinned hash
 and output.
+
+Module evaluation (K9 B, 2026-11-06) runs static blocks where their class is
+defined, so the `static-block` gap passes with its pinned hash and output.

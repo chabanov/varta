@@ -4007,12 +4007,26 @@ Contract: [architecture.md](architecture.md#declarations-and-classes-declaration
   number semantics); never emit an enum object. A non-constant key of a
   numeric enum calls the generated reverse-mapping function, typed
   `string | undefined`.
-- Static fields are module variables declared after their class and follow
-  every module-constant rule; never admit calls or effects in their
-  initializers here (that needs the owner's module-initialization design,
-  as do static blocks and decorators). `this` in static code is the class;
-  an inherited static method that uses `this` is copied into the subclasses
-  that reach it (`statics::lower_class`).
+- Static fields and static blocks are module variables declared after their
+  class (a block is an arrow called by the initializer) and follow every
+  module-constant rule; their effects are module evaluation (below). `this`
+  in static code is the class; an inherited static method that uses `this`
+  or `super` is copied into the subclasses that reach it, and `super.m()`
+  of a `this`-using method calls a private copy keyed by `statics::
+  super_key` (`statics::lower_class`). Classes hoisted from namespaces get
+  a second statics pass (`namespaces::hoisted_statics`).
+- Generated names are tagged with the module path hash (`desugar::tag`)
+  after every phase-1 transform; re-exports forward symbols and generated
+  names in `desugar::forward`. Writes to imported static fields go through
+  the exported setter (`Rewriter::imported_write`); never make imported
+  module variables assignable.
+- Module evaluation (`module_evaluation`, `lower::module_evaluation`): an
+  initializer may run code. Keep the compile-time temporal-dead-zone check
+  (`reachable` over-approximates: names reach whole declarations, classes
+  their instance members, `C.m` a static method) in `module_constants::
+  check`, reserve the initializer index for effectful chunks, and never let
+  `prune::unread_constants` drop an initializer that calls code. Top-level
+  `await` stays refused.
 - Class forms are a pre-layout rewrite (`classes::forms`, after
   `private_names` and `parameter_properties`): setters become methods named
   `forms::setter_key` (no string key can spell it), abstract members get an

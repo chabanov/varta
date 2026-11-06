@@ -30,14 +30,14 @@ mod scope;
 mod statics;
 
 use crate::CompilerError;
-use crate::modules::Dependency;
+use crate::modules::{Dependency, Export};
 use crate::source::Source;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use swc_common::Span;
 use swc_ecma_ast as ast;
-use swc_ecma_visit::{Visit, VisitWith};
+use swc_ecma_visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// Generated names start with this prefix, which program code may not use.
 pub(crate) const PREFIX: &str = "__vartaDecl";
@@ -180,7 +180,43 @@ pub(crate) fn declarations(
         Exports::default()
     };
     overloads::mark(module, source)?;
-    Ok(exports)
+    Ok(tag(module, exports, source))
+}
+
+/// Make the module's generated names unique in the graph: `__vartaDecl$x`
+/// becomes `__vartaDecl$m<hash>$x`, with the hash of the module path, so
+/// imports and re-exports of two modules' declarations never collide. The
+/// last segment, the declared name, is kept.
+fn tag(module: &mut ast::Module, exports: Exports, source: &Source) -> Exports {
+    struct Tag(String);
+    impl Tag {
+        fn name(&self, name: &str) -> String {
+            match name.strip_prefix(PREFIX) {
+                Some(rest) if !rest.starts_with(&self.0) => format!("{PREFIX}{}{rest}", self.0),
+                _ => name.to_owned(),
+            }
+        }
+    }
+    impl VisitMut for Tag {
+        fn visit_mut_ident(&mut self, id: &mut ast::Ident) {
+            if id.sym.starts_with(PREFIX) {
+                id.sym = self.name(&id.sym).into();
+            }
+        }
+    }
+    // FNV-1a of the module path: stable across runs and platforms.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in source.file.name.to_string().bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+    let mut tag = Tag(format!("{SEPARATOR}m{hash:016x}"));
+    module.visit_mut_with(&mut tag);
+    let symbols = exports
+        .symbols
+        .iter()
+        .map(|(name, symbol)| (name.clone(), mapped(symbol, &|n| tag.name(n))))
+        .collect();
+    Exports { symbols }
 }
 
 /// Whether a module item declares an enum, a namespace or a class with
@@ -209,17 +245,60 @@ fn declaration(item: &ast::ModuleItem) -> Option<(&ast::Decl, bool)> {
     }
 }
 
+/// `symbol` with every generated name mapped through `map`.
+fn mapped(symbol: &Symbol, map: &dyn Fn(&str) -> String) -> Symbol {
+    let mut symbol = symbol.clone();
+    if symbol.name.starts_with(PREFIX) {
+        symbol.name = map(&symbol.name);
+    }
+    if let Some(field) = &mut symbol.field {
+        field.setter = field.setter.as_deref().map(map);
+    }
+    if let Some(enumeration) = &symbol.enumeration
+        && enumeration.reverse.is_some()
+    {
+        symbol.enumeration = Some(Rc::new(Enum {
+            name: enumeration.name.clone(),
+            members: enumeration.members.clone(),
+            is_const: enumeration.is_const,
+            reverse: enumeration.reverse.as_deref().map(map),
+        }));
+    }
+    if let Some(namespace) = &symbol.namespace {
+        symbol.namespace = Some(Rc::new(Namespace {
+            members: namespace
+                .members
+                .iter()
+                .map(|(name, member)| {
+                    (
+                        name.clone(),
+                        Member {
+                            exported: member.exported,
+                            symbol: mapped(&member.symbol, map),
+                        },
+                    )
+                })
+                .collect(),
+        }));
+    }
+    symbol
+}
+
 /// Rewrite the module's uses of imported enums and namespaces, once its
 /// dependencies are loaded, and import the generated names they need.
+/// Re-exports (`export { E } from`, `export *`, `export { E }` of an import)
+/// forward the symbols and their generated names, which `declared`
+/// receives.
 pub(crate) fn imports(
     module: &mut ast::Module,
     source: &Source,
-    dependencies: &mut [Dependency],
+    (dependencies, module_exports, stars): (&mut [Dependency], &mut Vec<Export>, &[PathBuf]),
+    declared: &mut Exports,
     exports: &dyn Fn(&Path) -> Option<Exports>,
 ) -> Result<(), CompilerError> {
     let mut frame = BTreeMap::new();
-    // Generated names, by the dependency that exports them.
-    let mut providers: BTreeMap<String, PathBuf> = BTreeMap::new();
+    // Local generated names: the providing module and the exported name.
+    let mut providers: Providers = BTreeMap::new();
     let mut namespaces: BTreeSet<(PathBuf, String)> = BTreeSet::new();
     for dependency in dependencies.iter() {
         let Some(exported) = exports(&dependency.target) else {
@@ -241,7 +320,7 @@ pub(crate) fn imports(
                 continue;
             }
             for name in generated_names(symbol) {
-                providers.insert(name, dependency.target.clone());
+                providers.insert(name.clone(), (dependency.target.clone(), name));
             }
             if !symbol.value && symbol.enumeration.is_none() {
                 namespaces.insert((dependency.target.clone(), binding.local.clone()));
@@ -251,10 +330,17 @@ pub(crate) fn imports(
             frame.insert(binding.local.clone(), symbol);
         }
     }
-    if frame.is_empty() {
-        return Ok(());
-    }
-    let used = rewrite::module(module, source, &frame)?;
+    let mut used = if frame.is_empty() {
+        BTreeSet::new()
+    } else {
+        rewrite::module(module, source, &frame)?
+    };
+    forward(
+        (module_exports, stars),
+        declared,
+        exports,
+        (&frame, &providers, &mut used),
+    );
     // Each generated name is bound once, by the first import of its module.
     let mut bound: BTreeSet<String> = BTreeSet::new();
     for dependency in dependencies.iter_mut() {
@@ -263,12 +349,13 @@ pub(crate) fn imports(
             .bindings
             .retain(|b| !namespaces.contains(&(dependency.target.clone(), b.local.clone())));
         for name in &used {
-            if providers.get(name) == Some(&dependency.target)
+            if let Some((target, imported)) = providers.get(name)
+                && *target == dependency.target
                 && !dependency.bindings.iter().any(|b| &b.local == name)
                 && bound.insert(name.clone())
             {
                 dependency.bindings.push(crate::modules::ImportBinding {
-                    imported: name.clone(),
+                    imported: imported.clone(),
                     local: name.clone(),
                     span: dependency.span,
                     type_only: false,
@@ -279,11 +366,95 @@ pub(crate) fn imports(
     Ok(())
 }
 
+/// Generated names by the module that exports them, with the name it
+/// exports them under.
+type Providers = BTreeMap<String, (PathBuf, String)>;
+
+/// Forward re-exported enums, namespaces and classes with statics.
+fn forward(
+    (module_exports, stars): (&mut Vec<Export>, &[PathBuf]),
+    declared: &mut Exports,
+    exports: &dyn Fn(&Path) -> Option<Exports>,
+    (frame, providers, used): (&BTreeMap<String, Symbol>, &Providers, &mut BTreeSet<String>),
+) {
+    let mut added = Vec::new();
+    let mut removed = BTreeSet::new();
+    for (position, export) in module_exports.iter().enumerate() {
+        let symbol = match &export.from {
+            // `export { E } from './a'`: the target's own symbol and names.
+            Some(target) => {
+                match exports(target).and_then(|e| e.symbols.get(&export.local).cloned()) {
+                    Some(symbol) => {
+                        for name in generated_names(&symbol) {
+                            added.push(Export {
+                                local: name.clone(),
+                                exported: name,
+                                span: export.span,
+                                type_only: false,
+                                from: Some(target.clone()),
+                            });
+                        }
+                        symbol
+                    }
+                    None => continue,
+                }
+            }
+            // `export { E }` of an imported `E`: re-export the local
+            // bindings of its generated names under their original names.
+            None => match frame.get(&export.local) {
+                Some(symbol) => {
+                    for (local, (_, original)) in providers {
+                        if generated_names(symbol).contains(local) {
+                            used.insert(local.clone());
+                            added.push(Export {
+                                local: local.clone(),
+                                exported: original.clone(),
+                                span: export.span,
+                                type_only: false,
+                                from: None,
+                            });
+                        }
+                    }
+                    symbol.clone()
+                }
+                None => continue,
+            },
+        };
+        if !symbol.value && symbol.enumeration.is_none() {
+            // A namespace has no export of its own name.
+            removed.insert(position);
+        }
+        declared.symbols.insert(export.exported.clone(), symbol);
+    }
+    let mut position = 0;
+    module_exports.retain(|_| {
+        position += 1;
+        !removed.contains(&(position - 1))
+    });
+    for export in added {
+        if !module_exports.iter().any(|e| e.exported == export.exported) {
+            module_exports.push(export);
+        }
+    }
+    // `export * from './a'` forwards every symbol the module does not
+    // declare itself; star exports already forward the generated names.
+    for star in stars {
+        if let Some(forwarded) = exports(star) {
+            for (name, symbol) in forwarded.symbols {
+                declared.symbols.entry(name).or_insert(symbol);
+            }
+        }
+    }
+}
+
 /// Every generated name reachable from an exported symbol.
 fn generated_names(symbol: &Symbol) -> Vec<String> {
     let mut names = Vec::new();
     if symbol.name.starts_with(PREFIX) {
         names.push(symbol.name.clone());
+    }
+    if let Some(setter) = symbol.field.as_ref().and_then(|f| f.setter.clone()) {
+        names.push(setter);
     }
     if let Some(reverse) = symbol.enumeration.as_ref().and_then(|e| e.reverse.clone()) {
         names.push(reverse);

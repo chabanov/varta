@@ -82,6 +82,14 @@
   images and alternative-text rendering are refused. New dependencies `png`
   0.18.1, `image` 0.25.10 and `moxcms` 0.8.1; the image limits await an
   owner decision.
+- V38 module evaluation (K9 B, `module_evaluation`): module initializers may
+  call code, as ECMAScript evaluates a module once per instance in source
+  order; static fields with calls and `static { … }` blocks run where their
+  class is defined, and a read before initialization that the initializer
+  can reach is a compile error (JavaScript's `ReferenceError`). Also `super`
+  in static methods, re-exports of enums, namespaces and classes with static
+  fields, static fields of classes in namespaces and writes of imported
+  static fields. Conformance: `static-block` passes.
 - V38 declarations and classes (K9 B, `declaration_forms`): numeric,
   string, heterogeneous and `const` enums with constant member expressions,
   enum types as literal unions and the reverse mapping `E[n]`; namespaces

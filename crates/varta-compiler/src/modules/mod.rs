@@ -186,17 +186,18 @@ impl Builder<'_> {
         // V38 (`declaration_forms`): enums, namespaces, static fields, class
         // expressions and overload signatures lower to the checked subset
         // before the module is scanned.
-        let declarations = if self.profile.declaration_forms() && !engine::is_prelude(&input.path) {
-            crate::desugar::declarations(&mut ast, &source)?
-        } else {
-            crate::desugar::Exports::default()
-        };
+        let mut declarations =
+            if self.profile.declaration_forms() && !engine::is_prelude(&input.path) {
+                crate::desugar::declarations(&mut ast, &source)?
+            } else {
+                crate::desugar::Exports::default()
+            };
         if self.profile.web_bytes() && !engine::is_prelude(&input.path) {
             global_members::rewrite(&mut ast);
         }
         let syntax::Scan {
             mut imports,
-            exports,
+            mut exports,
             stars,
         } = syntax::scan(&mut ast, &source, &input.path, self.loader, self.profile)?;
         if let Some(import) = imports.iter().find(|i| engine::is_prelude(&i.target)) {
@@ -267,12 +268,18 @@ impl Builder<'_> {
         self.visiting.pop();
         if self.profile.declaration_forms() && !engine::is_prelude(&input.path) {
             let units = &self.graph.units;
-            crate::desugar::imports(&mut ast, &source, &mut imports, &|path| {
-                units
-                    .get(path)
-                    .filter(|unit| !unit.declarations.is_empty())
-                    .map(|unit| unit.declarations.clone())
-            })?;
+            crate::desugar::imports(
+                &mut ast,
+                &source,
+                (&mut imports, &mut exports, &stars),
+                &mut declarations,
+                &|path| {
+                    units
+                        .get(path)
+                        .filter(|unit| !unit.declarations.is_empty())
+                        .map(|unit| unit.declarations.clone())
+                },
+            )?;
         }
         text::check_stylesheets(&ast, &imports, &self.graph.units)?;
         self.graph.order.push(input.path.clone());

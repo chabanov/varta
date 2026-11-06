@@ -66,6 +66,16 @@ const CASES: &[(&str, &str, &str)] = &[
         include_str!("declaration_form_cases/declarations.ts"),
         include_str!("declaration_form_cases/declarations.expected"),
     ),
+    (
+        "module_evaluation",
+        include_str!("declaration_form_cases/module_evaluation.ts"),
+        include_str!("declaration_form_cases/module_evaluation.expected"),
+    ),
+    (
+        "static_super",
+        include_str!("declaration_form_cases/static_super.ts"),
+        include_str!("declaration_form_cases/static_super.expected"),
+    ),
     // The `docs/language-guide.md` example, verbatim.
     (
         "guide",
@@ -157,6 +167,16 @@ fn class_expressions_match_node() {
 #[test]
 fn declare_override_and_parameter_properties_match_node() {
     matches_node("declarations");
+}
+
+#[test]
+fn module_evaluation_and_static_blocks_match_node() {
+    matches_node("module_evaluation");
+}
+
+#[test]
+fn super_in_static_methods_matches_node() {
+    matches_node("static_super");
 }
 
 #[test]
@@ -262,10 +282,61 @@ fn imported_declarations_match_node() {
     let bytes = compile_modules(entry, &[("lib.ts", library)]).unwrap();
     wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
     assert_eq!(lines(&bytes), ["High 12px theme 4", "2 2 counter Low"]);
-    // Imported module variables are read-only, as for every module `let`.
+    // An imported class's static field is written through the generated
+    // setter its module exports; a readonly one stays read-only.
     let write = "import { Counter } from './lib.ts';
-         export function main(): void { Counter.count = 5; }";
-    assert!(compile_modules(write, &[("lib.ts", library)]).is_err());
+         export function main(): void {
+           Counter.count = 10; Counter.count += 5; const before = Counter.count++; ++Counter.count;
+           console.log(String(before) + ' ' + String(Counter.count) + ' ' + String(Counter.bump()));
+         }";
+    let bytes = compile_modules(write, &[("lib.ts", library)]).unwrap();
+    assert_eq!(lines(&bytes), ["15 17 18"]);
+    let readonly = "import { Counter } from './lib.ts';
+         export function main(): void { Counter.label = 'x'; }";
+    let error = compile_modules(readonly, &[("lib.ts", library)])
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(error.contains("read-only static field (TS2540)"), "{error}");
+}
+
+/// `export { E } from`, `export *` and `export { E }` of an import forward
+/// enums, namespaces and classes with static fields with their generated
+/// declarations; static fields of a class in a namespace are reached
+/// through it, also from another module. Node 24 prints the same lines.
+#[test]
+fn re_exported_declarations_match_node() {
+    let a = "export enum Level { Low = 1, Mid, High }
+         export namespace Units { export const scale = 2; export function cm(n: number): string { return String(n * scale) + 'cm'; } }
+         export class Counter { static count = 0; static bump(): number { Counter.count++; return Counter.count; } }
+         export namespace Store {
+           export class Item {
+             static created = 0;
+             static readonly kind: string = 'item';
+             constructor(public name: string) { Item.created++; }
+             static make(name: string): Item { return new this(name); }
+             static total(): string { return this.kind + ':' + String(this.created); }
+           }
+         }";
+    let b = "export { Level, Units } from './a.ts';
+         export * from './c.ts';
+         import { Counter, Store } from './a.ts';
+         export { Counter, Store };";
+    let c = "export enum Tone { Warm = 'warm' }
+         export enum Level { Other }";
+    let entry = "import { Level, Units, Tone, Counter, Store } from './b.ts';
+         export function main(): void {
+           let level = Level.Mid;
+           level = Level.High;
+           console.log(Level[level] + ' ' + Units.cm(level) + ' ' + Tone.Warm);
+           Counter.count = 4;
+           Store.Item.make('a');
+           Store.Item.created += 10;
+           console.log(String(Counter.bump()) + ' ' + Store.Item.total());
+         }";
+    let bytes = compile_modules(entry, &[("a.ts", a), ("b.ts", b), ("c.ts", c)]).unwrap();
+    wasmtime::Module::new(&wasmtime::Engine::default(), &bytes).unwrap();
+    assert_eq!(lines(&bytes), ["High 6cm warm", "5 item:11"]);
 }
 
 #[test]
@@ -336,8 +407,8 @@ fn unsupported_declaration_forms_are_refused_by_name() {
             "enum member Y must have an initializer (TS1061)",
         ),
         (
-            "class C { static n = 1; static { C.n = 2; } } export function main(): void { console.log(String(C.n)); }",
-            "static class block",
+            "class B { static make(): number { return this.n; } static n = 1; } class C extends B { static { super.make(); } } export function main(): void { console.log('x'); }",
+            "super call of a static method that uses this, from a static block",
         ),
         (
             "function dec(value: unknown, context: unknown): void {} @dec class C {} export function main(): void { console.log('x'); }",
@@ -360,8 +431,12 @@ fn unsupported_declaration_forms_are_refused_by_name() {
             "assignment to the inherited static field n through a subclass",
         ),
         (
-            "class C { static make(): C { return new C(); } static x = C.make(); } export function main(): void { console.log('x'); }",
-            "call in a module constant initializer",
+            "function limit(): number[] { return LIMITS; } const first = limit(); const LIMITS: number[] = [3]; export function main(): void { console.log(String(first.length)); }",
+            "binding used before initialization: LIMITS is read by code this initializer runs",
+        ),
+        (
+            "class C { static make(): C { return new C(); } static x = C.make(); constructor() { console.log(String(C.later)); } static later = 2; } export function main(): void { console.log('x'); }",
+            "binding used before initialization: later is read by code this initializer runs",
         ),
         (
             "export function main(): void { const k = 2; const C = class { v = k; }; console.log(String(new C().v)); }",

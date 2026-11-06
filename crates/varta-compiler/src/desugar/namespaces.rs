@@ -132,8 +132,142 @@ pub(super) fn lower(module: &mut ast::Module, source: &Source) -> Result<Exports
             }
         }
     }
-    module.body = body;
+    module.body = hoisted_statics(body, source, &mut exports)?;
     Ok(exports)
+}
+
+/// Whether a class has static members that `statics` lowers.
+fn has_statics(class: &ast::Class) -> bool {
+    class.body.iter().any(|member| match member {
+        ast::ClassMember::ClassProp(p) => p.is_static,
+        ast::ClassMember::AutoAccessor(a) => a.is_static,
+        ast::ClassMember::StaticBlock(_) => true,
+        ast::ClassMember::Method(m) => m.is_static,
+        _ => false,
+    })
+}
+
+/// Static members of classes declared in namespaces, which the namespace
+/// pass hoisted under generated names: a second pass lowers them like those
+/// of module-level classes, and `NS.C.x` (already `__vartaDecl$NS$C.x`)
+/// resolves to the field variables. The exported namespace symbols gain the
+/// class's fields.
+fn hoisted_statics(
+    body: Vec<ast::ModuleItem>,
+    source: &Source,
+    exports: &mut Exports,
+) -> Result<Vec<ast::ModuleItem>, CompilerError> {
+    let hoisted = |item: &ast::ModuleItem| match declaration(item) {
+        Some((ast::Decl::Class(class), _)) => {
+            class.ident.sym.starts_with(super::PREFIX) && has_statics(&class.class)
+        }
+        _ => false,
+    };
+    if !body.iter().any(hoisted) {
+        return Ok(body);
+    }
+    let classes: statics::Classes = statics::collect(&body, source)?
+        .into_iter()
+        .filter(|(name, _)| name.starts_with(super::PREFIX))
+        .collect();
+    let mut frame = Frame::new();
+    for (name, class) in &classes {
+        if class.fields.is_empty() {
+            continue;
+        }
+        let namespace = Rc::new(Namespace {
+            members: class
+                .fields
+                .iter()
+                .map(|(field, info, variable)| {
+                    let mut symbol = Symbol::plain(variable.clone());
+                    symbol.field = Some(info.clone());
+                    (
+                        field.clone(),
+                        Member {
+                            exported: true,
+                            symbol,
+                        },
+                    )
+                })
+                .collect(),
+        });
+        frame.insert(
+            name.clone(),
+            Symbol {
+                name: name.clone(),
+                enumeration: None,
+                namespace: Some(namespace.clone()),
+                value: true,
+                field: None,
+            },
+        );
+        for symbol in exports.symbols.values_mut() {
+            *symbol = with_namespace(symbol, name, &namespace);
+        }
+    }
+    let parents: BTreeMap<String, String> = classes
+        .iter()
+        .filter_map(|(name, c)| c.parent.clone().map(|p| (name.clone(), p)))
+        .collect();
+    let context = rewrite::Context { parents: &parents };
+    let references = statics::references(&body);
+    let mut lowered = Vec::with_capacity(body.len());
+    for item in body {
+        let span = item.span();
+        if let Some((ast::Decl::Class(class), exported)) = declaration(&item)
+            && classes.contains_key(class.ident.sym.as_ref())
+        {
+            let name = class.ident.sym.to_string();
+            let mut class = class.clone();
+            let variables = statics::lower_class(
+                &mut class.class,
+                (&name, exported),
+                &classes,
+                &references,
+                source,
+            )?;
+            let item = item_of(ast::Decl::Class(class), exported, span);
+            lowered.push(rewrite::item_with(item, source, &[&frame], &context, None)?);
+            for variable in variables {
+                lowered.push(rewrite::item_with(
+                    item_of(variable, exported, span),
+                    source,
+                    &[&frame],
+                    &context,
+                    Some(&name),
+                )?);
+            }
+            continue;
+        }
+        lowered.push(rewrite::item_with(item, source, &[&frame], &context, None)?);
+    }
+    Ok(lowered)
+}
+
+/// `symbol` with the member named `name` (at any depth) given `namespace`.
+fn with_namespace(symbol: &Symbol, name: &str, namespace: &Rc<Namespace>) -> Symbol {
+    let mut symbol = symbol.clone();
+    if symbol.name == name {
+        symbol.namespace = Some(namespace.clone());
+    } else if let Some(inner) = &symbol.namespace {
+        symbol.namespace = Some(Rc::new(Namespace {
+            members: inner
+                .members
+                .iter()
+                .map(|(key, member)| {
+                    (
+                        key.clone(),
+                        Member {
+                            exported: member.exported,
+                            symbol: with_namespace(&member.symbol, name, namespace),
+                        },
+                    )
+                })
+                .collect(),
+        }));
+    }
+    symbol
 }
 
 /// Static fields are members of their class's symbol, like the members of a

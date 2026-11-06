@@ -41,6 +41,9 @@ pub(crate) struct Field {
     pub readonly: bool,
     /// Reached through a subclass of the declaring class.
     pub inherited: bool,
+    /// The exported function another module writes the field through
+    /// (imported module variables are read-only bindings).
+    pub setter: Option<String>,
 }
 
 /// The static members of one module-level class.
@@ -49,8 +52,9 @@ pub(super) struct Statics {
     pub parent: Option<String>,
     /// Own and inherited fields: name, field, generated variable.
     pub fields: Vec<(String, Field, String)>,
-    /// Static methods that use `this`, own and inherited, as declared.
-    this_methods: Vec<ast::ClassMethod>,
+    /// Static methods that use `this`, own and inherited, as declared, with
+    /// their declaring (home) class.
+    this_methods: Vec<(String, ast::ClassMethod)>,
 }
 
 /// Module-level classes by name, with their parent class names.
@@ -72,8 +76,8 @@ fn access(accessibility: Option<ast::Accessibility>) -> Access {
     }
 }
 
-/// Whether a function's own code uses `this` (outside nested non-arrow
-/// functions).
+/// Whether a function's own code uses `this` or `super` (outside nested
+/// non-arrow functions).
 fn uses_this(function: &ast::Function) -> bool {
     let mut finder = ThisFinder(false);
     function.params.visit_with(&mut finder);
@@ -83,6 +87,10 @@ fn uses_this(function: &ast::Function) -> bool {
 pub(super) struct ThisFinder(bool);
 impl Visit for ThisFinder {
     fn visit_this_expr(&mut self, _: &ast::ThisExpr) {
+        self.0 = true;
+    }
+    // `super.m()` calls `m` with this class as `this`.
+    fn visit_super_prop_expr(&mut self, _: &ast::SuperPropExpr) {
         self.0 = true;
     }
     fn visit_function(&mut self, _: &ast::Function) {}
@@ -157,7 +165,7 @@ fn resolve(
         statics.this_methods = inherited
             .this_methods
             .into_iter()
-            .filter(|method| {
+            .filter(|(_, method)| {
                 let name = key(&method.key);
                 !class.body.iter().any(|member| {
                     matches!(member, ast::ClassMember::Method(own)
@@ -184,14 +192,18 @@ fn resolve(
                         access: access(property.accessibility),
                         readonly: property.readonly,
                         inherited: false,
+                        setter: (!property.readonly && field_type(property).is_some())
+                            .then(|| generated(&[name, &field, "set"])),
                     },
                     generated(&[name, &field]),
                 ));
             }
             ast::ClassMember::Method(method) if method.is_static && uses_this(&method.function) => {
-                let name = key(&method.key);
-                statics.this_methods.retain(|m| key(&m.key) != name);
-                statics.this_methods.push(method.clone());
+                let method_name = key(&method.key);
+                statics
+                    .this_methods
+                    .retain(|(_, m)| key(&m.key) != method_name);
+                statics.this_methods.push((name.to_owned(), method.clone()));
             }
             _ => {}
         }
@@ -233,10 +245,67 @@ fn static_accessor(member: &ast::ClassMember) -> std::borrow::Cow<'_, ast::Class
     }
 }
 
-/// Replace `this` (outside nested non-arrow functions) by the class name.
+/// The static method of `home` that `super.m()` reaches with a subclass as
+/// `this`, copied into that subclass under this name.
+fn super_key(home: &str, method: &str) -> String {
+    generated(&["super", home, method])
+}
+
+/// Replace `this` (outside nested non-arrow functions) by the class name,
+/// and `super.x` by the home class's parent: `P.x`, or for a static method
+/// of `P` that uses `this`, the copy of it that runs with this class as
+/// `this` (recorded in `supers`).
 struct ThisToClass<'a> {
     name: &'a str,
+    /// The parent of the class whose code this is, and its static methods
+    /// that use `this`.
+    parent: Option<(&'a str, &'a [(String, ast::ClassMethod)])>,
+    supers: Vec<(String, ast::ClassMethod)>,
     error: Option<Span>,
+}
+impl<'a> ThisToClass<'a> {
+    fn new(name: &'a str, home: &str, classes: Option<&'a Classes>) -> Self {
+        let parent = classes.and_then(|classes| {
+            let parent = classes.get(home)?.parent.as_deref()?;
+            let methods = classes.get(parent)?.this_methods.as_slice();
+            Some((parent, methods))
+        });
+        Self {
+            name,
+            parent,
+            supers: Vec::new(),
+            error: None,
+        }
+    }
+    fn super_member(&mut self, property: &ast::SuperPropExpr) -> Option<ast::Expr> {
+        let ast::SuperProp::Ident(member) = &property.prop else {
+            return None;
+        };
+        let (parent, methods) = self.parent?;
+        let span = property.span;
+        let ident = |name: &str| ast::Expr::Ident(ast::Ident::new_no_ctxt(name.into(), span));
+        let found = methods
+            .iter()
+            .find(|(_, m)| key(&m.key).as_deref() == Some(member.sym.as_ref()));
+        let (base, name) = match found {
+            Some((home, method)) => {
+                if !self
+                    .supers
+                    .iter()
+                    .any(|(h, m)| h == home && m.key == method.key)
+                {
+                    self.supers.push((home.clone(), method.clone()));
+                }
+                (self.name.to_owned(), super_key(home, member.sym.as_ref()))
+            }
+            None => (parent.to_owned(), member.sym.to_string()),
+        };
+        Some(ast::Expr::Member(ast::MemberExpr {
+            span,
+            obj: Box::new(ident(&base)),
+            prop: ast::MemberProp::Ident(ast::IdentName::new(name.into(), member.span)),
+        }))
+    }
 }
 impl VisitMut for ThisToClass<'_> {
     fn visit_mut_expr(&mut self, expr: &mut ast::Expr) {
@@ -244,9 +313,12 @@ impl VisitMut for ThisToClass<'_> {
             ast::Expr::This(this) => {
                 *expr = ast::Expr::Ident(ast::Ident::new_no_ctxt(self.name.into(), this.span));
             }
-            ast::Expr::SuperProp(property) => {
-                self.error.get_or_insert(property.span);
-            }
+            ast::Expr::SuperProp(property) => match self.super_member(property) {
+                Some(replacement) => *expr = replacement,
+                None => {
+                    self.error.get_or_insert(property.span);
+                }
+            },
             _ => expr.visit_mut_children_with(self),
         }
     }
@@ -256,19 +328,27 @@ impl VisitMut for ThisToClass<'_> {
     fn visit_mut_setter_prop(&mut self, _: &mut ast::SetterProp) {}
 }
 
+/// Static code of class `home` run with class `name` as `this`; returns
+/// the parent's static methods its `super` calls need copied.
 fn this_to_class(
     function: &mut ast::Function,
-    name: &str,
+    (name, home): (&str, &str),
+    classes: Option<&Classes>,
     source: &Source,
-) -> Result<(), CompilerError> {
-    let mut rewrite = ThisToClass { name, error: None };
+) -> Result<Vec<(String, ast::ClassMethod)>, CompilerError> {
+    let mut rewrite = ThisToClass::new(name, home, classes);
     function.params.visit_mut_with(&mut rewrite);
     if let Some(body) = &mut function.body {
         body.visit_mut_with(&mut rewrite);
     }
     match rewrite.error {
-        Some(span) => Err(source.locate(unsupported("super in static class code"), span)),
-        None => Ok(()),
+        Some(span) => Err(source.locate(
+            unsupported(
+                "super in static code outside a module-level subclass, or a computed super member",
+            ),
+            span,
+        )),
+        None => Ok(rewrite.supers),
     }
 }
 
@@ -307,28 +387,35 @@ pub(super) fn lower_class(
     };
     let mut variables = Vec::new();
     let mut body = Vec::with_capacity(class.body.len());
+    let mut supers = Vec::new();
     for member in std::mem::take(&mut class.body) {
         match static_accessor(&member).into_owned() {
             ast::ClassMember::ClassProp(property) if property.is_static => {
-                variables.push(variable(property, name, source)?);
+                let setter = exported.then(|| setter(&property, name)).flatten();
+                variables.push(variable(property, name, classes, source)?);
+                variables.extend(setter);
             }
             ast::ClassMember::StaticBlock(block) => {
-                return Err(source.locate(
-                    unsupported(
-                        "static class block (code that runs at class definition needs the module initialization design)",
-                    ),
-                    block.span,
-                ));
+                let index = variables.len();
+                variables.push(static_block(block, name, index, classes, source)?);
             }
             ast::ClassMember::Method(mut method) if method.is_static => {
-                this_to_class(&mut method.function, name, source)?;
+                supers.extend(this_to_class(
+                    &mut method.function,
+                    (name, name),
+                    Some(classes),
+                    source,
+                )?);
                 body.push(ast::ClassMember::Method(method));
             }
             member => body.push(member),
         }
     }
     // Inherited static methods that use `this` run with this class as `this`.
-    for inherited in &statics.this_methods {
+    for (home, inherited) in &statics.this_methods {
+        if home == name {
+            continue;
+        }
         let declared = body.iter().any(|member| {
             matches!(member, ast::ClassMember::Method(own)
                 if own.is_static && key(&own.key) == key(&inherited.key))
@@ -345,17 +432,208 @@ pub(super) fn lower_class(
                 copy.span,
             ));
         }
-        this_to_class(&mut copy.function, name, source)?;
+        supers.extend(this_to_class(
+            &mut copy.function,
+            (name, home),
+            Some(classes),
+            source,
+        )?);
+        body.push(ast::ClassMember::Method(copy));
+    }
+    // `super.m()` of a parent's static method that uses `this` runs a copy
+    // of that method with this class as `this`; its own `super` calls
+    // resolve from its declaring class.
+    let mut copied: BTreeSet<String> = BTreeSet::new();
+    while let Some((home, method)) = supers.pop() {
+        let Some(method_name) = key(&method.key) else {
+            continue;
+        };
+        let copy_name = super_key(&home, &method_name);
+        if !copied.insert(copy_name.clone()) {
+            continue;
+        }
+        let mut copy = method.clone();
+        copy.key = ast::PropName::Ident(ast::IdentName::new(copy_name.into(), copy.key.span()));
+        copy.accessibility = Some(ast::Accessibility::Private);
+        supers.extend(this_to_class(
+            &mut copy.function,
+            (name, &home),
+            Some(classes),
+            source,
+        )?);
         body.push(ast::ClassMember::Method(copy));
     }
     class.body = body;
     Ok(variables)
 }
 
+/// `static { … }` as the module variable
+/// `let __vartaDecl$C$static$n: number = ((): number => { …; return 0; })();`,
+/// evaluated in the module initializer sequence at the class's position
+/// (v38 `module_evaluation`), with `this` the class.
+fn static_block(
+    block: ast::StaticBlock,
+    class: &str,
+    index: usize,
+    classes: &Classes,
+    source: &Source,
+) -> Result<ast::Decl, CompilerError> {
+    let span = block.span;
+    let mut stmts = block.body.stmts;
+    let mut rewrite = ThisToClass::new(class, class, Some(classes));
+    stmts.visit_mut_with(&mut rewrite);
+    if let Some(span) = rewrite.error {
+        return Err(source.locate(unsupported("super in static class code"), span));
+    }
+    if !rewrite.supers.is_empty() {
+        return Err(source.locate(
+            unsupported("super call of a static method that uses this, from a static block"),
+            span,
+        ));
+    }
+    // The block's completion is a number: a module variable needs a value
+    // with a boxed form.
+    let number = || {
+        Box::new(ast::TsType::TsKeywordType(ast::TsKeywordType {
+            span,
+            kind: ast::TsKeywordTypeKind::TsNumberKeyword,
+        }))
+    };
+    stmts.push(ast::Stmt::Return(ast::ReturnStmt {
+        span,
+        arg: Some(Box::new(ast::Expr::Lit(ast::Lit::Num(ast::Number {
+            span,
+            value: 0.0,
+            raw: None,
+        })))),
+    }));
+    let arrow = ast::Expr::Arrow(ast::ArrowExpr {
+        span,
+        ctxt: Default::default(),
+        params: Vec::new(),
+        body: Box::new(ast::ArrowFunctionBody::FunctionBody(ast::FunctionBody {
+            span,
+            stmts,
+        })),
+        is_async: false,
+        is_generator: false,
+        type_params: None,
+        return_type: Some(Box::new(ast::TsTypeAnn {
+            span,
+            type_ann: number(),
+        })),
+    });
+    let call = ast::Expr::Call(ast::CallExpr {
+        span,
+        ctxt: Default::default(),
+        callee: ast::Callee::Expr(Box::new(ast::Expr::Paren(ast::ParenExpr {
+            span,
+            expr: Box::new(arrow),
+        }))),
+        args: Vec::new(),
+        type_args: None,
+    });
+    let name = generated(&[class, "static", &index.to_string()]);
+    Ok(ast::Decl::Var(Box::new(ast::VarDecl {
+        span,
+        ctxt: Default::default(),
+        kind: ast::VarDeclKind::Let,
+        declare: false,
+        decls: vec![ast::VarDeclarator {
+            span,
+            name: ast::Pat::Ident(ast::BindingIdent {
+                id: ast::Ident::new_no_ctxt(name.into(), span),
+                type_ann: Some(Box::new(ast::TsTypeAnn {
+                    span,
+                    type_ann: number(),
+                })),
+            }),
+            init: Some(Box::new(call)),
+            definite: false,
+        }],
+    })))
+}
+
+/// The declared type of a static field: its annotation, or the type of a
+/// literal initializer.
+fn field_type(property: &ast::ClassProp) -> Option<Box<ast::TsType>> {
+    if let Some(annotation) = &property.type_ann {
+        return (!property.is_optional).then(|| annotation.type_ann.clone());
+    }
+    let kind = match property.value.as_deref()? {
+        ast::Expr::Lit(ast::Lit::Num(_)) => ast::TsKeywordTypeKind::TsNumberKeyword,
+        ast::Expr::Lit(ast::Lit::Str(_)) => ast::TsKeywordTypeKind::TsStringKeyword,
+        ast::Expr::Lit(ast::Lit::Bool(_)) => ast::TsKeywordTypeKind::TsBooleanKeyword,
+        _ => return None,
+    };
+    Some(Box::new(ast::TsType::TsKeywordType(ast::TsKeywordType {
+        span: property.span,
+        kind,
+    })))
+}
+
+/// `function __vartaDecl$C$x$set(value: T): T { __vartaDecl$C$x = value; return value; }`,
+/// through which importing modules write an exported class's static field.
+fn setter(property: &ast::ClassProp, class: &str) -> Option<ast::Decl> {
+    let field = key(&property.key)?;
+    if property.readonly {
+        return None;
+    }
+    let ty = field_type(property)?;
+    let span = property.span;
+    let ident = |name: &str| ast::Ident::new_no_ctxt(name.into(), span);
+    let annotation = || {
+        Some(Box::new(ast::TsTypeAnn {
+            span,
+            type_ann: ty.clone(),
+        }))
+    };
+    let value = ident("value");
+    let body = vec![
+        ast::Stmt::Expr(ast::ExprStmt {
+            span,
+            expr: Box::new(ast::Expr::Assign(ast::AssignExpr {
+                span,
+                op: ast::AssignOp::Assign,
+                left: ast::AssignTarget::Simple(ast::SimpleAssignTarget::Ident(
+                    ast::BindingIdent {
+                        id: ident(&generated(&[class, &field])),
+                        type_ann: None,
+                    },
+                )),
+                right: Box::new(ast::Expr::Ident(value.clone())),
+            })),
+        }),
+        ast::Stmt::Return(ast::ReturnStmt {
+            span,
+            arg: Some(Box::new(ast::Expr::Ident(value.clone()))),
+        }),
+    ];
+    Some(ast::Decl::Fn(ast::FnDecl {
+        ident: ident(&generated(&[class, &field, "set"])),
+        declare: false,
+        function: Box::new(ast::Function {
+            params: vec![ast::Param {
+                span,
+                decorators: Vec::new(),
+                pat: ast::Pat::Ident(ast::BindingIdent {
+                    id: value,
+                    type_ann: annotation(),
+                }),
+            }],
+            span,
+            body: Some(ast::FunctionBody { span, stmts: body }),
+            return_type: annotation(),
+            ..Default::default()
+        }),
+    }))
+}
+
 /// `static x: T = v` as the module variable `let __vartaDecl$C$x: T = v`.
 fn variable(
     property: ast::ClassProp,
     class: &str,
+    classes: &Classes,
     source: &Source,
 ) -> Result<ast::Decl, CompilerError> {
     let Some(field) = key(&property.key) else {
@@ -375,13 +653,18 @@ fn variable(
     }
     let mut value = property.value;
     if let Some(value) = &mut value {
-        let mut rewrite = ThisToClass {
-            name: class,
-            error: None,
-        };
+        let mut rewrite = ThisToClass::new(class, class, Some(classes));
         value.visit_mut_with(&mut rewrite);
         if let Some(span) = rewrite.error {
             return Err(source.locate(unsupported("super in static class code"), span));
+        }
+        if !rewrite.supers.is_empty() {
+            return Err(source.locate(
+                unsupported(
+                    "super call of a static method that uses this, from a static field initializer",
+                ),
+                property.span,
+            ));
         }
     }
     let mut type_ann = property.type_ann;
