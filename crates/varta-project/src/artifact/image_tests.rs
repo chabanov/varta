@@ -26,10 +26,15 @@ impl Project {
         ));
         std::fs::create_dir_all(path.join("images")).unwrap();
         std::fs::write(path.join("images/pixel.png"), PIXEL).unwrap();
-        let mut animated = PIXEL.to_vec();
-        // Retype the IDAT chunk as an animation control chunk.
-        animated[37..41].copy_from_slice(b"acTL");
-        std::fs::write(path.join("images/animated.png"), animated).unwrap();
+        let mut corrupt = PIXEL.to_vec();
+        // A flipped compressed byte: the structure holds, the checksum fails.
+        corrupt[43] ^= 1;
+        std::fs::write(path.join("images/corrupt.png"), corrupt).unwrap();
+        std::fs::write(
+            path.join("images/icon.svg"),
+            "<svg xmlns='http://www.w3.org/2000/svg'/>",
+        )
+        .unwrap();
         Self(path)
     }
 }
@@ -109,12 +114,19 @@ fn images_are_packaged_beside_fonts_and_carried_by_the_browser_bundle() {
         .map(|resource| (resource.name.as_str(), resource.font))
         .collect();
     assert_eq!(carried, [("a/pixel.png", false), ("b.png", false)]);
-    let refused = config(serde_json::json!({"images": {"a.png": "images/animated.png"}})).unwrap();
-    match resources(&refused, &project.0) {
-        Err(ProjectError::Config(VartaError::InvalidArtifact(message))) => {
-            assert!(message.contains("animated"), "{message}");
+    // Packaging decodes every image with the renderer's decoder, and SVG
+    // is refused with its own reason.
+    for (path, reason) in [
+        ("images/corrupt.png", "invalid image data"),
+        ("images/icon.svg", "SVG images are not admitted"),
+    ] {
+        let refused = config(serde_json::json!({"images": {"a.png": path}})).unwrap();
+        match resources(&refused, &project.0) {
+            Err(ProjectError::Config(VartaError::InvalidArtifact(message))) => {
+                assert!(message.contains(reason), "{message}");
+            }
+            other => panic!("{:?}", other.map(|section| section.images().len())),
         }
-        other => panic!("{:?}", other.map(|section| section.images().len())),
     }
     let missing = config(serde_json::json!({"images": {"a.png": "images/missing.png"}})).unwrap();
     assert!(matches!(

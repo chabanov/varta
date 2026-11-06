@@ -179,7 +179,17 @@ pub(crate) fn resources_with_loader(
             data,
         });
     }
-    Ok(Resources::with_images(faces, images).map_err(VartaError::from)?)
+    let section = Resources::with_images(faces, images).map_err(VartaError::from)?;
+    // Every image decodes with the native renderer's own decoder and limits
+    // now, so the artifact always loads in the shell.
+    varta_runtime::ViewImageSet::decode(
+        section
+            .images()
+            .iter()
+            .map(|image| (image.name.as_str(), image.data.as_slice())),
+    )
+    .map_err(|error| VartaError::InvalidArtifact(format!("images: {error}")))?;
+    Ok(section)
 }
 
 #[cfg(test)]

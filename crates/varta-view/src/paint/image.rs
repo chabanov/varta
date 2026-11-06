@@ -1,16 +1,18 @@
-//! The replaced content of an `img`: its packaged image stretched over the
-//! content box (Chrome's initial `object-fit: fill`), whose edges are snapped
-//! to whole paint pixels before DPI as Blink snaps its destination rectangle.
+//! The replaced content of an `img`: its current image frame in its object
+//! rectangle (CSS Images 3 `object-fit`/`object-position`; the initial
+//! `fill` stretches it over the content box), whose edges are snapped to
+//! whole paint pixels before DPI as Blink snaps its destination rectangle,
+//! clipped to the content box.
 //! The content-box curve of a rounded image clips it (the content clip of
 //! `clip_scopes`), the ancestors' rectangular clip as for a background, and
 //! opacity and scaling come from the element's group and transform scopes.
 use super::{ClipMask, PaintError, Primitive, Recording, Surface, clipped, snap};
 use crate::image::ImageDraw;
 use crate::layout::BoxGeometry;
+use crate::style::Environment;
 use crate::tree::Tree;
 use std::sync::Arc;
 use tiny_skia::{Color, Paint, Rect, Transform};
-use varta_common::view::Attribute;
 
 impl Surface<'_> {
     /// Record one image draw. Images are always recorded (an immediate
@@ -48,36 +50,52 @@ fn layout_units(rect: crate::BoxRect) -> crate::BoxRect {
     }
 }
 
-/// Paint `id`'s image into its snapped content box; `rounded` when its
-/// content-box curve clips it.
+/// Paint `id`'s image: its current frame in its object rectangle
+/// (`object-fit`, `object-position`), snapped to whole paint pixels and
+/// clipped to its content box; `rounded` when its content-box curve clips
+/// it. An `img` without an image paints nothing.
 pub(super) fn paint(
     surface: &mut Surface<'_>,
-    tree: &Tree,
+    (tree, env): (&Tree, &Environment),
     id: u32,
     (bounds, rounded): (BoxGeometry, bool),
 ) -> Result<(), PaintError> {
-    let image = tree
-        .element(id)
-        .and_then(|element| element.attributes.get(&Attribute::Src))
-        .and_then(|name| tree.images.0.as_ref()?.get(name).cloned())
-        .ok_or(PaintError::Unsupported(id))?;
-    let content = snap::rect(layout_units(bounds.content));
-    let Some(rect) = Rect::from_xywh(content.x, content.y, content.width, content.height) else {
-        // An empty content box draws nothing.
+    let Some(shown) = crate::image::style::shown(tree, env, id) else {
         return Ok(());
     };
-    let Some(visible) = clipped(content, surface.local_clip(bounds.clip)) else {
+    let object = crate::image::style::object_rect(tree, env, id, shown.natural, bounds.content)
+        .ok_or(PaintError::Unsupported(id))?;
+    let object = snap::rect(layout_units(object));
+    let content = snap::rect(layout_units(bounds.content));
+    let Some(rect) = Rect::from_xywh(object.x, object.y, object.width, object.height) else {
+        // An empty object draws nothing.
+        return Ok(());
+    };
+    let Some(within) = clipped(content, surface.local_clip(bounds.clip)) else {
+        return Ok(());
+    };
+    let Some(visible) = within.intersect(&rect) else {
         return Ok(());
     };
     let mask = if visible == rect {
         None
     } else {
-        Some(surface.mask(visible)?)
+        Some(surface.mask(within)?)
     };
+    let elapsed = tree.images.now
+        - tree
+            .images
+            .started
+            .get(&id)
+            .copied()
+            .unwrap_or(tree.images.now);
     surface.fill_image(
         id,
         ImageDraw {
-            image: Arc::clone(&image),
+            frame: shown.image.frame_at(elapsed),
+            image: Arc::clone(&shown.image),
+            orientation: shown.orientation,
+            filter: crate::image::style::filter(tree, env, id),
             rect,
             rounded,
         },

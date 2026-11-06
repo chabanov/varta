@@ -3,7 +3,8 @@ use super::super::{
     VERSION_AT,
 };
 use super::*;
-use varta_common::view::images::{MAX_IMAGE_DIMENSION, PngRefusal};
+use varta_common::view::images::ImageFormat;
+use varta_common::view::images::ImageRefusal;
 
 const PAYLOAD: &[u8] = b"\0asm\x01\0\0\0";
 /// A valid 1x1 RGBA PNG.
@@ -14,8 +15,6 @@ const PIXEL: [u8; 70] = [
     0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
     0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 ];
-/// Where the IHDR width sits in [`PIXEL`].
-const WIDTH_IN_PNG: usize = 16;
 const NAME: &str = "a.png";
 
 fn image(name: &str) -> ImageResource {
@@ -76,13 +75,12 @@ fn image_names_bytes_and_structure_are_checked() {
     let mut large = image(NAME);
     large.data.resize(MAX_IMAGE_BYTES + 1, 0);
     assert_eq!(refused(vec![large]), ResourceError::ImageSize(0));
-    let mut wide = image(NAME);
-    wide.data[WIDTH_IN_PNG..WIDTH_IN_PNG + size_of::<u32>()]
-        .copy_from_slice(&(MAX_IMAGE_DIMENSION + 1).to_be_bytes());
+    let mut svg = image(NAME);
+    svg.data = b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec();
     assert!(matches!(
-        refused(vec![wide]),
+        refused(vec![svg]),
         ResourceError::Image {
-            source: PngRefusal::Dimensions { .. },
+            source: ImageRefusal::Svg,
             ..
         }
     ));
@@ -103,18 +101,16 @@ fn tampered_and_inconsistent_image_sections_are_refused() {
         Resources::decode(&file, PAYLOAD),
         Err(ResourceError::ImageDigest(1))
     );
-    let mut dimensions = bytes.clone();
-    dimensions[IMAGE_HEADER_BYTES + WIDTH_AT] = 2;
-    assert_eq!(
-        Resources::decode(&dimensions, PAYLOAD),
-        Err(ResourceError::ImageDimensions(0))
-    );
-    let mut reserved = bytes.clone();
-    reserved[IMAGE_HEADER_BYTES + RESERVED_AT] = 1;
-    assert_eq!(
-        Resources::decode(&reserved, PAYLOAD),
-        Err(ResourceError::Reserved)
-    );
+    // A descriptor whose format is not the file's own, or unknown.
+    for code in [ImageFormat::Jpeg.code(), 0] {
+        let mut format = bytes.clone();
+        format[IMAGE_HEADER_BYTES + FORMAT_AT..][..size_of::<u16>()]
+            .copy_from_slice(&code.to_le_bytes());
+        assert_eq!(
+            Resources::decode(&format, PAYLOAD),
+            Err(ResourceError::ImageFormat(0))
+        );
+    }
     let mut none = bytes.clone();
     none[IMAGE_COUNT_AT..IMAGE_COUNT_AT + size_of::<u32>()].copy_from_slice(&0u32.to_le_bytes());
     assert_eq!(

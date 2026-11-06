@@ -778,8 +778,8 @@ fn alignment(value: &str) -> Option<AlignItems> {
 enum Measure {
     Text(TextShape),
     Control(controls::ControlSize),
-    /// A replaced image's natural size (`replaced::compute`).
-    Image((f32, f32)),
+    /// A replaced image's natural size and ratio (`replaced::compute`).
+    Image(replaced::Replaced),
 }
 
 /// Measurements prepared before a layout pass, by node.
@@ -1348,6 +1348,17 @@ fn build_one(
                 CssProperty::Overflow if element.tag == Tag::Img && value != "visible" => {
                     return Err(LayoutError::Unsupported(id));
                 }
+                // An image's own placement and sizing (`replaced`, the
+                // image paint); `aspect-ratio` is admitted on images only.
+                CssProperty::ObjectFit | CssProperty::ObjectPosition | CssProperty::AspectRatio
+                    if element.tag == Tag::Img => {}
+                // Inherited image properties have no effect on other boxes.
+                CssProperty::ImageOrientation | CssProperty::ImageRendering => {}
+                // `vertical-align` applies to inline-level boxes (CSS Inline
+                // 3 §4.2); a block-level box ignores it.
+                CssProperty::VerticalAlign
+                    if element.tag != Tag::Img || !replaced::inline(tree, env, id) => {}
+                CssProperty::VerticalAlign if value == "baseline" => {}
                 CssProperty::Display => {
                     style.display = match value.as_str() {
                         "flex" => Display::Flex,
@@ -1648,7 +1659,8 @@ fn image_leaf(
     (id, mut style): (u32, Style),
 ) -> Result<(NodeId, bool), LayoutError> {
     let engine_error = |e: taffy::TaffyError| LayoutError::Engine(e.to_string());
-    let natural = replaced::natural_size(tree, id).ok_or(LayoutError::Unsupported(id))?;
+    let natural = replaced::replaced(tree, env, id)?;
+    replaced::dimension_hints(tree, env, id, &mut style);
     style.item_is_replaced = true;
     let inline = replaced::inline(tree, env, id);
     if inline {

@@ -3274,6 +3274,12 @@ not imply complete CSS rendering or typography acceptance.
 | 26 | `aria-invalid` | all | `true` \| `false` |
 | 27 | `aria-hidden` | all | `true` \| `false` |
 | 28 | `rows` | `textarea` | positive integer without sign or leading zeros |
+| 29 | `width` | `img` | count: `0` or a positive integer without sign or leading zeros |
+| 30 | `height` | `img` | count: `0` or a positive integer without sign or leading zeros |
+| 31 | `srcset` | `img` | image candidates: `<resource> [<number>x \| <integer>w]?`, comma-separated |
+| 32 | `sizes` | `img` | source sizes: `[(min-width: <length>) \| (max-width: <length>)] <length>`, comma-separated, the last unconditional |
+| 33 | `decoding` | `img` | `sync` \| `async` \| `auto` |
+| 34 | `loading` | `img` | `eager` \| `lazy` |
 <!-- generated:view-attributes:end -->
 
 **CSS properties.**
@@ -3355,6 +3361,12 @@ not imply complete CSS rendering or typography acceptance.
 | 72 | `border-bottom` | `none \| [<length> \|\| solid \|\| <color>]` | — |
 | 73 | `border-left` | `none \| [<length> \|\| solid \|\| <color>]` | — |
 | 74 | `resize` | `none \| vertical` | textarea only; treated as `none` with `field-sizing: content` |
+| 75 | `object-fit` | `fill \| contain \| cover \| none \| scale-down` | replaced elements (`img`) |
+| 76 | `object-position` | `[left \| center \| right \| <length-percentage>] [top \| center \| bottom \| <length-percentage>]?` | replaced elements (`img`) |
+| 77 | `image-rendering` | `auto \| smooth \| high-quality \| pixelated \| crisp-edges` | replaced elements (`img`) |
+| 78 | `aspect-ratio` | `auto \|\| [<number> [/ <number>]?]` | positive ratio terms |
+| 79 | `vertical-align` | `baseline \| sub \| super \| text-top \| text-bottom \| middle \| top \| bottom \| <length-percentage>` | inline-level boxes |
+| 80 | `image-orientation` | `from-image \| none` | inherited |
 <!-- generated:view-css-properties:end -->
 
 **Events.**

@@ -24,6 +24,8 @@ fn attribute(grammar: v::AttributeValue) -> Value {
         A::ElementType => ("elementType", None),
         A::Href => ("href", None),
         A::Resource => ("resource", None),
+        A::ImageCandidates => ("imageCandidates", None),
+        A::SourceSizes => ("sourceSizes", None),
     };
     json!({"kind":kind,"values":values})
 }

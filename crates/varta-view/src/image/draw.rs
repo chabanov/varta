@@ -3,7 +3,7 @@
 //! the module documentation of `image`) into a small pixel block, which is
 //! then composited through the ordinary rectangle path, so edge coverage,
 //! clip masks, opacity and blending behave as for any other fill.
-use super::{Image, Level};
+use super::{Frame, Image, Level};
 use std::sync::Arc;
 use tiny_skia::{
     BlendMode, FilterQuality, Mask, Paint, Pattern, Pixmap, Rect, SpreadMode, Transform,
@@ -16,10 +16,28 @@ const LEVEL_BIAS: f32 = 0.5;
 const CHANNEL_MAX: f32 = 255.0;
 const HALF: f32 = 0.5;
 
-/// One image drawn into `rect` (CSS pixels before the draw transform).
+/// How texels are filtered (CSS Images 3 §5.4 `image-rendering`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Filter {
+    /// `auto`, `smooth`, `high-quality`: bilinear and levels.
+    Smooth,
+    /// `pixelated` (§5.2): per axis, nearest-neighbor scaling to the integer
+    /// multiple of the natural size closest to the target (at least 1),
+    /// then the rest of the way as for smooth.
+    Pixelated,
+    /// `crisp-edges` (§5.2): nearest-neighbor scaling, which the
+    /// specification admits (it neither blurs edges nor blends colours).
+    Nearest,
+}
+
+/// One frame of an image drawn into `rect` (CSS pixels before the draw
+/// transform), with an EXIF orientation applied.
 #[derive(Debug, Clone)]
 pub(crate) struct ImageDraw {
     pub image: Arc<Image>,
+    pub frame: usize,
+    pub orientation: u8,
+    pub filter: Filter,
     pub rect: Rect,
     /// The image is clipped by its rounded content box, whose coverage is
     /// then its only edge coverage: Blink fills the rounded rectangle with
@@ -30,6 +48,9 @@ pub(crate) struct ImageDraw {
 impl PartialEq for ImageDraw {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.image, &other.image)
+            && self.frame == other.frame
+            && self.orientation == other.orientation
+            && self.filter == other.filter
             && self.rect == other.rect
             && self.rounded == other.rounded
     }
@@ -74,10 +95,66 @@ fn bilinear(level: &Level, u: f32, v: f32) -> [f32; 4] {
     out
 }
 
-/// The image's color at level of detail `lod`, at `(u, v)` in image pixels:
-/// bilinear within the two nearest levels and linear between them.
-fn sample(image: &Image, lod: f32, u: f32, v: f32) -> [u8; 4] {
-    let last = image.levels.len() - 1;
+/// The stored image coordinates of oriented coordinates `(u, v)` for an
+/// EXIF `orientation` of a stored `width` x `height` image (EXIF 2.32
+/// Orientation tag: the stored 0th row and column are drawn at the named
+/// sides).
+fn stored(orientation: u8, (width, height): (f32, f32), (u, v): (f32, f32)) -> (f32, f32) {
+    match orientation {
+        2 => (width - u, v),
+        3 => (width - u, height - v),
+        4 => (u, height - v),
+        5 => (v, u),
+        6 => (v, height - u),
+        7 => (width - v, height - u),
+        8 => (width - v, u),
+        _ => (u, v),
+    }
+}
+
+/// The nearest texel of `level` at `(u, v)`, edges clamped.
+fn nearest(level: &Level, u: f32, v: f32) -> [u8; 4] {
+    let clamp = |value: f32, length: u32| (value.floor().max(0.0) as u32).min(length - 1) as usize;
+    let at = (clamp(v, level.height) * level.width as usize + clamp(u, level.width))
+        * DECODED_PIXEL_BYTES;
+    let mut out = [0; 4];
+    out.copy_from_slice(&level.pixels[at..at + DECODED_PIXEL_BYTES]);
+    out
+}
+
+/// Bilinear sample at `(u, v)` (stored image pixels) of the image
+/// nearest-neighbor scaled by the integer `factors`: the intermediate image
+/// of `pixelated`, whose texel `(x, y)` is the stored texel
+/// `(x / factor, y / factor)`.
+fn pixelated(level: &Level, factors: (f32, f32), u: f32, v: f32) -> [u8; 4] {
+    let (fx, fy) = factors;
+    let (width, height) = (level.width as f32 * fx, level.height as f32 * fy);
+    let x = u * fx - HALF;
+    let y = v * fy - HALF;
+    let (x0, y0) = (x.floor(), y.floor());
+    let (wx, wy) = (x - x0, y - y0);
+    let texel = |ix: f32, iy: f32| {
+        let ix = ix.clamp(0.0, width - 1.0);
+        let iy = iy.clamp(0.0, height - 1.0);
+        nearest(level, (ix + HALF) / fx, (iy + HALF) / fy)
+    };
+    let mut out = [0.0f32; 4];
+    for (iy, weight_y) in [(y0, 1.0 - wy), (y0 + 1.0, wy)] {
+        for (ix, weight_x) in [(x0, 1.0 - wx), (x0 + 1.0, wx)] {
+            let color = texel(ix, iy);
+            for (channel, total) in out.iter_mut().enumerate() {
+                *total += f32::from(color[channel]) * weight_x * weight_y;
+            }
+        }
+    }
+    out.map(|value| (value + HALF).floor().clamp(0.0, CHANNEL_MAX) as u8)
+}
+
+/// The frame's color at level of detail `lod`, at `(u, v)` in stored image
+/// pixels: bilinear within the two nearest levels and linear between them.
+fn sample(frame: &Frame, lod: f32, u: f32, v: f32) -> [u8; 4] {
+    let image = &frame.levels[0];
+    let last = frame.levels.len() - 1;
     let lower = (lod.floor() as usize).min(last);
     let weight = if lower == last {
         0.0
@@ -85,11 +162,11 @@ fn sample(image: &Image, lod: f32, u: f32, v: f32) -> [u8; 4] {
         lod - lod.floor()
     };
     let at = |index: usize| {
-        let level = &image.levels[index];
+        let level = &frame.levels[index];
         bilinear(
             level,
-            u * level.width as f32 / image.width() as f32,
-            v * level.height as f32 / image.height() as f32,
+            u * level.width as f32 / image.width as f32,
+            v * level.height as f32 / image.height as f32,
         )
     };
     let near = at(lower);
@@ -145,12 +222,23 @@ pub(crate) fn draw_image(
     ) else {
         return;
     };
-    let image = &draw.image;
+    let image: &Image = &draw.image;
+    let frame = &image.frames[draw.frame.min(image.frames.len() - 1)];
+    let stored_size = (image.width() as f32, image.height() as f32);
+    let (oriented_width, oriented_height) = image.oriented_size(draw.orientation);
     let (scale_x, scale_y) = (
-        device.width() / image.width() as f32,
-        device.height() / image.height() as f32,
+        device.width() / oriented_width as f32,
+        device.height() / oriented_height as f32,
     );
     let lod = level_of_detail(scale_x.max(scale_y));
+    // `pixelated`: the integer multiple of the natural size closest to the
+    // target on each axis (at least 1); at 1 on both axes the rest is a
+    // smooth scale of the image itself.
+    let factors = (scale_x.round().max(1.0), scale_y.round().max(1.0));
+    let filter = match draw.filter {
+        Filter::Pixelated if factors == (1.0, 1.0) => Filter::Smooth,
+        filter => filter,
+    };
     let Some(mut block) = Pixmap::new(area.width(), area.height()) else {
         return;
     };
@@ -159,10 +247,18 @@ pub(crate) fn draw_image(
         let v = (area.y() as f32 + row as f32 + HALF - device.y()) / scale_y;
         for column in 0..area.width() {
             let u = (area.x() as f32 + column as f32 + HALF - device.x()) / scale_x;
+            let (u, v) = stored(draw.orientation, stored_size, (u, v));
             let at = (row as usize * block_width + column as usize) * DECODED_PIXEL_BYTES;
-            block.data_mut()[at..at + DECODED_PIXEL_BYTES]
-                .copy_from_slice(&sample(image, lod, u, v));
+            let color = match filter {
+                Filter::Smooth => sample(frame, lod, u, v),
+                Filter::Pixelated => pixelated(&frame.levels[0], factors, u, v),
+                Filter::Nearest => nearest(&frame.levels[0], u, v),
+            };
+            block.data_mut()[at..at + DECODED_PIXEL_BYTES].copy_from_slice(&color);
         }
+    }
+    if let Some(transform) = &image.deferred {
+        transform.apply_premultiplied(block.data_mut());
     }
     // A rounded image takes its edge coverage from the clip alone.
     let (fill, anti_alias) = if draw.rounded {

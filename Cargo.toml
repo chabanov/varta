@@ -43,7 +43,9 @@ tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", 
 # image-rs reference decoder in safe Rust (it forbids unsafe code); its
 # inflate crates (fdeflate, miniz_oxide) are pure Rust. The decoder's own
 # allocation limit is set from the view image limits.
-png = "=0.17.16"
+png = "=0.18.1"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+moxcms = { version = "=0.8.1", default-features = false }
 # Font outlines for the CPU text renderer; already used transitively by Parley.
 skrifa = "=0.44.0"
 # Unicode grapheme boundaries for safe native text editing.

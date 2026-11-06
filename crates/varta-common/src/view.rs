@@ -209,6 +209,12 @@ coded! {
         AriaInvalid = 26 => "aria-invalid",
         AriaHidden = 27 => "aria-hidden",
         Rows = 28 => "rows",
+        Width = 29 => "width",
+        Height = 30 => "height",
+        Srcset = 31 => "srcset",
+        Sizes = 32 => "sizes",
+        Decoding = 33 => "decoding",
+        Loading = 34 => "loading",
     }
 }
 
@@ -303,6 +309,12 @@ coded! {
         BorderBottom = 72 => "border-bottom",
         BorderLeft = 73 => "border-left",
         Resize = 74 => "resize",
+        ObjectFit = 75 => "object-fit",
+        ObjectPosition = 76 => "object-position",
+        ImageRendering = 77 => "image-rendering",
+        AspectRatio = 78 => "aspect-ratio",
+        VerticalAlign = 79 => "vertical-align",
+        ImageOrientation = 80 => "image-orientation",
     }
 }
 
@@ -713,6 +725,13 @@ pub enum AttributeValue {
     Href,
     /// A path of a bundled artifact resource, resolved against the asset base.
     Resource,
+    /// An HTML `srcset` (§4.8.4.2.1): comma-separated image candidates, each
+    /// a `Resource` with an optional density (`1.5x`) or width (`400w`)
+    /// descriptor.
+    ImageCandidates,
+    /// An HTML `sizes` source size list (§4.8.4.2.2): optional media
+    /// conditions with lengths, the last length unconditional.
+    SourceSizes,
 }
 impl AttributeValue {
     #[must_use]
@@ -750,6 +769,12 @@ impl AttributeValue {
                 "internal route: `#fragment` or `/path[?query][#fragment]`, never `//`; or an absolute `https://`/`http://` URL matching a `{OPEN_URL_CAPABILITY}` grant"
             ),
             Self::Resource => "bundled resource path".into(),
+            Self::ImageCandidates => {
+                "image candidates: `<resource> [<number>x | <integer>w]?`, comma-separated".into()
+            }
+            Self::SourceSizes => {
+                "source sizes: `[(min-width: <length>) | (max-width: <length>)] <length>`, comma-separated, the last unconditional".into()
+            }
         }
     }
 }
@@ -758,6 +783,9 @@ const BOOLEAN_STATE: &[&str] = &["true", "false"];
 const LIVE_REGIONS: &[&str] = &["off", "polite", "assertive"];
 const CURRENT: &[&str] = &["page", "step", "location", "date", "time", "true", "false"];
 const TABINDEX: &[&str] = &["0", "-1"];
+/// HTML `img` `decoding` (§4.8.4.3.1) and `loading` (§2.5.7) keywords.
+const DECODING: &[&str] = &["sync", "async", "auto"];
+const LOADING: &[&str] = &["eager", "lazy"];
 
 impl Attribute {
     /// Elements that may carry the attribute; any other element invalidates the batch.
@@ -789,7 +817,14 @@ impl Attribute {
             Self::Selected => Tags::Only(&[T::Option]),
             Self::For => Tags::Only(&[T::Label]),
             Self::Href => Tags::Only(&[T::A]),
-            Self::Src | Self::Alt => Tags::Only(&[T::Img]),
+            Self::Src
+            | Self::Alt
+            | Self::Width
+            | Self::Height
+            | Self::Srcset
+            | Self::Sizes
+            | Self::Decoding
+            | Self::Loading => Tags::Only(&[T::Img]),
             Self::Max => Tags::Only(&[T::Progress]),
             Self::Rows => Tags::Only(&[T::Textarea]),
         }
@@ -806,6 +841,11 @@ impl Attribute {
             Self::Maxlength => V::Count,
             Self::Max => V::Number,
             Self::Rows => V::PositiveCount,
+            Self::Width | Self::Height => V::Count,
+            Self::Srcset => V::ImageCandidates,
+            Self::Sizes => V::SourceSizes,
+            Self::Decoding => V::Keywords(DECODING),
+            Self::Loading => V::Keywords(LOADING),
             Self::Href => V::Href,
             Self::Src => V::Resource,
             Self::Tabindex => V::Keywords(TABINDEX),
@@ -1006,6 +1046,16 @@ impl CssProperty {
             Self::TransitionTimingFunction => "[linear | ease | ease-in | ease-out | ease-in-out]#",
             Self::FieldSizing => "fixed | content",
             Self::Resize => "none | vertical",
+            Self::ObjectFit => "fill | contain | cover | none | scale-down",
+            Self::ObjectPosition => {
+                "[left | center | right | <length-percentage>] [top | center | bottom | <length-percentage>]?"
+            }
+            Self::ImageRendering => "auto | smooth | high-quality | pixelated | crisp-edges",
+            Self::AspectRatio => "auto || [<number> [/ <number>]?]",
+            Self::VerticalAlign => {
+                "baseline | sub | super | text-top | text-bottom | middle | top | bottom | <length-percentage>"
+            }
+            Self::ImageOrientation => "from-image | none",
         }
     }
 }
@@ -1026,6 +1076,12 @@ impl CssProperty {
             Self::FontFamily => Some("artifact fonts or generic families; no CSS-wide keywords"),
             Self::FieldSizing => Some("textarea only"),
             Self::Resize => Some("textarea only; treated as `none` with `field-sizing: content`"),
+            Self::ObjectFit | Self::ObjectPosition | Self::ImageRendering => {
+                Some("replaced elements (`img`)")
+            }
+            Self::AspectRatio => Some("positive ratio terms"),
+            Self::VerticalAlign => Some("inline-level boxes"),
+            Self::ImageOrientation => Some("inherited"),
             _ => None,
         }
     }
@@ -1478,6 +1534,12 @@ mod tests {
             P::TransitionTimingFunction => &["ease-out"],
             P::FieldSizing => &["content"],
             P::Resize => &["vertical", "none"],
+            P::ObjectFit => &["contain", "scale-down"],
+            P::ObjectPosition => &["left top", "50% 25%", "right", "4px center"],
+            P::ImageRendering => &["pixelated", "auto"],
+            P::AspectRatio => &["auto", "16 / 9", "2", "auto 4 / 3"],
+            P::VerticalAlign => &["middle", "text-top", "-2px", "10%"],
+            P::ImageOrientation => &["none", "from-image"],
         }
     }
 

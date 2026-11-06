@@ -3,7 +3,7 @@
 //! premultiplied channels with integer kernels that truncate: a two-tap box
 //! on an axis of even length, a 1-2-1 kernel on an odd one, and a single tap
 //! on an axis of one pixel.
-use super::{Image, ImageError, Level};
+use super::{ImageError, Level};
 use varta_common::view::images::DECODED_PIXEL_BYTES;
 
 /// Source taps (offsets from twice the output index) and weights along an
@@ -55,14 +55,14 @@ fn halve(level: &Level) -> Level {
     }
 }
 
-/// The image and its level chain, charging every level's bytes to `charge`
+/// A frame and its level chain, charging every level's bytes to `charge`
 /// before it is allocated.
 pub(super) fn build(
     width: u32,
     height: u32,
     pixels: Vec<u8>,
     mut charge: impl FnMut(usize) -> Result<(), ImageError>,
-) -> Result<Image, ImageError> {
+) -> Result<Vec<Level>, ImageError> {
     charge(pixels.len())?;
     let mut levels = vec![Level {
         width,
@@ -81,5 +81,5 @@ pub(super) fn build(
         let next = halve(last);
         levels.push(next);
     }
-    Ok(Image { levels })
+    Ok(levels)
 }

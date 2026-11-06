@@ -178,6 +178,12 @@ declare namespace JSX {
     img: Attributes & {
       src?: string;
       alt?: string;
+      width?: string;
+      height?: string;
+      srcset?: string;
+      sizes?: string;
+      decoding?: string;
+      loading?: string;
     };
     aside: Attributes;
   }

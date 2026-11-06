@@ -1,6 +1,6 @@
 use super::*;
 use crate::{Access, BatchWriter as B, Broker, LayoutError, PaintError, Renderer, View, Violation};
-use varta_common::view::images::MAX_IMAGE_DIMENSION;
+use varta_common::view::images::{ImageRefusal, MAX_IMAGE_DIMENSION};
 use varta_common::view::{Attribute as A, CssProperty as P};
 
 struct Denied;
@@ -82,7 +82,7 @@ fn every_color_type_decodes_to_premultiplied_rgba() {
     .unwrap();
     assert_eq!(images.len(), 3);
     assert_eq!(images.size("rgba.png"), Some((2, 1)));
-    let pixels = |name| images.get(name).unwrap().levels[0].pixels.clone();
+    let pixels = |name| images.get(name).unwrap().frames[0].levels[0].pixels.clone();
     // Skia's rounding premultiplication: 200 * 128 / 255 = 100.39 -> 100.
     assert_eq!(pixels("rgba.png"), [100, 50, 25, 128, 1, 2, 3, 255]);
     assert_eq!(pixels("rgb.png"), [10, 20, 30, 255]);
@@ -100,7 +100,7 @@ fn level_chains_follow_skia_kernels_and_sizes() {
     let pixels: Vec<u8> = row.iter().chain(row.iter()).copied().collect();
     let png = encode(5, 2, png::ColorType::Rgba, &pixels);
     let images = set(&[("ramp.png", &png)]);
-    let levels = &images.get("ramp.png").unwrap().levels;
+    let levels = &images.get("ramp.png").unwrap().frames[0].levels;
     let sizes: Vec<_> = levels.iter().map(|l| (l.width, l.height)).collect();
     assert_eq!(sizes, [(5, 2), (2, 1), (1, 1)]);
     // (0 + 2*40 + 80) / 4 = 40 and (80 + 2*120 + 160) / 4 = 120.
@@ -110,9 +110,7 @@ fn level_chains_follow_skia_kernels_and_sizes() {
     // A one-pixel axis keeps its single row.
     let tall = encode(1, 4, png::ColorType::Rgba, &[0; 16]);
     let images = set(&[("tall.png", &tall)]);
-    let sizes: Vec<_> = images
-        .get("tall.png")
-        .unwrap()
+    let sizes: Vec<_> = images.get("tall.png").unwrap().frames[0]
         .levels
         .iter()
         .map(|l| (l.width, l.height))
@@ -144,17 +142,22 @@ fn sets_are_bounded_named_and_checked_before_decoding() {
         ImageSet::decode(many.iter().map(|(name, bytes)| (name.as_str(), *bytes))).unwrap_err(),
         ImageError::Count(MAX_IMAGES + 1)
     );
-    let mut animated = red.clone();
-    // The first chunk after the header becomes an animation control chunk.
-    let header_end = 8 + 25;
-    animated[header_end + 4..header_end + 8].copy_from_slice(b"acTL");
-    assert!(matches!(
-        refused(&[("a.png", &animated)]),
-        ImageError::Refused {
-            source: PngRefusal::Animated,
-            ..
-        }
-    ));
+    for (bytes, refusal) in [
+        (
+            &b"<svg xmlns='http://www.w3.org/2000/svg'/>"[..],
+            ImageRefusal::Svg,
+        ),
+        (&b"\0\0\0\x1cftypavif\0\0\0\0"[..], ImageRefusal::Avif),
+        (&b"not an image"[..], ImageRefusal::Unknown),
+    ] {
+        assert_eq!(
+            refused(&[("a.img", bytes)]),
+            ImageError::Refused {
+                name: "a.img".into(),
+                source: refusal
+            }
+        );
+    }
     let mut corrupt = red.clone();
     let last_data = corrupt.len() - 12 - 5;
     corrupt[last_data] ^= 0xff;
@@ -164,20 +167,16 @@ fn sets_are_bounded_named_and_checked_before_decoding() {
             name: "a.png".into()
         }
     );
-    let mut wide = red.clone();
-    wide[16..20].copy_from_slice(&(MAX_IMAGE_DIMENSION + 1).to_be_bytes());
-    assert!(matches!(
+    let wide = solid(MAX_IMAGE_DIMENSION + 1, 1, RED);
+    assert_eq!(
         refused(&[("a.png", &wide)]),
-        ImageError::Refused {
-            source: PngRefusal::Dimensions { .. },
-            ..
-        }
-    ));
+        ImageError::Decoded("a.png".into())
+    );
     // Each image fits alone; together they exceed the decoded total.
     let big = solid(2048, 1024, RED);
     assert_eq!(
         refused(&[("a.png", &big), ("b.png", &big), ("c.png", &big)]),
-        ImageError::Decoded
+        ImageError::Decoded("c.png".into())
     );
 }
 

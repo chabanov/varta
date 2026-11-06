@@ -19,8 +19,8 @@ pub use resources::{
 };
 /// The packaged image limits, owned by `varta_common::view::images`.
 pub use varta_common::view::images::{
-    MAX_IMAGE_BYTES, MAX_IMAGE_DECODED_BYTES, MAX_IMAGE_NAME_BYTES, MAX_IMAGE_TOTAL_BYTES,
-    MAX_IMAGES,
+    ImageFormat, MAX_IMAGE_BYTES, MAX_IMAGE_DECODED_BYTES, MAX_IMAGE_NAME_BYTES,
+    MAX_IMAGE_TOTAL_BYTES, MAX_IMAGES,
 };
 
 const MAGIC: &[u8; 8] = b"VARTA3\0\0";

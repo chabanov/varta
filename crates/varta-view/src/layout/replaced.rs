@@ -21,12 +21,117 @@ use taffy::prelude::*;
 use taffy::{LayoutInput, LayoutOutput, MaybeResolve, ResolveOrZero, SizingMode};
 use varta_common::view::{Attribute, CssProperty, Tag};
 
-/// The natural size of `id`'s image in CSS pixels; `None` when the view has
-/// no images or its `src` names none of them (refused by the caller).
-pub(super) fn natural_size(tree: &Tree, id: u32) -> Option<(f32, f32)> {
-    let name = tree.element(id)?.attributes.get(&Attribute::Src)?;
-    let (width, height) = tree.images.0.as_ref()?.size(name)?;
-    Some((width as f32, height as f32))
+/// What sizes a replaced image: its natural size in CSS pixels and its
+/// preferred aspect ratio (width over height), if any.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Replaced {
+    pub natural: (f32, f32),
+    pub ratio: Option<f32>,
+}
+
+/// A positive `<ratio>` (`a` or `a / b`), CSS Values 4 §8.
+fn ratio(text: &str) -> Option<f32> {
+    let mut parts = text.split('/').map(str::trim);
+    let first: f32 = parts.next()?.parse().ok()?;
+    let second: f32 = parts.next().map_or(Some(1.0), |part| part.parse().ok())?;
+    (first > 0.0 && second > 0.0 && parts.next().is_none()).then_some(first / second)
+}
+
+/// The HTML `width`/`height` presentational hint of `id` in CSS pixels.
+fn dimension_hint(tree: &Tree, id: u32, attribute: Attribute) -> Option<f32> {
+    tree.element(id)?.attributes.get(&attribute)?.parse().ok()
+}
+
+/// The natural size and preferred ratio of `id` (HTML §4.8.4.3, §15.4.4;
+/// CSS Sizing 4 §5.1 `aspect-ratio`). An `img` with an image has the
+/// image's density-corrected natural size and ratio, or a ratio its
+/// `aspect-ratio` or `width`/`height` attributes (their `aspect-ratio: auto
+/// w / h` hint) give. An `img` without an image represents nothing: it is an
+/// empty box of zero size, as Chrome lays it out. Refused: one that would
+/// render its alternative text (a non-empty `alt`) or a sized broken-image
+/// box (`width`/`height` attributes or styles), whose look the user agent
+/// chooses (HTML §15.4.4).
+pub(super) fn replaced(tree: &Tree, env: &Environment, id: u32) -> Result<Replaced, LayoutError> {
+    let refused = || LayoutError::Unsupported(id);
+    let element = tree.element(id).ok_or_else(refused)?;
+    let shown = crate::image::style::shown(tree, env, id);
+    let natural_ratio = shown
+        .as_ref()
+        .map(|shown| shown.natural.0 / shown.natural.1);
+    if shown.is_none()
+        && (element
+            .attributes
+            .get(&Attribute::Alt)
+            .is_some_and(|alt| !alt.is_empty())
+            || element.attributes.contains_key(&Attribute::Width)
+            || element.attributes.contains_key(&Attribute::Height)
+            || [
+                CssProperty::Width,
+                CssProperty::Height,
+                CssProperty::MinWidth,
+                CssProperty::MinHeight,
+                CssProperty::AspectRatio,
+            ]
+            .into_iter()
+            .any(|property| tree.computed_property(id, env, property).is_some()))
+    {
+        return Err(refused());
+    }
+    let hint = match (
+        dimension_hint(tree, id, Attribute::Width),
+        dimension_hint(tree, id, Attribute::Height),
+    ) {
+        (Some(width), Some(height)) if width > 0.0 && height > 0.0 => Some(width / height),
+        _ => None,
+    };
+    let preferred = match tree.computed_property(id, env, CssProperty::AspectRatio) {
+        None => natural_ratio.or(hint),
+        Some(value) => {
+            let auto = value.split_ascii_whitespace().any(|word| word == "auto");
+            let given = value
+                .split_ascii_whitespace()
+                .filter(|word| *word != "auto")
+                .collect::<Vec<_>>()
+                .join(" ");
+            let given = (!given.is_empty())
+                .then(|| ratio(&given).ok_or_else(refused))
+                .transpose()?;
+            match (auto, given) {
+                (true, given) => natural_ratio.or(given),
+                (false, given) => given,
+            }
+        }
+    };
+    let natural = shown.map_or((0.0, 0.0), |shown| shown.natural);
+    Ok(Replaced {
+        // A ratio other than the image's keeps its natural width.
+        natural: match preferred {
+            Some(ratio) if Some(ratio) != natural_ratio && natural.0 > 0.0 => {
+                (natural.0, natural.0 / ratio)
+            }
+            _ => natural,
+        },
+        ratio: preferred,
+    })
+}
+
+/// Apply the HTML `width`/`height` presentational hints (§15.4.4, mapped
+/// to `width`/`height` in pixels) where no author style sets the property.
+pub(super) fn dimension_hints(tree: &Tree, env: &Environment, id: u32, style: &mut Style) {
+    for (attribute, property) in [
+        (Attribute::Width, CssProperty::Width),
+        (Attribute::Height, CssProperty::Height),
+    ] {
+        if tree.computed_property(id, env, property).is_some() {
+            continue;
+        }
+        if let Some(value) = dimension_hint(tree, id, attribute) {
+            match property {
+                CssProperty::Width => style.size.width = length(value),
+                _ => style.size.height = length(value),
+            }
+        }
+    }
 }
 
 /// Whether `id` is an `img` laid out as inline-level content of its parent
@@ -146,31 +251,36 @@ pub(super) fn line_item(style: &mut Style) {
     style.align_self = None;
 }
 
-/// The used content-box size of a replaced box with natural size `natural`
-/// for `width`/`height` (definite or `auto`) and min/max constraints.
+/// The used content-box size of a replaced box with `natural` size and
+/// preferred `ratio` for `width`/`height` (definite or `auto`) and min/max
+/// constraints. Without a ratio an `auto` axis keeps its natural size.
 fn used_size(
-    natural: (f32, f32),
+    (natural, ratio): ((f32, f32), Option<f32>),
     width: Option<f32>,
     height: Option<f32>,
     min: (f32, f32),
     max: (f32, f32),
 ) -> (f32, f32) {
-    let (natural_width, natural_height) = natural;
     let clamp = |value: f32, min: f32, max: f32| value.min(max).max(min);
     // CSS 2.1 §10.4: a maximum below the minimum is the minimum.
     let max = (max.0.max(min.0), max.1.max(min.1));
-    let ratio = natural_width / natural_height;
-    match (width, height) {
-        (Some(width), Some(height)) => (clamp(width, min.0, max.0), clamp(height, min.1, max.1)),
-        (Some(width), None) => {
+    match (width, height, ratio) {
+        (Some(width), Some(height), _) => (clamp(width, min.0, max.0), clamp(height, min.1, max.1)),
+        (Some(width), None, Some(ratio)) => {
             let width = clamp(width, min.0, max.0);
             (width, clamp(width / ratio, min.1, max.1))
         }
-        (None, Some(height)) => {
+        (None, Some(height), Some(ratio)) => {
             let height = clamp(height, min.1, max.1);
             (clamp(height * ratio, min.0, max.0), height)
         }
-        (None, None) => constrained(natural, min, max),
+        (None, None, Some(_)) if natural.0 > 0.0 && natural.1 > 0.0 => {
+            constrained(natural, min, max)
+        }
+        (width, height, _) => (
+            clamp(width.unwrap_or(natural.0), min.0, max.0),
+            clamp(height.unwrap_or(natural.1), min.1, max.1),
+        ),
     }
 }
 
@@ -201,7 +311,8 @@ fn constrained(natural: (f32, f32), min: (f32, f32), max: (f32, f32)) -> (f32, f
 /// Taffy's leaf layout for an image: its border box from the known
 /// dimensions a parent imposes (a stretched or flexed size, final for that
 /// axis), otherwise from its own sizes and natural ratio.
-pub(super) fn compute(inputs: LayoutInput, style: &Style, natural: (f32, f32)) -> LayoutOutput {
+pub(super) fn compute(inputs: LayoutInput, style: &Style, replaced: Replaced) -> LayoutOutput {
+    let Replaced { natural, ratio } = replaced;
     let parent = inputs.parent_size;
     let calc = |_: *const (), value: f32| value;
     let padding = style.padding.resolve_or_zero(parent.width, calc);
@@ -256,18 +367,18 @@ pub(super) fn compute(inputs: LayoutInput, style: &Style, natural: (f32, f32)) -
     let known = inputs.known_dimensions;
     let known_width = known.width.map(|value| (value - edges.width).max(0.0));
     let known_height = known.height.map(|value| (value - edges.height).max(0.0));
-    let ratio = natural.0 / natural.1;
+    let sizing = (natural, ratio);
     let (used_width, used_height) = match (known_width, known_height) {
         (Some(width), Some(height)) => (width, height),
         // A parent-imposed size is final on its axis; the other axis follows
         // the ratio unless it has its own size.
         (Some(width), None) => (
             width,
-            used_size(natural, Some(width), height, (width, min.1), (width, max.1)).1,
+            used_size(sizing, Some(width), height, (width, min.1), (width, max.1)).1,
         ),
         (None, Some(height)) => (
             used_size(
-                natural,
+                sizing,
                 width,
                 Some(height),
                 (min.0, height),
@@ -276,9 +387,8 @@ pub(super) fn compute(inputs: LayoutInput, style: &Style, natural: (f32, f32)) -
             .0,
             height,
         ),
-        (None, None) => used_size(natural, width, height, min, max),
+        (None, None) => used_size(sizing, width, height, min, max),
     };
-    debug_assert!(ratio.is_finite());
     LayoutOutput::from_outer_size(Size {
         width: known.width.unwrap_or(used_width + edges.width),
         height: known.height.unwrap_or(used_height + edges.height),
@@ -291,7 +401,7 @@ mod tests {
 
     #[test]
     fn constraint_table_keeps_the_ratio_where_css_does() {
-        let natural = (20.0, 10.0);
+        let natural = ((20.0, 10.0), Some(2.0));
         let none = (0.0, 0.0);
         let unbounded = (f32::INFINITY, f32::INFINITY);
         assert_eq!(
@@ -336,5 +446,19 @@ mod tests {
             used_size(natural, None, None, (30.0, 0.0), (10.0, f32::INFINITY)),
             (30.0, 15.0)
         );
+        // No image: a zero natural size, or the attributes' ratio.
+        let empty = ((0.0, 0.0), None);
+        assert_eq!(used_size(empty, None, None, none, unbounded), (0.0, 0.0));
+        assert_eq!(
+            used_size(empty, Some(80.0), None, none, unbounded),
+            (80.0, 0.0)
+        );
+        assert_eq!(
+            used_size(((0.0, 0.0), Some(2.0)), Some(80.0), None, none, unbounded),
+            (80.0, 40.0)
+        );
+        assert_eq!(ratio("16 / 9"), Some(16.0 / 9.0));
+        assert_eq!(ratio("2"), Some(2.0));
+        assert_eq!(ratio("0 / 1"), None);
     }
 }

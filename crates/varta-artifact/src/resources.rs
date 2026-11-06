@@ -307,8 +307,6 @@ pub enum ResourceError {
     ImageSize(usize),
     #[error("image bytes exceed the total image limit")]
     ImageTotalSize,
-    #[error("decoded images exceed the decoded image limit")]
-    ImageDecodedSize,
     #[error("invalid image name {0:?}: a bounded view resource path")]
     ImageName(String),
     #[error("duplicate image {0:?}")]
@@ -317,14 +315,14 @@ pub enum ResourceError {
     ImageOrder,
     #[error("image {0} does not match its recorded SHA-256")]
     ImageDigest(usize),
-    #[error("image {0} does not have its recorded dimensions")]
-    ImageDimensions(usize),
+    #[error("image {0} is not of its recorded format")]
+    ImageFormat(usize),
     #[error("image {index} ({name:?}): {source}")]
     Image {
         index: usize,
         name: String,
         #[source]
-        source: varta_common::view::images::PngRefusal,
+        source: varta_common::view::images::ImageRefusal,
     },
     #[error("font face {index} ({family:?}): {source}")]
     Face {

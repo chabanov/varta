@@ -262,21 +262,21 @@ fn packaged_images_reach_the_resource_section_and_the_browser_bundle() {
         "{}",
         combined(&refused)
     );
-    // An animated image is refused when the project is packaged.
-    let animated = project("export function main():void{}");
-    fs::create_dir(animated.0.join("images")).unwrap();
+    // A corrupt image is refused when the project is packaged.
+    let corrupt = project("export function main():void{}");
+    fs::create_dir(corrupt.0.join("images")).unwrap();
     let mut bytes = png.to_vec();
-    bytes[37..41].copy_from_slice(b"acTL");
-    fs::write(animated.0.join("images/a.png"), bytes).unwrap();
-    animated.configure("images", serde_json::json!({"a.png":"images/a.png"}));
-    let refused = animated.command(&["build"]);
+    bytes[43] ^= 1;
+    fs::write(corrupt.0.join("images/a.png"), bytes).unwrap();
+    corrupt.configure("images", serde_json::json!({"a.png":"images/a.png"}));
+    let refused = corrupt.command(&["build"]);
     assert!(!refused.status.success());
     assert!(
-        combined(&refused).contains("animated"),
+        combined(&refused).contains("invalid image data"),
         "{}",
         combined(&refused)
     );
-    assert!(!animated.0.join("dist").exists());
+    assert!(!corrupt.0.join("dist").exists());
 }
 
 #[cfg(unix)]

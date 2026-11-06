@@ -416,16 +416,19 @@ impl View {
     /// a new frame should be presented.
     pub fn set_animation_time(&mut self, ms: f64) -> bool {
         let transitions = self.tree.animations.advance(ms);
-        self.tree.scrollbars.advance(ms) || transitions
+        let images = image::advance(&mut self.tree, &self.environment, ms);
+        self.tree.scrollbars.advance(ms) || transitions || images
     }
 
-    /// Whether a CSS transition runs or an overlay scrollbar waits to fade
-    /// or animates: the host keeps advancing the clock at its display rate
+    /// Whether a CSS transition runs, an animated image changes frames or an
+    /// overlay scrollbar waits to fade or animates: the host keeps advancing the clock at its display rate
     /// and presents a frame whenever [`Self::set_animation_time`] reports a
     /// change (none during an overlay bar's fade-out delay).
     #[must_use]
     pub fn animating(&self) -> bool {
-        self.tree.animations.active() || self.tree.scrollbars.animating()
+        self.tree.animations.active()
+            || self.tree.scrollbars.animating()
+            || image::animating(&self.tree, &self.environment)
     }
 
     /// Tell the view which scroll container's overlay scrollbar frame the
@@ -470,7 +473,7 @@ impl View {
     /// an unpackaged asset, and admitted `img` elements are laid out and
     /// drawn natively. Without one (the default), no `img` is laid out.
     pub fn set_images(&mut self, images: Option<std::sync::Arc<ImageSet>>) {
-        self.tree.images = image::Images(images);
+        self.tree.images.set = images;
     }
 
     /// Cancel transient IME state on the currently focused field, if any.

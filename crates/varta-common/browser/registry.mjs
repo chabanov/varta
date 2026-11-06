@@ -11154,6 +11154,79 @@ export const registry = freeze({
         "tags": [
           "textarea"
         ]
+      },
+      {
+        "code": 29,
+        "grammar": {
+          "kind": "count",
+          "values": null
+        },
+        "name": "width",
+        "tags": [
+          "img"
+        ]
+      },
+      {
+        "code": 30,
+        "grammar": {
+          "kind": "count",
+          "values": null
+        },
+        "name": "height",
+        "tags": [
+          "img"
+        ]
+      },
+      {
+        "code": 31,
+        "grammar": {
+          "kind": "imageCandidates",
+          "values": null
+        },
+        "name": "srcset",
+        "tags": [
+          "img"
+        ]
+      },
+      {
+        "code": 32,
+        "grammar": {
+          "kind": "sourceSizes",
+          "values": null
+        },
+        "name": "sizes",
+        "tags": [
+          "img"
+        ]
+      },
+      {
+        "code": 33,
+        "grammar": {
+          "kind": "keywords",
+          "values": [
+            "sync",
+            "async",
+            "auto"
+          ]
+        },
+        "name": "decoding",
+        "tags": [
+          "img"
+        ]
+      },
+      {
+        "code": 34,
+        "grammar": {
+          "kind": "keywords",
+          "values": [
+            "eager",
+            "lazy"
+          ]
+        },
+        "name": "loading",
+        "tags": [
+          "img"
+        ]
       }
     ],
     "buttonTypes": [
@@ -11660,6 +11733,42 @@ export const registry = freeze({
         "grammar": "none | vertical",
         "name": "resize",
         "note": "textarea only; treated as `none` with `field-sizing: content`"
+      },
+      {
+        "code": 75,
+        "grammar": "fill | contain | cover | none | scale-down",
+        "name": "object-fit",
+        "note": "replaced elements (`img`)"
+      },
+      {
+        "code": 76,
+        "grammar": "[left | center | right | <length-percentage>] [top | center | bottom | <length-percentage>]?",
+        "name": "object-position",
+        "note": "replaced elements (`img`)"
+      },
+      {
+        "code": 77,
+        "grammar": "auto | smooth | high-quality | pixelated | crisp-edges",
+        "name": "image-rendering",
+        "note": "replaced elements (`img`)"
+      },
+      {
+        "code": 78,
+        "grammar": "auto || [<number> [/ <number>]?]",
+        "name": "aspect-ratio",
+        "note": "positive ratio terms"
+      },
+      {
+        "code": 79,
+        "grammar": "baseline | sub | super | text-top | text-bottom | middle | top | bottom | <length-percentage>",
+        "name": "vertical-align",
+        "note": "inline-level boxes"
+      },
+      {
+        "code": 80,
+        "grammar": "from-image | none",
+        "name": "image-orientation",
+        "note": "inherited"
       }
     ],
     "cssTypes": {

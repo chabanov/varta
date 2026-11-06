@@ -1369,14 +1369,25 @@ impl Apply<'_, '_, '_> {
         if !valid {
             return Err(self.fail(Violation::InvalidAttributeValue(attribute.name())));
         }
-        if attribute == Attribute::Src
-            && let Some(images) = &self.tree.images.0
-            && !images.contains(value)
+        if matches!(attribute, Attribute::Src | Attribute::Srcset)
+            && let Some(images) = &self.tree.images.set
         {
-            return Err(self.fail(Violation::UnpackagedImage(value.into())));
+            let names = match attribute {
+                Attribute::Src => crate::image::select::named(Some(value), None),
+                _ => crate::image::select::named(None, Some(value)),
+            };
+            if let Some(missing) = names.into_iter().find(|name| !images.contains(name)) {
+                return Err(self.fail(Violation::UnpackagedImage(missing.into())));
+            }
         }
         let element = self.element(node)?;
         let changed = element.attributes.get(&attribute).map(String::as_str) != Some(value);
+        // A new image source restarts the element's animation timeline.
+        if changed && matches!(attribute, Attribute::Src | Attribute::Srcset) {
+            let now = self.tree.images.now;
+            self.tree.images.started.insert(node, now);
+        }
+        let element = self.element(node)?;
         element.attributes.insert(attribute, value.into());
         if changed && attribute == Attribute::Type {
             element.editor.text_epoch = Some(Arc::new(()));

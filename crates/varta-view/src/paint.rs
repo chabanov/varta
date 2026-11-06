@@ -2613,6 +2613,7 @@ fn rasterize_inner_scoped(
     validate_dimensions(width, height, scale)?;
     let env = Environment {
         width: f64::from(width) / f64::from(scale),
+        device_pixel_ratio: f64::from(scale),
         ..*env
     };
     let units = Units::new(&env).ok_or(layout::LayoutError::RootFont)?;
@@ -2959,7 +2960,7 @@ fn rasterize_inner_scoped(
                     &scopes.content.get(&id).cloned(),
                     &scopes.own.get(&id).cloned(),
                 );
-                image::paint(&mut pixmap, tree, id, (geometry[&id], rounded))?;
+                image::paint(&mut pixmap, (tree, &env), id, (geometry[&id], rounded))?;
             }
             pixmap.active_clip = scopes.children.get(&id).cloned();
             if let Some(frame) = flows.get(&id) {

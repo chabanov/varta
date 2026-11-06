@@ -99,6 +99,25 @@ impl BrowserResource {
         })
     }
 
+    /// One image of the artifact's resource section, already admitted and
+    /// decoded at packaging: served with its own format's media type.
+    pub(crate) fn packaged_image(name: &str, bytes: Vec<u8>) -> Result<Self> {
+        validate_name(name)?;
+        let format = varta_artifact::ImageFormat::ALL
+            .into_iter()
+            .find(|format| varta_common::view::images::sniff(&bytes) == Ok(*format))
+            .ok_or_else(|| ProjectError::Usage("unknown packaged image format".into()))?;
+        Ok(Self {
+            name: name.into(),
+            decoded_bytes: 0,
+            bytes,
+            media_type: format.media_type(),
+            extension: format.extension(),
+            font: false,
+            packaged: None,
+        })
+    }
+
     /// Bounded OpenType/TrueType/WOFF/WOFF2 face. Complete font sanitization is
     /// delegated to FontFace before registration or guest execution.
     pub fn font(family: &str, bytes: Vec<u8>) -> Result<Self> {
@@ -258,7 +277,7 @@ pub(crate) fn packaged(section: &Resources) -> Result<Vec<BrowserResource>> {
             section
                 .images()
                 .iter()
-                .map(|image| BrowserResource::png(&image.name, image.data.clone())),
+                .map(|image| BrowserResource::packaged_image(&image.name, image.data.clone())),
         )
         .collect()
 }

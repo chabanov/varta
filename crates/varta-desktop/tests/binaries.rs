@@ -204,7 +204,8 @@ fn a_corrupt_packaged_image_is_refused_before_any_storage_is_created() {
     assert!(!output.status.success());
     let message = stderr(&output);
     assert!(
-        message.starts_with(&format!("{SHELL_LABEL}images: ")) && message.contains("invalid PNG"),
+        message.starts_with(&format!("{SHELL_LABEL}images: "))
+            && message.contains("invalid image data"),
         "{message}"
     );
     assert!(!storage.exists());
