@@ -121,12 +121,17 @@ lay out, draw, hit and name a packaged image through the shell core and
 refuse a corrupt image in `varta-shell` before storage; a CLI smoke test
 packages an image into both distributions.
 
-**Pending owner decision.** The image limits are initial conservative values
-in `varta_common::view::images`: 64 images, 4 MiB per file and 16 MiB in all
-(the browser bundle's per-resource and total values), 4096 px per dimension,
-512 frames per image, 16 MiB of decoded RGBA in all (every frame counted),
-and 32 MiB of retained pixels with their levels. No existing production
-budget changed.
+**Owner decision (2026-11-06).** The image limits in
+`varta_common::view::images` are the extended set: 256 images, 32 MiB per
+file and 128 MiB in all, 16384 px per dimension (a common GPU texture
+maximum), 4096 frames per image, 256 MiB of decoded RGBA in all (every frame
+counted) and 512 MiB of retained pixels with their levels; a host may only
+lower them. The older `browser.resources` inventory uses the same constants.
+New dependencies, all safe Rust with exact pins, are accepted: `png` 0.18.1,
+`image` 0.25.10 (PNG, JPEG, GIF, WebP, BMP and ICO only) and `moxcms` 0.8.1.
+Known before this batch and unrelated to it: `native_inline_probe`'s
+`paint-overlap-hits` case fails its Chrome pixel bound (RGB mean 5.39) on
+`81e26b9` and later; open.
 
 **Open.** AVIF and SVG images; alternative-text and broken-image rendering;
 HDR images; Chrome draws a downscaled `pixelated` image by nearest neighbour

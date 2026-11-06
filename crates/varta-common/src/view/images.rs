@@ -8,22 +8,25 @@
 //!
 //! These values are conservative initial choices pending an owner decision.
 
+/// Image limits: owner decision 2026-11-06 (the "extended" set; a host may
+/// only lower them).
+///
 /// At most this many images in one artifact.
-pub const MAX_IMAGES: usize = 64;
+pub const MAX_IMAGES: usize = 256;
 /// The largest single encoded image (bytes).
-pub const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 /// The largest total of encoded image bytes in one artifact.
-pub const MAX_IMAGE_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_IMAGE_TOTAL_BYTES: usize = 128 * 1024 * 1024;
 /// The largest image width or height (pixels).
-pub const MAX_IMAGE_DIMENSION: u32 = 4096;
+pub const MAX_IMAGE_DIMENSION: u32 = 16384;
 /// At most this many frames in one animated image.
-pub const MAX_IMAGE_FRAMES: usize = 512;
+pub const MAX_IMAGE_FRAMES: usize = 4096;
 /// Bytes per decoded pixel: premultiplied 8-bit RGBA.
 pub const DECODED_PIXEL_BYTES: usize = 4;
 /// The largest total of decoded full-resolution pixels of one artifact's
 /// images, every frame of an animated image counted, in bytes of
 /// premultiplied RGBA.
-pub const MAX_IMAGE_DECODED_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_IMAGE_DECODED_BYTES: usize = 256 * 1024 * 1024;
 /// The largest total of decoded image memory a renderer retains: every
 /// frame's full-resolution pixels and its downscaling levels. A level halves
 /// each axis longer than one pixel, so it holds at most half the pixels of

@@ -4,11 +4,12 @@ use std::collections::BTreeMap;
 use varta_artifact::{FontFace, FontStyle, Resources};
 use varta_common::view::{AttributeValue, Tag, attributes};
 
-pub const MAX_RESOURCES: usize = 64;
-pub const MAX_RESOURCE_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
-pub const MAX_DECODED_BYTES: usize = 16 * 1024 * 1024;
-const MAX_DIMENSION: u32 = 4096;
+// The same image limits as packaged `images` (one source of truth).
+pub const MAX_RESOURCES: usize = varta_common::view::images::MAX_IMAGES;
+pub const MAX_RESOURCE_BYTES: usize = varta_common::view::images::MAX_IMAGE_BYTES;
+pub const MAX_TOTAL_BYTES: usize = varta_common::view::images::MAX_IMAGE_TOTAL_BYTES;
+pub const MAX_DECODED_BYTES: usize = varta_common::view::images::MAX_IMAGE_DECODED_BYTES;
+const MAX_DIMENSION: u32 = varta_common::view::images::MAX_IMAGE_DIMENSION;
 const MAX_NAME_BYTES: usize = 1024;
 
 /// Immutable checked PNG resource, independent of any source filesystem path.
@@ -305,11 +306,16 @@ mod tests {
             assert!(BrowserResource::png(name, png()).is_err(), "{name}");
         }
         let mut large = png();
-        large[16..20].copy_from_slice(&4097u32.to_be_bytes());
+        large[16..20].copy_from_slice(&(MAX_DIMENSION + 1).to_be_bytes());
         assert!(BrowserResource::png("large", large).is_err());
+        // Within the dimension bound, past the decoded total.
         let mut pixels = png();
-        pixels[16..20].copy_from_slice(&4096u32.to_be_bytes());
-        pixels[20..24].copy_from_slice(&4096u32.to_be_bytes());
+        pixels[16..20].copy_from_slice(&MAX_DIMENSION.to_be_bytes());
+        pixels[20..24].copy_from_slice(&MAX_DIMENSION.to_be_bytes());
+        assert!(
+            (MAX_DIMENSION as usize).pow(2) * varta_common::view::images::DECODED_PIXEL_BYTES
+                > MAX_DECODED_BYTES
+        );
         assert!(BrowserResource::png("decoded-limit", pixels).is_err());
         let mut bad = png();
         bad[33..37].copy_from_slice(&u32::MAX.to_be_bytes());
