@@ -7463,6 +7463,9 @@ sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-s1s3).
   preferences, not the OS settings (reduced motion, contrast); (7) gamut
   mapping per the specification differs from Chrome's clipping for colours
   outside sRGB.
+- Gate: `python3 scripts/verify.py full` PASS (3979 Rust tests passed, 0
+  failed, 21 ignored; 218 browser Node tests; conformance baseline), report
+  `target/verification/20261106-130906-pnr2i3f3/report.json` (macOS only).
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
