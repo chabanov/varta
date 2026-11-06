@@ -33,5 +33,7 @@ pub mod value_parser;
 pub mod variants;
 
 pub use canonical::{Supports, VartaSupports};
-pub use compiler::{Build, Compiler, compile};
+pub use compiler::{
+    Build, Compiler, LoadError, NoProjectImports, StylesheetLoader, compile, compile_with_loader,
+};
 pub use error::TailwindError;

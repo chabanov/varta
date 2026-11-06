@@ -278,7 +278,8 @@ fn compile_attempt(
 
 /// Generate the project's Tailwind stylesheet (K8 T1) and serve it as the
 /// text of the entry stylesheet's resource: scan the module graph's class
-/// tokens with the resource as an empty sheet, compile the entry with them
+/// tokens with the resource as an empty sheet, compile the entry (its
+/// relative `@import`s read through the same loader) with them
 /// (`varta-tailwind`, canonical form, `@supports` resolved against the L0
 /// grammar), and serve the result for the compilation that follows. The same
 /// sources always give the same stylesheet bytes.
@@ -302,7 +303,8 @@ fn tailwind_stylesheet(
         path: path.clone(),
         source,
     };
-    let mut compiler = varta_tailwind::compile(&raw).map_err(tailwind)?;
+    let mut compiler =
+        varta_tailwind::compile_with_loader(&raw, &path, loader).map_err(tailwind)?;
     let build = compiler
         .build(
             scan.tokens.iter().map(String::as_str),

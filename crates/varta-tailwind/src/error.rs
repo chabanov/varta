@@ -33,9 +33,13 @@ pub enum TailwindError {
     )]
     FileSource(String),
     #[error(
-        "`@import \"{0}\"` cannot be resolved: only the embedded `tailwindcss` stylesheets (`tailwindcss`, `tailwindcss/theme`, `tailwindcss/preflight`, `tailwindcss/utilities`) are importable"
+        "`@import {0}` cannot be resolved: a stylesheet imports the embedded `tailwindcss` package (`tailwindcss`, `tailwindcss/theme`, `tailwindcss/preflight`, `tailwindcss/utilities`) or a project file by a relative `./` or `../` path; URLs are never fetched"
     )]
     Import(String),
+    #[error("`@import \"{specifier}\"`: {reason}")]
+    ImportLoad { specifier: String, reason: String },
+    #[error("`@import` cycle through {0}")]
+    ImportCycle(String),
     #[error("`layer(…)` in an `@import` should come before any other functions or conditions")]
     ImportLayerOrder,
     #[error("exceeded the maximum `@import` depth while resolving `{0}`")]
