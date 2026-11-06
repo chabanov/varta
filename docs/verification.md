@@ -8,15 +8,14 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-06
 
-- **Latest successful full gate:** `target/verification/20261106-164451-rnhotsbe/report.json` passes every
-  command with unchanged inputs: **4301 Rust tests, 0 failures, 25 ignored;
-  185 browser Node tests** (fewer than before because the browser host's
-  stylesheet and cascade logic moved from JavaScript into the Rust engine
-  compiled to Wasm, with its tests); checked-v38 conformance matches its
-  baseline. It covers merged `main` with the K8 T2 CSS engine stages S1–S3
-  and the Wasm style bridge, the K8 T1 Tailwind compiler and its follow-ups,
-  native `img` to the standards, the iteration protocol, overlay scrollbars
-  and the audit fixes.
+- **Latest successful full gate:** `target/verification/20261106-171730-qa6y6wrg/report.json` passes every
+  command with unchanged inputs: **4317 Rust tests, 0 failures, 25 ignored;
+  185 browser Node tests**; checked-v38 conformance matches its baseline. It
+  covers merged `main` with the first K9 D standard library stream (Array,
+  Object, String and Promise methods, iterator helpers, Set methods,
+  `groupBy`, UTC `Date`) on top of the K8 CSS engine with its Wasm bridge,
+  the Tailwind compiler, native `img`, the iteration protocol, overlay
+  scrollbars and the audit fixes.
 - **One full gate at a time:** `verify.py full` waits for the machine-wide
   lock (`VARTA_GATE_LOCK`, default `varta-full-gate.lock` in the temporary
   directory) before taking its fingerprint, so gates of several worktrees
