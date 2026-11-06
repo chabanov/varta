@@ -7422,9 +7422,16 @@ frame bounds.
   grammar refuses a full build at Preflight's `display: none !important`
   (S8) and static tokens such as `w-1/2` at the TSX attribute (S1). The CLI
   tests pin these first violations; the end-to-end test is ignored until T2.
-- Not in T1: JavaScript plugins/config, `@source` file globs, project-relative
-  CSS `@import` (only the embedded package is importable), source maps,
+- Not in T1: JavaScript plugins/config, `@source` file globs, source maps,
   IntelliSense suggestions and candidate canonicalization.
+- Follow-up (owner decisions 2026-11-06): composed class names enumerate
+  through the checker's finite string-literal types (bounded by
+  `MAX_CLASS_COMBINATIONS`; other holes stay errors), and the entry may
+  `@import` project stylesheets by relative path through the project
+  loader under the module path policy (Cascade 5 placement and
+  conditions, cycle, depth, count and byte bounds). Open: the v38 checker
+  types an unannotated `const x = "a"` and `as const` tuple elements as
+  `string`, so those need annotations to be enumerated.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 

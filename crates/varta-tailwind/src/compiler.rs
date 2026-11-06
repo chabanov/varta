@@ -22,11 +22,14 @@ use crate::utils::{escape, segment, unescape};
 use crate::value_parser::{self, ValueNode};
 use crate::variants::{compounds_for_selectors, is_valid_variant_name, substitute_at_variant};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 /// The largest Tailwind entry stylesheet, in bytes.
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
-/// Tailwind's own `@import` recursion bound.
-pub const MAX_IMPORT_DEPTH: usize = 100;
+/// The deepest `@import` chain (the module graph's depth bound).
+pub const MAX_IMPORT_DEPTH: usize = 32;
+/// The most project stylesheets one entry imports (the module graph's count).
+pub const MAX_IMPORTED_FILES: usize = 256;
 /// The most class tokens one build compiles.
 pub const MAX_CANDIDATES: usize = 65_536;
 /// The longest class token, in bytes.
@@ -87,7 +90,7 @@ fn parse_import_params(params: &[ValueNode]) -> Result<Option<ImportParams>, Tai
         if let ValueNode::Function { name, .. } = node
             && name.eq_ignore_ascii_case("url")
         {
-            return Ok(None);
+            return Err(TailwindError::Import(value_parser::to_css(params)));
         }
         if uri.is_none() {
             return Ok(None);
@@ -125,64 +128,199 @@ fn parse_import_params(params: &[ValueNode]) -> Result<Option<ImportParams>, Tai
     }))
 }
 
-/// Inline embedded `@import`/`@reference` rules (port of
-/// `substituteAtImports`).
-fn substitute_imports(ast: &mut Vec<Node>, depth: usize) -> Result<(), TailwindError> {
-    let mut out = Vec::with_capacity(ast.len());
-    for mut node in std::mem::take(ast) {
-        let Node::AtRule { name, params, .. } = &node else {
-            if let Some(children) = node.children_mut() {
-                substitute_imports(children, depth)?;
-            }
-            out.push(node);
-            continue;
-        };
-        if name != "@import" && name != "@reference" {
-            if let Some(children) = node.children_mut() {
-                substitute_imports(children, depth)?;
-            }
-            out.push(node);
-            continue;
-        }
-        let Some(mut parsed) = parse_import_params(&value_parser::parse(params))? else {
-            out.push(node);
-            continue;
-        };
-        if name == "@reference" {
-            parsed.media = Some("reference".into());
-        }
-        if parsed.uri.starts_with("data:")
-            || parsed.uri.starts_with("http://")
-            || parsed.uri.starts_with("https://")
-        {
-            return Err(TailwindError::Import(parsed.uri));
-        }
-        if depth > MAX_IMPORT_DEPTH {
-            return Err(TailwindError::ImportDepth(parsed.uri));
-        }
-        let content =
-            embedded(&parsed.uri).ok_or_else(|| TailwindError::Import(parsed.uri.clone()))?;
-        let mut imported = css_parser::parse(content)?;
-        substitute_imports(&mut imported, depth + 1)?;
-        let mut root = imported;
-        if let Some(layer) = parsed.layer {
-            root = vec![Node::at_rule("@layer", layer, root)];
-        }
-        if let Some(media) = parsed.media {
-            root = vec![Node::at_rule("@media", media, root)];
-        }
-        if let Some(supports) = parsed.supports {
-            let supports = if supports.starts_with('(') {
-                supports
-            } else {
-                format!("({supports})")
-            };
-            root = vec![Node::at_rule("@supports", supports, root)];
-        }
-        out.push(Node::context(BTreeMap::new(), root));
+/// A project stylesheet the host could not resolve or load.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct LoadError(pub String);
+
+/// The host's access to project stylesheets for `@import` (K8): the same
+/// path policy as modules and text resources. Identities are paths.
+pub trait StylesheetLoader {
+    /// The identity of a relative `specifier` imported by `importer`.
+    fn resolve(&self, importer: &Path, specifier: &str) -> Result<PathBuf, LoadError>;
+    /// The text of a resolved stylesheet (bounded, UTF-8).
+    fn load(&self, path: &Path) -> Result<String, LoadError>;
+}
+
+/// A loader that admits no project stylesheet: only the embedded package.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoProjectImports;
+
+impl StylesheetLoader for NoProjectImports {
+    fn resolve(&self, _: &Path, specifier: &str) -> Result<PathBuf, LoadError> {
+        Err(LoadError(format!(
+            "`{specifier}`: this compilation has no project stylesheet loader"
+        )))
     }
-    *ast = out;
+    fn load(&self, path: &Path) -> Result<String, LoadError> {
+        Err(LoadError(format!(
+            "{}: no project stylesheet loader",
+            path.display()
+        )))
+    }
+}
+
+/// `@import` resolution state: the loader, the active import chain (cycle
+/// detection) and the aggregate budgets of project stylesheets.
+struct Imports<'a> {
+    loader: &'a dyn StylesheetLoader,
+    chain: Vec<PathBuf>,
+    files: usize,
+    bytes: usize,
+}
+
+/// Whether a top-level rule may precede `@import` (CSS Cascade 5 §2:
+/// `@import` rules precede all other at-rules and style rules except
+/// `@charset` and empty `@layer` statements).
+fn may_precede_import(node: &Node) -> bool {
+    match node {
+        Node::AtRule { name, nodes, .. } => {
+            name == "@import" || name == "@charset" || (name == "@layer" && nodes.is_empty())
+        }
+        Node::Comment(_) => true,
+        _ => false,
+    }
+}
+
+impl Imports<'_> {
+    /// Inline `@import`/`@reference` rules of one stylesheet (port of
+    /// `substituteAtImports`): the embedded package by name, project files
+    /// by relative path through the loader.
+    fn substitute(&mut self, ast: &mut Vec<Node>, importer: &Path) -> Result<(), TailwindError> {
+        let mut out = Vec::with_capacity(ast.len());
+        let mut preamble = true;
+        for node in std::mem::take(ast) {
+            let is_import = matches!(&node, Node::AtRule { name, .. } if name == "@import");
+            if is_import && !preamble {
+                return Err(TailwindError::Directive(
+                    "`@import` must precede all other rules except `@charset` and `@layer` statements (CSS Cascade 5)".into(),
+                ));
+            }
+            preamble &= may_precede_import(&node);
+            let Node::AtRule { name, params, .. } = &node else {
+                reject_nested_imports(&node)?;
+                out.push(node);
+                continue;
+            };
+            if name != "@import" && name != "@reference" {
+                reject_nested_imports(&node)?;
+                out.push(node);
+                continue;
+            }
+            let Some(mut parsed) = parse_import_params(&value_parser::parse(params))? else {
+                return Err(TailwindError::Import(params.clone()));
+            };
+            if name == "@reference" {
+                parsed.media = Some("reference".into());
+            }
+            let imported = self.import(&parsed.uri, importer)?;
+            out.push(Node::context(
+                BTreeMap::new(),
+                wrap_import(imported, parsed),
+            ));
+        }
+        *ast = out;
+        Ok(())
+    }
+
+    /// The parsed, recursively substituted stylesheet one import names.
+    fn import(&mut self, uri: &str, importer: &Path) -> Result<Vec<Node>, TailwindError> {
+        if self.chain.len() >= MAX_IMPORT_DEPTH {
+            return Err(TailwindError::ImportDepth(uri.to_owned()));
+        }
+        if let Some(content) = embedded(uri) {
+            let mut imported = css_parser::parse(content)?;
+            // The embedded package has no imports of project files.
+            self.chain.push(PathBuf::from(uri));
+            let result = self.substitute(&mut imported, Path::new(uri));
+            self.chain.pop();
+            result?;
+            return Ok(imported);
+        }
+        if !(uri.starts_with("./") || uri.starts_with("../")) {
+            return Err(TailwindError::Import(uri.to_owned()));
+        }
+        let path =
+            self.loader
+                .resolve(importer, uri)
+                .map_err(|error| TailwindError::ImportLoad {
+                    specifier: uri.to_owned(),
+                    reason: error.0,
+                })?;
+        if self.chain.contains(&path) {
+            return Err(TailwindError::ImportCycle(path.display().to_string()));
+        }
+        self.files += 1;
+        if self.files > MAX_IMPORTED_FILES {
+            return Err(TailwindError::Limit {
+                limit: "imported stylesheets",
+                max: MAX_IMPORTED_FILES,
+            });
+        }
+        let text = self
+            .loader
+            .load(&path)
+            .map_err(|error| TailwindError::ImportLoad {
+                specifier: uri.to_owned(),
+                reason: error.0,
+            })?;
+        self.bytes += text.len();
+        if self.bytes > MAX_INPUT_BYTES {
+            return Err(TailwindError::Limit {
+                limit: "entry and imported stylesheet bytes",
+                max: MAX_INPUT_BYTES,
+            });
+        }
+        let mut imported = css_parser::parse(&text)?;
+        self.chain.push(path.clone());
+        let result = self.substitute(&mut imported, &path);
+        self.chain.pop();
+        result?;
+        Ok(imported)
+    }
+}
+
+/// An `@import` below the top level is invalid CSS (CSS Cascade 5 §2);
+/// Varta refuses it rather than ignoring it.
+fn reject_nested_imports(node: &Node) -> Result<(), TailwindError> {
+    let Some(children) = node.children() else {
+        return Ok(());
+    };
+    let mut nested = false;
+    crate::ast::for_each(children, &mut |child, _| {
+        if matches!(child, Node::AtRule { name, .. } if name == "@import") {
+            nested = true;
+        }
+    });
+    if nested {
+        return Err(TailwindError::Directive(
+            "`@import` is only valid at the top level of a stylesheet (CSS Cascade 5)".into(),
+        ));
+    }
     Ok(())
+}
+
+/// Wrap an imported sheet in its import conditions (port of
+/// `buildImportNodes`): `layer()` as `@layer`, media as `@media`,
+/// `supports()` as `@supports`, which is what CSS Cascade 5 §2.1 gives an
+/// import with those conditions.
+fn wrap_import(imported: Vec<Node>, parsed: ImportParams) -> Vec<Node> {
+    let mut root = imported;
+    if let Some(layer) = parsed.layer {
+        root = vec![Node::at_rule("@layer", layer, root)];
+    }
+    if let Some(media) = parsed.media {
+        root = vec![Node::at_rule("@media", media, root)];
+    }
+    if let Some(supports) = parsed.supports {
+        let supports = if supports.starts_with('(') {
+            supports
+        } else {
+            format!("({supports})")
+        };
+        root = vec![Node::at_rule("@supports", supports, root)];
+    }
+    root
 }
 
 /// A `@custom-variant` registration.
@@ -698,16 +836,34 @@ impl std::fmt::Debug for Compiler {
     }
 }
 
-/// Compile a Tailwind entry stylesheet (port of `compile`/`parseCss`).
+/// Compile a Tailwind entry stylesheet that imports only the embedded
+/// package (port of `compile`/`parseCss`).
 pub fn compile(css: &str) -> Result<Compiler, TailwindError> {
+    compile_with_loader(css, Path::new("<entry>"), &NoProjectImports)
+}
+
+/// Compile the Tailwind entry stylesheet `entry` (its identity for
+/// relative imports) with project `@import`s served by `loader`.
+pub fn compile_with_loader(
+    css: &str,
+    entry: &Path,
+    loader: &dyn StylesheetLoader,
+) -> Result<Compiler, TailwindError> {
     if css.len() > MAX_INPUT_BYTES {
         return Err(TailwindError::Limit {
             limit: "entry stylesheet bytes",
             max: MAX_INPUT_BYTES,
         });
     }
-    let mut ast = vec![Node::context(BTreeMap::new(), css_parser::parse(css)?)];
-    substitute_imports(&mut ast, 0)?;
+    let mut sheet = css_parser::parse(css)?;
+    let mut imports = Imports {
+        loader,
+        chain: vec![entry.to_owned()],
+        files: 0,
+        bytes: css.len(),
+    };
+    imports.substitute(&mut sheet, entry)?;
+    let mut ast = vec![Node::context(BTreeMap::new(), sheet)];
 
     let mut parsed = Parsed {
         theme: Theme::new(),
@@ -1068,11 +1224,128 @@ mod tests {
         );
     }
 
+    /// In-memory project stylesheets under `/p`, resolved lexically.
+    struct Files(&'static [(&'static str, &'static str)]);
+    impl StylesheetLoader for Files {
+        fn resolve(&self, importer: &Path, specifier: &str) -> Result<PathBuf, LoadError> {
+            let mut path = importer.parent().unwrap_or(Path::new("/")).to_owned();
+            for part in specifier.split('/') {
+                match part {
+                    "." => {}
+                    ".." => {
+                        path.pop();
+                    }
+                    part => path.push(part),
+                }
+            }
+            Ok(path)
+        }
+        fn load(&self, path: &Path) -> Result<String, LoadError> {
+            self.0
+                .iter()
+                .find(|(name, _)| Path::new(name) == path)
+                .map(|(_, text)| (*text).to_owned())
+                .ok_or_else(|| LoadError(format!("{} not found", path.display())))
+        }
+    }
+
+    fn build_files(
+        css: &str,
+        files: &'static [(&'static str, &'static str)],
+    ) -> Result<String, TailwindError> {
+        compile_with_loader(css, Path::new("/p/app.css"), &Files(files))?
+            .build(["flex"], &VartaSupports)
+            .map(|build| build.css)
+    }
+
     #[test]
-    fn unknown_imports_are_rejected() {
-        assert!(matches!(
-            compile("@import \"./other.css\";").unwrap_err(),
-            TailwindError::Import(_)
-        ));
+    fn project_imports_resolve_relative_to_their_importer() {
+        let css = build_files(
+            "@import \"./parts/base.css\" layer(base);\n@import \"./x.css\" (min-width: 40rem);\n@tailwind utilities;",
+            &[
+                ("/p/parts/base.css", "@import \"../shared/a.css\";\n.base { color: #111; }"),
+                ("/p/shared/a.css", ".a { color: #222; }"),
+                ("/p/x.css", ".x { color: #333; }"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            css,
+            "@layer base {\n  .a {\n    color: #222;\n  }\n  .base {\n    color: #111;\n  }\n}\n@media (min-width: 40rem) {\n  .x {\n    color: #333;\n  }\n}\n.flex {\n  display: flex;\n}\n"
+        );
+    }
+
+    #[test]
+    fn project_imports_keep_their_bounds_and_cascade_rules() {
+        let cycle = build_files(
+            "@import \"./a.css\";",
+            &[
+                ("/p/a.css", "@import \"./b.css\";"),
+                ("/p/b.css", "@import \"./a.css\";"),
+            ],
+        );
+        assert!(
+            matches!(cycle, Err(TailwindError::ImportCycle(_))),
+            "{cycle:?}"
+        );
+        let missing = build_files("@import \"./none.css\";", &[]);
+        assert!(
+            matches!(missing, Err(TailwindError::ImportLoad { .. })),
+            "{missing:?}"
+        );
+        for refused in [
+            "@import url(\"./a.css\");",
+            "@import \"https://example.com/a.css\";",
+            "@import \"a.css\";",
+            "@import \"/p/a.css\";",
+        ] {
+            assert!(
+                matches!(build_files(refused, &[]), Err(TailwindError::Import(_))),
+                "{refused}"
+            );
+        }
+        let late = build_files(".a { color: #111; }\n@import \"tailwindcss\";", &[]);
+        assert!(matches!(late, Err(TailwindError::Directive(_))), "{late:?}");
+        let nested = build_files("@media print { @import \"tailwindcss\"; }", &[]);
+        assert!(
+            matches!(nested, Err(TailwindError::Directive(_))),
+            "{nested:?}"
+        );
+        let without_loader = compile("@import \"./other.css\";").unwrap_err();
+        assert!(matches!(without_loader, TailwindError::ImportLoad { .. }));
+        // A chain deeper than the bound.
+        static DEEP: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+        let files = DEEP.get_or_init(|| {
+            (0..=MAX_IMPORT_DEPTH)
+                .map(|i| {
+                    (
+                        format!("/p/{i}.css"),
+                        format!("@import \"./{}.css\";", i + 1),
+                    )
+                })
+                .collect()
+        });
+        struct Deep(&'static [(String, String)]);
+        impl StylesheetLoader for Deep {
+            fn resolve(&self, _: &Path, specifier: &str) -> Result<PathBuf, LoadError> {
+                Ok(PathBuf::from(format!("/p/{}", &specifier[2..])))
+            }
+            fn load(&self, path: &Path) -> Result<String, LoadError> {
+                self.0
+                    .iter()
+                    .find(|(name, _)| Path::new(name) == path)
+                    .map(|(_, text)| text.clone())
+                    .ok_or_else(|| LoadError("missing".into()))
+            }
+        }
+        let deep = compile_with_loader(
+            "@import \"./0.css\";",
+            Path::new("/p/app.css"),
+            &Deep(files),
+        );
+        assert!(
+            matches!(deep, Err(TailwindError::ImportDepth(_))),
+            "{deep:?}"
+        );
     }
 }

@@ -263,6 +263,24 @@ impl SourceLoader {
         Ok(false)
     }
 }
+/// Project stylesheets imported by the Tailwind entry (K8): resolved like
+/// text resources (relative, no URL syntax, inside the configuration
+/// directory) and read through the pinned root with no-follow at every
+/// component, bounded and UTF-8, never the generated stylesheet.
+impl varta_tailwind::StylesheetLoader for SourceLoader {
+    fn resolve(
+        &self,
+        importer: &Path,
+        specifier: &str,
+    ) -> std::result::Result<PathBuf, varta_tailwind::LoadError> {
+        ModuleLoader::resolve_text(self, importer, specifier)
+            .map_err(|e| varta_tailwind::LoadError(e.to_string()))
+    }
+    fn load(&self, path: &Path) -> std::result::Result<String, varta_tailwind::LoadError> {
+        self.read(path)
+            .map_err(|e| varta_tailwind::LoadError(format!("cannot load {}: {e}", path.display())))
+    }
+}
 impl ModuleLoader for SourceLoader {
     fn resolve(
         &self,
