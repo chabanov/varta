@@ -44,6 +44,15 @@ Original crates.io package SHA-256 (from the preceding lockfile):
   boundary before it and a closing edge stays with the preceding word, fitting
   together with its last cluster. Content widths use the same word rule. Their
   count and sort/visit work share the existing output/operation ceilings.
+- Atomic inlines (`src/layout/line_break.rs`, `src/layout/inline_edges.rs`):
+  an `InFlow` box is an inline image's margin box. CSS Text 3 §5.1 puts a soft
+  wrap opportunity before and after it; with decoration edges the one before
+  lies before the opening edges right before the box, and the one after it
+  after the closing edges right after it, so those edges move and wrap with
+  the box. A box that does not fit an otherwise empty line overflows it with
+  its closing edges instead of ending the line at once. The box (with those
+  edges) is one word of the min-content width, and a line holding only boxes
+  takes their source position as its text range.
 - `src/layout/line.rs`/`src/layout/mod.rs` expose `Line::items_unpositioned`
   and `LineItem`, visual-order runs and inline boxes without the glyph-run
   splitting of `Line::items`, for Varta's fragment projection.
@@ -87,7 +96,8 @@ counts around 255/256, long-cluster fallback coverage and the existing 65536-gly
 paint boundary with refusal and recovery. Decoration-edge regressions cover
 unbreakable words across edges, opening/closing break placement, negative
 margins, empty boxes, ligature/joining splits, memo invalidation and refusal of
-oversized edge programs; `portable_edge_probe` compares the result with Chrome. Original synthetic fonts and their
+oversized edge programs, and atomic inlines breaking on both sides with their
+adjacent edges; `portable_edge_probe` and `native_image_probe` compare the result with Chrome. Original synthetic fonts and their
 regeneration script live in the repository; no third-party font is copied.
 
 Reassess/remove this patch when an upstream dependency update supplies equivalent

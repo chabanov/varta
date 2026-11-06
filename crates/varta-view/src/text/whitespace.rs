@@ -366,6 +366,11 @@ fn units(layout: &mut Layout<u32>, text: &str, flow: &Flow) -> Result<Vec<Unit>,
                         });
                     }
                 }
+                // An atomic inline breaks the line on both sides, which
+                // this model's breaking does not reproduce.
+                LineItem::InlineBox(edge) if edge.kind == parley::InlineBoxKind::InFlow => {
+                    return Err(TextMeasureError::Unsupported);
+                }
                 LineItem::InlineBox(edge) => units.push(Unit {
                     advance: edge.width,
                     end: edge.index,

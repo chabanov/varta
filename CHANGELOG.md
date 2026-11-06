@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Native `img`: packaged images (a configuration's new `images` map,
+  stored in resource section version 2 and carried by the browser bundle
+  under the same names) are laid out and drawn by the native renderer to the
+  HTML and CSS standards: PNG/APNG, JPEG, GIF, WebP, BMP and ICO by
+  signature, converted to sRGB (ICC, `cICP`, `sRGB`, `cHRM`/`gAMA`) with EXIF
+  orientation and `image-orientation`, animations on the view clock,
+  `srcset`/`sizes`, `width`/`height` hints, `object-fit`, `object-position`,
+  `image-rendering`, `aspect-ratio`, replaced sizing, inline images in lines
+  of text with every `vertical-align` (a recorded Parley patch for atomic
+  inlines), Skia's sampling, rounded content clips, opacity and transforms,
+  and named by `alt`; checked against Chrome at four scales. AVIF, SVG, HDR
+  images and alternative-text rendering are refused. New dependencies `png`
+  0.18.1, `image` 0.25.10 and `moxcms` 0.8.1; the image limits await an
+  owner decision.
 - V38 iteration protocol: a class's `[Symbol.iterator]()` generator method
   makes its instances iterable by `for...of`, array spreads, `Array.from` and
   `yield*`; classes declare synchronous generator methods; array literals

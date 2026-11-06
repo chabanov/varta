@@ -211,6 +211,16 @@ impl Raster {
                 draw.transform.post_concat(origin),
                 mask,
             ),
+            Primitive::Image(source) => crate::image::draw_image(
+                image,
+                source,
+                draw.transform,
+                (x, y),
+                dirty,
+                draw.color.alpha(),
+                blend,
+                mask,
+            ),
             _ => unreachable!("only drawable operations reach tile rasterization"),
         }
     }

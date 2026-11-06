@@ -145,7 +145,7 @@ unrestricted browser DOM in guest code.
 | Part | Implemented native surface |
 | --- | --- |
 | Structure/layout | Block/flex/grid, dimensions and constraints, margins/padding/gaps, admitted positioning/z-index, inline shaping/line fragments, headings/lists/pre/labels |
-| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, retained drawing/damage and mixed border colors |
+| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, packaged images (`img`), retained drawing/damage and mixed border colors |
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
@@ -157,8 +157,14 @@ The native scope still has concrete gaps:
 
 - Controls need admitted block/flex/grid placement; arbitrary atomic inline
   control layout and mixed block/inline formatting are not complete.
-- Native `<img>` is not admitted by the current layout path. Browser bundles
-  support checked static PNG resources; that does not add native image painting.
+- Native `<img>` draws packaged images (the configuration's `images`, the
+  same files the browser bundle carries) to the HTML and CSS standards:
+  PNG/APNG, JPEG, GIF, WebP, BMP and ICO converted to sRGB with EXIF
+  orientation, animations on the view clock, `srcset`/`sizes`,
+  `object-fit`/`object-position`, `image-rendering`, `aspect-ratio`, and
+  inline images in lines of text with `vertical-align`. AVIF, SVG, HDR
+  images and alternative-text rendering are refused, and the optional GPU
+  backend presents frames with images through its software fallback.
 - General transforms/scaling and scrollable overflow from translated boxes
   remain unfinished. macOS scrollbars paint natively in both system styles
   (classic gutters, and overlay bars shown while scrolling and faded on the
@@ -175,7 +181,8 @@ Contracts: [native controls](architecture.md#native-control-defaults),
 [preserved whitespace](architecture.md#native-preserved-white-space),
 [dialogs](architecture.md#native-modal-dialogs-top-layer),
 [transitions](architecture.md#native-css-transitions),
-[transforms](architecture.md#native-css-transforms) and
+[transforms](architecture.md#native-css-transforms),
+[images](architecture.md#native-images-img) and
 [the native shell](architecture.md#native-shell-varta-shell).
 
 ## GPU and application graphics

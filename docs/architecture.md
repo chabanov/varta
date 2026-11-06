@@ -14629,6 +14629,244 @@ creating properties are not admitted. Chrome snaps scrolled content to whole
 device pixels while native paint keeps fractional scroll offsets, so the
 oracle's scroll offsets are whole device pixels at its scales.
 
+#### Native images (`img`)
+
+The native renderer lays out and draws `img` elements to the HTML Standard
+and the CSS image, sizing and inline specifications; Chrome is the
+verification oracle, never the definition. An image is a file of the
+artifact's [resource section](#packaged-images-section-version-2)
+(version 2), decoded once by the host into a `varta_view::ImageSet` and
+given to the view with `View::set_images` (`varta-runtime`:
+`ViewLayout::with_images`; `varta-shell` does both for every packaged
+artifact, with an empty set for an artifact without images). With a set, a
+batch whose `img` `src` or `srcset` names an image outside it is refused as
+a whole (`Violation::UnpackagedImage`), as the browser host refuses an
+unpackaged asset before any effect; a view without a set (headless
+snapshots, `varta-preview`) keeps the grammar-only check and shows no image,
+so its `img` elements represent nothing (below). The browser bundle carries the same files
+under the same names and leaves every rule below to the browser: web stays
+web, native stays native.
+
+- **Formats.** A file is told apart by its signature, as the WHATWG MIME
+  Sniffing Standard's image type pattern table (§6.1) defines
+  (`varta_common::view::images::sniff`), never by its name: PNG (with APNG,
+  PNG 3rd edition), JPEG, GIF87a/89a, WebP (lossy, lossless, animated; RFC
+  9649), BMP and ICO (its largest entry). Decoding uses the image-rs decoders
+  in safe Rust (`png`; `image` with `zune-jpeg`, `gif`, `image-webp`), every
+  one with dimension and allocation limits. AVIF is refused
+  (`ImageRefusal::Avif`): its only image-rs decoder is the C `dav1d` library.
+  SVG as an image is refused (`ImageRefusal::Svg`): drawing it needs an SVG
+  renderer (SVG 2 with CSS, fonts and the HTML §4.8.4.3 secure-static
+  mode), a separate engine decision. Any other file is
+  `ImageRefusal::Unknown`; a file that does not decode refuses the set
+  (`ImageError::Malformed`).
+- **Limits.** `ImageSet::decode` checks every image before any is decoded:
+  the count (`MAX_IMAGES`), names (the view resource grammar, at most
+  `MAX_IMAGE_NAME_BYTES`), unique names and the encoded total
+  (`MAX_IMAGE_TOTAL_BYTES`); each file within `MAX_IMAGE_BYTES` and
+  `MAX_IMAGE_DIMENSION` per axis, at most `MAX_IMAGE_FRAMES` frames, the
+  pixels of every frame charged to `MAX_IMAGE_DECODED_BYTES` before they are
+  decoded, and the retained frames with their downscaling levels within
+  `MAX_IMAGE_CACHE_BYTES` (each level at most halves the previous one).
+  These are conservative initial values pending an owner decision.
+- **Colour** (CSS Color 4 §10, PNG 3rd edition §4.3, §11.3.2). Images are
+  converted to sRGB, the colour space Chrome draws them in on an sRGB
+  output, with `moxcms`: a PNG's space comes from `cICP`, then `iCCP`, then
+  `sRGB`, then `cHRM`/`gAMA` (a `gAMA` of 1/2.2 without `cHRM` is sRGB, as
+  Chrome treats it); JPEG and WebP from an embedded ICC profile; an untagged
+  image is sRGB and an ICC profile that does not parse is ignored. PNG,
+  WebP and the other formats convert their straight-alpha pixels at decode,
+  as Skia's decoders apply `skcms`; JPEG converts what is sampled, as Skia
+  draws a JPEG in its own space and transforms at draw (measured: converting
+  JPEG at decode differs from Chrome by about 5/255 when upscaled). `cICP`
+  with an HDR transfer (PQ, HLG), narrow range or a non-RGB matrix is
+  refused (`ImageError::Color`): Chrome tone-maps HDR for its output, which
+  is not modelled. 16-bit channels round to 8 bits; pixels are premultiplied
+  as Skia premultiplies.
+- **Orientation** (CSS Images 3 §5.1). The EXIF orientation (PNG `eXIf`,
+  JPEG and WebP `Exif`) is kept with the pixels and applied when sampling:
+  `image-orientation: from-image`, the initial value, shows the oriented
+  image with its natural size swapped for quarter turns, and `none` the
+  stored pixels. The property is inherited.
+- **Animation** (HTML §4.8.4.3 "update the image data"; PNG 3rd edition
+  §4.9 APNG, GIF89a, RFC 9649). Animated PNG, GIF and WebP frames are
+  composited by their decoders and advance on the view's animation clock
+  (`View::set_animation_time`) from the time the element's `src` or
+  `srcset` was set, so frames are deterministic like transitions and
+  `View::animating` keeps a playing image's frames requested. A frame of 10
+  ms or less lasts 100 ms (Chrome's and Firefox's rule); a GIF plays its
+  NETSCAPE loop count plus one time (0 forever, none once), APNG `num_plays`
+  and WebP `loop_count` times (0 forever); a finished animation stays on its
+  last frame.
+- **Selection** (HTML §4.8.4.3, the source set, `srcset` and `sizes`
+  parsing and "select an image source"). `srcset` and `sizes` are
+  parsed as the source set and source size grammars define (density and
+  width descriptors; source sizes with `max-width`/`min-width` media
+  conditions in `px`, `rem` at the initial 16px, `vw`), `src` joins as the
+  `1x` candidate when no candidate has density 1 and none has a width, and
+  a width descriptor becomes a density through the first matching source
+  size (`100vw` by default). The user agent chooses the candidate; this is
+  Chromium's choice (`HTMLSrcsetParser` selection): candidates by density,
+  the first whose density reaches the device pixel ratio unless the ratio
+  is below the geometric mean of it and the one before. The chosen
+  candidate's density divides the natural size (the density-corrected
+  natural size). Chromium's preference for an already cached candidate is a
+  cache heuristic, not a rule, and is not modelled.
+- **Missing image** (HTML §15.4.2). An `img` that names no image represents
+  nothing: a replaced box with zero natural size. One that would render its
+  `alt` text (a non-empty `alt`) or a sized broken-image box (`width`/
+  `height` attributes or sizes) is refused: its look is the user agent's
+  choice (Chrome draws an icon and a grey border) and is not a standard
+  rendering. `decoding` and `loading` are admitted and change nothing
+  natively: every image is local and decoded before guest code runs, so
+  `async`/`lazy` show the same pixels as `sync`/`eager` (HTML §4.8.4:
+  `decoding` is a hint and `loading` defers only fetching); the browser
+  bundle passes them to the browser.
+- **Sizing** (CSS 2.1 §10.3.2, §10.6.2, §10.4; CSS Sizing 4 §4.1; HTML
+  §15.4.3). The image is a replaced box with its natural size and ratio:
+  `width` and `height` (lengths and percentages), `min-*`/`max-*`, padding,
+  border and margins apply; with one size `auto` the other follows the
+  ratio, with both `auto` the §10.4 constraint table applies (so
+  `max-width: 100%` scales both axes). The `width`/`height` attributes are
+  presentational hints for `width`/`height` and map to `aspect-ratio: auto
+  w / h` (HTML §15.2, §15.4.3): the image's own ratio wins once it is known,
+  as for an image without a ratio the hint gives one. `aspect-ratio` takes
+  `auto`, a ratio or both (CSS Sizing 4 §4.1). A size a parent imposes (a
+  stretched or flexed flex item, a grid area) is final on its axis; flex
+  items do not shrink below their natural size (the automatic minimum).
+- **Placement** (CSS 2.1 §9.2.2, §10.8; CSS Inline 3 §2.2, §4.2). A
+  block-level image is `display: block`, a flex or grid item or an absolutely
+  or fixed positioned image. An inline image alone on its line (its parent a
+  block container, no inline-level neighbour, baseline-aligned) has its line
+  box: the parent's strut and the image's margin box standing on the
+  baseline, placed by `text-align` and start-aligned when it overflows (CSS
+  Text 3 §6.1). Any other inline image is an atomic inline of its parent's
+  inline formatting context ([lines of text](#images-in-lines-of-text)).
+- **Object** (CSS Images 3 §4.5, §4.6). `object-fit` (`fill`, `contain`,
+  `cover`, `none`, `scale-down`) sizes the image in its content box and
+  `object-position` (keywords, lengths, percentages) places it; the content
+  box clips it.
+- **Sampling** (CSS Images 3 §5.2). Measured against Chrome (Skia): each
+  device pixel is sampled at its centre with bilinear filtering between
+  texels, edges clamped. Drawn smaller than half its size, an image is
+  sampled from a level chain built as `SkMipmap` builds it (every axis longer
+  than one pixel halves, rounding down; a two-tap box on an even axis, a
+  1-2-1 kernel on an odd one, integer channels truncated) with linear
+  filtering between the two levels around the level of detail
+  `max(0, log2(1 / s) - 0.5)`, where `s` is the larger of the two axis
+  scales in device pixels per image pixel. `image-rendering` (inherited):
+  `auto`, `smooth` and `high-quality` sample so; `pixelated` scales each axis
+  by nearest neighbour to the integer multiple of the natural size closest
+  to the target (at least one) and the rest of the way smoothly, as §5.2
+  defines; `crisp-edges` samples the nearest texel, which §5.2 admits.
+- **Painting** (CSS2 Appendix E). An image paints in its element's content
+  phase as an atomic replaced element, after its background and border, in
+  its object rectangle, whose edges are its layout box in Blink's 1/64 px
+  layout units snapped to whole paint pixels before DPI. A rounded image is
+  clipped by its content-box curve whatever its `overflow` (CSS Backgrounds
+  3 §5.3), whose coverage is then its only edge coverage; otherwise
+  fractional device edges are covered by area, and a clip that cuts the
+  image masks only where it cuts. Opacity, the ancestors' clips and
+  `transform` (translations and `scale()`) apply as to any box.
+- **Hits and accessibility** (HTML-AAM `img`). The image box is its own
+  pointer target (rounded by its radii). An image is named by its `alt`; an
+  `img` with an empty `alt` and no `aria-label`/`aria-labelledby` is
+  presentational and has no role, as Chrome exposes it.
+- **Display list.** An image is the software-only scene primitive
+  `Primitive::Image`; a frame with images is retained and damaged like any
+  software frame, and `Renderer::prepare` returns it as the explicit
+  `PreparedFrame::Raster`, so the optional GPU backend presents its pixels.
+  The public `DisplayList` has no image command.
+
+##### Images in lines of text
+
+An inline image that shares its line box with text or other inline content
+is an atomic inline of the parent block's inline formatting context
+(`inline::atoms`, CSS 2.1 §9.2.2). Its margin box is one unbreakable advance
+of the line, a Parley `InFlow` box (the [Parley
+patch](../vendor/parley/VARTA-PATCH.md) records the line breaking):
+
+- **Breaking** (CSS Text 3 §5.1). There is a soft wrap opportunity before
+  and after an atomic inline, even next to a letter. The opening edges of
+  inline boxes right before it and the closing edges right after it move
+  and wrap with it; an image wider than an otherwise empty line overflows
+  it. The image and those edges are one word of the min-content width. A
+  collapsible space before or after an image is content (CSS Text 3 §4.1.1
+  collapses only adjacent spaces).
+- **Vertical alignment** (CSS 2.1 §10.8.1; CSS Inline 3 §4.2). The image's
+  baseline is its bottom margin edge. `vertical-align` places that edge
+  against the parent's baseline and first available font, with Chrome's
+  shifts in Blink's 1/64 px layout units: `baseline` on it; `sub` a fifth of
+  the parent's font size plus one pixel below; `super` a third plus one
+  above; `middle` with its margin box's centre half the parent's x-height
+  above the baseline (a font without an x-height, OS/2 `sxHeight`, is
+  refused: Chrome then measures glyphs); `text-top`/`text-bottom` with its
+  top/bottom on the parent's rounded ascent/descent; a length raises it by
+  that length and a percentage by that part of the image's own line height.
+  `top` and `bottom` align the margin box with the line box's top or bottom
+  once the rest of the line is placed, and grow the line downwards or
+  upwards when the image is taller (the aligned subtree, CSS Inline 3
+  §4.2.3). The line box spans the strut, the text and every image's margin
+  box (CSS 2.1 §10.8).
+- **Boxes.** An enclosing inline box's fragment spans the image's advance at
+  that box's own font box (its background and border do not grow with the
+  image), and the image's geometry is its border box. The image paints, is
+  hit and is named as any image, right after its line's text in tree order
+  (or in its stacking layer when it has opacity).
+- **Refused.** Percentages in the image's sizes, margins or padding (the
+  line is measured before its containing block is fixed), a positioned or
+  transformed image, an image inside an inline box with opacity, and images
+  in a `text-overflow: ellipsis` flow or a flow whose preserved white space
+  takes the native white-space model.
+
+##### Conformance
+
+| Feature | Specification | Status |
+| --- | --- | --- |
+| `src`, `alt` | HTML §4.8.4 | Native; `alt` names the image |
+| Image that represents nothing | HTML §15.4.2 | Native: zero-size replaced box |
+| Alternative text, broken-image box | HTML §15.4.2 | Refused (user agent rendering) |
+| `width`/`height` attributes, ratio hint | HTML §15.2, §15.4.3; CSS Sizing 4 §4.1 | Native |
+| `srcset`, `sizes`, density selection | HTML §4.8.4.3 | Native (Chromium selection) |
+| `decoding`, `loading` | HTML §4.8.4 | Admitted; no effect on local images |
+| PNG, APNG | PNG 3rd edition | Native |
+| JPEG | ITU T.81, JFIF | Native |
+| GIF, animated | GIF89a | Native |
+| WebP, animated | RFC 9649 | Native |
+| BMP, ICO | Microsoft formats | Native (largest ICO entry) |
+| AVIF | AV1 Image File Format | Refused (no safe-Rust decoder) |
+| SVG as an image | SVG 2, HTML §4.8.4.3 | Refused (no SVG renderer) |
+| Format by signature | MIME Sniffing §6.1 | Native |
+| ICC, `cICP`, `iCCP`, `sRGB`, `cHRM`/`gAMA` | CSS Color 4 §10; PNG 3rd edition §11.3.2 | Native (SDR); HDR, narrow range refused |
+| EXIF orientation, `image-orientation` | CSS Images 3 §5.1; PNG §11.3.4.5 | Native |
+| Animation timing and loops | HTML §4.8.4.3; GIF89a; PNG §4.9; RFC 9649 | Native, on the view clock |
+| `object-fit` | CSS Images 3 §4.5 | Native |
+| `object-position` | CSS Images 3 §4.6 | Native |
+| `image-rendering` | CSS Images 3 §5.2 | Native |
+| `aspect-ratio` | CSS Sizing 4 §4.1 | Native (images) |
+| Replaced sizing and constraints | CSS 2.1 §10.3.2, §10.4, §10.6.2 | Native |
+| Inline image alone on a line | CSS 2.1 §10.8 | Native |
+| Inline image in a line of text | CSS 2.1 §9.2.2, §10.8; CSS Text 3 §5.1 | Native |
+| `vertical-align` | CSS 2.1 §10.8.1; CSS Inline 3 §4.2 | Native (`middle` needs an x-height) |
+| Painting order | CSS2 Appendix E | Native |
+
+Geometry, hits, image roles and names, animation timing and pixels match
+Chrome at 1x, 1.5x, 2x and 3x (`native_image_probe` with
+`scripts/test-native-images.mjs`; the viewport and each image's box are
+compared separately within the mean bound of the other probes, and frame
+durations and loop counts with Chrome's `ImageDecoder`). The cases cover
+every format, colour source and orientation, `object-fit` and
+`object-position`, `image-rendering`, `aspect-ratio` and the attribute
+hints, `srcset` and `sizes`, animation frames on the clock, natural,
+explicit, ratio-derived and constrained sizes, inline lines alone and in
+text with every `vertical-align`, flex and grid items, downscaling levels,
+rounded clips, opacity, `transform`, fractional and positioned boxes.
+Chrome draws a downscaled `pixelated` image by nearest neighbour where §5.2
+asks for the smooth rest, and drops `crisp-edges`; the oracle compares those
+cases with the values Chrome implements. Curved clip edges differ by up to
+about a quarter of full intensity on a few pixels (path antialiasing),
+within the bound.
+
 ## Local modules
 
 The compiler accepts named function imports (`import { f as g } from "./lib.ts"`),
@@ -16039,9 +16277,13 @@ use the common view resource grammar. These are build inputs under the config
 root, read through pinned no-follow descriptors, never execution filesystem roots
 or host grants. This section affects browser distribution only; portable/native
 Wasm and manifests retain their existing bytes. `bundle_with_resources` also accepts
-owned checked `BrowserResource` values without ambient file loading.
+owned checked `BrowserResource` values without ambient file loading. Images every
+renderer draws are declared in the top-level `images` map instead, which packages
+them into the artifact's resource section ([packaged
+images](#packaged-images-section-version-2)); the two cannot both be declared.
 
-Image resources currently use static PNG. Inventory count, per-file/total bytes,
+Images of the top-level `images` map follow the [native image
+admission](#native-images-img) instead. `browser.resources` images currently use static PNG. Inventory count, per-file/total bytes,
 aggregate decoded RGBA/font bytes, name length and image dimensions are bounded by the packaging constants in
 `crates/varta-project/src/browser/resources.rs`. Admission checks the signature,
 first/unique IHDR, bounded chunk lengths and final IEND; animated PNG is rejected.
@@ -16498,6 +16740,54 @@ native paint, while the browser, with synthesis off, draws the nearest face
 unemboldened and upright; and a control's font size stays Chrome's control size in the
 browser and the inherited size natively unless the guest sets one.
 
+#### Packaged images (section version 2)
+
+A v38 configuration may also declare the images the application draws as a
+top-level `images` map from the view resource name an `img` `src` or
+`srcset` uses to a no-follow path under the configuration directory, in the
+same grammar: `"images": {"icons/logo.png": "assets/logo.png"}`. Packaging
+reads every file through the pinned loader within `MAX_IMAGE_BYTES` each and
+`MAX_IMAGE_TOTAL_BYTES` in all (`varta_artifact`, owned by
+`varta_common::view::images`), refuses a file whose signature is not an
+admitted format (`sniff`; AVIF and SVG with their own reasons), decodes every
+image with the native renderer's decoder (`ImageSet::decode`, the [native
+image](#native-images-img) limits and colour rules), so a packaged artifact
+always loads natively, and builds the section with `Resources::with_images`:
+at most `MAX_IMAGES` images, unique names in canonical (bytewise ascending)
+order. These limits equal the browser bundle's per-resource limits, and the
+browser bundle carries the section's images under the same names with their
+formats' media types (with the faces in its inventory, so its shared
+inventory caps still apply), so both distributions admit and draw the same
+images. A configuration may not declare both `images` and
+`browser.resources` (refused when the configuration is validated): a
+browser-only image would be refused natively. `browser.resources` keeps its
+meaning.
+
+A section with images is version `IMAGE_RESOURCE_VERSION` (2):
+
+```text
+magic | version u32 (2) | face count u32 | image count u32 | payload SHA-256 [32]
+face count x face descriptor | image count x image descriptor |
+face count x (family | font) | image count x (name | file)
+image descriptor: name length u16 | format u16 | file length u32 | file SHA-256 [32]
+```
+
+The format is the `ImageFormat` code: 1 PNG (and APNG), 2 JPEG, 3 GIF, 4
+WebP, 5 BMP, 6 ICO. The section has 1..=`MAX_IMAGES` images and
+0..=`MAX_FONT_FACES` faces; a section without images keeps its version 1
+bytes, so one declaration still has one encoding and every existing section
+reads unchanged. A reader refuses a version 2 section without images, an
+unknown format code, a file whose signature is not its descriptor's format,
+a file that does not match its digest, names out of canonical order or
+duplicated, every bound above and every face rule;
+`MAX_RESOURCE_SECTION_BYTES` includes the image bounds. The container format
+is unchanged (format 2 carries any section). A runtime companion that reads
+only version 1 refuses a version 2 section in `--validate`, before any
+output is written. The native host decodes the images again (`varta-shell`:
+before storage is created and before any guest code runs), and the browser
+decodes them before guest execution, as for `browser.resources`. The limits
+are initial conservative values pending an owner decision.
+
 Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserialization
 are removed. Rebuild existing native artifacts. Native launchers currently compile
 embedded portable Wasm at startup. Reintroducing cached/AOT machine code requires
@@ -16685,6 +16975,13 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   `--font PATH FAMILY` (nonempty, at most
   `shell::MAX_FONT_BYTES`) supplies one explicit face for an artifact without
   fonts and is refused (`ShellError::FontConflict`) for one that ships fonts.
+- **Images.** `Launch::packaged` decodes the section's images once
+  (`varta_view::ImageSet::decode`, the [native image](#native-images-img)
+  formats, colour conversion and limits) after the faces and before storage directories are created; a
+  refused image is `ShellError::Images`, before any guest code. The start
+  gives the view the decoded set (`ViewLayout::with_images`), empty for an
+  artifact without images, so an `img` naming another image is refused as in
+  the browser. `varta-preview` has no images.
 - **System fonts.** `--system-fonts`, also only for an artifact without fonts
   (`ShellError::FontConflict` otherwise) and exclusive with `--font`, maps the
   CSS generic families to this computer's fonts as the platform's browser

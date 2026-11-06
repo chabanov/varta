@@ -293,7 +293,7 @@ impl Plan {
             for item in line.items() {
                 let glyph_run = match item {
                     PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,
-                    PositionedLayoutItem::InlineBox(edge) if super::decoration_edge(edge.kind) => {
+                    PositionedLayoutItem::InlineBox(edge) if super::glyphless_box(edge.kind) => {
                         continue;
                     }
                     PositionedLayoutItem::InlineBox(_) => return Err(PaintError::Unsupported(id)),

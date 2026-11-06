@@ -24,9 +24,21 @@ fn options() -> TextOptions {
 fn edge(index: usize, opening: bool, advance: f32) -> TextEdge {
     TextEdge {
         index,
-        opening,
+        kind: if opening {
+            EdgeKind::Opening
+        } else {
+            EdgeKind::Closing
+        },
         advance,
         owner: 3,
+    }
+}
+fn atom(index: usize, advance: f32) -> TextEdge {
+    TextEdge {
+        index,
+        kind: EdgeKind::Atom,
+        advance,
+        owner: 4,
     }
 }
 fn shape(
@@ -191,4 +203,37 @@ fn invalid_programs_fail_before_shaping_and_output_slots_share_existing_limits()
         super::super::MAX_CACHED_SHAPING_SLOTS,
     );
     assert_eq!(shape(&mut f, "A", 12.0, &edges).unwrap().0.width, 10.0);
+}
+/// Each line's advance, from its clusters and inline boxes.
+fn line_widths(layout: &Layout<u32>) -> Vec<f32> {
+    layout.lines().map(|line| line.metrics().advance).collect()
+}
+#[test]
+fn atomic_inlines_break_on_both_sides_and_keep_their_adjacent_edges() {
+    // CSS Text 3 §5.1: soft wrap opportunities before and after an atomic
+    // inline, even between letters (A<img>A, ligature split).
+    let mut f = font();
+    let atoms = [atom(1, 10.0)];
+    let (m, l) = shape(&mut f, "AA", 80.0, &atoms).unwrap();
+    assert_eq!((m.width, m.min_width, m.lines), (26.0, 10.0, 1));
+    let (m, l2) = shape(&mut f, "AA", 20.0, &atoms).unwrap();
+    assert_eq!((m.lines, line_widths(&l2)), (2, vec![18.0, 8.0]));
+    assert_eq!(glyphs(&l).len(), 2);
+    // A<span padding:0 3px><img></span>A: the opening edge moves with the
+    // image to the next line and the closing edge stays with it.
+    let program = [edge(1, true, 3.0), atom(1, 10.0), edge(1, false, 3.0)];
+    let (m, l) = shape(&mut f, "AA", 22.0, &program).unwrap();
+    assert_eq!(
+        (m.min_width, m.lines, line_widths(&l)),
+        (16.0, 3, vec![8.0, 16.0, 8.0])
+    );
+    let (m, l) = shape(&mut f, "AA", 30.0, &program).unwrap();
+    assert_eq!((m.lines, line_widths(&l)), (2, vec![24.0, 8.0]));
+    // A line holding only an image keeps the image's source position.
+    let (m, l) = shape(&mut f, "AA", 9.0, &atoms).unwrap();
+    assert_eq!(m.lines, 3);
+    assert_eq!(l.lines().nth(1).unwrap().text_range(), 1..1);
+    // An image wider than the line overflows it alone.
+    let (m, l) = shape(&mut f, "AA", 9.0, &[atom(1, 30.0)]).unwrap();
+    assert_eq!((m.min_width, line_widths(&l)), (30.0, vec![8.0, 30.0, 8.0]));
 }

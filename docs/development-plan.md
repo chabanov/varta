@@ -38,12 +38,102 @@ their current limitations and the evidence behind this checkpoint.
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
-| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). macOS overlay scrollbars are shown while scrolling, on the animation clock ([record](#native-overlay-scrollbars--2026-11-06)). Colour glyphs on Linux, scrollbar dragging and track clicks, and every Linux comparison with Chrome remain open. |
+| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). macOS overlay scrollbars are shown while scrolling, on the animation clock ([record](#native-overlay-scrollbars--2026-11-06)). Colour glyphs on Linux, scrollbar dragging and track clicks, and every Linux comparison with Chrome remain open. Packaged images (`img`) are laid out and drawn natively to the HTML, CSS and image-format standards, checked against Chrome ([record](#native-images--2026-11-06)). |
 | Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. The Showcase was removed on 2026-11-06 (owner decision); its measurements are kept in [`docs/evidence/`](evidence/). |
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
+
+### Native images — 2026-11-06
+
+Applications that show images now draw them natively, not only in the
+browser bundle, to the published standards with Chrome as the oracle
+([contract and conformance table](architecture.md#native-images-img)). The
+first increment admitted static sRGB PNG only; the owner directive of the
+same day asked for the standards instead of a PNG subset, which this record
+covers. A configuration declares its image files in a top-level `images`
+map (view name to project path); packaging decodes them with the native
+decoder and puts them into the artifact's resource section, version 2 when
+there are images (a fonts-only section keeps its version 1 bytes;
+[format](architecture.md#packaged-images-section-version-2)), and the browser
+bundle carries the same files under the same names with their media types,
+so both renderers admit the same images. `images` and `browser.resources`
+cannot be declared together.
+
+- **Formats and colour.** PNG/APNG, JPEG, GIF, WebP, BMP and ICO, told apart
+  by signature (MIME Sniffing §6.1), decoded by the image-rs decoders with
+  limits; converted to sRGB with `moxcms` from `cICP`, `iCCP`, `sRGB`,
+  `cHRM`/`gAMA` (PNG 3rd edition priority) or an embedded ICC profile; EXIF
+  orientation with `image-orientation`. JPEG converts after sampling, as
+  Skia draws it (converting at decode differed by about 5/255 when
+  upscaled). AVIF (no safe-Rust decoder), SVG (no SVG renderer) and HDR or
+  narrow-range `cICP` are refused with their own reasons.
+- **HTML.** `srcset`/`sizes` with Chromium's density selection and the
+  density-corrected natural size; `width`/`height` attributes as
+  presentational hints and the `aspect-ratio` hint; an `img` without an
+  image represents nothing, and one that would show alternative text or a
+  sized broken-image box is refused (user agent rendering); `decoding` and
+  `loading` change nothing for local images. Animations play on the view's
+  animation clock with Blink's 100 ms short-frame rule and each format's
+  loop count.
+- **CSS.** `object-fit`, `object-position`, `image-rendering` (`pixelated`
+  and `crisp-edges` as CSS Images 3 §5.2 defines them), `aspect-ratio`,
+  replaced sizing (CSS 2.1 §10.3.2, §10.4, §10.6.2).
+- **Images in lines of text.** An inline image beside text is an atomic
+  inline of the inline formatting context: a Parley `InFlow` box with a
+  soft wrap opportunity on both sides (CSS Text 3 §5.1) that keeps the
+  decoration edges next to it (a recorded Parley patch; `VARTA-PATCH.diff`
+  regenerated and checked to reproduce the vendored tree from the release),
+  and every `vertical-align` value with Chrome's shifts in layout units,
+  `top`/`bottom` growing the line box as aligned subtrees. Images alone on a
+  line keep their line box. Percentage sizes of images in text, positioned
+  or transformed images there, images under an inline box with opacity and
+  images in ellipsis or native white-space flows are refused.
+- **Paint.** A software-only scene primitive (`Primitive::Image`) samples as
+  Skia does: bilinear, and below half size linear between two `SkMipmap`
+  levels at level of detail `log2(1/s) - 0.5`; the destination snaps in
+  Blink's 1/64 layout units to whole paint pixels before DPI, a rounded
+  image takes its edge coverage from its content-box clip alone, and a clip
+  that cuts an image masks only where it cuts (a viewport clip had doubled
+  the image's own edge coverage). Frames with images take the explicit
+  software path (`PreparedFrame::Raster`) on the GPU backend.
+- **Accessibility.** `alt` names the image; an empty `alt` without a label
+  is presentational, as Chrome exposes it.
+- **Dependencies.** `png` 0.18.1, `image` 0.25.10 (PNG, JPEG, GIF, WebP,
+  BMP, ICO features only) and `moxcms` 0.8.1 (no default features), all safe
+  Rust with exact pins; `flate2` is held at 1.1.10 in the lockfile.
+
+Verification on macOS 27.0.1 with Chrome 156.0.8078.80: `native_image_probe`
+with `scripts/test-native-images.mjs`, 22 cases and 22482 checks per scale
+(geometry, hits, roles and names, frame durations and loop counts with
+Chrome's `ImageDecoder`, pixels of the viewport and of every image's box),
+pass at 1x, 1.5x, 2x and 3x; viewport RGB means at most 0.821, 0.904, 0.847
+and 0.742/255 and per-image means at most 1.095, 1.404, 1.472 and 1.000/255.
+The oracle shows a later animation frame by giving the same `img` a lossless
+PNG of the frame Chrome's decoder produced (a canvas in its place had been
+composited differently at 1.5x). Unit tests cover sniffing, the section
+encoding, selection, sizes, colour sources and refusals, orientation
+mapping, `pixelated` and nearest sampling, animation timing and loop counts,
+object sizes, the constraint table, atomic-inline breaking with decoration
+edges, every `vertical-align` and the refusals; `varta-desktop` tests decode,
+lay out, draw, hit and name a packaged image through the shell core and
+refuse a corrupt image in `varta-shell` before storage; a CLI smoke test
+packages an image into both distributions.
+
+**Pending owner decision.** The image limits are initial conservative values
+in `varta_common::view::images`: 64 images, 4 MiB per file and 16 MiB in all
+(the browser bundle's per-resource and total values), 4096 px per dimension,
+512 frames per image, 16 MiB of decoded RGBA in all (every frame counted),
+and 32 MiB of retained pixels with their levels. No existing production
+budget changed.
+
+**Open.** AVIF and SVG images; alternative-text and broken-image rendering;
+HDR images; Chrome draws a downscaled `pixelated` image by nearest neighbour
+and drops `crisp-edges`, so the oracle compares those cases with Chrome's
+values; Chromium's cached-candidate `srcset` heuristic; `varta dev` shows no
+packaged images; images on Linux are not compared with Chrome; the GPU
+backend presents image frames through the software path.
 
 ### Language gap ranking and the v38 iteration protocol — 2026-11-06
 

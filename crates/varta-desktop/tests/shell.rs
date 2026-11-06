@@ -1995,3 +1995,94 @@ fn malformed_or_foreign_decision_files_are_typed_errors_before_start() {
     std::fs::remove_file(&file).unwrap();
     assert!(prepare(&temp, &artifact, None).is_ok());
 }
+
+/// The image probe's log line once its view is committed.
+const IMAGE_READY: &str = "image ready";
+/// The image probe's `img` box: a 40x20 block at the origin.
+const IMAGE_BOX: (u32, u32) = (40, 20);
+const RED: [u8; 4] = [255, 0, 0, 255];
+
+/// The image probe packaged with its built manifest and resource section.
+fn package_image(temp: &Temp) -> PathBuf {
+    let built = support::image_probe();
+    let path = temp.path("image.wasm");
+    built
+        .artifact
+        .write_wasm_with(&path, &built.resources)
+        .unwrap();
+    path
+}
+
+#[test]
+fn packaged_images_are_decoded_laid_out_drawn_and_named() {
+    let temp = Temp::new();
+    let artifact = package_image(&temp);
+    let launch = prepare(&temp, &artifact, None).unwrap();
+    let images = launch.images().unwrap();
+    assert_eq!(images.size("icons/red.png"), Some((1, 1)));
+    let mut app = launch.start(layout(), effects()).unwrap();
+    let mut lines = Vec::new();
+    settle(&mut app, &mut lines, IMAGE_READY);
+    let mut renderer = varta_view::Renderer::new(None, ROOT_FONT_SIZE).unwrap();
+    let frame = app
+        .view_render(&mut renderer, VIEW_WIDTH, VIEW_HEIGHT, 1.0)
+        .unwrap();
+    let pixel = |x: u32, y: u32| {
+        let at = ((y * frame.width + x) * 4) as usize;
+        [
+            frame.pixels[at],
+            frame.pixels[at + 1],
+            frame.pixels[at + 2],
+            frame.pixels[at + 3],
+        ]
+    };
+    // The one red texel fills the content box; the rounded corner clips it
+    // and nothing is drawn outside the box.
+    assert_eq!(pixel(IMAGE_BOX.0 / 2, IMAGE_BOX.1 / 2), RED);
+    assert_eq!(pixel(0, 0)[3], 0);
+    assert_eq!(pixel(IMAGE_BOX.0 + 1, IMAGE_BOX.1 / 2)[3], 0);
+    // The image is its own pointer target and is named by its `alt`.
+    let target = frame
+        .hit_test((IMAGE_BOX.0 / 2) as f32, (IMAGE_BOX.1 / 2) as f32)
+        .unwrap();
+    let tree = app.view_accessibility_tree().unwrap();
+    let node = &tree.nodes[&target];
+    assert_eq!(
+        (node.role.as_str(), node.name.as_str()),
+        ("image", "Red square")
+    );
+    // The GPU path has no image primitive: the frame is an explicit
+    // software raster.
+    let prepared = app
+        .view_prepare(&mut renderer, VIEW_WIDTH, VIEW_HEIGHT, 1.0)
+        .unwrap();
+    assert!(matches!(prepared, varta_view::PreparedFrame::Raster(_)));
+}
+
+#[test]
+fn an_artifact_without_the_named_image_refuses_the_guest_batch() {
+    let temp = Temp::new();
+    let built = support::image_probe();
+    // The same guest without its image: the view refuses the batch that
+    // names an unpackaged image, as the browser host does.
+    let path = temp.path("bare.wasm");
+    built.artifact.write_wasm(&path).unwrap();
+    let launch = prepare(&temp, &path, None).unwrap();
+    assert!(launch.images().unwrap().is_empty());
+    let mut app = launch.start(layout(), effects()).unwrap();
+    let deadline = Instant::now() + PROBE_DEADLINE;
+    while !matches!(app.step(Some(STEP_WAIT)), Step::Failed) {
+        assert!(Instant::now() < deadline, "the probe was not refused");
+        assert!(
+            !app.take_output()
+                .iter()
+                .any(|line| line.ends_with(IMAGE_READY)),
+            "the batch was admitted"
+        );
+    }
+    let failure = app
+        .failure()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(failure.contains("not a packaged image"), "{failure}");
+}

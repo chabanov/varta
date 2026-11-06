@@ -124,7 +124,165 @@ pub fn valid(grammar: AttributeValue, tag: Tag, value: &str) -> bool {
         },
         A::Href => internal_route(value),
         A::Resource => resource(value),
+        A::ImageCandidates => image_candidates(value),
+        A::SourceSizes => source_sizes(value),
     }
+}
+
+/// The descriptor of one image candidate (HTML §4.8.4.2.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CandidateDescriptor {
+    /// `Nx`; a candidate without a descriptor is `1x`.
+    Density(f64),
+    /// `Nw`.
+    Width(u32),
+}
+
+/// One image candidate of a valid `srcset`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImageCandidate<'a> {
+    pub resource: &'a str,
+    pub descriptor: CandidateDescriptor,
+}
+
+/// The candidates of a valid `srcset`: comma-separated, each a resource path
+/// and an optional positive density (`<number>x`) or width (`<integer>w`)
+/// descriptor, separated by ASCII spaces. Densities and widths do not mix,
+/// and no two candidates share one. `None` for an invalid set.
+#[must_use]
+pub fn image_candidates_of(text: &str) -> Option<Vec<ImageCandidate<'_>>> {
+    let mut candidates: Vec<ImageCandidate<'_>> = Vec::new();
+    for part in text.split(',') {
+        let mut words = part.split_ascii_whitespace();
+        let resource_text = words.next()?;
+        if !resource(resource_text) {
+            return None;
+        }
+        let descriptor = match words.next() {
+            None => CandidateDescriptor::Density(1.0),
+            Some(word) => {
+                if let Some(width) = word.strip_suffix('w') {
+                    let width = positive_count(width).then(|| width.parse().ok())??;
+                    CandidateDescriptor::Width(width)
+                } else {
+                    let density = word.strip_suffix('x')?;
+                    if !number(density) {
+                        return None;
+                    }
+                    let density: f64 = density.parse().ok()?;
+                    (density > 0.0).then_some(CandidateDescriptor::Density(density))?
+                }
+            }
+        };
+        if words.next().is_some() {
+            return None;
+        }
+        let mixed = candidates.iter().any(|known| {
+            matches!(
+                (known.descriptor, descriptor),
+                (
+                    CandidateDescriptor::Density(_),
+                    CandidateDescriptor::Width(_)
+                ) | (
+                    CandidateDescriptor::Width(_),
+                    CandidateDescriptor::Density(_)
+                )
+            ) || known.descriptor == descriptor
+        });
+        if mixed {
+            return None;
+        }
+        candidates.push(ImageCandidate {
+            resource: resource_text,
+            descriptor,
+        });
+    }
+    Some(candidates)
+}
+
+fn image_candidates(text: &str) -> bool {
+    image_candidates_of(text).is_some()
+}
+
+/// A media condition of a source size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SizeCondition {
+    MinWidth(SizeLength),
+    MaxWidth(SizeLength),
+}
+
+/// A source size length: CSS pixels, root ems or viewport-width percent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SizeLength {
+    Px(f64),
+    Rem(f64),
+    Vw(f64),
+}
+
+/// One source size: an optional condition and its length.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceSize {
+    pub condition: Option<SizeCondition>,
+    pub length: SizeLength,
+}
+
+/// A source size length of one unit.
+type SizeUnit = fn(f64) -> SizeLength;
+/// The units a source size length may use.
+const SIZE_UNITS: [(&str, SizeUnit); 3] = [
+    ("px", SizeLength::Px),
+    ("rem", SizeLength::Rem),
+    ("vw", SizeLength::Vw),
+];
+
+fn size_length(text: &str) -> Option<SizeLength> {
+    let (number_text, unit) = SIZE_UNITS
+        .iter()
+        .find_map(|(suffix, unit)| text.strip_suffix(suffix).map(|n| (n, unit)))?;
+    if !number(number_text) {
+        return None;
+    }
+    Some(unit(number_text.parse().ok()?))
+}
+
+/// The sizes of a valid `sizes` list: comma-separated source sizes, each an
+/// optional `(min-width: <length>)` or `(max-width: <length>)` condition and
+/// a nonnegative length in `px`, `rem` or `vw`; only the last has no
+/// condition. `None` for an invalid list.
+#[must_use]
+pub fn source_sizes_of(text: &str) -> Option<Vec<SourceSize>> {
+    let parts: Vec<&str> = text.split(',').map(str::trim).collect();
+    let mut sizes = Vec::with_capacity(parts.len());
+    for (index, part) in parts.iter().enumerate() {
+        let last = index + 1 == parts.len();
+        let (condition, length) = match part.strip_prefix('(') {
+            Some(rest) => {
+                let (inside, length) = rest.split_once(')')?;
+                let (feature, value) = inside.split_once(':')?;
+                let value = size_length(value.trim())?;
+                let condition = match feature.trim() {
+                    "min-width" => SizeCondition::MinWidth(value),
+                    "max-width" => SizeCondition::MaxWidth(value),
+                    _ => return None,
+                };
+                (Some(condition), length.trim())
+            }
+            None if last => (None, *part),
+            None => return None,
+        };
+        if last && condition.is_some() {
+            return None;
+        }
+        sizes.push(SourceSize {
+            condition,
+            length: size_length(length)?,
+        });
+    }
+    Some(sizes)
+}
+
+fn source_sizes(text: &str) -> bool {
+    source_sizes_of(text).is_some()
 }
 
 #[cfg(test)]
