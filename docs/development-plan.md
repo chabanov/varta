@@ -5036,8 +5036,10 @@ are themselves JavaScript with JSDoc types; Solid's reactive core is TypeScript
 
 Caution: `date-fns` and all date/number/plural formatting need `Date` and `Intl`
 (a large gap, possibly a capability-free host provider); `immer`, MobX and Vue
-reactivity rely on `Proxy` and are out of scope; CSS-only design systems (plain
-CSS, Tailwind output) are usable because CSS is data shipped as a stylesheet asset.
+reactivity rely on `Proxy` and are out of scope. CSS-only design systems were
+assumed usable as stylesheet assets; the 2026-11-06 inventory showed the L0
+grammar rejects Tailwind output at its first byte, and full support is the
+[K8 track](#k8--tailwind-at-compile-level-agreed-design-2026-11-06).
 
 **Front-end options compared.** Facts: SWC is configured with
 `Syntax::Typescript(Default::default())` in `crates/varta-compiler/src/parse.rs`, so
@@ -7324,6 +7326,74 @@ bearer tokens and cookies fit; contract v1 and response headers keep the
 earlier bounds. Open: a per-stream write-idle bound for HTTP/2 streams whose
 client never opens its window, h2c, HTTP/3, certificate reload, and Linux
 and sustained-load benchmarks.
+
+### K8 — Tailwind at compile level (agreed design, 2026-11-06)
+
+**Goal (owner).** The developer writes ordinary TSX with Tailwind classes of the
+latest version and no hand-written CSS, and gets the result modern web
+technology gives, with Varta's determinism and typing. Varta does everything
+under the hood, optimization and browser compatibility included, through Wasm.
+Tailwind plugins and other extensibility come later, once Tailwind compiles
+straight into the artifact.
+
+**Owner decisions (2026-11-06).**
+
+- Varta compiles Tailwind itself in Rust; no Node in its toolchain. The
+  official `tailwindcss` package is only a test oracle.
+- Varta supports web technologies without JavaScript: native applications run
+  with no JS; on the web JS is only the bridge between Wasm and browser APIs
+  (recorded in `CLAUDE.md`).
+- Web stays web, native stays native: the web target keeps the real DOM, with
+  Varta's cascade and style resolution in Wasm and the bridge setting computed
+  styles; no canvas renderer replacing the DOM. Native keeps Varta's renderer.
+- Class names follow the HTML class model (any non-whitespace characters
+  without controls, bounded length), with strict escapes in selectors.
+- TSX accepts `className` as an alias of `class`; both on one element is a
+  compile error.
+- `@plugin` and `@config` (JavaScript) are out of the first scope; CSS-first
+  `@theme`, `@utility` and `@custom-variant` are in.
+
+**Evidence.** Tailwind 4.3.5 output was run through the L0 grammar
+(scratch inventory, not in the tree): every sheet fails at byte 0 (its
+`/*!` header), then on `@layer`, `@property`, escaped classes and `>`. A
+five-component application accepts 25% of its 588 class uses; the full
+surface (39,135 candidates, 12 MB) accepts 5%. Theme colours in `oklch()`
+pass the grammar through `var()` and render in Chrome but not natively: an
+existing parity gap.
+
+**Tracks.**
+
+- **T1 compiler** (new crate, used by `varta build`): candidate parser,
+  variants, utilities, theme, Preflight, `@apply`, `@utility`,
+  `@custom-variant`, arbitrary values and modifiers, property order and
+  canonical output (no comments, flattened nesting, normalized media, static
+  `@supports`). Classes come from the module graph's string, template and JSX
+  literals, never a filesystem walk; a `class` whose type is a finite union of
+  literals is enumerated exactly, a template hole that builds a class is a
+  diagnostic. Oracle tests compare candidate CSS with the official compiler.
+- **T2 engine**, one Rust implementation for native and the web: S1 class
+  tokens and escapes; S2 sheet structure (`@layer`, `@property`, media
+  features as recorded host inputs); S3 values (`calc`, `oklch`/`oklab`/
+  `color-mix`, units, keywords); S4 layout and text properties (logical
+  properties, `inset`, `translate`/`scale`/`rotate`, `aspect-ratio`, …); S5
+  selectors (combinators, `:where`/`:is`/`:not`/`:has` with work bounds,
+  structural and form pseudo-classes, `data-*`/`aria-*` attributes,
+  pseudo-elements, type selectors); S6 paint (shadows and rings, gradients,
+  filters, masks, `clip-path`); S7 animation (`@keyframes`,
+  `@starting-style`); S8 `@container`, `!important`, remaining media.
+  Measured acceptance of the application's class uses after S1–S6: 27%, 38%,
+  72%, 86%, 96%, 100%.
+- **T3 web bridge**: move the browser host's view model, stylesheet grammar,
+  cascade and custom-property resolution (about 1,700 lines of JS) into a
+  wasm32 shim of the Rust engine, as the KV codec moved; the JS keeps DOM
+  calls only.
+
+**Security.** `url()` stays refused (or resolves at build time to artifact
+resources only), `@import` resolves only at build time, `image-set()`,
+`expression()`, `attr()` and `element()` stay refused, `:visited` never
+matches, environment media features are recorded host inputs, and `:has()`,
+descendant matching and infinite animations are charged against work and
+frame bounds.
 
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
