@@ -40,7 +40,7 @@ their current limitations and the evidence behind this checkpoint.
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
 | Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). Colour glyphs on Linux, the overlay scrollbar shown while scrolling and every Linux comparison with Chrome remain open. |
 | Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
-| Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. [Record](../examples/native-showcase/README.md#порівняння-на-macos-2026-11-03) |
+| Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. The Showcase was removed on 2026-11-06 (owner decision); its measurements are kept in [`docs/evidence/`](evidence/). |
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
@@ -1317,7 +1317,7 @@ Open, not met:
   node yet and its initial frame still stops at the control-box rules, so
   `headless_frame` was not run; a unit test with the console mockup's toast and
   panel CSS stands in for it and does not close the item.
-- For the web-host owner (`examples/varta-web-host`): the browser applier's
+- For the web-host owner (`examples/varta-web-host`, removed on 2026-11-06): the browser applier's
   view root must be a stacking context (`isolation: isolate` on the root
   container) to match native root-level negative `z-index` layers, which paint
   above the root's background. Until then those layers differ between native
@@ -1361,7 +1361,7 @@ all-target Clippy with GPU. Native macOS API checks pass in CPU Debug and Metal
 GPU Release: controls/names, activation, Ukrainian SetValue and concrete option
 selection; Debug also covers radio/checkbox, Undo and window zoom/restore with
 preserved state and subsequent input. Release guest async output is observed.
-[Pinned inputs and observations](../examples/native-showcase/accessibility-checkpoint-2026-11-03.json).
+[Pinned inputs and observations](evidence/accessibility-checkpoint-2026-11-03.json).
 Consolidated verification ran all eight commands successfully: **3215 passed,
 0 failures, 16 ignored**; the conformance baseline matches (123/127, four known
 unsupported). The wrapper's source guard failed because an additional native
@@ -1406,7 +1406,7 @@ process. Those native observations precede the final semantic FIFO refinement;
 its native retry is blocked by UI-tool timeouts. The attempted final Release
 textarea edit has no confirmed outcome. A short thread sample shows worker waits
 and AppKit window-raise work, without proving the timeout cause.
-[Pinned observations, hosts, code digest and limits](../examples/native-showcase/accessibility-descriptions-2026-11-03.json).
+[Pinned observations, hosts, code digest and limits](evidence/accessibility-descriptions-2026-11-03.json).
 The older 3215-test reconciliation above does not verify these newer code inputs.
 The full workspace gate remains a pre-commit
 batch-boundary check. Text ranges/line data, assistive scrolling/announcements and
@@ -1431,7 +1431,7 @@ affected-package GPU all-target Clippy and a GPU-capable Debug build. Seven
 strengthened text cases pass again separately and are included in the view count.
 The prepared CPU Debug bundle's native query timed out in the UI tool, so platform
 range behavior remains unconfirmed.
-[Pinned inputs, checks and limits](../examples/native-showcase/accessibility-text-ranges-2026-11-03.json).
+[Pinned inputs, checks and limits](evidence/accessibility-text-ranges-2026-11-03.json).
 These scoped results are separate from the preceding full-gate checkpoints.
 
 **UI-2.3 — visual text geometry implemented; platform acceptance open.** The renderer retains shaped
@@ -1450,7 +1450,7 @@ overlapping cases are not additional unique tests. Strict affected-package GPU
 all-target Clippy, formatting and a GPU-capable Debug build pass. The prepared
 `Varta Showcase GEOMETRY Debug.app` query timed out after 20 seconds in the UI
 tool; launch and OS range behavior remain unconfirmed.
-[Source digest, artifact hashes and limits](../examples/native-showcase/accessibility-text-geometry-2026-11-03.json).
+[Source digest, artifact hashes and limits](evidence/accessibility-text-geometry-2026-11-03.json).
 UI-2.2 results above do not verify this newer code. Assistive scrolling,
 announcements and actual platform acceptance remain next.
 
@@ -1611,7 +1611,7 @@ and system clipboard behavior remain unconfirmed. Evidence:
 `target/clipboard-core-final.log`, `target/clipboard-runtime-tests.log`,
 `target/clipboard-desktop-gpu-updated.log`, `target/clipboard-clippy-final.log`,
 `target/clipboard-boundaries.log`, `target/clipboard-showcase.log`, and
-`examples/native-showcase/clipboard-checkpoint-2026-11-04.json`. SDK/OS transient allocation is outside
+`docs/evidence/clipboard-checkpoint-2026-11-04.json`. SDK/OS transient allocation is outside
 retained-response bounds. Current system clipboard/IME/VoiceOver and target
 acceptance remain open. Final full gate: **3323 passed, 0 failures, 16 ignored**, all eight commands with unchanged inputs. Report: `target/verification/20261104-032530-xtwjknm6/report.json`; source SHA-256 `011b1246d98baaba320d4a7e85bf0b676c75779b3e03099e3cf279d2659d7ced`. Only documentation annotations follow the gate.
 
@@ -1880,7 +1880,7 @@ checks close this implementation batch, not the broader P10/P13 target matrix.
 - The pinned TSX pointer benchmark has **192 reference-equal frames**. At 2×,
   historical Debug/Release median frame preparation is 8.58/1.66 ms for pointer
   feedback, 6.68/1.38 ms for the counter and 16.85/10.23 ms for scrolling.
-  [Raw data](../examples/native-showcase/tsx-pointer-performance-2026-11-03.json)
+  [Raw data](evidence/tsx-pointer-performance-2026-11-03.json)
   identifies the measured Wasm and hosts. It predates the CSS extraction/browser
   font configuration and excludes input turns, startup, presentation and pointer
   sampling wait; it is not input latency or a current Chrome/native speed ratio.
@@ -1926,7 +1926,7 @@ exact input geometry and mean RGB delta 0.187–0.477/255. Release window sample
 6.13/19.80 ms. One host-entry-to-first-present-return sample is 1.89 s. These
 small local observations exclude physical scanout and do not establish a Chrome
 speed ratio. Stripped Release bundles are CPU 24,065,252 bytes and GPU 28,574,180
-bytes. [Pinned measurements](../examples/native-showcase/gpu-ui-checkpoint-2026-11-03.json)
+bytes. [Pinned measurements](evidence/gpu-ui-checkpoint-2026-11-03.json)
 identify inputs and binaries. Total GPU-memory accounting, broader target
 acceptance remain open. The consolidated final gate passes 3202 tests. P13b/P13c follow
 only after their contracts and source admission work; they do not delay closing
@@ -2458,10 +2458,12 @@ wasm32 shim of the shared intrinsic implementation. Project loading/configuratio
 packaging and CLI presentation are supporting development tools. They consume
 engine APIs and must not become engine dependencies.
 
-Apart from the product example `examples/uarp-console/` (the
+Apart from the developer examples under `examples/` (self-contained projects that
+show the public project protocol; not workspace members, and no crate depends on
+them), no separate application project is built in this repository. The product
+example `examples/uarp-console/` (the
 [cross-target acceptance application](#uarp-console-cross-target-acceptance-application),
-decided on 2026-10-29), no separate application project is built in this
-repository; the example is not a workspace member and no crate depends on it. The scenarios
+decided on 2026-10-29) was removed on 2026-11-06 by owner decision. The scenarios
 below are deferred consumers of the core, not work items for built-in domain
 models. First design and verify the generic mechanisms; only then build a separate
 TS/JS project using those real APIs. Test source fixtures remain necessary for
@@ -5688,6 +5690,13 @@ own tests and the same-artifact cross-target console session pass; it is not
 closed by a per-file compile probe.
 
 ##### UARP console (cross-target acceptance application)
+
+**Status: removed (owner decision, 2026-11-06).** The console, the TSX Showcase and
+the web-host prototype were experiments and were deleted with all of `examples/`,
+including the SDK acceptance drivers below. uarp-sdk stays the
+[pilot package](#pilot-acceptance-package-uarp-sdk); the cross-target acceptance
+application and the SDK-own-test harness (M7) must be rebuilt in a new form. The
+text below is the historical record.
 
 Confirmed by the owner on 2026-10-29 as the first application. It lives in this
 repository at `examples/uarp-console/`, a product example kept apart from the

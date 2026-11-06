@@ -16203,8 +16203,7 @@ full cross-host corpus, other fair host charges, overhead and delivery acceptanc
 remain open; long-lived application turns and the Firefox/WebKit/Chrome effect
 matrix are compared with native by the browser effect acceptance
 ([verification](verification.md#browser-registry-and-fuel-probe-development)), not
-by these probes. The prototype third-party host (`examples/varta-web-host`) remains
-unmetered. The value layouts and view protocol facts the official host reads are
+by these probes. The value layouts and view protocol facts the official host reads are
 generated from Rust by `varta_common::browser::registry()` and checked by its drift
 test; that registry is not a copy of every generated table of the
 [embedding contract](embedding.md).

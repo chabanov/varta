@@ -1,4 +1,0 @@
-# The `data` root of varta.json: `varta dev` keeps the console's KV database
-# (with the API key) here. Only this file is tracked.
-*
-!.gitignore

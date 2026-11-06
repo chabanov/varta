@@ -594,8 +594,8 @@ race was never reproduced, so it is not a verified fix.
 
 The gate does not cover `test-browser-select-bundle.mjs` (its `examples/select`
 fixture is not in the repository), the native oracles (`test-native-*.mjs`,
-`test-headless-geometry.mjs`, `test-select-work-runtime.mjs`), the fuel probe
-page or the `examples/uarp-console` drivers.
+`test-headless-geometry.mjs`, `test-select-work-runtime.mjs`) or the fuel probe
+page.
 
 The CI `browser` job runs this scope on Linux and macOS with Node.js 24, Playwright
 1.64.1 and its Firefox/WebKit builds installed outside the repository, and the
@@ -1253,18 +1253,7 @@ cargo test -p varta-common --test embedding_documentation --locked
 ```
 
 The Chrome probe compares native admission, failure operation and DOM rollback;
-the Worker test compares admission before/after a deferred local radio edit. The
-application-owned mockup driver also exercises radio work refusal and a later
-successful patch on each selected engine:
-
-```sh
-node --test examples/uarp-console/scripts/serve-mockups.test.mjs
-node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs chrome
-node examples/uarp-console/scripts/test-mockups.mjs /path/to/playwright/index.mjs webkit
-```
-
-Use `firefox` or omit the final selector for the complete three-engine attempt.
-A browser launch failure is an unverified engine, not a passing matrix. These
+the Worker test compares admission before/after a deferred local radio edit. These
 focused checks do not establish local-input radio work limits, aggregate
 retained-text/cascade limits, complete
 cross-target radio behavior, compiled pilot acceptance or release readiness.
@@ -1294,25 +1283,6 @@ also check that hidden source-size caches cannot poison future admission.
 Native and browser payload accounting excludes actual live values already
 covered by sticky reservations, preserving admission while their event is queued.
 This is a payload contract, not a measurement of process RSS or complete CSS work.
-
-For normal-stack application acceptance after rebuilding the CLI/companion and
-projection example, run from the repository root:
-
-```sh
-cargo build -p varta -p varta-launcher --locked
-cargo build -p varta-view --example project_flex_snapshot --locked
-VARTA_BIN="$PWD/target/debug/varta" examples/uarp-console/scripts/test.sh
-node examples/uarp-console/scripts/test-browser-sdk.mjs target/debug/varta
-node examples/uarp-console/scripts/test-browser-settings.mjs target/debug/varta
-node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs chrome
-node examples/uarp-console/scripts/test-browser-chat-matrix.mjs target/debug/varta /path/to/playwright/index.mjs webkit
-```
-
-The optional engine selector keeps a focused run local; omit it for all three
-engines. A selected engine pass does not establish Firefox or the full matrix.
-The mockup driver separately checks retained-capacity refusal, unchanged DOM and
-successful reclamation; the live chat probe checks trusted interactions, the
-native ordered tree, selected accessibility and sampled style declarations.
 
 
 ## Stylesheet expansion and packaged resource failures
@@ -1979,7 +1949,7 @@ builds and the Showcase passes its 12 trusted-input script
 (`target/clipboard-showcase.log`). App selection through Cua times out after
 60 s with kernel reset; current launch and actual system clipboard behavior
 remain unconfirmed. Bundle hashes and scope are recorded in
-`examples/native-showcase/clipboard-checkpoint-2026-11-04.json`. These scoped
+`docs/evidence/clipboard-checkpoint-2026-11-04.json`. These scoped
 results do not constitute the final package gate.
 
 The first full-gate attempt stopped at formatting before engine checks

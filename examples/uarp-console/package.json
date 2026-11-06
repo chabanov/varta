@@ -1,8 +1,0 @@
-{
-  "name": "uarp-console",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "uarp-sdk": "0.13.2"
-  }
-}

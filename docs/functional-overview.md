@@ -222,9 +222,10 @@ integration remain future work.
 | Raspberry Pi 5 | Earlier aarch64 launcher cross-build/run probe | Actual Pi hardware, kernel/page-size, UI/GPU/input and package metadata acceptance |
 | Browser Worker | Metered applications/views, OPFS, effects and recorded SDK/settings checks in Chrome; selected other-engine evidence | Updated streaming probe, current complete Chromium/Firefox/WebKit and pilot matrices |
 
-The [TSX Showcase](../examples/native-showcase/README.md) is a renderer demo.
-The [UARP console](../examples/uarp-console/README.md) is the cross-target pilot,
-kept outside engine crates. Recorded pilot evidence includes:
+The TSX Showcase and the UARP console pilot application were removed from the
+repository on 2026-11-06 (owner decision); a structured developer examples package
+replaces them. Their recorded evidence is historical and cannot be reproduced from
+the current tree. It included:
 
 - Pinned uarp-sdk 0.13.2: 65/65 source files checked and exported generic sites
   instantiated under the admitted profile.

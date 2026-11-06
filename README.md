@@ -22,8 +22,9 @@ The native renderer includes inline borders/decorations, control defaults,
 positioned painting, modal dialogs, system fonts with platform fallback faces and
 macOS colour emoji, `scale()` transforms, classic scrollbars and CSS transitions/
 translations; the console has headless first-frame and button-state evidence.
-The [TSX Showcase](examples/native-showcase/README.md) remains a renderer demo;
-the [UARP console](examples/uarp-console/README.md) is the application pilot.
+The earlier experimental examples (TSX Showcase, UARP console, web-host
+prototype) were removed on 2026-11-06; a structured developer examples package
+replaces them.
 
 HTTP v2 streams response bodies, takes Web `Request` handlers with streamed
 request bodies and runs requests as async Wasmtime tasks with pooled instances,
