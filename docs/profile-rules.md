@@ -4520,11 +4520,23 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders),
   border and padding (opening piece starts after the margin), enclosing boxes take the
   whole signed advance, and fragment widths are clamped at zero only after the
   line is projected. Elements with edges are placed by their edges, not by the
-  empty-anchor path. Glyph and underline loops skip decoration-edge items; any
-  other inline box remains unsupported. Refuse nonzero horizontal percentages,
+  empty-anchor path. Glyph and underline loops skip glyphless items (decoration
+  edges and atomic inlines). Refuse nonzero horizontal percentages,
   spacing on `<br>`, and edges in a flow with right-to-left runs. Edges share the
   inline-work, glyph-slot, shaping-operation and fragment ceilings and the shape
   memo key. Compare changes with `portable_edge_probe` in Chrome at 1×/1.25×/2×.
+- An inline image that shares its line is an `EdgeKind::Atom` edge (a Parley
+  `InFlow` box of its margin-box width), never an inserted character. Its
+  break opportunities lie before the opening edges right before it and after
+  the closing edges right after it (the Parley patch); a pending collapsible
+  space is emitted before it and one after it is kept. Size it through
+  `layout::image_box` (the same style validation as every image) and refuse
+  percentages there; resolve `vertical-align` in `inline::atoms` with
+  Chrome's layout-unit shifts and place `top`/`bottom` after the rest of the
+  line. The image is not part of inline paint programs: it paints, hits and
+  is named as its own box through `Order::inline_atoms` right after its
+  flow's text. An image alone on a baseline-aligned line keeps its flex-row
+  line box. Compare changes with `native_image_probe` at 1×/1.5×/2×/3×.
 - Rich-flow hits insert, for each line after the first, block hit regions for
   the horizontal gaps between that line's visible fragments over its line box
   (`ShapedFlow::line_boxes`), ordered after earlier lines and before the line's

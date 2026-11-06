@@ -795,16 +795,24 @@ for scale in 1 1.5 2 3; do
 done
 ```
 
-Native images (`img`) are compared with Chrome on the probe's own PNG bytes:
-geometry, hits, image roles and names, and pixels of the viewport and of
-each image's box. Image sampling depends on the device scale (levels of
-detail, fractional edges), so all four scales run:
+Native images (`img`) are compared with Chrome on the probe's own image
+files (every format, colour source, orientation and animation, generated at
+run time): geometry, hits, image roles and names, frame durations and loop
+counts (Chrome's `ImageDecoder`), and pixels of the viewport and of each
+image's box. Image sampling depends on the device scale (levels of detail,
+fractional edges), so all four scales run. Images in lines of text use the
+Parley atomic-inline patch: after changing it, regenerate
+`vendor/parley/VARTA-PATCH.diff` from the crates.io release and check that
+applying it to the release `src/` reproduces the vendored tree.
 
 ```sh
 cargo test -p varta-common --lib --locked view::images
+cargo test -p varta-common --lib --locked view::attributes
 cargo test -p varta-artifact --lib --locked resources::
 cargo test -p varta-view --lib --locked image::
 cargo test -p varta-view --lib --locked layout::replaced
+cargo test -p varta-view --lib --locked inline::atoms
+cargo test -p varta-view --lib --locked text::edges
 cargo test -p varta-project --lib --locked image_tests
 cargo test -p varta-desktop --test shell --locked image
 cargo test -p varta-desktop --test binaries --locked corrupt_packaged_image

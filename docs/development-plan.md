@@ -48,73 +48,93 @@ their current limitations and the evidence behind this checkpoint.
 ### Native images — 2026-11-06
 
 Applications that show images now draw them natively, not only in the
-browser bundle ([contract](architecture.md#native-images-img)). A
-configuration declares its PNG files in a top-level `images` map (view `src`
-name to project path); packaging puts them into the artifact's resource
-section, version 2 when there are images (a fonts-only section keeps its
-version 1 bytes; [format](architecture.md#packaged-images-section-version-2)),
-and the browser bundle carries the same files under the same names, so both
-renderers admit the same images. `images` and `browser.resources` cannot be
-declared together.
+browser bundle, to the published standards with Chrome as the oracle
+([contract and conformance table](architecture.md#native-images-img)). The
+first increment admitted static sRGB PNG only; the owner directive of the
+same day asked for the standards instead of a PNG subset, which this record
+covers. A configuration declares its image files in a top-level `images`
+map (view name to project path); packaging decodes them with the native
+decoder and puts them into the artifact's resource section, version 2 when
+there are images (a fonts-only section keeps its version 1 bytes;
+[format](architecture.md#packaged-images-section-version-2)), and the browser
+bundle carries the same files under the same names with their media types,
+so both renderers admit the same images. `images` and `browser.resources`
+cannot be declared together.
 
-- **Admission.** One structural check (`varta_common::view::images::inspect_png`)
-  serves packaging, artifact reading and the renderer: signature, a unique
-  leading `IHDR`, dimensions, bounded chunks, a final `IEND`; animated PNG,
-  EXIF orientation and colour-managed images (`iCCP`, `cICP`, `mDCV`, and
-  without `sRGB` also `cHRM` and a non-sRGB `gAMA`, which Chrome 156 was
-  measured to apply) are refused, so natively drawn pixels are the image's
-  sRGB pixels as in Chrome. `varta-shell` decodes the images once
-  (`ImageSet::decode`, new dependency `png` 0.17.16) before storage exists
-  and before guest code; a corrupt stream is `ShellError::Images`. With an
-  image set, a guest batch naming an unpackaged image is refused, as the
-  browser host refuses it.
-- **Layout.** Replaced sizing follows CSS 2.1 (natural size and ratio,
-  `width`/`height`, min/max and the §10.4 table, parent-imposed sizes final
-  per axis) in a dedicated Taffy leaf (`layout/replaced.rs`), with
-  `item_is_replaced` for block and grid placement. Block-level, flex/grid,
-  positioned and alone-on-a-line inline images are admitted; the inline line
-  box (the parent's strut, the margin box on the baseline, safe `text-align`)
-  is a flex row standing in the parent. Inline images beside text are refused.
-- **Paint.** A software-only scene primitive (`Primitive::Image`) samples
-  each device pixel as Skia does: bilinear, and below half size linear
-  between two `SkMipmap` levels (box or 1-2-1 kernels, truncating) at level
-  of detail `log2(1/s) - 0.5` for the larger axis scale. These rules were
-  measured against Chrome before implementation (bilinear alone left mean
-  errors of 2 to 18/255 on downscales; nearest-level mipmaps 1.8; Skia's
-  biased trilinear rule 0.35, max 1). The destination snaps in Blink's 1/64
-  layout units to whole paint pixels before DPI; a rounded image takes its
-  edge coverage from its content-box clip alone (Blink's `DrawImageRRect`).
-  Frames with images take the explicit software path
-  (`PreparedFrame::Raster`) on the GPU backend.
+- **Formats and colour.** PNG/APNG, JPEG, GIF, WebP, BMP and ICO, told apart
+  by signature (MIME Sniffing §6.1), decoded by the image-rs decoders with
+  limits; converted to sRGB with `moxcms` from `cICP`, `iCCP`, `sRGB`,
+  `cHRM`/`gAMA` (PNG 3rd edition priority) or an embedded ICC profile; EXIF
+  orientation with `image-orientation`. JPEG converts after sampling, as
+  Skia draws it (converting at decode differed by about 5/255 when
+  upscaled). AVIF (no safe-Rust decoder), SVG (no SVG renderer) and HDR or
+  narrow-range `cICP` are refused with their own reasons.
+- **HTML.** `srcset`/`sizes` with Chromium's density selection and the
+  density-corrected natural size; `width`/`height` attributes as
+  presentational hints and the `aspect-ratio` hint; an `img` without an
+  image represents nothing, and one that would show alternative text or a
+  sized broken-image box is refused (user agent rendering); `decoding` and
+  `loading` change nothing for local images. Animations play on the view's
+  animation clock with Blink's 100 ms short-frame rule and each format's
+  loop count.
+- **CSS.** `object-fit`, `object-position`, `image-rendering` (`pixelated`
+  and `crisp-edges` as CSS Images 3 §5.2 defines them), `aspect-ratio`,
+  replaced sizing (CSS 2.1 §10.3.2, §10.4, §10.6.2).
+- **Images in lines of text.** An inline image beside text is an atomic
+  inline of the inline formatting context: a Parley `InFlow` box with a
+  soft wrap opportunity on both sides (CSS Text 3 §5.1) that keeps the
+  decoration edges next to it (a recorded Parley patch; `VARTA-PATCH.diff`
+  regenerated and checked to reproduce the vendored tree from the release),
+  and every `vertical-align` value with Chrome's shifts in layout units,
+  `top`/`bottom` growing the line box as aligned subtrees. Images alone on a
+  line keep their line box. Percentage sizes of images in text, positioned
+  or transformed images there, images under an inline box with opacity and
+  images in ellipsis or native white-space flows are refused.
+- **Paint.** A software-only scene primitive (`Primitive::Image`) samples as
+  Skia does: bilinear, and below half size linear between two `SkMipmap`
+  levels at level of detail `log2(1/s) - 0.5`; the destination snaps in
+  Blink's 1/64 layout units to whole paint pixels before DPI, a rounded
+  image takes its edge coverage from its content-box clip alone, and a clip
+  that cuts an image masks only where it cuts (a viewport clip had doubled
+  the image's own edge coverage). Frames with images take the explicit
+  software path (`PreparedFrame::Raster`) on the GPU backend.
 - **Accessibility.** `alt` names the image; an empty `alt` without a label
-  is presentational, as Chrome exposes it (a native role change).
+  is presentational, as Chrome exposes it.
+- **Dependencies.** `png` 0.18.1, `image` 0.25.10 (PNG, JPEG, GIF, WebP,
+  BMP, ICO features only) and `moxcms` 0.8.1 (no default features), all safe
+  Rust with exact pins; `flate2` is held at 1.1.10 in the lockfile.
 
 Verification on macOS 27.0.1 with Chrome 156.0.8078.80: `native_image_probe`
-with `scripts/test-native-images.mjs`, 12 cases and 12174 checks per scale
-(geometry, hits, roles and names, pixels of the viewport and of every image's
-box), pass at 1x, 1.5x, 2x and 3x; viewport RGB means at most 0.246, 0.145,
-0.106 and 0.082/255 and per-image means at most 1.095, 1.311, 1.472 and
-0.367/255 (curved clip edges and an odd-sized level chain at 1.5x/2x are the
-largest). Unit tests cover the chunk rules, the section's version 2 encoding,
-canonical order, tampering and bounds, decoding of every colour type, the
-level kernels, the constraint table, refusals, far-edge coverage and the
-software path; `varta-desktop` tests decode, lay out, draw, hit and name a
-packaged image through the shell core, refuse an unpackaged name and refuse
-a corrupt image in `varta-shell` before storage; a CLI smoke test packages an
-image into both distributions.
+with `scripts/test-native-images.mjs`, 22 cases and 22482 checks per scale
+(geometry, hits, roles and names, frame durations and loop counts with
+Chrome's `ImageDecoder`, pixels of the viewport and of every image's box),
+pass at 1x, 1.5x, 2x and 3x; viewport RGB means at most 0.821, 0.904, 0.847
+and 0.742/255 and per-image means at most 1.095, 1.404, 1.472 and 1.000/255.
+The oracle shows a later animation frame by giving the same `img` a lossless
+PNG of the frame Chrome's decoder produced (a canvas in its place had been
+composited differently at 1.5x). Unit tests cover sniffing, the section
+encoding, selection, sizes, colour sources and refusals, orientation
+mapping, `pixelated` and nearest sampling, animation timing and loop counts,
+object sizes, the constraint table, atomic-inline breaking with decoration
+edges, every `vertical-align` and the refusals; `varta-desktop` tests decode,
+lay out, draw, hit and name a packaged image through the shell core and
+refuse a corrupt image in `varta-shell` before storage; a CLI smoke test
+packages an image into both distributions.
 
 **Pending owner decision.** The image limits are initial conservative values
 in `varta_common::view::images`: 64 images, 4 MiB per file and 16 MiB in all
 (the browser bundle's per-resource and total values), 4096 px per dimension,
-16 MiB of decoded RGBA in all, and 32 MiB of retained pixels with their
-levels. No existing production budget changed.
+512 frames per image, 16 MiB of decoded RGBA in all (every frame counted),
+and 32 MiB of retained pixels with their levels. No existing production
+budget changed.
 
-**Not done.** Inline images beside text or inside inline elements (the
-vendored Parley's inline boxes do not yet follow CSS line metrics), `object-fit`,
-`object-position`, `aspect-ratio`, `image-rendering`, `srcset`, other formats,
-animation and colour management. Images on the direct GPU path (frames with
-images fall back to the CPU raster). `varta dev` headless geometry does not
-load the configuration's images yet. Chrome on Linux was not compared.
+**Open.** AVIF and SVG images; alternative-text and broken-image rendering;
+HDR images; Chrome draws a downscaled `pixelated` image by nearest neighbour
+and drops `crisp-edges`, so the oracle compares those cases with Chrome's
+values; Chromium's cached-candidate `srcset` heuristic; `varta dev` shows no
+packaged images; images on Linux are not compared with Chrome; the GPU
+backend presents image frames through the software path.
+
 ### Language gap ranking and the v38 iteration protocol — 2026-11-06
 
 Ranking of the remaining language gaps of the [functional

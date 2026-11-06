@@ -8,7 +8,7 @@
 //! - Colour (`color`): converted to sRGB per CSS Color 4 §10 and the PNG 3rd
 //!   edition chunk priority.
 //! - Orientation: the EXIF orientation is kept with the pixels and applied
-//!   when drawing, so `image-orientation: none` (CSS Images 3 §5.3) shows
+//!   when drawing, so `image-orientation: none` (CSS Images 3 §5.1) shows
 //!   the stored pixels and `from-image` (the initial value) the oriented
 //!   ones, with the natural size swapped for quarter turns.
 //! - Animation (`Playback`): frames advance on the view's animation clock
@@ -19,7 +19,7 @@
 //!   level of detail `log2(1 / scale) - 0.5` for the larger axis scale; each
 //!   level halves the axes longer than one pixel with Skia's integer kernels.
 //!   `image-rendering: pixelated` and `crisp-edges` sample the nearest texel
-//!   when the image is not drawn smaller (CSS Images 3 §5.4). Measured
+//!   when the image is not drawn smaller (CSS Images 3 §5.2). Measured
 //!   against Chrome (see `examples/native_image_probe.rs`).
 mod color;
 mod decode;

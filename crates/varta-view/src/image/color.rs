@@ -261,3 +261,88 @@ pub(super) fn to_srgb(source: &ColorSource, rgba: Vec<u8>) -> Result<Vec<u8>, Fa
         .map_err(|_| Failure::Malformed)?;
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The colour source a decoder reads from a PNG with `chunks` before
+    /// its pixels.
+    fn source(chunks: &[(&[u8; 4], &[u8])]) -> ColorSource {
+        let mut out = Vec::new();
+        {
+            let mut encoder = ::png::Encoder::new(&mut out, 1, 1);
+            encoder.set_color(::png::ColorType::Rgba);
+            encoder.set_depth(::png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            for (kind, data) in chunks {
+                writer
+                    .write_chunk(::png::chunk::ChunkType(**kind), data)
+                    .unwrap();
+            }
+            writer.write_image_data(&[0, 0, 0, 255]).unwrap();
+        }
+        let reader = ::png::Decoder::new(std::io::Cursor::new(out))
+            .read_info()
+            .unwrap();
+        png_source(reader.info())
+    }
+
+    #[test]
+    fn png_colour_chunks_take_the_third_edition_priority() {
+        let cicp: &[u8] = &[9, 13, 0, 1];
+        let srgb: &[u8] = &[0];
+        let linear = 100_000u32.to_be_bytes();
+        let srgb_gamma = SRGB_GAMMA.to_be_bytes();
+        assert!(matches!(
+            source(&[(b"cICP", cicp), (b"sRGB", srgb), (b"gAMA", &linear)]),
+            ColorSource::Cicp { primaries: 9, .. }
+        ));
+        assert_eq!(
+            source(&[(b"sRGB", srgb), (b"gAMA", &linear)]),
+            ColorSource::Untagged
+        );
+        // `gAMA` 1/2.2 alone is sRGB, as Chrome treats it.
+        assert_eq!(source(&[(b"gAMA", &srgb_gamma)]), ColorSource::Untagged);
+        assert_eq!(
+            source(&[(b"gAMA", &linear)]),
+            ColorSource::Gamma {
+                gamma: 100_000,
+                chromaticities: None
+            }
+        );
+        assert_eq!(source(&[]), ColorSource::Untagged);
+    }
+
+    #[test]
+    fn colour_sources_convert_to_srgb_or_are_refused() {
+        let cicp = |primaries, transfer, matrix, full_range| ColorSource::Cicp {
+            primaries,
+            transfer,
+            matrix,
+            full_range,
+        };
+        // PQ and HLG are tone-mapped by Chrome; narrow range and YCbCr
+        // matrices have no RGB meaning.
+        for refused in [
+            cicp(9, 16, 0, true),
+            cicp(9, 18, 0, true),
+            cicp(1, 13, 0, false),
+            cicp(1, 13, 1, true),
+        ] {
+            assert!(matches!(profile(&refused), Err(Failure::Unsupported)));
+        }
+        assert!(matches!(profile(&cicp(1, 13, 0, true)), Ok(None)));
+        assert!(matches!(profile(&cicp(12, 13, 0, true)), Ok(Some(_))));
+        // A linear file gamma brightens a mid grey; sRGB pixels pass through.
+        let grey = vec![128, 128, 128, 255];
+        let linear = ColorSource::Gamma {
+            gamma: 100_000,
+            chromaticities: None,
+        };
+        let converted = to_srgb(&linear, grey.clone()).unwrap();
+        assert!((185..=190).contains(&converted[0]), "{converted:?}");
+        assert_eq!(converted[3], 255);
+        assert_eq!(to_srgb(&ColorSource::Untagged, grey.clone()).unwrap(), grey);
+    }
+}

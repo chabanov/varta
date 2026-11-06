@@ -16,7 +16,7 @@ const LEVEL_BIAS: f32 = 0.5;
 const CHANNEL_MAX: f32 = 255.0;
 const HALF: f32 = 0.5;
 
-/// How texels are filtered (CSS Images 3 §5.4 `image-rendering`).
+/// How texels are filtered (CSS Images 3 §5.2 `image-rendering`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Filter {
     /// `auto`, `smooth`, `high-quality`: bilinear and levels.
@@ -287,5 +287,66 @@ pub(crate) fn draw_image(
     let local = Transform::from_translate(-ox, -oy);
     if let Some(rect) = fill.and_then(|fill| fill.transform(local)) {
         crate::render::scene::fill_rect(target, rect, &paint, Transform::identity(), mask);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 2x2 level: red, green / blue, white.
+    fn level() -> Level {
+        Level {
+            width: 2,
+            height: 2,
+            pixels: [
+                [255, 0, 0, 255],
+                [0, 255, 0, 255],
+                [0, 0, 255, 255],
+                [255; 4],
+            ]
+            .concat(),
+        }
+    }
+
+    #[test]
+    fn exif_orientations_map_display_points_to_stored_pixels() {
+        let size = (4.0, 2.0);
+        // The display point near the top-left corner of each orientation's
+        // displayed image, in stored coordinates (EXIF 2.32 §4.6.4).
+        let corner = (0.5, 0.5);
+        let expected = [
+            (1, (0.5, 0.5)),
+            (2, (3.5, 0.5)),
+            (3, (3.5, 1.5)),
+            (4, (0.5, 1.5)),
+            (5, (0.5, 0.5)),
+            (6, (0.5, 1.5)),
+            (7, (3.5, 1.5)),
+            (8, (3.5, 0.5)),
+        ];
+        for (orientation, stored_point) in expected {
+            assert_eq!(
+                stored(orientation, size, corner),
+                stored_point,
+                "{orientation}"
+            );
+        }
+    }
+
+    #[test]
+    fn nearest_and_pixelated_sampling_keep_texels_sharp() {
+        let level = level();
+        assert_eq!(nearest(&level, 0.2, 0.2), [255, 0, 0, 255]);
+        assert_eq!(nearest(&level, 1.9, 1.9), [255; 4]);
+        // Clamped outside the image.
+        assert_eq!(nearest(&level, -3.0, 9.0), [0, 0, 255, 255]);
+        // `pixelated` at 2.5x: the 2x nearest image is smoothed only where
+        // its texels meet, so texel centres keep their colours.
+        let factors = (2.0, 2.0);
+        assert_eq!(pixelated(&level, factors, 0.25, 0.25), [255, 0, 0, 255]);
+        assert_eq!(pixelated(&level, factors, 1.75, 0.25), [0, 255, 0, 255]);
+        let edge = pixelated(&level, factors, 1.0, 0.25);
+        assert_eq!((edge[0], edge[1]), (128, 128));
     }
 }

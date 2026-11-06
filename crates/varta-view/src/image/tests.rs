@@ -226,7 +226,7 @@ fn block_images_size_from_their_ratio_without_a_font() {
 
 #[test]
 fn unsupported_image_placements_and_styles_are_refused() {
-    // Text beside an inline image would share its line box.
+    // Text beside an inline image needs its font.
     let mixed = view(&[], true);
     assert!(matches!(
         mixed.layout_boxes(VIEWPORT as f32, VIEWPORT as f32),
@@ -284,4 +284,159 @@ fn image_frames_take_the_explicit_software_path() {
     // The software scene is retained: an unchanged frame has no damage.
     renderer.prepare(&view, VIEWPORT, VIEWPORT, 1.0).unwrap();
     assert_eq!(renderer.damage(), None);
+}
+
+const INLINE_FAMILY: &str = "Varta Inline Fixture";
+
+/// `A<img>A` in a 20px fixture line (ascent 18, descent 2), the image 10px
+/// square with `styles`, inside an inline `span` of `span` styles when given.
+fn line_boxes(
+    styles: &[(P, &str)],
+    span: Option<&[(P, &str)]>,
+    root: &[(P, &str)],
+) -> Result<std::collections::BTreeMap<u32, crate::BoxRect>, LayoutError> {
+    let red = solid(4, 4, RED);
+    let mut view = View::default();
+    view.set_images(Some(set(&[("red.png", &red)])));
+    let mut b = B::new();
+    b.create_element(2, Tag::Div)
+        .insert(1, 2, 0)
+        .set_style(2, P::FontFamily, "\"Varta Inline Fixture\"")
+        .set_style(2, P::FontSize, "20px")
+        .set_style(2, P::LineHeight, "20px");
+    for &(property, value) in root {
+        b.set_style(2, property, value);
+    }
+    b.create_text(4, "A").insert(2, 4, 0);
+    let parent = if let Some(styles) = span {
+        b.create_element(6, Tag::Span).insert(2, 6, 0);
+        for &(property, value) in styles {
+            b.set_style(6, property, value);
+        }
+        6
+    } else {
+        2
+    };
+    b.create_element(3, Tag::Img)
+        .insert(parent, 3, 0)
+        .set_attribute(3, A::Src, "red.png")
+        .set_attribute(3, A::Alt, "Red")
+        .set_style(3, P::Width, "10px");
+    for &(property, value) in styles {
+        b.set_style(3, property, value);
+    }
+    b.create_text(5, "A").insert(2, 5, 0);
+    view.commit(&b.finish(), false, &mut Denied).unwrap();
+    let mut font = crate::TextMeasurer::new(
+        include_bytes!("../../tests/fixtures/inline.ttf").to_vec(),
+        INLINE_FAMILY,
+    )
+    .unwrap();
+    view.layout_boxes_with_text(VIEWPORT as f32, VIEWPORT as f32, &mut font, 16.0)
+}
+
+#[test]
+fn images_in_lines_of_text_are_atomic_inlines_aligned_by_vertical_align() {
+    let at = |styles: &[(P, &str)]| {
+        let image = line_boxes(styles, None, &[]).unwrap()[&3];
+        (image.x, image.y, image.width, image.height)
+    };
+    // The margin box bottom on the baseline (18), after the first letter.
+    assert_eq!(at(&[]), (8.0, 8.0, 10.0, 10.0));
+    assert_eq!(at(&[(P::VerticalAlign, "top")]), (8.0, 0.0, 10.0, 10.0));
+    assert_eq!(at(&[(P::VerticalAlign, "bottom")]), (8.0, 10.0, 10.0, 10.0));
+    assert_eq!(
+        at(&[(P::VerticalAlign, "text-bottom")]),
+        (8.0, 10.0, 10.0, 10.0)
+    );
+    // `sub`: 20 / 5 + 1 below the baseline; `super`: 20 / 3 + 1 above.
+    assert_eq!(at(&[(P::VerticalAlign, "sub")]), (8.0, 13.0, 10.0, 10.0));
+    let lifted = line_boxes(&[(P::VerticalAlign, "super")], None, &[]).unwrap();
+    let raise = (20.0f32 / 3.0 * 64.0).trunc() / 64.0 + 1.0;
+    assert_eq!(lifted[&3].y, 18.0 - 10.0 - raise);
+    assert_eq!(lifted[&2].height, 20.0);
+    // Raised beyond the strut, it grows the line above the baseline.
+    let raised = line_boxes(&[(P::VerticalAlign, "12px")], None, &[]).unwrap();
+    assert_eq!((raised[&3].y, raised[&2].height), (0.0, 24.0));
+    assert_eq!(at(&[(P::VerticalAlign, "4px")]), (8.0, 4.0, 10.0, 10.0));
+    // Margins take part in the margin box and its advance.
+    let boxes = line_boxes(&[(P::Margin, "1px 2px 3px 4px")], None, &[]).unwrap();
+    assert_eq!((boxes[&3].x, boxes[&3].y), (12.0, 5.0));
+    assert_eq!(boxes[&5].x, 24.0);
+    // An enclosing inline box spans the image's advance at its own font box.
+    let boxes = line_boxes(&[], Some(&[]), &[]).unwrap();
+    assert_eq!(
+        (boxes[&6].x, boxes[&6].y, boxes[&6].width, boxes[&6].height),
+        (8.0, 0.0, 10.0, 20.0)
+    );
+}
+
+#[test]
+fn image_lines_refuse_what_their_layout_does_not_resolve() {
+    for (styles, span, root) in [
+        // A percentage of the containing block, positioning, a transform.
+        (&[(P::Width, "50%")][..], None, &[][..]),
+        (&[(P::Position, "relative")], None, &[]),
+        (&[(P::Transform, "scale(2)")], None, &[]),
+        // The fixture has no x-height for `middle`.
+        (&[(P::VerticalAlign, "middle")], None, &[]),
+        // An inline box with opacity groups its content.
+        (&[], Some(&[(P::Opacity, "0.5")][..]), &[]),
+    ] {
+        assert!(
+            matches!(
+                line_boxes(styles, span, root),
+                Err(LayoutError::Unsupported(3))
+            ),
+            "{styles:?} {span:?}"
+        );
+    }
+    // An ellipsis flow refuses its images.
+    assert!(matches!(
+        line_boxes(
+            &[],
+            None,
+            &[(P::TextOverflow, "ellipsis"), (P::Overflow, "hidden")]
+        ),
+        Err(LayoutError::Unsupported(2))
+    ));
+}
+
+#[test]
+fn animations_follow_their_durations_and_plays() {
+    let frame = |duration_ms| Frame {
+        levels: Vec::new(),
+        duration_ms,
+    };
+    let image = |plays| Image {
+        frames: vec![frame(100), frame(200), frame(300)],
+        plays,
+        orientation: 1,
+        deferred: None,
+    };
+    let twice = image(decode::Plays::Finite(2));
+    for (elapsed, expected) in [
+        (0.0, 0),
+        (99.0, 0),
+        (100.0, 1),
+        (299.0, 1),
+        (300.0, 2),
+        (650.0, 0),
+        (750.0, 1),
+    ] {
+        assert_eq!(twice.frame_at(elapsed), expected, "{elapsed}");
+    }
+    // After its plays it stays on its last frame.
+    assert_eq!(twice.frame_at(1200.0), 2);
+    assert!(twice.playing(1199.0) && !twice.playing(1200.0));
+    let forever = image(decode::Plays::Infinite);
+    assert_eq!(forever.frame_at(6000.0 + 150.0), 1);
+    assert!(forever.playing(1e9));
+    // A still image never animates.
+    let still = Image {
+        frames: vec![frame(0)],
+        ..image(decode::Plays::Infinite)
+    };
+    assert_eq!(still.frame_at(500.0), 0);
+    assert!(!still.playing(0.0));
 }

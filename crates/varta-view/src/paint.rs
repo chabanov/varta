@@ -1560,7 +1560,7 @@ fn paint_shaped_with(
             let glyph_run = match item {
                 PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,
                 // Decoration edges only advance; their boxes paint separately.
-                PositionedLayoutItem::InlineBox(edge) if decoration_edge(edge.kind) => continue,
+                PositionedLayoutItem::InlineBox(edge) if glyphless_box(edge.kind) => continue,
                 PositionedLayoutItem::InlineBox(_) => return Err(PaintError::Unsupported(id)),
             };
             let base_color = color(glyph_run.style().brush)?;
@@ -2671,7 +2671,9 @@ fn rasterize_inner_scoped(
         affines: Vec::new(),
         capture: None,
     };
-    let mut pending = order::Order::new(tree, &env, &geometry, |id| flows.contains_key(&id))?;
+    let mut pending = order::Order::new(tree, &env, &geometry, |id| {
+        flows.get(&id).map(|frame| frame.atoms.as_slice())
+    })?;
     let scopes = clip_scopes(tree, &env, &geometry, units, &pending, &mut pixmap)?;
     // Rectangular clips of the open opacity groups, innermost last.
     let mut group_clips = Vec::<(u32, BoxRect)>::new();
@@ -2990,6 +2992,7 @@ fn rasterize_inner_scoped(
                     &mut pending,
                     &mut inline_programs,
                 )?;
+                pending.inline_atoms(&frame.atoms);
             }
             if let Some(marker) = markers.get(&id) {
                 let color = current_color(tree, &env, id).ok_or(PaintError::Unsupported(id))?;
@@ -3328,11 +3331,14 @@ fn rasterize_inner_scoped(
     })
 }
 
-/// Inline decoration edges contribute advance but no glyphs.
-pub(crate) fn decoration_edge(kind: parley::InlineBoxKind) -> bool {
+/// Inline decoration edges and atomic inlines contribute advance but no
+/// glyphs; an atomic inline paints as its own box.
+pub(crate) fn glyphless_box(kind: parley::InlineBoxKind) -> bool {
     matches!(
         kind,
-        parley::InlineBoxKind::InlineStart | parley::InlineBoxKind::InlineEnd
+        parley::InlineBoxKind::InlineStart
+            | parley::InlineBoxKind::InlineEnd
+            | parley::InlineBoxKind::InFlow
     )
 }
 

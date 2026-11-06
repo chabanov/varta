@@ -56,7 +56,7 @@ await withBrowserPage(origin,async call=>{
   }
   await call('Emulation.setDeviceMetricsOverride',{...viewport,deviceScaleFactor:scale,mobile:false});
   await call('Accessibility.enable');
-  await evaluate(`(async()=>{document.open();document.write("<!doctype html><html><head></head><body></body></html>");document.close();document.fonts.add(await new FontFace(${JSON.stringify(oracle.family)},Uint8Array.from(${JSON.stringify(oracle.font)})).load());document.body.style.margin='0';document.body.style.background='white';document.documentElement.style.colorScheme='light';})()`);
+  await evaluate(`(async()=>{document.open();document.write("<!doctype html><html><head></head><body></body></html>");document.close();for(const {family,font} of ${JSON.stringify([{family:oracle.family,font:oracle.font},...(oracle.fonts??[])])})document.fonts.add(await new FontFace(family,Uint8Array.from(font)).load());document.body.style.margin='0';document.body.style.background='white';document.documentElement.style.colorScheme='light';})()`);
   for(const fixture of oracle.cases) {
     const actual=await evaluate(`(async()=>{
       document.body.replaceChildren();scrollTo(0,0);const nodes=new Map(),sources=${JSON.stringify(sources)},types=${JSON.stringify(TYPES)};let served=0;const fresh=name=>'/image/'+name+'?u='+(++served)+'-'+Math.random();
@@ -73,14 +73,15 @@ await withBrowserPage(origin,async call=>{
       // CSS Images 3 §5.2: pixelated scales down to the closest integer multiple (1) and the rest as smooth; Chrome scales it down nearest-neighbor, so a scaled-down pixelated image is compared as Chrome draws auto.
       for(const image of document.images)if(image.style.imageRendering==="pixelated"&&image.getBoundingClientRect().width*devicePixelRatio<image.naturalWidth)image.style.imageRendering="auto";
       // A native image shown at a later frame: Chrome's own decoder draws
-      // that frame into a canvas of the image's natural size in its place.
+      // that frame into a canvas of the image's natural size, whose lossless
+      // PNG the same img then shows, drawn by Chrome's image pipeline.
       for(const {id,image,frame} of ${JSON.stringify(fixture.frames??[])}){
         const element=nodes.get(id),bytes=await (await fetch(sources[image])).arrayBuffer();
         const decoder=new ImageDecoder({data:bytes,type:types[image.split('.').pop()]});
         const {image:videoFrame}=await decoder.decode({frameIndex:frame});
         const canvas=document.createElement('canvas');canvas.width=videoFrame.displayWidth;canvas.height=videoFrame.displayHeight;
         canvas.getContext('2d').drawImage(videoFrame,0,0);videoFrame.close();decoder.close();
-        canvas.setAttribute('style',element.getAttribute('style')??'');canvas.dataset.node=id;element.replaceWith(canvas);nodes.set(id,canvas);
+        const png=await new Promise(r=>canvas.toBlob(r,'image/png'));element.src=URL.createObjectURL(png);await element.decode();
       }
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
       const box=r=>({x:r.x,y:r.y,width:r.width,height:r.height}),boxes={};

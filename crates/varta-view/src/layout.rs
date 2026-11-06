@@ -11,7 +11,7 @@ use taffy::style::{GridPlacement, GridTemplateTracks, Overflow, RepetitionCount}
 use varta_common::view::{CssProperty, ROOT_NODE, Tag};
 
 pub(crate) mod controls;
-mod replaced;
+pub(crate) mod replaced;
 
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 128;
 pub(crate) const MAX_LAYOUT_NODES: usize = 4096;
@@ -790,6 +790,9 @@ struct Measured<'a> {
     /// The parent's strut (ascent and descent with half-leading) of each
     /// inline image's line box.
     struts: &'a BTreeMap<u32, (f32, f32)>,
+    /// One image of a line of text is being sized as an atomic inline
+    /// (`image_box`): it has no line box of its own.
+    atom: bool,
 }
 
 #[derive(Clone)]
@@ -1356,8 +1359,12 @@ fn build_one(
                 CssProperty::ImageOrientation | CssProperty::ImageRendering => {}
                 // `vertical-align` applies to inline-level boxes (CSS Inline
                 // 3 §4.2); a block-level box ignores it.
+                // An image in a line of text resolves it with its line
+                // (`inline::atoms`).
                 CssProperty::VerticalAlign
-                    if element.tag != Tag::Img || !replaced::inline(tree, env, id) => {}
+                    if element.tag != Tag::Img
+                        || !replaced::inline(tree, env, id)
+                        || measured.atom => {}
                 CssProperty::VerticalAlign if value == "baseline" => {}
                 CssProperty::Display => {
                     style.display = match value.as_str() {
@@ -1649,6 +1656,38 @@ fn build_one(
     Ok((node_id, descend))
 }
 
+/// The box of an image in a line of text (`inline::atoms`): its style is
+/// validated and converted as every image's (`build_one`) and sized as an
+/// atomic inline (`replaced::atom`).
+pub(crate) fn image_box(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+) -> Result<replaced::AtomBox, LayoutError> {
+    let engine_error = |e: taffy::TaffyError| LayoutError::Engine(e.to_string());
+    let mut engine = TaffyTree::new();
+    let (node, _) = build_one(
+        tree,
+        env,
+        &mut engine,
+        (&mut BTreeMap::new(), &mut BTreeMap::new()),
+        Measured {
+            text: &BTreeMap::new(),
+            controls: &BTreeMap::new(),
+            struts: &BTreeMap::new(),
+            atom: true,
+        },
+        (id, 0),
+        ((0.0, 0.0), None),
+    )?;
+    let Some(Measure::Image(natural)) = engine.get_node_context(node) else {
+        return Err(LayoutError::Unsupported(id));
+    };
+    let natural = *natural;
+    let style = engine.style(node).map_err(engine_error)?;
+    replaced::atom(style, natural).ok_or(LayoutError::Unsupported(id))
+}
+
 /// An `img` leaf and, for an inline image, its line box (`replaced`).
 fn image_leaf(
     tree: &Tree,
@@ -1662,8 +1701,13 @@ fn image_leaf(
     let natural = replaced::replaced(tree, env, id)?;
     replaced::dimension_hints(tree, env, id, &mut style);
     style.item_is_replaced = true;
-    let inline = replaced::inline(tree, env, id);
+    let inline = replaced::inline(tree, env, id) && !measured.atom;
     if inline {
+        // An inline image that shares its line is laid out by its line's
+        // inline formatting context (`inline::atoms`), never here.
+        if !replaced::alone(tree, env, id) {
+            return Err(LayoutError::Unsupported(id));
+        }
         replaced::check_line(tree, env, id)?;
         replaced::check_inline_style(tree, env, id)?;
         replaced::line_item(&mut style);
@@ -1755,6 +1799,7 @@ pub(crate) fn geometry_local(
             text: &BTreeMap::new(),
             controls: &BTreeMap::new(),
             struts: &BTreeMap::new(),
+            atom: false,
         },
         None,
         None,
@@ -1853,7 +1898,7 @@ fn geometry_and_text_inner(
         }
         if let Content::Element(element) = &node.content
             && element.tag == Tag::Img
-            && replaced::inline(tree, &layout_env, id)
+            && replaced::alone(tree, &layout_env, id)
         {
             let parent = node.parent.ok_or(LayoutError::Unsupported(id))?;
             struts.insert(
@@ -2018,6 +2063,7 @@ fn geometry_and_text_inner(
             text: &metrics,
             controls: &control_sizes,
             struts: &struts,
+            atom: false,
         },
         Some(measurer),
         Some(font_size),

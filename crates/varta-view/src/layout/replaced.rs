@@ -1,11 +1,12 @@
 //! `img`, the one replaced element of the view subset: a packaged image's
 //! natural size and ratio sized as Chrome sizes replaced boxes (CSS 2.1
 //! §10.3.2, §10.6.2 and the §10.4 constraint table), as a block-level box (a
-//! `display: block`, flex or grid item or out-of-flow image) or as the only
-//! content of an anonymous line box.
+//! `display: block`, flex or grid item or out-of-flow image), as the only
+//! content of an anonymous line box, or as an atomic inline of a line of
+//! text (`atom`, laid out by `inline::atoms`).
 //!
-//! An inline image is admitted only where it alone forms a line: its parent
-//! is a block container and no sibling next to it is inline-level content.
+//! An inline image alone forms a line when its parent is a block container,
+//! no sibling next to it is inline-level content and it is baseline-aligned.
 //! Its line box (CSS 2.1 §10.8) holds the parent's strut, whose ascent and
 //! descent with half-leading are `above` and `below`, and the image's margin
 //! box standing on the baseline: the line is `max(above, margin height)`
@@ -42,15 +43,15 @@ fn dimension_hint(tree: &Tree, id: u32, attribute: Attribute) -> Option<f32> {
     tree.element(id)?.attributes.get(&attribute)?.parse().ok()
 }
 
-/// The natural size and preferred ratio of `id` (HTML §4.8.4.3, §15.4.4;
-/// CSS Sizing 4 §5.1 `aspect-ratio`). An `img` with an image has the
+/// The natural size and preferred ratio of `id` (HTML §4.8.4.3, §15.4.3;
+/// CSS Sizing 4 §4.1 `aspect-ratio`). An `img` with an image has the
 /// image's density-corrected natural size and ratio, or a ratio its
 /// `aspect-ratio` or `width`/`height` attributes (their `aspect-ratio: auto
 /// w / h` hint) give. An `img` without an image represents nothing: it is an
 /// empty box of zero size, as Chrome lays it out. Refused: one that would
 /// render its alternative text (a non-empty `alt`) or a sized broken-image
 /// box (`width`/`height` attributes or styles), whose look the user agent
-/// chooses (HTML §15.4.4).
+/// chooses (HTML §15.4.2).
 pub(super) fn replaced(tree: &Tree, env: &Environment, id: u32) -> Result<Replaced, LayoutError> {
     let refused = || LayoutError::Unsupported(id);
     let element = tree.element(id).ok_or_else(refused)?;
@@ -115,7 +116,7 @@ pub(super) fn replaced(tree: &Tree, env: &Environment, id: u32) -> Result<Replac
     })
 }
 
-/// Apply the HTML `width`/`height` presentational hints (§15.4.4, mapped
+/// Apply the HTML `width`/`height` presentational hints (§15.4.3, mapped
 /// to `width`/`height` in pixels) where no author style sets the property.
 pub(super) fn dimension_hints(tree: &Tree, env: &Environment, id: u32, style: &mut Style) {
     for (attribute, property) in [
@@ -135,8 +136,8 @@ pub(super) fn dimension_hints(tree: &Tree, env: &Environment, id: u32, style: &m
 }
 
 /// Whether `id` is an `img` laid out as inline-level content of its parent
-/// (its own line box), rather than as a block-level box.
-pub(super) fn inline(tree: &Tree, env: &Environment, id: u32) -> bool {
+/// (its own line box or an atomic inline), rather than as a block-level box.
+pub(crate) fn inline(tree: &Tree, env: &Environment, id: u32) -> bool {
     let display = tree.computed_property(id, env, CssProperty::Display);
     let positioned = tree
         .computed_property(id, env, CssProperty::Position)
@@ -144,6 +145,22 @@ pub(super) fn inline(tree: &Tree, env: &Environment, id: u32) -> bool {
     display.as_deref().is_none_or(|value| value == "inline")
         && !positioned
         && !crate::inline::blockified(tree, env, id)
+}
+
+/// Whether inline image `id` alone forms its line (the flex row below):
+/// no inline-level neighbour and `vertical-align: baseline`. Any other
+/// inline image is an atomic inline of its parent's inline formatting
+/// context.
+pub(crate) fn alone(tree: &Tree, env: &Environment, id: u32) -> bool {
+    let in_inline_box = tree.nodes[&id].parent.is_some_and(|parent| {
+        inline_level(tree, env, parent) && !crate::inline::blockified(tree, env, parent)
+    });
+    inline(tree, env, id)
+        && !in_inline_box
+        && check_line(tree, env, id).is_ok()
+        && tree
+            .computed_property(id, env, CssProperty::VerticalAlign)
+            .is_none_or(|value| value == "baseline")
 }
 
 /// Whether node `id` is inline-level content that would share a line box
@@ -306,6 +323,87 @@ fn constrained(natural: (f32, f32), min: (f32, f32), max: (f32, f32)) -> (f32, f
         (.., true) => (max_w.min(min_h * w / h), min_h),
         _ => (w, h),
     }
+}
+
+/// An image in a line of text, sized as an atomic inline (CSS 2.1 §10.3.2,
+/// §10.6.2 with the §10.4 table) from its own lengths. Inline boxes take
+/// `auto` margins as zero (§10.3.2, §10.6.2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct AtomBox {
+    /// The border box size.
+    pub size: (f32, f32),
+    /// Margins in top, right, bottom, left order.
+    pub margin: [f32; 4],
+    /// Border plus padding in the same order.
+    pub inset: [f32; 4],
+}
+
+/// Size an image of a line of text from its layout style. `None` when a
+/// size, margin or padding is a percentage: it resolves against the
+/// containing block, which the line does not fix while it is measured.
+pub(super) fn atom(style: &Style, replaced: Replaced) -> Option<AtomBox> {
+    use taffy::style::{ExpandedLengthPercentage, ExpandedLengthPercentageAuto};
+    let length = |value: LengthPercentage| match value.expand() {
+        ExpandedLengthPercentage::Length(value) => Some(value),
+        ExpandedLengthPercentage::Percent(_) => None,
+    };
+    let margin = |value: LengthPercentageAuto| match value.expand() {
+        ExpandedLengthPercentageAuto::Length(value) => Some(value),
+        ExpandedLengthPercentageAuto::Auto => Some(0.0),
+        ExpandedLengthPercentageAuto::Percent(_) => None,
+    };
+    // `Some(None)` is `auto` (or `none`), `None` refuses.
+    let dimension = |value: Dimension| {
+        if value.is_auto() {
+            Some(None)
+        } else {
+            value.into_option().map(Some)
+        }
+    };
+    let bound = |value: LengthPercentageAuto| match value.expand() {
+        ExpandedLengthPercentageAuto::Length(value) => Some(Some(value)),
+        ExpandedLengthPercentageAuto::Auto => Some(None),
+        ExpandedLengthPercentageAuto::Percent(_) => None,
+    };
+    let sides = |rect: Rect<LengthPercentage>| {
+        Some([
+            length(rect.top)?,
+            length(rect.right)?,
+            length(rect.bottom)?,
+            length(rect.left)?,
+        ])
+    };
+    let padding = sides(style.padding)?;
+    let border = sides(style.border)?;
+    let inset: [f32; 4] = std::array::from_fn(|side| padding[side] + border[side]);
+    let edges = (inset[1] + inset[3], inset[0] + inset[2]);
+    let content = |value: Option<f32>, edge: f32| {
+        value.map(|value| match style.box_sizing {
+            BoxSizing::ContentBox => value.max(0.0),
+            BoxSizing::BorderBox => (value - edge).max(0.0),
+        })
+    };
+    let width = content(dimension(style.size.width)?, edges.0);
+    let height = content(dimension(style.size.height)?, edges.1);
+    let min = (
+        content(bound(style.min_size.width)?, edges.0).unwrap_or(0.0),
+        content(bound(style.min_size.height)?, edges.1).unwrap_or(0.0),
+    );
+    let max = (
+        content(bound(style.max_size.width)?, edges.0).unwrap_or(f32::INFINITY),
+        content(bound(style.max_size.height)?, edges.1).unwrap_or(f32::INFINITY),
+    );
+    let used = used_size((replaced.natural, replaced.ratio), width, height, min, max);
+    Some(AtomBox {
+        size: (used.0 + edges.0, used.1 + edges.1),
+        margin: [
+            margin(style.margin.top)?,
+            margin(style.margin.right)?,
+            margin(style.margin.bottom)?,
+            margin(style.margin.left)?,
+        ],
+        inset,
+    })
 }
 
 /// Taffy's leaf layout for an image: its border box from the known

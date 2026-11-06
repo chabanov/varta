@@ -145,7 +145,7 @@ unrestricted browser DOM in guest code.
 | Part | Implemented native surface |
 | --- | --- |
 | Structure/layout | Block/flex/grid, dimensions and constraints, margins/padding/gaps, admitted positioning/z-index, inline shaping/line fragments, headings/lists/pre/labels |
-| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, packaged PNG images (`img`), retained drawing/damage and mixed border colors |
+| Paint | Background colors, solid borders and radii, outlines, clipping, isolated opacity, underline, packaged images (`img`), retained drawing/damage and mixed border colors |
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
@@ -157,13 +157,14 @@ The native scope still has concrete gaps:
 
 - Controls need admitted block/flex/grid placement; arbitrary atomic inline
   control layout and mixed block/inline formatting are not complete.
-- Native `<img>` draws packaged static PNG images (the configuration's
-  `images`, the same files the browser bundle carries) as a block-level box,
-  a flex/grid item, a positioned box or alone on a line, with Chrome's
-  replaced sizing and sampling. An image inline with text or inside an inline
-  element, `object-fit`/`aspect-ratio`, other formats, animated and
-  colour-managed images are refused, and the optional GPU backend presents
-  frames with images through its software fallback.
+- Native `<img>` draws packaged images (the configuration's `images`, the
+  same files the browser bundle carries) to the HTML and CSS standards:
+  PNG/APNG, JPEG, GIF, WebP, BMP and ICO converted to sRGB with EXIF
+  orientation, animations on the view clock, `srcset`/`sizes`,
+  `object-fit`/`object-position`, `image-rendering`, `aspect-ratio`, and
+  inline images in lines of text with `vertical-align`. AVIF, SVG, HDR
+  images and alternative-text rendering are refused, and the optional GPU
+  backend presents frames with images through its software fallback.
 - General transforms/scaling and scrollable overflow from translated boxes
   remain unfinished. macOS scrollbars paint natively in both system styles
   (classic gutters, and overlay bars shown while scrolling and faded on the

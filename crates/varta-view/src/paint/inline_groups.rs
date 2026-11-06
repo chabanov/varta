@@ -242,7 +242,7 @@ impl Contexts {
             owner.end = owner.order;
             if flow.shape.hidden(id) {
                 owner.hidden = true;
-            } else if flow.tree.element(id).is_some() {
+            } else if flow.tree.element(id).is_some() && !flow.shape.atom(id) {
                 let opacity = flow
                     .tree
                     .computed_property(id, flow.env, CssProperty::Opacity)
@@ -421,6 +421,11 @@ impl Flow<'_> {
             }
         }
         for (source_order, &node) in self.shape.nodes.iter().enumerate() {
+            // An atomic inline paints and hit-tests as its own box after
+            // the flow (`order::Order::inline_atoms`).
+            if self.shape.atom(node) {
+                continue;
+            }
             if let Some(capture) = pixmap.capture.as_mut() {
                 capture.owner = node;
             }
@@ -586,7 +591,7 @@ impl Flow<'_> {
             capture.outline_phase = true;
         }
         for &node in &self.shape.nodes {
-            if self.tree.element(node).is_none() {
+            if self.tree.element(node).is_none() || self.shape.atom(node) {
                 continue;
             }
             if let Some(capture) = pixmap.capture.as_mut() {

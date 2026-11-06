@@ -1,7 +1,7 @@
 //! The CSS that places and samples an `img`'s image: its natural size
 //! (HTML density-corrected, CSS Images 3 `image-orientation`), the concrete
-//! object size and position in its content box (CSS Images 3 §5.5
-//! `object-fit`, §5.6 `object-position`) and its filter (§5.4
+//! object size and position in its content box (CSS Images 3 §4.5
+//! `object-fit`, §4.6 `object-position`) and its filter (§5.2
 //! `image-rendering`).
 use super::select::{self, Current};
 use super::{Filter, Image};
@@ -61,7 +61,7 @@ pub(crate) fn filter(tree: &Tree, env: &Environment, id: u32) -> Filter {
 }
 
 /// The concrete object size of `natural` in a `content` box for
-/// `object-fit` (§5.5): `fill` stretches, `contain` and `cover` keep the
+/// `object-fit` (§4.5): `fill` stretches, `contain` and `cover` keep the
 /// ratio inside or over the box, `none` keeps the natural size and
 /// `scale-down` the smaller of `none` and `contain`.
 fn object_size(fit: &str, natural: (f32, f32), content: (f32, f32)) -> (f32, f32) {

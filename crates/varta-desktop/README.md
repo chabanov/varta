@@ -63,7 +63,7 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm --revoke net.reques
   synthesis stays refused at paint. `--font PATH FAMILY` (nonempty, at most
   `shell::MAX_FONT_BYTES`) is one explicit face for an artifact without
   fonts and is refused for an artifact that ships fonts.
-- **Images.** The PNG images of the artifact's resource section (the
+- **Images.** The images of the artifact's resource section (the
   configuration's `images`), decoded once by `varta_view::ImageSet` after the
   fonts and before storage is created; a corrupt image fails there. The view
   gets the set (empty without images), so an `img` naming another image is

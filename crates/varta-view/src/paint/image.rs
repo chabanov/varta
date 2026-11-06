@@ -80,7 +80,19 @@ pub(super) fn paint(
     let mask = if visible == rect {
         None
     } else {
-        Some(surface.mask(within)?)
+        // The image's own edges already take their coverage once; the mask
+        // cuts only where the clip does.
+        let open = |clip: f32, edge: f32, outward: f32| {
+            if clip == edge { clip + outward } else { clip }
+        };
+        let cut = Rect::from_ltrb(
+            open(within.left(), rect.left(), -1.0),
+            open(within.top(), rect.top(), -1.0),
+            open(within.right(), rect.right(), 1.0),
+            open(within.bottom(), rect.bottom(), 1.0),
+        )
+        .ok_or(PaintError::Unsupported(id))?;
+        Some(surface.mask(cut)?)
     };
     let elapsed = tree.images.now
         - tree

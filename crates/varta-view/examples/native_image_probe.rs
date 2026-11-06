@@ -2,15 +2,16 @@
 //! and pixel oracle in `scripts/test-native-images.mjs`: natural and explicit
 //! sizes, the natural ratio and its constraints, inline line boxes, flex and
 //! grid items, downscaling levels and upscaling, odd level sizes, rounded
-//! content clips, opacity, `transform`, fractional edges and every PNG color
-//! type the decoder expands.
+//! content clips, opacity, `transform`, fractional edges, every format and
+//! colour space the decoder converts, and images in lines of text with each
+//! `vertical-align`.
 //! Usage: native_image_probe [SCALE]
 #[path = "native_image_probe/fixtures.rs"]
 mod fixtures;
 
 use std::sync::Arc;
 use varta_common::view::{Attribute as A, CssProperty as P, Tag};
-use varta_view::{Access, BatchWriter as B, Broker, ImageSet, TextMeasurer, View};
+use varta_view::{Access, BatchWriter as B, Broker, ImageSet, TextFont, TextMeasurer, View};
 
 struct Denied;
 impl Broker for Denied {
@@ -27,6 +28,10 @@ impl Broker for Denied {
 
 const FAMILY: &str = "Varta Inline Fixture";
 const FONT: &[u8] = include_bytes!("../tests/fixtures/inline.ttf");
+/// A second face with an x-height (OS/2 `sxHeight`), for `middle`.
+const X_FAMILY: &str = "Varta Controls Fixture";
+const X_FONT: &[u8] = include_bytes!("../tests/fixtures/controls.ttf");
+const X_FAMILY_CSS: &str = "\"Varta Controls Fixture\"";
 /// The viewport in CSS pixels.
 const SIDE: u32 = 100;
 /// Chrome's initial `medium` font size, handed to the measurer as the host size.
@@ -293,6 +298,11 @@ fn element(b: &mut B, (id, tag, parent): (u32, Tag, u32), styles: Styles) {
 
 fn div(b: &mut B, id: u32, parent: u32, styles: Styles) {
     element(b, (id, Tag::Div, parent), styles);
+}
+
+/// A text node `id` appended to `parent`.
+fn text(b: &mut B, (id, parent): (u32, u32), value: &str) {
+    b.create_text(id, value).insert(parent, id, 0);
 }
 
 /// An `img` `id` with `attributes`.
@@ -658,6 +668,98 @@ fn build(name: &str, b: &mut B) {
             );
             img(b, (7, 6), ("pattern-16.png", "C"), &[]);
         }
+        // Images in lines of text: soft wrap opportunities around them,
+        // inside a decorated inline box with its edges, and as boxes with
+        // their own border, radius and opacity on a centred line.
+        "inline-text" => {
+            div(b, 2, 1, &[(P::Width, "70px"), (P::BackgroundColor, GRAY)]);
+            text(b, (3, 2), "A ");
+            img(b, (4, 2), ("pattern-16.png", "P"), &[]);
+            text(b, (5, 2), " AA ");
+            element(
+                b,
+                (6, Tag::Span, 2),
+                &[
+                    (P::Padding, "0 3px"),
+                    (P::Border, "1px solid #0000e0"),
+                    (P::BackgroundColor, YELLOW),
+                ],
+            );
+            text(b, (7, 6), "A");
+            img(b, (8, 6), ("wide-20x10.png", "W"), &[(P::Margin, "0 2px")]);
+            text(b, (9, 2), " A");
+            div(
+                b,
+                10,
+                1,
+                &[(P::TextAlign, "center"), (P::BackgroundColor, GRAY)],
+            );
+            img(b, (11, 10), ("pattern-16.png", "C"), &[(P::Width, "8px")]);
+            text(b, (12, 10), "A");
+            img(
+                b,
+                (13, 10),
+                ("wide-20x10.png", "D"),
+                &[
+                    (P::Border, "2px solid #e00000"),
+                    (P::Padding, "1px"),
+                    (P::BorderRadius, "4px"),
+                    (P::Opacity, "0.5"),
+                ],
+            );
+        }
+        // Each `vertical-align` of an image between letters of a font with
+        // an x-height; lines wrap between them.
+        "inline-align" => {
+            div(
+                b,
+                2,
+                1,
+                &[(P::FontFamily, X_FAMILY_CSS), (P::BackgroundColor, GRAY)],
+            );
+            for (index, align) in [
+                "baseline",
+                "middle",
+                "sub",
+                "super",
+                "text-top",
+                "text-bottom",
+                "-3px",
+                "25%",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = 3 + 2 * index as u32;
+                text(b, (id, 2), "A");
+                img(
+                    b,
+                    (id + 1, 2),
+                    ("pattern-16.png", align),
+                    &[(P::Width, "8px"), (P::VerticalAlign, align)],
+                );
+            }
+            div(
+                b,
+                30,
+                1,
+                &[(P::FontFamily, X_FAMILY_CSS), (P::BackgroundColor, YELLOW)],
+            );
+            for (index, (align, height)) in
+                [("top", "30px"), ("bottom", "26px"), ("middle", "24px")]
+                    .into_iter()
+                    .enumerate()
+            {
+                let id = 31 + 2 * index as u32;
+                text(b, (id, 30), "A");
+                img(
+                    b,
+                    (id + 1, 30),
+                    ("wide-20x10.png", align),
+                    &[(P::Height, height), (P::VerticalAlign, align)],
+                );
+            }
+        }
         // Every admitted format at its natural size over a background.
         "formats" => {
             div(
@@ -934,7 +1036,7 @@ fn frames_steps() -> Vec<Step> {
     steps
 }
 
-const CASES: [&str; 20] = [
+const CASES: [&str; 22] = [
     "formats",
     "color",
     "orientation",
@@ -955,6 +1057,8 @@ const CASES: [&str; 20] = [
     "fractional",
     "positioned",
     "inline-normal",
+    "inline-text",
+    "inline-align",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -976,7 +1080,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .map(|(name, bytes)| (*name, bytes.as_slice())),
     )?);
-    let mut font = TextMeasurer::new(FONT.to_vec(), FAMILY)?;
+    let mut font = TextMeasurer::new_with_fonts(
+        [(FONT, FAMILY), (X_FONT, X_FAMILY)]
+            .into_iter()
+            .map(|(data, family)| TextFont {
+                data: data.to_vec(),
+                family: family.into(),
+                aliases: Vec::new(),
+            })
+            .collect(),
+    )?;
     let side = (SIDE as f32 * scale).round() as u32;
     let mut cases = Vec::new();
     for name in CASES {
@@ -1096,7 +1209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect::<Result<serde_json::Map<_, _>, Box<dyn std::error::Error>>>()?;
     let output = serde_json::to_vec(&serde_json::json!({
-        "family":FAMILY,"font":FONT,"scale":scale,"images":images,"animations":animations,
+        "family":FAMILY,"font":FONT,"fonts":[{"family":X_FAMILY,"font":X_FONT}],"scale":scale,"images":images,"animations":animations,
         "viewport":{"width":SIDE,"height":SIDE},"cases":cases
     }))?;
     use std::io::Write;
