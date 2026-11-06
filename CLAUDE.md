@@ -29,6 +29,12 @@ Durable principles:
   rules and application-specific permissions belong to separate TS/JS applications,
   not to engine crates or built-in CLI profiles. Tests may use domain examples as
   fixtures without turning them into public APIs.
+- Varta supports web technologies (TSX, CSS including Tailwind, Web APIs)
+  without JavaScript (owner principle, 2026-11-06). Native applications run with
+  no JS at all. For the web, JS exists only as a thin bridge between Wasm and
+  browser APIs; logic (scheduling, styling and CSS, storage formats, policy)
+  belongs in Wasm compiled from Rust or TS, not in the bridge. Logic still in the
+  official browser host's JS is a migration target, not a pattern to extend.
 - Generic JSON, network and event-loop primitives belong to the engine; routes,
   payload schemas and business rules belong to applications. A developer must
   eventually be able to implement a JSON server in TS/JS on Varta APIs without a
