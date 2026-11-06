@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- V38 compiled JSON decoders scan string bodies and whitespace, and copy
+  escaped strings, sixteen UTF-16 units per step with fixed-width WebAssembly
+  SIMD (`simd128`): 0.75 fuel per scanned string byte instead of 11.5, and a
+  276 KB transcript parses in 2.4M fuel instead of 5.9M, with the scalar
+  scanner's outcomes, errors and positions. Host contract change: a v38 host
+  must support `simd128` (one fuel unit per SIMD instruction); modules of
+  earlier profiles are rejected when they contain SIMD, and relaxed SIMD is
+  rejected for every module (the reference engine disables it).
 - Incremental GC clears large-heap mark bitmaps in bounded work before taking
   its root snapshot, retaining the idle-step fuel bound instead of zeroing all
   bitmap bytes in one step.

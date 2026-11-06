@@ -34,6 +34,7 @@ mod asm;
 mod build;
 mod check;
 mod scan;
+mod simd;
 
 use super::*;
 use asm::Asm;
@@ -83,7 +84,9 @@ pub(super) fn powers() -> Vec<u8> {
 /// Test-only switches, per thread: [`Mode::Generic`] compiles v38 checked
 /// parses to the linked `json_parse_v19` alone (no decoders), the path the
 /// decoders are compared against; [`Mode::Collecting`] compiles decoders
-/// that run a full collection before every block they allocate.
+/// that run a full collection before every block they allocate;
+/// [`Mode::Scalar`] compiles decoders whose scanner reads one unit per step
+/// (the reference of the `simd128` scanner).
 pub(crate) mod hook {
     #[cfg(any(test, feature = "suspension-test-hook"))]
     use std::cell::Cell;
@@ -93,6 +96,8 @@ pub(crate) mod hook {
         Generic,
         AssertionsReference,
         Collecting,
+        /// Production decoders with the scalar scanner (no `simd128`).
+        Scalar,
     }
     #[cfg(any(test, feature = "suspension-test-hook"))]
     thread_local! {
@@ -120,6 +125,11 @@ pub(super) fn enabled(profile: varta_common::language::LanguageProfile) -> bool 
     profile.json_decoders()
         && crate::link::links(profile, profile.json_parse())
         && hook::mode() != hook::Mode::Generic
+}
+
+/// Whether the decoders of a module of `profile` scan with `simd128`.
+pub(super) fn simd(profile: varta_common::language::LanguageProfile) -> bool {
+    profile.simd128() && hook::mode() != hook::Mode::Scalar
 }
 
 /// Test reference leaves ordinary compiled decoders enabled while disabling
@@ -446,6 +456,9 @@ pub(super) struct Context {
     /// Test-only ([`hook::Mode::Collecting`]): the collector, run before
     /// every decoder block.
     pub collect: Option<u32>,
+    /// Whether the scanner and the string builder use `simd128` (see
+    /// [`simd`]).
+    pub simd: bool,
 }
 
 /// Every decoder body, in index order, with a label for fuel profiles.

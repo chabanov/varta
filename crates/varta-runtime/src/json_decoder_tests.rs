@@ -166,6 +166,14 @@ fn corpus_program(declarations: &str, target: &str, texts: &[String]) -> String 
         .iter()
         .map(|text| serde_json::to_string(text).unwrap())
         .collect();
+    literal_corpus_program(declarations, target, &literals)
+}
+/// [`corpus_program`] over texts already spelled as JS string `literals`.
+pub(super) fn literal_corpus_program(
+    declarations: &str,
+    target: &str,
+    literals: &[String],
+) -> String {
     format!(
         r#"{declarations}
 function show(text: string): string {{

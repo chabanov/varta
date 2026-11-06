@@ -7542,6 +7542,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-8",
       "supportedKinds": [
         0,
@@ -7584,6 +7585,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-8",
       "supportedKinds": [
         0,
@@ -7626,6 +7628,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-8",
       "supportedKinds": [
         0,
@@ -7669,6 +7672,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -7712,6 +7716,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -7756,6 +7761,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -7800,6 +7806,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -7845,6 +7852,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -7890,6 +7898,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -7935,6 +7944,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -7983,6 +7993,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8032,6 +8043,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8081,6 +8093,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8130,6 +8143,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8179,6 +8193,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8228,6 +8243,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8277,6 +8293,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8326,6 +8343,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8375,6 +8393,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8424,6 +8443,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8473,6 +8493,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8522,6 +8543,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8571,6 +8593,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8620,6 +8643,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8669,6 +8693,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8718,6 +8743,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8767,6 +8793,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8816,6 +8843,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8865,6 +8893,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8914,6 +8943,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -8963,6 +8993,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9012,6 +9043,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9067,6 +9099,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9122,6 +9155,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9177,6 +9211,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9238,6 +9273,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9299,6 +9335,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9361,6 +9398,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9424,6 +9462,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9488,6 +9527,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 32 pending timers",
         "timers": 32
       },
+      "simd128": false,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,
@@ -9552,6 +9592,7 @@ export const registry = freeze({
         "timerError": "execution exceeds 65536 pending timers",
         "timers": 65536
       },
+      "simd128": true,
       "strings": "UTF-16LE",
       "supportedKinds": [
         0,

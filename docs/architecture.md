@@ -129,49 +129,49 @@ and compared with them by `crates/varta-common/tests/documentation.rs`. When the
 registries change, replace a block with the test's expected output.
 
 <!-- generated:version-matrix:begin (checked by crates/varta-common/tests/documentation.rs) -->
-| Profile | Host ABI | Value ABI | Exception export | JSON stringify | JSON parse |
-| --- | --- | --- | --- | --- | --- |
-| `checked-i32-utf8-v1` | 1 | 2 | — | `json_stringify` | `json_parse` |
-| `checked-f64-utf8-v1` | 2 | 3 | — | `json_stringify_v3` | `json_parse_v3` |
-| `checked-f64-utf8-v2` | 3 | 4 | — | `json_stringify_v4` | `json_parse_v4` |
-| `checked-f64-utf16-v1` | 4 | 5 | — | `json_stringify_v5` | `json_parse_v5` |
-| `checked-f64-utf16-v2` | 5 | 6 | — | `json_stringify_v6` | `json_parse_v6` |
-| `checked-f64-utf16-v3` | 6 | 7 | — | `json_stringify_v7` | `json_parse_v7` |
-| `checked-f64-utf16-v4` | 7 | 8 | — | `json_stringify_v8` | `json_parse_v8` |
-| `checked-f64-utf16-v5` | 8 | 8 | — | `json_stringify_v8` | `json_parse_v9` |
-| `checked-f64-utf16-v6` | 9 | 9 | — | `json_stringify_v9` | `json_parse_v10` |
-| `checked-f64-utf16-v7` | 10 | 9 | `varta.exception.version` = 2 | `json_stringify_v9` | `json_parse_v10` |
-| `checked-f64-utf16-v8` | 11 | 10 | `varta.exception.version` = 2 | `json_stringify_v10` | `json_parse_v11` |
-| `checked-f64-utf16-v9` | 12 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v12` |
-| `checked-f64-utf16-v10` | 13 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v13` |
-| `checked-f64-utf16-v11` | 14 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v13` |
-| `checked-f64-utf16-v12` | 15 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v13` |
-| `checked-f64-utf16-v13` | 16 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v14` | 17 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v15` | 18 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v16` | 19 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v17` | 20 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v18` | 21 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v19` | 22 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v20` | 23 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v21` | 24 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v22` | 25 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v23` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v24` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v25` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v26` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v27` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v28` | 27 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` |
-| `checked-f64-utf16-v29` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
-| `checked-f64-utf16-v30` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
-| `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` |
-| `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
-| `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` |
-| `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` |
-| `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` |
-| `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` |
-| `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` |
-| `checked-f64-utf16-v38` | 34 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` |
+| Profile | Host ABI | Value ABI | Exception export | JSON stringify | JSON parse | Wasm SIMD |
+| --- | --- | --- | --- | --- | --- | --- |
+| `checked-i32-utf8-v1` | 1 | 2 | — | `json_stringify` | `json_parse` | — |
+| `checked-f64-utf8-v1` | 2 | 3 | — | `json_stringify_v3` | `json_parse_v3` | — |
+| `checked-f64-utf8-v2` | 3 | 4 | — | `json_stringify_v4` | `json_parse_v4` | — |
+| `checked-f64-utf16-v1` | 4 | 5 | — | `json_stringify_v5` | `json_parse_v5` | — |
+| `checked-f64-utf16-v2` | 5 | 6 | — | `json_stringify_v6` | `json_parse_v6` | — |
+| `checked-f64-utf16-v3` | 6 | 7 | — | `json_stringify_v7` | `json_parse_v7` | — |
+| `checked-f64-utf16-v4` | 7 | 8 | — | `json_stringify_v8` | `json_parse_v8` | — |
+| `checked-f64-utf16-v5` | 8 | 8 | — | `json_stringify_v8` | `json_parse_v9` | — |
+| `checked-f64-utf16-v6` | 9 | 9 | — | `json_stringify_v9` | `json_parse_v10` | — |
+| `checked-f64-utf16-v7` | 10 | 9 | `varta.exception.version` = 2 | `json_stringify_v9` | `json_parse_v10` | — |
+| `checked-f64-utf16-v8` | 11 | 10 | `varta.exception.version` = 2 | `json_stringify_v10` | `json_parse_v11` | — |
+| `checked-f64-utf16-v9` | 12 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v12` | — |
+| `checked-f64-utf16-v10` | 13 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v13` | — |
+| `checked-f64-utf16-v11` | 14 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v13` | — |
+| `checked-f64-utf16-v12` | 15 | 11 | `varta.exception.version_v3` = 3 | `json_stringify_v11` | `json_parse_v13` | — |
+| `checked-f64-utf16-v13` | 16 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v14` | 17 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v15` | 18 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v16` | 19 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v17` | 20 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v18` | 21 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v19` | 22 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v20` | 23 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v21` | 24 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v22` | 25 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v23` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v24` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v25` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v26` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v27` | 26 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v28` | 27 | 12 | `varta.exception.version_v3` = 3 | `json_stringify_v12` | `json_parse_v14` | — |
+| `checked-f64-utf16-v29` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` | — |
+| `checked-f64-utf16-v30` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` | — |
+| `checked-f64-utf16-v31` | 28 | 13 | `varta.exception.version_v4` = 4 | `json_stringify_v13` | `json_parse_v15` | — |
+| `checked-f64-utf16-v32` | 28 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` | — |
+| `checked-f64-utf16-v33` | 29 | 13 | `varta.exception.version_v5` = 5 | `json_stringify_v13` | `json_parse_v15` | — |
+| `checked-f64-utf16-v34` | 30 | 15 | `varta.exception.version_v6` = 6 | `json_stringify_v14` | `json_parse_v16` | — |
+| `checked-f64-utf16-v35` | 31 | 16 | `varta.exception.version_v7` = 7 | `json_stringify_v15` | `json_parse_v17` | — |
+| `checked-f64-utf16-v36` | 32 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v16` | `json_parse_v18` | — |
+| `checked-f64-utf16-v37` | 33 | 17 | `varta.exception.version_v8` = 8 | `json_stringify_v17` | `json_parse_v18` | — |
+| `checked-f64-utf16-v38` | 34 | 18 | `varta.exception.version_v9` = 9 | `json_stringify_owned` | `json_parse_v19` | `simd128` |
 <!-- generated:version-matrix:end -->
 
 <!-- generated:launcher-summary:begin (checked by crates/varta-common/tests/documentation.rs) -->
@@ -10916,6 +10916,38 @@ decodes (`kv_key`, `kv_value`) stay host imports. Contract:
   linked `primitive_to_number` through a string cell (correctly rounded,
   like the shared decoder's `core` path). Both give the shared decoder's
   bits, `-0` included.
+- **Vectorised scanning (`simd128`).** Selector `simd128()` (v38 only)
+  admits fixed-width WebAssembly SIMD (WebAssembly 2.0) in the module, and
+  the decoders use it in three shared functions; their contract above is
+  unchanged. Each step loads sixteen UTF-16 units (two `v128.load`s) and
+  narrows them to one signed-saturated byte per unit
+  (`i8x16.narrow_i16x8_s`): an ASCII unit stays itself and every other unit
+  becomes `0x7f` or `0x80`, neither special to JSON, so the narrowed bytes
+  classify every unit exactly and non-ASCII text needs no scalar step. The
+  string scanner finds the first quote, backslash or control character of a
+  step (`(b ^ 0x02) <u 0x21`, or `b == 0x5c`, then `i8x16.bitmask` and
+  `i32.ctz`) and hands exactly that unit to the scalar path, which checks
+  it as before (an escape is validated against a two-word bit set of the
+  simple escapes); the whitespace skipper skips sixteen whitespace units per
+  step (an `i8x16.swizzle` table of `\t`, `\n`, `\r` and a comparison with
+  the space) after the first unit of a run, so a single space costs one
+  scalar test more; the builder of an escaped string copies sixteen units
+  per step up to the next backslash (both `v128` stores land before the
+  string's end and the scalar decoder overwrites what follows the
+  backslash; a letter escape maps through a nibble table). A step runs only
+  while its sixteen units lie inside the input (the string's decoded end for
+  the builder); the units near the input's end take the scalar path, so
+  every outcome, position, error, limit and fallback is the scalar
+  scanner's. SIMD instructions are ordinary operators: one fuel unit each,
+  deterministic on every host and metered identically by the browser
+  transform. Runtime validation admits `v128` types, locals and
+  instructions only in modules of a `simd128()` profile and the engine
+  disables relaxed SIMD for every module
+  ([embedding validation step 10](embedding.md#module-validation)), so a v38
+  host must support `simd128`; earlier profiles emit and admit no SIMD and
+  stay byte-for-byte unchanged. The compiler's test switch
+  `json_decoder_test_hook::scalar` builds the same decoders with the scalar
+  scanner, the reference of `json_simd_tests`.
 - **Resources.** The decoders' recursion is bounded by their depth limit;
   their scratch is the rooted tape (eight bytes per entry: a container count,
   field slot, union member, string span, number or boolean; the first block
@@ -15240,7 +15272,10 @@ Ordinary traps and statically impossible memory offsets preserve native fuel
 publication boundaries. Instrumentation instructions consume no modeled guest fuel.
 
 Supported operation families currently include core numeric/control, bulk memory,
-SIMD, sign extension, saturating conversion, multi-value and tail calls. Unmodeled
+fixed-width SIMD (`simd128`, one unit per operator, its loads checked at their
+16-byte width; the v38 JSON decoders' scanner), sign extension, saturating
+conversion, multi-value and tail calls. Relaxed SIMD (disabled in the reference
+engine: its results differ between hosts), unmodeled
 proposals, variable table operations, shared/memory64/custom-page, non-function imports, Wasm
 start functions and already instrumented input are rejected. Input/output module,
 type and function-body sizes are checked against Wasm implementation limits.

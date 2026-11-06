@@ -3646,10 +3646,11 @@ tape holds its old and new capacity. A 100,000-number round trip runs in
 **SIMD (`simd128`).** Validates in Wasmtime with the production engine
 configuration (`simd128_validates_in_the_production_engine`) and in Node 24
 (`WebAssembly.validate`); browser support (not tested here, no browser
-automation): Chrome 91+, Firefox 89+, Safari 16.4+. Not used yet: the
-measured cost is per value and per schema node, not per scanned unit (a
-200-unit string costs about 30 fuel per unit), so a SIMD unit scanner would
-change the long-string term only.
+automation): Chrome 91+, Firefox 89+, Safari 16.4+. The linked decoder
+does not use it (the measured cost there is per value and per schema node,
+not per scanned unit); the compiled decoders scan strings and whitespace
+with it since the SIMD stream
+([measurement](#simd-json-scanning-measurement-v38)).
 
 #### Linked serialization measurement (v38)
 
@@ -4070,6 +4071,58 @@ closure beyond what `json_parse_v19` already links), plus per target type:
 seven-member union, its array and dictionary) 6,087, a record with a nested
 record 7,872, `Item[]` (five nodes) 7,876, a 40-field record 9,981. Second
 call sites of a target add no decoder function.
+
+#### SIMD JSON scanning measurement (v38)
+
+Branch `worktree-agent-ae6712a3a00a2a71c` (from `10ff9ae`): the compiled
+decoders scan string bodies and whitespace and copy escaped strings sixteen
+UTF-16 units per step with fixed-width SIMD (`simd128`,
+[contract](architecture.md#compiled-json-decoders-json_decoders); v38 hosts
+must support it, [embedding step 10](embedding.md#module-validation)). Fuel
+from `json_simd_tests::json_scan_fuel_per_string_byte` (`--ignored
+--nocapture`), debug test build on the reference macOS arm64 host, fuel
+deterministic. "Scalar" is the same decoders with the scalar scanner (the
+test switch `json_decoder_test_hook::scalar`), whose fuel equals the decoders
+before this stream exactly; "scan" is the self fuel of the string scanner
+(`<json Text>`) over the bytes between the quotes of every string and key;
+"parse" is the whole parse (check and build). The transcript is ~276 KB of
+UTF-16 text (200 session events: nested records, long text fields with
+prose, code, Cyrillic, emoji and about 3,000 escapes, mostly `\n`).
+
+| Document | Scanner | Text bytes | String bytes | Scan fuel | Scan per string byte | Whitespace fuel | Escaped-string build fuel | Parse fuel | Parse per byte |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| transcript, compact | linked decoder alone | 283,128 | 245,598 | – | – | – | – | 13,270,110 | 46.87 |
+| transcript, compact | scalar (before) | 283,128 | 245,598 | 3,046,577 | 12.41 | 5 | 1,652,807 | 5,946,329 | 21.00 |
+| transcript, compact | `simd128` | 283,128 | 245,598 | 643,032 | 2.62 | 5 | 531,623 | 2,421,600 | 8.55 |
+| transcript, indented | scalar (before) | 343,130 | 245,598 | 3,046,577 | 12.41 | 799,240 | 1,652,807 | 6,824,775 | 19.89 |
+| transcript, indented | `simd128` | 343,130 | 245,598 | 642,752 | 2.62 | 375,284 | 531,623 | 2,875,810 | 8.38 |
+| one plain ASCII string | scalar (before) | 278,536 | 278,528 | 3,203,105 | 11.50 | 5 | 278,563 | 3,483,297 | 12.51 |
+| one plain ASCII string | `simd128` | 278,536 | 278,528 | 208,940 | 0.75 | 5 | 278,563 | 489,132 | 1.76 |
+
+Per scanned string byte the scanner costs **0.75 fuel instead of 11.5
+(15.3x fewer)**: a step of sixteen units is 24 instructions against 23 per
+unit. On the transcript the scan pass costs 4.7x less (12.41 to 2.62 per
+string byte) and the whole parse 2.5x less (21.0 to 8.55 per byte, 2.4M fuel
+instead of 5.9M); the 10x target holds for the per-byte term but not for the
+transcript average, which fixed costs now dominate: about 55 fuel per string
+(entry, the first step, the packed result: 4,600 strings, most of them short
+keys) and about 80 per escape (the scalar escape check and a new step after
+it), against 0.75 per byte. Building a plain string is one `memory.copy`,
+charged one fuel per byte, so a plain long string's parse floor is the copy
+(1.0) plus the scan (0.75). Whitespace runs of an indented document cost
+2.1x less (a single space after a colon costs the same as before). Escaped
+strings build 3.1x cheaper (sixteen units per step up to each backslash, a
+letter escape mapped through a nibble table). The decoders' code grows by
+374 bytes per module (`decoder_code_bytes_per_target`: 9,048 instead of
+8,674 bytes for `Item[]`). The v38 golden `json` entry of
+`fuel_determinism_tests` moves 33,789 to 33,439; v37 is unchanged.
+
+Open: the per-string and per-escape terms (a key scanner that returns at the
+first quote of its step without the general scanner's prologue, escapes
+handled inside a step without restarting it), and the linked decoder, the
+decoders' fallback, which stays scalar (46.9 fuel per byte on the
+transcript): `varta-intrinsics` is built for plain wasm32, and enabling
+`simd128` for it changes the code of every linked intrinsic.
 
 #### Wave-3a integration open items
 
@@ -7153,8 +7206,9 @@ exhaust a turn).
 Application side, same batch: the console reads a session transcript in pages
 of 10 through the API's `limit`/`cursor` pagination (canonical `items`), and
 the server no longer reports an idle keep-alive connection closing after it
-answered requests. Open: SIMD (`simd128`) string scanning in the compiled
-JSON decoders, which today spend about 21 instructions per string byte.
+answered requests. SIMD (`simd128`) string scanning in the compiled JSON
+decoders, which then spent about 21 fuel per input byte on a transcript:
+implemented, see the [SIMD scanning measurement](#simd-json-scanning-measurement-v38).
 
 ### K5 — Modules, standard system APIs and package compatibility
 

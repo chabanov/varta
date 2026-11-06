@@ -335,6 +335,84 @@ fn trap_paths_preserve_native_observable_fuel() {
     }
 }
 
+/// Fixed-width SIMD (v38 `simd128`, the compiled JSON decoders' scanner):
+/// one unit per operator, a loop of vector steps and an out-of-bounds
+/// 16-byte load (a static offset beyond memory, and one straddling its end)
+/// meter exactly as native fuel.
+#[test]
+fn simd128_operators_match_native_fuel() {
+    let vector = |offset| wasm_encoder::MemArg {
+        offset,
+        align: 0,
+        memory_index: 0,
+    };
+    let steps = vec![
+        I::Loop(BlockType::Empty),
+        I::LocalGet(0),
+        I::V128Load(vector(0)),
+        I::LocalGet(0),
+        I::V128Load(vector(16)),
+        I::I8x16NarrowI16x8S,
+        I::V128Const(i128::from_le_bytes([b'\\'; 16])),
+        I::I8x16Eq,
+        I::I8x16Bitmask,
+        I::Drop,
+        I::LocalGet(0),
+        I::V128Load(vector(0)),
+        I::V128AnyTrue,
+        I::Drop,
+        I::LocalGet(0),
+        I::I32Const(32),
+        I::I32Add,
+        I::LocalTee(0),
+        I::I32Const(1024),
+        I::I32LtU,
+        I::BrIf(0),
+        I::End,
+        I::LocalGet(0),
+        I::End,
+    ];
+    compare(
+        &module(&steps),
+        &[0, 1, 2, 3, 10, 17, 18, 19, 100, 500, 640, 641, 642, 1000],
+    );
+    for body in [
+        vec![
+            I::I32Const(0),
+            I::V128Load(vector(262144)),
+            I::V128AnyTrue,
+            I::End,
+        ],
+        vec![
+            I::I32Const(65528),
+            I::V128Load(vector(0)),
+            I::V128AnyTrue,
+            I::End,
+        ],
+    ] {
+        compare(&module(&body), &[0, 1, 2, 3, 100]);
+    }
+}
+
+/// Relaxed SIMD is outside the fuel model (the reference engine disables
+/// it: its results differ between hosts).
+#[test]
+fn relaxed_simd_is_rejected() {
+    let body = [
+        I::V128Const(0),
+        I::V128Const(0),
+        I::I8x16RelaxedSwizzle,
+        I::V128AnyTrue,
+        I::End,
+    ];
+    assert!(
+        instrument(&module(&body))
+            .unwrap_err()
+            .to_string()
+            .contains("outside the implemented fuel model")
+    );
+}
+
 #[test]
 fn bulk_copy_init_and_memory_growth_match_native() {
     for body in [
@@ -563,6 +641,35 @@ fn real_v38_linked_intrinsics_recursion_and_host_charges_match_native() {
     let browser = run_program(&bytes, true);
     assert_eq!(native, browser);
     assert_eq!(native.1.len(), 3);
+}
+
+/// The compiled JSON decoders' `simd128` scanner and string builder on long
+/// strings with escapes, non-ASCII text, indentation and a rejected input:
+/// the metered image charges exactly the native fuel.
+#[test]
+fn real_v38_simd_json_decoders_match_native() {
+    let bytes = crate::compile_typescript_with_profile(
+        r#"
+      interface Event { role: string; text: string; tags: string[] }
+      export function main():void{
+        let t = "[\n";
+        for (let i = 0; i < 24; i++) {
+          if (i > 0) t += ",\n";
+          t += '  { "role": "assistant", "text": "line ' + String(i) + '\\n\\"quoted\\" Привіт 😀 \\u00e9' + "x".repeat(i * 7) + '", "tags": [ "a" , "b\\\\c" ] }';
+        }
+        t += "\n]";
+        const events = JSON.parse(t) as Event[];
+        console.log(String(events.length) + events[23].text.slice(0, 30));
+        try { JSON.parse(t + "x") as Event[]; } catch (e) { console.log("rejected"); }
+      }
+    "#,
+        varta_common::language::LanguageProfile::CheckedF64Utf16V38,
+    )
+    .unwrap();
+    let native = run_program(&bytes, false);
+    let browser = run_program(&bytes, true);
+    assert_eq!(native, browser);
+    assert_eq!(native.1.len(), 2);
 }
 
 #[test]

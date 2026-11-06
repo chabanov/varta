@@ -48,6 +48,39 @@ const ESCAPES: [(u8, i32); 8] = [
     (b'r', 0x0d),
     (b't', 0x09),
 ];
+/// The units the letter escapes (`\b`, `\f`, `\n`, `\r`, `\t`) stand
+/// for, one nibble each at nibble `(letter >> 1) - base` of the word (the
+/// letters differ in their upper six bits), with that base. The other simple
+/// escapes, all below the base letter, stand for themselves.
+const LETTER_ESCAPES: (i64, i32) = {
+    let base = (b'b' >> 1) as u32;
+    let mut word = 0u64;
+    let mut index = 0;
+    while index < ESCAPES.len() {
+        let (escape, value) = ESCAPES[index];
+        if escape as i32 != value {
+            word |= (value as u64) << (((escape as u32 >> 1) - base) * HEX_DIGIT_BITS as u32);
+        }
+        index += 1;
+    }
+    (word as i64, base as i32)
+};
+/// One nibble of [`LETTER_ESCAPES`].
+const LETTER_ESCAPE_MASK: i32 = (1 << HEX_DIGIT_BITS) - 1;
+/// Bits of one word of [`SIMPLE_ESCAPES`].
+const BITSET_WORD_BITS: i32 = i64::BITS as i32;
+/// The units after a backslash that make a simple escape ([`ESCAPES`]), as
+/// a bit set over the units below 128 in two words.
+const SIMPLE_ESCAPES: [i64; 2] = {
+    let mut words = [0u64; 2];
+    let mut index = 0;
+    while index < ESCAPES.len() {
+        let unit = ESCAPES[index].0 as usize;
+        words[unit / u64::BITS as usize] |= 1 << (unit % u64::BITS as usize);
+        index += 1;
+    }
+    [words[0] as i64, words[1] as i64]
+};
 /// The unit count of a tape string entry's high word, without [`ESCAPED`].
 const UNITS_MASK: i32 = (ESCAPED - 1) as i32;
 /// Bytes of one UTF-16 unit.
@@ -158,8 +191,8 @@ pub(super) fn shared(
 ) -> Result<wasm_encoder::Function> {
     let globals = context.globals;
     Ok(match shared {
-        Shared::Whitespace => whitespace(globals),
-        Shared::Text => text(globals),
+        Shared::Whitespace => whitespace(globals, context.simd),
+        Shared::Text => text(globals, context.simd),
         Shared::Push => tape_push(plan, globals),
         Shared::Grow => grow(plan, globals),
         Shared::Same => same(),
@@ -167,7 +200,7 @@ pub(super) fn shared(
         Shared::Publish => publish(context),
         Shared::Cell => cell(plan),
         Shared::Vector => vector(plan),
-        Shared::Decode => decode(plan),
+        Shared::Decode => decode(plan, context.simd),
         Shared::Slow => slow(plan, context)?,
         Shared::CheckString => check_string(plan, globals),
         Shared::CheckNumber => check_number(plan, context),
@@ -198,10 +231,13 @@ pub(super) fn shared(
     })
 }
 
-fn whitespace(globals: Globals) -> wasm_encoder::Function {
+/// `(pos) -> pos`: skip whitespace. With `simd`, a run longer than one unit
+/// is skipped sixteen units per step while sixteen units of input remain.
+fn whitespace(globals: Globals, simd: bool) -> wasm_encoder::Function {
     const POS: u32 = 0;
     let mut a = Asm::new(1);
     let u = a.local(ValType::I32);
+    let vector = simd.then(|| (a.local(ValType::V128), a.local(ValType::I32)));
     a.loop_("next").block("done");
     a.get(POS)
         .i(I::GlobalGet(globals.end))
@@ -222,14 +258,70 @@ fn whitespace(globals: Globals) -> wasm_encoder::Function {
         .i(I::I32And)
         .i(I::I32Eqz)
         .br_if("done");
-    a.add(POS, UNIT_BYTES).br("next");
+    a.add(POS, UNIT_BYTES);
+    if let Some((lanes, bits)) = vector {
+        whitespace_run(&mut a, globals, POS, (lanes, bits));
+    }
+    a.br("next");
     a.end().end();
     a.get(POS);
     a.finish()
 }
+/// After a whitespace unit, while sixteen units of input remain at `pos`:
+/// the next unit not whitespace ends at `done`, sixteen whitespace units
+/// step on. A single whitespace unit (as after a colon) costs one scalar
+/// test.
+fn whitespace_run(a: &mut Asm, globals: Globals, pos: u32, (lanes, bits): (u32, u32)) {
+    a.block("scalar");
+    a.get(pos)
+        .int(simd::STEP_BYTES)
+        .i(I::I32Add)
+        .i(I::GlobalGet(globals.end))
+        .i(I::I32GtU)
+        .br_if("scalar");
+    a.get(pos)
+        .i(I::I32Load16U(UNIT))
+        .int(SPACE)
+        .i(I::I32GtU)
+        .br_if("done");
+    a.loop_("vector");
+    simd::narrowed(a, pos);
+    simd::whitespace(a, lanes);
+    a.i(I::I8x16Bitmask)
+        .tee(bits)
+        .int(simd::ALL_LANES)
+        .i(I::I32Ne)
+        .if_();
+    a.get(pos)
+        .get(bits)
+        .int(-1)
+        .i(I::I32Xor)
+        .i(I::I32Ctz)
+        .int(simd::UNIT_SHIFT)
+        .i(I::I32Shl)
+        .i(I::I32Add)
+        .set(pos)
+        .br("done");
+    a.end();
+    a.get(pos)
+        .int(simd::STEP_BYTES)
+        .i(I::I32Add)
+        .tee(pos)
+        .int(simd::STEP_BYTES)
+        .i(I::I32Add)
+        .i(I::GlobalGet(globals.end))
+        .i(I::I32LeU)
+        .br_if("vector");
+    a.end();
+    a.end();
+}
 
 /// `(pos) -> i64`: the string whose quote is at `pos` (see [`Shared::Text`]).
-fn text(globals: Globals) -> wasm_encoder::Function {
+/// With `simd`, plain units are skipped sixteen per step while sixteen units
+/// of input remain; the unit that stops a step (a quote, a backslash or a
+/// control character) and the units near the input's end take the scalar
+/// path, so every outcome and position is the scalar scanner's.
+fn text(globals: Globals, simd: bool) -> wasm_encoder::Function {
     const POS: u32 = 0;
     let mut a = Asm::new(1);
     let cursor = a.local(ValType::I32);
@@ -237,74 +329,78 @@ fn text(globals: Globals) -> wasm_encoder::Function {
     let extra = a.local(ValType::I32);
     let escaped = a.local(ValType::I64);
     let k = a.local(ValType::I32);
+    let vector = simd.then(|| {
+        (
+            a.local(ValType::I32),
+            a.local(ValType::V128),
+            a.local(ValType::I32),
+        )
+    });
     a.get(POS).int(UNIT_BYTES).i(I::I32Add).set(cursor);
+    if let Some((last, _, _)) = vector {
+        // The last address a step may start at. It wraps below the address
+        // 32 only when no step fits the input at all, and a step is entered
+        // only after its sixteen units are found inside the input.
+        a.i(I::GlobalGet(globals.end))
+            .int(simd::STEP_BYTES)
+            .i(I::I32Sub)
+            .set(last);
+    }
     a.block("fail").block("done").loop_("unit");
-    a.get(cursor)
-        .i(I::GlobalGet(globals.end))
-        .i(I::I32GeU)
-        .br_if("fail");
-    a.get(cursor)
-        .i(I::I32Load16U(UNIT))
-        .tee(u)
-        .int(QUOTE)
-        .i(I::I32Eq)
-        .br_if("done");
-    a.get(u).int(BACKSLASH).i(I::I32Eq).if_();
-    {
-        a.long(ESCAPED).set(escaped);
+    if let Some((last, lanes, bits)) = vector {
+        a.block("read");
+        a.block("scalar");
         a.get(cursor)
-            .int(UNIT_BYTES)
+            .int(simd::STEP_BYTES)
+            .i(I::I32Add)
+            .i(I::GlobalGet(globals.end))
+            .i(I::I32GtU)
+            .br_if("scalar");
+        a.loop_("vector");
+        simd::narrowed(&mut a, cursor);
+        simd::string_stops(&mut a, lanes);
+        a.i(I::I8x16Bitmask).tee(bits).if_();
+        a.get(cursor)
+            .get(bits)
+            .i(I::I32Ctz)
+            .int(simd::UNIT_SHIFT)
+            .i(I::I32Shl)
             .i(I::I32Add)
             .tee(cursor)
+            .i(I::I32Load16U(UNIT))
+            .set(u)
+            .br("read");
+        a.end();
+        a.get(cursor)
+            .int(simd::STEP_BYTES)
+            .i(I::I32Add)
+            .tee(cursor)
+            .get(last)
+            .i(I::I32LeU)
+            .br_if("vector");
+        a.end();
+        a.end();
+        a.get(cursor)
+            .i(I::GlobalGet(globals.end))
+            .i(I::I32GeU)
+            .br_if("fail");
+        a.get(cursor).i(I::I32Load16U(UNIT)).set(u);
+        a.end();
+        a.get(u).int(QUOTE).i(I::I32Eq).br_if("done");
+    } else {
+        a.get(cursor)
             .i(I::GlobalGet(globals.end))
             .i(I::I32GeU)
             .br_if("fail");
         a.get(cursor)
             .i(I::I32Load16U(UNIT))
             .tee(u)
-            .int(LOWER_U)
+            .int(QUOTE)
             .i(I::I32Eq)
-            .if_();
-        {
-            // Four hexadecimal digits, all inside the input.
-            a.get(cursor)
-                .int(HEX_DIGITS * UNIT_BYTES)
-                .i(I::I32Add)
-                .i(I::GlobalGet(globals.end))
-                .i(I::I32GeU)
-                .br_if("fail");
-            a.int(0).set(k);
-            a.loop_("hex");
-            a.get(cursor)
-                .get(k)
-                .i(I::I32Add)
-                .i(I::I32Load16U(at(UNIT, UNIT_BYTES as u64)))
-                .set(u);
-            hex_digit(&mut a, u);
-            a.i(I::I32Eqz).br_if("fail");
-            a.add(k, UNIT_BYTES)
-                .get(k)
-                .int(HEX_DIGITS * UNIT_BYTES)
-                .i(I::I32LtU)
-                .br_if("hex");
-            a.end();
-            a.add(cursor, (HEX_DIGITS + 1) * UNIT_BYTES);
-            a.add(extra, UNICODE_ESCAPE_UNITS - 1);
-            a.br("unit");
-        }
-        a.end();
-        // One of the simple escapes.
-        for (index, (escape, _)) in ESCAPES.iter().enumerate() {
-            a.get(u).int(i32::from(*escape)).i(I::I32Eq);
-            if index > 0 {
-                a.i(I::I32Or);
-            }
-        }
-        a.i(I::I32Eqz).br_if("fail");
-        a.add(cursor, UNIT_BYTES);
-        a.add(extra, SIMPLE_ESCAPE_UNITS - 1);
-        a.br("unit");
+            .br_if("done");
     }
+    a.get(u).int(BACKSLASH).i(I::I32Eq).if_();
+    escape(&mut a, globals, (cursor, u, extra, escaped, k), simd);
     a.end();
     a.get(u).int(CONTROL_END).i(I::I32LtU).br_if("fail");
     a.add(cursor, UNIT_BYTES).br("unit");
@@ -333,6 +429,92 @@ fn text(globals: Globals) -> wasm_encoder::Function {
     a.end();
     a.long(0);
     a.finish()
+}
+/// The escape whose backslash is at `cursor`: validated, `cursor` past it
+/// and `extra` counting its units beyond the one it stands for; branches to
+/// `unit`, or to `fail` on a malformed or truncated escape. The `simd`
+/// scanner tests a simple escape against the bit set [`SIMPLE_ESCAPES`],
+/// the scalar one against each escape in turn.
+fn escape(
+    a: &mut Asm,
+    globals: Globals,
+    (cursor, u, extra, escaped, k): (u32, u32, u32, u32, u32),
+    simd: bool,
+) {
+    a.long(ESCAPED).set(escaped);
+    a.get(cursor)
+        .int(UNIT_BYTES)
+        .i(I::I32Add)
+        .tee(cursor)
+        .i(I::GlobalGet(globals.end))
+        .i(I::I32GeU)
+        .br_if("fail");
+    a.get(cursor)
+        .i(I::I32Load16U(UNIT))
+        .tee(u)
+        .int(LOWER_U)
+        .i(I::I32Eq)
+        .if_();
+    {
+        // Four hexadecimal digits, all inside the input.
+        a.get(cursor)
+            .int(HEX_DIGITS * UNIT_BYTES)
+            .i(I::I32Add)
+            .i(I::GlobalGet(globals.end))
+            .i(I::I32GeU)
+            .br_if("fail");
+        a.int(0).set(k);
+        a.loop_("hex");
+        a.get(cursor)
+            .get(k)
+            .i(I::I32Add)
+            .i(I::I32Load16U(at(UNIT, UNIT_BYTES as u64)))
+            .set(u);
+        hex_digit(a, u);
+        a.i(I::I32Eqz).br_if("fail");
+        a.add(k, UNIT_BYTES)
+            .get(k)
+            .int(HEX_DIGITS * UNIT_BYTES)
+            .i(I::I32LtU)
+            .br_if("hex");
+        a.end();
+        a.add(cursor, (HEX_DIGITS + 1) * UNIT_BYTES);
+        a.add(extra, UNICODE_ESCAPE_UNITS - 1);
+        a.br("unit");
+    }
+    a.end();
+    // One of the simple escapes.
+    if simd {
+        // The set's word for `u` (`i64.shr_u` shifts by `u` modulo 64), and
+        // `u` below the set's end.
+        a.long(SIMPLE_ESCAPES[1])
+            .long(SIMPLE_ESCAPES[0])
+            .get(u)
+            .int(BITSET_WORD_BITS)
+            .i(I::I32GeU)
+            .i(I::Select)
+            .get(u)
+            .i(I::I64ExtendI32U)
+            .i(I::I64ShrU)
+            .i(I::I32WrapI64)
+            .get(u)
+            .int(2 * BITSET_WORD_BITS)
+            .i(I::I32LtU)
+            .i(I::I32And)
+            .int(1)
+            .i(I::I32And);
+    } else {
+        for (index, (escape, _)) in ESCAPES.iter().enumerate() {
+            a.get(u).int(i32::from(*escape)).i(I::I32Eq);
+            if index > 0 {
+                a.i(I::I32Or);
+            }
+        }
+    }
+    a.i(I::I32Eqz).br_if("fail");
+    a.add(cursor, UNIT_BYTES);
+    a.add(extra, SIMPLE_ESCAPE_UNITS - 1);
+    a.br("unit");
 }
 /// Whether the unit in `u` is a hexadecimal digit (pushes 1 or 0).
 fn hex_digit(a: &mut Asm, u: u32) {
@@ -661,8 +843,10 @@ fn vector(plan: &Plan) -> wasm_encoder::Function {
 }
 
 /// `(entry) -> handle`: an owned string of a tape string entry, raw runs
-/// copied and escapes decoded (the empty string is the zero handle).
-fn decode(plan: &Plan) -> wasm_encoder::Function {
+/// copied and escapes decoded (the empty string is the zero handle). With
+/// `simd`, an escaped string's runs without a backslash are copied sixteen
+/// units per step while sixteen decoded units remain.
+fn decode(plan: &Plan, simd: bool) -> wasm_encoder::Function {
     const ENTRY_VALUE: u32 = 0;
     let mut a = Asm::new(1);
     let len = a.local(ValType::I32);
@@ -673,6 +857,14 @@ fn decode(plan: &Plan) -> wasm_encoder::Function {
     let u = a.local(ValType::I32);
     let code = a.local(ValType::I32);
     let k = a.local(ValType::I32);
+    let vector = simd.then(|| {
+        (
+            a.local(ValType::V128),
+            a.local(ValType::V128),
+            a.local(ValType::I32),
+            a.local(ValType::I32),
+        )
+    });
     a.get(ENTRY_VALUE)
         .long(strings::LENGTH_SHIFT as i64)
         .i(I::I64ShrU)
@@ -697,7 +889,13 @@ fn decode(plan: &Plan) -> wasm_encoder::Function {
     {
         a.get(ptr).set(target);
         a.get(ptr).get(len).i(I::I32Add).set(end);
+        if vector.is_some() {
+            a.block("finished");
+        }
         a.loop_("unit");
+        if let Some(lanes) = vector {
+            plain_run(&mut a, (source, target, end), lanes);
+        }
         a.get(source)
             .i(I::I32Load16U(UNIT))
             .tee(u)
@@ -733,16 +931,21 @@ fn decode(plan: &Plan) -> wasm_encoder::Function {
             a.else_();
             {
                 // A simple escape: its unit is itself unless mapped.
-                a.get(u).set(code);
-                for (escape, value) in ESCAPES {
-                    if i32::from(escape) != value {
-                        a.int(value)
-                            .get(code)
-                            .get(u)
-                            .int(i32::from(escape))
-                            .i(I::I32Eq)
-                            .i(I::Select)
-                            .set(code);
+                if vector.is_some() {
+                    mapped_escape(&mut a, u);
+                    a.set(code);
+                } else {
+                    a.get(u).set(code);
+                    for (escape, value) in ESCAPES {
+                        if i32::from(escape) != value {
+                            a.int(value)
+                                .get(code)
+                                .get(u)
+                                .int(i32::from(escape))
+                                .i(I::I32Eq)
+                                .i(I::Select)
+                                .set(code);
+                        }
                     }
                 }
                 a.add(source, SIMPLE_ESCAPE_UNITS * UNIT_BYTES);
@@ -760,6 +963,9 @@ fn decode(plan: &Plan) -> wasm_encoder::Function {
             .i(I::I32LtU)
             .br_if("unit");
         a.end();
+        if vector.is_some() {
+            a.end();
+        }
     }
     a.else_();
     a.get(ptr).get(source).get(len).i(I::MemoryCopy {
@@ -769,6 +975,93 @@ fn decode(plan: &Plan) -> wasm_encoder::Function {
     a.end();
     handle(&mut a, len, ptr);
     a.finish()
+}
+
+/// The unit the simple escape whose letter is in `u` stands for (pushes
+/// it): the letters map through [`LETTER_ESCAPES`], every other escape
+/// stands for itself.
+fn mapped_escape(a: &mut Asm, u: u32) {
+    a.long(LETTER_ESCAPES.0)
+        .get(u)
+        .int(1)
+        .i(I::I32ShrU)
+        .int(LETTER_ESCAPES.1)
+        .i(I::I32Sub)
+        .int(HEX_DIGIT_BITS.trailing_zeros() as i32)
+        .i(I::I32Shl)
+        .i(I::I64ExtendI32U)
+        .i(I::I64ShrU)
+        .i(I::I32WrapI64)
+        .int(LETTER_ESCAPE_MASK)
+        .i(I::I32And)
+        .get(u)
+        .get(u)
+        .int(LETTER_ESCAPES.1 << 1)
+        .i(I::I32GeU)
+        .i(I::Select);
+}
+
+/// While sixteen decoded units remain at `target` (the string's end at
+/// `end`): copy sixteen units from `source`. Up to the first backslash each
+/// is a plain unit standing for itself (the checker accepted the string, and
+/// the closing quote follows every decoded unit), so both pointers step past
+/// them; the units copied beyond a backslash lie below `end` and are
+/// overwritten by the scalar decoder, which resumes at the backslash. The
+/// decoded units all copied end at `finished`.
+fn plain_run(
+    a: &mut Asm,
+    (source, target, end): (u32, u32, u32),
+    (low, high, bits, offset): (u32, u32, u32, u32),
+) {
+    a.block("scalar");
+    a.get(target)
+        .int(simd::STEP_BYTES)
+        .i(I::I32Add)
+        .get(end)
+        .i(I::I32GtU)
+        .br_if("scalar");
+    a.loop_("vector");
+    a.get(source)
+        .i(I::V128Load(TEXT))
+        .tee(low)
+        .get(source)
+        .i(I::V128Load(at(TEXT, simd::VECTOR_BYTES as u64)))
+        .tee(high)
+        .i(I::I8x16NarrowI16x8S);
+    simd::backslashes(a);
+    a.i(I::I8x16Bitmask).set(bits);
+    a.get(target).get(low).i(I::V128Store(TEXT));
+    a.get(target)
+        .get(high)
+        .i(I::V128Store(at(TEXT, simd::VECTOR_BYTES as u64)));
+    a.get(bits).if_();
+    a.get(bits)
+        .i(I::I32Ctz)
+        .int(simd::UNIT_SHIFT)
+        .i(I::I32Shl)
+        .tee(offset)
+        .get(source)
+        .i(I::I32Add)
+        .set(source);
+    a.get(target)
+        .get(offset)
+        .i(I::I32Add)
+        .set(target)
+        .br("scalar");
+    a.end();
+    a.add(source, simd::STEP_BYTES);
+    a.get(target)
+        .int(simd::STEP_BYTES)
+        .i(I::I32Add)
+        .tee(target)
+        .int(simd::STEP_BYTES)
+        .i(I::I32Add)
+        .get(end)
+        .i(I::I32LeU)
+        .br_if("vector");
+    a.end();
+    a.get(target).get(end).i(I::I32GeU).br_if("finished");
+    a.end();
 }
 
 /// `(start) -> bits`: the literal at `start` converted by the linked
@@ -1223,4 +1516,32 @@ fn build_number(plan: &Plan, globals: Globals) -> wasm_encoder::Function {
         .i(I::Call(plan.shared(Shared::Slow)));
     a.else_().get(bits).end();
     a.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The simple-escape bit set and the letter table, evaluated as the
+    /// emitted code evaluates them (`i64.shr_u` shifts modulo 64), agree
+    /// with [`ESCAPES`] on every unit after a backslash.
+    #[test]
+    fn escape_tables_match_the_escapes() {
+        for unit in 0..=u32::from(u16::MAX) {
+            let word = SIMPLE_ESCAPES[usize::from(unit >= BITSET_WORD_BITS as u32)] as u64;
+            let valid = (word >> (unit % u64::BITS)) & 1 == 1 && unit < 2 * BITSET_WORD_BITS as u32;
+            let escape = ESCAPES.iter().find(|(e, _)| u32::from(*e) == unit);
+            assert_eq!(valid, escape.is_some(), "{unit:#x}");
+            if let Some(&(_, value)) = escape {
+                let shift = (((unit >> 1).wrapping_sub(LETTER_ESCAPES.1 as u32)) << 2) % u64::BITS;
+                let letter = (LETTER_ESCAPES.0 as u64 >> shift) as i32 & LETTER_ESCAPE_MASK;
+                let mapped = if unit >= (LETTER_ESCAPES.1 << 1) as u32 {
+                    letter
+                } else {
+                    unit as i32
+                };
+                assert_eq!(mapped, value, "{unit:#x}");
+            }
+        }
+    }
 }
