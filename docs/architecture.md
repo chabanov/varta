@@ -8442,7 +8442,9 @@ edges, so keys, values and nested collections are traced like any record.
   (cost linear in the key's length), numbers by value (every `NaN` and both
   zeros share a hash), booleans by value and references by their stable heap
   address. BigInt keys compare by value but share one chain (a documented
-  linear cost, bounded by the entry ceiling).
+  linear cost, bounded by the entry ceiling). V38 replaces this index by
+  hashed tables of every key type ([collection
+  hashing](#collection-hashing-collection_hashing)).
 - *Order and deletion.* Entries live in insertion order in parallel vectors.
   `delete` negates the entry's insertion serial; an insertion into full
   vectors first compacts the deleted entries away. A collection holds at most
@@ -9056,6 +9058,10 @@ by selectors; each admits nothing until its stream adds a subsection below:
   decoders compiled for their target types, the linked decoder their
   fallback; [implemented](#compiled-json-decoders-json_decoders); it admits
   no syntax);
+- collection-hashing stream (wave 3): `collection_hashing()` (`Map` and
+  `Set` find, insert and delete through hashed tables in amortized constant
+  time; [implemented](#collection-hashing-collection_hashing); it admits no
+  syntax and changes no value layout);
 - collection stream (wave 3 (f)): `incremental_collection()` (idle
   collection between turns under a maintenance budget and an incremental
   collector with a deletion write barrier inside turns;
@@ -9622,8 +9628,9 @@ earlier compile byte-identically (pinned by FNV digests of 14 v37 modules in
 
 | Bound | v37 and earlier | v38 | What bounds v38 in practice |
 | --- | --- | --- | --- |
-| Elements of one array (dense, resizable, sparse), entries of one `Map`, `Set`, `Uint8Array`, flattened spread/rest arguments | 1024 | `V38_MAX_ARRAY_ELEMENTS` = 2^27 | Memory budget |
+| Elements of one array (dense, resizable, sparse), entries of one `Uint8Array`, flattened spread/rest arguments | 1024 | `V38_MAX_ARRAY_ELEMENTS` = 2^27 | Memory budget |
 | Entries of one dictionary or mixed record | 1024 | 2^26 (`value::dictionary_entry_limit`: half the element limit, [dictionary hashing](#dictionary-hashing-dictionary_hashing)) | Memory budget |
+| Entries of one `Map` or `Set` | 1024 | 2^26 live entries (half the element limit, [collection hashing](#collection-hashing-collection_hashing)) | Memory budget |
 | Bytes of one string value | 1 MiB | `V38_MAX_STRING_BYTES` = 2^30 (2^29 UTF-16 units) | Memory budget |
 | One guest heap allocation | 1 MiB | `V38_MAX_ALLOCATION_BYTES` = 2^31 − 64 KiB | Memory budget |
 | JSON nesting depth | 64 | `V38_MAX_JSON_DEPTH` = 10000 (host ceiling) | Host JSON stack |
@@ -9736,9 +9743,11 @@ message.
 preludes compile under v38 with the v38 element limit
 (`Prelude::lifted`; v37 compiles the unchanged sources), and the v38
 `Array.prototype.join` concatenates balanced halves, so joining n elements
-copies O(n log n) code units instead of O(n²). `Map`/`Set` lookup stays
-hashed; dictionaries and mixed records keep their linear key search and
-ordered insertion (see the pending items below).
+copies O(n log n) code units instead of O(n²). `Map`/`Set` find, insert
+and delete in amortized constant time ([collection
+hashing](#collection-hashing-collection_hashing)), and dictionaries and
+mixed records are hashed under value layout 18 (see the pending items
+below).
 
 **Bounded host copies.** Value readers (logging, `typeof`, equality, unions,
 JSON) read guest memory in place and allocate host memory bounded by the
@@ -9752,7 +9761,10 @@ more than a constant multiple of the memory budget.
 **Measured costs.** Guest fuel and final memory pages (64 KiB each; the
 budget is 128) under the production 8 MiB memory budget and test-only fuel
 and host-call budgets (`varta-runtime` `data_limit_tests`,
-`frame_limit_tests`, `json_limit_tests`; deterministic, not wall-clock):
+`frame_limit_tests`, `json_limit_tests`; deterministic, not wall-clock;
+the `Map`/`Set` rows predate [collection
+hashing](#collection-hashing-collection_hashing), which has its own
+measurement):
 
 | Workload | 10k elements | 100k elements |
 | --- | --- | --- |
@@ -9910,6 +9922,122 @@ insertion there. 50,000 hashed entries exhaust the memory budget (typed
 100,000-key array alone exhausts it before and after. The shape the
 data-limits stream measured at 251M fuel (1,000 insertions with 500 of the
 keys deleted again) takes 2.7M.
+
+#### Collection hashing (`collection_hashing()`)
+
+Selector `collection_hashing()` (wave 3 of the batch) gives v38 `Map` and
+`Set` the dictionary table encoding and allocation-free guest probes, so
+finding, inserting and deleting a key cost amortized constant time for every
+key type. It admits no syntax and changes no value layout, host import or
+ABI: the storage stays private to the engine prelude, and no value reader,
+JSON, logging, KV or `unknown` sees it (as in v37). Behaviour is the v37
+behaviour (pinned against Node 24 in `varta-runtime`
+`collection_hashing_tests`, which also runs the v37 collection cases under
+v38), apart from the lifted ceiling of [data limits](#data-limits-data_limits).
+V37 and earlier compile the frozen v37 prelude and keep their bytes.
+
+**Storage.** The v38 source of `<varta>/builtins/collections.ts`
+(`prelude/collections_hashed.ts`) lays `Map<K, V>` out as
+`MapStore<K, V> = { index; keys: K[]; values: V[] }` and `Set<T>` as
+`SetStore<T> = { index; keys: T[] }`, with `CollectionIndex = { table,
+serials: number[]; size, serial, first: number }`:
+
+- **Entries.** Positions in insertion order across the vectors. A deleted
+  position is a hole of `keys` and `values` (its key and value are released
+  to the collector) and its serial is negated; `size` counts the live
+  entries, `serial` is the last insertion serial issued (never reset, so
+  cursors survive `clear`), and every position below `first` is deleted.
+- **Table.** As a [value18 dictionary table](#dictionary-hashing-dictionary_hashing):
+  a `number[]` whose capacity equals its power-of-two length, from 8 to the
+  element limit; a hole is an empty slot, a present `+0` a tombstone and a
+  present `p + 1` the live entry at position `p`. Every live position is
+  referenced once, tombstones plus references equal the positions, and the
+  positions stay at most half the capacity, so every probe meets an empty
+  slot.
+- **Hash and equality** by the key type (`ir::KeyHash`), with no seed, so
+  identical on every host:
+  - strings and BigInts (canonical code-unit payloads): FNV-1a over the
+    UTF-16 units (`value::dictionary_hash`; a BigInt's canonical transport
+    bytes as units), content equality;
+  - numbers: SameValueZero. The slot's binary64 bits, with every NaN
+    canonicalized and `-0` as `+0`, folded to 32 bits (low word XOR high
+    word) and mixed by the murmur3 `fmix32` finalizer; equal when `==` or
+    both are NaN (whose bits may differ);
+  - booleans and references (records, class instances, arrays, tuples,
+    functions, errors, promises, generators and collections): the low word
+    of the slot (a reference's stable heap address in the nonmoving heap)
+    mixed by `fmix32`; equal when the 64-bit slots are equal, as `===`.
+
+**Operations.**
+
+- **Lookup** (`get`, `has`): one probe from the key's home slot
+  (`varta.collections.lookup`).
+- **Insertion** (`set`, `add`; the key normalized, `-0` to `+0`): when one
+  more position would pass half the capacity, the key is looked up first (a
+  present key is updated in place) and the collection otherwise rebuilt;
+  inserting past half the largest table (2^26 live entries under v38) throws
+  `RangeError: Map maximum size exceeded` (`Set …`). Then one `insert` probe
+  either finds the key (a map replaces its value) or references the next
+  position from the first empty slot of the probe, and the entry is appended.
+- **Deletion** (`delete`): an `unlink` probe tombstones the slot, the
+  position becomes a hole of both vectors with a negated serial, and when the
+  deleted positions exceed both 8 and the live entries the collection is
+  rebuilt.
+- **Rebuild**: the live entries move to dense vectors in order with their
+  serials, `first` returns to 0, and a fresh table of the smallest power of
+  two of at least three slots per entry (8 to the element limit) indexes the
+  dense keys (`varta.collections.indexKeys`). At least a sixth of the new
+  capacity in insertions, or half the live entries in deletions, separates
+  two rebuilds, so every operation costs amortized constant time.
+- **`clear`**: a fresh index that keeps the serial counter, and empty
+  vectors.
+- **Iteration** (`for…of`, `keys`/`values`/`entries`, `forEach`, spreads,
+  copies, `Array.from`): live, as in v37. A cursor remembers the serial of
+  the last visited entry and resumes after it (directly when nothing moved,
+  by binary search after a rebuild), so it visits entries added during
+  iteration, skips deleted ones and continues after `clear`. A cursor at or
+  below `first` advances `first` past the deleted entries it crosses, so
+  taking the first key of a queue-like collection and deleting it repeatedly
+  costs amortized constant time.
+
+**Guest probes.** `varta.collections.table(n)` reserves `n` empty slots
+(`E::ArrayReserve`); `lookup`, `unlink`, `insert` and `indexKeys` are
+prelude-only intrinsics (`lower::collection_hashing`) that select their
+helper by the key type: string and BigInt keys share the dictionary helpers
+(`DictionaryFind`, `DictionaryUnlink`, `DictionaryIndex`) and add
+`Collection(Insert, Units)`; number and identity keys use
+`Collection(Find | Unlink | Insert | Index, Number | Identity)`
+(`emit::strings::dictionary_probe`). The probes read the key vector, write
+only the table (a `number[]` without reference elements) and never allocate
+or call the host, so no handle moves while they run and no write barrier is
+needed; an `insert` probe that meets no empty slot traps (the prelude keeps
+the load at most one half). Every reference store to the vectors and the
+storage records (appends, holes, rebuilt vectors) is ordinary prelude code
+with the v38 write barriers; the collector traces the table as an ordinary
+field.
+
+**Measured costs.** Fuel of `n` entries under the v38 turn budgets with
+test-only fuel and the production v38 memory (`varta-runtime`
+`collection_fuel_measurements`, `--ignored --nocapture`; deterministic),
+before (the v37-layout prelude lifted to the v38 ceiling) and after:
+
+| Workload | 1,000 | 10,000 | 100,000 | 300,000 |
+| --- | --- | --- | --- | --- |
+| `Map<string, string>` `set` of `` `k${i}` `` → `` `v${i}` `` | 4.6M → 1.7M | 58.4M → 24.1M | 585.0M → 234.6M | 1922.0M → 873.7M |
+| `Set<string>` `add` | 4.0M → 1.3M | 50.5M → 15.6M | 503.1M → 159.9M | 1670.5M → 606.4M |
+| `Map<number, number>` `set`, `get` and every other `delete` | 4.4M → 2.1M | 49.0M → 20.5M | 470.1M → 236.9M | 1518.0M → 640.1M |
+| `Set<bigint>` `add` (with `b += 1n`) | 3741.0M → 5.8M | over 20,000M → 60.8M | → 605.3M | → 1938.6M |
+| `Map<object, number>` `set` | 3.8M → 1.1M | 50.3M → 14.8M | 433.5M → 171.2M | 1429.4M → 562.5M |
+| `Set<number>` as a queue (take the first, delete it, add one) | 34.8M → 3.5M | 3053.3M → 37.5M | over 20,000M → 381.5M | → 1146.6M |
+
+For comparison, pushing the same two strings into two arrays takes 498.8M
+and a dictionary of 300,000 such entries 996.6M. An application turn that
+fills a 300,000-entry `Map<string, string>` takes 873.7M fuel and a
+`Set<string>` 552.3M, within the default turn fuel. The cost per entry still
+grows with the live heap (from about 1,700 to 2,900 fuel per map entry
+between 1,000 and 300,000 entries; 900 to 1,660 for the two arrays); the
+fuel profile puts that growth in the collector's marking work, while the
+probes cost the same per call.
 
 #### Code generation v2 (`codegen_v2`)
 

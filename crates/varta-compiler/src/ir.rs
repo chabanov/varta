@@ -864,6 +864,55 @@ pub(crate) enum Intrinsic {
     /// and every table reference to it (the zero table handle: none).
     /// Allocation-free.
     DictionaryInsertAt,
+    /// V38 (`collection_hashing`): a `Map`/`Set` table probe for keys of one
+    /// [`KeyHash`] class, with the dictionary table encoding (string and
+    /// BigInt keys use the dictionary probes where one exists).
+    /// Allocation-free.
+    Collection(CollectionProbe, KeyHash),
+}
+impl Intrinsic {
+    /// The operand that a [`Self::Collection`] probe takes as a key slot
+    /// (`i64` bits: a number reinterpreted, a boolean extended).
+    pub(crate) fn key_slot(self) -> Option<usize> {
+        match self {
+            Self::Collection(
+                CollectionProbe::Find | CollectionProbe::Unlink | CollectionProbe::Insert,
+                _,
+            ) => Some(2),
+            _ => None,
+        }
+    }
+}
+/// The table probes of a v38 `Map`/`Set` (`collection_hashing`), with the
+/// operands of the dictionary probe of the same name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum CollectionProbe {
+    /// `(keys, table, key) -> number`: the position of `key`'s entry, or -1.
+    Find,
+    /// As [`Self::Find`], and the found slot becomes a tombstone.
+    Unlink,
+    /// `(keys, table, key, position) -> number`: as [`Self::Find`], and on a
+    /// miss `position` is referenced from the first empty slot of the probe
+    /// (the caller then appends the entry there). The table must stay below
+    /// half load.
+    Insert,
+    /// `(keys, table) -> 0`: reference every entry of a dense key vector
+    /// from a fresh table of empty slots.
+    Index,
+}
+/// How a `Map`/`Set` probe hashes and compares a key slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum KeyHash {
+    /// Strings and BigInts (canonical code-unit payloads): FNV-1a over the
+    /// code units (`value::dictionary_hash`), content equality. Their
+    /// lookups, deletions and placements use the dictionary probes.
+    Units,
+    /// Numbers: SameValueZero (every NaN alike, `-0` equal to `+0`) over the
+    /// slot's binary64 bits.
+    Number,
+    /// Booleans and references: the slot bits themselves (a reference's
+    /// stable heap address), compared by identity.
+    Identity,
 }
 /// The most code units one `Intrinsic::Units` call packs.
 pub(crate) const MAX_PACKED_UNITS: usize = 16;

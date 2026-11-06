@@ -7126,9 +7126,63 @@ collector now clears the bitmaps incrementally
 snapshot, with a headroom so blocks allocated meanwhile are ordinary blocks
 below the limit. A test with a heap past 100 MB and a maintenance budget of
 one and a half step reserves fails with the console's diagnostic on the
-earlier collector and passes now; the collector stress corpora pass. Open:
-`Map`/`Set` operations cost in proportion to their size (300,000 entries
-exhaust a turn).
+earlier collector and passes now; the collector stress corpora pass.
+
+**Map and Set hashing** (same batch): a console handler that filled a
+`Map<string, string>` with 300,000 `` `k${i}` `` → `` `v${i}` `` entries
+exhausted its 1,000,000,000-fuel turn, and so did `Set.add`. The v37-layout
+prelude was already a chained hash, so the cost was a large constant rather
+than a lookup growing with the size: a profile of 20,000 insertions put
+about 1,100 fuel per key into hashing the key in guest TypeScript (the
+32-bit FNV-1a arithmetic over binary64 Numbers), and most of the rest into
+five parallel vectors per entry (chains, hashes, serials, keys, values),
+each written through the generic element path. BigInt keys shared one
+chain (linear), and deleted entries were compacted only at the v37
+ceiling, so under v38 they accumulated without bound. The
+collection-hashing stream ([contract](architecture.md#collection-hashing-collection_hashing))
+gives v38 the dictionary table encoding with allocation-free guest probes
+selected by the key type (strings and BigInts share the dictionary probes),
+one `insert` probe that finds a key or places the new position, three
+vectors per map entry (two per set entry), rebuilds at half load and after
+deletions outnumber the live entries, and a `first` bound on the deleted
+prefix for queue-like use. Behaviour is pinned against Node 24; v37 keeps
+its prelude and bytes.
+
+Fuel of `n` entries (`varta-runtime` `collection_fuel_measurements`,
+`--ignored --nocapture`; v38 turn budgets with test-only fuel of 20 turns
+and the production v38 memory; deterministic, debug test build), before
+(the v37-layout prelude lifted to the v38 ceiling, as integrated) and after:
+
+| Workload | 1,000 | 10,000 | 100,000 | 300,000 | Per entry at 300,000 |
+| --- | --- | --- | --- | --- | --- |
+| `Map<string, string>` `set` of `` `k${i}` `` → `` `v${i}` `` | 4.6M → 1.7M | 58.4M → 24.1M | 585.0M → 234.6M | 1,922.0M → 873.7M | 6,407 → 2,912 |
+| `Set<string>` `add` | 4.0M → 1.3M | 50.5M → 15.6M | 503.1M → 159.9M | 1,670.5M → 606.4M | 5,568 → 2,021 |
+| `Map<number, number>` `set`, `get`, every other `delete` | 4.4M → 2.1M | 49.0M → 20.5M | 470.1M → 236.9M | 1,518.0M → 640.1M | 5,060 → 2,134 |
+| `Set<bigint>` `add` (with `b += 1n`) | 3,741.0M → 5.8M | over 20,000M → 60.8M | over 20,000M → 605.3M | over 20,000M → 1,938.6M | — → 6,462 |
+| `Map<object, number>` `set` | 3.8M → 1.1M | 50.3M → 14.8M | 433.5M → 171.2M | 1,429.4M → 562.5M | 4,765 → 1,875 |
+| `Set<number>` queue (take the first, delete it, add one) | 34.8M → 3.5M | 3,053.3M → 37.5M | over 20,000M → 381.5M | over 20,000M → 1,146.6M | — → 3,822 |
+| Two string arrays (comparison, unchanged) | 0.9M | 12.2M | 169.1M | 498.8M | 1,663 |
+| Dictionary of the same entries (comparison, unchanged) | 2.4M | 31.6M | 318.8M | 996.6M | 3,322 |
+
+- **The reported turn.** A `varta.events.listen` handler that fills a
+  300,000-entry `Map<string, string>` now takes 873.7M fuel and a
+  `Set<string>` 552.3M, each within the default 1,000,000,000-fuel turn
+  (`three_hundred_thousand_entries_fit_one_turn_under_default_budgets`);
+  before, they needed 1,922M and 1,671M.
+- **Quadratic cases gone.** BigInt keys (one shared chain, a host comparison
+  per entry) and a queue (deleted entries never compacted below the v38
+  ceiling, so every first-key search crossed all of them) were quadratic;
+  both are now linear in the entry count.
+- **What remains.** About 1,250 fuel per map entry above the two arrays at
+  300,000 entries: three vector appends, one probe with the key's FNV-1a
+  hash, amortized rebuilds that rehash every key, and the roots of the
+  prelude calls. The cost per entry of every workload, the arrays included,
+  still grows with the live heap (map entries 1,700 to 2,900 fuel, array
+  pairs 900 to 1,660 between 1,000 and 300,000 entries); the fuel profile
+  puts that growth in the collector's marking work over the larger heap.
+  Open: the collector's pacing on heaps of hundreds of megabytes; the
+  per-entry constant (the three generic vector appends are about a quarter
+  of it, by the profile, and could be done inside the `insert` probe).
 
 Application side, same batch: the console reads a session transcript in pages
 of 10 through the API's `limit`/`cursor` pagination (canonical `items`), and

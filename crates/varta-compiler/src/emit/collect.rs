@@ -481,6 +481,13 @@ impl<'a> Collected<'a> {
                     ir::Intrinsic::DictionaryInsertAt => {
                         self.helpers.insert(strings::Helper::DictionaryInsertAt);
                     }
+                    ir::Intrinsic::Collection(probe, hash) => {
+                        self.helpers
+                            .insert(strings::Helper::Collection(*probe, *hash));
+                        if *hash == ir::KeyHash::Units {
+                            self.helpers.insert(strings::Helper::StringEquals);
+                        }
+                    }
                 }
                 for arg in args {
                     self.expression(arg, source);

@@ -222,6 +222,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "timer-long-throw",
             r#"class Failure extends Error{constructor(){super("x".repeat(300));this.name="Failure";}}export function main():void{setTimeout(()=>{throw new Failure();},1);}"#,
         ),
+        // V38 hashed Map/Set tables (`collection_hashing`): string, number
+        // and BigInt keys, deletions, rebuilds and live iteration.
+        (
+            "collections",
+            r#"export function main():void{const m=new Map<string,number>();for(let i=0;i<3000;i++)m.set("k"+i,i);for(let i=0;i<3000;i+=2)m.delete("k"+i);const n=new Map<number,string>([[NaN,"nan"],[-0,"zero"]]);const s=new Set<bigint>();for(let i=0;i<500;i++)s.add(BigInt(i%250));let t=0;for(const [k,v] of m){if(k.length>4)t+=v;}const first:string[]=[];for(const k of m.keys()){first.push(k);if(first.length===3)break;}console.log(`${m.size} ${t} ${first.join(",")} ${n.get(NaN)} ${n.get(0)} ${s.size} ${s.has(249n)}`);}"#,
+        ),
         ("view-live",r#"export function main():void{const root=View.node();View.createElement(root,1);const button=View.node();View.createElement(button,20);View.setAttribute(button,1,"counter");const label=View.node();View.createText(label,"0");View.insert(button,label,0);View.insert(root,button,0);let count=0;View.on(button,1,(event:ViewEvent):void=>{count++;View.setText(label,String(count));console.log(count);},0,0,0,0);const box=View.node();View.createElement(box,24);View.setAttribute(box,1,"entry");View.insert(root,box,0);View.on(box,2,(event:ViewEvent):void=>{View.setText(label,event.value);console.log(event.value);},0,0,0,0);View.mount(root);console.log("main");}"#),
         ("view-invalid",r#"export function main():void{const root=View.node();View.createElement(root,1);View.setAttribute(root,1,"duplicate");const other=View.node();View.createElement(other,1);View.setAttribute(other,1,"duplicate");View.insert(root,other,0);View.mount(root);console.log("must not run");}"#),
         ("view-second",r#"export function main():void{const root=View.node();View.createElement(root,1);View.mount(root);View.setTitle("second");View.commit();console.log("must not run");}"#),

@@ -48,7 +48,10 @@ impl Emitter<'_> {
             E::Math(_, args) | E::NumberPredicate(_, args) => args.iter().all(|a| self.quiet(a)),
             // Code-unit reads and table probes load from memory in place.
             E::Intrinsic(
-                ir::Intrinsic::CodeUnit | ir::Intrinsic::CharCodeAt | ir::Intrinsic::DictionaryFind,
+                ir::Intrinsic::CodeUnit
+                | ir::Intrinsic::CharCodeAt
+                | ir::Intrinsic::DictionaryFind
+                | ir::Intrinsic::Collection(ir::CollectionProbe::Find, _),
                 args,
             ) => args.iter().all(|a| self.quiet(a)),
             // A checked element read throws on its only allocating path.

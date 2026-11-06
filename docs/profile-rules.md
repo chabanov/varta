@@ -3036,8 +3036,11 @@ Contract: [collections and binary text](architecture.md#collections-and-binary-t
   `lower::web_text` with `is_prelude_source`; in program modules they stay
   unknown calls. `varta.array.get` is for densely filled prelude vectors read
   below their length only. Prefer index appends (`a[a.length] = v`) and
-  `varta.array.get` over `push` and `a[i]!` in prelude hot paths: `push`
+  `varta.array.get` over `push` and `a[i]!` in v37 prelude hot paths: `push`
   allocates its argument array and `!` reads through the hole-aware path.
+  Under v38 (`codegen_v2`) a `push` of up to four values appends without an
+  argument array and costs a fraction of an index append (which resizes and
+  sets presence through the generic path), so v38-only preludes push.
 - `Type::Collection` and `Type::Tuple` are erased to their storage in
   `literal_erasure` (with dictionaries, promises and merged function types);
   emission never sees them. Map/Set storage is the prelude's generic
@@ -3161,7 +3164,9 @@ structural subtyping (`structural_subtyping`) and code generation v2
 (`strict_members`, [rules below](#strict-members-and-wide-unions-strict_members)), web bytes
 (`web_bytes`, [rules below](#web-bytes-web_bytes)) and virtual roots (`file_roots`,
 [rules below](#virtual-file-roots-file_roots)), and the wave-3b compiled JSON
-decoders (`json_decoders`, [rules below](#json-decoders-json_decoders));
+decoders (`json_decoders`, [rules below](#json-decoders-json_decoders))
+and hashed `Map`/`Set` tables (`collection_hashing`, [rules
+below](#collection-hashing-collection_hashing));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
@@ -3377,6 +3382,38 @@ Normative contract: [architecture](architecture.md#turn-budgets-and-application-
   limit); compile-time limits, checked parsing and validation use it.
 - Behaviour tests compare v37 and v38 against Node 24 output; corrupt-table
   tests tamper with a real guest image and expect every boundary to reject it.
+
+### Collection hashing (`collection_hashing`)
+
+Contract: [collection hashing](architecture.md#collection-hashing-collection_hashing).
+
+- The v38 collections prelude is `prelude/collections_hashed.ts`, selected by
+  `modules::engine::collections_v38` (with its table ceiling lifted to the
+  v38 element limit); `prelude/collections.ts` stays the frozen v37 source.
+  Keep the exported function names and the `MapStore`/`SetStore` interface
+  names, which `lower::collections` instantiates and calls for both.
+- `varta.collections.table`, `lookup`, `insert`, `unlink` and `indexKeys`
+  exist only under `collection_hashing()` and only in prelude sources
+  (`lower::collection_hashing`). They select the probe by the key type
+  (`ir::KeyHash`): strings and BigInts reuse the dictionary probes (and
+  `Collection(Insert, Units)`), numbers and identity keys use
+  `ir::Intrinsic::Collection`. Never add a key type without its hash and
+  equality in `emit::strings::dictionary_probe`.
+- Probes stay allocation-free and host-free, read the key vector and write
+  only the table; a helper never stores a reference (that would need the
+  write barrier). Keep the positions at most half the table's capacity
+  before every `insert` probe (it traps without an empty slot), and keep
+  every reference store to the vectors in prelude code.
+- Hashing is deterministic and seedless. A number key hashes its canonical
+  SameValueZero bits (one NaN, `+0` for `-0`) and compares with `==` or
+  both-NaN, never by bits: Wasm arithmetic may change NaN payloads.
+- Rebuild before a probe could fail and after deletions outnumber the live
+  entries, from dense live vectors, so every operation stays amortized
+  constant; iteration keeps the serial cursor of v37.
+- Tests: Node-pinned cases and the v37 collection cases under v38
+  (`collection_hashing_tests`), the per-key-class fuel ratio, the
+  300,000-entry application turn under default budgets, the
+  `collector_stress_tests` store kind and the browser bundle `collections`.
 
 ### Virtual file roots (`file_roots`)
 

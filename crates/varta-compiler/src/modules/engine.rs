@@ -1121,20 +1121,24 @@ fn lift(source: &str, from: &str, to: &str) -> String {
     debug_assert_eq!(source.matches(from).count(), 1, "{from}");
     source.replacen(from, to, 1)
 }
-/// The v38 collections prelude: entries up to the v38 array element limit.
+/// The v38 collections prelude (`collection_hashing`): hashed tables of up
+/// to the v38 array element limit of slots.
 fn collections_v38() -> &'static str {
     static LIFTED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         lift(
-            COLLECTIONS.source,
-            COLLECTION_CEILING,
+            HASHED_COLLECTIONS,
+            HASHED_COLLECTION_CEILING,
             &format!(
-                "const MAX_ENTRIES = {};",
+                "const MAX_TABLE = {};",
                 varta_common::limits::V38_MAX_ARRAY_ELEMENTS
             ),
         )
     });
     &LIFTED
 }
+/// The source of [`collections_v38`].
+const HASHED_COLLECTIONS: &str = include_str!("../prelude/collections_hashed.ts");
+const HASHED_COLLECTION_CEILING: &str = "const MAX_TABLE = 1024;";
 /// The v38 binary prelude: `Uint8Array` lengths up to the v38 array element
 /// limit.
 fn binary_v38() -> &'static str {
@@ -1192,5 +1196,4 @@ export function arrayJoin<T>(array: T[], separator?: string): string {
   return joinRange(array, between, 0, array.length);
 }";
 /// The frozen per-value ceilings of the v37 collection preludes.
-const COLLECTION_CEILING: &str = "const MAX_ENTRIES = 1024;";
 const BINARY_CEILING: &str = "const MAX_LENGTH = 1024;";

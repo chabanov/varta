@@ -192,6 +192,9 @@ pub(super) enum Helper {
     /// Value18 dictionaries: `(keys, values, table, position) -> 0`, the
     /// appended entry rotated to an own-key position.
     DictionaryInsertAt,
+    /// V38 `Map`/`Set` tables (`collection_hashing`): the probe of a number
+    /// or identity key, with the operands of the dictionary probe.
+    Collection(crate::ir::CollectionProbe, crate::ir::KeyHash),
     /// V35 Web preludes: index of the first code unit of a class, or -1.
     UnitIndex(crate::ir::UnitClass),
     /// V35 Web preludes: ASCII-lowercased copy.
@@ -309,6 +312,16 @@ impl Helper {
                 vec![ValType::F64],
             ),
             Self::DictionaryIndex => (vec![ValType::I64; 2], vec![ValType::F64]),
+            Self::Collection(probe, _) => match probe {
+                crate::ir::CollectionProbe::Find | crate::ir::CollectionProbe::Unlink => {
+                    Self::DictionaryFind.signature()
+                }
+                crate::ir::CollectionProbe::Insert => (
+                    vec![ValType::I64, ValType::I64, ValType::I64, ValType::F64],
+                    vec![ValType::F64],
+                ),
+                crate::ir::CollectionProbe::Index => Self::DictionaryIndex.signature(),
+            },
             Self::DictionaryInsertAt => (
                 vec![ValType::I64, ValType::I64, ValType::I64, ValType::F64],
                 vec![ValType::F64],
@@ -443,6 +456,7 @@ impl Helper {
                 | Self::DictionaryPlace
                 | Self::DictionaryIndex
                 | Self::DictionaryInsertAt
+                | Self::Collection(..)
                 | Self::UnitIndex(_)
                 | Self::RegExpSlot
                 | Self::RegExpUnit
@@ -634,6 +648,11 @@ impl Helper {
             Self::DictionaryUnlink => dictionary_probe::find(helpers[&Self::StringEquals], true),
             Self::DictionaryPlace => dictionary_probe::place(),
             Self::DictionaryIndex => dictionary_probe::index(),
+            Self::Collection(probe, hash) => dictionary_probe::collection(
+                probe,
+                hash,
+                helpers.get(&Self::StringEquals).copied().unwrap_or(0),
+            ),
             Self::DictionaryInsertAt => {
                 dictionary_probe::insert_at(Self::barrier(Some(globals), helpers))
             }

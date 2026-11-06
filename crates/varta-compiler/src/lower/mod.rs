@@ -350,6 +350,7 @@ mod byte_values;
 mod callback_inference;
 pub(crate) mod classes;
 mod closure_narrowing;
+mod collection_hashing;
 mod collections;
 mod completion;
 mod compound_assignments;
