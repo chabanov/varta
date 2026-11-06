@@ -22,8 +22,9 @@ fn quasi(element: &ast::TplElement) -> Result<Vec<u16>> {
     Ok(cooked.as_wtf8().to_ill_formed_utf16().collect())
 }
 
-/// The finite texts of a placeholder type, in UTF-16 code units.
-fn texts(ty: Type, types: &mut ir::ValueTypes) -> Result<Vec<Vec<u16>>> {
+/// The finite texts of a placeholder type, in UTF-16 code units; `None` for
+/// a type with infinitely many texts (`string`, `number`, `bigint`).
+fn texts(ty: Type, types: &mut ir::ValueTypes) -> Result<Option<Vec<Vec<u16>>>> {
     let mut texts = Vec::new();
     for member in split(ty, types) {
         let text = match member {
@@ -46,16 +47,12 @@ fn texts(ty: Type, types: &mut ir::ValueTypes) -> Result<Vec<Vec<u16>>> {
             Type::Null => "null".encode_utf16().collect(),
             Type::Undefined => "undefined".encode_utf16().collect(),
             Type::Never => continue,
-            other => {
-                return Err(unsupported(&format!(
-                    "template literal type with a {} placeholder (a pattern literal type has no finite member set; it is admitted only as a conditional type's extends pattern)",
-                    subtyping::describe(other, types)
-                )));
-            }
+            // A pattern literal type (`` `on${string}` ``): see `evaluate`.
+            _ => return Ok(None),
         };
         texts.push(text);
     }
-    Ok(texts)
+    Ok(Some(texts))
 }
 
 /// `` `a${X}b${Y}` ``: the string literal set of every combination.
@@ -63,7 +60,12 @@ pub(super) fn evaluate(template: &ast::TsTplLitType, types: &mut ir::ValueTypes)
     let mut results: Vec<Vec<u16>> = vec![quasi(&template.quasis[0])?];
     for (placeholder, next) in template.types.iter().zip(&template.quasis[1..]) {
         let ty = keyword_type(placeholder, types)?;
-        let choices = texts(ty, types)?;
+        // A pattern literal type (`` `on${string}` ``) has no finite member
+        // set: its values are strings, so it is `string` (TypeScript would
+        // also check each literal assigned to it against the pattern).
+        let Some(choices) = texts(ty, types)? else {
+            return Ok(Type::String);
+        };
         let tail = quasi(next)?;
         if results.len().saturating_mul(choices.len()) > literals::MAX_LITERAL_MEMBERS {
             return Err(invalid(format!(
@@ -361,10 +363,14 @@ impl Intrinsic {
                 if member == Type::Never {
                     continue;
                 }
-                return Err(unsupported(&format!(
-                    "{}<{}> (an intrinsic string type over a non-literal type has no finite member set)",
-                    self.name(),
-                    subtyping::describe(member, types)
+                // `Uppercase<string>` is a pattern type of strings: `string`.
+                if member == Type::String {
+                    return Ok(Type::String);
+                }
+                return Err(type_error(format!(
+                    "type {} does not satisfy the constraint string of {}",
+                    subtyping::describe(member, types),
+                    self.name()
                 )));
             };
             for value in types.literals.values(id).clone() {

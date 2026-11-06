@@ -29,20 +29,37 @@ pub(super) fn intern_rest(
     readonly: bool,
     types: &mut ir::ValueTypes,
 ) -> Result<Type> {
-    if elements.len() > MAX_TUPLE_ELEMENTS {
+    intern_tuple(elements, required, (rest, Vec::new()), readonly, types)
+}
+
+/// A tuple type with a rest element followed by `trailing` required
+/// elements (`[A, ...B[], C]`, v38 `type_level`).
+pub(super) fn intern_tuple(
+    elements: Vec<Type>,
+    required: usize,
+    (rest, trailing): (Option<Type>, Vec<Type>),
+    readonly: bool,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    if elements.len() + trailing.len() > MAX_TUPLE_ELEMENTS {
         return Err(invalid("tuple element count exceeds limit"));
     }
     if elements.is_empty() && rest.is_none() && !types.profile.type_level() {
         return Err(unsupported("empty tuple type"));
     }
     if let Some(id) = types.tuples.iter().position(|t| {
-        t.elements == elements && t.required == required && t.rest == rest && t.readonly == readonly
+        t.elements == elements
+            && t.required == required
+            && t.rest == rest
+            && t.trailing == trailing
+            && t.readonly == readonly
     }) {
         return Ok(Type::Tuple(id as u32));
     }
     let mut members: Vec<Type> = elements
         .iter()
         .chain(rest.iter())
+        .chain(trailing.iter())
         .map(|ty| physical(*ty, types))
         .collect();
     if required < elements.len() || members.is_empty() {
@@ -61,6 +78,7 @@ pub(super) fn intern_rest(
         elements,
         required,
         rest,
+        trailing,
         readonly,
         array,
     });
@@ -138,7 +156,7 @@ impl Lower<'_> {
             return Err(invalid("missing tuple array"));
         };
         let element = self.types.arrays[physical as usize];
-        if array.elems.len() < tuple.required
+        if array.elems.len() < tuple.required + tuple.trailing.len()
             || tuple.rest.is_none() && array.elems.len() > tuple.elements.len()
         {
             return Err(self.source.locate(
@@ -151,11 +169,18 @@ impl Lower<'_> {
             ));
         }
         let mut values = Vec::new();
-        let positions = tuple
-            .elements
-            .iter()
-            .copied()
-            .chain(std::iter::repeat(tuple.rest.unwrap_or(Type::Never)));
+        // Positions: the leading elements, the rest element and (counted
+        // from the end) the trailing elements.
+        let count = array.elems.len();
+        let positions = (0..count).map(|index| {
+            if index < tuple.elements.len() {
+                tuple.elements[index]
+            } else if index + tuple.trailing.len() >= count {
+                tuple.trailing[index + tuple.trailing.len() - count]
+            } else {
+                tuple.rest.unwrap_or(Type::Never)
+            }
+        });
         for (entry, expected) in array.elems.iter().zip(positions) {
             let expected = &expected;
             let Some(entry) = entry else {
@@ -195,7 +220,19 @@ impl Lower<'_> {
         };
         let tuple = self.types.tuples[id as usize].clone();
         let span = value.span;
-        let Some(ty) = tuple.elements.get(index).copied().or(tuple.rest) else {
+        // Past the leading elements of a tuple with trailing elements, a
+        // literal index may be the rest element or a trailing one.
+        let past = if tuple.trailing.is_empty() {
+            tuple.rest
+        } else {
+            let members = tuple
+                .rest
+                .into_iter()
+                .chain(tuple.trailing.iter().copied())
+                .collect();
+            Some(unions::intern(members, self.types)?)
+        };
+        let Some(ty) = tuple.elements.get(index).copied().or(past) else {
             return Err(self.source.locate(
                 type_error(format!(
                     "tuple index {index} is out of range for a tuple of length {}",

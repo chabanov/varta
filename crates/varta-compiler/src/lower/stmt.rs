@@ -92,9 +92,12 @@ impl Lower<'_> {
     fn statement(&mut self, statement: &ast::Stmt) -> Result<S> {
         // A later statement is what the end of the function follows.
         self.core.uncovered = None;
+        // `typeof local` (v38 `type_level`) sees the bindings in scope here.
+        let outer_locals = self.enter_local_types(statement);
         let result = self
             .statement_inner(statement)
             .map_err(|e| self.source.locate(e, statement.span()));
+        self.leave_local_types(outer_locals);
         if self.types.profile.refinement_writes()
             && let Ok(statement) = &result
             && !completion::normal(std::slice::from_ref(statement))

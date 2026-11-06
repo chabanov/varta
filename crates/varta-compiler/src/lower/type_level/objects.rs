@@ -37,33 +37,226 @@ pub(super) fn keys(ty: Type, types: &mut ir::ValueTypes) -> Result<Type> {
         }
         Type::Dictionary(_) => union_of(vec![Type::String, types.number()], types),
         Type::Unknown => Ok(Type::Never),
-        Type::Class(_) => Err(unsupported(
-            "keyof a class type (methods and inherited members are keys)",
-        )),
-        Type::Array(_) | Type::Tuple(_) => Err(unsupported(
-            "keyof an array or tuple type (every array method is a key)",
-        )),
+        Type::Class(class) => {
+            let names = class_members(class, types)?
+                .into_iter()
+                .map(|field| field.name)
+                .collect();
+            string_keys(names, types)
+        }
+        // Symbol-keyed members (`[Symbol.iterator]`) have no key type here.
+        Type::Array(_) => prototype_keys(ARRAY_KEYS, true, 0, types),
+        Type::Tuple(id) => {
+            let length = types.tuples[id as usize].elements.len();
+            prototype_keys(ARRAY_KEYS, true, length, types)
+        }
+        Type::String | Type::Literal(ir::LiteralBase::String, _) => {
+            prototype_keys(STRING_KEYS, true, 0, types)
+        }
+        Type::Number | Type::Float64 | Type::Literal(ir::LiteralBase::Number, _) => {
+            prototype_keys(NUMBER_KEYS, false, 0, types)
+        }
+        Type::Boolean | Type::Literal(ir::LiteralBase::Boolean, _) => {
+            prototype_keys(&["valueOf"], false, 0, types)
+        }
+        Type::BigInt => prototype_keys(&["toLocaleString", "toString", "valueOf"], false, 0, types),
         Type::Never => Err(unsupported(
             "keyof never (string | number | symbol needs symbol keys)",
         )),
         other => Err(unsupported(&format!(
-            "keyof {} (its prototype methods are keys)",
+            "keyof {}",
             subtyping::describe(other, types)
         ))),
     }
 }
 
-fn names(ty: Type, types: &ir::ValueTypes) -> Result<Vec<String>> {
+fn names(ty: Type, types: &mut ir::ValueTypes) -> Result<Vec<String>> {
     match ty {
         Type::Record(id) => Ok(types.records[id as usize]
             .fields
             .iter()
             .map(|field| field.name.clone())
             .collect()),
-        _ => Err(unsupported(
-            "keyof a class type (methods and inherited members are keys)",
-        )),
+        Type::Class(class) => Ok(class_members(class, types)?
+            .into_iter()
+            .map(|field| field.name)
+            .collect()),
+        _ => Err(invalid("keyof member without names")),
     }
+}
+
+/// The ES2025 `Array.prototype` string keys TypeScript's `Array<T>` lists.
+const ARRAY_KEYS: &[&str] = &[
+    "at",
+    "concat",
+    "copyWithin",
+    "entries",
+    "every",
+    "fill",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flat",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "length",
+    "map",
+    "pop",
+    "push",
+    "reduce",
+    "reduceRight",
+    "reverse",
+    "shift",
+    "slice",
+    "some",
+    "sort",
+    "splice",
+    "toLocaleString",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "toString",
+    "unshift",
+    "values",
+    "with",
+];
+/// The `String.prototype` keys TypeScript's `String` lists (ES2025 and
+/// Annex B).
+const STRING_KEYS: &[&str] = &[
+    "anchor",
+    "at",
+    "big",
+    "blink",
+    "bold",
+    "charAt",
+    "charCodeAt",
+    "codePointAt",
+    "concat",
+    "endsWith",
+    "fixed",
+    "fontcolor",
+    "fontsize",
+    "includes",
+    "indexOf",
+    "isWellFormed",
+    "italics",
+    "lastIndexOf",
+    "length",
+    "link",
+    "localeCompare",
+    "match",
+    "matchAll",
+    "normalize",
+    "padEnd",
+    "padStart",
+    "repeat",
+    "replace",
+    "replaceAll",
+    "search",
+    "slice",
+    "small",
+    "split",
+    "startsWith",
+    "strike",
+    "sub",
+    "substr",
+    "substring",
+    "sup",
+    "toLocaleLowerCase",
+    "toLocaleUpperCase",
+    "toLowerCase",
+    "toString",
+    "toUpperCase",
+    "toWellFormed",
+    "trim",
+    "trimEnd",
+    "trimLeft",
+    "trimRight",
+    "trimStart",
+    "valueOf",
+];
+const NUMBER_KEYS: &[&str] = &[
+    "toExponential",
+    "toFixed",
+    "toLocaleString",
+    "toPrecision",
+    "toString",
+    "valueOf",
+];
+
+/// `keyof` of a primitive or array type: its prototype's string keys, the
+/// index positions `"0"`… of a tuple, and `number` for an indexable type.
+fn prototype_keys(
+    keys: &[&str],
+    indexable: bool,
+    positions: usize,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    let mut names: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
+    names.extend((0..positions).map(|index| index.to_string()));
+    let strings = string_keys(names, types)?;
+    if indexable {
+        union_of(vec![strings, types.number()], types)
+    } else {
+        Ok(strings)
+    }
+}
+
+/// The public members of a class instance type as properties: data fields
+/// with their types, getters with their result types and methods as
+/// function types without a receiver (TypeScript's view of `keyof C`,
+/// `C[K]` and mapped types over `C`).
+pub(super) fn class_members(class: u32, types: &mut ir::ValueTypes) -> Result<Vec<RecordField>> {
+    let info = types.classes.get(class);
+    if info.is_template() {
+        return Err(unsupported("members of a generic class template"));
+    }
+    let mut fields: Vec<RecordField> = info
+        .fields
+        .iter()
+        .filter(|field| field.access == classes::Access::Public && !field.name.starts_with('#'))
+        .map(|field| RecordField {
+            name: field.name.clone(),
+            ty: field.ty,
+            optional: false,
+        })
+        .collect();
+    let methods: Vec<(String, classes::Method)> = info
+        .methods
+        .iter()
+        .filter(|(name, method)| method.access == classes::Access::Public && !name.starts_with('#'))
+        .map(|(name, method)| (name.clone(), method.clone()))
+        .collect();
+    for (name, method) in methods {
+        if fields.iter().any(|field| field.name == name) {
+            continue;
+        }
+        let ty = if method.getter {
+            method.signature.result
+        } else {
+            let signature = method.signature;
+            functions::intern_full(
+                None,
+                signature.params,
+                signature.shape,
+                signature.result,
+                types,
+            )?
+        };
+        fields.push(RecordField {
+            name,
+            ty,
+            optional: false,
+        });
+    }
+    Ok(fields)
 }
 
 /// The string literal set of `names`; `never` when there is none.
@@ -166,15 +359,11 @@ fn access(object: Type, key: &Key, types: &mut ir::ValueTypes) -> Result<Type> {
                 .map(|field| field.ty)
                 .ok_or_else(|| missing(&name, types))
         }
-        (Type::Class(class), Key::Name(name)) => types
-            .classes
-            .field(class, name)
-            .map(|(_, field)| field.ty)
-            .ok_or_else(|| {
-                unsupported(&format!(
-                    "indexed access of class member {name} (only data fields have a static type here)"
-                ))
-            }),
+        (Type::Class(class), Key::Name(name)) => class_members(class, types)?
+            .into_iter()
+            .find(|field| field.name == *name)
+            .map(|field| field.ty)
+            .ok_or_else(|| missing(name, types)),
         (Type::Tuple(id), _) => tuple_access(id, key, types),
         (Type::Array(id), Key::Number) => Ok(types.arrays[id as usize]),
         (Type::Array(id), Key::Position(_)) => Ok(types.arrays[id as usize]),
@@ -204,6 +393,15 @@ fn tuple_access(id: u32, key: &Key, types: &mut ir::ValueTypes) -> Result<Type> 
         _ => None,
     };
     match (key, position) {
+        (_, Some(at)) if at >= tuple.elements.len() && !tuple.trailing.is_empty() => {
+            // A rest position or a trailing one.
+            let members = tuple
+                .rest
+                .into_iter()
+                .chain(tuple.trailing.iter().copied())
+                .collect();
+            union_of(members, types)
+        }
         (_, Some(at)) => tuple
             .elements
             .get(at)
@@ -230,6 +428,7 @@ fn tuple_access(id: u32, key: &Key, types: &mut ir::ValueTypes) -> Result<Type> 
                 .elements
                 .iter()
                 .chain(tuple.rest.iter())
+                .chain(tuple.trailing.iter())
                 .copied()
                 .collect();
             union_of(members, types)
@@ -285,9 +484,12 @@ pub(super) fn intersect(a: Type, b: Type, types: &mut ir::ValueTypes) -> Result<
         {
             merge_records(x, y, types)
         }
-        (Type::Function(_), Type::Function(_)) => Err(unsupported(
-            "intersection of function types (an overloaded function value has no single static signature)",
-        )),
+        // `F & G` of function types is the overloaded type `F`, then `G`.
+        (Type::Function(_), Type::Function(_)) => {
+            let mut signatures = overloads::signatures(a, types);
+            signatures.extend(overloads::signatures(b, types));
+            overloads::overloaded(signatures, types)
+        }
         _ if extends(a, b, types) => Ok(a),
         _ if extends(b, a, types) => Ok(b),
         (
@@ -311,26 +513,26 @@ pub(super) fn intersect(a: Type, b: Type, types: &mut ir::ValueTypes) -> Result<
             // Disjoint primitives.
             Ok(Type::Never)
         }
+        // A branded primitive (`string & { __brand: "Id" }`): the object type
+        // is a phantom brand, and the value is the primitive.
         (
-            Type::String
+            primitive @ (Type::String
             | Type::Number
             | Type::Float64
             | Type::Boolean
             | Type::BigInt
-            | Type::Literal(..),
-            Type::Record(_),
+            | Type::Literal(..)),
+            Type::Record(brand),
         )
         | (
-            Type::Record(_),
-            Type::String
+            Type::Record(brand),
+            primitive @ (Type::String
             | Type::Number
             | Type::Float64
             | Type::Boolean
             | Type::BigInt
-            | Type::Literal(..),
-        ) => Err(unsupported(
-            "intersection of a primitive with an object type (a branded primitive has no value with that property)",
-        )),
+            | Type::Literal(..)),
+        ) if types.records[brand as usize].class.is_none() => Ok(primitive),
         _ => Err(unsupported(&format!(
             "intersection of {} and {} (no closed type has the members of both)",
             subtyping::describe(a, types),

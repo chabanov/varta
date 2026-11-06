@@ -166,6 +166,7 @@ impl Lower<'_> {
                 }
             })
             .and_then(|value| self.void_function(value, expected))
+            .map(|value| self.class_union_array(value, expected))
             .and_then(|value| unions::widen(value, expected, self.types))
             .map_err(|e| self.source.locate(e, expression.span()))
     }

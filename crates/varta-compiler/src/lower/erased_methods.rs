@@ -185,6 +185,11 @@ impl Lower<'_> {
             None => Vec::new(),
         };
         let mut supplied: Vec<Option<Type>> = explicit.into_iter().map(Some).collect();
+        // V38 (`type_level`): a type parameter that is a whole parameter's
+        // type is inferred from that argument, as TypeScript does.
+        if supplied.is_empty() && self.types.profile.type_level() {
+            supplied = self.infer_erased(call, &declaration);
+        }
         // A parameter without an argument or a default is `unknown`, which
         // TypeScript also infers when no argument determines it.
         while supplied.len() < declaration.params.params.len() {
@@ -250,5 +255,59 @@ impl Lower<'_> {
         let name = subtyping::describe(instance.result, self.types);
         let message = format!("result of {} is not a {name}", declaration.name);
         self.assert_value(result, instance.result, &name, &message, span)
+    }
+    /// Type arguments inferred from the arguments of whole-parameter type
+    /// parameters (`x: T` takes the argument's type, `xs: T[]` its element
+    /// type); `None` for the others.
+    fn infer_erased(&self, call: &ast::CallExpr, declaration: &ErasedMethod) -> Vec<Option<Type>> {
+        let mut inferred: Vec<Option<Type>> = vec![None; declaration.params.params.len()];
+        for (position, param) in declaration.function.params.iter().enumerate() {
+            let ast::TsFnParam::Ident(binding) = param else {
+                continue;
+            };
+            let Some(annotation) = &binding.type_ann else {
+                continue;
+            };
+            let Some(argument) = call.args.get(position) else {
+                continue;
+            };
+            let Some(actual) = self
+                .peek_type(&argument.expr, 0)
+                .or_else(|| parameters::literal(&argument.expr, self.types))
+            else {
+                continue;
+            };
+            let actual = literals::erased(actual, self.types);
+            let (name, ty) = match &*annotation.type_ann {
+                ast::TsType::TsTypeRef(reference) if reference.type_params.is_none() => {
+                    (&reference.type_name, actual)
+                }
+                ast::TsType::TsArrayType(array) => match (&*array.elem_type, actual) {
+                    (ast::TsType::TsTypeRef(reference), Type::Array(id))
+                        if reference.type_params.is_none() =>
+                    {
+                        (&reference.type_name, self.types.arrays[id as usize])
+                    }
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let ast::TsEntityName::Ident(id) = name else {
+                continue;
+            };
+            if let Some(index) = declaration
+                .params
+                .params
+                .iter()
+                .position(|param| param.name.sym == id.sym)
+                && inferred[index].is_none()
+            {
+                inferred[index] = Some(ty);
+            }
+        }
+        while inferred.last() == Some(&None) {
+            inferred.pop();
+        }
+        inferred
     }
 }

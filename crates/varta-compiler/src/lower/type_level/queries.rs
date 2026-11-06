@@ -111,6 +111,17 @@ fn entity(name: &ast::TsEntityName, types: &mut ir::ValueTypes) -> Result<Type> 
 
 /// The declaration type of the module value `name` in the current module.
 fn named_value(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
+    // A function-local binding (in an annotation of the body being lowered,
+    // not in a module-level declaration it resolves) shadows module values.
+    if !named::resolving_declaration(types)
+        && let Some(ty) = types
+            .type_level
+            .locals
+            .as_ref()
+            .and_then(|locals| locals.get(name))
+    {
+        return Ok(*ty);
+    }
     if let Some(class) = named::class(types, name) {
         return constructors::class_constructor(class, types);
     }
@@ -134,8 +145,8 @@ fn named_value(name: &str, types: &mut ir::ValueTypes) -> Result<Type> {
                 return result;
             }
             None => {
-                return Err(unsupported(&format!(
-                    "typeof query of {name} (only module constants, functions and classes have a type-level identity; a function-local binding has none)"
+                return Err(type_error(format!(
+                    "cannot find the value {name} of the typeof query"
                 )));
             }
         }
@@ -431,4 +442,53 @@ pub(super) fn literal_constant(types: &ir::ValueTypes, module: usize, name: &str
         }
     }
     false
+}
+
+impl Lower<'_> {
+    /// Make the visible local bindings' types available to `typeof` queries
+    /// while `statement` is lowered; the previous snapshot is returned.
+    pub(in crate::lower) fn enter_local_types(
+        &mut self,
+        statement: &ast::Stmt,
+    ) -> Option<Option<BTreeMap<String, Type>>> {
+        use swc_ecma_visit::{Visit, VisitWith};
+        struct Query(bool);
+        impl Visit for Query {
+            fn visit_ts_type_query(&mut self, _: &ast::TsTypeQuery) {
+                self.0 = true;
+            }
+        }
+        if !self.types.profile.type_level() {
+            return None;
+        }
+        let mut query = Query(false);
+        statement.visit_with(&mut query);
+        if !query.0 {
+            return None;
+        }
+        let mut locals = BTreeMap::new();
+        for (name, binding) in &self.outer {
+            if let Some(ty) = binding.ty {
+                locals.insert(name.clone(), ty);
+            }
+        }
+        for scope in &self.scopes {
+            for (name, binding) in scope {
+                if let Some(ty) = binding.ty
+                    && !name.starts_with('#')
+                {
+                    locals.insert(name.clone(), ty);
+                }
+            }
+        }
+        Some(self.types.type_level.locals.replace(locals))
+    }
+    pub(in crate::lower) fn leave_local_types(
+        &mut self,
+        outer: Option<Option<BTreeMap<String, Type>>>,
+    ) {
+        if let Some(outer) = outer {
+            self.types.type_level.locals = outer;
+        }
+    }
 }

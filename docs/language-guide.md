@@ -5872,11 +5872,33 @@ export function main(): void {
 }
 ```
 
-Refused by name: `unique symbol`, pattern template types such as
-`` `on${string}` `` outside a conditional `extends` clause, intersections of
-function types or of a primitive with an object type, overloaded call
-signatures, mapped types and `keyof` over class instance types, and `typeof`
-of a function-local binding.
+Branded primitives, overloaded and generic call signatures, `this` in
+interfaces, `typeof` of locals and class subtyping in containers work too:
+
+```ts
+type UserId = string & { readonly __brand: 'UserId' };
+type Parse = { (text: string): number; (value: number): string };
+type Identity = <T>(value: T) => T;
+class Shape { area(): number { return 0; } }
+class Square extends Shape { side = 2; area(): number { return this.side ** 2; } }
+
+export function main(): void {
+  const id = 'u1' as UserId;
+  const parse = ((v: string | number) => (typeof v === 'string' ? v.length : String(v))) as Parse;
+  const same: Identity = (value) => value;
+  const squares: Square[] = [new Square()];
+  const shapes: Shape[] = squares;          // a copy: Varta never aliases a wider view
+  const point = { x: 1, y: 2 };
+  const next: typeof point = { x: 3, y: 4 };
+  console.log(`${id} ${parse('abc') + 1} ${same(5)} ${shapes[0].area()} ${next.x}`);
+}
+```
+
+Two behaviours deviate from Node on purpose: a type predicate that lies
+throws `TypeError` where its narrowed value is read, and a `Square[]` used
+as `Shape[]` is copied, so pushing through one name is not seen through the
+other. Still refused by name: `unique symbol`, callable objects that also
+have properties, and overloads with type parameters or rest parameters.
 
 #### Standard library (opt-in v38)
 

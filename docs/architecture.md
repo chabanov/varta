@@ -11847,22 +11847,81 @@ refused with an `unsupported …` diagnostic that names it (list below).
   `` `text-${size}` `` with `const size = "sm"` is enumerated without an
   annotation.
 
-Refused, each by name: `unique symbol` (no Symbol values in this profile),
-`import("…")` types, pattern template literal types outside an `extends`
-clause (`` `on${string}` ``), intrinsic string types over non-literal types,
-mapped types over class instance types and over `number`/symbol key sets,
-`keyof` of classes, arrays, tuples, primitives and `never`, intersections of
-function types (an overloaded value), of a primitive with an object type
-(branded primitives) and of object types whose shared property has no common
-type, overloaded call or construct signatures and callable objects with
-properties, generic call/construct signatures and constructor types, `typeof`
-of a function-local binding, of a generic function or class, and of an
-initializer whose type would need lowering, `infer` inside a union pattern
-or inside a declared generic type's arguments, `infer` over tuples with
-optional elements, tuple elements after a rest element, `this` types outside
-class member signatures, predicate narrowing of a non-union class instance to
-a subclass or of `unknown` to an object type (the binding keeps its type),
-and `this is T` method predicates (no narrowing).
+- **Step 2 admissions (2026-11-06, owner decisions).**
+  - *Branded primitives*: `string & { __brand: "Id" }` (any primitive or
+    literal set intersected with an object type) is the primitive; the object
+    type is a phantom brand with no run-time property.
+  - *`typeof` of local bindings*: a query in a function body sees the
+    bindings in scope at its statement (declared or inferred types; inner
+    scopes shadow module values); an annotated declaration whose annotation
+    queries a local resolves when the declaration is reached. A module-level
+    declaration never sees a function's locals.
+  - *Overloads*: an object type or interface with several call (or several
+    construct) signatures, and an intersection of function types, is an
+    overloaded function type: the function type whose parameters and result
+    are the unions of the overloads' (`FunctionType::overloads`). A call
+    selects the first overload whose parameters accept the arguments' static
+    types, checks the arguments against it and reads the result as that
+    overload's result through a run-time member test. A value converts to the
+    overloaded type when its own signature is the merged one (typically
+    `fn as Overloaded`).
+  - *Generic call signatures* (`<T>(x: T) => T`, `{ <T>(xs: T[]): T[] }`):
+    the erased signature of generic method signatures; a call instantiates
+    the type parameters from explicit arguments, from whole-parameter (`x: T`)
+    and element (`xs: T[]`) arguments, then defaults, then `unknown`, and
+    checks the result back to the instantiated type. A function literal
+    lowered against the erased type takes it.
+  - *`this` in object types*: in an interface or object type alias, `this` is
+    the declared type itself (through the recursive-type reservation); a
+    generic declaration's `this` stays refused.
+  - *`keyof` and mapped types over every closed type*: a class instance's
+    public fields, getters and methods (methods as function types without a
+    receiver; `C["m"]` is that type, and `Partial<C>`/`Pick<C, K>`/mapped
+    types map them); an array's and tuple's `number`, positions and
+    `Array.prototype` string keys; a primitive's prototype string keys
+    (`number` for strings). Symbol-keyed members have no key type here.
+  - *Pattern template literal types* (`` `on${string}` ``) and intrinsic
+    string types over `string` are `string` outside an `extends` clause (a
+    lenient deviation: TypeScript would also check each literal assigned to
+    them against the pattern).
+  - *`infer`* inside a declared generic type's arguments (`Box<infer U>`: the
+    declaration body with its parameters as inference positions), in a union
+    pattern with one inferring member (`infer U | undefined`) and over
+    optional tuple elements (`[unknown, (infer S)?]` binds the declared type).
+  - *Elements after a rest element* (`[...string[], number]`,
+    `TupleType::trailing`): literal positions are typed from the end, a read
+    at a literal index past the leading elements has the union of the rest
+    and trailing types.
+  - *Narrowing*: a predicate narrows a class instance to a subclass (the read
+    tests the descriptor) and `unknown` to an object type (the read is the
+    checked assertion of `x as T`); `this is T` method predicates narrow the
+    receiver of `x.isT()`.
+  - *Class subtyping in containers*: a subclass instance is accepted wherever
+    an ancestor is expected in arrays (`push`, literals, element writes),
+    tuples, records, `Map`/`Set` values and unions. An array of a class
+    converts to an array of an ancestor class (`B[]` to `A[]`) by a shallow
+    copy (an array literal is retyped), and an array of a union of classes
+    to an array of their common ancestor by a new array of the unboxed
+    elements.
+- **Intentional deviations from Node.** (1) A type predicate that lies
+  (narrows to a member the value does not hold) throws `TypeError` at the
+  narrowed read (`value does not have the type its type predicate
+  asserted`), consistent with the checked `as` assertions; Node continues
+  with the mistyped value. (2) A `B[]` converted to `A[]` is a copy: a write
+  through one name is not seen through the other, where Node aliases one
+  array (a shared alias could store an `A` into the `B[]`).
+
+Still refused, each by name: `unique symbol` (no Symbol values in this
+profile), `import("…")` types, callable objects with properties (a call
+signature together with other members: no closed layout holds a function
+value and fields), overloads with a `this` parameter, type parameters or a
+rest parameter, generic construct signatures and constructor types,
+intersections of object types whose shared property has no common type,
+mapped types over `number` or symbol key sets, `keyof never`, `this` in a
+generic declaration, `typeof` of a generic function or class and of a
+module initializer whose type would need lowering, `infer` inside an
+intersection pattern or a union with several inferring members, and an
+`asserts this` method.
 
 #### Bytes held by unknown (`byte_values`)
 
