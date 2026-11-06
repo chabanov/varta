@@ -697,7 +697,7 @@ impl Tree {
         id: u32,
         environment: &Environment,
     ) -> varta_style::Scope<'a> {
-        self.styles.scope(self, id, &environment.media())
+        self.styles.scope(self, id, &environment.style())
     }
     pub(crate) fn pointer_contains(&self, target: Option<&crate::NodeIdentity>, id: u32) -> bool {
         target.is_some_and(|target| {
@@ -1836,6 +1836,7 @@ pub(crate) fn focus_records(tree: &mut Tree, next: Option<u32>) -> Vec<crate::Ev
 impl varta_style::Document for Tree {
     fn element(&self, id: u32) -> Option<varta_style::Element<'_>> {
         Tree::element(self, id).map(|element| varta_style::Element {
+            tag: element.tag,
             class: &element.class,
             style: &element.style,
             disabled: element.disabled(),

@@ -158,11 +158,10 @@ The native scope still has concrete gaps:
 
 - Controls need admitted block/flex/grid placement; arbitrary atomic inline
   control layout and mixed block/inline formatting are not complete.
-- The CSS engine refuses `em`, `ex`, `ch`, `lh` and the other
-  font-relative units outside `font-size` and math mixing percentages with
-  lengths: both need the element's computed font or layout-time resolution,
-  which the engine and native layout do not provide yet. Registered
-  `<length>` values are inherited as written rather than absolutized.
+- The CSS engine refuses `ex`, `ch`, `cap`, `ic`, `lh` with
+  `line-height: normal` and `rlh`, which need the first available font's
+  metrics, and sums of lengths and percentages outside sizes, margins,
+  padding, gaps, flex basis, insets and `vertical-align`.
   Increased-contrast and reduced-motion are read from the OS on macOS only;
   other desktops report no preference.
 - Native `<img>` draws packaged images (the configuration's `images`, the

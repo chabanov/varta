@@ -22,6 +22,7 @@ mod prelude {
     pub use alloc::vec;
     pub use alloc::vec::Vec;
 }
+pub mod font;
 pub mod index;
 pub mod session;
 pub mod variables;
@@ -42,6 +43,7 @@ pub use variables::{Registered, Scope};
 /// What the cascade reads of one element.
 #[derive(Debug, Clone, Copy)]
 pub struct Element<'a> {
+    pub tag: varta_common::view::Tag,
     pub class: &'a str,
     pub style: &'a BTreeMap<CssProperty, String>,
     pub disabled: bool,
@@ -68,6 +70,8 @@ pub trait Document {
 pub struct Environment {
     pub media: Media,
     pub context: Context,
+    /// The host's medium font size and monospace behaviour.
+    pub font: font::FontBase,
 }
 
 /// An admitted stylesheet.
@@ -357,7 +361,13 @@ impl Styles {
     /// resolved before inheritance, registered properties seeded with their
     /// initial values.
     #[must_use]
-    pub fn scope<'a>(&'a self, document: &impl Document, id: u32, media: &Media) -> Scope<'a> {
+    pub fn scope<'a>(
+        &'a self,
+        document: &impl Document,
+        id: u32,
+        environment: &Environment,
+    ) -> Scope<'a> {
+        let media = &environment.media;
         let registered = self.index.registered();
         let mut scope = if registered.is_empty() {
             Scope::default()
@@ -380,7 +390,23 @@ impl Styles {
                         raw.insert(name.as_str(), declared.value);
                     }
                 }
-                scope.extend(raw);
+                // A registered length computes against the declaring
+                // element's font (Properties and Values API 1 §2.4).
+                let font = core::cell::OnceCell::new();
+                let absolutize = |value: &str| {
+                    let font = if font::uses_font_units(value) {
+                        *font
+                            .get_or_init(|| self.font_context(document, ancestor, environment).ok())
+                    } else {
+                        None
+                    };
+                    let context = css::Context {
+                        font,
+                        ..environment.context
+                    };
+                    css::absolutize_lengths(value, &context)
+                };
+                scope.extend(raw, &absolutize);
             }
         }
         scope
@@ -466,18 +492,52 @@ impl Styles {
         environment: &Environment,
         validate: impl Fn(CssProperty, &str) -> bool,
     ) -> BTreeMap<CssProperty, Computed> {
+        self.computed_where(document, id, environment, |_| true, &validate)
+    }
+
+    /// The computed values of `wanted` properties of `id` only, lowered in
+    /// `environment` as given (see [`Styles::computed`]).
+    pub(crate) fn computed_only(
+        &self,
+        document: &impl Document,
+        id: u32,
+        environment: &Environment,
+        wanted: &[CssProperty],
+    ) -> BTreeMap<CssProperty, Computed> {
+        self.computed_where(
+            document,
+            id,
+            environment,
+            |property| wanted.contains(&property),
+            &|_, _| true,
+        )
+    }
+
+    fn computed_where(
+        &self,
+        document: &impl Document,
+        id: u32,
+        environment: &Environment,
+        wanted: impl Fn(CssProperty) -> bool,
+        validate: &impl Fn(CssProperty, &str) -> bool,
+    ) -> BTreeMap<CssProperty, Computed> {
         let declared = self.declared(document, id, &environment.media);
         let mut scope: Option<Scope<'_>> = None;
+        // The element's font references, computed on the first value that
+        // names a font-relative unit.
+        let mut font: Option<Option<css::FontContext>> = environment.context.font.map(Some);
         let mut out = BTreeMap::new();
         for (property, raw) in declared {
+            if !wanted(property) {
+                continue;
+            }
             if let Some(computed) = self.compute(
                 document,
-                id,
-                environment,
-                &mut scope,
+                (id, environment),
+                (&mut scope, &mut font),
                 property,
                 raw,
-                &validate,
+                validate,
             ) {
                 out.insert(property, computed);
             }
@@ -486,20 +546,21 @@ impl Styles {
     }
 
     /// One computed value (see [`Styles::computed`]).
-    #[allow(clippy::too_many_arguments)]
     fn compute<'a>(
         &'a self,
         document: &impl Document,
-        id: u32,
-        environment: &Environment,
-        scope: &mut Option<Scope<'a>>,
+        (id, environment): (u32, &Environment),
+        (scope, font): (
+            &mut Option<Scope<'a>>,
+            &mut Option<Option<css::FontContext>>,
+        ),
         property: CssProperty,
         raw: &str,
         validate: &impl Fn(CssProperty, &str) -> bool,
     ) -> Option<Computed> {
         let substituted = if css::contains_variable(raw) {
             scope
-                .get_or_insert_with(|| self.scope(document, id, &environment.media))
+                .get_or_insert_with(|| self.scope(document, id, environment))
                 .substitute(raw)?
         } else {
             raw.to_owned()
@@ -521,7 +582,12 @@ impl Styles {
         if !validate(property, &substituted) {
             return None;
         }
-        css::lower(property, &substituted, &environment.context).map(Computed::Value)
+        let mut context = environment.context;
+        if font::uses_font_units(&substituted) {
+            context.font =
+                *font.get_or_insert_with(|| self.font_context(document, id, environment).ok());
+        }
+        css::lower(property, &substituted, &context).map(Computed::Value)
     }
 
     /// Whether any rule declares a transition duration or delay.
