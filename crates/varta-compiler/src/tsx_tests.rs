@@ -153,8 +153,9 @@ fn template_errors_name_the_construct_and_its_rule() {
             "use `for` instead of `htmlFor`",
         ),
         (
-            "<div className=\"a.b\">x</div>",
-            "invalid value `a.b` for attribute `className`",
+            // `a.b` is one HTML class token; a control character is not.
+            "<div className=\"a\u{1}b\">x</div>",
+            "for attribute `className`",
         ),
         (
             "<button disabled=\"false\">x</button>",
