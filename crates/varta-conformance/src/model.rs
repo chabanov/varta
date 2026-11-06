@@ -27,6 +27,8 @@ pub struct Feature {
 pub enum Origin {
     Ecmascript2025,
     VartaContract,
+    /// The TypeScript Handbook (type-system features; tsc is the reference).
+    TypescriptHandbook,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

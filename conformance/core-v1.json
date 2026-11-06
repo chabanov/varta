@@ -760,6 +760,140 @@
       ],
       "origin": "ecmascript2025",
       "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-iteration"
+    },
+    {
+      "id": "array-copying-methods",
+      "title": "Array sort order, copying, splicing and flattening methods",
+      "core": [
+        "CORE-02"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/indexed-collections.html#sec-array.prototype.sort"
+    },
+    {
+      "id": "iterator-helpers",
+      "title": "Iterator helpers over generators and built-in iterators",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-iterator.prototype.map"
+    },
+    {
+      "id": "set-methods",
+      "title": "Set union, intersection, difference and relations",
+      "core": [
+        "CORE-05"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/keyed-collections.html#sec-set.prototype.union"
+    },
+    {
+      "id": "grouping",
+      "title": "Object.groupBy, Map.groupBy and Object.fromEntries",
+      "core": [
+        "CORE-02",
+        "CORE-05"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-object.groupby"
+    },
+    {
+      "id": "aggregate-error",
+      "title": "AggregateError objects",
+      "core": [
+        "CORE-04"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/fundamental-objects.html#sec-aggregate-error-objects"
+    },
+    {
+      "id": "ts-conditional-types",
+      "title": "Conditional types, distribution, infer and recursive aliases",
+      "core": [
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/conditional-types.html"
+    },
+    {
+      "id": "ts-mapped-types",
+      "title": "Mapped types with as remapping and +/- modifiers",
+      "core": [
+        "CORE-02",
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/mapped-types.html"
+    },
+    {
+      "id": "ts-template-literal-types",
+      "title": "Template literal types and intrinsic string types",
+      "core": [
+        "CORE-01",
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/template-literal-types.html"
+    },
+    {
+      "id": "ts-utility-types",
+      "title": "Built-in utility types",
+      "core": [
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/utility-types.html"
+    },
+    {
+      "id": "ts-type-operators",
+      "title": "keyof, indexed access, typeof queries and intersections",
+      "core": [
+        "CORE-02",
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/indexed-access-types.html"
+    },
+    {
+      "id": "ts-narrowing-predicates",
+      "title": "Type predicates, assertion functions, satisfies and never exhaustiveness",
+      "core": [
+        "CORE-03",
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/narrowing.html"
+    },
+    {
+      "id": "ts-signatures",
+      "title": "Call and construct signatures, constructor types and polymorphic this",
+      "core": [
+        "CORE-03",
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/functions.html"
+    },
+    {
+      "id": "ts-tuple-types",
+      "title": "Named, optional, rest and variadic tuple elements",
+      "core": [
+        "CORE-05",
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/objects.html"
+    },
+    {
+      "id": "ts-literal-inference",
+      "title": "Literal types, literal inference and widening",
+      "core": [
+        "CORE-01",
+        "CORE-15"
+      ],
+      "origin": "typescript_handbook",
+      "reference": "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html"
     }
   ],
   "cases": [
@@ -2872,6 +3006,353 @@
         "varta log: 10",
         "varta log: early true",
         "varta log: inner finally; inner done; inner caught boom; inner finally; inner done; inner finally"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-sort-comparator",
+      "feature": "array-copying-methods",
+      "path": "cases/array-sort-comparator.ts",
+      "sha256": "3ea2fe44707117ad9ced558d8e677f22c0873319fcceb48dbca47f98328208bc",
+      "stdout": [
+        "varta log: 1,2,3,4,5",
+        "varta log: 1:5 4:1 4:5 4:1 2:4 2:1 3:4 3:2",
+        "varta log: a,b,c",
+        "varta log: b,a,c",
+        "varta log: 1,10,100,9"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-copying-methods",
+      "feature": "array-copying-methods",
+      "path": "cases/array-copying-methods.ts",
+      "sha256": "3ae92dfd525f18d55b6e27b5e341ba9c7a1b06bbc4841afb37855ee1311c3461",
+      "stdout": [
+        "varta log: 5,4,3,2,1",
+        "varta log: 1,2,3,4,9",
+        "varta log: 1,7,4,5",
+        "varta log: 1,2",
+        "varta log: 1,2,3,4,5",
+        "varta log: Invalid index : 5",
+        "varta log: 7,8",
+        "varta log: 0,2,4",
+        "varta log: 1.5,2.5"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-splice-flat",
+      "feature": "array-copying-methods",
+      "path": "cases/array-splice-flat.ts",
+      "sha256": "ea70579a8873bac2db91abf749985f453c750a94490f1cb9646e86df18a796d0",
+      "stdout": [
+        "varta log: 2,3 | 1,9,4,5,6",
+        "varta log: 4,5,3,4,5",
+        "varta log: 1 3 7,8,2",
+        "varta log: 1,2,3,4",
+        "varta log: [[1],[2,3]]",
+        "varta log: 1,2,3",
+        "varta log: a|b|c"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "iterator-helpers",
+      "feature": "iterator-helpers",
+      "path": "cases/iterator-helpers.ts",
+      "sha256": "c8cc341bd06dcbb0196c9a734855940c4052d238d152dad808af75a1187967c8",
+      "stdout": [
+        "varta log: 1,9,25,49",
+        "varta log: 4,5",
+        "varta log: 15",
+        "varta log: true",
+        "varta log: false",
+        "varta log: 8",
+        "varta log: 0x,1y",
+        "varta log: RangeError: -1 must be positive"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "set-methods",
+      "feature": "set-methods",
+      "path": "cases/set-methods.ts",
+      "sha256": "cf6edd7cc56aebc65e28871f2687247bc61b0f69c5eb7bc3770b239172b99d1a",
+      "stdout": [
+        "varta log: 1,2,3,4",
+        "varta log: 3",
+        "varta log: 1,2",
+        "varta log: 1,2,4",
+        "varta log: true false true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "group-by",
+      "feature": "grouping",
+      "path": "cases/group-by.ts",
+      "sha256": "c1de4cd393bf360651e2d0f0d08a1a0b573cd52b6d18b6abb74aa329710554fb",
+      "stdout": [
+        "varta log: {\"east\":[{\"region\":\"east\",\"amount\":3},{\"region\":\"east\",\"amount\":4}],\"west\":[{\"region\":\"west\",\"amount\":5}]}",
+        "varta log: 1,3,5 2,4",
+        "varta log: {\"1\":1,\"b\":2,\"a\":3}",
+        "varta log: {\"k\":true}"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "json-stringify-options",
+      "feature": "json-stringify",
+      "path": "cases/json-stringify-options.ts",
+      "sha256": "3c2fda2efc63c1ac905f8a4bd0c610bc34757d28abf2006a085d31e7a37d559c",
+      "stdout": [
+        "varta log: {",
+        "varta log:   \"name\": \"x\",",
+        "varta log:   \"tags\": [",
+        "varta log:     \"a\",",
+        "varta log:     \"b\"",
+        "varta log:   ],",
+        "varta log:   \"empty\": [],",
+        "varta log:   \"nested\": {",
+        "varta log:     \"n\": 1",
+        "varta log:   }",
+        "varta log: }",
+        "varta log: {\"nested\":{\"n\":1},\"name\":\"x\"}",
+        "varta log: [ ->1, ->[ ->->2 ->] ]"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "aggregate-error",
+      "feature": "aggregate-error",
+      "path": "cases/aggregate-error.ts",
+      "sha256": "6db1544f1f39dbdd90a1e40f25ca7f2ac3fef201ce6960da7812fdc6663ea7d1",
+      "stdout": [
+        "varta log: AggregateError: two failures 2 2",
+        "varta log: true",
+        "varta log: a"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "date-components",
+      "feature": "date",
+      "path": "cases/date-components.ts",
+      "sha256": "2d5115c7af2866b023b8de57a616e4875a7d32d45dbdb70959b9b0e294c2053c",
+      "stdout": [
+        "varta log: 1709208000000",
+        "varta log: 2024-03-02T08:30:00.000Z",
+        "varta log: 2024 2 2 6 8",
+        "varta log: Sat, 02 Mar 2024 08:30:00 GMT",
+        "varta log: Sat Mar 02 2024 08:30:00 GMT+0000 (Coordinated Universal Time)",
+        "varta log: 2024-03-02T08:30:00.000Z",
+        "varta log: round trip",
+        "varta log: Invalid Date"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "string-well-formed",
+      "feature": "string-builtins",
+      "path": "cases/string-well-formed.ts",
+      "sha256": "9b319a724b186f41dd76c7dc72f8c93a5bf951858e33e4bafc0f2fed93f0d3d3",
+      "stdout": [
+        "varta log: false true",
+        "varta log: fffd",
+        "varta log: o undefined",
+        "varta log: cd"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "math-spread",
+      "feature": "math",
+      "path": "cases/math-spread.ts",
+      "sha256": "385c5052f4bc68696184186f99b66438e367e7dabb8f1ee61a3547122c798048",
+      "stdout": [
+        "varta log: 9 -5",
+        "varta log: -Infinity Infinity"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-conditional",
+      "feature": "ts-conditional-types",
+      "path": "cases/ts-conditional.ts",
+      "sha256": "368999107d592727bd94ceddaea2013fd2d4646d6d7b724c42121622f7465349",
+      "stdout": [
+        "varta log: yes yes no yes/no",
+        "varta log: 5 true",
+        "varta log: 3 plain settled",
+        "varta log: 1 false two true 2",
+        "varta log: 3,2,1 3",
+        "varta log: 43 true arg",
+        "varta log: x none other string",
+        "varta log: 7 no id"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-mapped",
+      "feature": "ts-mapped-types",
+      "path": "cases/ts-mapped.ts",
+      "sha256": "81dfd3ccbc82aabce9c72abe98d8bc6ac541f841641a68afbebce1a8266efa34",
+      "stdout": [
+        "varta log: 1 Ada true",
+        "varta log: null x undefined",
+        "varta log: 3",
+        "varta log: 4:C:c@example.org",
+        "varta log: undefined undefined",
+        "varta log: name",
+        "varta log: 3 true false",
+        "varta log: 3",
+        "varta log: null p 1||3"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-templates",
+      "feature": "ts-template-literal-types",
+      "path": "cases/ts-templates.ts",
+      "sha256": "9c0f4003ceaabb53854362616758f02beb5bfb84f35e8dbb67036faa3509795c",
+      "stdout": [
+        "varta log: onClick,onKey onKey",
+        "varta log: btn-sm-1 btn-lg-2",
+        "varta log: YOU hello name getSize",
+        "varta log: x a+b+c 3 users root truefalse"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-utilities",
+      "feature": "ts-utility-types",
+      "path": "cases/ts-utilities.ts",
+      "sha256": "07c40fc1e75d2117a6bcad3d11057ea0c49fba940e76aa34b99bedeffe22b438",
+      "stdout": [
+        "varta log: undefined true n f",
+        "varta log: p undefined title",
+        "varta log: 3 true",
+        "varta log: bc a ac",
+        "varta log: 10 18 3 1",
+        "varta log: 12",
+        "varta log: hi t plain",
+        "varta log: loaded 19",
+        "varta log: ABC abc Word word"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-queries",
+      "feature": "ts-type-operators",
+      "path": "cases/ts-queries.ts",
+      "sha256": "78545c19c8886e152feaed7a5ba658a243d446e0e4fb834276b6bbfb53e7717e",
+      "stdout": [
+        "varta log: p 5",
+        "varta log: 800x600 copy main",
+        "varta log: #f00 #0f0",
+        "varta log: dark 42",
+        "varta log: Ada 36",
+        "varta log: a undefined",
+        "varta log: age,name"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-narrowing",
+      "feature": "ts-narrowing-predicates",
+      "path": "cases/ts-narrowing.ts",
+      "sha256": "0ba14648dee0a0f28f302df58e53800cc47705f490de80beeb9976a0696f66e5",
+      "stdout": [
+        "varta log: A10B",
+        "varta log: fish 1",
+        "varta log: bird 2",
+        "varta log: 4",
+        "varta log: CHECKED",
+        "varta log: 4",
+        "varta log: TypeError",
+        "varta log: svc 3 circle,square",
+        "varta log: 0 4 3",
+        "varta log: snb"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-signatures",
+      "feature": "ts-signatures",
+      "path": "cases/ts-signatures.ts",
+      "sha256": "2912496385a2acb36f04ba096fc9a80ac16b16fdc5c2e4253477057542354572",
+      "stdout": [
+        "varta log: 2 2.0 2.000",
+        "varta log: rex: woof",
+        "varta log: built",
+        "varta log: b: woof",
+        "varta log: typed: woof",
+        "varta log: function 7"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-tuples",
+      "feature": "ts-tuple-types",
+      "path": "cases/ts-tuples.ts",
+      "sha256": "0a08105101e3a55d6e8d5badf5ff58f48c5090e3c89b50eb24d964ed4ab11ddc",
+      "stdout": [
+        "varta log: Ada Bob(42) 1 2",
+        "varta log: 10 5 1 4",
+        "varta log: 1 true z 3",
+        "varta log: p:2 0"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "ts-literals",
+      "feature": "ts-literal-inference",
+      "path": "cases/ts-literals.ts",
+      "sha256": "2c8bc7f168b490fc0a63657167635b19a13d1bb63dd47637a4a647d40a337bf4",
+      "stdout": [
+        "varta log: dark sm lg 3 true sm a p sm,md,xl",
+        "varta log: light"
       ],
       "baseline": {
         "status": "supported"

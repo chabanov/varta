@@ -124,6 +124,7 @@ fn validate(i: &Inventory) -> Result<(), Error> {
         let prefix = match f.origin {
             Origin::Ecmascript2025 => "https://tc39.es/ecma262/2025/multipage/",
             Origin::VartaContract => "docs/",
+            Origin::TypescriptHandbook => "https://www.typescriptlang.org/docs/handbook/",
         };
         if !f.reference.starts_with(prefix)
             || f.reference.len() > 512

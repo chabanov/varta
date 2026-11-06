@@ -274,6 +274,7 @@ impl Lower<'_> {
             return Err(invalid("missing tuple pattern type"));
         };
         let length = self.types.tuples[id as usize].elements.len();
+        let open = self.types.tuples[id as usize].rest.is_some();
         let mut body = Vec::new();
         for (index, entry) in pattern.elems.iter().enumerate() {
             let Some(entry) = entry else {
@@ -284,7 +285,7 @@ impl Lower<'_> {
                     .source
                     .locate(unsupported("rest element in a tuple pattern"), pattern.span));
             }
-            if index >= length {
+            if index >= length && !open {
                 return Err(self.source.locate(
                     type_error(format!(
                         "tuple pattern position {index} is out of range for a tuple of length {length}"

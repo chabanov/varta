@@ -137,6 +137,15 @@ impl Lower<'_> {
             ast::Expr::OptChain(chain) if self.types.profile.function_fields() => {
                 self.optional_chain(chain)
             }
+            // K9 type level (v38): `satisfies`, class values of constructor
+            // types and `new` on such values.
+            ast::Expr::TsSatisfies(satisfies) if self.types.profile.type_level() => {
+                self.satisfies(satisfies, expected)
+            }
+            ast::Expr::Ident(id) if let Some(context) = self.constructor_context(id, expected) => {
+                self.class_constructor_value(id, context)
+            }
+            ast::Expr::New(new) if self.constructs_value(&new.callee) => self.construct_value(new),
             _ => self.expr_inner(expression),
         };
         if let Ok(value) = &result {
@@ -295,6 +304,10 @@ impl Lower<'_> {
                         && narrow == Self::unknown_array_type(self.types)?
                     {
                         return self.unknown_array(local);
+                    }
+                    // A type predicate's narrowing is tested at run time (v38).
+                    if self.predicate_checked(binding.identity, narrow) {
+                        return self.predicate_read(local, narrow);
                     }
                     // A literal guard may refine a non-union local in place.
                     let retag =
@@ -803,6 +816,14 @@ impl Lower<'_> {
         {
             return self.function_field_call(call, callee);
         }
+        // V38 (`standard_library`): `date.toString()` and `date.valueOf()`.
+        if self.types.profile.standard_library()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let ast::Expr::Member(member) = stmt::unparen(callee)
+            && self.date_conversion(member)
+        {
+            return self.date_conversion_call(call, member);
+        }
         if self.types.profile.classes() {
             if matches!(call.callee, ast::Callee::Super(_)) {
                 return self.super_call(call);
@@ -863,6 +884,15 @@ impl Lower<'_> {
         }
         if let Some(generic) = self.generic_callee(call) {
             return self.generic_call(call, generic, expected);
+        }
+        // V38 (`standard_library`): `Array.of`, mapped `Array.from`,
+        // `Object.groupBy`, `Object.fromEntries` and `Map.groupBy`.
+        if self.types.profile.standard_library()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && let Some(name) = callee_name(callee)
+            && let Some(value) = self.standard_static(call, &name, expected)?
+        {
+            return Ok(value);
         }
         if call.type_args.is_some() {
             return Err(unsupported("generic call"));
@@ -1182,6 +1212,10 @@ impl Lower<'_> {
             return self.global_parse_json(call);
         }
         if name == "JSON.stringify" {
+            // V38 (`standard_library`): replacer lists and indentation.
+            if self.types.profile.standard_library() && matches!(call.args.len(), 2 | 3) {
+                return self.json_stringify_options(call);
+            }
             if call.args.len() != 1 {
                 return Err(invalid("JSON.stringify expects one value"));
             }

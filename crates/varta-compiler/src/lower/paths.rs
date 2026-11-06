@@ -476,7 +476,12 @@ impl Lower<'_> {
     }
     /// `value` (a union cell) as its sub-union or member `narrow`, tested at
     /// run time: a `TypeError` with `message` when it holds another member.
-    fn checked_narrow(&mut self, value: Expr, narrow: Type, message: &str) -> Result<Expr> {
+    pub(super) fn checked_narrow(
+        &mut self,
+        value: Expr,
+        narrow: Type,
+        message: &str,
+    ) -> Result<Expr> {
         let span = value.span;
         let union = value.ty;
         let saved = self.hidden(union);

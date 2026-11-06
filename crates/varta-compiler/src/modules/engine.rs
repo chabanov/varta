@@ -233,7 +233,9 @@ pub(crate) const BASE64: Prelude = Prelude {
     lifted: None,
 };
 /// The `Date` subset (v37 `collections`): UTC time values, ISO-8601 and
-/// IMF-fixdate parsing, and the `time.now`-gated clock.
+/// IMF-fixdate parsing, and the `time.now`-gated clock; v38
+/// (`standard_library`) replaces the class with the complete `Date`
+/// ([`date_v38`]).
 pub(crate) const DATE: Prelude = Prelude {
     path: "<varta>/builtins/date.ts",
     source: include_str!("../prelude/date.ts"),
@@ -254,9 +256,103 @@ pub(crate) const DATE: Prelude = Prelude {
     admitted: LanguageProfile::collections,
     extended: None,
     loads: &[],
-    lifted: None,
+    lifted: Some(date_v38),
 };
 pub(crate) const DATE_CLASS: &str = "Date";
+/// The v38 date prelude (`standard_library`): the v37 parser and calendar
+/// helpers, `Date.parse` extended to the legacy `toString` forms, and the
+/// complete `Date` class of `prelude/date_local.ts` in place of the v37 one.
+fn date_v38() -> &'static str {
+    static LIFTED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let helpers = DATE
+            .source
+            .split_once(DATE_V37_CLASS)
+            .map_or(DATE.source, |(helpers, _)| helpers);
+        let helpers = lift(helpers, DATE_V37_PARSE, DATE_V38_PARSE);
+        format!("{helpers}{}", include_str!("../prelude/date_local.ts"))
+    });
+    &LIFTED
+}
+/// Where the v37 `Date` class starts in `prelude/date.ts`.
+const DATE_V37_CLASS: &str = "export class Date {";
+const DATE_V37_PARSE: &str = "  return Number.isNaN(iso) ? parseImf(text) : iso;";
+const DATE_V38_PARSE: &str = "  if (!Number.isNaN(iso)) {
+    return iso;
+  }
+  const imf = parseImf(text);
+  return Number.isNaN(imf) ? parseDateString(text) : imf;";
+/// The ECMAScript 2025 array, object and string methods of v38
+/// (`standard_library`, K9 D), called by `lower::standard`.
+pub(crate) const STANDARD: Prelude = Prelude {
+    path: "<varta>/builtins/standard.ts",
+    source: include_str!("../prelude/standard.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::standard_library,
+    extended: None,
+    loads: STANDARD_LOADS,
+    lifted: None,
+};
+/// `AggregateError` (v38 `standard_library`), an `Error` subclass of
+/// typed guest code outside the opaque builtins, like `URIError`.
+pub(crate) const AGGREGATE: Prelude = Prelude {
+    path: "<varta>/builtins/aggregate.ts",
+    source: include_str!("../prelude/aggregate.ts"),
+    exports: &[("AggregateError", Namespace::Class)],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::standard_library,
+    extended: None,
+    loads: &[],
+    lifted: None,
+};
+/// The reference keys that load [`STANDARD`]: its method names and the
+/// static members `Array.from`, `Object.groupBy` and `Object.fromEntries`.
+pub(crate) const STANDARD_LOADS: &[&str] = &[
+    ".sort",
+    ".toSorted",
+    ".toReversed",
+    ".with",
+    ".toSpliced",
+    ".splice",
+    ".copyWithin",
+    ".concat",
+    ".shift",
+    ".unshift",
+    ".flat",
+    ".flatMap",
+    ".keys",
+    ".values",
+    ".entries",
+    ".at",
+    ".substr",
+    ".isWellFormed",
+    ".toWellFormed",
+    ".toLocaleUpperCase",
+    ".toLocaleLowerCase",
+    ".getOwnPropertyNames",
+    ".hasOwnProperty",
+    ".from",
+    ".groupBy",
+    ".fromEntries",
+    // `JSON.stringify` with a property list or indentation.
+    ".stringify",
+    // `Math.max` and `Math.min` with spread arguments.
+    ".max",
+    ".min",
+    // Iterator helpers (on a generator the program created itself).
+    ".map",
+    ".filter",
+    ".take",
+    ".drop",
+    ".reduce",
+    ".toArray",
+    ".forEach",
+    ".some",
+    ".every",
+    ".find",
+];
 /// `RegExp`, `RegExpExecArray` and `RegExpMatchArray` (v37 `regexp`), also
 /// loaded by a regular expression literal or a regex string method call.
 pub(crate) const REGEXP: Prelude = Prelude {
@@ -684,7 +780,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 19] = [
+pub(crate) const PRELUDES: [&Prelude; 21] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -693,6 +789,8 @@ pub(crate) const PRELUDES: [&Prelude; 19] = [
     &BINARY,
     &BASE64,
     &DATE,
+    &STANDARD,
+    &AGGREGATE,
     &REGEXP,
     &BLOB,
     &FETCH,
@@ -760,7 +858,8 @@ pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
 
 /// The v37 builtin preludes (`collections`), whose class instances are
 /// private to every host value reader.
-pub(crate) const BUILTINS: [&Prelude; 5] = [&TEXT, &COLLECTIONS, &BINARY, &BASE64, &DATE];
+pub(crate) const BUILTINS: [&Prelude; 6] =
+    [&TEXT, &COLLECTIONS, &BINARY, &BASE64, &DATE, &STANDARD];
 
 /// Whether `source` is a v37 builtin prelude module.
 pub(crate) fn is_builtin_source(source: &crate::source::Source) -> bool {

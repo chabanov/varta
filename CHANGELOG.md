@@ -8,6 +8,27 @@
   sums of lengths and percentages (`calc(50% - 1rem)`) resolve at layout for
   sizes, margins, padding, gaps, flex basis, insets and `vertical-align`
   (Taffy is vendored with a recorded patch for calc resolution).
+- V38 K9 type level (selector `type_level`): conditional types with
+  distribution, `infer` (constrained, tuple, function, object and template
+  patterns) and recursive generic aliases; mapped types with `as` remapping
+  and `+/-readonly`/`+/-?` over records, tuples and arrays; template literal
+  types and `Uppercase`/`Lowercase`/`Capitalize`/`Uncapitalize`; every
+  built-in utility type; `keyof` and precise `T[K]` (also for computed
+  record reads); `typeof`/`keyof typeof` queries of module constants,
+  functions and classes; record intersections; call and construct
+  signatures, `new (…) => T` constructor types and class values for them;
+  named, optional, rest and variadic tuple elements and `[]`; type
+  predicates and assertion functions (predicate-narrowed reference reads are
+  checked at run time); `satisfies`; polymorphic `this`; `never`
+  exhaustiveness over literal sets; and tsc's literal inference (`const x =
+  "a"` is `"a"`, `let` widens, `as const` readonly literal tuples and
+  records), which also lets the Tailwind scanner enumerate literal-typed
+  class compositions. Refused by name: `unique symbol`, pattern template
+  types outside `extends`, function and branded-primitive intersections,
+  overloaded signatures, `typeof` of locals. No host ABI or value layout
+  change; v37 keeps rejecting every form. Conformance (with K9 D): 155
+  passed, 5 known unsupported of 160 (new origin `typescript_handbook`, nine
+  feature rows).
 - K8 T2 standards items and K8 T3: the browser host runs the Rust CSS engine
   as `view-engine.wasm` (built by `scripts/build-view-engine.py`) and applies
   its computed values, so browser and native hosts accept, refuse and
@@ -37,6 +58,22 @@
   browser host's L0 contract is unchanged. Native and Chrome match at 1x,
   1.25x and 2x (`scripts/test-native-css-engine.mjs`); the Tailwind
   application corpus's accepted class uses rise from 25.3% to 70.4%.
+- V38 standard library (K9 D, `standard_library`): `sort`/`toSorted` with
+  V8's TimSort comparator order, `toReversed`, `with`, `toSpliced`,
+  `splice`, `copyWithin`, `concat`, `shift`, `unshift`, `flat`, `flatMap`,
+  array `keys`/`values`/`entries`, `Array.of`, mapped and array-like
+  `Array.from`; ES2025 iterator helpers and `Iterator.from`; the ES2025 `Set`
+  methods; `Map.groupBy`, `Object.groupBy`, `Object.fromEntries`,
+  `Object.getOwnPropertyNames` and `hasOwnProperty`; `JSON.stringify`
+  property lists and indentation; `AggregateError`; promise combinator
+  arrays mixing `Promise.reject`; `Math.max`/`min` spreads; `String`
+  `at`/`substr`/`isWellFormed`/`toWellFormed`; and the complete `Date` with
+  local time in the UTC zone (a host zone awaits an owner decision). All in
+  typed guest code of engine preludes: no host ABI or value layout change.
+  `Symbol`, weak references, `Proxy`/`Reflect`, integrity levels,
+  `structuredClone` and `Intl` are refused with the reason. Conformance: 146
+  passed, 5 known unsupported of 151 (new features `array-copying-methods`,
+  `iterator-helpers`, `set-methods`, `grouping`, `aggregate-error`).
 - Native `img`: packaged images (a configuration's new `images` map,
   stored in resource section version 2 and carried by the browser bundle
   under the same names) are laid out and drawn by the native renderer to the

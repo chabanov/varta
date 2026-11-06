@@ -200,6 +200,58 @@ pub(super) fn string_set<'a>(
     intern(LiteralBase::String, values, types)
 }
 
+/// The singleton literal type of `value` (v38 `type_level`).
+pub(super) fn single(
+    base: LiteralBase,
+    value: LiteralValue,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    intern(base, Set::from([value]), types)
+}
+/// The literal set of `values` of one base (v38 `type_level`).
+pub(super) fn of_values(
+    base: LiteralBase,
+    values: Set,
+    types: &mut ir::ValueTypes,
+) -> Result<Type> {
+    intern(base, values, types)
+}
+/// The literal number value of `value`; `None` for NaN.
+pub(super) fn number_value(value: f64) -> Option<LiteralValue> {
+    LiteralValue::number(value)
+}
+/// The UTF-16 code units of a string literal value.
+pub(super) fn string_units(
+    value: &LiteralValue,
+    profile: varta_common::language::LanguageProfile,
+) -> Option<Vec<u16>> {
+    match value {
+        LiteralValue::String(bytes) if profile.utf16() => Some(
+            bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .collect(),
+        ),
+        LiteralValue::String(bytes) => {
+            Some(String::from_utf8_lossy(bytes).encode_utf16().collect())
+        }
+        _ => None,
+    }
+}
+/// The string literal value of UTF-16 code units in `profile`'s encoding.
+pub(super) fn string_value(
+    units: &[u16],
+    profile: varta_common::language::LanguageProfile,
+) -> LiteralValue {
+    if profile.utf16() {
+        LiteralValue::String(units.iter().flat_map(|unit| unit.to_le_bytes()).collect())
+    } else {
+        LiteralValue::String(String::from_utf16_lossy(units).into_bytes())
+    }
+}
+
 /// The members of a string literal set as record keys; `None` for any other
 /// type or for a member that is not a well-formed key string.
 pub(super) fn string_members(ty: Type, types: &ir::ValueTypes) -> Option<Vec<String>> {
@@ -329,6 +381,14 @@ fn constant(value: &Expr) -> Option<LiteralValue> {
         (E::Integer(flag), Type::Boolean) => Some(LiteralValue::Boolean(*flag != 0)),
         _ => None,
     }
+}
+
+/// The singleton literal type of a constant expression (v38 `type_level`:
+/// the declaration type of `const x = "a"` is `"a"`, as in TypeScript).
+pub(super) fn fresh(value: &Expr, types: &mut ir::ValueTypes) -> Option<Type> {
+    let literal = constant(value)?;
+    let base = literal.base();
+    intern(base, Set::from([literal]), types).ok()
 }
 
 /// Whether `value` statically belongs to literal set `target` of `base`.
@@ -493,6 +553,11 @@ pub(super) fn refine(
             m if !positive => refined.push(m),
             _ => {}
         }
+    }
+    // V38 (`type_level`): excluding the last literal leaves `never`, which
+    // makes a `default` clause or `else` branch an exhaustiveness check.
+    if refined.is_empty() && !positive && types.profile.type_level() {
+        return Some(Type::Never);
     }
     if refined.is_empty() || refined == members {
         return None;

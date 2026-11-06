@@ -311,6 +311,67 @@ impl Lower<'_> {
     /// the elements are lowered one by one, so promises of different value
     /// types race into `Promise<T0 | T1 | …>` without forming an array of a
     /// union of promise types. Elements of one type form the ordinary array.
+    /// An array literal of promises in which every `Promise.reject(...)`
+    /// element without a type argument takes the one promise type of the
+    /// other elements; `None` for any other array. The elements keep their
+    /// source order; only their lowering visits the others first.
+    fn rejection_items(&mut self, array: &ast::ArrayLit) -> Result<Option<Expr>> {
+        let rejection = |element: &ast::Expr| {
+            let ast::Expr::Call(call) = stmt::unparen(element) else {
+                return false;
+            };
+            let ast::Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            call.type_args.is_none()
+                && matches!(stmt::unparen(callee), ast::Expr::Member(member)
+                    if self.promise_builtin(&member.obj)
+                        && matches!(&member.prop, ast::MemberProp::Ident(id) if id.sym == "reject"))
+        };
+        let mut elements = Vec::new();
+        for element in &array.elems {
+            match element {
+                Some(element) if element.spread.is_none() => elements.push(&*element.expr),
+                _ => return Ok(None),
+            }
+        }
+        let rejections: Vec<bool> = elements.iter().map(|element| rejection(element)).collect();
+        if !rejections.contains(&true) || !rejections.contains(&false) {
+            return Ok(None);
+        }
+        let mut lowered: Vec<Option<Expr>> = vec![None; elements.len()];
+        let mut promise = None;
+        for (index, element) in elements.iter().enumerate() {
+            if rejections[index] {
+                continue;
+            }
+            let value = self.expr(element)?;
+            if !matches!(value.ty, Type::Promise(_)) || promise.is_some_and(|ty| ty != value.ty) {
+                return Err(self.source.locate(
+                    unsupported(
+                        "a promise combinator over an array literal of different promise types",
+                    ),
+                    value.span,
+                ));
+            }
+            promise = Some(value.ty);
+            lowered[index] = Some(value);
+        }
+        let Some(promise) = promise else {
+            return Ok(None);
+        };
+        for (index, element) in elements.iter().enumerate() {
+            if lowered[index].is_none() {
+                lowered[index] = Some(self.expr_expected(element, Some(promise))?);
+            }
+        }
+        let ty = arrays::intern(promise, self.types)?;
+        Ok(Some(Expr {
+            span: array.span,
+            ty,
+            kind: E::Array(lowered),
+        }))
+    }
     fn race_items(
         &mut self,
         combinator: Combinator,
@@ -321,6 +382,14 @@ impl Lower<'_> {
         let ast::Expr::Array(array) = stmt::unparen(argument) else {
             return Ok(RaceItems::Ordinary);
         };
+        // V38 (`standard_library`): `Promise.reject(reason)` elements take
+        // the promise type of the other elements, as TypeScript infers
+        // `Promise<never>` for them.
+        if self.types.profile.standard_library()
+            && let Some(items) = self.rejection_items(array)?
+        {
+            return Ok(RaceItems::Array(items));
+        }
         if combinator != Combinator::Race
             || !self.types.profile.web_bytes()
             || array.elems.is_empty()

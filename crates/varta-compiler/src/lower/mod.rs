@@ -135,6 +135,11 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     {
         return named::resolve(id.sym.as_ref(), types);
     }
+    // K9 type level (v38): conditional, mapped and template literal types,
+    // utility types, type queries and the other type operators.
+    if let Some(ty) = type_level::evaluate(ty, types)? {
+        return Ok(ty);
+    }
     if let ast::TsType::TsTypeRef(reference) = ty
         && reference.type_params.is_none()
         && let ast::TsEntityName::Ident(id) = &reference.type_name
@@ -459,6 +464,7 @@ mod sdk_paths;
 mod shared_unions;
 mod signature;
 mod spread;
+mod standard;
 mod stmt;
 mod string_enumeration;
 mod string_iteration;
@@ -470,6 +476,7 @@ mod tdz;
 mod templates;
 mod tools;
 mod tuples;
+pub(crate) mod type_level;
 mod type_operators;
 mod undefined;
 mod unions;

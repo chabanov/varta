@@ -643,6 +643,39 @@ impl Lower<'_> {
     }
 }
 
+/// The constructor parameters of `class` as patterns, from its own or its
+/// nearest ancestor's constructor (v38 `type_level`: `typeof C` before the
+/// class layout exists).
+pub(super) fn constructor_patterns(types: &ir::ValueTypes, class: u32) -> Vec<ast::Pat> {
+    let mut current = Some(class);
+    while let Some(id) = current {
+        let info = types.classes.get(id);
+        let constructor = info
+            .declaration
+            .body
+            .iter()
+            .find_map(|member| match member {
+                ast::ClassMember::Constructor(constructor) => Some(constructor),
+                _ => None,
+            });
+        if let Some(constructor) = constructor {
+            return constructor
+                .params
+                .iter()
+                .map(|param| match param {
+                    ast::ParamOrTsParamProp::Param(param) => param.pat.clone(),
+                    ast::ParamOrTsParamProp::TsParamProp(prop) => match &prop.param {
+                        ast::TsParamPropParam::Ident(binding) => ast::Pat::Ident(binding.clone()),
+                        ast::TsParamPropParam::Assign(assign) => ast::Pat::Assign(assign.clone()),
+                    },
+                })
+                .collect();
+        }
+        current = info.parent;
+    }
+    Vec::new()
+}
+
 mod constructors;
 mod dispatch;
 mod error_classes;

@@ -11593,11 +11593,276 @@ keys below.
   `finally` block returns a value of its own, JavaScript would return that
   value from this `void` generator; Varta returns `undefined`. Async
   generators keep their own `yield*` rules.
-- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`) and
-  iterator helpers, `Symbol()` values and symbol-keyed properties,
-  destructuring of generators, strings and iterable instances,
-  `Array.from` with a map function or an array-like, and `Iterable<T>`
-  value annotations.
+- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`),
+  `Symbol()` values and symbol-keyed properties, destructuring of
+  generators, strings and iterable instances, and `Iterable<T>` value
+  annotations. Iterator helpers and `Array.from` with a map function or an
+  array-like are admitted by the [standard library](#standard-library-standard_library).
+
+#### Standard library (`standard_library`)
+
+Additions to v38 (K9 D, 2026-11-06) that complete the ECMAScript 2025
+library forms typed npm code uses most, under the selector
+`LanguageProfile::standard_library()`. Everything is typed guest code of the
+engine preludes (`<varta>/builtins/standard.ts`, `<varta>/builtins/aggregate.ts`,
+the v38 collections prelude and the v38 date prelude) called by
+`lower::standard`, so there is no host import, value layout, frame catalog
+or ABI change, and the native runtime and every JavaScript host run the same
+Wasm. V1–v37 keep rejecting every form below with their old diagnostics; the
+prelude loads only for programs that name one of its methods
+(`modules::engine::STANDARD_LOADS`).
+
+- **Sorting.** `array.sort(compare?)` and `array.toSorted(compare?)`
+  (§23.1.3.30, §23.1.3.34) run V8's TimSort (`array-sort.tq`, CPython's
+  listsort: run detection, binary insertion below the minimum run, galloping
+  merges with the adaptive `minGallop`), so every comparator is called with
+  the same arguments in the same order as in Node and an inconsistent
+  comparator leaves V8's order. A comparator result of NaN counts as 0.
+  Holes and `undefined` are taken out first; the sorted values, then the
+  `undefined`s, then the holes are written back (`sort` returns its
+  receiver). Without a comparator the elements' String forms compare by
+  code units; elements other than primitives are refused by name
+  (object-to-string conversion is not modelled). A readonly (`as const`)
+  receiver is refused for `sort`, `splice`, `copyWithin`, `shift` and
+  `unshift`.
+- **Copying and mutating methods.** `toReversed`, `with` (`RangeError:
+  Invalid index : n` outside the array), `toSpliced`, `splice` (the argument
+  count decides the delete count, as in §23.1.3.31), `copyWithin`,
+  `shift`, `unshift`, `concat` (an argument of the receiver's array type
+  spreads, one of its element type is appended; holes stay holes; a receiver
+  whose elements are arrays only takes arguments of its own type, since
+  JavaScript spreads every array argument), `keys`, `values` and `entries`
+  (live generators that read the length at every step) and `at` on strings.
+  Mutations keep holes as holes (`Object.hasOwn`/`delete` semantics). A
+  copying method that reads a hole of an element type without `undefined`
+  throws `TypeError` (`array element is missing`), as `for...of` does,
+  because such an array cannot hold the `undefined` JavaScript would copy;
+  with `undefined` in the element type the hole reads as `undefined`.
+- **Flattening.** `flat(depth?)` with a number literal, `Infinity` or no
+  depth (the result type depends on it): each level flattens `T[][]` or
+  `(T | T[])[]`, skipping holes; depth 0 is a hole-free copy.
+  `flatMap(callback)` flattens a callback returning arrays one level, maps
+  one returning other values, and refuses a callback returning both.
+- **Constructors.** `Array.of(...)` (the same fresh array as the literal,
+  `Array.of<T>()` typed by its argument), `Array.from(source, map)` (the
+  source is collected as one-argument `Array.from` collects it, then mapped
+  with `(value, index)`), `Array.from({ length: n }, map)` (ToLength, then
+  `RangeError: Invalid array length` above 2³²−1).
+- **Iterator helpers.** On a synchronous generator that returns `void` and
+  takes no `next` input (every built-in iterator: array, `Map` and `Set`
+  `keys`/`values`/`entries`, and the helpers themselves): `map`, `filter`,
+  `take`, `drop`, `flatMap` (array results), `reduce` (with or without an
+  initial value: `TypeError: Reduce of a done iterator with no initial
+  value`), `toArray`, `forEach`, `some`, `every`, `find`, and
+  `Iterator.from` of a generator, array, `Set` or `Map`. Helpers are lazy
+  guest generators over the source; `take`/`drop` validate their limit when
+  the helper is created (`RangeError: -1 must be positive`), a `break` or
+  `return()` closes the source through the helper's `for...of`, and
+  `take(0)` closes it without pulling. The one difference: `return()` on a
+  helper that has not started does not close the source (a JavaScript
+  helper does; a generator body that never ran has nothing to close).
+- **Sets and grouping.** `union`, `intersection`, `difference`,
+  `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, `isDisjointFrom`
+  (§24.2.4) of two `Set`s with the same element type, iterating the receiver
+  or the argument exactly as the specification chooses by size; other
+  set-like arguments are refused. `Map.groupBy(items, callback)`,
+  `Object.groupBy(items, callback)` (string and number keys, a dictionary in
+  JavaScript key order) and `Object.fromEntries` of `[key, value]` tuples or
+  a `Map`. `Object.getOwnPropertyNames` of a record or dictionary is its
+  `Object.keys`; `value.hasOwnProperty(key)` is `Object.hasOwn(value, key)`.
+- **JSON.** `JSON.stringify(value, replacer, space)` with a `null` or
+  `undefined` replacer or a property list (an array of strings and numbers,
+  deduplicated, selecting and ordering every object's members), and a number
+  (clamped to 10 spaces) or string (its first 10 code units) `space`: both
+  are deterministic rewrites of the compact text the engine serializer
+  produces. Replacer functions are refused (the host serializer cannot call
+  guest code). The replacer and space arguments must be free of effects
+  (literals, bindings, field reads), since they are evaluated after the
+  value is serialized.
+- **Errors and promises.** `AggregateError(errors, message?, { cause })`
+  is an `Error` subclass of typed guest code (`errors: unknown[]`,
+  `instanceof`, `cause`, `toString`). `Promise.all`/`allSettled`/`any`/`race`
+  over an array literal that mixes `Promise.reject(...)` with promises of one
+  type give the rejections that type (TypeScript's `Promise<never>`).
+  `Promise.any` still rejects with an `Error` named `Error`, not an
+  `AggregateError`.
+- **Math and strings.** `Math.max(...xs)`/`Math.min(...xs)` with spread
+  `number[]` arguments (NaN wins, +0 above −0). `String.prototype.at`,
+  `substr` (Annex B), `isWellFormed`, `toWellFormed` and locale-free
+  `toLocaleUpperCase`/`toLocaleLowerCase`.
+- **Date.** The v38 date prelude replaces the v37 class with the complete
+  `Date` (§21.4): `Date.UTC`, the component constructor (local time,
+  years 0–99 as 1900–1999), every local and UTC getter and setter (with
+  rest parameters, so an omitted argument and an explicit `undefined` never
+  meet), `getTimezoneOffset`, `getYear`, `toString`, `toDateString`,
+  `toTimeString`, `toUTCString`/`toGMTString`, `toJSON`, `valueOf`, and
+  `Date.parse` of the forms `toString`, `toDateString`, `toUTCString` and
+  `toISOString` produce. The time zone is a recorded host input; without a
+  host-granted zone (none is defined yet, an owner decision) it is UTC, so
+  every output equals Node's with `TZ=UTC`. `toString`, `valueOf` and
+  `toJSON` are prelude functions the compiler calls for `Date` receivers (a
+  class cannot declare them); `JSON.stringify` of a `Date`, `String(date)`
+  and the `toLocale*String` forms stay refused.
+- **Refused by name.** `Symbol()`/`Symbol.for`/`Symbol.keyFor`, `WeakMap`,
+  `WeakSet`, `WeakRef`, `FinalizationRegistry`, `Proxy`, `Reflect.*`,
+  `structuredClone`, `Object.freeze`/`seal`/`preventExtensions` and their
+  predicates, descriptor and prototype functions, and `Intl` fail with the
+  missing value-model part in the diagnostic.
+
+#### Type level (`type_level`)
+
+K9 track A (2026-11-06), under the selector `LanguageProfile::type_level()`:
+TypeScript's type-level language, with tsc 5.x as the reference and the
+[TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/) as the
+cited source. Varta monomorphizes: every type parameter is bound to a
+resolved type before a type expression is lowered, so each operator below is
+evaluated at compile time over resolved types and yields an existing closed
+type (record, dictionary, literal set, tuple, union, function type). No host
+import, value tag, value layout, frame catalog or ABI changes; nothing generic
+or deferred reaches emission. V1–v37 keep rejecting every form below with
+their earlier diagnostics. A construct without a sound static layout is
+refused with an `unsupported …` diagnostic that names it (list below).
+
+- **Conditional types** `C extends E ? T : F` ([Conditional
+  Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html)):
+  the check type is resolved, so only the selected branch is evaluated. A
+  naked type parameter bound to a union distributes over its members (the
+  values of a literal set and `true | false` of `boolean` included); `never`
+  yields `never`; `[T] extends [U]` does not distribute. `infer X` and
+  `infer X extends C` bind the matched part of the check type in array,
+  `Array`/`ReadonlyArray`, `Promise`/`PromiseLike`, tuple (one rest position,
+  `[infer H, ...infer R]`, `[...infer I, infer L]`), function and construct
+  (`(...args: infer P) => infer R`; parameters contravariant, `never[]`
+  accepts every list), object (`{ k: infer V }`) and template literal
+  patterns; two candidates of one name join into a union. The assignability
+  relation of the condition, of generic constraints and of predicates is
+  TypeScript's over closed types: unions distribute on the source, literal
+  sets are subsets of their base, tuples and arrays are covariant, object
+  types are structural with width subtyping and optional properties, a record
+  is assignable to a string index signature when every property is, function
+  types are contravariant in parameters and covariant in their result, `{}`
+  admits every non-nullish value and `object` the object kinds.
+- **Recursive aliases.** A generic alias may refer to itself with other type
+  arguments (`type Reverse<T> = T extends [infer H, ...infer R] ?
+  [...Reverse<R>, H] : []`), up to `type_level::MAX_TYPE_DEPTH` (64) nested
+  instantiations and evaluations; the same instantiation inside itself, and
+  non-generic cycles, keep the earlier rules.
+- **Mapped types** `{ [K in C as N]: V }` with `+/-readonly` and `+/-?`
+  ([Mapped Types](https://www.typescriptlang.org/docs/handbook/2/mapped-types.html)):
+  the key set must resolve to string or number literals (a closed record) or
+  to `string` (a dictionary); `K` is bound to each key's singleton literal.
+  Over `keyof T` the mapped type is homomorphic: it keeps each property's
+  optionality, maps a tuple element-wise (`K` is `"0"`, `"1"`, …) and an
+  array element-wise, distributes over a union bound to a naked `T` and maps
+  a primitive to itself. `?`/`+?` adds `undefined` to an optional property,
+  `-?` removes it; `readonly` modifiers are accepted and, like `Readonly<T>`,
+  binding-level intent (the closed type is the same). An `as` clause renames
+  or (`never`) drops keys; keys renamed onto one name union their values.
+- **Template literal types** and `Uppercase`/`Lowercase`/`Capitalize`/
+  `Uncapitalize` ([Template Literal
+  Types](https://www.typescriptlang.org/docs/handbook/2/template-literal-types.html)):
+  placeholders of string, number (ECMAScript `Number::toString`), boolean,
+  `null` and `undefined` literal sets expand to the string literal set of
+  every combination, at most `literals::MAX_LITERAL_MEMBERS`. The intrinsic
+  types map each member with JavaScript's `toUpperCase`/`toLowerCase` (the
+  first code unit for (Un)capitalize). As an `extends` pattern a template
+  matches string literals: a placeholder followed by text takes the text up
+  to its first occurrence, one followed by another placeholder one code unit,
+  the last the rest; `${string}` matches any text, `${number}` round-tripping
+  numeric text, and `infer N extends number` converts such text to its number
+  literal (TypeScript 4.8).
+- **Utility types** ([Utility
+  Types](https://www.typescriptlang.org/docs/handbook/utility-types.html)):
+  `Partial`, `Required`, `Readonly`, `Pick`, `Omit`, `Record`, `Exclude`,
+  `Extract`, `NonNullable`, `ReturnType`, `Parameters` (optional parameters
+  are optional elements, a rest parameter the rest element),
+  `ConstructorParameters`, `InstanceType`, `ThisParameterType`,
+  `OmitThisParameter`, `Awaited`, `NoInfer` and the intrinsic string types,
+  each evaluated as its `lib.es5.d.ts` definition would be; `Partial` and
+  `Required` distribute over unions and apply to tuples and arrays. A module
+  declaration of the same name shadows the built-in.
+- **`keyof` and indexed access.** `keyof` of a record is its key literal set
+  (`never` when empty), of a dictionary `string | number`, of a union the
+  keys every member has, of `unknown` `never`. `T[K]` distributes over both
+  members: record properties, class data fields, tuple positions (`"0"` or
+  `0`), `T[number]` of tuples and arrays, `["length"]` of a tuple (the number
+  literal set of its admitted lengths), dictionary values and string
+  `length`/indexes. A computed read `obj[k]` whose key has a string literal
+  type of the record's fields has the precise type `T[K]` (the union of
+  those fields' types, read through a checked narrowing).
+- **Type queries.** `typeof x` gives module values a type-level identity: a
+  module constant is typed by its annotation or by TypeScript's declaration
+  type of its initializer (a `const` primitive literal keeps its literal
+  type; object and array literals widen theirs; `as const` keeps every
+  literal and makes readonly tuples; `as T` is `T`; a call of a module
+  function its result); a function by its signature; a class by its
+  constructor type. `typeof a.b` indexes the result, and queries follow value
+  imports.
+- **Intersections** ([Intersection
+  Types](https://www.typescriptlang.org/docs/handbook/2/objects.html#intersection-types)):
+  object types merge their properties (a property in both intersects its
+  types; it is optional only if optional in both), literal sets intersect
+  their base, disjoint primitives give `never`, `unknown` is the identity, a
+  union distributes, and a type assignable to the other is the result.
+- **Call and construct signatures, constructor types.** An object type or
+  interface whose only member is one call signature is that function type;
+  one construct signature, `new (…) => T` and `abstract new (…) => T` are a
+  construct type: a function type marked `construct` (`FunctionType::construct`),
+  physically the closure that constructs. A class named where a construct
+  type is expected (an annotated binding, an argument, `typeof C`, a generic
+  argument inferring from `typeof C`) becomes `(a0, …) => new C(a0, …)`;
+  only `new c(…)` invokes such a value (calling it is a type error).
+- **Tuples.** Named members, optional elements (`[name: string, age?:
+  number]`), one trailing rest element (`[number, ...number[]]`, stored in
+  `TupleType::rest`), the empty tuple `[]` (physically an empty array) and
+  variadic spreads of resolved tuples and arrays (`[...A, ...B]`), which
+  flatten at compile time.
+- **Type predicates and assertion functions.** A top-level or generic
+  function returning `x is T` returns `boolean`; `asserts x is T` and
+  `asserts x` return `void`. A call used as a condition narrows the argument
+  binding in each branch (union members assignable to `T` and the others;
+  a primitive `T` for `unknown`); an assertion call statement narrows it for
+  the rest of the block. TypeScript trusts a predicate's body; Varta reads a
+  predicate-narrowed binding holding a reference member through a run-time
+  member test that throws `TypeError` when the value holds another member,
+  so a lying predicate cannot confuse layouts.
+- **`satisfies`** (TypeScript 4.9): the expression keeps its own type when
+  that type is assignable to the target; otherwise the target is its
+  contextual type (literal properties, function literal parameters) and the
+  expression takes it. A failure is a type error naming both types.
+- **Polymorphic `this`.** `this` in a class method's signature is the class;
+  a method returning `this` has the receiver's class at each call (also in
+  call chains), and every return in its body must be `this`.
+- **`never` exhaustiveness.** Excluding the last value of a literal set
+  narrows to `never`, so a `default` clause or final `else` can assign the
+  discriminant to `never`.
+- **Literal inference** ([Literal
+  Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#literal-types)):
+  an unannotated `const` initialized by a string, number or boolean literal
+  has that literal type (a widening literal type); a `let`/`var` initialized
+  by a literal or by such a binding widens to the base primitive, while
+  annotated and `as const` literal types are kept; `x as const` gives readonly
+  tuples and records of literal types. The [build-time Tailwind
+  scanner](#build-time-tailwind-stylesheets-k8-t1) reads these types, so
+  `` `text-${size}` `` with `const size = "sm"` is enumerated without an
+  annotation.
+
+Refused, each by name: `unique symbol` (no Symbol values in this profile),
+`import("…")` types, pattern template literal types outside an `extends`
+clause (`` `on${string}` ``), intrinsic string types over non-literal types,
+mapped types over class instance types and over `number`/symbol key sets,
+`keyof` of classes, arrays, tuples, primitives and `never`, intersections of
+function types (an overloaded value), of a primitive with an object type
+(branded primitives) and of object types whose shared property has no common
+type, overloaded call or construct signatures and callable objects with
+properties, generic call/construct signatures and constructor types, `typeof`
+of a function-local binding, of a generic function or class, and of an
+initializer whose type would need lowering, `infer` inside a union pattern
+or inside a declared generic type's arguments, `infer` over tuples with
+optional elements, tuple elements after a rest element, `this` types outside
+class member signatures, predicate narrowing of a non-union class instance to
+a subclass or of `unknown` to an object type (the binding keeps its type),
+and `this is T` method predicates (no narrowing).
 
 #### Bytes held by unknown (`byte_values`)
 
@@ -15377,8 +15642,10 @@ configured stylesheet is never silently dropped.
 2. The module graph is loaded with the entry's text served as the empty
    sheet and scanned for class tokens (`varta_compiler::
    scan_classes_with_profile`, below). When a class position composes a
-   name, the program is type-checked to resolve it; a composition that
-   cannot be enumerated is a located `type_error` and stops the build.
+   name, the program is type-checked to resolve it (with TypeScript's
+   literal inference, [type level](#type-level-type_level): `const size =
+   "sm"` has the type `"sm"`); a composition that cannot be enumerated is a
+   located `type_error` and stops the build.
 3. The entry is compiled (`varta_tailwind::compile_with_loader`, its
    relative `@import`s read through the same loader, below) and built with
    the tokens plus its `@source inline(…)` safelist (`Compiler::build`).
@@ -15431,9 +15698,12 @@ is a located `type_error`, as is a touching hole of any other type
 (`string`, a number, a union with non-literal members), naming the
 remedies (a literal union type, complete literals such as
 `cond ? "btn-lg" : "btn-sm"`, or `@source inline(…)`). The types are the
-v38 checker's: an unannotated `const x = "a"` and the elements of an
-`as const` tuple are `string` there (TypeScript infers literal types), so
-they need an annotation (`const x: "a" = "a"`) to be enumerated.
+v38 checker's, which follow TypeScript's literal inference ([type
+level](#type-level-type_level)): an unannotated `const x = "a"` has the
+type `"a"` and the elements of an `as const` tuple their literal types, so
+both are enumerated; a number or boolean literal type contributes its
+ECMAScript string (`const weight = 600` gives `font-600`), while a widened
+`let` (`string`) stays an error.
 
 **Supported Tailwind surface.** Candidates (variants, static and functional
 utilities, named, fractional, bare and arbitrary values, `(--var)`
