@@ -3465,13 +3465,22 @@ fn paint_only_css_keeps_geometry_translations_move_and_scales_remain_unsupported
     commit(&mut view, &transform).unwrap();
     let moved = view.layout_boxes(200.0, 100.0).unwrap();
     assert_eq!((moved[&2].x, moved[&3].x), (5.0, 5.0));
+    // A scale maps the box and its subtree around its centre in the
+    // public geometry; layout keeps the flow.
     let mut transform = BatchWriter::new();
     transform.set_style(2, CssProperty::Transform, "scale(2)");
     commit(&mut view, &transform).unwrap();
-    assert!(matches!(
-        view.layout_boxes(200.0, 100.0),
-        Err(varta_view::LayoutError::Unsupported(2))
-    ));
+    let scaled = view.layout_boxes(200.0, 100.0).unwrap();
+    assert_eq!(
+        (
+            scaled[&2].x,
+            scaled[&2].y,
+            scaled[&2].width,
+            scaled[&2].height
+        ),
+        (-50.0, -15.0, 200.0, 60.0)
+    );
+    assert_eq!((scaled[&3].x, scaled[&3].width), (-50.0, 40.0));
 }
 
 #[test]

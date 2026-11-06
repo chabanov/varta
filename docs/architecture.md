@@ -14118,10 +14118,13 @@ those bounds and drops the inert page.
 
 The native view runs CSS Transitions 1 as Chrome 156 does for the subset's
 animatable properties: the paint-only `color`, `background-color` and
-`opacity`, and `transform` translations ([native transforms](#native-css-transforms)),
-whose pixel and box-fraction parts interpolate linearly (as both CSS list and
-matrix interpolation do for pure translations; a scaling list is refused by
-layout). `transition-property` (initially `all`; `none` matches
+`opacity`, and `transform` ([native transforms](#native-css-transforms)), whose
+lists interpolate function by function when they pair (CSS Transforms 1 §9:
+the same length and the same primitive in each position, `translate()` and
+its one-axis forms being one primitive; `none` stands for the identity
+functions of the other list), each argument linearly (a translation's pixel
+and box-fraction parts separately). Lists that do not pair, which Chrome
+interpolates as matrices, start no transition: the value changes at once. `transition-property` (initially `all`; `none` matches
 nothing), `-duration`, `-timing-function` (`linear`, `ease`, `ease-in`,
 `ease-out`, `ease-in-out` as their cubic Béziers) and `-delay` are
 paint-only: layout admits them and they change no box. A property's
@@ -14158,14 +14161,32 @@ moves the element's box and everything in it for paint, hits, geometry,
 accessibility bounds and scroll-into-view; no other box moves, as in
 layout. Any transform makes the element a stacking context painted at level
 zero (CSS2 Appendix E with CSS Transforms 1 §3), so it paints over later
-in-flow siblings it overlaps. Refused with `LayoutError::Unsupported`: a list
-that scales (a factor other than one), and a fixed descendant of a
-transformed box or an absolute one whose containing block would be a
-transformed box that is not positioned (the transformed box contains them,
-which native layout does not model yet); a transform on an inline box has no
-effect, as in CSS. Geometry, hits and pixels match Chrome at 1x, 1.25x and 2x
-for whole-pixel and percentage translations (the `transform-*` cases of
-`native_positioned_probe`). A translation that is not a whole CSS pixel
+in-flow siblings it overlaps. A list that scales (positive factors, at most
+`MAX_TRANSFORM_FUNCTIONS` functions, applied in list order around the
+origin) keeps every box where layout put it: its stacking context paints
+untransformed into the recorded scene and its draws and hit regions (and
+rounded hit regions) are then mapped through the transform in device
+pixels, nested scales composing; text under a scale draws its portable
+outlines (host glyph coverage is device pixels at the unscaled size). The
+context's ancestors' clip is taken back through the inverse transform, so
+the same pixels clip. `BoxGeometry::transform` carries the element's own
+scaling transform; the public geometry (`layout_boxes`, `layout_geometry`,
+scroll-into-view and accessibility bounds) maps every box of the subtree as
+`getBoundingClientRect` does. Refused with `LayoutError::Unsupported`: a
+factor that is not positive, a scroll container or clip (`overflow` other
+than `visible`), text field or select in a scaled subtree or on the scaled
+box, a scaled stacking context inside an inline capture or under a curved
+clip (`PaintError::Unsupported`), and a fixed descendant of a transformed box
+or an absolute one whose containing block would be a transformed box that is
+not positioned (the transformed box contains them, which native layout does
+not model yet); a transform on an inline box has no effect, as in CSS.
+Geometry, hits and pixels match Chrome at 1x, 1.25x and 2x for whole-pixel
+and percentage translations and for scales (the `transform-*` and `scale-*`
+cases of `native_positioned_probe`: a scaled button with radii, outline and
+text, list order with anisotropic factors, nested scales with a stacked
+child). Blink paints an element's outline before its stacking-context
+children at level zero, native after them (CSS2 Appendix E), a difference
+that is not specific to transforms. A translation that is not a whole CSS pixel
 moves the box exactly but its edges are snapped with it, while Chrome draws
 the snapped box at the fraction; its edges then differ by under one pixel.
 Native scrollable overflow does not include translated boxes.

@@ -153,6 +153,7 @@ fn label(
             scroll: None,
             programmatic_scroll: None,
             scrollbars: None,
+            transform: None,
         },
         underline::Style::resolve(tree, env, id, true, color)?,
         id,

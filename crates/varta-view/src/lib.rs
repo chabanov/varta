@@ -80,6 +80,7 @@ pub use text::fallback::{
     MAX_FALLBACK_FACE_BYTES, MAX_FALLBACK_FACES, MAX_FALLBACK_PASSES,
 };
 pub use text::{ENLARGED_ASCENT_FRACTION, TextFont, TextMeasureError, TextMeasurer, TextMetrics};
+pub use transform::{Affine, MAX_FUNCTIONS as MAX_TRANSFORM_FUNCTIONS};
 pub use wire::{BatchWriter, EventRecord};
 
 /// Whether a number field's value is valid under Chrome's number

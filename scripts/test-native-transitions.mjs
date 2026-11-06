@@ -5,7 +5,8 @@
 // currentTime), so no wall clock is involved. Each probe's expected pixel is
 // Chrome's computed background or border color over white, under the box's
 // computed opacity; the native pixel is the probe's premultiplied raster
-// pixel over white.
+// pixel over white. Every sample also compares the boxes with Chrome's
+// getBoundingClientRect, which a transform transition moves and scales.
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {withBrowserPage} from './browser-probe.mjs';
@@ -13,6 +14,8 @@ assert(process.argv[2], 'pass native_transition_probe JSON');
 const oracle=JSON.parse(await readFile(process.argv[2],'utf8'));
 // 8-bit rounding of an interpolated channel on either side.
 const MAX_CHANNEL_DELTA=2;
+// Timing curves in single (native) and double (Chrome) precision.
+const BOX_TOLERANCE=0.02;
 let checks=0;
 await withBrowserPage('about:blank',async call=>{
   async function evaluate(expression) {
@@ -50,7 +53,8 @@ await withBrowserPage('about:blank',async call=>{
           // The border sits on the box's background, both under the box's opacity.
           const base=probe.kind==='background'?[255,255,255]:over(rgba(getComputedStyle(box).backgroundColor),[255,255,255]);
           const ink=over(own,base);out[probe.node]=ink.map((v,i)=>v*opacity+255*(1-opacity));}
-        return {pixels:out,running:document.getAnimations().filter(a=>a.currentTime<a.effect.getComputedTiming().endTime).length>0};
+        const boxes={};for(const id of ${JSON.stringify(Object.keys(sample.boxes))}){const r=nodes.get(Number(id)).getBoundingClientRect();boxes[id]=[r.x,r.y,r.width,r.height];}
+        return {pixels:out,boxes,running:document.getAnimations().filter(a=>a.currentTime<a.effect.getComputedTiming().endTime).length>0};
       })()`);
       // A moving case compares positions only (see the probe).
       for(const probe of fixture.moves?[]:oracle.probes) {
@@ -62,6 +66,9 @@ await withBrowserPage('about:blank',async call=>{
             `${fixture.name} at ${sample.at}ms ${probe.kind}: native ${native}, chrome ${chrome.map(v=>v.toFixed(2))}`);
           checks++;
         }
+      }
+      for(const [id,box] of Object.entries(sample.boxes))for(let i=0;i<4;i++){
+        assert(Math.abs(box[i]-expected.boxes[id][i])<BOX_TOLERANCE,`${fixture.name} at ${sample.at}ms node ${id} box: native ${box}, chrome ${expected.boxes[id]}`);checks++;
       }
       assert.equal(sample.animating,expected.running,`${fixture.name} at ${sample.at}ms: native running ${sample.animating}, chrome ${expected.running}`);
       checks++;

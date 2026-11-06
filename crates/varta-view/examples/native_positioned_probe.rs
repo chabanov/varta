@@ -681,6 +681,101 @@ fn build(name: &str, b: &mut B) {
                 ],
             );
         }
+        // A pressed button scaled to 0.9 around its centre, its border,
+        // radii, background, outline and text mapped together.
+        "scale-button" => {
+            b.create_element(2, Tag::Button).insert(1, 2, 0);
+            for (property, value) in [
+                (P::Display, "block"),
+                (P::FontFamily, "\"Varta Inline Fixture\""),
+                (P::FontSize, "20px"),
+                (P::LineHeight, "20px"),
+                (P::Border, "2px solid #000000"),
+                (P::BorderRadius, "6px"),
+                (P::BackgroundColor, GRAY),
+                (P::Color, DARK),
+                (P::Padding, "4px 6px"),
+                (P::Outline, "2px solid #c000c0"),
+                (P::Transform, "scale(0.9)"),
+            ] {
+                b.set_style(2, property, value);
+            }
+            b.create_text(3, "AAA").insert(2, 3, 0);
+            div(
+                b,
+                4,
+                1,
+                &[
+                    (P::Width, "20px"),
+                    (P::Height, "20px"),
+                    (P::BackgroundColor, BLUE),
+                ],
+            );
+        }
+        // List order: a translation before the scale moves by the given
+        // pixels, one after it by scaled pixels; anisotropic factors.
+        "scale-order" => {
+            div(
+                b,
+                2,
+                1,
+                &[
+                    (P::Transform, "translate(10px, 4px) scale(1.5, 0.5)"),
+                    (P::Width, "30px"),
+                    (P::Height, "20px"),
+                    (P::BackgroundColor, RED),
+                ],
+            );
+            div(
+                b,
+                3,
+                1,
+                &[
+                    (P::Transform, "scale(0.5) translate(20px, 10px)"),
+                    (P::Width, "40px"),
+                    (P::Height, "40px"),
+                    (P::BackgroundColor, GREEN),
+                ],
+            );
+        }
+        // Nested scaling with a translated and a stacked child.
+        "scale-nested" => {
+            div(
+                b,
+                2,
+                1,
+                &[
+                    (P::Transform, "scale(0.75)"),
+                    (P::Width, "60px"),
+                    (P::Height, "60px"),
+                    (P::BackgroundColor, YELLOW),
+                ],
+            );
+            div(
+                b,
+                3,
+                2,
+                &[
+                    (P::Transform, "translateX(8px) scale(2)"),
+                    (P::Width, "16px"),
+                    (P::Height, "10px"),
+                    (P::BackgroundColor, BLUE),
+                ],
+            );
+            div(
+                b,
+                4,
+                2,
+                &[
+                    (P::Position, "relative"),
+                    (P::ZIndex, "1"),
+                    (P::Width, "20px"),
+                    (P::Height, "20px"),
+                    (P::BackgroundColor, CYAN),
+                    (P::Opacity, TRANSLUCENT),
+                ],
+            );
+        }
         "minimum-font-mono" => {
             b.create_element(2, Tag::P).insert(1, 2, 0);
             b.set_style(2, P::FontSize, "50%")
@@ -792,6 +887,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: "transform-scroll",
             scrolls: &[(2, 10.0)],
             reveal: Some(3),
+        },
+        Case {
+            name: "scale-button",
+            scrolls: &[],
+            reveal: None,
+        },
+        Case {
+            name: "scale-order",
+            scrolls: &[],
+            reveal: None,
+        },
+        Case {
+            name: "scale-nested",
+            scrolls: &[],
+            reveal: None,
         },
     ] {
         let mut b = B::new();

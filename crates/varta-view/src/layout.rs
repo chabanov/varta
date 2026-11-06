@@ -37,6 +37,10 @@ pub struct BoxGeometry {
     pub programmatic_scroll: Option<ScrollMetrics>,
     /// Classic scrollbars of a scroll container ([`crate::Scrollbars::Classic`]).
     pub scrollbars: Option<ScrollbarGeometry>,
+    /// The element's own transform when it scales, around its border box
+    /// as laid out: paint maps the element and its subtree through it. The
+    /// public geometry has already applied it (and every ancestor's).
+    pub transform: Option<crate::transform::Affine>,
 }
 
 /// The always-shown scrollbars of one scroll container: each bar's track
@@ -1310,21 +1314,10 @@ fn build_one(
                             .get(&id)
                             .is_some_and(|shape| shape.rich.is_some()) => {}
                 property if paint_only(property) => {}
-                // A translation moves the box after layout (`boxes_inner`);
-                // a scaling transform is refused (`crate::transform`).
+                // A transform applies after layout (`boxes_inner`).
                 CssProperty::Transform => {
-                    let zero = BoxRect {
-                        x: 0.0,
-                        y: 0.0,
-                        width: 0.0,
-                        height: 0.0,
-                    };
-                    if crate::transform::resolve(&value, units, zero)
-                        .map_err(|()| LayoutError::Unsupported(id))?
-                        .is_some_and(|affine| affine.translation().is_none())
-                    {
-                        return Err(LayoutError::Unsupported(id));
-                    }
+                    crate::transform::List::parse(&value, units)
+                        .ok_or(LayoutError::Unsupported(id))?;
                 }
                 CssProperty::Width => {
                     style.size.width = if value == "auto" {
@@ -1584,7 +1577,44 @@ pub(crate) fn boxes(
         .collect())
 }
 
+/// Geometry as the page sees it: every box of a scaled subtree mapped
+/// through its ancestors' and its own scaling transforms (the visual boxes
+/// `getBoundingClientRect` reports), and its clips back to the ancestor
+/// clips they stand for.
+pub(crate) fn visual(
+    tree: &Tree,
+    mut geometry: BTreeMap<u32, BoxGeometry>,
+) -> BTreeMap<u32, BoxGeometry> {
+    if geometry.values().all(|value| value.transform.is_none()) {
+        return geometry;
+    }
+    let mut pending = vec![(ROOT_NODE, crate::transform::Affine::IDENTITY)];
+    while let Some((id, parent)) = pending.pop() {
+        let Some(value) = geometry.get_mut(&id) else {
+            continue;
+        };
+        let affine = value.transform.map_or(parent, |own| parent.then(own));
+        value.rect = affine.rect(value.rect);
+        value.content = affine.rect(value.content);
+        value.clip = affine.rect(value.clip);
+        if let Some(node) = tree.nodes.get(&id) {
+            pending.extend(node.children.iter().map(|&child| (child, affine)));
+        }
+    }
+    geometry
+}
+
 pub(crate) fn geometry(
+    tree: &Tree,
+    env: &Environment,
+    width: f32,
+    height: f32,
+) -> Result<BTreeMap<u32, BoxGeometry>, LayoutError> {
+    Ok(visual(tree, geometry_local(tree, env, width, height)?))
+}
+
+/// [`geometry`] before scaling transforms: the boxes paint draws.
+pub(crate) fn geometry_local(
     tree: &Tree,
     env: &Environment,
     width: f32,
@@ -1628,7 +1658,10 @@ pub(crate) fn geometry_with_text(
     measurer: &mut TextMeasurer,
     font_size: f32,
 ) -> Result<BTreeMap<u32, BoxGeometry>, LayoutError> {
-    Ok(geometry_and_text(tree, env, width, height, measurer, font_size)?.0)
+    Ok(visual(
+        tree,
+        geometry_and_text(tree, env, width, height, measurer, font_size)?.0,
+    ))
 }
 
 pub(crate) fn geometry_and_text(
@@ -1868,6 +1901,8 @@ fn flow_node(tree: &Tree, id: u32) -> u32 {
 struct Transformed {
     ancestor: bool,
     static_containing_block: bool,
+    /// Inside (or on) a box whose transform scales.
+    scaled: bool,
 }
 
 fn boxes_inner(
@@ -2129,6 +2164,7 @@ fn boxes_inner(
         let mut scroll = None;
         let mut programmatic_scroll = None;
         let mut scrollbars = None;
+        let mut scaling = None;
         let mut content = BoxRect {
             x: 0.0,
             y: 0.0,
@@ -2183,7 +2219,9 @@ fn boxes_inner(
                 height: layout.size.height,
             };
             // A translation moves the border box, and with it everything the
-            // box contains, without moving any other box.
+            // box contains, without moving any other box. A transform that
+            // scales keeps the subtree where layout put it: paint, hits and
+            // the public geometry map it through `transform`.
             let transform = tree
                 .computed_read(id, &layout_env)
                 .get(&CssProperty::Transform)
@@ -2192,10 +2230,32 @@ fn boxes_inner(
                 .map_err(|()| LayoutError::Unsupported(id))?
                 .flatten();
             if let Some(affine) = transform {
-                let (x, y) = affine.translation().ok_or(LayoutError::Unsupported(id))?;
-                rect.x += x;
-                rect.y += y;
+                match affine.translation() {
+                    Some((x, y)) => {
+                        rect.x += x;
+                        rect.y += y;
+                    }
+                    None => {
+                        // Everything this box paints is drawn untransformed
+                        // and then mapped, so its ancestors' clip is taken
+                        // back through the transform: the same pixels clip.
+                        clip = affine.inverse().rect(clip);
+                        scaling = Some(affine);
+                        child_transformed.scaled = true;
+                    }
+                }
                 child_transformed.ancestor = true;
+            }
+            // A scaled subtree holds no scroll container or clip, text
+            // field or select (their geometry is not mapped yet).
+            if child_transformed.scaled
+                && (style.overflow.x != Overflow::Visible
+                    || style.overflow.y != Overflow::Visible
+                    || tree
+                        .element(id)
+                        .is_some_and(|element| element.text_field() || element.tag == Tag::Select))
+            {
+                return Err(LayoutError::Unsupported(id));
             }
             let positioned = matches!(
                 position,
@@ -2295,6 +2355,7 @@ fn boxes_inner(
                 scroll,
                 programmatic_scroll,
                 scrollbars,
+                transform: scaling,
             },
         );
         if tree
@@ -2323,6 +2384,7 @@ fn boxes_inner(
                         scroll: None,
                         programmatic_scroll: None,
                         scrollbars: None,
+                        transform: None,
                     },
                 );
                 options.extend(tree.nodes[&option].children.iter().copied());
