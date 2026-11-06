@@ -41,6 +41,7 @@ its own location; these examples start at the workspace root:
 
 ```sh
 python3 scripts/verify.py local varta-bigint
+python3 scripts/verify.py local varta-tailwind
 python3 scripts/verify.py local varta-runtime --filter array_inference
 python3 scripts/verify.py feature array_inference
 python3 scripts/verify.py full
@@ -59,6 +60,17 @@ build the companion, then select matching runtime unit tests, public engine API
 tests and CLI smoke tests. Each selected suite, Cargo or Node, must execute
 passing tests; a typo that matches zero tests fails. Where names differ, run explicit Cargo commands
 with the appropriate filters instead of widening a filter until it happens to pass.
+
+## Tailwind compiler
+
+`python3 scripts/verify.py local varta-tailwind` runs the port's unit tests
+and the committed oracle conformance (`tests/oracle_subset.rs`: per-candidate
+and whole-stylesheet fixtures). The full 39,152-candidate corpus lives outside
+the repository and runs manually:
+`cargo test -p varta-tailwind --release --test oracle_full -- --ignored --nocapture`
+(and `--test canonical_oracle` for the canonical form). Project integration
+is covered by `cargo test -p varta --test tailwind --locked`, and class
+extraction by `cargo test -p varta-compiler --lib --locked tsx_tests classes`.
 
 ## View integration cases
 

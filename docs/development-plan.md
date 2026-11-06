@@ -7395,6 +7395,37 @@ matches, environment media features are recorded host inputs, and `:has()`,
 descendant matching and infinite animations are charged against work and
 frame bounds.
 
+**T1 record (2026-11-06).** Implemented in the new tooling crate
+`varta-tailwind` and wired into `check`/`dev`/`build`
+([contract](architecture.md#build-time-tailwind-stylesheets-k8-t1)):
+
+- Ported from Tailwind CSS v4.3.5: candidate and variant parsing, every
+  built-in utility and variant (and the legacy utilities of its
+  compatibility layer), theme, Preflight, `@import` of the embedded pinned
+  package, `@theme`, `@apply`, `@utility`, `@custom-variant`, `@variant`,
+  `@source inline()`, `--theme()`/`--spacing()`/`--alpha()`/`theme(--var)`,
+  `@reference`, `important`/`prefix()`/`theme()` import parameters, the
+  property sort and `optimizeAst` without polyfills; data tables stay data.
+- Varta's canonical form on top: no comments, flattened nesting (CSS
+  Nesting 1), `@supports` resolved against the L0 grammar (Conditional 3),
+  Media Queries 4 ranges as `min-`/`max-` features with `not`.
+- Classes come from the module graph (`varta_compiler::
+  scan_classes_with_profile`): literals, template text, literal types and
+  TSX values; a class composed at run time is a located error. `className`
+  is an alias of `class`.
+- Rejected with typed errors: `@plugin`, `@config`, file `@source`/`source()`,
+  non-embedded `@import`, dot-path `theme()`.
+- Oracle conformance: committed subset of 2,986 candidates and eight whole
+  stylesheets, all matching after canonicalization; the full corpus
+  (39,152 candidates, manual run) matches 39,152/39,152.
+- Waiting for T2: the generated sheet is stored and checked, but the L0
+  grammar refuses a full build at Preflight's `display: none !important`
+  (S8) and static tokens such as `w-1/2` at the TSX attribute (S1). The CLI
+  tests pin these first violations; the end-to-end test is ignored until T2.
+- Not in T1: JavaScript plugins/config, `@source` file globs, project-relative
+  CSS `@import` (only the embedded package is importable), source maps,
+  IntelliSense suggestions and candidate canonicalization.
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

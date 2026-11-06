@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- K8 T1: Tailwind CSS at compile level. The new tooling crate
+  `varta-tailwind` ports the CSS-first compiler of Tailwind CSS v4.3.5 to
+  Rust (no Node or JavaScript): candidates, all built-in utilities and
+  variants, theme, Preflight, `@apply`, `@utility`, `@custom-variant`,
+  `@variant`, `@source inline()` and the theme functions, with output in a
+  canonical form (no comments or nesting, static `@supports`, `min-`/`max-`
+  media ranges). `"tailwind": {"entry": "src/app.css"}` makes `check`, `dev`
+  and `build` generate the stylesheet from the module graph's class tokens
+  and serve it as the entry's text resource, deterministically. TSX accepts
+  `className` as an alias of `class`; a class name composed at run time, and
+  `@plugin`/`@config`, are errors. It matches the official compiler on all
+  39,152 oracle candidates; applying full Tailwind output waits for the T2
+  stylesheet grammar.
 - V38 compiled JSON decoders scan string bodies and whitespace, and copy
   escaped strings, sixteen UTF-16 units per step with fixed-width WebAssembly
   SIMD (`simd128`): 0.75 fuel per scanned string byte instead of 11.5, and a

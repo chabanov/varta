@@ -168,6 +168,14 @@ The native scope still has concrete gaps:
   sessions require their own acceptance. Headless pixels and semantic metadata
   do not establish those outcomes.
 
+Styling can be generated: a project's CSS-first Tailwind entry
+(`"tailwind": {"entry": …}`) is compiled at build time in Rust (a port of
+Tailwind CSS v4.3.5, oracle-checked) from the class tokens of the module
+graph, and the canonical stylesheet replaces the entry's text resource;
+`className` is an alias of `class`. The L0 grammar still refuses most
+Tailwind output until track T2 widens it, so full Tailwind applications do
+not apply yet ([contract](architecture.md#build-time-tailwind-stylesheets-k8-t1)).
+
 Contracts: [native controls](architecture.md#native-control-defaults),
 [preserved whitespace](architecture.md#native-preserved-white-space),
 [dialogs](architecture.md#native-modal-dialogs-top-layer),
