@@ -17,6 +17,9 @@ pub struct Environment {
     /// The platform's scrollbar style, which a native host reads from its
     /// system setting.
     pub scrollbars: Scrollbars,
+    /// Device pixels per CSS pixel: what an `img` `srcset` selects a
+    /// candidate for (HTML §4.8.4.3.3). A renderer sets its own scale.
+    pub device_pixel_ratio: f64,
 }
 impl Default for Environment {
     fn default() -> Self {
@@ -25,6 +28,7 @@ impl Default for Environment {
             dark: false,
             root_font_size: varta_common::view::stylesheet::REM_PIXELS,
             scrollbars: Scrollbars::default(),
+            device_pixel_ratio: 1.0,
         }
     }
 }

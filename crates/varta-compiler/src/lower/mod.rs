@@ -189,6 +189,23 @@ fn keyword_type(ty: &ast::TsType, types: &mut ir::ValueTypes) -> Result<Type> {
     {
         return generators::annotation(reference, types);
     }
+    if types.profile.iteration_protocol()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && let ast::TsEntityName::Ident(id) = &reference.type_name
+        && generators::iterator_name(id.sym.as_ref())
+        && !named::declared(types, id.sym.as_ref())
+    {
+        return generators::iterator_annotation(reference, id.sym.as_ref(), types);
+    }
+    if types.profile.iteration_protocol()
+        && let ast::TsType::TsTypeRef(reference) = ty
+        && matches!(&reference.type_name, ast::TsEntityName::Ident(id) if id.sym == "Iterable")
+        && !named::declared(types, "Iterable")
+    {
+        return Err(unsupported(
+            "Iterable<T> annotation (only `implements Iterable<T>`; a value annotation would also have to accept arrays: annotate T[] or Generator<T>)",
+        ));
+    }
     if types.profile.async_generators()
         && let ast::TsType::TsTypeRef(reference) = ty
         && let ast::TsEntityName::Ident(id) = &reference.type_name
@@ -389,6 +406,7 @@ mod globals;
 mod guest_logical;
 mod http;
 mod interfaces;
+mod iteration;
 pub(crate) mod json;
 mod kv;
 mod labels;

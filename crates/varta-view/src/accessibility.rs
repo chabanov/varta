@@ -133,11 +133,23 @@ pub(crate) fn role(element: &Element) -> Option<&str> {
         .get(&A::Role)
         .map(String::as_str)
         .or_else(|| {
+            let labelled = element.attributes.contains_key(&A::AriaLabel)
+                || element.attributes.contains_key(&A::AriaLabelledby);
+            // HTML-AAM: an `img` whose `alt` is empty and that has no label
+            // is presentational, as Chrome exposes it.
+            if element.tag == Tag::Img
+                && !labelled
+                && element
+                    .attributes
+                    .get(&A::Alt)
+                    .is_some_and(|alt| alt.is_empty())
+            {
+                return None;
+            }
             varta_common::view::accessibility::implicit_role(
                 element.tag,
                 element.input_type(),
-                element.attributes.contains_key(&A::AriaLabel)
-                    || element.attributes.contains_key(&A::AriaLabelledby),
+                labelled,
             )
         })
 }

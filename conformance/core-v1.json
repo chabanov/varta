@@ -751,6 +751,15 @@
       ],
       "origin": "varta_contract",
       "reference": "docs/architecture.md#sdk-paths-sdk_paths"
+    },
+    {
+      "id": "iteration-protocol",
+      "title": "Iterable objects, array spread, Array.from and yield* delegation",
+      "core": [
+        "CORE-03"
+      ],
+      "origin": "ecmascript2025",
+      "reference": "https://tc39.es/ecma262/2025/multipage/control-abstraction-objects.html#sec-iteration"
     }
   ],
   "cases": [
@@ -2816,6 +2825,56 @@
         "status": "known_unsupported",
         "diagnostic": "type_error",
         "reason": "A union of record shapes does not convert to one record type: v38 views a single record or class instance as a narrower record, but rejects an A | B argument for { n: number } (argument type mismatch)."
+      }
+    },
+    {
+      "id": "iterable-class",
+      "feature": "iteration-protocol",
+      "path": "cases/iterable-class.ts",
+      "sha256": "b2d38399dd47e4adb13919f99619db1b5d6c0ab3af625dc6b1b275d98316316a",
+      "stdout": [
+        "varta log: 10",
+        "varta log: 12",
+        "varta log: 2",
+        "varta log: 1",
+        "varta log: true"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "array-spread",
+      "feature": "iteration-protocol",
+      "path": "cases/array-spread.ts",
+      "sha256": "f77522ad3baf163fe72ddc1805c1b629a1c736ae2fb14ac4520a813363c34abe",
+      "stdout": [
+        "varta log: 0,1,2,1,4,9,7,8",
+        "varta log: xy12",
+        "varta log: string number",
+        "varta log: 2 3",
+        "varta log: 1|4",
+        "varta log: undefined"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "yield-delegation",
+      "feature": "iteration-protocol",
+      "path": "cases/yield-delegation.ts",
+      "sha256": "89c6497694f6e29cdb0a170bcdcab7c15b900c81487b1426e5081af1fa564844",
+      "stdout": [
+        "varta log: 1,2,10,20",
+        "varta log: 1",
+        "varta log: 3",
+        "varta log: 10",
+        "varta log: early true",
+        "varta log: inner finally; inner done; inner caught boom; inner finally; inner done; inner finally"
+      ],
+      "baseline": {
+        "status": "supported"
       }
     }
   ]

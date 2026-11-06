@@ -58,6 +58,13 @@ pub struct VartaConfig {
     /// (checked-f64-utf16-v38); package files, never host grants.
     #[serde(default)]
     pub fonts: Vec<crate::artifact::FontSpec>,
+    /// PNG images packaged into the artifact's resource section
+    /// (checked-f64-utf16-v38): view `src` name -> no-follow
+    /// project-relative path. Every renderer (the native shell and the
+    /// browser bundle) draws the same images; package files, never host
+    /// grants.
+    #[serde(default)]
+    pub images: std::collections::BTreeMap<String, String>,
     /// The build-time Tailwind stylesheet (K8, checked-f64-utf16-v38):
     /// `"tailwind": {"entry": "src/app.css"}`.
     #[serde(default)]
@@ -162,6 +169,7 @@ impl VartaConfig {
             }
         }
         crate::artifact::validate_fonts(self)?;
+        crate::artifact::validate_images(self)?;
         varta_common::validate_grants(&grants)?;
         if let Some(fs) = &self.fs {
             if !self.language_profile.file_roots() {

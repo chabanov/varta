@@ -8,13 +8,15 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-06
 
-- **Latest successful full gate:** `target/verification/20261106-114846-cule_s6v/report.json` passes every
-  command with unchanged inputs: **3949 Rust tests, 0 failures, 21 ignored;
-  218 browser Node tests**; checked-v38 conformance matches its baseline.
-  It covers the audit fixes of 2026-11-06 (HTTP/2 streams and idle bound,
-  per-stream write idle, file reads off the request workers, linear emoji
-  fallback, Parley segment counting) on top of colour emoji and text under
-  `scale()`.
+- **Latest successful full gate:** `target/verification/20261106-121636-n8h8914c/report.json` passes every
+  command with unchanged inputs: **3975 Rust tests, 0 failures, 21 ignored;
+  218 browser Node tests**; checked-v38 conformance (135 passed, 5 known
+  unsupported of 140) matches its baseline. It covers merged `main`: the v38
+  iteration protocol and macOS overlay scrollbars on top of the audit fixes
+  of 2026-11-06 (HTTP/2 streams and idle bound, per-stream write idle, file
+  reads off the request workers, linear emoji fallback, Parley segment
+  counting), colour emoji and text under `scale()`. The audit-fix batch alone
+  passed `20261106-114846-cule_s6v` (3949 Rust tests).
 - **Superseded runs of the same batch:** `20261106-112155-1m2tiy5k` passed
   every test but saw its sources change during the run (another session
   edited the tree); `20261106-113508-baj7a9l2` failed one new HTTP/2 test
@@ -22,7 +24,9 @@ any previous check whose scope includes those inputs.
   run. Neither is current evidence.
 - **Source scope:** the gate fingerprint covers every tracked and untracked
   file except the independent product examples (`examples/`), which no
-  engine input depends on (`scripts/verify.py`, `INDEPENDENT_PREFIXES`).
+  engine input depends on, and `.claude/` (local session tooling and agent
+  worktrees, each verified on its own) (`scripts/verify.py`,
+  `INDEPENDENT_PREFIXES`).
 - **Separate external acceptance:** Chrome streaming after the network
   inactivity change has not been run. Real-window/system-input checks,
   current remote CI, remaining browser/platform matrices, sustained live
@@ -766,6 +770,29 @@ for scale in 1 1.25 2; do
 done
 ```
 
+Overlay scrollbars (macOS "Show scroll bars" automatic or when scrolling,
+headless Chrome's style on this Mac) are compared with Chrome running the
+probe's steps in real time: a wheel or programmatic scroll, the pointer on the
+bar or away, and waits. Captures are taken where both are steady (just after a
+scroll, after the pointer rested on the bar, after the fade-out); the oracle
+checks that the bar reserves no space, the hits on and beside the bar and the
+pixels around it. The state machine, paint and shell feed have their own
+tests:
+
+```sh
+cargo test -p varta-view --lib --locked overlay_scrollbar
+cargo test -p varta-view --test integration --locked scrollbars
+cargo test -p varta-view --test integration --locked accessibility_scroll
+cargo test -p varta-runtime --lib --locked a_native_scroll_shows_the_overlay_scrollbar
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_overlay_scrollbar_probe --locked -- "$scale" > "target/native-overlay-scrollbars-$scale.json"
+  node scripts/test-native-overlay-scrollbars.mjs "target/native-overlay-scrollbars-$scale.json"
+done
+```
+
+Scrolled cases of `native_positioned_probe` show the overlay thumb on both
+sides; rerun it at 1x and 2x after changing overlay paint.
+
 Platform fallback faces with `--system-fonts` (macOS), colour emoji
 included, are compared with Chrome on the same machine; the oracle carries no
 font bytes, so Chrome resolves the generic families and fallback faces itself.
@@ -781,6 +808,34 @@ cargo clippy -p varta-desktop --features fontconfig --all-targets --locked -- -D
 for scale in 1 1.5 2 3; do
   cargo run -p varta-desktop --example native_fallback_probe --locked -- "$scale" > "target/native-fallback-$scale.json"
   node scripts/test-native-inline.mjs "target/native-fallback-$scale.json"
+done
+```
+
+Native images (`img`) are compared with Chrome on the probe's own image
+files (every format, colour source, orientation and animation, generated at
+run time): geometry, hits, image roles and names, frame durations and loop
+counts (Chrome's `ImageDecoder`), and pixels of the viewport and of each
+image's box. Image sampling depends on the device scale (levels of detail,
+fractional edges), so all four scales run. Images in lines of text use the
+Parley atomic-inline patch: after changing it, regenerate
+`vendor/parley/VARTA-PATCH.diff` from the crates.io release and check that
+applying it to the release `src/` reproduces the vendored tree.
+
+```sh
+cargo test -p varta-common --lib --locked view::images
+cargo test -p varta-common --lib --locked view::attributes
+cargo test -p varta-artifact --lib --locked resources::
+cargo test -p varta-view --lib --locked image::
+cargo test -p varta-view --lib --locked layout::replaced
+cargo test -p varta-view --lib --locked inline::atoms
+cargo test -p varta-view --lib --locked text::edges
+cargo test -p varta-project --lib --locked image_tests
+cargo test -p varta-desktop --test shell --locked image
+cargo test -p varta-desktop --test binaries --locked corrupt_packaged_image
+cargo test -p varta --test smoke --locked packaged_images
+for scale in 1 1.5 2 3; do
+  cargo run -p varta-view --example native_image_probe --locked -- "$scale" > "target/native-images-$scale.json"
+  node scripts/test-native-images.mjs "target/native-images-$scale.json"
 done
 ```
 

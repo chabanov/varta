@@ -1,7 +1,7 @@
-//! The versioned resource section of a packaged artifact: the font faces an
-//! application ships, so every renderer loads the same faces.
+//! The versioned resource section of a packaged artifact: the font faces and
+//! images an application ships, so every renderer loads the same resources.
 //!
-//! Section version 1 (all integers little-endian):
+//! Section version 1 (fonts only; all integers little-endian):
 //!
 //! ```text
 //! magic "VARTARS\0" | version u32 | face count u32 | payload SHA-256 [32]
@@ -11,6 +11,19 @@
 //! face count x (family UTF-8 bytes | font bytes), in descriptor order
 //! ```
 //!
+//! Section version 2 adds packaged images (`images.rs`) and is written
+//! exactly when there are images, so a fonts-only section keeps its version 1
+//! bytes:
+//!
+//! ```text
+//! magic | version u32 (2) | face count u32 | image count u32 | payload SHA-256 [32]
+//! face count x face descriptor | image count x image descriptor |
+//! face count x (family | font) | image count x (name | PNG)
+//! ```
+//!
+//! A version 2 section has at least one image and at most
+//! [`MAX_FONT_FACES`] faces (possibly none).
+//!
 //! The payload digest binds the section to the portable Wasm it was packaged
 //! with, so a section can never travel to another payload. Every face is
 //! bounded, matches its recorded digest and declares exactly the family,
@@ -19,15 +32,20 @@
 //! their declaration order (the first family is the default) and a family's
 //! faces ascend by weight, then style. Decoding refuses any other order, so
 //! one declaration has exactly one encoding.
+mod images;
 mod sfnt;
+
+pub use images::ImageResource;
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 /// The section's magic bytes.
 pub const RESOURCE_MAGIC: &[u8; 8] = b"VARTARS\0";
-/// The only section version this build reads and writes.
+/// The section version of an artifact that ships fonts and no images.
 pub const RESOURCE_VERSION: u32 = 1;
+/// The section version of an artifact that ships images (and any fonts).
+pub const IMAGE_RESOURCE_VERSION: u32 = 2;
 /// The face count and byte ceilings: the native text shaper's collection
 /// limits, owned by `varta_common::view::fonts`.
 pub use varta_common::view::fonts::{MAX_FONT_BYTES, MAX_FONT_FACE_BYTES, MAX_FONT_FACES};
@@ -51,6 +69,10 @@ const VERSION_AT: usize = RESOURCE_MAGIC.len();
 const COUNT_AT: usize = VERSION_AT + size_of::<u32>();
 const PAYLOAD_DIGEST_AT: usize = COUNT_AT + size_of::<u32>();
 const HEADER_BYTES: usize = PAYLOAD_DIGEST_AT + DIGEST_BYTES;
+/// Version 2: the image count follows the face count.
+const IMAGE_COUNT_AT: usize = COUNT_AT + size_of::<u32>();
+const IMAGE_PAYLOAD_DIGEST_AT: usize = IMAGE_COUNT_AT + size_of::<u32>();
+const IMAGE_HEADER_BYTES: usize = IMAGE_PAYLOAD_DIGEST_AT + DIGEST_BYTES;
 const FAMILY_LENGTH_AT: usize = 0;
 const WEIGHT_AT: usize = FAMILY_LENGTH_AT + size_of::<u16>();
 const STYLE_AT: usize = WEIGHT_AT + size_of::<u16>();
@@ -61,9 +83,11 @@ const FONT_DIGEST_AT: usize = FONT_LENGTH_AT + size_of::<u32>();
 const DESCRIPTOR_BYTES: usize = FONT_DIGEST_AT + DIGEST_BYTES;
 const DESCRIPTOR_RESERVED: u16 = 0;
 /// The largest encoded section: header, every descriptor and family name at
-/// its maximum, and the font byte ceiling.
-pub const MAX_RESOURCE_SECTION_BYTES: usize =
-    HEADER_BYTES + MAX_FONT_FACES * (DESCRIPTOR_BYTES + MAX_FAMILY_BYTES) + MAX_FONT_BYTES;
+/// its maximum, the font byte ceiling and the images at theirs.
+pub const MAX_RESOURCE_SECTION_BYTES: usize = IMAGE_HEADER_BYTES
+    + MAX_FONT_FACES * (DESCRIPTOR_BYTES + MAX_FAMILY_BYTES)
+    + MAX_FONT_BYTES
+    + images::MAX_IMAGE_SECTION_BYTES;
 
 /// CSS-wide keywords and generic family names a package family cannot use.
 const RESERVED_FAMILIES: [&str; 9] = [
@@ -202,6 +226,7 @@ pub struct FontFace {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Resources {
     fonts: Vec<FontFace>,
+    images: Vec<ImageResource>,
 }
 
 /// Why one face's bytes were refused.
@@ -276,6 +301,29 @@ pub enum ResourceError {
     Digest(usize),
     #[error("the resource section was packaged with another payload")]
     Payload,
+    #[error("image count {0} is outside 1..={max} in a version 2 section", max = varta_common::view::images::MAX_IMAGES)]
+    ImageCount(usize),
+    #[error("image {0} is empty or exceeds the per-image byte limit")]
+    ImageSize(usize),
+    #[error("image bytes exceed the total image limit")]
+    ImageTotalSize,
+    #[error("invalid image name {0:?}: a bounded view resource path")]
+    ImageName(String),
+    #[error("duplicate image {0:?}")]
+    DuplicateImage(String),
+    #[error("images are not in canonical order")]
+    ImageOrder,
+    #[error("image {0} does not match its recorded SHA-256")]
+    ImageDigest(usize),
+    #[error("image {0} is not of its recorded format")]
+    ImageFormat(usize),
+    #[error("image {index} ({name:?}): {source}")]
+    Image {
+        index: usize,
+        name: String,
+        #[source]
+        source: varta_common::view::images::ImageRefusal,
+    },
     #[error("font face {index} ({family:?}): {source}")]
     Face {
         index: usize,
@@ -295,6 +343,16 @@ impl Resources {
     /// Validate declared faces and put them into canonical order: families
     /// in first-declaration order, each family's faces by weight, then style.
     pub fn new(fonts: Vec<FontFace>) -> Result<Self, ResourceError> {
+        Self::with_images(fonts, Vec::new())
+    }
+
+    /// [`Self::new`] with packaged images, put into canonical (name) order.
+    /// The faces may be none when there are images.
+    pub fn with_images(
+        fonts: Vec<FontFace>,
+        mut images: Vec<ImageResource>,
+    ) -> Result<Self, ResourceError> {
+        images.sort_by(|a, b| a.name.cmp(&b.name));
         let mut order: Vec<String> = Vec::new();
         for face in &fonts {
             let key = face.family.to_ascii_lowercase();
@@ -312,7 +370,7 @@ impl Resources {
         };
         let mut fonts = fonts;
         fonts.sort_by_key(rank);
-        let resources = Self { fonts };
+        let resources = Self { fonts, images };
         resources.validate()?;
         Ok(resources)
     }
@@ -323,17 +381,35 @@ impl Resources {
         &self.fonts
     }
 
+    /// The images, in canonical (name) order.
+    #[must_use]
+    pub fn images(&self) -> &[ImageResource] {
+        &self.images
+    }
+
     /// Whether the artifact ships no resources.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.fonts.is_empty()
+        self.fonts.is_empty() && self.images.is_empty()
     }
 
-    /// Every rule of a section: bounds, faces, families and canonical order.
+    /// The version this section is encoded with.
+    fn version(&self) -> u32 {
+        if self.images.is_empty() {
+            RESOURCE_VERSION
+        } else {
+            IMAGE_RESOURCE_VERSION
+        }
+    }
+
+    /// Every rule of a section: bounds, faces, families, images and
+    /// canonical order.
     fn validate(&self) -> Result<(), ResourceError> {
-        if !(1..=MAX_FONT_FACES).contains(&self.fonts.len()) {
+        let fewest = usize::from(self.images.is_empty());
+        if !(fewest..=MAX_FONT_FACES).contains(&self.fonts.len()) {
             return Err(ResourceError::FaceCount(self.fonts.len()));
         }
+        images::validate(&self.images)?;
         // Every byte bound holds before any face is parsed.
         let mut total = 0usize;
         for (index, face) in self.fonts.iter().enumerate() {
@@ -414,7 +490,7 @@ impl Resources {
     /// An empty set has no section.
     #[must_use]
     pub fn encode(&self, payload: &[u8]) -> Option<Vec<u8>> {
-        if self.fonts.is_empty() {
+        if self.is_empty() {
             return None;
         }
         let names = self.fonts.iter().map(|f| f.family.len()).sum::<usize>();
@@ -422,11 +498,15 @@ impl Resources {
         let mut bytes =
             Vec::with_capacity(HEADER_BYTES + self.fonts.len() * DESCRIPTOR_BYTES + names + fonts);
         bytes.extend_from_slice(RESOURCE_MAGIC);
-        bytes.extend_from_slice(&RESOURCE_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&self.version().to_le_bytes());
         // Validated: at most MAX_FONT_FACES faces of at most
-        // MAX_FONT_FACE_BYTES each, and family names of at most
-        // MAX_FAMILY_BYTES, so every length fits its field.
+        // MAX_FONT_FACE_BYTES each, family names of at most
+        // MAX_FAMILY_BYTES and at most MAX_IMAGES images, so every length
+        // fits its field.
         bytes.extend_from_slice(&(self.fonts.len() as u32).to_le_bytes());
+        if !self.images.is_empty() {
+            bytes.extend_from_slice(&(self.images.len() as u32).to_le_bytes());
+        }
         bytes.extend_from_slice(&Sha256::digest(payload));
         for face in &self.fonts {
             bytes.extend_from_slice(&(face.family.len() as u16).to_le_bytes());
@@ -437,15 +517,18 @@ impl Resources {
             bytes.extend_from_slice(&(face.data.len() as u32).to_le_bytes());
             bytes.extend_from_slice(&Sha256::digest(&face.data));
         }
+        images::encode_descriptors(&self.images, &mut bytes);
         for face in &self.fonts {
             bytes.extend_from_slice(face.family.as_bytes());
             bytes.extend_from_slice(&face.data);
         }
+        images::encode_data(&self.images, &mut bytes);
         Some(bytes)
     }
 
     /// Decode and validate a section that must belong to `payload`. Any
-    /// version but [`RESOURCE_VERSION`] is refused.
+    /// version but [`RESOURCE_VERSION`] and [`IMAGE_RESOURCE_VERSION`] is
+    /// refused, and so is a version 2 section without images.
     pub fn decode(bytes: &[u8], payload: &[u8]) -> Result<Self, ResourceError> {
         if bytes.len() > MAX_RESOURCE_SECTION_BYTES {
             return Err(ResourceError::Length);
@@ -455,23 +538,36 @@ impl Resources {
             return Err(ResourceError::Magic);
         }
         let version = le_u32(header, VERSION_AT).ok_or(ResourceError::Length)?;
-        if version != RESOURCE_VERSION {
-            return Err(ResourceError::Version(version));
-        }
         let count = le_u32(header, COUNT_AT).ok_or(ResourceError::Length)? as usize;
-        if !(1..=MAX_FONT_FACES).contains(&count) {
+        let (header_bytes, image_count) = match version {
+            RESOURCE_VERSION => (HEADER_BYTES, 0),
+            IMAGE_RESOURCE_VERSION => {
+                let images = le_u32(bytes, IMAGE_COUNT_AT).ok_or(ResourceError::Length)? as usize;
+                if !(1..=varta_common::view::images::MAX_IMAGES).contains(&images) {
+                    return Err(ResourceError::ImageCount(images));
+                }
+                (IMAGE_HEADER_BYTES, images)
+            }
+            _ => return Err(ResourceError::Version(version)),
+        };
+        let fewest = usize::from(image_count == 0);
+        if !(fewest..=MAX_FONT_FACES).contains(&count) {
             return Err(ResourceError::FaceCount(count));
         }
-        if header[PAYLOAD_DIGEST_AT..] != Sha256::digest(payload)[..] {
+        let digest = bytes
+            .get(header_bytes - DIGEST_BYTES..header_bytes)
+            .ok_or(ResourceError::Length)?;
+        if digest != &Sha256::digest(payload)[..] {
             return Err(ResourceError::Payload);
         }
-        let mut at = HEADER_BYTES + count * DESCRIPTOR_BYTES;
+        let image_descriptors = header_bytes + count * DESCRIPTOR_BYTES;
+        let mut at = image_descriptors + image_count * images::IMAGE_DESCRIPTOR_BYTES;
         if bytes.len() < at {
             return Err(ResourceError::Length);
         }
         let mut fonts = Vec::with_capacity(count);
         for index in 0..count {
-            let descriptor = &bytes[HEADER_BYTES + index * DESCRIPTOR_BYTES..][..DESCRIPTOR_BYTES];
+            let descriptor = &bytes[header_bytes + index * DESCRIPTOR_BYTES..][..DESCRIPTOR_BYTES];
             let field = |at| le_u16(descriptor, at).ok_or(ResourceError::Length);
             if field(DESCRIPTOR_RESERVED_AT)? != DESCRIPTOR_RESERVED {
                 return Err(ResourceError::Reserved);
@@ -506,10 +602,11 @@ impl Resources {
             });
             at = font_end;
         }
+        let images = images::decode(bytes, image_descriptors, image_count, &mut at)?;
         if at != bytes.len() {
             return Err(ResourceError::Length);
         }
-        let resources = Self { fonts };
+        let resources = Self { fonts, images };
         resources.validate()?;
         Ok(resources)
     }
@@ -666,10 +763,10 @@ mod tests {
             Err(ResourceError::Payload)
         );
         let mut version = bytes.clone();
-        version[VERSION_AT..COUNT_AT].copy_from_slice(&(RESOURCE_VERSION + 1).to_le_bytes());
+        version[VERSION_AT..COUNT_AT].copy_from_slice(&(IMAGE_RESOURCE_VERSION + 1).to_le_bytes());
         assert_eq!(
             Resources::decode(&version, PAYLOAD),
-            Err(ResourceError::Version(RESOURCE_VERSION + 1))
+            Err(ResourceError::Version(IMAGE_RESOURCE_VERSION + 1))
         );
         let mut magic = bytes.clone();
         magic[0] ^= 1;
@@ -766,7 +863,12 @@ mod tests {
         let canonical = Resources::new(declared()).unwrap();
         let mut fonts = canonical.fonts.clone();
         fonts.swap(0, 2);
-        let swapped = Resources { fonts }.encode(PAYLOAD).unwrap();
+        let swapped = Resources {
+            fonts,
+            images: Vec::new(),
+        }
+        .encode(PAYLOAD)
+        .unwrap();
         assert_eq!(
             Resources::decode(&swapped, PAYLOAD),
             Err(ResourceError::Order)
@@ -774,7 +876,12 @@ mod tests {
         // A family whose faces are not adjacent.
         let mut fonts = canonical.fonts.clone();
         fonts.swap(2, 3);
-        let split = Resources { fonts }.encode(PAYLOAD).unwrap();
+        let split = Resources {
+            fonts,
+            images: Vec::new(),
+        }
+        .encode(PAYLOAD)
+        .unwrap();
         assert_eq!(
             Resources::decode(&split, PAYLOAD),
             Err(ResourceError::Order)

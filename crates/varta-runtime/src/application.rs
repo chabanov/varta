@@ -68,6 +68,7 @@ pub struct ViewLayout {
     pub(crate) dark: Option<bool>,
     pub(crate) root_font_size: Option<f64>,
     pub(crate) scrollbars: varta_view::Scrollbars,
+    pub(crate) images: Option<std::sync::Arc<varta_view::ImageSet>>,
 }
 
 impl ViewLayout {
@@ -86,7 +87,17 @@ impl ViewLayout {
             dark: None,
             root_font_size: None,
             scrollbars: varta_view::Scrollbars::default(),
+            images: None,
         })
+    }
+
+    /// Give the view the application's decoded packaged images before the
+    /// first guest turn: what its `img` elements may name and draw
+    /// ([`varta_view::View::set_images`]).
+    #[must_use]
+    pub fn with_images(mut self, images: std::sync::Arc<varta_view::ImageSet>) -> Self {
+        self.images = Some(images);
+        self
     }
 
     /// Set the initial system color scheme before the first guest turn.
@@ -932,16 +943,30 @@ impl Application {
             .set_pointer_state(hovered, active)
     }
 
+    /// Tell the view which scroll container's overlay scrollbar frame the
+    /// pointer is over (`FrameMetadata::scrollbar_at` of the presented
+    /// frame), at the instance's clock, without a guest event. Returns
+    /// whether a bar changed.
+    pub fn view_set_scrollbar_hover(&mut self, container: Option<u32>) -> bool {
+        crate::view::sync_clock(self.execution.store.data_mut());
+        self.execution
+            .store
+            .data_mut()
+            .view
+            .set_scrollbar_hover(container)
+    }
+
     /// Move the view's animation clock to now (the wall clock since the
     /// instance started; a scripted session's virtual loop time) before a
-    /// frame. Returns whether a running CSS transition's value may have
-    /// changed, so the frame differs.
+    /// frame. Returns whether a running CSS transition's value or an overlay
+    /// scrollbar may have changed, so the frame differs.
     pub fn view_advance_animations(&mut self) -> bool {
         crate::view::sync_clock(self.execution.store.data_mut())
     }
-    /// Whether a CSS transition is running: a host presents frames at its
-    /// display rate, calling [`Self::view_advance_animations`] before each,
-    /// until none is.
+    /// Whether a CSS transition runs or an overlay scrollbar waits to fade
+    /// or animates: a host keeps calling [`Self::view_advance_animations`]
+    /// at its display rate and presents a frame whenever it reports a
+    /// change, until none runs.
     #[must_use]
     pub fn view_animating(&self) -> bool {
         self.execution.store.data().view.animating()

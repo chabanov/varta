@@ -18,7 +18,7 @@ dev-dependency, directly or transitively
 ## Native shell (`varta-shell`)
 
 ```sh
-varta build --config app/varta.config.json          # writes app.wasm + app.manifest.json (+ app.resources with fonts)
+varta build --config app/varta.config.json          # writes app.wasm + app.manifest.json (+ app.resources with fonts or images)
 cargo run -p varta-desktop --bin varta-shell -- app/app.wasm \
   [--policy ceiling.json] [--data-dir /abs/storage] [--font font.ttf 'Family'] [--renderer cpu|gpu|auto]
 cargo run -p varta-desktop --bin varta-shell -- app/app.wasm --revoke net.request [--data-dir /abs/storage]
@@ -63,6 +63,13 @@ cargo run -p varta-desktop --bin varta-shell -- app/app.wasm --revoke net.reques
   synthesis stays refused at paint. `--font PATH FAMILY` (nonempty, at most
   `shell::MAX_FONT_BYTES`) is one explicit face for an artifact without
   fonts and is refused for an artifact that ships fonts.
+- **Images.** The images of the artifact's resource section (the
+  configuration's `images`), decoded once by `varta_view::ImageSet` after the
+  fonts and before storage is created; a corrupt image fails there. The view
+  gets the set (empty without images), so an `img` naming another image is
+  refused as in the browser; see the
+  [native image contract](../../docs/architecture.md#native-images-img).
+  `tests/fixtures/image-probe/` packages one image for the shell-core tests.
 - **Guest effects.** A granted `copy_text` in a trusted gesture turn writes
   the system clipboard, and a trusted activation of a granted external link
   hands the URL to the system browser (`/usr/bin/open -u` on macOS,

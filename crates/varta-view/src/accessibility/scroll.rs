@@ -197,10 +197,9 @@ impl View {
         top: f64,
         metrics: ScrollMetrics,
     ) -> Result<(), InputError> {
-        let Some(element) = self.tree.element_mut(id) else {
+        let Some(element) = self.tree.scroll_to(id, top) else {
             return Err(InputError::ScrollGeometry);
         };
-        element.scroll_top = top;
         if element.tag == Tag::Textarea {
             element.editor.manual_text_scroll = true;
         }

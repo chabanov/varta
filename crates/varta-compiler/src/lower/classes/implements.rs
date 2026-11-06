@@ -22,11 +22,23 @@ pub(super) fn check(
                 clause.span,
             ));
         };
-        let reference = ast::TsType::TsTypeRef(ast::TsTypeRef {
+        let reference = ast::TsTypeRef {
             span: clause.span,
             type_name: ast::TsEntityName::Ident(name.clone()),
             type_params: clause.type_args.clone(),
-        });
+        };
+        // `implements Iterable<T>` (v38 `iteration_protocol`): the class
+        // declares `[Symbol.iterator]()` returning a synchronous generator
+        // with exactly the clause's type arguments' yield type (and its
+        // `TReturn` and `TNext` when they are given).
+        if types.profile.iteration_protocol()
+            && name.sym == ITERABLE_INTERFACE
+            && !named::declared(types, ITERABLE_INTERFACE)
+        {
+            iterable(id, &reference, source, types)?;
+            continue;
+        }
+        let reference = ast::TsType::TsTypeRef(reference);
         let ty = keyword_type(&reference, types).map_err(|e| source.locate(e, clause.span))?;
         let fields = match ty {
             Type::Record(record) => types.records[record as usize].fields.clone(),
@@ -87,6 +99,49 @@ pub(super) fn check(
         }
     }
     Ok(())
+}
+
+/// The iteration interface an `implements` clause may name (v38).
+const ITERABLE_INTERFACE: &str = "Iterable";
+
+/// `implements Iterable<T, TReturn?, TNext?>` of class `id` (v38).
+fn iterable(
+    id: u32,
+    reference: &ast::TsTypeRef,
+    source: &Source,
+    types: &mut ir::ValueTypes,
+) -> Result<()> {
+    let (yielded, returned, next) = generators::arguments(reference, ITERABLE_INTERFACE, types)
+        .map_err(|e| source.locate(e, reference.span))?;
+    let given = reference
+        .type_params
+        .as_ref()
+        .map_or(0, |params| params.params.len());
+    let class = types.classes.get(id);
+    let method = class
+        .methods
+        .get(ITERATOR_METHOD)
+        .filter(|method| !method.getter && method.signature.params.is_empty());
+    let generator = method.and_then(|method| match method.signature.result {
+        Type::Generator(generator) => Some(types.generators[generator as usize]),
+        _ => None,
+    });
+    let conforms = generator.is_some_and(|generator| {
+        generator.asynchronous.is_none()
+            && generator.yielded == yielded
+            && (given < 2 || generator.returned == returned)
+            && (given < 3 || generator.next == next)
+    });
+    if conforms {
+        return Ok(());
+    }
+    Err(source.locate(
+        type_error(format!(
+            "class {} incorrectly implements Iterable: it needs a [Symbol.iterator]() method without parameters returning a generator that yields {yielded}",
+            class.name
+        )),
+        reference.span,
+    ))
 }
 
 /// Why class `id` does not provide the interface member `field`, if it does not.

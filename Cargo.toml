@@ -39,6 +39,19 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "raw_value", "unbounded_depth"] }
 # CPU fallback for native view rendering, with no PNG or SIMD dependencies.
 tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", "simd"] }
+# MIT OR Apache-2.0: the decoders of the native view renderer's packaged
+# images (`varta_view::ImageSet`), the formats the browser draws for `img`.
+# `png` is the image-rs PNG/APNG decoder in safe Rust (it forbids unsafe
+# code; fdeflate and miniz_oxide are pure Rust). `image` supplies the
+# image-rs JPEG (zune-jpeg), GIF, WebP (image-webp), BMP and ICO decoders and
+# their animation compositing, with only those features: safe Rust, no C
+# codecs (its AVIF decoder needs dav1d, so AVIF stays refused). `moxcms`
+# converts ICC, cICP and gAMA/cHRM colour to sRGB as CSS Color 4 asks, in
+# safe Rust without default features. Every decoder runs with the view
+# image limits.
+png = "=0.18.1"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+moxcms = { version = "=0.8.1", default-features = false }
 # Font outlines for the CPU text renderer; already used transitively by Parley.
 skrifa = "=0.44.0"
 # Unicode grapheme boundaries for safe native text editing.

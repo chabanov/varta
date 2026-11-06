@@ -32,18 +32,178 @@ their current limitations and the evidence behind this checkpoint.
 | Profiles | Default `checked-i32-utf8-v1`; newest implemented opt-in `checked-f64-utf16-v38`. V32–v38 are integrated in `main` and remain development profiles; their earlier branch names below identify historical measurements, not outstanding merges. Registry-derived versions: [version matrix](architecture.md#version-matrix) |
 | Language and scheduling | Classes/generics, module exports, collections, checked JSON, suspension frames, generators, Promise jobs, async/await, async generators, timers and async HTTP(S) client requests are implemented within explicit admission rules |
 | Application runtime | V38 long-lived instances, host event turns, per-turn budgets, permission broker, virtual file roots, KV storage, incremental and idle collection, L0 headless view output and TSX are implemented. Wave 1 adds the v38 long-lived network contract (inactivity window, per-read bound and delivery cap, host-owned `User-Agent`), bare package specifiers, the official browser host's clock/entropy/environment/exit effects with idle collection, and the native `varta-shell` for packaged artifacts with manifest grants and a host ceiling ([wave 1 integration](#wave-1-integration--2026-11-04)). Native display targets and full browser acceptance remain open; generated browser view sessions now work within their checked host surface |
-| Last recorded successful full gate | Audit fixes on `main` (HTTP/2 stream lifecycle and per-stream write idle, file reads off the request workers, linear emoji fallback), macOS arm64, 2026-11-06, the commit that records it: **3949 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-114846-cule_s6v/report.json`. Linux CI and other platforms not run |
+| Last recorded successful full gate | Merged `main` with the v38 iteration protocol and macOS overlay scrollbars on top of the audit fixes, macOS arm64, 2026-11-06, the commit that records it: **3975 Rust tests passed, 0 failures, 21 ignored; 218 browser Node tests passed**; conformance baseline matched; sources unchanged during the run. Report: `target/verification/20261106-121636-n8h8914c/report.json`. Linux CI and other platforms not run |
 | Current GC / verification state | Incremental clearing bounds bitmap initialization before the root snapshot; the new large-heap maintenance test and the codegen-v2 fuel comparison pass in the consolidated gate. Current code/resource inputs match those checked during the run. The previous failed attempt is retained as history. The updated Chrome streaming acceptance has not been run. |
-| Compatibility inventory | ECMAScript 2025, checked profile v38: **132 passed, 5 known unsupported out of 137**, baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
+| Compatibility inventory | ECMAScript 2025, checked profile v38: **135 passed, 5 known unsupported out of 140** after the iteration-protocol cases (2026-11-06), baseline matched ([conformance README](../conformance/README.md)). This is a partial inventory, not a core-completion percentage |
 | HTTP server | V38 HTTP v2 streams Web `Response` text/bytes/`ReadableStream` bodies; the modern-server stages H1–H4 are merged ([record](#k7-merged-values-approved-2026-11-06)): Web `Request` ingress with streamed request bodies, async Wasmtime with pooled `InstancePre` and task/memory admission, native TLS 1.3 with ALPN `h2`/`http/1.1` and HTTP/2 with stream/header/reset bounds, fuzz/flood/slow-client tests and local benchmarks (~44k req/s, p99 ~1.4 ms on macOS arm64). An HTTP/2 connection stays open while a response body still streams ([fix](#review-fixes--2026-11-06)). The separate v38 network-read inactivity window is implemented (`6dfb06e`); its updated Chrome streaming acceptance has not been run. Open: a per-stream HTTP/2 write-idle bound, h2c, HTTP/3, certificate reload, Linux and sustained-load benchmarks. |
 | Pilot | Pinned uarp-sdk **0.13.2**: recorded checks cover 65/65 source files and exported generics; real native `UarpClient` loopback acceptance covers 43 cases in 6 groups. The console has 249 tests in 36 groups and 10 headless view checks. Its six SDK groups replay in Chrome with native-equal results/accounting, and browser settings persist through OPFS and reload. These are separate pilot-specific checkpoints; the latest full gate does not rerun all live-browser/SDK acceptance. SDK-own-test execution, sustained live-service sessions and full cross-target parity remain open. |
 | JS host | Official metered browser application/view bundles include scheduler/network/effects, packaged resources, permission prompts, OPFS KV storage, network replay and dev/reload. Native-recorded SDK replay and settings persistence have local Chrome evidence. The browser oracle driver and CI definitions are integrated; their existence does not prove current remote CI or a complete Chromium/Firefox/WebKit matrix. The older unmetered prototype remains a separate compatibility surface. |
-| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). Colour glyphs on Linux, the overlay scrollbar shown while scrolling and every Linux comparison with Chrome remain open. |
+| Native renderer | Integrated on `main`: retained CPU rendering/damage, inline edges/borders/decorations, positioned painting/z-index, preserved/mixed white space, user-agent control defaults and number stepping, modal dialogs, native consent, accessibility geometry and macOS adapters. `varta-shell --system-fonts` adds macOS font mappings, optical size/bold synthesis, color/opacity transitions and translated/animated boxes. The console first frame and every button's hover/pressed states render headlessly through the shell path with system fonts. Real-window console sessions, complete IME/accessibility/clipboard/link gestures remain open; see [native controls](#native-control-defaults--wave-3-package-w3-native-controls-scoped-2026-11-05) and [transitions](architecture.md#native-css-transitions). Native backlog batch (2026-11-06, merged): platform fallback faces with `--system-fonts` (⚙ draws in Menlo as in Chrome; CoreText on macOS, fontconfig on Linux, which also maps the generic families there; [record](#native-fallback-faces-and-linux-system-fonts--native-backlog-batch-2026-11-06)), `transform: scale()` with transitions ([record](#native-css-scale--native-backlog-batch-2026-11-06)) and classic macOS scrollbars ([record](#native-classic-scrollbars--native-backlog-batch-2026-11-06)); colour emoji on macOS as Chrome draws them ([record](#native-colour-emoji--2026-11-06)). Text and colour emoji under a uniform `scale()` now draw through CoreText at the scaled size ([record](#native-text-under-scale--2026-11-06)). macOS overlay scrollbars are shown while scrolling, on the animation clock ([record](#native-overlay-scrollbars--2026-11-06)). Colour glyphs on Linux, scrollbar dragging and track clicks, and every Linux comparison with Chrome remain open. Packaged images (`img`) are laid out and drawn natively to the HTML, CSS and image-format standards, checked against Chrome ([record](#native-images--2026-11-06)). |
 | Native white space | `w2-native-whitespace` is merged (`316fc62`): preserved `pre-wrap`/`pre` tab stops, hanging spaces and mixed white-space modes in one flow have scoped Chrome evidence at three DPIs. Bidi on that path, ellipsis combined with it and a configurable `tab-size` remain open ([record](#native-preserved-white-space--wave-2-package-w2-native-whitespace-scoped-2026-11-04)). |
 | Showcase and browser comparison | Typed `main.tsx`, reactive bindings, external `styles.css` and explicit `.ts` imports; local macOS Debug/Release bundles plus a newer Dev bundle. Twelve trusted-input assertions pass for the CSS/TSX dev artifact. Chrome interaction and native result comparison pass for the sampled scenarios; standalone root sizing/scrolling and admitted control box sizing are normalized. Native appearance and accessibility gaps remain. The Showcase was removed on 2026-11-06 (owner decision); its measurements are kept in [`docs/evidence/`](evidence/). |
 | GPU and games | Optional wgpu/Vello UI backend and shared bounded scenes are implemented; `w3-gpu-color-fields` is merged (`ff45daa`), so distinct border colors can stay on GPU. Recorded Metal Debug/Release probes cover that implementation; direct GPU opacity groups, real-window/performance acceptance and other devices remain open. P13b guest graphics and P13c typed 3D ports remain planned; no guest GPU API or unmodified Three.js support is claimed. [Scope](#gpu-and-game-graphics-future-direction) |
 | Review batch | Four reproduced defects fixed in `abea3ac`: compiler stack exhaustion, JS table limits, explicit thenable rejection and fractional timer ordering |
 | Completion | [CORE ledger](#core-completion-ledger) records implemented scope and remaining acceptance separately. Whole work streams are not closed by passing regression tests |
+
+### Native images — 2026-11-06
+
+Applications that show images now draw them natively, not only in the
+browser bundle, to the published standards with Chrome as the oracle
+([contract and conformance table](architecture.md#native-images-img)). The
+first increment admitted static sRGB PNG only; the owner directive of the
+same day asked for the standards instead of a PNG subset, which this record
+covers. A configuration declares its image files in a top-level `images`
+map (view name to project path); packaging decodes them with the native
+decoder and puts them into the artifact's resource section, version 2 when
+there are images (a fonts-only section keeps its version 1 bytes;
+[format](architecture.md#packaged-images-section-version-2)), and the browser
+bundle carries the same files under the same names with their media types,
+so both renderers admit the same images. `images` and `browser.resources`
+cannot be declared together.
+
+- **Formats and colour.** PNG/APNG, JPEG, GIF, WebP, BMP and ICO, told apart
+  by signature (MIME Sniffing §6.1), decoded by the image-rs decoders with
+  limits; converted to sRGB with `moxcms` from `cICP`, `iCCP`, `sRGB`,
+  `cHRM`/`gAMA` (PNG 3rd edition priority) or an embedded ICC profile; EXIF
+  orientation with `image-orientation`. JPEG converts after sampling, as
+  Skia draws it (converting at decode differed by about 5/255 when
+  upscaled). AVIF (no safe-Rust decoder), SVG (no SVG renderer) and HDR or
+  narrow-range `cICP` are refused with their own reasons.
+- **HTML.** `srcset`/`sizes` with Chromium's density selection and the
+  density-corrected natural size; `width`/`height` attributes as
+  presentational hints and the `aspect-ratio` hint; an `img` without an
+  image represents nothing, and one that would show alternative text or a
+  sized broken-image box is refused (user agent rendering); `decoding` and
+  `loading` change nothing for local images. Animations play on the view's
+  animation clock with Blink's 100 ms short-frame rule and each format's
+  loop count.
+- **CSS.** `object-fit`, `object-position`, `image-rendering` (`pixelated`
+  and `crisp-edges` as CSS Images 3 §5.2 defines them), `aspect-ratio`,
+  replaced sizing (CSS 2.1 §10.3.2, §10.4, §10.6.2).
+- **Images in lines of text.** An inline image beside text is an atomic
+  inline of the inline formatting context: a Parley `InFlow` box with a
+  soft wrap opportunity on both sides (CSS Text 3 §5.1) that keeps the
+  decoration edges next to it (a recorded Parley patch; `VARTA-PATCH.diff`
+  regenerated and checked to reproduce the vendored tree from the release),
+  and every `vertical-align` value with Chrome's shifts in layout units,
+  `top`/`bottom` growing the line box as aligned subtrees. Images alone on a
+  line keep their line box. Percentage sizes of images in text, positioned
+  or transformed images there, images under an inline box with opacity and
+  images in ellipsis or native white-space flows are refused.
+- **Paint.** A software-only scene primitive (`Primitive::Image`) samples as
+  Skia does: bilinear, and below half size linear between two `SkMipmap`
+  levels at level of detail `log2(1/s) - 0.5`; the destination snaps in
+  Blink's 1/64 layout units to whole paint pixels before DPI, a rounded
+  image takes its edge coverage from its content-box clip alone, and a clip
+  that cuts an image masks only where it cuts (a viewport clip had doubled
+  the image's own edge coverage). Frames with images take the explicit
+  software path (`PreparedFrame::Raster`) on the GPU backend.
+- **Accessibility.** `alt` names the image; an empty `alt` without a label
+  is presentational, as Chrome exposes it.
+- **Dependencies.** `png` 0.18.1, `image` 0.25.10 (PNG, JPEG, GIF, WebP,
+  BMP, ICO features only) and `moxcms` 0.8.1 (no default features), all safe
+  Rust with exact pins; `flate2` is held at 1.1.10 in the lockfile.
+
+Verification on macOS 27.0.1 with Chrome 156.0.8078.80: `native_image_probe`
+with `scripts/test-native-images.mjs`, 22 cases and 22482 checks per scale
+(geometry, hits, roles and names, frame durations and loop counts with
+Chrome's `ImageDecoder`, pixels of the viewport and of every image's box),
+pass at 1x, 1.5x, 2x and 3x; viewport RGB means at most 0.821, 0.904, 0.847
+and 0.742/255 and per-image means at most 1.095, 1.404, 1.472 and 1.000/255.
+The oracle shows a later animation frame by giving the same `img` a lossless
+PNG of the frame Chrome's decoder produced (a canvas in its place had been
+composited differently at 1.5x). Unit tests cover sniffing, the section
+encoding, selection, sizes, colour sources and refusals, orientation
+mapping, `pixelated` and nearest sampling, animation timing and loop counts,
+object sizes, the constraint table, atomic-inline breaking with decoration
+edges, every `vertical-align` and the refusals; `varta-desktop` tests decode,
+lay out, draw, hit and name a packaged image through the shell core and
+refuse a corrupt image in `varta-shell` before storage; a CLI smoke test
+packages an image into both distributions.
+
+**Owner decision (2026-11-06).** The image limits in
+`varta_common::view::images` are the extended set: 256 images, 32 MiB per
+file and 128 MiB in all, 16384 px per dimension (a common GPU texture
+maximum), 4096 frames per image, 256 MiB of decoded RGBA in all (every frame
+counted) and 512 MiB of retained pixels with their levels; a host may only
+lower them. The older `browser.resources` inventory uses the same constants.
+New dependencies, all safe Rust with exact pins, are accepted: `png` 0.18.1,
+`image` 0.25.10 (PNG, JPEG, GIF, WebP, BMP and ICO only) and `moxcms` 0.8.1.
+Known before this batch and unrelated to it: `native_inline_probe`'s
+`paint-overlap-hits` case fails its Chrome pixel bound (RGB mean 5.39) on
+`81e26b9` and later; open.
+
+**Open.** AVIF and SVG images; alternative-text and broken-image rendering;
+HDR images; Chrome draws a downscaled `pixelated` image by nearest neighbour
+and drops `crisp-edges`, so the oracle compares those cases with Chrome's
+values; Chromium's cached-candidate `srcset` heuristic; `varta dev` shows no
+packaged images; images on Linux are not compared with Chrome; the GPU
+backend presents image frames through the software path.
+
+### Language gap ranking and the v38 iteration protocol — 2026-11-06
+
+Ranking of the remaining language gaps of the [functional
+overview](functional-overview.md) for typed npm packages, measured against
+the pilot and the inventory:
+
+- **Pilot.** The pinned uarp-sdk 0.13.2 sources (65 files) already check; of
+  the candidates they use only `[Symbol.asyncIterator]` (`core/sse.ts`,
+  admitted since v37), `Date.now`/`Date.parse` (UTC subset) and four
+  linear-time regular expressions; no top-level `await`, `Symbol()`, `then`
+  members, local-time `Date` methods or wrapper objects. The three pinned SDK
+  own tests (`pins/uarp-sdk-tests.json`, fetched at the pinned commit with
+  their recorded sha256, scratch only) use none of these either: they stop at
+  `node:` modules and `import.meta.url` (M7), with one `Date.parse` and
+  regex literals in assertions.
+- **Inventory.** Of the five known gaps one is a candidate (`symbol-type`,
+  `Symbol()` values); the others are local classes, property descriptors,
+  generator return inference and union-to-record arguments.
+- **Typed npm code.** The iteration protocol is the most used: custom
+  collections, trees, token streams and paginators implement
+  `[Symbol.iterator]()` with `yield`/`yield*`, and array spreads
+  (`[...a, ...b]`, `[...set]`, `[...iterable]`) are among the most common
+  expressions of TypeScript code, yet v38 refused every array literal spread
+  except `[...collection]`, synchronous generator methods and `yield*`.
+  `Symbol()` values follow (brands, private keys), but they need a value tag
+  and symbol-keyed properties. Library code avoids top-level `await` (it
+  blocks every importer); structural thenables appear mostly as
+  `PromiseLike<T>` parameters; local-time `Date`, wider RegExp and wrapper
+  objects (`new String`, `Object(x)`) are rarer in libraries and each needs a
+  policy decision first.
+
+Implemented in order: the [iteration protocol](architecture.md#iteration-protocol-iteration_protocol)
+(selector `iteration_protocol()`, no host ABI, value layout or scheduler
+change, so the browser host runs it unchanged). Behaviour is pinned to Node
+24.20.0 (`varta-runtime` `iteration_protocol_tests`, collector stress builds
+included), the CLI smoke runs it through `varta dev`, both artifacts and both
+binaries, and the inventory gains the `iteration-protocol` row with three
+passing cases (135 passed, 5 known unsupported of 140). Existing fuel goldens
+are unchanged. Full gate on macOS arm64, 2026-11-06, before the commit that
+records it: **3951 Rust tests passed, 0 failures, 21 ignored; 218 browser Node
+tests passed**; conformance baseline matched; sources unchanged during the
+run (`target/verification/20261106-103548-wia1snhj/report.json`). Linux CI and
+other platforms not run.
+
+Not done, with the reason:
+
+- **`Symbol()` values and `description`** (inventory `symbol-type`): a symbol
+  needs a value tag in value layout 18 (`typeof`, unions, `unknown`, logging,
+  equality, JSON skipping) and readers in every host; symbol-keyed
+  properties, their main use, need dynamic property keys. A value-layout
+  change needs an owner decision.
+- **Top-level `await`**: module initializers run synchronously before
+  `main`; awaiting in them makes module evaluation asynchronous (async
+  initializer frames, initialization order across the graph, scheduler turns
+  before `main` in the native and browser hosts). Rare in library code.
+- **Structural thenables**: adopting an object with a typed `then` needs
+  the NewPromiseResolveThenableJob job in both schedulers (browser parity)
+  and checked callback typing; explicit rejection (`abea3ac`) stays.
+- **Local-time `Date`**: the time zone is ambient host state; reading it
+  needs a host policy (a grant or a fixed zone) decided by the owner.
+- **Wider RegExp** (backreferences, lookaround, `\p{…}`): the matcher is
+  linear-time by contract; these need a new matcher contract.
+- **Object wrappers and object-to-primitive coercion**: rare in typed
+  library code; they need `valueOf`/`toString` dispatch on objects.
 
 ### Native CSS `scale()` — native backlog batch, 2026-11-06
 
@@ -83,12 +243,68 @@ gains `macDefaults`), checks that Chrome's gutter is 15px, and compares seven
 cases (vertical, horizontal, both with the corner, gutter-induced overflow,
 borders and padding, the minimum thumb, content that fits): 10124 geometry and
 hit checks per scale and pixel means 0.00 to 0.02/255 (1x), 0.06 to 0.48 and
-1.13 for the bordered case (1.25x), 0.06 to 0.09 (2x). Open: the overlay thumb
-Chrome shows while scrolling (it fades about 0.6s after the scroll), thumb
-hover color, thumb dragging and track clicks, a dark `color-scheme` (outside
-the subset), rounded scroll containers with classic bars (refused), live
-changes of the system setting (read at window start) and Chrome's Linux Aura
-scrollbars (Linux keeps overlay behaviour).
+1.13 for the bordered case (1.25x), 0.06 to 0.09 (2x). Open: thumb hover
+color, thumb dragging and track clicks, a dark `color-scheme` (outside the
+subset), rounded scroll containers with classic bars (refused), live changes
+of the system setting (read at window start) and Chrome's Linux Aura
+scrollbars (Linux keeps overlay behaviour). The overlay thumb shown while
+scrolling followed the same day
+([record](#native-overlay-scrollbars--2026-11-06)).
+
+### Native overlay scrollbars — 2026-11-06
+
+With macOS's default "Show scroll bars" setting (automatic, or when
+scrolling) native scroll containers now show Chrome's overlay scrollbar while
+they scroll ([contract](architecture.md#native-overlay-scrollbars)); classic
+bars are unchanged.
+
+- **Constants from Chromium.** `ui::OverlayScrollbarAnimatorMac`
+  (`kFadeOutDelay` 500 ms, `kAnimationDuration` 250 ms, ease-in-out, integer
+  thumb width), `MacScrollbarImplV2` (thumb box 12, expanded 16),
+  `ScrollbarThemeMac` (overlay frame 16, minimum thumb 26, track 28 for a
+  thumb), `NativeThemeMac` with `is_overlay` (thumb `0x80`, inset 2, track
+  gradient and border colors for both schemes) and Blink's
+  `RecalculateOverlayScrollbarColorScheme` (dark when the scroller's
+  background lightness is at most one half).
+- **Measured in Chrome 156 on this Mac** (CDP wheel, `scrollTop` and
+  `mouseMoved`, screenshots every 30 to 60 ms): a programmatic scroll before
+  the first paint also shows the thumb, so the positioned oracle's scrolled
+  cases now match with the bar on both sides; the fade starts 500 to 520 ms
+  after the scroll and ends by 750 to 800 ms; the pointer on the bar widens
+  the thumb 7 to 11 pixels and fades the track in over about 250 ms, and the
+  bar stays until 500 ms after the pointer leaves; a wheel under a resting
+  pointer first shows the narrow thumb and widens it a frame later; the bar
+  is not clipped by the scroller's rounded corners; with a horizontal
+  overflow the vertical track stops 16 pixels short. Two places where Chrome
+  differs from Blink's classic geometry: the thumb is computed in CSS pixels
+  and drawn scaled (fractional edges at 1.25x), and an offset under one pixel
+  leaves it at the start (the compositor's truncation).
+- **Model.** The view keeps each shown bar's event times (`overlay_scrollbar`):
+  every visual state is a function of them and the animation clock, so
+  headless renders are deterministic. Every write of a scroll offset goes
+  through `Tree::scroll_to`, which shows the bar when the offset changes. The
+  bar paints in its container's outline phase and, while shown, adds a hit
+  region for the container. `FrameMetadata::scrollbar_at` and
+  `View::set_scrollbar_hover` carry the pointer; `varta-shell` feeds them from
+  each pointer sample. `View::animating` stays true during the fade-out delay
+  but `set_animation_time` reports no change then, so the shell advances its
+  clock on its idle wake without presenting frames until the fade runs.
+- **Evidence.** `native_overlay_scrollbar_probe` with
+  `scripts/test-native-overlay-scrollbars.mjs` runs seven cases' steps (wheel,
+  wheel under the resting pointer, programmatic scroll, bordered, dark,
+  two-axis, rounded, minimum thumb) natively on the clock and in Chrome in
+  real time, and compares content width, hits and pixels around the bar at
+  each capture (shown, hovered, faded): 55 checks per scale pass at 1x, 1.25x
+  and 2x; pixel means 0.00 to 0.34/255 (1x), 0.03 to 1.17 (1.25x, where the
+  bordered and dark cases also carry the existing fractional box-edge
+  differences outside the bar), 0.00 to 0.58 (2x). The classic and positioned
+  probes still pass at 1x and 2x.
+- **Open.** Dragging a thumb and clicking a track (neither style has them
+  natively), horizontal overlay bars (native layout scrolls only
+  vertically), textarea bars, Chrome's `kFadeInScrollbarWhenMouseWheelMayBegin`
+  (a trackpad touch that has not scrolled yet shows the bar; not modelled),
+  live changes of the system setting, and a real-window session (only the
+  headless view and the shell's code path are exercised).
 
 ### Review fixes — 2026-11-06
 
@@ -3153,6 +3369,7 @@ The selectors are registered; the table records what each stream admits.
 | `codegen_v2()` | Code generation v2: cheaper loops, string comparison and concatenation, dictionary call sites; fuel profiler | Implemented for codegen ([contract](architecture.md#code-generation-v2-codegen_v2)): quiet expressions without root traffic, call and frame fast paths, operand-cache collapse, plain updates, content-equality and inline literal comparisons, amortized string builders, guest `charAt`/`charCodeAt`/`%`, bounded first allocation scans and a collection threshold; `varta dev --profile-fuel` ([profile builds](architecture.md#fuel-profile-builds-varta-dev---profile-fuel)). Admits no syntax; v37 bytes frozen |
 | `strict_members()` | Strict members: undeclared member access rejected, per-union member limits from the registry, discriminant dispatch, exhaustive discriminant switches | Implemented ([contract](architecture.md#strict-members-and-wide-unions-strict_members)): `property X is not declared by Owner` for every static access form; `union_members`/`json_union_members` in `ProgramLimits` (frozen 16/7, v38 the entity bound); one discriminant lookup and a flat literal chain (about 55 fuel per member before the match, 9 after); flat or balanced lowering above 16 members; exhaustive `switch` over `x.kind` and nested paths with a diagnostic naming unhandled members. Pending: `varta dev --profile-fuel` of programs with checked conversions fails (`value ABI helpers cannot call host imports`), pre-existing |
 | `file_roots()` | Virtual file roots (wave 2): `fs.*` paths and grants are virtual paths `/<root>/...`; the configuration names roots inside the project, the host policy maps them for packaged runs | Implemented ([contract](architecture.md#virtual-file-roots-file_roots)): `fs.roots` in the configuration pinned no-follow at load, manifest `fsRoots` names (host ABI 34), host-policy `fsRoots` mapping pinned at startup, canonical virtual paths with whole-component matching against request and ceiling, no-follow reads below the root descriptor; run, application, view, HTTP request stores and tool invocation. V1–v37 keep host paths |
+| `iteration_protocol()` | Iteration protocol (2026-11-06): iterable classes, generator methods, array literal spreads, `Array.from` of iterables, synchronous `yield*` | Implemented ([contract](architecture.md#iteration-protocol-iteration_protocol), [record](#language-gap-ranking-and-the-v38-iteration-protocol--2026-11-06)): `[Symbol.iterator]()` methods (inherited, overridden, generic classes), `x[Symbol.iterator]()`/`x[Symbol.asyncIterator]()` calls, `Iterator<T>`/`IterableIterator<T>` annotations and `implements Iterable<T>`, synchronous generator methods (split into a wrapper and a receiver-free body), spreads of arrays/tuples/strings (code points)/generators/collections/iterable instances in source order, one-argument `Array.from`, `yield*` with observed resumption (`Suspend::observe`) forwarding `next`/`throw`/`return`. No ABI, value-layout or host change. Pending: iterable destructuring, hand-written iterator objects, `Array.from` with a map function, `Iterable<T>` value annotations |
 
 Structural-subtyping pilot probe (per-file `varta check` of every pilot module
 under v38, scratch copies only, no live API call): the unmodified pilot checks

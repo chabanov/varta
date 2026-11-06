@@ -87,7 +87,10 @@ impl Lower<'_> {
                 Some(id) => self.tuple_literal(array, id),
                 None => match self.spread_copy(array)? {
                     Some(value) => Ok(value),
-                    None => self.array(array, context),
+                    None => match self.spread_literal(array, context)? {
+                        Some(value) => Ok(value),
+                        None => self.array(array, context),
+                    },
                 },
             },
             ast::Expr::New(new)
@@ -1126,6 +1129,11 @@ impl Lower<'_> {
             if self.collection_receiver(&source.expr, 0) {
                 let value = self.expr(&source.expr)?;
                 return self.collection_array(value);
+            }
+            // V38 (`iteration_protocol`): arrays, generators and iterable
+            // class instances.
+            if self.types.profile.iteration_protocol() {
+                return self.array_from_iterable(call, expected);
             }
             return Err(self.source.locate(
                 unsupported(

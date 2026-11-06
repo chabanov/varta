@@ -139,6 +139,8 @@ mod net_tests;
 mod replay;
 pub use replay::NetworkMode;
 pub use varta_common::net::replay::{NetworkLog, NetworkLogError, ReplayError};
+#[cfg(test)]
+mod iteration_protocol_tests;
 mod number;
 mod number_format;
 #[cfg(test)]
@@ -224,10 +226,10 @@ mod view_tests;
 #[cfg(test)]
 mod web_bytes_tests;
 pub use varta_view::{
-    GeometryRequest as ViewGeometryRequest, Script as ViewScript, ScriptError as ViewScriptError,
-    SnapshotError as ViewSnapshotError, SnapshotFormat as ViewSnapshotFormat, TextFont as ViewFont,
-    TextMeasureError as ViewFontError, TextMeasurer as ViewTextMeasurer, ViewError,
-    encode_snapshot as encode_view_snapshot,
+    GeometryRequest as ViewGeometryRequest, ImageError as ViewImageError, ImageSet as ViewImageSet,
+    Script as ViewScript, ScriptError as ViewScriptError, SnapshotError as ViewSnapshotError,
+    SnapshotFormat as ViewSnapshotFormat, TextFont as ViewFont, TextMeasureError as ViewFontError,
+    TextMeasurer as ViewTextMeasurer, ViewError, encode_snapshot as encode_view_snapshot,
 };
 
 use std::collections::BTreeMap;

@@ -74,7 +74,11 @@ fn page_item_and_absolute_scroll_use_current_metrics_and_never_grant_gesture() {
             )
             .unwrap()
     );
+    assert!(!view.animating());
     assert!(scroll(&mut view, 2, Scroll::Down(Unit::Page), &image));
+    // An assistive scroll shows the overlay scrollbar, as in Chrome.
+    assert!(view.animating());
+    assert!(frame(&view).hit_test(95.5, 25.5) == Some(2));
     let events = view.drain();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].record.scroll_top, 50.0);

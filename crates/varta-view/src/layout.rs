@@ -11,6 +11,7 @@ use taffy::style::{GridPlacement, GridTemplateTracks, Overflow, RepetitionCount}
 use varta_common::view::{CssProperty, ROOT_NODE, Tag};
 
 pub(crate) mod controls;
+pub(crate) mod replaced;
 
 pub(crate) const MAX_LAYOUT_DEPTH: usize = 128;
 pub(crate) const MAX_LAYOUT_NODES: usize = 4096;
@@ -35,7 +36,8 @@ pub struct BoxGeometry {
     pub scroll: Option<ScrollMetrics>,
     /// Programmatic scrolling also includes `overflow: hidden`.
     pub programmatic_scroll: Option<ScrollMetrics>,
-    /// Classic scrollbars of a scroll container ([`crate::Scrollbars::Classic`]).
+    /// The scrollbars of a scroll container whose content overflows: classic
+    /// gutters, or overlay bar frames that take no space.
     pub scrollbars: Option<ScrollbarGeometry>,
     /// The element's own transform when it scales, around its border box
     /// as laid out: paint maps the element and its subtree through it. The
@@ -43,11 +45,16 @@ pub struct BoxGeometry {
     pub transform: Option<crate::transform::Affine>,
 }
 
-/// The always-shown scrollbars of one scroll container: each bar's track
-/// in the gutter its axis reserves, inside the borders, and that axis's
-/// scroll range, in CSS pixels.
+/// The scrollbars of one scroll container, in CSS pixels: each bar's track
+/// inside the borders and that axis's scroll range. Classic bars fill the
+/// gutter their axis reserves; overlay bars ([`ScrollbarGeometry::overlay`])
+/// are frames of [`OVERLAY_SCROLLBAR_THICKNESS`] over the padding box's
+/// edge, painted only while shown.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScrollbarGeometry {
+    /// Overlay bar frames ([`crate::Scrollbars::Overlay`]) rather than
+    /// classic gutters.
+    pub overlay: bool,
     /// The vertical bar's track at the right edge, above any horizontal bar.
     pub vertical: Option<BoxRect>,
     /// The horizontal bar's track at the bottom edge, left of any vertical
@@ -63,9 +70,46 @@ pub struct ScrollbarGeometry {
 /// The thickness of an always-shown macOS scrollbar (the gutter it
 /// reserves), in CSS pixels: Chrome's `NSScroller` regular size.
 pub const CLASSIC_SCROLLBAR_THICKNESS: f32 = 15.0;
+/// The frame thickness of a macOS overlay scrollbar, in CSS pixels: Chrome's
+/// overlay `NSScroller` regular track box width. It takes no layout space.
+pub const OVERLAY_SCROLLBAR_THICKNESS: f32 = 16.0;
 /// Layout passes that may add classic scrollbar gutters after the first: a
 /// gutter can make content overflow on the other axis once more.
 pub const MAX_GUTTER_PASSES: usize = 2;
+
+/// The overlay bar frames of a scroll container (`overflow: auto`) whose
+/// content overflows `scrollport` by `[vertical, horizontal]` maximum
+/// offsets: each at its edge of the padding box, the vertical one above the
+/// corner a horizontal bar leaves, as Blink's `ScrollCornerRect`.
+fn overlay_scrollbars(
+    scrollport: BoxRect,
+    [vertical, horizontal]: [f32; 2],
+    offset: f32,
+) -> Option<ScrollbarGeometry> {
+    let (has_vertical, has_horizontal) = (vertical > 0.0, horizontal > 0.0);
+    if !has_vertical && !has_horizontal {
+        return None;
+    }
+    let thickness = OVERLAY_SCROLLBAR_THICKNESS;
+    let corner = |other: bool| if other { thickness } else { 0.0 };
+    Some(ScrollbarGeometry {
+        overlay: true,
+        vertical: has_vertical.then(|| BoxRect {
+            x: scrollport.x + scrollport.width - thickness,
+            y: scrollport.y,
+            width: thickness.min(scrollport.width),
+            height: (scrollport.height - corner(has_horizontal)).max(0.0),
+        }),
+        horizontal: has_horizontal.then(|| BoxRect {
+            x: scrollport.x,
+            y: scrollport.y + scrollport.height - thickness,
+            width: (scrollport.width - corner(has_vertical)).max(0.0),
+            height: thickness.min(scrollport.height),
+        }),
+        vertical_range: [scrollport.height, vertical, offset],
+        horizontal_range: [scrollport.width, horizontal, 0.0],
+    })
+}
 
 /// Clamped vertical scroll offset and maximum in CSS pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -734,6 +778,8 @@ fn alignment(value: &str) -> Option<AlignItems> {
 enum Measure {
     Text(TextShape),
     Control(controls::ControlSize),
+    /// A replaced image's natural size and ratio (`replaced::compute`).
+    Image(replaced::Replaced),
 }
 
 /// Measurements prepared before a layout pass, by node.
@@ -741,6 +787,12 @@ enum Measure {
 struct Measured<'a> {
     text: &'a BTreeMap<u32, TextShape>,
     controls: &'a BTreeMap<u32, controls::ControlSize>,
+    /// The parent's strut (ascent and descent with half-leading) of each
+    /// inline image's line box.
+    struts: &'a BTreeMap<u32, (f32, f32)>,
+    /// One image of a line of text is being sized as an atomic inline
+    /// (`image_box`): it has no line box of its own.
+    atom: bool,
 }
 
 #[derive(Clone)]
@@ -1115,7 +1167,7 @@ fn build(
     tree: &Tree,
     env: &Environment,
     engine: &mut TaffyTree<Measure>,
-    ids: &mut BTreeMap<u32, NodeId>,
+    (ids, lines): (&mut BTreeMap<u32, NodeId>, &mut BTreeMap<u32, NodeId>),
     text_metrics: Measured<'_>,
     location: (u32, usize),
     sizes: ((f32, f32), Option<style::FontBase>),
@@ -1124,17 +1176,26 @@ fn build(
     let mut scheduled = 1usize;
     while let Some((id, depth, finish)) = pending.pop() {
         if finish {
+            // An inline image's parent holds its line box.
             let children = tree.nodes[&id]
                 .children
                 .iter()
-                .map(|child| ids[child])
+                .map(|child| lines.get(child).copied().unwrap_or(ids[child]))
                 .collect::<Vec<_>>();
             engine
                 .set_children(ids[&id], &children)
                 .map_err(|error| LayoutError::Engine(error.to_string()))?;
             continue;
         }
-        let (_, descend) = build_one(tree, env, engine, ids, text_metrics, (id, depth), sizes)?;
+        let (_, descend) = build_one(
+            tree,
+            env,
+            engine,
+            (ids, lines),
+            text_metrics,
+            (id, depth),
+            sizes,
+        )?;
         if descend {
             let children = &tree.nodes[&id].children;
             scheduled = scheduled
@@ -1159,7 +1220,7 @@ fn build_one(
     tree: &Tree,
     env: &Environment,
     engine: &mut TaffyTree<Measure>,
-    ids: &mut BTreeMap<u32, NodeId>,
+    (ids, lines): (&mut BTreeMap<u32, NodeId>, &mut BTreeMap<u32, NodeId>),
     measured: Measured<'_>,
     location: (u32, usize),
     sizes: ((f32, f32), Option<style::FontBase>),
@@ -1218,6 +1279,7 @@ fn build_one(
                 | Tag::Input
                 | Tag::Textarea
                 | Tag::Select
+                | Tag::Img
         ) || modal_dialog(tree, id)
             || style::ua_defaults(element.tag).is_some_and(|ua| ua.block)
             || (crate::inline::inline_tag(element.tag)
@@ -1277,6 +1339,33 @@ fn build_one(
         };
         for (property, value) in computed {
             match property {
+                // An image is a leaf whatever its display; an inline one
+                // stands in its line box (`replaced`).
+                CssProperty::Display if element.tag == Tag::Img => {
+                    style.display = match value.as_str() {
+                        "block" | "inline" => Display::Block,
+                        _ => return Err(LayoutError::Unsupported(id)),
+                    }
+                }
+                // A replaced box is not a scroll container or a clip.
+                CssProperty::Overflow if element.tag == Tag::Img && value != "visible" => {
+                    return Err(LayoutError::Unsupported(id));
+                }
+                // An image's own placement and sizing (`replaced`, the
+                // image paint); `aspect-ratio` is admitted on images only.
+                CssProperty::ObjectFit | CssProperty::ObjectPosition | CssProperty::AspectRatio
+                    if element.tag == Tag::Img => {}
+                // Inherited image properties have no effect on other boxes.
+                CssProperty::ImageOrientation | CssProperty::ImageRendering => {}
+                // `vertical-align` applies to inline-level boxes (CSS Inline
+                // 3 §4.2); a block-level box ignores it.
+                // An image in a line of text resolves it with its line
+                // (`inline::atoms`).
+                CssProperty::VerticalAlign
+                    if element.tag != Tag::Img
+                        || !replaced::inline(tree, env, id)
+                        || measured.atom => {}
+                CssProperty::VerticalAlign if value == "baseline" => {}
                 CssProperty::Display => {
                     style.display = match value.as_str() {
                         "flex" => Display::Flex,
@@ -1545,6 +1634,8 @@ fn build_one(
     {
         let shape = text_metrics.get(&id).ok_or(LayoutError::Unsupported(id))?;
         engine.new_leaf_with_context(style, Measure::Text(shape.clone()))
+    } else if element.tag == Tag::Img {
+        return image_leaf(tree, env, engine, (ids, lines), measured, (id, style));
     } else if let Some(size) = (id != ROOT_NODE)
         .then(|| controls::square(tree, id))
         .flatten()
@@ -1563,6 +1654,85 @@ fn build_one(
     .map_err(|e| LayoutError::Engine(e.to_string()))?;
     ids.insert(id, node_id);
     Ok((node_id, descend))
+}
+
+/// The box of an image in a line of text (`inline::atoms`): its style is
+/// validated and converted as every image's (`build_one`) and sized as an
+/// atomic inline (`replaced::atom`).
+pub(crate) fn image_box(
+    tree: &Tree,
+    env: &Environment,
+    id: u32,
+) -> Result<replaced::AtomBox, LayoutError> {
+    let engine_error = |e: taffy::TaffyError| LayoutError::Engine(e.to_string());
+    let mut engine = TaffyTree::new();
+    let (node, _) = build_one(
+        tree,
+        env,
+        &mut engine,
+        (&mut BTreeMap::new(), &mut BTreeMap::new()),
+        Measured {
+            text: &BTreeMap::new(),
+            controls: &BTreeMap::new(),
+            struts: &BTreeMap::new(),
+            atom: true,
+        },
+        (id, 0),
+        ((0.0, 0.0), None),
+    )?;
+    let Some(Measure::Image(natural)) = engine.get_node_context(node) else {
+        return Err(LayoutError::Unsupported(id));
+    };
+    let natural = *natural;
+    let style = engine.style(node).map_err(engine_error)?;
+    replaced::atom(style, natural).ok_or(LayoutError::Unsupported(id))
+}
+
+/// An `img` leaf and, for an inline image, its line box (`replaced`).
+fn image_leaf(
+    tree: &Tree,
+    env: &Environment,
+    engine: &mut TaffyTree<Measure>,
+    (ids, lines): (&mut BTreeMap<u32, NodeId>, &mut BTreeMap<u32, NodeId>),
+    measured: Measured<'_>,
+    (id, mut style): (u32, Style),
+) -> Result<(NodeId, bool), LayoutError> {
+    let engine_error = |e: taffy::TaffyError| LayoutError::Engine(e.to_string());
+    let natural = replaced::replaced(tree, env, id)?;
+    replaced::dimension_hints(tree, env, id, &mut style);
+    style.item_is_replaced = true;
+    let inline = replaced::inline(tree, env, id) && !measured.atom;
+    if inline {
+        // An inline image that shares its line is laid out by its line's
+        // inline formatting context (`inline::atoms`), never here.
+        if !replaced::alone(tree, env, id) {
+            return Err(LayoutError::Unsupported(id));
+        }
+        replaced::check_line(tree, env, id)?;
+        replaced::check_inline_style(tree, env, id)?;
+        replaced::line_item(&mut style);
+    }
+    let node_id = engine
+        .new_leaf_with_context(style, Measure::Image(natural))
+        .map_err(engine_error)?;
+    ids.insert(id, node_id);
+    if inline {
+        let strut = *measured
+            .struts
+            .get(&id)
+            .ok_or(LayoutError::Unsupported(id))?;
+        let parent = tree.nodes[&id].parent.ok_or(LayoutError::Unsupported(id))?;
+        let align = tree
+            .computed_property(parent, env, CssProperty::TextAlign)
+            .map(|value| TextAlign::parse(&value).ok_or(LayoutError::Unsupported(parent)))
+            .transpose()?
+            .unwrap_or_default();
+        let line = engine
+            .new_with_children(replaced::line_style(strut, align), &[node_id])
+            .map_err(engine_error)?;
+        lines.insert(id, line);
+    }
+    Ok((node_id, false))
 }
 
 pub(crate) fn boxes(
@@ -1628,6 +1798,8 @@ pub(crate) fn geometry_local(
         Measured {
             text: &BTreeMap::new(),
             controls: &BTreeMap::new(),
+            struts: &BTreeMap::new(),
+            atom: false,
         },
         None,
         None,
@@ -1703,6 +1875,7 @@ fn geometry_and_text_inner(
     let mut pending = vec![(ROOT_NODE, 0usize)];
     let mut metrics = BTreeMap::new();
     let mut control_sizes = BTreeMap::new();
+    let mut struts = BTreeMap::new();
     let mut inventory = crate::inline::Inventory::default();
     while let Some((id, depth)) = pending.pop() {
         inventory.node(depth)?;
@@ -1722,6 +1895,16 @@ fn geometry_and_text_inner(
             && element.tag == Tag::Select
         {
             continue;
+        }
+        if let Content::Element(element) = &node.content
+            && element.tag == Tag::Img
+            && replaced::alone(tree, &layout_env, id)
+        {
+            let parent = node.parent.ok_or(LayoutError::Unsupported(id))?;
+            struts.insert(
+                id,
+                crate::inline::strut(tree, &layout_env, parent, (measurer, font_size))?,
+            );
         }
         if controls::needs_intrinsic(tree, &layout_env, id) {
             control_sizes.insert(
@@ -1879,6 +2062,8 @@ fn geometry_and_text_inner(
         Measured {
             text: &metrics,
             controls: &control_sizes,
+            struts: &struts,
+            atom: false,
         },
         Some(measurer),
         Some(font_size),
@@ -1927,6 +2112,7 @@ fn boxes_inner(
     let mut engine = TaffyTree::new();
     engine.disable_rounding();
     let mut ids = BTreeMap::new();
+    let mut lines = BTreeMap::new();
     let layout_env = Environment {
         width: f64::from(width),
         ..*env
@@ -1941,7 +2127,7 @@ fn boxes_inner(
         tree,
         &layout_env,
         &mut engine,
-        &mut ids,
+        (&mut ids, &mut lines),
         measured,
         (ROOT_NODE, 0),
         ((width, height), base),
@@ -1997,6 +2183,9 @@ fn boxes_inner(
                     height: AvailableSpace::Definite(height),
                 },
                 |inputs, node, context, style| {
+                    if let Some(Measure::Image(natural)) = context.as_deref() {
+                        return replaced::compute(inputs, style, *natural);
+                    }
                     taffy::compute_leaf_layout(
                         inputs,
                         style,
@@ -2006,6 +2195,9 @@ fn boxes_inner(
                                 Some(Measure::Text(shape)) => shape,
                                 Some(Measure::Control(size)) => {
                                     return size.measure(known, available);
+                                }
+                                Some(Measure::Image(_)) => {
+                                    unreachable!("images use their own leaf layout")
                                 }
                                 None => {
                                     return Size {
@@ -2212,9 +2404,19 @@ fn boxes_inner(
             {
                 return Err(LayoutError::Unsupported(id));
             }
+            // An inline image sits in its line box, a child of its parent.
+            let line = match lines.get(&id) {
+                Some(&line) => {
+                    engine
+                        .layout(line)
+                        .map_err(|e| LayoutError::Engine(e.to_string()))?
+                        .location
+                }
+                None => taffy::geometry::Point::ZERO,
+            };
             let mut rect = BoxRect {
-                x: origin_x + layout.location.x,
-                y: origin_y + layout.location.y,
+                x: origin_x + line.x + layout.location.x,
+                y: origin_y + line.y + layout.location.y,
                 width: layout.size.width,
                 height: layout.size.height,
             };
@@ -2308,6 +2510,7 @@ fn boxes_inner(
                         height: height.max(0.0),
                     };
                     scrollbars = Some(ScrollbarGeometry {
+                        overlay: false,
                         vertical: (bars.width > 0.0).then(|| {
                             track(
                                 scrollport.x + scrollport.width,
@@ -2327,6 +2530,14 @@ fn boxes_inner(
                         vertical_range: [scrollport.height, layout.scroll_height(), own_scroll],
                         horizontal_range: [scrollport.width, layout.scroll_width(), 0.0],
                     });
+                } else if env.scrollbars == style::Scrollbars::Overlay
+                    && style.overflow.y == Overflow::Scroll
+                {
+                    scrollbars = overlay_scrollbars(
+                        scrollport,
+                        [layout.scroll_height(), layout.scroll_width()],
+                        own_scroll,
+                    );
                 }
                 let metrics = ScrollMetrics {
                     top: own_scroll,

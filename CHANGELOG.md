@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Native `img`: packaged images (a configuration's new `images` map,
+  stored in resource section version 2 and carried by the browser bundle
+  under the same names) are laid out and drawn by the native renderer to the
+  HTML and CSS standards: PNG/APNG, JPEG, GIF, WebP, BMP and ICO by
+  signature, converted to sRGB (ICC, `cICP`, `sRGB`, `cHRM`/`gAMA`) with EXIF
+  orientation and `image-orientation`, animations on the view clock,
+  `srcset`/`sizes`, `width`/`height` hints, `object-fit`, `object-position`,
+  `image-rendering`, `aspect-ratio`, replaced sizing, inline images in lines
+  of text with every `vertical-align` (a recorded Parley patch for atomic
+  inlines), Skia's sampling, rounded content clips, opacity and transforms,
+  and named by `alt`; checked against Chrome at four scales. AVIF, SVG, HDR
+  images and alternative-text rendering are refused. New dependencies `png`
+  0.18.1, `image` 0.25.10 and `moxcms` 0.8.1; the image limits await an
+  owner decision.
+- V38 iteration protocol: a class's `[Symbol.iterator]()` generator method
+  makes its instances iterable by `for...of`, array spreads, `Array.from` and
+  `yield*`; classes declare synchronous generator methods; array literals
+  spread arrays, strings (code points), generators, `Map`/`Set`/`Uint8Array`
+  values and iterable instances in source order; `Array.from` copies the same sources;
+  synchronous `yield*` delegates to generators, arrays and iterable instances
+  and forwards `next`/`throw`/`return` as Node does; `Iterator<T>` and
+  `IterableIterator<T>` annotate generator objects and `implements
+  Iterable<T>` checks the method. No host ABI or value layout change; v37
+  keeps rejecting every form. Conformance: 135 passed, 5 known unsupported of
+  140 (new feature `iteration-protocol`).
 - K8 T1: Tailwind CSS at compile level. The new tooling crate
   `varta-tailwind` ports the CSS-first compiler of Tailwind CSS v4.3.5 to
   Rust (no Node or JavaScript): candidates, all built-in utilities and
@@ -38,6 +63,16 @@
   whole-pixel placement and emoji presentation selectors. Text and emoji
   under a uniform `scale()` draw through CoreText at the scaled size. Colour
   glyphs on Linux remain refused.
+- Native scroll containers show macOS overlay scrollbars as Chrome does under
+  the default "Show scroll bars" setting: a scroll (wheel, programmatic,
+  scroll-into-view or assistive) shows the thumb, which fades out 500 ms
+  later over 250 ms; the pointer on the bar widens the thumb and shows the
+  track until it leaves. The bar runs on the view's animation clock, so
+  headless renders are deterministic, takes the pointer while shown and
+  follows a dark scroller background. `View::set_scrollbar_hover` and
+  `FrameMetadata::scrollbar_at` carry the pointer; `varta-shell` presents
+  frames only while a bar animates. Compared with Chrome at 1x, 1.25x and 2x.
+  Thumb dragging and track clicks remain open.
 
 - Integrated v38 application delivery across the official metered browser host
   and packaged native `varta-shell`, including host effects, OPFS KV storage,

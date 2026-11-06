@@ -47,7 +47,7 @@ impl FontSet {
     /// generic families its faces declare.
     #[must_use]
     pub fn from_resources(resources: &Resources) -> Option<Self> {
-        (!resources.is_empty()).then(|| Self {
+        (!resources.fonts().is_empty()).then(|| Self {
             faces: resources
                 .fonts()
                 .iter()

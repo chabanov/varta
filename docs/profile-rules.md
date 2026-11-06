@@ -3166,7 +3166,8 @@ structural subtyping (`structural_subtyping`) and code generation v2
 [rules below](#virtual-file-roots-file_roots)), and the wave-3b compiled JSON
 decoders (`json_decoders`, [rules below](#json-decoders-json_decoders))
 and hashed `Map`/`Set` tables (`collection_hashing`, [rules
-below](#collection-hashing-collection_hashing));
+below](#collection-hashing-collection_hashing)), and the iteration
+protocol (`iteration_protocol`, [rules below](#iteration-protocol-iteration_protocol));
 the view-protocol and TSX selectors admit their streams (below). Gate every admission on its own selector, keep v37 and earlier
 profiles frozen, and add each stream's rules under its own heading here.
 
@@ -3933,6 +3934,49 @@ Contract: [architecture.md](architecture.md#sdk-paths-sdk_paths).
   files are Node 24.20.0 output, including the multipart and query wire
   bytes and the `FormData` entries; refusals and v37 denials).
 
+### Iteration protocol (`iteration_protocol`)
+
+Contract: [architecture.md](architecture.md#iteration-protocol-iteration_protocol).
+
+- Gate every admission on `iteration_protocol()`; v37 keeps its diagnostics
+  for each form (`iteration_forms_stay_refused_by_v37`).
+- `[Symbol.iterator]` registers under `classes::ITERATOR_METHOD` exactly as
+  `[Symbol.asyncIterator]` registers under `ASYNC_ITERATOR_METHOD`: through
+  `classes::well_known_symbol`, never through a string key (`member_name`
+  refuses both spellings). Member calls reach them through `member_key`.
+- Every consumer normalizes its source through `Lower::iterated` (match
+  arrays, then `iterable_instance`, collections, tuples, strings as a
+  code-point array built by `code_points`) or, in `for_of`,
+  through the same steps in the same order. Keep `match_array_values` and
+  `headers_iteration` ahead of `iterable_instance`: prelude classes keep
+  their own iteration. A new consumer goes through `iterated`.
+- Spreads and `Array.from` build the result in one `ValueBlock` that roots
+  the result and every source; each segment is lowered in source order and
+  iterated before the next segment's expression runs. Never snapshot all
+  operands first: a generator source's effects must interleave as in
+  JavaScript. Array sources read holes through `dense_read` with
+  `dense::ITERATED_HOLE`, as `for...of` does.
+- A synchronous generator method is split in `link::body`
+  (`split_generator_method`): the wrapper keeps the index, receiver and
+  shape; the body is a receiver-free generator taking the receiver as its
+  first parameter. Never give a generator body a receiver: `suspension::
+  admissible` keeps refusing generator functions with one.
+- `yield*` uses the only observed suspension point
+  (`Suspend::observe`, `ir::SuspendObserver`): its resumption stores the
+  completion kind and the thrown or returned input in the observer's locals
+  instead of throwing or returning (`states::Machine::observed`). Only
+  generator frames may have one; every other `Suspend` sets `observe: None`.
+  The delegation decides with the step outcomes of `generator_step` and
+  reads `GeneratorValue` only right after a step. Keep the async `yield*`
+  (request queue) separate.
+- The `void` return deviation of a forwarded `return()` is the only
+  documented one; do not widen it to non-`void` generators.
+- Tests: `varta-runtime` `iteration_protocol_tests` (the
+  `iteration_protocol_cases/*.expected` files are Node 24.20.0 output; the
+  collector stress builds must print the same), the CLI smoke
+  `v38_iteration_protocol_runs_in_dev_and_artifacts` and the conformance
+  feature `iteration-protocol`.
+
 ### Bytes held by unknown (`byte_values`)
 
 Contract: [architecture.md](architecture.md#bytes-held-by-unknown-byte_values).
@@ -4476,11 +4520,23 @@ Contract: [architecture](architecture.md#compiled-json-decoders-json_decoders),
   border and padding (opening piece starts after the margin), enclosing boxes take the
   whole signed advance, and fragment widths are clamped at zero only after the
   line is projected. Elements with edges are placed by their edges, not by the
-  empty-anchor path. Glyph and underline loops skip decoration-edge items; any
-  other inline box remains unsupported. Refuse nonzero horizontal percentages,
+  empty-anchor path. Glyph and underline loops skip glyphless items (decoration
+  edges and atomic inlines). Refuse nonzero horizontal percentages,
   spacing on `<br>`, and edges in a flow with right-to-left runs. Edges share the
   inline-work, glyph-slot, shaping-operation and fragment ceilings and the shape
   memo key. Compare changes with `portable_edge_probe` in Chrome at 1×/1.25×/2×.
+- An inline image that shares its line is an `EdgeKind::Atom` edge (a Parley
+  `InFlow` box of its margin-box width), never an inserted character. Its
+  break opportunities lie before the opening edges right before it and after
+  the closing edges right after it (the Parley patch); a pending collapsible
+  space is emitted before it and one after it is kept. Size it through
+  `layout::image_box` (the same style validation as every image) and refuse
+  percentages there; resolve `vertical-align` in `inline::atoms` with
+  Chrome's layout-unit shifts and place `top`/`bottom` after the rest of the
+  line. The image is not part of inline paint programs: it paints, hits and
+  is named as its own box through `Order::inline_atoms` right after its
+  flow's text. An image alone on a baseline-aligned line keeps its flex-row
+  line box. Compare changes with `native_image_probe` at 1×/1.5×/2×/3×.
 - Rich-flow hits insert, for each line after the first, block hit regions for
   the horizontal gaps between that line's visible fragments over its line box
   (`ShapedFlow::line_boxes`), ordered after earlier lines and before the line's

@@ -6071,7 +6071,8 @@ need no event loop and no new host import; every resumption is a guest call.
   `undefined` (a `void` `TNext` is also `undefined`), which can only reject
   programs that would need `any`. `T` is not `void`, and no type argument is a
   generator, `any` or `VartaResult`. Parameters are fixed: optional and rest
-  parameters, a `this` parameter, generator methods, generator function
+  parameters, a `this` parameter, generator methods (admitted by v38's
+  [iteration protocol](#iteration-protocol-iteration_protocol)), generator function
   expressions, async generators and a generator function used as a value are
   rejected with construct-specific diagnostics. Calling a generator function
   binds its arguments into a new frame and returns the generator object without
@@ -6082,7 +6083,8 @@ need no event loop and no new host import; every resumption is a guest call.
   return on every path. `yield` may appear in every normalized expression
   position of the [suspension foundation](#suspension-foundation-k44-block-1),
   inside `try`, `catch` and `finally` bodies, loops, labelled statements and
-  `switch` case bodies. `yield*` fails as `unsupported yield* delegation`;
+  `switch` case bodies. `yield*` fails as `unsupported yield* delegation`
+  (v38 admits it with the [iteration protocol](#iteration-protocol-iteration_protocol));
   `yield` inside an intrinsic value block (for example a `String(...)` call, a
   template literal or a generator method call), in a `switch` case test or in a
   `do-while` condition fails as `unsupported suspension point inside
@@ -11500,6 +11502,103 @@ import, value layout or ABI changes; v1–v37 keep rejecting every form below.
   SDK's byte parts are the wave-3
   [bytes stream](#bytes-held-by-unknown-byte_values).
 
+#### Iteration protocol (`iteration_protocol`)
+
+Additions to v38 (2026-11-06) that make program classes iterable and let
+array literals, `Array.from` and generators consume every synchronous
+iterable the checked subset has, under the selector
+`LanguageProfile::iteration_protocol()`. No host import, value layout, frame
+catalog, scheduler or ABI changes: the forms below lower to guest code over
+the existing generator frames, so the native runtime and every JavaScript
+host run them unchanged. V1–v37 keep rejecting every form below with their
+old diagnostics (`computed or numeric class member name`, `generator method`,
+`array spread`, `yield* delegation`, `Array.from of a value other than a Map,
+Set, Uint8Array or their iterators`). No `Symbol` value exists: `Symbol.iterator`
+and `Symbol.asyncIterator` are recognized only as the spelled-out computed
+keys below.
+
+- **Iterable classes.** An instance method declared with the computed key
+  `[Symbol.iterator]` (a generator method `*[Symbol.iterator]()` or a plain
+  method returning a generator object) makes the class's instances
+  iterable, inherited and overridden like any other method (an override
+  dispatches through the root's dispatcher). `for...of`, an array literal
+  spread, `Array.from` and `yield*` call it once and iterate the generator
+  it returns; the method must have no parameters, must not be a getter and
+  must return a synchronous generator (`unsupported … over a class
+  instance: [Symbol.iterator]() must be a method without parameters
+  returning a synchronous generator`), and a class instance without one is
+  refused by name (`… the class declares no [Symbol.iterator]() method`).
+  `x[Symbol.iterator]()` and `x[Symbol.asyncIterator]()` call the methods
+  explicitly. A static or string-keyed `[Symbol.iterator]` and other
+  computed keys stay refused. `RegExp` match arrays, `Headers`, `FormData`
+  and collections keep their own iteration.
+- **Generator methods.** Every synchronous generator instance method is
+  admitted (`*entries(from: number): Generator<…>`): the method keeps its
+  index, receiver and shape and returns the object of a receiver-free
+  generator body that takes the receiver as its first parameter, so the
+  frames, liveness and resume rules of [synchronous
+  generators](#synchronous-generators-generators) apply unchanged. Optional
+  and rest parameters stay refused (`generator method with optional or rest
+  parameters`).
+- **Annotations.** `Iterator<T, TReturn?, TNext?>` and
+  `IterableIterator<T, TReturn?, TNext?>` denote synchronous generator
+  objects with `Generator`'s defaults, as the async iteration interfaces
+  denote async generator objects. `implements Iterable<T, TReturn?, TNext?>`
+  checks that the class declares a `[Symbol.iterator]()` method without
+  parameters returning a synchronous generator that yields exactly `T` (and
+  has the given `TReturn` and `TNext`). `Iterable<T>` as a value annotation
+  is refused by name: an iterable parameter would also have to accept
+  arrays, which a generator type does not.
+- **Array literal spreads.** `[a, ...xs, b, ...source]` spreads checked
+  arrays and tuples, strings (their code points, as the String iterator
+  yields them: a surrogate pair is one element, a lone surrogate one
+  element of its own), synchronous generators (whose `TNext` accepts
+  `undefined`), `Map`, `Set` and `Uint8Array` values and their
+  `keys()`/`values()`/`entries()` iterators, and iterable class instances.
+  Elements and sources evaluate in source order, and each source is iterated
+  to completion where it appears, before the next element is evaluated; a
+  generator source is resumed with `undefined` until it completes and is
+  never closed (no abrupt exit can leave a spread). An array source is read
+  at its live length; a hole of an element type without `undefined` throws
+  `TypeError: array element is a hole`, as in `for...of`, and reads as
+  `undefined` when the element type includes it. The result is a fresh
+  array whose element type is the context's array element type, or else the
+  union of every element and source element type. A hole beside a spread
+  element and async generators are refused by name. The v37 form
+  `[...collection]` keeps its own lowering.
+- **`Array.from(source)`.** One argument: the same fresh array as
+  `[...source]` for every source above, besides the v37 collection forms. A
+  map function, more arguments or a spread argument stay refused.
+- **`yield*`.** In a synchronous generator body, `yield* source` over a
+  generator, an array (or tuple, string, collection or `RegExp` match array)
+  or an iterable class instance yields each value the source produces (widened to
+  this generator's `T`). The delegating point observes how this generator is
+  resumed instead of throwing or returning at it (`Suspend::observe`):
+  `next(v)` resumes a generator source with `v` (the first resumption sends
+  `undefined`, so the source's `TNext` accepts `undefined` and this
+  generator's `TNext` converts to it), `throw(e)` is forwarded to the
+  source's `throw` (a not-started or completed source rethrows `e`), and
+  `return(v)` to its `return`: a completed source makes this generator return
+  the source's completion value, a source that yields again from a `finally`
+  block keeps the delegation going. An array source has no `throw` or
+  `return` method: a forwarded `throw` throws `TypeError: The iterator does
+  not provide a 'throw' method.` and a forwarded `return(v)` returns `v`
+  from this generator. The expression's value is the source generator's
+  return value (`undefined` for an array). Conversions are checked at
+  compile time (`yield* source yields …`, `yield* forwards what this
+  generator receives from return() to its source`); a generator whose
+  `TReturn` is `void` returns `undefined` after a forwarded `return()`, and
+  closes a source whose `TReturn` excludes `undefined` with a placeholder
+  the source cannot observe. This is the one deviation: if the source's
+  `finally` block returns a value of its own, JavaScript would return that
+  value from this `void` generator; Varta returns `undefined`. Async
+  generators keep their own `yield*` rules.
+- **Not admitted.** Hand-written iterator objects (`{ next() {…} }`) and
+  iterator helpers, `Symbol()` values and symbol-keyed properties,
+  destructuring of generators, strings and iterable instances,
+  `Array.from` with a map function or an array-like, and `Iterable<T>`
+  value annotations.
+
 #### Bytes held by unknown (`byte_values`)
 
 Wave 3 of v38, selector `LanguageProfile::byte_values()` (owner decision of
@@ -14185,7 +14284,8 @@ property values keep such keywords. A quoted name is an ordinary family.
 `Environment::scrollbars` selects the platform's scrollbar style, as Chrome on
 macOS follows the system's "Show scroll bars" setting. `Scrollbars::Overlay`
 (the default, and headless Chrome's style on a Mac with a trackpad) reserves
-no space and paints nothing while a container is not being scrolled.
+no space and shows a container's bar only while it scrolls
+([overlay scrollbars](#native-overlay-scrollbars)).
 `Scrollbars::Classic` (always shown) gives every scroll container
 (`overflow: auto`, and the top-layer dialog) whose content overflows on an
 axis that axis's bar: a gutter of `CLASSIC_SCROLLBAR_THICKNESS` inside the
@@ -14195,7 +14295,8 @@ runs again after adding gutters; a gutter can make content overflow on the
 other axis, so gutters are only added, for at most `MAX_GUTTER_PASSES` more
 passes, and gutters still growing after them are refused
 (`LayoutError::Unsupported`). `BoxGeometry::scrollbars` gives each bar's
-track and its axis's range. Paint follows Chrome 156's `NativeThemeMac` in
+track and its axis's range (`ScrollbarGeometry::overlay` false). Paint
+follows Chrome 156's `NativeThemeMac` in
 the light scheme (the subset has no `color-scheme`, and the official host
 never sets one, so Chrome paints light scrollbars in either OS scheme), in
 device pixels: the track filled `#FAFAFA` with a one-pixel (floored when
@@ -14215,16 +14316,87 @@ pixels match Chrome 156 run with `-AppleShowScrollBars Always` (its argument
 domain only) at 1x, 1.25x and 2x within the 2/255 mean bound
 (`native_scrollbar_probe` with `scripts/test-native-positioned.mjs`); at 2x
 Chrome's scrollbar layer filters the track borders over two more pixels,
-which native does not. Not implemented: the overlay thumb that Chrome shows
-while scrolling and fades out after about half a second, the hover color of
-the classic thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a
-track, and Chrome's Linux (Aura) scrollbars.
+which native does not. Not implemented: the hover color of the classic
+thumb (`#000` at alpha `0x80`), dragging a thumb and clicking a track (with
+either style), and Chrome's Linux (Aura) scrollbars.
 
 `varta-shell` reads AppKit's preferred scroller style
 (`NSScroller.preferredScrollerStyle`, where "Automatically" resolves by the
 attached pointing devices) on the main thread when its window opens and hands
 it to the instance (`ViewLayout::with_scrollbars`); a later change of the
 setting applies after a restart. Other platforms keep overlay scrollbars.
+
+#### Native overlay scrollbars
+
+With `Scrollbars::Overlay` a scroll container (`overflow: auto`, and the
+top-layer dialog) whose content overflows on an axis has that axis's bar
+frame, `OVERLAY_SCROLLBAR_THICKNESS` thick, over the edge of its padding box:
+the vertical one at the right, above the corner a horizontal frame leaves as
+in Blink's `ScrollCornerRect`, and the horizontal one at the bottom.
+`BoxGeometry::scrollbars` gives them with `ScrollbarGeometry::overlay` true
+and the axis ranges; they take no layout space, and a hidden bar paints
+nothing and takes no pointer.
+
+When a bar shows follows Chrome 156's `ui::OverlayScrollbarAnimatorMac` as
+Blink's `MacScrollbarImplV2` drives it, on the view's animation clock
+([transitions](#native-css-transitions)), so a headless render at a given
+clock is deterministic. A scroll that changes a container's offset (wheel
+and `Scroll`/`ScrollMeasured` input, a commit's `ScrollTo` and
+`ScrollIntoView`, `View::scroll_into_view` and assistive scrolls; Chrome's
+explicit scroll types, not a clamp) shows its thumb at full opacity at once
+or keeps it, cancelling a running fade-out. The fade-out starts 500 ms
+(`kFadeOutDelay`) after the last such scroll and lasts 250 ms
+(`kAnimationDuration`), ease-in-out; the bar is then hidden. A host reports
+which container's bar frame the pointer is over (`FrameMetadata::scrollbar_at`
+of the presented frame: the last painted frame there whose container is the
+hit element or its ancestor; then `View::set_scrollbar_hover`, which
+dispatches no guest event). A
+shown bar under the pointer does not fade: its track fades in and its thumb
+box widens from 12 to 16 pixels (truncated to whole pixels), each over
+250 ms ease-in-out, and it stays wide until it has faded out; leaving the
+frame restarts the 500 ms delay, and the track fades out with the thumb. A
+hidden bar ignores the pointer, but a scroll under a resting pointer shows
+the bar and then takes the pointer at once, as Blink's hover update after
+the scroll does. `View::animating` is true while a bar waits for its fade-out
+or animates, and `View::set_animation_time` reports a change only when a bar
+paints differently, so the delay itself needs no frame.
+
+Paint follows `NativeThemeMac` with `is_overlay`. The colors are light, or
+dark when the scroller's own background color is not transparent and its HSL
+lightness is at most one half (`RecalculateOverlayScrollbarColorScheme`); a
+transparent background keeps the page's light scheme, as the subset has no
+`color-scheme`. The thumb is a pill of black (dark: white) at alpha `0x80`
+times its opacity, in the thumb box at the bar's outer edge, inset 2 pixels
+plus the 1-pixel border on the content side and kept at least 6 by 18
+(`ConstrainInsets`). Its length and offset are the compositor's: `round(visible
+/ total · track)`, at least 26 pixels, at `trunc(offset · (track − thumb) /
+max)` (an offset under one pixel leaves the thumb at the start, unlike the
+classic thumb), computed in CSS pixels and drawn scaled and anti-aliased, as
+Chrome draws them at 1.25x and 2x. The track, once shown, fills the frame in
+device pixels with one layer at the track's opacity: the gradient along the
+track (`0.973` at alpha `0.776` easing to `0.761` over the first third; dark
+`0.847` at `0.157` to `0.8` at `0.149`), the inner border `#DFDFDF` at
+`0xF9` (dark `#E5E5E5` at `0x33`) on the content side and the outer border
+`#E8E8E8` at `0xC6` (dark `#D8D8D8` at `0x28`) on the outer edge, each one
+pixel wide (floored when scaled). A bar paints in its container's outline
+phase, after the container's content and outline, clipped by its ancestors'
+clips but not by its container's rounded corners (as Chrome); while it shows,
+its frame takes the pointer for the container, so a wheel over it scrolls the
+container. Only vertical bars paint: native layout scrolls only vertically,
+and a horizontal overlay bar shows only while its axis scrolls. A textarea's
+own text scrolling shows no bar.
+
+Geometry, hits and pixels match Chrome 156 headless on macOS (overlay
+scrollbars) running the same steps in real time at 1x, 1.25x and 2x within
+the 2/255 mean bound (`native_overlay_scrollbar_probe` with
+`scripts/test-native-overlay-scrollbars.mjs`): just after a wheel or
+programmatic scroll, after the pointer rested on the bar and after the
+fade-out, on light, dark, bordered, rounded and two-axis scrollers and with
+the minimum thumb. Chrome advances its animations on a 60 Hz timer, so its
+frames can lag native's by up to one tick. `varta-shell` passes
+the frame's `scrollbar_at` for each pointer sample of the presented frame
+(`Application::view_set_scrollbar_hover`) and none when the pointer leaves the
+window, and presents frames while a bar animates.
 
 #### Native fallback faces
 
@@ -14411,9 +14583,11 @@ Native scrollable overflow does not include translated boxes.
 environment change: a scripted headless session uses its virtual loop time
 (a `wait` step moves transitions deterministically), an application
 instance the wall clock since it started. `Application::view_animating`
-tells a host that a transition runs and `view_advance_animations` moves the
-clock to now before a frame; `varta-shell` then presents a new frame each
-time the previous one was presented, and the last shows the end value.
+tells a host that a transition runs (or an overlay scrollbar waits for its
+fade-out or animates) and `view_advance_animations` moves the clock to now
+before a frame, reporting whether anything paints differently; `varta-shell`
+then presents a new frame each time the previous one was presented and that
+report is true, and the last shows the end value.
 
 #### Native positioned painting and stacking
 
@@ -14465,6 +14639,244 @@ refused by inline layout; `position: sticky` and other containing-block
 creating properties are not admitted. Chrome snaps scrolled content to whole
 device pixels while native paint keeps fractional scroll offsets, so the
 oracle's scroll offsets are whole device pixels at its scales.
+
+#### Native images (`img`)
+
+The native renderer lays out and draws `img` elements to the HTML Standard
+and the CSS image, sizing and inline specifications; Chrome is the
+verification oracle, never the definition. An image is a file of the
+artifact's [resource section](#packaged-images-section-version-2)
+(version 2), decoded once by the host into a `varta_view::ImageSet` and
+given to the view with `View::set_images` (`varta-runtime`:
+`ViewLayout::with_images`; `varta-shell` does both for every packaged
+artifact, with an empty set for an artifact without images). With a set, a
+batch whose `img` `src` or `srcset` names an image outside it is refused as
+a whole (`Violation::UnpackagedImage`), as the browser host refuses an
+unpackaged asset before any effect; a view without a set (headless
+snapshots, `varta-preview`) keeps the grammar-only check and shows no image,
+so its `img` elements represent nothing (below). The browser bundle carries the same files
+under the same names and leaves every rule below to the browser: web stays
+web, native stays native.
+
+- **Formats.** A file is told apart by its signature, as the WHATWG MIME
+  Sniffing Standard's image type pattern table (§6.1) defines
+  (`varta_common::view::images::sniff`), never by its name: PNG (with APNG,
+  PNG 3rd edition), JPEG, GIF87a/89a, WebP (lossy, lossless, animated; RFC
+  9649), BMP and ICO (its largest entry). Decoding uses the image-rs decoders
+  in safe Rust (`png`; `image` with `zune-jpeg`, `gif`, `image-webp`), every
+  one with dimension and allocation limits. AVIF is refused
+  (`ImageRefusal::Avif`): its only image-rs decoder is the C `dav1d` library.
+  SVG as an image is refused (`ImageRefusal::Svg`): drawing it needs an SVG
+  renderer (SVG 2 with CSS, fonts and the HTML §4.8.4.3 secure-static
+  mode), a separate engine decision. Any other file is
+  `ImageRefusal::Unknown`; a file that does not decode refuses the set
+  (`ImageError::Malformed`).
+- **Limits.** `ImageSet::decode` checks every image before any is decoded:
+  the count (`MAX_IMAGES`), names (the view resource grammar, at most
+  `MAX_IMAGE_NAME_BYTES`), unique names and the encoded total
+  (`MAX_IMAGE_TOTAL_BYTES`); each file within `MAX_IMAGE_BYTES` and
+  `MAX_IMAGE_DIMENSION` per axis, at most `MAX_IMAGE_FRAMES` frames, the
+  pixels of every frame charged to `MAX_IMAGE_DECODED_BYTES` before they are
+  decoded, and the retained frames with their downscaling levels within
+  `MAX_IMAGE_CACHE_BYTES` (each level at most halves the previous one).
+  These are conservative initial values pending an owner decision.
+- **Colour** (CSS Color 4 §10, PNG 3rd edition §4.3, §11.3.2). Images are
+  converted to sRGB, the colour space Chrome draws them in on an sRGB
+  output, with `moxcms`: a PNG's space comes from `cICP`, then `iCCP`, then
+  `sRGB`, then `cHRM`/`gAMA` (a `gAMA` of 1/2.2 without `cHRM` is sRGB, as
+  Chrome treats it); JPEG and WebP from an embedded ICC profile; an untagged
+  image is sRGB and an ICC profile that does not parse is ignored. PNG,
+  WebP and the other formats convert their straight-alpha pixels at decode,
+  as Skia's decoders apply `skcms`; JPEG converts what is sampled, as Skia
+  draws a JPEG in its own space and transforms at draw (measured: converting
+  JPEG at decode differs from Chrome by about 5/255 when upscaled). `cICP`
+  with an HDR transfer (PQ, HLG), narrow range or a non-RGB matrix is
+  refused (`ImageError::Color`): Chrome tone-maps HDR for its output, which
+  is not modelled. 16-bit channels round to 8 bits; pixels are premultiplied
+  as Skia premultiplies.
+- **Orientation** (CSS Images 3 §5.1). The EXIF orientation (PNG `eXIf`,
+  JPEG and WebP `Exif`) is kept with the pixels and applied when sampling:
+  `image-orientation: from-image`, the initial value, shows the oriented
+  image with its natural size swapped for quarter turns, and `none` the
+  stored pixels. The property is inherited.
+- **Animation** (HTML §4.8.4.3 "update the image data"; PNG 3rd edition
+  §4.9 APNG, GIF89a, RFC 9649). Animated PNG, GIF and WebP frames are
+  composited by their decoders and advance on the view's animation clock
+  (`View::set_animation_time`) from the time the element's `src` or
+  `srcset` was set, so frames are deterministic like transitions and
+  `View::animating` keeps a playing image's frames requested. A frame of 10
+  ms or less lasts 100 ms (Chrome's and Firefox's rule); a GIF plays its
+  NETSCAPE loop count plus one time (0 forever, none once), APNG `num_plays`
+  and WebP `loop_count` times (0 forever); a finished animation stays on its
+  last frame.
+- **Selection** (HTML §4.8.4.3, the source set, `srcset` and `sizes`
+  parsing and "select an image source"). `srcset` and `sizes` are
+  parsed as the source set and source size grammars define (density and
+  width descriptors; source sizes with `max-width`/`min-width` media
+  conditions in `px`, `rem` at the initial 16px, `vw`), `src` joins as the
+  `1x` candidate when no candidate has density 1 and none has a width, and
+  a width descriptor becomes a density through the first matching source
+  size (`100vw` by default). The user agent chooses the candidate; this is
+  Chromium's choice (`HTMLSrcsetParser` selection): candidates by density,
+  the first whose density reaches the device pixel ratio unless the ratio
+  is below the geometric mean of it and the one before. The chosen
+  candidate's density divides the natural size (the density-corrected
+  natural size). Chromium's preference for an already cached candidate is a
+  cache heuristic, not a rule, and is not modelled.
+- **Missing image** (HTML §15.4.2). An `img` that names no image represents
+  nothing: a replaced box with zero natural size. One that would render its
+  `alt` text (a non-empty `alt`) or a sized broken-image box (`width`/
+  `height` attributes or sizes) is refused: its look is the user agent's
+  choice (Chrome draws an icon and a grey border) and is not a standard
+  rendering. `decoding` and `loading` are admitted and change nothing
+  natively: every image is local and decoded before guest code runs, so
+  `async`/`lazy` show the same pixels as `sync`/`eager` (HTML §4.8.4:
+  `decoding` is a hint and `loading` defers only fetching); the browser
+  bundle passes them to the browser.
+- **Sizing** (CSS 2.1 §10.3.2, §10.6.2, §10.4; CSS Sizing 4 §4.1; HTML
+  §15.4.3). The image is a replaced box with its natural size and ratio:
+  `width` and `height` (lengths and percentages), `min-*`/`max-*`, padding,
+  border and margins apply; with one size `auto` the other follows the
+  ratio, with both `auto` the §10.4 constraint table applies (so
+  `max-width: 100%` scales both axes). The `width`/`height` attributes are
+  presentational hints for `width`/`height` and map to `aspect-ratio: auto
+  w / h` (HTML §15.2, §15.4.3): the image's own ratio wins once it is known,
+  as for an image without a ratio the hint gives one. `aspect-ratio` takes
+  `auto`, a ratio or both (CSS Sizing 4 §4.1). A size a parent imposes (a
+  stretched or flexed flex item, a grid area) is final on its axis; flex
+  items do not shrink below their natural size (the automatic minimum).
+- **Placement** (CSS 2.1 §9.2.2, §10.8; CSS Inline 3 §2.2, §4.2). A
+  block-level image is `display: block`, a flex or grid item or an absolutely
+  or fixed positioned image. An inline image alone on its line (its parent a
+  block container, no inline-level neighbour, baseline-aligned) has its line
+  box: the parent's strut and the image's margin box standing on the
+  baseline, placed by `text-align` and start-aligned when it overflows (CSS
+  Text 3 §6.1). Any other inline image is an atomic inline of its parent's
+  inline formatting context ([lines of text](#images-in-lines-of-text)).
+- **Object** (CSS Images 3 §4.5, §4.6). `object-fit` (`fill`, `contain`,
+  `cover`, `none`, `scale-down`) sizes the image in its content box and
+  `object-position` (keywords, lengths, percentages) places it; the content
+  box clips it.
+- **Sampling** (CSS Images 3 §5.2). Measured against Chrome (Skia): each
+  device pixel is sampled at its centre with bilinear filtering between
+  texels, edges clamped. Drawn smaller than half its size, an image is
+  sampled from a level chain built as `SkMipmap` builds it (every axis longer
+  than one pixel halves, rounding down; a two-tap box on an even axis, a
+  1-2-1 kernel on an odd one, integer channels truncated) with linear
+  filtering between the two levels around the level of detail
+  `max(0, log2(1 / s) - 0.5)`, where `s` is the larger of the two axis
+  scales in device pixels per image pixel. `image-rendering` (inherited):
+  `auto`, `smooth` and `high-quality` sample so; `pixelated` scales each axis
+  by nearest neighbour to the integer multiple of the natural size closest
+  to the target (at least one) and the rest of the way smoothly, as §5.2
+  defines; `crisp-edges` samples the nearest texel, which §5.2 admits.
+- **Painting** (CSS2 Appendix E). An image paints in its element's content
+  phase as an atomic replaced element, after its background and border, in
+  its object rectangle, whose edges are its layout box in Blink's 1/64 px
+  layout units snapped to whole paint pixels before DPI. A rounded image is
+  clipped by its content-box curve whatever its `overflow` (CSS Backgrounds
+  3 §5.3), whose coverage is then its only edge coverage; otherwise
+  fractional device edges are covered by area, and a clip that cuts the
+  image masks only where it cuts. Opacity, the ancestors' clips and
+  `transform` (translations and `scale()`) apply as to any box.
+- **Hits and accessibility** (HTML-AAM `img`). The image box is its own
+  pointer target (rounded by its radii). An image is named by its `alt`; an
+  `img` with an empty `alt` and no `aria-label`/`aria-labelledby` is
+  presentational and has no role, as Chrome exposes it.
+- **Display list.** An image is the software-only scene primitive
+  `Primitive::Image`; a frame with images is retained and damaged like any
+  software frame, and `Renderer::prepare` returns it as the explicit
+  `PreparedFrame::Raster`, so the optional GPU backend presents its pixels.
+  The public `DisplayList` has no image command.
+
+##### Images in lines of text
+
+An inline image that shares its line box with text or other inline content
+is an atomic inline of the parent block's inline formatting context
+(`inline::atoms`, CSS 2.1 §9.2.2). Its margin box is one unbreakable advance
+of the line, a Parley `InFlow` box (the [Parley
+patch](../vendor/parley/VARTA-PATCH.md) records the line breaking):
+
+- **Breaking** (CSS Text 3 §5.1). There is a soft wrap opportunity before
+  and after an atomic inline, even next to a letter. The opening edges of
+  inline boxes right before it and the closing edges right after it move
+  and wrap with it; an image wider than an otherwise empty line overflows
+  it. The image and those edges are one word of the min-content width. A
+  collapsible space before or after an image is content (CSS Text 3 §4.1.1
+  collapses only adjacent spaces).
+- **Vertical alignment** (CSS 2.1 §10.8.1; CSS Inline 3 §4.2). The image's
+  baseline is its bottom margin edge. `vertical-align` places that edge
+  against the parent's baseline and first available font, with Chrome's
+  shifts in Blink's 1/64 px layout units: `baseline` on it; `sub` a fifth of
+  the parent's font size plus one pixel below; `super` a third plus one
+  above; `middle` with its margin box's centre half the parent's x-height
+  above the baseline (a font without an x-height, OS/2 `sxHeight`, is
+  refused: Chrome then measures glyphs); `text-top`/`text-bottom` with its
+  top/bottom on the parent's rounded ascent/descent; a length raises it by
+  that length and a percentage by that part of the image's own line height.
+  `top` and `bottom` align the margin box with the line box's top or bottom
+  once the rest of the line is placed, and grow the line downwards or
+  upwards when the image is taller (the aligned subtree, CSS Inline 3
+  §4.2.3). The line box spans the strut, the text and every image's margin
+  box (CSS 2.1 §10.8).
+- **Boxes.** An enclosing inline box's fragment spans the image's advance at
+  that box's own font box (its background and border do not grow with the
+  image), and the image's geometry is its border box. The image paints, is
+  hit and is named as any image, right after its line's text in tree order
+  (or in its stacking layer when it has opacity).
+- **Refused.** Percentages in the image's sizes, margins or padding (the
+  line is measured before its containing block is fixed), a positioned or
+  transformed image, an image inside an inline box with opacity, and images
+  in a `text-overflow: ellipsis` flow or a flow whose preserved white space
+  takes the native white-space model.
+
+##### Conformance
+
+| Feature | Specification | Status |
+| --- | --- | --- |
+| `src`, `alt` | HTML §4.8.4 | Native; `alt` names the image |
+| Image that represents nothing | HTML §15.4.2 | Native: zero-size replaced box |
+| Alternative text, broken-image box | HTML §15.4.2 | Refused (user agent rendering) |
+| `width`/`height` attributes, ratio hint | HTML §15.2, §15.4.3; CSS Sizing 4 §4.1 | Native |
+| `srcset`, `sizes`, density selection | HTML §4.8.4.3 | Native (Chromium selection) |
+| `decoding`, `loading` | HTML §4.8.4 | Admitted; no effect on local images |
+| PNG, APNG | PNG 3rd edition | Native |
+| JPEG | ITU T.81, JFIF | Native |
+| GIF, animated | GIF89a | Native |
+| WebP, animated | RFC 9649 | Native |
+| BMP, ICO | Microsoft formats | Native (largest ICO entry) |
+| AVIF | AV1 Image File Format | Refused (no safe-Rust decoder) |
+| SVG as an image | SVG 2, HTML §4.8.4.3 | Refused (no SVG renderer) |
+| Format by signature | MIME Sniffing §6.1 | Native |
+| ICC, `cICP`, `iCCP`, `sRGB`, `cHRM`/`gAMA` | CSS Color 4 §10; PNG 3rd edition §11.3.2 | Native (SDR); HDR, narrow range refused |
+| EXIF orientation, `image-orientation` | CSS Images 3 §5.1; PNG §11.3.4.5 | Native |
+| Animation timing and loops | HTML §4.8.4.3; GIF89a; PNG §4.9; RFC 9649 | Native, on the view clock |
+| `object-fit` | CSS Images 3 §4.5 | Native |
+| `object-position` | CSS Images 3 §4.6 | Native |
+| `image-rendering` | CSS Images 3 §5.2 | Native |
+| `aspect-ratio` | CSS Sizing 4 §4.1 | Native (images) |
+| Replaced sizing and constraints | CSS 2.1 §10.3.2, §10.4, §10.6.2 | Native |
+| Inline image alone on a line | CSS 2.1 §10.8 | Native |
+| Inline image in a line of text | CSS 2.1 §9.2.2, §10.8; CSS Text 3 §5.1 | Native |
+| `vertical-align` | CSS 2.1 §10.8.1; CSS Inline 3 §4.2 | Native (`middle` needs an x-height) |
+| Painting order | CSS2 Appendix E | Native |
+
+Geometry, hits, image roles and names, animation timing and pixels match
+Chrome at 1x, 1.5x, 2x and 3x (`native_image_probe` with
+`scripts/test-native-images.mjs`; the viewport and each image's box are
+compared separately within the mean bound of the other probes, and frame
+durations and loop counts with Chrome's `ImageDecoder`). The cases cover
+every format, colour source and orientation, `object-fit` and
+`object-position`, `image-rendering`, `aspect-ratio` and the attribute
+hints, `srcset` and `sizes`, animation frames on the clock, natural,
+explicit, ratio-derived and constrained sizes, inline lines alone and in
+text with every `vertical-align`, flex and grid items, downscaling levels,
+rounded clips, opacity, `transform`, fractional and positioned boxes.
+Chrome draws a downscaled `pixelated` image by nearest neighbour where §5.2
+asks for the smooth rest, and drops `crisp-edges`; the oracle compares those
+cases with the values Chrome implements. Curved clip edges differ by up to
+about a quarter of full intensity on a few pixels (path antialiasing),
+within the bound.
 
 ## Local modules
 
@@ -16086,9 +16498,13 @@ use the common view resource grammar. These are build inputs under the config
 root, read through pinned no-follow descriptors, never execution filesystem roots
 or host grants. This section affects browser distribution only; portable/native
 Wasm and manifests retain their existing bytes. `bundle_with_resources` also accepts
-owned checked `BrowserResource` values without ambient file loading.
+owned checked `BrowserResource` values without ambient file loading. Images every
+renderer draws are declared in the top-level `images` map instead, which packages
+them into the artifact's resource section ([packaged
+images](#packaged-images-section-version-2)); the two cannot both be declared.
 
-Image resources currently use static PNG. Inventory count, per-file/total bytes,
+Images of the top-level `images` map follow the [native image
+admission](#native-images-img) instead. `browser.resources` images currently use static PNG. Inventory count, per-file/total bytes,
 aggregate decoded RGBA/font bytes, name length and image dimensions are bounded by the packaging constants in
 `crates/varta-project/src/browser/resources.rs`. Admission checks the signature,
 first/unique IHDR, bounded chunk lengths and final IEND; animated PNG is rejected.
@@ -16545,6 +16961,54 @@ native paint, while the browser, with synthesis off, draws the nearest face
 unemboldened and upright; and a control's font size stays Chrome's control size in the
 browser and the inherited size natively unless the guest sets one.
 
+#### Packaged images (section version 2)
+
+A v38 configuration may also declare the images the application draws as a
+top-level `images` map from the view resource name an `img` `src` or
+`srcset` uses to a no-follow path under the configuration directory, in the
+same grammar: `"images": {"icons/logo.png": "assets/logo.png"}`. Packaging
+reads every file through the pinned loader within `MAX_IMAGE_BYTES` each and
+`MAX_IMAGE_TOTAL_BYTES` in all (`varta_artifact`, owned by
+`varta_common::view::images`), refuses a file whose signature is not an
+admitted format (`sniff`; AVIF and SVG with their own reasons), decodes every
+image with the native renderer's decoder (`ImageSet::decode`, the [native
+image](#native-images-img) limits and colour rules), so a packaged artifact
+always loads natively, and builds the section with `Resources::with_images`:
+at most `MAX_IMAGES` images, unique names in canonical (bytewise ascending)
+order. These limits equal the browser bundle's per-resource limits, and the
+browser bundle carries the section's images under the same names with their
+formats' media types (with the faces in its inventory, so its shared
+inventory caps still apply), so both distributions admit and draw the same
+images. A configuration may not declare both `images` and
+`browser.resources` (refused when the configuration is validated): a
+browser-only image would be refused natively. `browser.resources` keeps its
+meaning.
+
+A section with images is version `IMAGE_RESOURCE_VERSION` (2):
+
+```text
+magic | version u32 (2) | face count u32 | image count u32 | payload SHA-256 [32]
+face count x face descriptor | image count x image descriptor |
+face count x (family | font) | image count x (name | file)
+image descriptor: name length u16 | format u16 | file length u32 | file SHA-256 [32]
+```
+
+The format is the `ImageFormat` code: 1 PNG (and APNG), 2 JPEG, 3 GIF, 4
+WebP, 5 BMP, 6 ICO. The section has 1..=`MAX_IMAGES` images and
+0..=`MAX_FONT_FACES` faces; a section without images keeps its version 1
+bytes, so one declaration still has one encoding and every existing section
+reads unchanged. A reader refuses a version 2 section without images, an
+unknown format code, a file whose signature is not its descriptor's format,
+a file that does not match its digest, names out of canonical order or
+duplicated, every bound above and every face rule;
+`MAX_RESOURCE_SECTION_BYTES` includes the image bounds. The container format
+is unchanged (format 2 carries any section). A runtime companion that reads
+only version 1 refuses a version 2 section in `--validate`, before any
+output is written. The native host decodes the images again (`varta-shell`:
+before storage is created and before any guest code runs), and the browser
+decodes them before guest execution, as for `browser.resources`. The limits
+are initial conservative values pending an owner decision.
+
 Native AOT payloads, `VARTA1`/`VARTA2` containers and public native deserialization
 are removed. Rebuild existing native artifacts. Native launchers currently compile
 embedded portable Wasm at startup. Reintroducing cached/AOT machine code requires
@@ -16732,6 +17196,13 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
   `--font PATH FAMILY` (nonempty, at most
   `shell::MAX_FONT_BYTES`) supplies one explicit face for an artifact without
   fonts and is refused (`ShellError::FontConflict`) for one that ships fonts.
+- **Images.** `Launch::packaged` decodes the section's images once
+  (`varta_view::ImageSet::decode`, the [native image](#native-images-img)
+  formats, colour conversion and limits) after the faces and before storage directories are created; a
+  refused image is `ShellError::Images`, before any guest code. The start
+  gives the view the decoded set (`ViewLayout::with_images`), empty for an
+  artifact without images, so an `img` naming another image is refused as in
+  the browser. `varta-preview` has no images.
 - **System fonts.** `--system-fonts`, also only for an artifact without fonts
   (`ShellError::FontConflict` otherwise) and exclusive with `--font`, maps the
   CSS generic families to this computer's fonts as the platform's browser
