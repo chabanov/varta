@@ -18,6 +18,7 @@
 //! layout and CPU raster methods support bounded box and explicit-font text
 //! subsets; full native rendering is not implemented yet.
 mod accessibility;
+mod calc;
 mod drawing;
 mod events;
 mod geometry;

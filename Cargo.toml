@@ -26,6 +26,7 @@ exclude = [
     "vendor/harfrust",
     "vendor/accesskit_macos",
     "vendor/accesskit_consumer",
+    "vendor/taffy",
 ]
 
 [workspace.package]
@@ -222,3 +223,5 @@ harfrust = { path = "vendor/harfrust" }
 accesskit_macos = { path = "vendor/accesskit_macos" }
 # Clip-aware node_at_point for every platform adapter; see its patch record.
 accesskit_consumer = { path = "vendor/accesskit_consumer" }
+# A resolver for `calc()` handles in the high-level tree; see its patch record.
+taffy = { path = "vendor/taffy" }

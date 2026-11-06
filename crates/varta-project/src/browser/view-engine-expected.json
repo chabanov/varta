@@ -5072,7 +5072,9 @@
     ]
   },
   "unrenderable": {
-    "computed": {},
+    "computed": {
+      "width": "max(0px, calc(100% - 16px))"
+    },
     "statuses": [
       0,
       0,
@@ -5080,7 +5082,9 @@
       0,
       0,
       0,
-      5
+      0,
+      0,
+      0
     ]
   },
   "work-limit": {

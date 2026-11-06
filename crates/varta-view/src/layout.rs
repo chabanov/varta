@@ -725,6 +725,7 @@ pub(crate) fn inline_spacing(
             let value = match value.expand() {
                 E::Length(value) => Some(LengthPercentage::length(value)),
                 E::Percent(value) => Some(LengthPercentage::percent(value)),
+                E::Calc(handle) => Some(LengthPercentage::calc(handle)),
                 E::Auto => None,
             };
             spacing.margin[side] = fixed(horizontal(value))?;
@@ -761,6 +762,8 @@ fn horizontal(value: Option<LengthPercentage>) -> Option<f32> {
     match value.expand() {
         taffy::style::ExpandedLengthPercentage::Length(value) => Some(value),
         taffy::style::ExpandedLengthPercentage::Percent(value) => (value == 0.0).then_some(0.0),
+        // A `calc()` with a percentage needs the width too.
+        taffy::style::ExpandedLengthPercentage::Calc(_) => None,
     }
 }
 
@@ -1613,6 +1616,7 @@ pub(crate) fn image_box(
 ) -> Result<replaced::AtomBox, LayoutError> {
     let engine_error = |e: taffy::TaffyError| LayoutError::Engine(e.to_string());
     let mut engine = TaffyTree::new();
+    engine.set_calc_resolver(crate::calc::resolve);
     let (node, _) = build_one(
         tree,
         env,
@@ -2063,6 +2067,7 @@ fn boxes_inner(
     }
     let text_metrics = measured.text;
     let mut engine = TaffyTree::new();
+    engine.set_calc_resolver(crate::calc::resolve);
     engine.disable_rounding();
     let mut ids = BTreeMap::new();
     let mut lines = BTreeMap::new();
@@ -2148,7 +2153,7 @@ fn boxes_inner(
                     taffy::compute_leaf_layout(
                         inputs,
                         style,
-                        |_, _| 0.0,
+                        crate::calc::resolve,
                         |known, available| {
                             let shape = match context.as_deref() {
                                 Some(Measure::Text(shape)) => shape,

@@ -7825,6 +7825,34 @@ sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-and-t3).
   layout lacks (`inline-flex`, `inline-block`, `sticky`, `fit-content`,
   `-webkit-box`).
 
+#### K8 T2 items (2) and (5): font-relative units and layout-time math (2026-11-06)
+
+Owner decision of the same day: (2) and (5) are required by the standards.
+
+- The style engine computes font sizes and line heights (`varta_style::font`:
+  the user-agent font rows, Blink's monospace and minimum-size rules, moved
+  from the native renderer), so `em`, `lh` and `rlh` resolve in every
+  property on both hosts, and registered length values compute at the
+  declaring element before they inherit (Properties and Values API 1 §2.4).
+  The browser host passes its `medium` size (the `all: initial` shadow host)
+  and whether a packaged face names `monospace`; the engine receives each
+  element's tag.
+- Sums of lengths and percentages resolve at layout (Values 4 §10.10) for
+  sizes, margins, padding, gaps, the flex basis, insets and
+  `vertical-align`, through a recorded Taffy 0.15.1 patch that lets the
+  high-level tree resolve calc handles (an index, never a pointer).
+- Chrome oracle: two new scenes (font-relative units with a registered
+  length, percentage-and-length math), `bridge` 503 and `platform` 491
+  checks pass at 1x, 1.25x and 2x with no new deviation.
+- Remaining for (2): `ex`, `ch`, `cap`, `ic` (and root forms), `lh` with
+  `line-height: normal` and `rlh` need the metrics of the first available
+  font. Proposed: the engine reads x-height, cap height, the `0` and `水`
+  advances and the line metrics from the packaged faces' bytes (read-fonts,
+  already in the dependency graph), so both hosts use one implementation;
+  generic system families keep the Values 4 fallbacks, a recorded Chrome
+  deviation. Sums with percentages in `border-radius`, `transform`,
+  `object-position` and grid tracks wait for those consumers.
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

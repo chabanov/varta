@@ -265,6 +265,21 @@ const SCENES: &[Scene] = &[
         reduced_motion: false,
         deviation: None,
     },
+    Scene {
+        name: "percentage-length-math",
+        sheet: ":root { --gutter: 1rem } .r { width: 300px; height: 160px; padding: 10px; background-color: #eee } .a { width: calc(50% - 20px); height: calc(25% + 0.5em); margin-left: calc(10% + 5px); background-color: #c00 } .b { width: min(80%, calc(100% - 4rem)); height: 20px; padding-top: calc(5% + 2px); background-color: #0a0 } .c { width: calc(100% - var(--gutter) * 2); max-width: calc(70% + 1em); height: 10px; margin-top: calc(2% - 1px); background-color: #00c } .d { width: calc(10% - 50px); height: 8px; min-width: calc(20% + 1px); background-color: #cc0 }",
+        nodes: &[Node(
+            "r",
+            &[
+                Node("a", &[]),
+                Node("b", &[]),
+                Node("c", &[]),
+                Node("d", &[]),
+            ],
+        )],
+        reduced_motion: false,
+        deviation: None,
+    },
 ];
 
 fn append(batch: &mut B, parent: u32, nodes: &[Node], next: &mut u32) {

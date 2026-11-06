@@ -385,6 +385,9 @@ pub fn composite(name: &str) -> Option<&'static str> {
 enum Mode {
     /// The registry's host contract.
     Host,
+    /// The host contract plus the layout-time math functions [`lower`]
+    /// emits for the properties of [`layout_math_property`].
+    Lowered,
     /// CSS Values 4 and Color 4/5 leaf types.
     Engine,
 }
@@ -411,6 +414,67 @@ fn host_leaf(name: &str, token: &V) -> bool {
         },
         _ => false,
     }
+}
+
+/// The properties whose native consumers resolve a layout-time `calc()`
+/// against their percentage basis: box sizes, margins, padding, gaps, the
+/// flex basis, insets and `vertical-align`. Elsewhere such a value is not
+/// renderable yet.
+#[must_use]
+pub fn layout_math_property(property: CssProperty) -> bool {
+    use CssProperty as P;
+    matches!(
+        property,
+        P::Width
+            | P::Height
+            | P::MinWidth
+            | P::MinHeight
+            | P::MaxWidth
+            | P::MaxHeight
+            | P::Margin
+            | P::MarginTop
+            | P::MarginRight
+            | P::MarginBottom
+            | P::MarginLeft
+            | P::Padding
+            | P::PaddingTop
+            | P::PaddingRight
+            | P::PaddingBottom
+            | P::PaddingLeft
+            | P::Gap
+            | P::RowGap
+            | P::ColumnGap
+            | P::FlexBasis
+            | P::Top
+            | P::Right
+            | P::Bottom
+            | P::Left
+            | P::VerticalAlign
+    )
+}
+
+/// A layout-time math function of the host grammar: a `<length-percentage>`
+/// that sums lengths with percentages, lowered by [`lower`] to `px`,
+/// percentage and number leaves (CSS Values 4 §10.10: resolved at layout).
+fn host_math(name: &str, tokens: &[V], at: usize) -> Option<usize> {
+    if name != "<length-percentage>" || !math::is_math(tokens.get(at)) {
+        return None;
+    }
+    let (expression, end) = math::parse(tokens, at)?;
+    (expression.layout_ready()
+        && expression.resolved_type(Some(math::Base::Length))
+            == Some(math::Type::of(math::Base::Length)))
+    .then_some(end)
+}
+
+/// A layout-time length of the host grammar (see [`host_math`]): `None`
+/// unless `value` is one lowered math function.
+#[must_use]
+pub fn layout_math(value: &str) -> Option<math::Expression> {
+    let tokens = lex_value(value)?;
+    let end = host_math("<length-percentage>", &tokens, 0)?;
+    // Only a lowered value reaches layout: its own text is `layout_ready`.
+    (end == tokens.len()).then(|| math::parse(&tokens, 0).map(|(expression, _)| expression))?
 }
 
 /// The math base a numeric leaf type resolves to, with its percent hint.
@@ -590,6 +654,11 @@ fn ends(grammar: &G, tokens: &[V], at: usize, mode: Mode) -> Vec<usize> {
                 }
             } else if tokens.get(at).is_some_and(|token| host_leaf(name, token)) {
                 out.push(at + 1);
+            }
+            if mode == Mode::Lowered
+                && let Some(end) = host_math(name, tokens, at)
+            {
+                out.push(end);
             }
             out
         }
@@ -892,7 +961,7 @@ fn literal_notes(property: CssProperty, tokens: &[V], mode: Mode) -> bool {
             // clamped at computed-value time; the host grammar refuses it.
             (CssProperty::Opacity, V::Num { value, unit, .. }) => match (unit, mode) {
                 (NumUnit::Percent | NumUnit::None, Mode::Engine) => value.is_finite(),
-                (NumUnit::None, Mode::Host) => (0.0..=1.0).contains(value),
+                (NumUnit::None, Mode::Host | Mode::Lowered) => (0.0..=1.0).contains(value),
                 _ => false,
             },
             (CssProperty::FontWeight, V::Num { value, .. }) => (1.0..=1000.0).contains(value),
@@ -1086,7 +1155,33 @@ fn lower_math(
         expression.evaluate(&resolution)?
     };
     if evaluated.mixed {
-        return None;
+        // Values 4 §10.10: a sum of lengths and percentages resolves at
+        // layout; its lengths become `px` now.
+        if !layout_math_property(property) {
+            return None;
+        }
+        let parts = tokens[at..end]
+            .iter()
+            .map(|token| match token {
+                V::Num {
+                    value,
+                    unit: NumUnit::Dimension(name),
+                    ..
+                } => match math::length_unit(name) {
+                    Some(unit) => absolute_length(*value, unit, context),
+                    None => Some(token_text(token)),
+                },
+                token => Some(token_text(token)),
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let text = join(&parts);
+        // §10.12: a nonnegative property clamps the used value at zero.
+        let text = if nonnegative(property) {
+            format!("max(0px, {text})")
+        } else {
+            text
+        };
+        return Some((text, end));
     }
     if nonnegative(property) {
         evaluated.value = evaluated.value.max(0.0);
@@ -1350,8 +1445,9 @@ pub fn lower(property: CssProperty, value: &str, context: &Context) -> Option<St
     }
     let lowered = join(&parts);
     let tokens = lex_value(&lowered)?;
-    (matches_tokens(target, &tokens, Mode::Host) && literal_notes(property, &tokens, Mode::Host))
-        .then_some(lowered)
+    (matches_tokens(target, &tokens, Mode::Lowered)
+        && literal_notes(property, &tokens, Mode::Lowered))
+    .then_some(lowered)
 }
 
 #[cfg(test)]
@@ -1481,7 +1577,7 @@ mod tests {
         }
         for (property, value, refusal) in [
             (P::Width, "calc(1px + 1)", Refusal::Invalid),
-            (P::Width, "calc(100% - 1rem)", Refusal::Unrenderable),
+            (P::BorderRadius, "calc(100% - 1rem)", Refusal::Unrenderable),
             (P::Width, "2ch", Refusal::Unrenderable),
             (P::Width, "round(1px, 2px)", Refusal::Invalid),
             (
@@ -1617,5 +1713,42 @@ mod font_tests {
             ..Context::NOMINAL
         };
         assert_eq!(super::lower(CssProperty::Width, "2em", &bare), None);
+    }
+}
+
+#[cfg(test)]
+mod layout_math_tests {
+    use super::*;
+
+    #[test]
+    fn sums_of_lengths_and_percentages_lower_to_layout_time_math() {
+        let lower = |property, value| lower(property, value, &Context::NOMINAL);
+        assert_eq!(
+            lower(CssProperty::Width, "calc(50% - 1rem)").as_deref(),
+            Some("max(0px, calc(50% - 16px))")
+        );
+        assert_eq!(
+            lower(CssProperty::MarginLeft, "calc(10% + 0.5em)").as_deref(),
+            Some("calc(10% + 8px)")
+        );
+        assert_eq!(
+            lower(CssProperty::Padding, "1px calc(5% + 1px)").as_deref(),
+            Some("1px max(0px, calc(5% + 1px))")
+        );
+        for (property, value) in [
+            (CssProperty::Width, "calc(50% - 20px)"),
+            (CssProperty::Height, "calc(100% - 2rem)"),
+            (CssProperty::MarginLeft, "calc(10% + 5px)"),
+            (CssProperty::PaddingTop, "calc(5% + 1px)"),
+            (CssProperty::MinWidth, "max(0px, calc(10% - 1000px))"),
+        ] {
+            assert_eq!(check(property, value), Ok(()), "{value}");
+        }
+        assert_eq!(
+            check(CssProperty::BorderRadius, "calc(50% - 1px)"),
+            Err(Refusal::Unrenderable)
+        );
+        assert!(layout_math("max(0px, calc(50% - 16px))").is_some());
+        assert!(layout_math("calc(50% - 1em)").is_none());
     }
 }

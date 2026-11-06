@@ -202,13 +202,15 @@ fn math_units_and_keywords_lower_to_the_native_grammar() {
     assert_eq!(got["border-radius"], "1000000px");
     assert_eq!(got["width"], "512px");
     assert_eq!(got["height"], "76.8px");
-    // A value the native renderer cannot render through `var()` is invalid
-    // at computed-value time natively.
+    // A sum of a percentage and a length through `var()` resolves at layout;
+    // a value the native renderer cannot render is invalid at
+    // computed-value time natively.
     let got = style(
-        ":root { --w: calc(100% - 1rem) } .target { width: var(--w) }",
+        ":root { --w: calc(100% - 1rem) } .target { width: var(--w); border-radius: var(--w) }",
         "target",
     );
-    assert!(got.get("width").is_none());
+    assert_eq!(got["width"], "max(0px, calc(100% - 16px))");
+    assert!(got.get("border-radius").is_none());
 }
 
 #[test]
@@ -367,5 +369,33 @@ fn css_wide_keywords_and_importance_reach_layout() {
     let mut view = View::default();
     let mut b = B::new();
     b.stylesheet(1, ".t { font-weight: 1001 }");
+    assert!(view.commit(&b.finish(), false, &mut Deny).is_err());
+}
+
+#[test]
+fn percentage_and_length_sums_resolve_at_layout() {
+    // CSS Values 4 §10.10: `calc(50% - 20px)` resolves against the
+    // percentage basis of its context (the containing block's width for
+    // widths, margins and padding, its height for heights).
+    let boxes = chain_boxes(
+        ".p { width: 400px; height: 300px; padding: 10px }
+         .t { width: calc(50% - 20px); height: calc(100% - 2rem); margin-left: calc(10% + 5px);
+              padding-top: calc(5% + 1px); min-width: max(0px, calc(10% - 1000px)) }",
+        &["p", "t"],
+        &[],
+    );
+    assert_eq!((boxes[1].x, boxes[1].width), (55.0, 180.0));
+    assert_eq!(boxes[1].height, 268.0 + 21.0);
+    // A nonnegative property clamps its used value at zero.
+    let boxes = chain_boxes(
+        ".p { width: 100px; height: 10px } .t { width: calc(10% - 50px); height: 5px }",
+        &["p", "t"],
+        &[],
+    );
+    assert_eq!(boxes[1].width, 0.0);
+    // Where no native consumer resolves one yet, it is refused.
+    let mut view = View::default();
+    let mut b = B::new();
+    b.stylesheet(1, ".t { border-radius: calc(50% - 1px) }");
     assert!(view.commit(&b.finish(), false, &mut Deny).is_err());
 }
