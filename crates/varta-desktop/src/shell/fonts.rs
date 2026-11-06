@@ -22,6 +22,11 @@ struct Face {
 pub struct FontSet {
     faces: Vec<Face>,
     origin: Origin,
+    /// The platform's fallback cascade of a system set.
+    fallback: Option<super::fallback::SystemFallback>,
+    /// Families whose ascent the platform's browser enlarges (a system set
+    /// on macOS).
+    enlarged_ascent: &'static [&'static str],
 }
 
 /// Where a set's faces come from, which selects how the shaper loads them.
@@ -57,6 +62,8 @@ impl FontSet {
                 })
                 .collect(),
             origin: Origin::Packaged,
+            fallback: None,
+            enlarged_ascent: &[],
         })
     }
 
@@ -70,22 +77,31 @@ impl FontSet {
                 aliases: Vec::new(),
             }],
             origin: Origin::Explicit,
+            fallback: None,
+            enlarged_ascent: &[],
         }
     }
 
     /// System font files with their registered families and the generic
-    /// family each stands for, in mapping order.
-    pub(super) fn from_system_faces(faces: Vec<(Vec<u8>, String, Option<&str>)>) -> Self {
+    /// families each stands for, in mapping order, and the platform's
+    /// fallback cascade for them.
+    pub(super) fn from_system_faces(
+        faces: Vec<(Vec<u8>, String, Vec<&str>)>,
+        fallback: super::fallback::SystemFallback,
+        enlarged_ascent: &'static [&'static str],
+    ) -> Self {
         Self {
             faces: faces
                 .into_iter()
-                .map(|(data, family, alias)| Face {
+                .map(|(data, family, aliases)| Face {
                     data: data.into(),
                     family,
-                    aliases: alias.into_iter().map(Into::into).collect(),
+                    aliases: aliases.into_iter().map(Into::into).collect(),
                 })
                 .collect(),
             origin: Origin::System,
+            fallback: Some(fallback),
+            enlarged_ascent,
         }
     }
 
@@ -111,7 +127,9 @@ impl FontSet {
     /// A text measurer over every face (`TextMeasurer::new_with_packaged_fonts`
     /// for a resource section, `new_with_system_fonts` for system fonts,
     /// otherwise `new_with_fonts`): the shaper parses each face and refuses
-    /// one that is malformed or whose tables do not name its family.
+    /// one that is malformed or whose tables do not name its family. A
+    /// system set's measurer also takes the platform's fallback faces
+    /// (`TextMeasurer::set_fallback`); the others look nothing up.
     pub fn measurer(&self) -> Result<TextMeasurer, TextMeasureError> {
         let fonts = self
             .faces
@@ -122,10 +140,15 @@ impl FontSet {
                 aliases: face.aliases.clone(),
             })
             .collect();
-        match self.origin {
+        let mut measurer = match self.origin {
             Origin::Packaged => TextMeasurer::new_with_packaged_fonts(fonts),
             Origin::Explicit => TextMeasurer::new_with_fonts(fonts),
             Origin::System => TextMeasurer::new_with_system_fonts(fonts),
+        }?;
+        if let Some(fallback) = &self.fallback {
+            measurer.set_fallback(Some(Box::new(fallback.clone())));
         }
+        measurer.set_enlarged_ascent_families(self.enlarged_ascent);
+        Ok(measurer)
     }
 }

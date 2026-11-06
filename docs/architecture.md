@@ -13996,6 +13996,55 @@ DOM boundary reports it as an indexed `ViewProtocolError` (`font-family
 keyword` for `set_style`, `stylesheet value` for a stylesheet). Custom
 property values keep such keywords. A quoted name is an ordinary family.
 
+#### Native fallback faces
+
+A host that lays text out with the platform's own fonts may give a
+`TextMeasurer` a `FontFallback` (`TextMeasurer::set_fallback`); `varta-shell
+--system-fonts` does, and no other host or font set looks anything up (a
+cluster none of the families covers keeps `.notdef`). The shaper first shapes
+with the CSS families. Then, as Blink's shaper falls back over a segment, the
+`.notdef` ranges of one style (adjacent clusters form one range; line breaks
+and control characters are not missing) all try the face the host names for
+the first range's first character (`FallbackRequest { character, family,
+weight, italic }`, `family` being the element's primary family), appended
+after the families each range had, and the text is shaped again; ranges that
+still miss repeat this, at most `MAX_FALLBACK_PASSES` times, and every pass is
+charged to the view's shaping budget. A covered character never changes face.
+The measurer registers each face once (by its `FallbackFace::key`); a face of
+a family the set already loads adds nothing and that family's faces are used.
+At most `MAX_FALLBACK_FACES` faces of at most `MAX_FALLBACK_FACE_BYTES` each
+and `MAX_FALLBACK_BYTES` in all are registered per measurer. A face drawing
+colour glyphs (`COLR`, `CBDT`, `EBDT`, `sbix` or `SVG ` tables, for example
+Apple Color Emoji), a face past these limits, or one that cannot be read
+refuses the text (`TextMeasureError::Fallback { character, refusal }`, a
+layout or paint failure) rather than drawing another face. As in Blink, a
+fallback face's run under a `line-height` other than `normal` takes its
+element's primary font ascent and descent, so it does not change the line box;
+under `normal` its own metrics take part (in an inline formatting context;
+plain text with `normal` keeps Parley's largest line height, a remaining
+difference). Weight and style select among the family's registered faces, and
+synthesis follows the paint rules of packaged faces (only the bold Chrome
+would synthesize stays refused).
+
+The shell names the face as Chrome does: on macOS CoreText's
+`CTFontCreateForStringWithLanguage` for the primary font (the UI font for the
+family `system-ui` maps, otherwise the named family) with the bold
+(weight 600 or more) and italic traits, then that family's face with those
+traits; the face is the platform font's own tables assembled as a standalone
+face, so no file is read. On Linux fontconfig's sorted match (`FcFontSort`)
+for a pattern of the character and the process locale (`LC_ALL`,
+`LC_MESSAGES`, then `LANG`), the first scalable face whose character map has
+it, extracted from its file or collection; like Chrome on Linux it does not
+ask for the weight or style. Answers and faces are cached per font set and
+shared by its measurers. Blink also splits fallback segments at script runs,
+which native grouping by style does not; they differ only when one segment's
+fallback face covers another script's missing characters. On macOS 27 with
+Chrome 156, `native_fallback_probe` with `scripts/test-native-inline.mjs`
+matches Chrome's boxes at 1x and 2x and its pixels within the 2/255 mean bound
+for lines whose primary font is Helvetica, Times or Menlo; lines in the UI
+font compare geometry only, because its `opsz` axis makes the CoreText
+rasterizer decline its glyphs (portable outlines, about 2.7/255 mean).
+
 #### Native modal dialogs (top layer)
 
 A closed `dialog` renders nothing. A modal one (`show_modal`) lays out as
@@ -16191,24 +16240,44 @@ unprivileged: no manifest, grants, host ceiling, file roots or storage.
 - **System fonts.** `--system-fonts`, also only for an artifact without fonts
   (`ShellError::FontConflict` otherwise) and exclusive with `--font`, maps the
   CSS generic families to this computer's fonts as the platform's browser
-  does: on macOS, as probed with Chrome 156, Times for `serif` (first, so the
-  family of text without `font-family`), the system UI font (its regular and
-  italic files, named by CoreText's UI font) for `system-ui`, Helvetica for
-  `sans-serif` and Menlo for `monospace`. The host names each file through the
-  platform's font APIs (a named family must be installed under that exact
-  family, `ShellError::SystemFontMissing` otherwise), reads it bounded by
-  `MAX_SYSTEM_FONT_FILE_BYTES` (a variable UI font exceeds the packaged-face
-  limit; the collection keeps `MAX_FONT_FACES` and `MAX_FONT_BYTES`), checks
-  that the file registers the family (`TextMeasurer::system_font_families`;
-  `ShellError::SystemFontFamily`) and loads the set with
-  `TextMeasurer::new_with_system_fonts`, before storage directories are
-  created. The application never names a file, and nothing else of the
-  system's fonts is reachable: a character outside these faces gets only the
-  next family of its CSS list, never an OS fallback. Text then depends on the
-  machine and its OS version, so pixel and geometry oracles do not apply to a
-  run with system fonts; packaged fonts remain the deterministic path. Other
-  platforms refuse the option (`ShellError::SystemFontsUnsupported`) until
-  their font lookup is added.
+  does, the standard font first (the family of text without `font-family`):
+  - on macOS, as probed with Chrome 156, Times for `serif`, the system UI font
+    (its regular and italic files, named by CoreText's UI font) for
+    `system-ui`, Helvetica for `sans-serif` and Menlo for `monospace`; a named
+    family must be installed under that exact family;
+  - on Linux, through fontconfig as Chrome on Linux resolves its defaults
+    (Times New Roman for the standard and `serif` font, Arial for
+    `sans-serif`, Monospace for `monospace`): the face fontconfig sorts first
+    for the name in the regular style counts only when Skia's fontconfig
+    interface would accept it (the family the configuration put first, the
+    requested family, a metric-compatible one such as Liberation Serif for
+    Times New Roman, or any face for `sans`, `serif` and `monospace`),
+    otherwise Blink's last resort for the generic (`Serif`, `Sans`,
+    `Monospace`) is used; `system-ui` is the family fontconfig matches for
+    `sans` (Chrome's UI font without a desktop toolkit). Each family loads the
+    faces fontconfig matches for regular and bold, roman and italic.
+    libfontconfig is opened at run time (`ShellError::SystemFontsUnavailable`
+    when it does not load).
+
+  A family already mapped takes a later generic as an alias, and no file is
+  read twice. The host reads each file bounded by `MAX_SYSTEM_FONT_FILE_BYTES`
+  (a variable UI font exceeds the packaged-face limit; the collection keeps
+  `MAX_FONT_FACES` and `MAX_FONT_BYTES`), checks that the file registers the
+  family (`TextMeasurer::system_font_families`; `ShellError::SystemFontFamily`)
+  and loads the set with `TextMeasurer::new_with_system_fonts`, before storage
+  directories are created; `ShellError::SystemFontMissing` names a generic
+  with no face. The application never names a file. A character none of an
+  element's families covers takes the platform's fallback face as the
+  platform's browser draws it ([native fallback faces](#native-fallback-faces));
+  nothing else of the system's fonts is reachable. On macOS the set's faces of
+  Times, Helvetica and Courier have their ascent enlarged by
+  `varta_view::ENLARGED_ASCENT_FRACTION` of their rounded height, rounded, as
+  Chrome's `FontMetrics::AscentDescentWithHacks` does
+  (`TextMeasurer::set_enlarged_ascent_families`). Text then depends on the
+  machine and its OS version, so pixel and geometry oracles compare a run with
+  system fonts only with the platform's browser on the same machine; packaged
+  fonts remain the deterministic path. Other platforms refuse the option
+  (`ShellError::SystemFontsUnsupported`).
   `--renderer cpu|gpu|auto` selects
   presentation (default `cpu`). An explicit `gpu` is refused before anything
   else in a build without the `gpu` feature, and is an error

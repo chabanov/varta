@@ -157,6 +157,38 @@ impl<B: Brush> Layout<B> {
         BreakLines::new(self)
     }
 
+    /// Varta: visits every shaped run in logical order, before line
+    /// breaking, with its text range, font and metrics; a returned ascent and
+    /// descent replace the run's own for line layout, and a line height
+    /// relative to the font's metrics follows them. Callers break lines
+    /// after this.
+    pub fn adjust_run_metrics(
+        &mut self,
+        mut adjust: impl FnMut(
+            core::ops::Range<usize>,
+            &crate::FontData,
+            &crate::RunMetrics,
+        ) -> Option<(f32, f32)>,
+    ) {
+        for run in &mut self.data.runs {
+            let font = &self.data.fonts[run.font_index];
+            if let Some((ascent, descent)) = adjust(run.text_range.clone(), font, &run.metrics) {
+                run.metrics.ascent = ascent;
+                run.metrics.descent = descent;
+                let style = self
+                    .data
+                    .clusters
+                    .get(run.cluster_range.start)
+                    .and_then(|cluster| self.data.styles.get(cluster.style_index as usize));
+                if let Some(crate::LineHeight::MetricsRelative(value)) =
+                    style.map(|style| style.line_height)
+                {
+                    run.metrics.line_height = (ascent + descent + run.metrics.leading) * value;
+                }
+            }
+        }
+    }
+
     /// Breaks all lines with the specified maximum advance.
     pub fn break_all_lines(&mut self, max_advance: Option<f32>) {
         self.break_lines()

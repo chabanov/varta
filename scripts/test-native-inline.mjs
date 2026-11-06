@@ -12,9 +12,12 @@ const viewport=oracle.viewport??{width:100,height:100};
 assert(Number.isInteger(viewport.width)&&viewport.width>0&&viewport.width<=4096&&Number.isInteger(viewport.height)&&viewport.height>0&&viewport.height<=4096,'invalid oracle viewport');
 // One face ({family, font}) or, from native_font_probe, every packaged face
 // with its weight, style and generic families ({fonts: [{family, weight,
-// style, generics, font}]}).
-const faces=oracle.fonts??[{family:oracle.family,font:oracle.font}];
-assert(faces.length>0&&faces.every(face=>typeof face.family==='string'&&Array.isArray(face.font)),'invalid oracle fonts');
+// style, generics, font}]}), or, from native_fallback_probe, none
+// ({system_fonts: true}): Chrome then resolves the generic families and the
+// fallback faces from this machine's fonts, as the native shell did.
+const systemFonts=oracle.system_fonts===true;
+const faces=systemFonts?[]:oracle.fonts??[{family:oracle.family,font:oracle.font}];
+assert(systemFonts||faces.length>0&&faces.every(face=>typeof face.family==='string'&&Array.isArray(face.font)),'invalid oracle fonts');
 // Packaged faces resolve exactly as the browser applier resolves them: its
 // own font namespace (private family names, generic aliases), its base
 // font rules (the default family and no synthesis on the view root, here the
@@ -69,7 +72,9 @@ await withBrowserPage('about:blank',async call=>{
     }
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     if(process.argv[3])await writeFile(`${process.argv[3]}-${fixture.name}.png`,Buffer.from(screenshot.data,'base64'));
-    if(fixture.raster){
+    // A case marked geometry_only compares boxes and hits; its reason is in
+    // the probe that marks it.
+    if(fixture.raster&&!fixture.geometry_only){
       const [width,height]=fixture.raster_size;
       assert.equal(width,Math.round(viewport.width*scale),`${fixture.name}: raster viewport width`);
       assert.equal(height,Math.round(viewport.height*scale),`${fixture.name}: raster viewport height`);

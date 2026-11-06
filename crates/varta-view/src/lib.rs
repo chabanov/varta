@@ -72,7 +72,11 @@ pub use render::{RenderStats, Renderer};
 pub use snapshot::project_flex_blockification;
 pub use snapshot_json::{SnapshotError, SnapshotFormat, encode_snapshot};
 pub use style::{DEFAULT_VIEWPORT_WIDTH, Environment, NATIVE_UA_VERSION};
-pub use text::{TextFont, TextMeasureError, TextMeasurer, TextMetrics};
+pub use text::fallback::{
+    FallbackFace, FallbackRefusal, FallbackRequest, FontFallback, MAX_FALLBACK_BYTES,
+    MAX_FALLBACK_FACE_BYTES, MAX_FALLBACK_FACES, MAX_FALLBACK_PASSES,
+};
+pub use text::{ENLARGED_ASCENT_FRACTION, TextFont, TextMeasureError, TextMeasurer, TextMetrics};
 pub use wire::{BatchWriter, EventRecord};
 
 /// Whether a number field's value is valid under Chrome's number

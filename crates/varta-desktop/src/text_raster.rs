@@ -8,7 +8,7 @@
 //! at the axis's `fvar` index, whose tag and range are checked, and every
 //! instance is read back before use. CoreText's axis names follow the
 //! process's preferred language and are never compared.
-mod sfnt;
+use crate::sfnt;
 #[cfg(test)]
 mod tests;
 use core_foundation::{base::CFType, dictionary::CFDictionary, number::CFNumber, string::CFString};

@@ -20,6 +20,10 @@
 pub mod args;
 pub mod consent;
 mod effects;
+mod fallback;
+// Built on Linux; elsewhere only for its tests with the `fontconfig` feature.
+#[cfg(any(target_os = "linux", all(test, feature = "fontconfig")))]
+mod fontconfig;
 mod fonts;
 mod launch;
 mod storage;
@@ -71,15 +75,18 @@ pub enum ShellError {
     )]
     FontConflict,
     /// `--system-fonts` on a platform whose font lookup this build lacks.
-    #[error("--system-fonts is supported on macOS only; use --font")]
+    #[error("--system-fonts is supported on macOS and Linux only; use --font")]
     SystemFontsUnsupported,
+    /// `--system-fonts` on Linux without a working fontconfig library.
+    #[error("--system-fonts needs fontconfig (libfontconfig.so.1), which did not load")]
+    SystemFontsUnavailable,
     /// The platform has no font for a generic family `--system-fonts` maps.
     #[error("the system has no font for the generic family {0}")]
     SystemFontMissing(&'static str),
     /// A system font file does not register the installed family that
     /// named it.
     #[error("system font {path} does not register the family {family}")]
-    SystemFontFamily { path: PathBuf, family: &'static str },
+    SystemFontFamily { path: PathBuf, family: String },
     /// A bare module given to the preview is unreadable, empty or too large.
     #[error("module {path}: {source}")]
     Module {

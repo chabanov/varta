@@ -9,6 +9,7 @@ mod checkables;
 mod clipboard;
 mod dialog;
 mod expansion_work;
+mod fallback;
 mod fields;
 mod glyph_raster;
 mod headless;

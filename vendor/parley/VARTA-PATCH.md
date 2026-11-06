@@ -43,6 +43,13 @@ Original crates.io package SHA-256 (from the preceding lockfile):
 - `src/layout/line.rs`/`src/layout/mod.rs` expose `Line::items_unpositioned`
   and `LineItem`, visual-order runs and inline boxes without the glyph-run
   splitting of `Line::items`, for Varta's fragment projection.
+- `src/layout/layout.rs` adds `Layout::adjust_run_metrics`: before line
+  breaking, the caller may replace a shaped run's ascent and descent (and a
+  `LineHeight::MetricsRelative` run's line height follows them). Varta uses it
+  for Chrome's line metrics: a platform fallback face's run under a fixed
+  line height takes its element's primary font metrics, and Chrome on macOS
+  enlarges the ascent of Times, Helvetica and Courier by 15% of their height.
+  It changes no shaping, glyph or advance.
 
 The original offset failure caused invalid UTF-8 slice panics. Large combining
 clusters also lost glyphs at the old inline sentinel, overflowed a character
@@ -56,7 +63,7 @@ caches, parser/analysis CPU, allocator overlap or RSS.
 The normalized Cargo manifest, upstream source, README and licenses were copied
 from the release. Registry bookkeeping and its independent lockfile were omitted.
 `VARTA-PATCH.md` and `VARTA-PATCH.diff` are Varta-specific documentation. Only the
-eleven source files named in the diff differ (one, `src/layout/inline_edges.rs`,
+twelve source files named in the diff differ (one, `src/layout/inline_edges.rs`,
 is new); applying the diff to the release `src/` reproduces the vendored tree
 exactly. Package archive verification is recorded in the local verification log. The workspace lockfile retains all
 existing dependency versions and selects this local patch only for Parley.
