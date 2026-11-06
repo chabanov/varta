@@ -31,8 +31,9 @@ pub const MAX_IMPORT_DEPTH: usize = 100;
 pub const MAX_CANDIDATES: usize = 65_536;
 /// The longest class token, in bytes.
 pub const MAX_CANDIDATE_BYTES: usize = 4096;
-/// The largest generated stylesheet, in bytes.
-pub const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+/// The largest generated stylesheet, in bytes: the bound of a text resource
+/// file, since the stylesheet is served as one.
+pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
 /// Context key marking the slot `@tailwind utilities` fills.
 const UTILITIES_SLOT: &str = "utilities";

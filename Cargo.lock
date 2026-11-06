@@ -5193,6 +5193,7 @@ dependencies = [
  "varta-compiler",
  "varta-kv-codec",
  "varta-runtime",
+ "varta-tailwind",
  "wasmtime",
 ]
 

@@ -9,6 +9,8 @@ varta-artifact = { path = "../varta-artifact" }
 varta-common = { path = "../varta-common" }
 varta-compiler = { path = "../varta-compiler" }
 varta-runtime = { path = "../varta-runtime" }
+# K8 T1: build-time Tailwind stylesheets from the project's entry CSS.
+varta-tailwind = { path = "../varta-tailwind" }
 serde_json.workspace = true
 thiserror.workspace = true
 serde.workspace = true

@@ -41,6 +41,8 @@ pub struct ClassScan {
     /// One located diagnostic per class name composed at run time, in module
     /// order.
     pub compositions: Vec<CompilerError>,
+    /// The identities of the graph's text resources.
+    pub text_resources: BTreeSet<std::path::PathBuf>,
 }
 
 impl ClassScan {
@@ -77,6 +79,7 @@ pub fn scan_classes_with_profile(
         }
         let unit = &graph.units[path];
         if unit.text {
+            scan.text_resources.insert(path.clone());
             continue;
         }
         let mut literals = Literals::default();
