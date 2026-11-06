@@ -780,7 +780,10 @@ fn http_v1_keeps_legacy_budget_and_consent_semantics() {
     server.finish();
 }
 
+mod bench;
 mod cancellation;
+mod flood;
+mod fuzz;
 mod reports;
 mod streaming;
 mod tasks;

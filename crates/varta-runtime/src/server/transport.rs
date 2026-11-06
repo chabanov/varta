@@ -496,3 +496,85 @@ async fn streaming(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{Rng, SeedableRng, rngs::StdRng};
+
+    /// Header name pieces: tokens, framing names, separators and controls.
+    const NAMES: [&str; 10] = [
+        "content-type",
+        "x-ok",
+        "connection",
+        "content-length",
+        "transfer-encoding",
+        "X-Mixed",
+        "bad name",
+        "bad:name",
+        "",
+        "x\u{0}",
+    ];
+    const VALUES: [&str; 7] = [
+        "text/plain",
+        "",
+        "a\r\nInjected: yes",
+        "é",
+        "\u{7f}",
+        "x\u{0}y",
+        "  spaced  ",
+    ];
+
+    /// K7 H4: any response envelope a guest returns is framed with a valid
+    /// status, safe headers and no body where none may be, or refused;
+    /// never a panic.
+    #[test]
+    fn random_response_envelopes_are_framed_safely_or_refused() {
+        let mut random = StdRng::seed_from_u64(0x6b37_6834_7265_7370);
+        let mut framed = 0;
+        for _ in 0..5000 {
+            let status = random.gen_range(-5..700);
+            // Up to the header count bound and beyond.
+            let count = if random.gen_ratio(1, 10) {
+                random.gen_range(0..=http::MAX_HEADERS + 2)
+            } else {
+                random.gen_range(0..4)
+            };
+            let headers = (0..count)
+                .map(|_| HttpHeader {
+                    name: NAMES[random.gen_range(0..NAMES.len())].to_owned(),
+                    value: VALUES[random.gen_range(0..VALUES.len())].to_owned(),
+                })
+                .collect();
+            let body = "b".repeat(random.gen_range(0..3));
+            let head = random.r#gen();
+            let value = HttpResponse {
+                status,
+                body: body.clone(),
+                headers,
+            };
+            let Ok(reply) = response(value, head, None) else {
+                continue;
+            };
+            framed += 1;
+            let code = reply.status().as_u16();
+            assert!((200..=599).contains(&code), "{code}");
+            for (name, value) in reply.headers() {
+                assert!(
+                    !FRAMING_HEADERS.contains(&name.as_str()) || name == "content-length" && head
+                );
+                assert!(
+                    !value
+                        .as_bytes()
+                        .iter()
+                        .any(|byte| *byte == b'\r' || *byte == b'\n')
+                );
+            }
+            if http::BODYLESS_STATUSES.contains(&i32::from(code)) {
+                assert!(body.is_empty());
+            }
+        }
+        // The generator reaches both outcomes.
+        assert!(framed > 100, "{framed}");
+    }
+}

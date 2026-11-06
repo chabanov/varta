@@ -569,6 +569,101 @@ mod tests {
         contract.version = LATEST_VERSION + 1;
         assert!(contract.validate().is_err());
     }
+    /// A seeded xorshift generator: the fuzz cases reproduce exactly.
+    struct Xorshift(u64);
+    impl Xorshift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, bound: usize) -> usize {
+            (self.next() % bound as u64) as usize
+        }
+    }
+    /// Bytes that make JSON structure and limit values interesting.
+    const FUZZ_ALPHABET: &[u8] = b"{}[]\":,0123456789-+.eE truefalsnul\\";
+    const FUZZ_CASES: usize = 4000;
+
+    /// K7 H4: mutated contract metadata never panics; what parses is valid,
+    /// keeps the registry limits of its version and round-trips.
+    #[test]
+    fn mutated_contract_metadata_fails_closed() {
+        let mut random = Xorshift(0x6b37_6834_6675_7a7a);
+        let mut contract = HttpContract {
+            version: UTF16_VERSION,
+            asynchronous: true,
+            streaming: true,
+            web_request: true,
+            bind: "127.0.0.1:8080".into(),
+            export: HANDLER.into(),
+            required_effects: vec![LISTEN_CAPABILITY.into()],
+            limits: HttpLimits::for_version(UTF16_VERSION),
+        };
+        let current = contract.to_bytes().unwrap();
+        contract.version = VERSION;
+        contract.asynchronous = false;
+        contract.streaming = false;
+        contract.web_request = false;
+        contract.limits = HttpLimits::default();
+        let seeds = [current, contract.to_bytes().unwrap()];
+        for case in 0..FUZZ_CASES {
+            let mut bytes = seeds[case % seeds.len()].clone();
+            for _ in 0..=random.below(4) {
+                let at = random.below(bytes.len());
+                let byte = FUZZ_ALPHABET[random.below(FUZZ_ALPHABET.len())];
+                match random.below(3) {
+                    0 => bytes[at] = byte,
+                    1 => bytes.insert(at, byte),
+                    _ => {
+                        bytes.remove(at);
+                    }
+                }
+            }
+            if let Ok(parsed) = HttpContract::parse(&bytes) {
+                parsed.validate().unwrap();
+                assert_eq!(parsed.limits, HttpLimits::for_version(parsed.version));
+                let again = HttpContract::parse(&parsed.to_bytes().unwrap()).unwrap();
+                assert_eq!(again.limits, parsed.limits);
+            }
+        }
+    }
+
+    /// K7 H4: a mutated host policy either lowers limits within the
+    /// registry or is refused; it never raises one.
+    #[test]
+    fn mutated_host_policies_never_raise_a_limit() {
+        let mut random = Xorshift(0x6b37_6834_706f_6c69);
+        let policy = br#"{"limits":{"connections":16,"workers":4,"memoryBytes":67108864,"requestBodyBytes":1024,"writeIdleMs":500}}"#;
+        let registry = HttpLimits::for_version(UTF16_VERSION);
+        let (pool_maximum, transport_maximum) =
+            (registry.pool.unwrap(), registry.transport.unwrap());
+        for _ in 0..FUZZ_CASES {
+            let mut bytes = policy.to_vec();
+            for _ in 0..=random.below(4) {
+                let at = random.below(bytes.len());
+                bytes[at] = FUZZ_ALPHABET[random.below(FUZZ_ALPHABET.len())];
+            }
+            let Some(limits) = serde_json::from_slice::<HttpPolicy>(&bytes)
+                .ok()
+                .and_then(|policy| policy.limits)
+            else {
+                continue;
+            };
+            if let Ok(lowered) = registry.lowered(&limits) {
+                let (pool, transport) = (lowered.pool.unwrap(), lowered.transport.unwrap());
+                assert!((1..=registry.connections).contains(&lowered.connections));
+                assert!((1..=pool_maximum.workers).contains(&pool.workers));
+                assert!((1..=pool_maximum.memory_bytes).contains(&pool.memory_bytes));
+                assert!(
+                    (1..=transport_maximum.request_body_bytes)
+                        .contains(&transport.request_body_bytes)
+                );
+                assert!((1..=transport_maximum.write_idle_ms).contains(&transport.write_idle_ms));
+            }
+        }
+    }
     #[test]
     fn host_policies_only_lower_v2_limits_and_never_v1() {
         let registry = HttpLimits::for_version(UTF16_VERSION);

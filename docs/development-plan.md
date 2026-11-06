@@ -7182,6 +7182,43 @@ Later: HTTP/3, response compression (a dependency decision), WebSocket.
   Node tests, conformance baseline), report
   `target/verification/20261106-004103-yowuttms/report.json` (macOS only).
 
+#### H4 — Hardening and performance acceptance (done 2026-11-06)
+
+- **Fuzzing (seeded, reproducible).** Mutated contract metadata never
+  panics, and what parses is valid, keeps its version's registry limits and
+  round-trips; a mutated host policy lowers within the registry or is
+  refused (`varta-common` http tests). Random response envelopes are framed
+  with a valid status and safe headers or refused (transport tests). Random
+  requests (methods, percent-escaped targets, headers, Unicode bodies)
+  reach the v1, v2 sync, v2 async and Web `Request` adapters exactly as
+  sent, and mutated wire requests are refused before dispatch, never with a
+  500 (`server_tests::fuzz`).
+- **Floods and slow clients** (`server_tests::flood`, with the TLS
+  rapid-reset flood of H3 and the write-idle test of H1): 64 slowloris
+  clients are cut at the lowered idle bound while the service answers; a
+  connection flood waits in the backlog; a request flood beyond the slots
+  gets 503 with `Retry-After`; 32 stalled request bodies end at the body
+  idle bound; every slot is free afterwards.
+- **Load acceptance numbers** (`server_tests::bench`, ignored; run with
+  `cargo test -p varta-runtime --release --lib -- --ignored --nocapture
+  --test-threads=1 server_tests::bench`): Apple M1 Max, 10 cores, macOS 27,
+  release build, clients in the same process over loopback, the machine
+  shared with other builds (load average about 11); three runs:
+
+  | Measure | Result |
+  | --- | --- |
+  | Web `Request` handler, 32 keep-alive HTTP/1.1 clients, 16,000 requests | 43,500–45,500 requests/s |
+  | Latency p50 / p99 / max | 0.67–0.71 ms / 1.41–1.46 ms / 2.6–3.7 ms |
+  | Resident memory per idle keep-alive connection (1000 open, client buffers included) | about 36 KB |
+  | Resident memory per open event stream (100 open, each its own instance holding a timer) | 174–187 KB |
+
+  Each request instantiates its own Store from the pooled `InstancePre`.
+  These are acceptance baselines for this machine, not cross-platform
+  claims; Linux, HTTP/2 over TLS and sustained-load runs remain to record.
+- Gate: `python3 scripts/verify.py full` PASS (3888 Rust and 218 browser
+  Node tests, conformance baseline), report
+  `target/verification/20261106-010141-7bk6f7yq/report.json` (macOS only).
+
 ### Realistic turn budget and application memory (owner decisions, 2026-11-06)
 
 The UARP console against the live API was terminated first by a network turn

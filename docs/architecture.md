@@ -16874,6 +16874,13 @@ keep-alive request count, idle bound and lifetime retire it with `GOAWAY`
 (HTTP/2 has no `connection` header), and the write idle bound covers its
 TLS records.
 
+**Hardening (H4).** Seeded fuzz tests cover the contract metadata and host
+policies, the response envelope's framing and every adapter form with
+random requests; flood and slow-client tests cover slow heads, slow bodies,
+connection and request floods and HTTP/2 rapid resets. The load
+benchmarks (`server_tests::bench`, ignored) and their recorded acceptance
+numbers are in the [development plan](development-plan.md#k7--modern-http-server-agreed-design-2026-11-05).
+
 The v2 service future owns a cancellation guard for its request task.
 Disconnect or connection timeout drops that owner and signals its execution;
 epoch checks interrupt guest loops, while timer/network waits await the same
