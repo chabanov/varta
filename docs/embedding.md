@@ -3015,6 +3015,17 @@ values:
 | Forbidden in `set_style` values | `;`, `{`, `}` |
 <!-- generated:view-stylesheet-tokens:end -->
 
+This grammar and these tables are the host contract and are unchanged. The
+Varta engine itself (the native renderer and the compiler's static
+stylesheet and class checks) admits a standards-based superset since K8 T2
+S1–S3: CSS Syntax 3 tokenization (comments, escapes), HTML class names and
+escaped class selectors, `@layer`, `@property`, Media Queries 4/5 and CSS
+Values 4 / Color 4–5 values ([view CSS engine](architecture.md#view-css-engine-k8-t2-s1s3)).
+A batch that uses the superset is valid natively but invalid for a host that
+implements only this contract, which rejects it as before; hosts are to run
+the engine's Rust implementation through Wasm instead of extending a grammar
+of their own (development plan, K8 T3).
+
 **Variable values.** `var()` function names are ASCII case-insensitive; custom-property
 names remain case-sensitive. The fallback is a balanced component list, including nested references or
 functions; a bare comma specifies an empty fallback. Unbalanced functions, empty hashes and malformed references also reject

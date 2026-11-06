@@ -743,6 +743,19 @@ cargo run -p varta-view --example native_transition_probe --locked > target/nati
 node scripts/test-native-transitions.mjs target/native-transitions.json
 ```
 
+The CSS engine (K8 T2 S1–S3: escaped classes, layers, registered
+properties, media features, math, units and Color 4/5) is compared with
+Chrome evaluating the same stylesheet text in a closed shadow root; a scene
+with a recorded deviation (out-of-gamut colours) reports instead of failing:
+
+```sh
+cargo test -p varta-view --test integration --locked css_engine
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_css_engine_probe --locked -- "$scale" > "target/native-css-$scale.json"
+  node scripts/test-native-css-engine.mjs "target/native-css-$scale.json"
+done
+```
+
 Classic (always-shown) scrollbars are compared with Chrome run with macOS's
 "Show scroll bars: Always" for that process only (no system setting changes):
 

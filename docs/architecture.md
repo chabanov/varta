@@ -12459,8 +12459,8 @@ and `stopPropagation`; and serializes a deterministic JSON snapshot: the
 tree (tags, attributes, classes, computed styles, field values and edit
 counters, listeners), the accessibility tree (roles, names, states), title,
 focus, stylesheets and the simulated clipboard, opened URLs and prompt count.
-The cascade orders by specificity, sheet id, then source order; inline
-styles win; custom properties resolve through an iterative dependency graph at
+The cascade orders by cascade layer, specificity, sheet id, then source
+order; inline styles win ([view CSS engine](#view-css-engine-k8-t2-s1s3)); custom properties resolve through an iterative dependency graph at
 each element before inheritance. The native resolver invalidates active dependency
 cycles, evaluates only selected fallbacks, freezes inherited aliases, preserves token
 boundaries/quoted text and revalidates selected values for geometry and paint.
@@ -14395,6 +14395,153 @@ that is not specific to transforms. A translation that is not a whole CSS pixel
 moves the box exactly but its edges are snapped with it, while Chrome draws
 the snapped box at the fraction; its edges then differ by under one pixel.
 Native scrollable overflow does not include translated boxes.
+
+#### View CSS engine (K8 T2 S1–S3)
+
+One Rust implementation in `varta-common` (`view::syntax`, `view::css`,
+`view::stylesheet`) decides stylesheets, `set_style` values and class
+names for the native renderer and the compiler's static checks. It follows
+the published specifications; an admitted construct behaves as its
+specification says, and anything outside the subset is a violation with a
+typed diagnostic (the subset fails closed rather than ignoring what it does
+not admit). Chrome is the verification oracle, not the definition. The L0
+host contract of [embedding.md](embedding.md#view-protocol-draft-v0-unstable) (its grammar,
+`FORBIDDEN_CSS`, `MEDIA_FEATURES` and the registry grammars) is unchanged: the
+browser host keeps its own checker and rejects what it rejected before
+until it runs this engine through Wasm (development plan, K8 T3).
+
+- **Tokens (CSS Syntax 3).** Stylesheets and values are tokenized by §4:
+  input preprocessing (§3.3: CR, CR LF and FF are newlines, NUL is U+FFFD),
+  comments dropped (§4.3.2), escapes decoded (§4.3.7, at most six hex
+  digits, NUL, surrogates and values above U+10FFFF become U+FFFD), numbers
+  with exponents (§4.3.12), dimensions, percentages and `url(` (§4.3.6). The
+  rule list is parsed by §5.4. A stored value that had comments or escapes
+  is its §9 serialization (an empty comment keeps two tokens apart), so a
+  later `var()` scan sees neither; other values keep their source text.
+- **Forbidden constructs** are found on decoded tokens, so no escape or
+  comment hides them: a url token, the functions of `css::FORBIDDEN_FUNCTIONS`
+  (`url`, `image-set`, `-webkit-image-set`, `expression`, `attr`, `element`,
+  `-moz-element`), the at-rule `@import`, `!important` (§5.4.6; refused for
+  now) and the HTML comment tokens `<!--`/`-->`.
+- **Class names (HTML class model).** `set_class`, TSX `class` literals and
+  selectors take any token without ASCII whitespace or control characters,
+  at most `css::MAX_CLASS_NAME_BYTES` (256) UTF-8 bytes. A class selector is
+  `.` and an ident token (Selectors 4 §6.6), so Tailwind's escaped classes
+  (`.sm\:flex`, `.w-1\/2`, `.p-0\.5`, `.\[…\]`, `.\!p-1`, `.\32 xl\:…`)
+  match the decoded names; class names are case-sensitive.
+- **Selectors (Selectors 4).** Compound selectors (§3.1) of class
+  selectors and the pseudo-classes `:hover` (§9.1), `:active` (§9.2),
+  `:focus-visible` (§9.4), `:disabled` (§12.1.1) and `:checked` (§12.2.1), in
+  any order, with at least one class, or `:root` alone (§13.1); pseudo-class
+  names are ASCII case-insensitive. Specificity is §15 (every admitted
+  simple selector is in the B component). Combinators, type, id,
+  attribute, functional pseudo-classes and pseudo-elements are K8 S5.
+- **Cascade layers (Cascade 5 §6.4).** `@layer` statements and blocks at
+  the top level and nested in `@layer` blocks, with dotted names (§6.4.2;
+  CSS-wide keywords are invalid names) and anonymous blocks (§6.4.2.1, each
+  distinct). The layer order is the order of first declaration across the
+  document's sheets in ascending sheet id (§6.4.3); a layer's own rules form
+  an implicit final sublayer after its sublayers, and unlayered rules come
+  after every layer. The cascade (§6.1) orders normal declarations by layer,
+  then specificity, then sheet id and source order; inline `set_style`
+  values are element-attached and win. `@layer` inside `@media` is outside
+  the subset (Cascade 5 makes its contribution to the order conditional).
+- **Registered custom properties (Properties and Values API 1 §3).**
+  `@property --name { syntax; inherits; initial-value }` at the top level:
+  `syntax` (§3.1, §5) is `"*"` or `|`-separated components of `<length>`,
+  `<number>`, `<percentage>`, `<length-percentage>`, `<color>`, `<integer>`,
+  `<angle>`, `<time>`, `<custom-ident>`, `<string>` or an identifier, each
+  with an optional `+` or `#`; `inherits` (§3.2) is required; `initial-value`
+  (§3.3) is required unless the syntax is universal and must be
+  computationally independent (§4.1: no `var()`, font- or viewport-relative
+  unit or `currentcolor`). Registrations are document-wide, the last one in
+  sheet order winning (§2.1, §2.8). A registered property starts at its
+  initial value, a non-inheriting one is reset to it at every element, and a
+  value that does not match the syntax after substitution is invalid at
+  computed-value time and computes as `unset` (§2.7): the parent's value
+  for an inheriting registration, the initial value otherwise. Computed
+  values keep the substituted text (a registered `<length>` is not
+  absolutized before inheritance yet).
+- **Media queries (Media Queries 4/5).** Query lists (§2.1), `not`/`only`
+  with the media types `all`, `screen` and `print` (§2.3; the renderer is
+  `screen`), conditions with `not`, `and`, `or` and parentheses (§2.5, no
+  mixing of `and` and `or` at one level), boolean context (§2.4.2) and the
+  range syntax with `<`, `<=`, `>`, `>=`, `=` (§2.4.3), and the features
+  `width`, `height` (§4.1, §4.2, also `min-`/`max-`), `orientation` (§4.4),
+  `pointer`, `hover`, `any-pointer`, `any-hover` (§7.1–§7.3),
+  `prefers-reduced-motion`, `prefers-contrast`, `forced-colors` and
+  `prefers-color-scheme` (§12.1, §12.3–§12.5). Lengths are `0`, absolute
+  units, `em` and `rem`, relative units being based on the initial font size
+  (§1.3, 16px). The environment features are recorded host inputs of the
+  native `Environment` (`height`, `dark` and `preferences`: by default a
+  desktop with a mouse and no stated preference, which is what headless
+  Chrome reports), so rendering stays deterministic. An unknown feature,
+  value or `<general-enclosed>` is a violation, not the `unknown` of §3.2.
+  `@media` blocks nest (up to `stylesheet::MAX_NESTING` with `@layer`).
+- **Values (CSS Values 4).** Wherever a property grammar has a numeric type,
+  the engine admits every length unit of §6 (`px`, `cm`, `mm`, `Q`, `in`,
+  `pt`, `pc`, `em`, `rem`, `ex`, `ch`, `lh`, …, the viewport units with
+  their `s`/`l`/`d` forms of §6.1.2), angles and times, and the math
+  functions `calc()`, `min()`, `max()` and `clamp()` (§10) with `+`, `-`,
+  `*`, `/`, nested parentheses and the constants `e`, `pi`, `infinity`,
+  `-infinity` and `NaN`. `+` and `-` need whitespace on both sides, which the
+  tokenizer enforces (`1px +2px` is two operands). Types follow §10.7, with
+  percentages typed by the property's percentage basis. A top-level NaN is
+  0 and infinities are clamped (§10.12) to `css::MAX_LOWERED_MAGNITUDE`, the
+  native length range; results in nonnegative properties are clamped to 0,
+  and in integer properties (`z-index`, grid lines) rounded to the nearest
+  integer, halves towards +∞ (§5.2). Other math functions are outside the
+  subset.
+- **Colours (CSS Color 4 and 5).** Hexadecimal colours with 3, 4, 6 or 8
+  digits (§5.2), `transparent`, `currentcolor`, `rgb()`/`rgba()` (§5.1) and
+  `hsl()`/`hsla()` (§7) in the legacy comma and the modern space syntax with
+  `/ alpha`, `hwb()` (§8), `lab()`/`lch()` (§9.3), `oklab()`/`oklch()` (§9.4),
+  `none` components (§4.4) and `color-mix()` (Color 5 §3) of two colours with
+  an optional interpolation method (Oklab by default) in `srgb`,
+  `srgb-linear`, `lab`, `oklab`, `xyz`, `xyz-d50`, `xyz-d65`, `hsl`, `hwb`,
+  `lch` or `oklch` and any hue method (Color 4 §13.4), premultiplied
+  interpolation (§13.3), missing components carried forward and the
+  percentage normalization of Color 5 §3.2 (a zero sum mixes evenly with
+  alpha 0). Conversions use the sample code's matrices (§18); a colour
+  outside sRGB is mapped by the CSS gamut mapping algorithm (§14.2, binary
+  search, JND 0.02 ΔEOK, ε 0.0001). Named and system colours, `color()`,
+  relative colours and more than two `color-mix()` colours are outside the
+  subset.
+- **Other values.** `opacity` takes percentages (`<alpha-value>`),
+  `font-weight` numbers in [1, 1000] (Fonts 4 §2.2), `white-space: pre`,
+  `text-align: start | end` (Text 3 §7.1; the renderer is left-to-right),
+  `transition-property` any property names (Transitions 1 §2.1; unknown ones
+  are ignored), and `transition-timing-function` `cubic-bezier()` (x in
+  [0, 1]), `steps()` with every jump position, `step-start` and `step-end`
+  (Easing 1 §2.2, §2.3).
+- **Lowering.** After `var()` substitution (Variables 1 §3), a valid value
+  is lowered to the host grammar the renderer's consumers read
+  (`css::lower`): math functions are evaluated, absolute and viewport units
+  become `px`, `em` in `font-size` a percentage of the parent's size, colours
+  `rgba()` with 8-bit channels after gamut mapping, `opacity` percentages
+  numbers. A value the native renderer cannot render yet is refused at
+  parse time with `Unrenderable` and, when it only appears after
+  substitution, is invalid at computed-value time natively: `em` outside
+  `font-size`, `ex`/`ch`/`lh` and the other font-relative units, a math
+  result that mixes a percentage with a length (it needs layout-time
+  resolution), `currentcolor` inside `color-mix()`, and values of the
+  specifications that native layout lacks (`display: inline-block` and the
+  other inner/outer display types, `position: sticky`, intrinsic sizes,
+  `overflow: scroll | clip`, `white-space: pre-line | break-spaces`,
+  `text-align: justify`, border styles other than `solid`).
+- **Not yet admitted:** the CSS-wide keywords `inherit`, `initial` and
+  `unset` on standard properties (they remain refused; custom properties
+  accept them), `@supports`, `@keyframes`, `@container`, nesting, and the
+  selector, layout and paint stages S4–S8.
+
+Chrome deviations recorded by the oracle (`native_css_engine_probe` with
+`scripts/test-native-css-engine.mjs`, 1x, 1.25x and 2x): Chrome clips
+out-of-gamut colours per channel instead of gamut mapping (all 286 Tailwind 4
+palette colours lie in sRGB within rounding and match to 1/255); Chrome
+ignores `@property` rules in shadow trees, although registrations are not
+scoped to a tree scope (§2.8), so the oracle registers them in the document;
+and Chrome snaps lengths to its 1/64 px layout unit, which native layout
+does not (pre-existing, not specific to these values).
 
 `varta-runtime` sets the clock before each view commit, input, pointer and
 environment change: a scripted headless session uses its virtual loop time

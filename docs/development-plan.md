@@ -7395,6 +7395,75 @@ matches, environment media features are recorded host inputs, and `:has()`,
 descendant matching and infinite animations are charged against work and
 frame bounds.
 
+#### K8 T2 S1–S3 — engine tokens, sheet structure and values (2026-11-06)
+
+Owner directive of the same day: everything by the published standards,
+Chrome only as the oracle. The engine contract with its specification
+sections is [view CSS engine](architecture.md#view-css-engine-k8-t2-s1s3).
+
+- **S1.** CSS Syntax 3 tokenizer (`view::syntax`: preprocessing, comments,
+  escapes, numbers, url tokens, §9 serialization); stylesheets parsed on
+  tokens, forbidden constructs found after decoding; HTML class model in
+  `set_class`, TSX and selectors (`css::class_list`, 256-byte names).
+- **S2.** `@layer` (statements, blocks, nesting, anonymous; Cascade 5 order
+  across sheets, unlayered last), `@property` (syntax, inherits,
+  computationally independent initial values; reset per element when not
+  inherited; syntax mismatch computes as `unset`), comments, Media Queries
+  4/5 (`stylesheet::media`: lists, `not`/`only`/`and`/`or`, range syntax,
+  `height`, `orientation`, `hover`, `pointer`, `any-*`,
+  `prefers-reduced-motion`, `prefers-contrast`, `forced-colors`) with
+  `Environment.height` and `Environment.preferences` as recorded host inputs
+  (runtime and shell pass the viewport height).
+- **S3.** `css::math` (Values 4 §10), `css::color` (Color 4/5, CSS gamut
+  mapping), every length unit, `opacity` percentages, numeric
+  `font-weight`, `white-space: pre`, `text-align: start | end`, any
+  `transition-property` names, `cubic-bezier()`/`steps()` in transitions.
+  Values are lowered at computed-value time (`css::lower`) to the host
+  grammar the renderer reads, so `oklch()` theme colours through `var()` now
+  render natively (the recorded parity gap). Values valid in CSS that native
+  layout cannot render are refused as `Unrenderable` with their own
+  diagnostic.
+- **Browser host.** Unchanged and still rejecting exactly what it rejected:
+  its registry (`FORBIDDEN_CSS`, `MEDIA_FEATURES`, grammars) is untouched and
+  no CSS logic was added in JavaScript. Routing its stylesheet check,
+  cascade and value validation through a wasm32 shim of this engine is the
+  next step (T3): the shim needs `varta-common`'s view modules on `no_std` +
+  `alloc` (or a std wasm32 build) and the JS view model's per-rule work and
+  expansion data from Rust. A finding for it: Chrome ignores `@property` in
+  shadow trees (Properties and Values API 1 §2.8 says registrations are not
+  tree-scoped), so the bridge must register them at document level.
+- **Measured acceptance** of the five-component application's 588 class
+  uses, end to end through the native engine (each candidate's Tailwind CSS
+  flattened as T1's canonical output will be, with the referenced theme
+  variables; class token, sheet commit and every computed property): 25.3%
+  before (149 uses; 17.3% of 312 distinct candidates), 70.4% after (414
+  uses; 64.1% distinct). The design projected 72% for S1–S3; the difference
+  is the values S3 refuses because native layout lacks them (`inline-flex`,
+  `inline-block`, `sticky`, `fit-content`: 10 uses). The rest is S4–S6
+  (logical properties, selectors, shadows).
+- **Chrome oracle** (`native_css_engine_probe`, `test-native-css-engine.mjs`;
+  ten scenes: escaped classes, layers, registered properties, theme
+  colours, colour functions, out-of-gamut colours, math and units, media
+  features, reduced motion, comments and escapes): 224 checks pass at 1x,
+  1.25x and 2x; box geometry matches within 0.02 px, in-gamut colours within
+  1/255 (RGB mean ≤ 0.033, the 1.25x maxima are antialiased edges), and all
+  286 Tailwind 4 palette colours match Chrome within 1/255. Recorded
+  deviations: Chrome clips out-of-gamut colours (mean 0.58, max 81 for
+  far-out colours), ignores `@property` in shadow trees, and snaps lengths to
+  1/64 px.
+- **Open, for owner decisions:** (1) CSS-wide keywords on standard
+  properties need a native cascade that knows initial values and user-agent
+  rows; (2) `em` outside `font-size`, `ex`/`ch`/`lh`, and percentage-plus-
+  length math need layout-time resolution (taffy's `calc` handles); (3)
+  literal `opacity` above 1 and `font-weight` outside [1, 1000] stay refused
+  although CSS clamps `<alpha-value>`; (4) `@layer` inside `@media`,
+  `!important`, more than two `color-mix()` colours (Chrome refuses those
+  too) and named colours stay outside; (5) registered computed values are not
+  absolutized before inheritance; (6) the desktop shell passes default
+  preferences, not the OS settings (reduced motion, contrast); (7) gamut
+  mapping per the specification differs from Chrome's clipping for colours
+  outside sRGB.
+
 ### K7 — Modern HTTP server (agreed design, 2026-11-05)
 
 Goal: the native HTTP server runs at current standards, secure and fast enough

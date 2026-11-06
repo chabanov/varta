@@ -84,7 +84,7 @@ const SCENES: &[Scene] = &[
     },
     Scene {
         name: "colour-functions",
-        sheet: ".r { display: flex; flex-wrap: wrap } .a { background-color: rgb(255 0 0 / 50%) } .b { background-color: hsl(210deg 60% 40%) } .c { background-color: hwb(120 10% 20%) } .d { background-color: lab(52% 40 -30) } .e { background-color: lch(60% 50 250) } .f { background-color: oklab(0.6 0.1 -0.1) } .g { background-color: color-mix(in srgb, #f00 30%, #00f) } .j { background-color: #0f08 } .k { background-color: rgb(10%, 20%, 30%, 0.75) } .l { background-color: hsla(0, 100%, 50%, 25%) } .box { width: 40px; height: 20px; margin: 2px }",
+        sheet: ".r { display: flex; flex-wrap: wrap } .a { background-color: rgb(255 0 0 / 50%) } .b { background-color: hsl(210deg 60% 40%) } .c { background-color: hwb(120 10% 20%) } .d { background-color: lab(52% 40 -30) } .e { background-color: lch(60% 50 250) } .f { background-color: oklab(0.6 0.1 -0.1) } .g { background-color: color-mix(in srgb, #f00 30%, #00f) } .j { background-color: #0f08 } .k { background-color: rgb(10%, 20%, 30%, 0.75) } .l { background-color: hsla(0, 100%, 50%, 25%) } .m { background-color: color-mix(#f00 30%, #00f) } .n { background-color: color-mix(in srgb, #f00 0%, #00f 0%) } .box { width: 40px; height: 20px; margin: 2px }",
         nodes: &[Node(
             "r",
             &[
@@ -98,6 +98,8 @@ const SCENES: &[Scene] = &[
                 Node("j box", &[]),
                 Node("k box", &[]),
                 Node("l box", &[]),
+                Node("m box", &[]),
+                Node("n box", &[]),
             ],
         )],
         reduced_motion: false,

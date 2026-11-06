@@ -354,30 +354,20 @@ impl Arguments<'_> {
     /// `color-mix()` (Color 5 §2): `in <space> [<hue-method> hue]?, <color>
     /// && <percentage>?, <color> && <percentage>?`.
     fn mix(&mut self) -> Option<Parsed> {
-        match self.peek()? {
-            V::Ident(word) if word.eq_ignore_ascii_case("in") => self.at += 1,
-            _ => return None,
-        }
-        let V::Ident(name) = self.peek()? else {
-            return None;
-        };
-        let space = Space::named(name)?;
-        self.at += 1;
-        let mut method = Hue::Shorter;
-        if let Some(V::Ident(word)) = self.peek()
-            && let Some(found) = Hue::named(word)
-        {
-            space.polar_hue()?;
-            self.at += 1;
-            match self.peek()? {
-                V::Ident(word) if word.eq_ignore_ascii_case("hue") => self.at += 1,
-                _ => return None,
+        // Color 5 §3.1: without an interpolation method, Oklab.
+        let (space, method, explicit) = match self.peek()? {
+            V::Ident(word) if word.eq_ignore_ascii_case("in") => {
+                self.at += 1;
+                let (space, method) = self.method()?;
+                (space, method, true)
             }
-            method = found;
-        }
+            _ => (Space::Oklab, Hue::Shorter, false),
+        };
         let mut items = Vec::new();
-        for _ in 0..2 {
-            self.eat(&V::Comma).then_some(())?;
+        for index in 0..2 {
+            if explicit || index > 0 {
+                self.eat(&V::Comma).then_some(())?;
+            }
             let mut percent = self.percent();
             let (color, end) = parse(self.tokens, self.at)?;
             self.at = end;
@@ -396,17 +386,41 @@ impl Arguments<'_> {
             (None, Some(p)) => (100.0 - p, p),
             (Some(a), Some(b)) => (a, b),
         };
+        // Color 5 §3.2: percentages summing to zero mix evenly with a zero
+        // alpha multiplier; a sum below 100% multiplies the alpha.
         let total = p1 + p2;
-        if total == 0.0 {
-            return None;
-        }
+        let (progress, multiplier) = if total == 0.0 {
+            (0.5, 0.0)
+        } else {
+            (p2 / total, if total < 100.0 { total / 100.0 } else { 1.0 })
+        };
         let (Parsed::Color(a), Parsed::Color(b)) = (first.0, second.0) else {
             return Some(Parsed::Current);
         };
-        let multiplier = if total < 100.0 { total / 100.0 } else { 1.0 };
-        let mut mixed = interpolate(a, b, p2 / total, space, method);
+        let mut mixed = interpolate(a, b, progress, space, method);
         mixed.alpha = mixed.alpha.map(|alpha| alpha * multiplier);
         Some(Parsed::Color(mixed))
+    }
+    /// A `<color-interpolation-method>` after `in` (Color 4 §13.1).
+    fn method(&mut self) -> Option<(Space, Hue)> {
+        let V::Ident(name) = self.peek()? else {
+            return None;
+        };
+        let space = Space::named(name)?;
+        self.at += 1;
+        let mut method = Hue::Shorter;
+        if let Some(V::Ident(word)) = self.peek()
+            && let Some(found) = Hue::named(word)
+        {
+            space.polar_hue()?;
+            self.at += 1;
+            match self.peek()? {
+                V::Ident(word) if word.eq_ignore_ascii_case("hue") => self.at += 1,
+                _ => return None,
+            }
+            method = found;
+        }
+        Some((space, method))
     }
     fn percent(&mut self) -> Option<f64> {
         let save = self.at;
@@ -996,7 +1010,18 @@ mod tests {
             legacy("color-mix(in srgb, #000 20%, #fff 20%)").as_deref(),
             Some("rgba(128, 128, 128, 0.4)")
         );
+        // Color 5 §3: Oklab without a method; a zero sum is transparent.
+        assert_eq!(
+            legacy("color-mix(#ff0000 50%, transparent)").as_deref(),
+            Some("rgba(255, 0, 0, 0.5)")
+        );
+        assert_eq!(
+            legacy("color-mix(in srgb, #000 0%, #fff 0%)").as_deref(),
+            Some("rgba(128, 128, 128, 0)")
+        );
         for invalid in [
+            "color-mix(in srgb, #000, #fff, #f00)",
+            "color-mix(, #000, #fff)",
             "rgb(1, 2 3)",
             "rgb(1, 2%, 3)",
             "rgb(none, 0, 0)",
@@ -1004,7 +1029,6 @@ mod tests {
             "#12",
             "color-mix(in display-p3, #000, #fff)",
             "color-mix(in srgb longer hue, #000, #fff)",
-            "color-mix(in srgb, #000 0%, #fff 0%)",
             "color-mix(in srgb, #000 120%, #fff)",
             "oklch(0.5 0.1 10px)",
         ] {
