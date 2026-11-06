@@ -34,7 +34,7 @@ reload and Linux/sustained-load acceptance remain open. See the
 [current status](docs/development-plan.md#status) and
 [server stages](docs/development-plan.md#k7-merged-values-approved-2026-11-06).
 
-The latest full gate passes on merged `main` of 2026-11-06: 4317 Rust tests,
+The latest full gate passes on merged `main` of 2026-11-06: 4327 Rust tests,
 25 ignored, 185 browser Node tests and the reviewed v38 conformance baseline.
 These are local macOS implementation checks, with browser Node tests;
 real-browser and other-target acceptance retain their separate scope.
