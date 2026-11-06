@@ -347,6 +347,7 @@ export const registry = freeze({
       "POST",
       "PUT"
     ],
+    "readInactivityMs": 300000,
     "replay": {
       "errors": {
         "abort": "network replay diverged: request {request} was aborted where the log continues",

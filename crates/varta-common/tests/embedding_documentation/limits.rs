@@ -275,6 +275,11 @@ fn net_limits() -> String {
             "net::MAX_CHUNK_BYTES",
         ),
         row(
+            "V38 network inactivity window in seconds (the head, and each wait of a body read)",
+            net::READ_INACTIVITY_SECONDS,
+            "net::READ_INACTIVITY_SECONDS",
+        ),
+        row(
             "Body bytes one v38 read delivers (a text read: the bytes it decodes)",
             net::MAX_READ_DELIVERY_BYTES,
             "net::MAX_READ_DELIVERY_BYTES",

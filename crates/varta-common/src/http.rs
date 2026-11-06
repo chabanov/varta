@@ -76,8 +76,11 @@ pub const CONNECTION_LIFETIME_SECONDS: u64 = 600;
 /// A v2 streaming response: the longest wait for the next body chunk (each
 /// chunk is one turn with fresh budgets and this deadline) and the longest
 /// whole response, after which the transport ends the body and the client
-/// reconnects. A chunk holds at most `net::MAX_CHUNK_BYTES`.
-pub const STREAM_IDLE_SECONDS: u64 = 60;
+/// reconnects. A chunk holds at most `net::MAX_CHUNK_BYTES`. The idle wait
+/// equals the network inactivity window (owner decision 2026-11-06), so a
+/// service that streams an upstream response never ends it while its
+/// upstream may still be quiet.
+pub const STREAM_IDLE_SECONDS: u64 = crate::net::READ_INACTIVITY_SECONDS;
 pub const STREAM_LIFETIME_SECONDS: u64 = 3600;
 pub const STREAM_CHUNK_BYTES: usize = crate::net::MAX_CHUNK_BYTES;
 /// Request details retained by a native server report. Totals keep counting

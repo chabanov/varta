@@ -643,9 +643,9 @@ fn v37_rejects_the_byte_body_types() {
     }
 }
 
-/// Test-only per-turn deadline of the long-lived transfer tests, so the v38
-/// inactivity window is far shorter than the streams; production budgets
-/// are unchanged.
+/// Test-only network inactivity window of the long-lived transfer tests (a
+/// host-lowered `RunOptions::network_idle`, with the same per-turn
+/// deadline), far shorter than the streams; production values are unchanged.
 const WINDOW_MS: u64 = 500;
 /// The long stream: `EVENT_COUNT` events of `EVENT_BYTES` data bytes, each
 /// after `EVENT_PAUSE_MS`, so a chunk arrives inside every window while the
@@ -684,6 +684,7 @@ fn application(
         ..RunOptions::default()
     };
     run.budgets.deadline_per_turn_ms = Some(WINDOW_MS);
+    run.network_idle = Some(std::time::Duration::from_millis(WINDOW_MS));
     VartaRuntime::new().run_application(
         bytes,
         ApplicationOptions {
@@ -728,6 +729,37 @@ fn v38_long_lived_streams_are_bounded_by_inactivity() {
     let elapsed = started.elapsed();
     assert!(elapsed >= streamed, "{elapsed:?}");
     assert!(report.budget.unwrap().deadline_per_turn);
+}
+
+/// V38: the network has its own inactivity window
+/// (`net::READ_INACTIVITY_SECONDS`), not the per-turn deadline. A stream
+/// silent for several per-turn deadlines (a live session while an agent
+/// works) keeps its connection and completes, where a read bounded by the
+/// turn deadline failed with `terminated` and made clients reconnect.
+#[test]
+fn v38_network_silence_is_not_bounded_by_the_turn_deadline() {
+    let server = Loopback::start();
+    let bytes = compile_with(&long_stream(&server), V38);
+    let mut run = RunOptions {
+        requested: grants(&server),
+        ..RunOptions::default()
+    };
+    run.budgets.deadline_per_turn_ms = Some(WINDOW_MS);
+    let report = VartaRuntime::new().run_application(
+        &bytes,
+        ApplicationOptions {
+            run,
+            ..ApplicationOptions::default()
+        },
+    );
+    assert!(report.failure.is_none(), "{:?}", report.failure);
+    let stalled = crate::net_loopback::event(1, 1).len() + crate::net_loopback::event(2, 1).len();
+    assert_eq!(
+        report.output.lines.last(),
+        Some(&format!(
+            "varta log: stall: 200 {stalled} bytes, last id: 2"
+        ))
+    );
 }
 
 /// V38: the head must arrive within one window of the start.

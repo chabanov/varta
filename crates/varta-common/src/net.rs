@@ -46,6 +46,13 @@ pub const MAX_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
 /// Body bytes delivered by one `net_body_read` completion (as UTF-16 text
 /// it stays far below the host result buffer).
 pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
+/// V38 network inactivity window (owner decision 2026-11-06): how long the
+/// head of a long-lived transfer and each wait of a body read may go without
+/// bytes, as Node's default `bodyTimeout`. It is the network's own bound,
+/// separate from the per-turn deadline that bounds guest computation; the
+/// instance lifetime (a bounded run's deadline) still ends every wait, a
+/// host may lower it, and code may abort earlier (`AbortSignal.timeout`).
+pub const READ_INACTIVITY_SECONDS: u64 = 300;
 /// V38 (`net_request_start_v2`): body bytes one `net_body_read` or
 /// `net_body_read_bytes` completion delivers, at most (text reads: the bytes
 /// it decodes, held-back bytes of a split sequence included). A larger

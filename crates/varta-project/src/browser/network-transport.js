@@ -1,6 +1,7 @@
 // Browser transport limits supplement package/host policy. Redirects are never
 // followed here: an opaque manual redirect cannot expose its checked next hop.
-// V38 timing: plan.timeoutMs (the per-turn deadline) is an inactivity window.
+// V38 timing: plan.timeoutMs (the network inactivity window, not the per-turn
+// deadline) bounds each wait for bytes.
 // The head must arrive within one window of the start, and each body read
 // waits at most one window for its next bytes, so a chunk renews it.
 function browserTransport(plan, fetcher = fetch) {

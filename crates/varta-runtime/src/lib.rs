@@ -315,6 +315,9 @@ pub(crate) struct RuntimeContext {
     /// The end of the instance: the execution deadline of a bounded run,
     /// the embedder's optional lifetime bound of an application instance.
     lifetime: Option<Instant>,
+    /// V38: how long a network transfer may wait for bytes
+    /// (`net::READ_INACTIVITY_SECONDS`, or the host's lower value).
+    network_idle: std::time::Duration,
     budgets: varta_common::budget::Budgets,
     turns: turns::Turns,
     /// The permission broker (v37), with broker v1 states in v38.
@@ -827,6 +830,10 @@ impl VartaRuntime {
             },
         };
         let mut execution = execution::Execution::with_setup(&self.engine, setup)?;
+        if let Some(idle) = options.network_idle {
+            let context = execution.store.data_mut();
+            context.network_idle = context.network_idle.min(idle);
+        }
         if let Some(names) = profiled {
             let budget = execution.store.get_fuel()?;
             execution.store.data_mut().profiler =
@@ -883,6 +890,9 @@ pub struct RunOptions {
     /// ([`varta_common::profile`]); link its probes and report the fuel of
     /// every guest function across all turns in [`RunReport::fuel_profile`].
     pub fuel_profile: bool,
+    /// V38: a host's lower network inactivity window; a longer value keeps
+    /// `net::READ_INACTIVITY_SECONDS`.
+    pub network_idle: Option<std::time::Duration>,
 }
 impl RunOptions {
     /// The options of a package manifest and an optional host ceiling
@@ -907,6 +917,7 @@ impl RunOptions {
             decisions: None,
             observer: None,
             fuel_profile: false,
+            network_idle: None,
         })
     }
 }

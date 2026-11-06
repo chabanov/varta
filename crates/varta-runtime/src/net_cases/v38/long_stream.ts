@@ -1,8 +1,10 @@
 // V38 long-lived transfers, run as an application instance whose per-turn
-// deadline (the inactivity window) is far shorter than the stream:
-// - `events` lasts several windows with a chunk inside every window and
+// deadline is far shorter than the stream:
+// - `events` lasts several deadlines with a chunk inside every one and
 //   carries more than one v37 response body, read chunk by chunk;
-// - `stall` keeps silent for longer than one window, so its read fails;
+// - `stall` keeps silent for several deadlines: its read fails where the
+//   host lowered the network inactivity window to one deadline, and
+//   completes under the production window (`net::READ_INACTIVITY_SECONDS`);
 // - `agent` sends an SDK `User-Agent`, which every host owns and ignores.
 // The lines are host-independent (no chunk counts or sizes), so the native
 // and browser hosts print the same output. The harness replaces the

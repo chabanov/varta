@@ -5,9 +5,10 @@
 // own `varta build --target browser` bundle, mounted) against the same
 // loopback server (`net_cases/server.mjs` routes, with CORS for the page's
 // other origin). Its event stream lasts several test-only per-turn deadlines
-// (the inactivity window) with a chunk inside every window and carries more
-// than 512 KiB; a stall longer than one window fails the read; an SDK
-// User-Agent is ignored by both hosts. A second program
+// with a chunk inside every one and carries more than 512 KiB; a stall longer
+// than several per-turn deadlines completes, because the network has its own
+// inactivity window (net::READ_INACTIVITY_SECONDS), not the turn deadline;
+// an SDK User-Agent is ignored by both hosts. A second program
 // (net_cases/v38/burst.ts) runs under the production budgets: back-to-back
 // events far larger than one read may deliver (net::MAX_READ_DELIVERY_BYTES),
 // so each host must split them across reads instead of exhausting a turn's
@@ -34,7 +35,7 @@ const expected = [
   'varta log: agent: 200 {"guestAgent":false}',
   "varta log: compressed: 200 compressed text no coding",
   `varta log: events: 200 ${streamed} bytes, last id: ${COUNT}`,
-  "varta log: stall: TypeError terminated after data",
+  `varta log: stall: 200 ${event(1, 1).length + event(2, 1).length} bytes, last id: 2`,
 ];
 // The burst of `net_tests.rs` (BURST_COUNT, BURST_BYTES): every event is
 // larger than one read's cap.
@@ -123,7 +124,7 @@ try {
   assert.deepEqual(bursts.nativeLines, burstExpected, bursts.native.stderr);
   assert.equal(bursts.browser.status, "ok", JSON.stringify(bursts.browser));
   assert.deepEqual(bursts.browser.logs, bursts.nativeLines, "Chrome prints exactly the native burst lines");
-  console.log(`Browser streaming acceptance passed: ${streamed} bytes over ${COUNT} events (${COUNT * PAUSE_MS} ms, window ${WINDOW_MS} ms), stall failure, host-owned User-Agent and decoded compression print the same ${expected.length} lines natively and in Chrome; a ${burst}-byte burst of ${BURST_COUNT} events, read at most ${CAP} bytes at a time under the production budgets, prints the same ${burstExpected.length} lines`);
+  console.log(`Browser streaming acceptance passed: ${streamed} bytes over ${COUNT} events (${COUNT * PAUSE_MS} ms, window ${WINDOW_MS} ms), a stall past the turn deadline, host-owned User-Agent and decoded compression print the same ${expected.length} lines natively and in Chrome; a ${burst}-byte burst of ${BURST_COUNT} events, read at most ${CAP} bytes at a time under the production budgets, prints the same ${burstExpected.length} lines`);
 } finally {
   await Promise.all([network, pages].map((server) => new Promise((done) => { server.close(done); server.closeAllConnections(); })));
   await rm(root, { recursive: true, force: true });

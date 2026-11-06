@@ -972,6 +972,7 @@ URL is bounded by the [limits table](#manifest-limits).
 | Response header fields | 100 | `net::MAX_RESPONSE_HEADERS` |
 | Response header name and value bytes | 65536 | `net::MAX_RESPONSE_HEADER_BYTES` |
 | Body bytes of one `net_body_read` completion (v37) | 65536 | `net::MAX_CHUNK_BYTES` |
+| V38 network inactivity window in seconds (the head, and each wait of a body read) | 300 | `net::READ_INACTIVITY_SECONDS` |
 | Body bytes one v38 read delivers (a text read: the bytes it decodes) | 8192 | `net::MAX_READ_DELIVERY_BYTES` |
 | Body bytes of one response (v37), or received while serving one read (v38) | 524288 | `net::MAX_RESPONSE_BODY_BYTES` |
 | First descriptor line: `net_request_start` / `net_request_start_v2` | `varta-net-request-1` / `varta-net-request-2` | `net::DESCRIPTOR_VERSION`, `net::DESCRIPTOR_VERSION_BYTES` |
@@ -1051,9 +1052,12 @@ remaining execution deadline (in a v38 long-lived instance, which v37 modules
 never run in, that would be one per-turn allowance from the start).
 
 `net_request_start_v2` (v38) bounds a transfer by **inactivity** instead. The
-inactivity window is the instance's per-turn deadline (`deadlinePerTurnMs`,
-which a manifest can only lower and the host ceiling caps; see the
-[budget table](architecture.md#resource-limits)):
+inactivity window is the network's own bound, `net::READ_INACTIVITY_SECONDS`
+(owner decision 2026-11-06, Node's default `bodyTimeout`), not the per-turn
+deadline that bounds guest computation; a host may lower it (the native
+`RunOptions::network_idle`) and code may abort earlier
+(`AbortSignal.timeout`). The browser host uses the registry's
+`network.readInactivityMs`:
 
 1. The head (name resolution, connect, TLS, sending and the response head)
    must arrive within one window of the start, or the request fails with the
@@ -3699,7 +3703,7 @@ Found by the first browser applier (all rounds 1–5 pass in Chromium).
 | HTTP header / connection timeout | 2 s / 10 s | `http::HEADER_SECONDS`, `http::CONNECTION_SECONDS` |
 | HTTP v1 connections / v2 open connections / v2 concurrent requests | 1 / 1024 / 8 | `http::MAX_CONNECTIONS`, `http::MAX_OPEN_CONNECTIONS`, `http::MAX_CONCURRENT_REQUESTS` |
 | HTTP v2 worker wait / keep-alive idle / requests per connection / connection lifetime | 10 s / 5 s / 1000 / 600 s | `http::WORKER_WAIT_SECONDS`, `http::KEEP_ALIVE_IDLE_SECONDS`, `http::MAX_KEEP_ALIVE_REQUESTS`, `http::CONNECTION_LIFETIME_SECONDS` |
-| HTTP v2 stream idle / lifetime / chunk bytes | 60 s / 3600 s / 65536 | `http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES` |
+| HTTP v2 stream idle / lifetime / chunk bytes | 300 s / 3600 s / 65536 | `http::STREAM_IDLE_SECONDS`, `http::STREAM_LIFETIME_SECONDS`, `http::STREAM_CHUNK_BYTES` |
 | Native HTTP retained request reports / total retained audit entries | 32 / 256 | `http::MAX_REPORTED_REQUESTS`, `permission::MAX_AUDIT_ENTRIES` |
 | Live continuation frames | 64 | `frame::MAX_LIVE_FRAMES` |
 | Catalog types / bindings | 672 / 672 | `function::MAX_CAPTURE_TYPES` |

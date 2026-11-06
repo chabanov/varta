@@ -251,7 +251,7 @@ self.onmessage = async ({ data }) => {
     }
     network = createNetwork(scheduler, policy, emit, readDescriptor, writeResult, replay
       ? Object.assign((plan, claim) => replay.transport(plan, claim), { claim: (plan) => replay.claim(plan), abandon: (claim) => replay.abandon(claim) })
-      : (plan) => browserTransport({...plan,timeoutMs:descriptor.budgets.deadlinePerTurnMs}));
+      : (plan) => browserTransport({...plan,timeoutMs:registry.network.readInactivityMs}));
     Object.assign(implementations, network.implementations);
     const uiPolicy = viewPolicy.createViewPolicy(manifest, permissions,broker.granted);
     const assetNames=new Set(descriptor.resources.filter((resource)=>!resource.font).map((resource)=>resource.key));

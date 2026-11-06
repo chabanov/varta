@@ -500,7 +500,7 @@ impl Inactivity {
 /// The inactivity rule of a transfer started now.
 pub(crate) fn inactivity(context: &RuntimeContext) -> Inactivity {
     Inactivity {
-        window: context.budgets.deadline_per_turn,
+        window: context.network_idle,
         bound: if context.turns.renew_deadline {
             context.lifetime
         } else {

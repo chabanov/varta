@@ -15,6 +15,7 @@ pub(super) fn registry() -> Value {
         "maxPending":n::MAX_PENDING_REQUESTS,"maxRequestBytes":n::MAX_REQUEST_BYTES,
         "maxRequestHeaders":n::MAX_REQUEST_HEADERS,"maxRequestHeaderBytes":n::MAX_REQUEST_HEADER_BYTES,
         "maxResponseHeaders":n::MAX_RESPONSE_HEADERS,"maxResponseHeaderBytes":n::MAX_RESPONSE_HEADER_BYTES,
+        "readInactivityMs":n::READ_INACTIVITY_SECONDS*crate::budget::MILLISECONDS_PER_SECOND,
         "maxChunkBytes":n::MAX_CHUNK_BYTES,"maxReadBytes":n::MAX_READ_DELIVERY_BYTES,"maxBodyBytes":n::MAX_RESPONSE_BODY_BYTES,"maxUrlBytes":n::MAX_URL_BYTES,
         "maxPatterns":crate::MAX_GRANT_PATTERNS,"maxPatternBytes":crate::MAX_PATTERN_BYTES,
         "maxMatchWork":crate::MAX_PATTERN_MATCH_WORK,"maxMethods":n::MAX_GRANT_METHODS,

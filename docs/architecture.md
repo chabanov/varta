@@ -9168,9 +9168,10 @@ unhandled rejection after the turn, fatal host error) **terminates the
 instance**: no later turn runs and nothing restarts it automatically; only an
 explicit new instance starts again from `main`. A guest exit finishes it with
 its code. A network transfer of the instance has no end-to-end deadline:
-each wait for its bytes lasts at most one per-turn deadline from the moment
-it starts and never passes the lifetime bound, so a stream lives while it
-stays active ([long-lived transfers](#long-lived-transfers-and-host-owned-headers-v38)).
+each wait for its bytes lasts at most the network inactivity window
+(`net::READ_INACTIVITY_SECONDS`, separate from the per-turn deadline) from
+the moment it starts and never passes the lifetime bound, so a stream lives
+while it stays active, including through the silences of a live session ([long-lived transfers](#long-lived-transfers-and-host-owned-headers-v38)).
 Tool and HTTP entry points
 stay stateless fresh-store invocations.
 
@@ -11067,9 +11068,11 @@ earlier profiles keep their bytes, preludes and diagnostics (v37 rejects
   therefore differs from the frozen v37 start in five ways, identically on
   every host. (1) **Inactivity, not an end-to-end deadline:** the head must
   arrive within one window of the start and each wait of an armed body read
-  lasts at most one window, where the window is the per-turn deadline
-  (`Budgets::deadline_per_turn`, capped by `budget::MAX_DEADLINE_PER_TURN_MS`
-  and the host ceiling; no production value changed). Receiving bytes ends a
+  lasts at most one window, where the window is the network's own
+  `net::READ_INACTIVITY_SECONDS` (owner decision 2026-11-06; until then the
+  per-turn deadline, which cut every live stream quiet for five seconds and
+  made clients reconnect in a loop); a host may lower it
+  (`RunOptions::network_idle`). Receiving bytes ends a
   wait, so every chunk renews the window; no window runs while no read is
   armed; and no wait passes the instance's bound (the embedder's lifetime of
   a long-lived instance, none without one, or the execution deadline of a
