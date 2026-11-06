@@ -405,7 +405,7 @@ fn member_name(key: &ast::PropName) -> Result<String> {
             "class member named like the inherited {name}"
         )));
     }
-    if name == ASYNC_ITERATOR_METHOD {
+    if name == ASYNC_ITERATOR_METHOD || name == ITERATOR_METHOD {
         return Err(unsupported(&format!("class member named {name}")));
     }
     Ok(name)
@@ -416,17 +416,47 @@ fn member_name(key: &ast::PropName) -> Result<String> {
 /// the spelling), so only the well-known symbol reaches it.
 pub(super) const ASYNC_ITERATOR_METHOD: &str = "[Symbol.asyncIterator]";
 
+/// The name a `[Symbol.iterator]()` method is registered under (v38
+/// `iteration_protocol`); like the async iterator name, no string key
+/// reaches it.
+pub(super) const ITERATOR_METHOD: &str = "[Symbol.iterator]";
+
+/// The global whose well-known members name the iterator methods.
+const SYMBOL_GLOBAL: &str = "Symbol";
+const ITERATOR_SYMBOL: &str = "iterator";
+const ASYNC_ITERATOR_SYMBOL: &str = "asyncIterator";
+
+/// The registered method name of the well-known symbol `Symbol.<name>`
+/// that `expression` spells (`Symbol.iterator` only with `iteration`).
+pub(super) fn well_known_symbol(expression: &ast::Expr, iteration: bool) -> Option<&'static str> {
+    let ast::Expr::Member(ast::MemberExpr {
+        obj,
+        prop: ast::MemberProp::Ident(property),
+        ..
+    }) = stmt::unparen(expression)
+    else {
+        return None;
+    };
+    if !matches!(stmt::unparen(obj), ast::Expr::Ident(object) if object.sym == SYMBOL_GLOBAL) {
+        return None;
+    }
+    match property.sym.as_ref() {
+        ASYNC_ITERATOR_SYMBOL => Some(ASYNC_ITERATOR_METHOD),
+        ITERATOR_SYMBOL if iteration => Some(ITERATOR_METHOD),
+        _ => None,
+    }
+}
+
 /// Whether `key` is the computed key `[Symbol.asyncIterator]`.
 fn async_iterator_key(key: &ast::PropName) -> bool {
-    let ast::PropName::Computed(computed) = key else {
-        return false;
-    };
-    matches!(
-        &*computed.expr,
-        ast::Expr::Member(ast::MemberExpr { obj, prop: ast::MemberProp::Ident(property), .. })
-            if matches!(&**obj, ast::Expr::Ident(object) if object.sym == "Symbol")
-                && property.sym == "asyncIterator"
-    )
+    matches!(key, ast::PropName::Computed(computed)
+        if well_known_symbol(&computed.expr, false) == Some(ASYNC_ITERATOR_METHOD))
+}
+
+/// Whether `key` is the computed key `[Symbol.iterator]` (v38).
+fn iterator_key(key: &ast::PropName) -> bool {
+    matches!(key, ast::PropName::Computed(computed)
+        if well_known_symbol(&computed.expr, true) == Some(ITERATOR_METHOD))
 }
 
 /// An instance method's registered name: `member_name`, or the async
@@ -439,6 +469,9 @@ fn method_name(
 ) -> Result<String> {
     if profile.net_request() && async_iterator_key(key) {
         return Ok(ASYNC_ITERATOR_METHOD.to_owned());
+    }
+    if profile.iteration_protocol() && iterator_key(key) {
+        return Ok(ITERATOR_METHOD.to_owned());
     }
     if profile.net_request()
         && prelude

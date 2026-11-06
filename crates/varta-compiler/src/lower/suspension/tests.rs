@@ -35,7 +35,7 @@ fn canonical(body: &[S], states: &mut Vec<u32>) {
         match statement {
             S::Expr(Expr {
                 ty: Type::Void,
-                kind: E::Suspend { value, state },
+                kind: E::Suspend { value, state, .. },
                 ..
             }) => {
                 assert!(!walk::suspends(value));

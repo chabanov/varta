@@ -5781,6 +5781,49 @@ throws a catchable `TypeError` (Node would keep the object). A `switch` that
 misses a member leaves the function without a return, and the diagnostic
 names the members it does not handle.
 
+#### Iterables, spreads and `yield*` (opt-in v38)
+
+A class becomes iterable with a `[Symbol.iterator]()` generator method;
+`for...of`, array spreads, `Array.from` and `yield*` use it. Array literals
+spread arrays, generators, `Map`/`Set` values and iterable instances, and a
+generator delegates to another generator or an array with `yield*`, whose
+value is the delegate's return value:
+
+```ts
+class Tree implements Iterable<string> {
+  constructor(public label: string, public children: Tree[]) {}
+  *[Symbol.iterator](): Generator<string> {
+    yield this.label;
+    for (const child of this.children) yield* child;
+  }
+}
+function* numbered(tree: Tree): Generator<string, number> {
+  let n = 0;
+  for (const label of tree) yield `${++n}. ${label}`;
+  return n;
+}
+function* report(tree: Tree): Generator<string> {
+  const count = yield* numbered(tree);
+  yield `${count} nodes`;
+}
+export function main(): void {
+  const tree = new Tree("root", [new Tree("a", [new Tree("a1", [])]), new Tree("b", [])]);
+  console.log([...tree].join(" ")); // root a a1 b
+  const extra: string[] = ["z"];
+  console.log([...tree, ...extra, ...new Set(["s"])].length); // 6
+  console.log(Array.from(report(tree)).join(", ")); // 1. root, 2. a, 3. a1, 4. b, 4 nodes
+}
+```
+
+`next(v)`, `throw(e)` and `return(v)` of a generator suspended in `yield*`
+reach its delegate, as in JavaScript. `Iterator<T>` and
+`IterableIterator<T>` annotate generator objects; `Iterable<T>` is accepted in
+`implements` only, since a parameter of that type would also have to accept
+arrays. Strings spread their code points (`[..."a😀"]` has two elements).
+Hand-written `{ next() }` iterators, `Symbol()` values and destructuring of
+generators are not supported, and a hole in a `number[]` throws `TypeError`
+when it is spread, as in `for...of`.
+
 #### Web bytes (opt-in v38)
 
 Response bodies are bytes, as in browsers and Node: a reader yields

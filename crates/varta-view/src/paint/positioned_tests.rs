@@ -411,6 +411,10 @@ fn scrolled_fixed() -> View {
         None,
     )
     .unwrap();
+    // The scroll's overlay scrollbar has faded out by then.
+    view.set_animation_time(
+        crate::overlay_scrollbar::FADE_OUT_DELAY_MS + crate::overlay_scrollbar::ANIMATION_MS,
+    );
     view
 }
 

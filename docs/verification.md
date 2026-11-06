@@ -8,13 +8,15 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-06
 
-- **Latest successful full gate:** `target/verification/20261106-114846-cule_s6v/report.json` passes every
-  command with unchanged inputs: **3949 Rust tests, 0 failures, 21 ignored;
-  218 browser Node tests**; checked-v38 conformance matches its baseline.
-  It covers the audit fixes of 2026-11-06 (HTTP/2 streams and idle bound,
-  per-stream write idle, file reads off the request workers, linear emoji
-  fallback, Parley segment counting) on top of colour emoji and text under
-  `scale()`.
+- **Latest successful full gate:** `target/verification/20261106-121636-n8h8914c/report.json` passes every
+  command with unchanged inputs: **3975 Rust tests, 0 failures, 21 ignored;
+  218 browser Node tests**; checked-v38 conformance (135 passed, 5 known
+  unsupported of 140) matches its baseline. It covers merged `main`: the v38
+  iteration protocol and macOS overlay scrollbars on top of the audit fixes
+  of 2026-11-06 (HTTP/2 streams and idle bound, per-stream write idle, file
+  reads off the request workers, linear emoji fallback, Parley segment
+  counting), colour emoji and text under `scale()`. The audit-fix batch alone
+  passed `20261106-114846-cule_s6v` (3949 Rust tests).
 - **Superseded runs of the same batch:** `20261106-112155-1m2tiy5k` passed
   every test but saw its sources change during the run (another session
   edited the tree); `20261106-113508-baj7a9l2` failed one new HTTP/2 test
@@ -766,6 +768,29 @@ for scale in 1 1.25 2; do
   node scripts/test-native-positioned.mjs "target/native-scrollbars-$scale.json"
 done
 ```
+
+Overlay scrollbars (macOS "Show scroll bars" automatic or when scrolling,
+headless Chrome's style on this Mac) are compared with Chrome running the
+probe's steps in real time: a wheel or programmatic scroll, the pointer on the
+bar or away, and waits. Captures are taken where both are steady (just after a
+scroll, after the pointer rested on the bar, after the fade-out); the oracle
+checks that the bar reserves no space, the hits on and beside the bar and the
+pixels around it. The state machine, paint and shell feed have their own
+tests:
+
+```sh
+cargo test -p varta-view --lib --locked overlay_scrollbar
+cargo test -p varta-view --test integration --locked scrollbars
+cargo test -p varta-view --test integration --locked accessibility_scroll
+cargo test -p varta-runtime --lib --locked a_native_scroll_shows_the_overlay_scrollbar
+for scale in 1 1.25 2; do
+  cargo run -p varta-view --example native_overlay_scrollbar_probe --locked -- "$scale" > "target/native-overlay-scrollbars-$scale.json"
+  node scripts/test-native-overlay-scrollbars.mjs "target/native-overlay-scrollbars-$scale.json"
+done
+```
+
+Scrolled cases of `native_positioned_probe` show the overlay thumb on both
+sides; rerun it at 1x and 2x after changing overlay paint.
 
 Platform fallback faces with `--system-fonts` (macOS), colour emoji
 included, are compared with Chrome on the same machine; the oracle carries no

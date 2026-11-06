@@ -27,7 +27,7 @@ defaults maintained in this overview.
 | Area | Implemented surface | Remaining boundary |
 | --- | --- | --- |
 | Compiler | Shared TS parsing, resolved typed IR, Wasm emission and validation for check/dev/build; explicit profile negotiation and source-aware diagnostics | Deliberate checked subset; unsupported syntax/types produce diagnostics |
-| Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports | General dynamic properties/prototypes/descriptors, wider receiver/iteration behavior and remaining type/module semantics |
+| Types and programs | Interfaces/aliases, unions and narrowing, optional fields, checked `unknown`/assertions, classes/inheritance/generics/private fields, functions/closures, supported control flow, modules and re-exports; v38 iteration protocol: `[Symbol.iterator]()` iterable classes, generator methods, array literal spreads, `Array.from` of iterables and synchronous `yield*` ([contract](architecture.md#iteration-protocol-iteration_protocol)) | General dynamic properties/prototypes/descriptors, hand-written iterator objects and iterable destructuring, wider receiver behavior and remaining type/module semantics |
 | Values and built-ins | Number/BigInt/UTF-16 strings, objects, sparse/resizable arrays, hashed dictionaries, tuples, Map/Set, JSON, admitted Math/String/Array operations, ahead-of-time RegExp and a UTC Date subset | Symbol, object coercion, wrappers, Intl, wider Date/RegExp and full conversion inventory |
 | Async language | Promise chains/combinators, async/await, sync/async generators, for-await, timers, microtasks and abort support | Structural thenables, top-level await and wider async iterable forms |
 | Runtime | Bounded executions, isolated HTTP request instances and long-lived application instances with event turns, host tasks, permission answers and captured state | Broader sustained cancellation/shutdown, retained-resource and target evidence |
@@ -150,7 +150,7 @@ unrestricted browser DOM in guest code.
 | Text | Unicode shaping, ligatures, combining marks, admitted bidi flows, wrapping and preserved whitespace, explicit font data, macOS system-family mapping, optical size and supported face/synthesis paths |
 | Controls | Buttons, text/search/password/number inputs, textarea, checkboxes/radios, select, forms and modal dialogs with top-layer/focus behavior |
 | Input | Pointer/keyboard, hover/active/focus/cursors, editing, selection/caret, Undo/Redo, scrolling and IME preedit |
-| Animation | Color/background/opacity transitions and translations on a host-set animation clock; translated boxes update painting, hits and geometry |
+| Animation | Color/background/opacity transitions and translations on a host-set animation clock; translated boxes update painting, hits and geometry; macOS overlay scrollbar fades on the same clock |
 | Platform effects | Host-owned clipboard and external links under gesture/grant rules, with explicit denial/platform failure |
 | Accessibility | Roles/names/states/descriptions, semantic snapshots, geometry, live updates and assistive actions; macOS adapter and scrollbar-action routes |
 
@@ -166,8 +166,11 @@ The native scope still has concrete gaps:
   `font-size` and percentage-plus-length math remain refused natively.
 - Native `<img>` is not admitted by the current layout path. Browser bundles
   support checked static PNG resources; that does not add native image painting.
-- General transforms/scaling, scrollable overflow from translated boxes and
-  visual native scrollbar painting remain unfinished.
+- General transforms/scaling and scrollable overflow from translated boxes
+  remain unfinished. macOS scrollbars paint natively in both system styles
+  (classic gutters, and overlay bars shown while scrolling and faded on the
+  animation clock); dragging a thumb, clicking a track and Linux scrollbars
+  do not.
 - OS glyph fallback and wider real-font typography remain open. Some ordinary
   bidi shaping is implemented while RTL edge ordering and bidi on preserved
   whitespace paths remain separate gaps.
@@ -259,8 +262,9 @@ codegen-v2 fuel comparison. Its recorded HEAD is `6dfb06e` with the GC changes
 present; `10ff9ae` commits that verified code. See
 [current verification evidence](verification.md#current-verification-evidence--2026-11-06).
 
-The checked-v38 ECMAScript 2025 inventory has 132 passing and five reviewed
-unsupported cases out of 137; eight feature rows have no executable case.
+The checked-v38 ECMAScript 2025 inventory has 135 passing and five reviewed
+unsupported cases out of 140 after the iteration-protocol cases of 2026-11-06;
+eight feature rows have no executable case.
 The baseline matches. This is a bounded compatibility inventory rather than
 Test262, full language compatibility or a global completion percentage; see
 [the inventory](../conformance/README.md).

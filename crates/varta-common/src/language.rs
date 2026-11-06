@@ -791,6 +791,21 @@ impl LanguageProfile {
     pub fn sdk_paths(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, iteration-protocol stream: a class's `[Symbol.iterator]()`
+    /// generator method makes its instances iterable by `for...of`, array
+    /// literal spreads, `Array.from` and `yield*`; classes declare
+    /// synchronous generator methods; array literals spread arrays,
+    /// strings, generators, collections and iterable instances; `Array.from` copies
+    /// the same sources; a synchronous generator delegates with `yield*`;
+    /// `x[Symbol.iterator]()` and `x[Symbol.asyncIterator]()` call
+    /// the well-known methods; `Iterator<T>` and `IterableIterator<T>`
+    /// annotate generator objects and `implements Iterable<T>` checks the
+    /// method. Admits no `Symbol` values and changes no host ABI or value
+    /// layout.
+    #[must_use]
+    pub fn iteration_protocol(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, wave-3 bytes stream: a `Uint8Array` carries its own value
     /// tag ([`crate::value::ValueKind::Bytes`], an additive tag of the
     /// in-development value layout 18) in record fields, array elements,
@@ -3256,6 +3271,7 @@ mod tests {
                 profile.byte_values(),
                 profile.file_roots(),
                 profile.json_decoders(),
+                profile.iteration_protocol(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");
             }

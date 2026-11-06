@@ -98,6 +98,13 @@ impl Lower<'_> {
                     ))
                 }
                 ast::Expr::Lit(ast::Lit::Str(_)) => records::expression_key(&key.expr),
+                // V38 (`iteration_protocol`): `x[Symbol.iterator]` and
+                // `x[Symbol.asyncIterator]` name the well-known methods.
+                expression if self.types.profile.iteration_protocol() => {
+                    classes::well_known_symbol(expression, true)
+                        .map(str::to_owned)
+                        .ok_or_else(|| unsupported("computed class member access"))
+                }
                 _ => Err(unsupported("computed class member access")),
             },
         }

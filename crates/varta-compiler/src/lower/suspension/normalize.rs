@@ -386,7 +386,11 @@ impl<'a> Normalizer<'a> {
         }
         let Expr { span, ty, kind } = expr;
         let (prefix, kind) = match kind {
-            E::Suspend { value, state } => {
+            E::Suspend {
+                value,
+                state,
+                observe,
+            } => {
                 let (mut prefix, value) = self.expr(*value)?;
                 let slot = self.fresh(ty);
                 prefix.push(S::Init(
@@ -397,6 +401,7 @@ impl<'a> Normalizer<'a> {
                         kind: E::Suspend {
                             value: Box::new(value),
                             state,
+                            observe,
                         },
                     },
                 ));
@@ -443,6 +448,7 @@ impl<'a> Normalizer<'a> {
                         kind: E::Suspend {
                             value: Box::new(published),
                             state: 0,
+                            observe: None,
                         },
                     },
                 ));
