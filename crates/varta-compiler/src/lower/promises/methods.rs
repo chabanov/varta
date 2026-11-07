@@ -383,6 +383,15 @@ impl Lower<'_> {
                 };
                 return self.promise_object(span, id, Some(undefined(span)));
             };
+            // V38 (`expression_forms`): a structural thenable (`thenables`).
+            if self.types.profile.expression_forms()
+                && self
+                    .thenable_operand(&arg.expr)
+                    .is_some_and(|ty| self.thenable(ty).is_some())
+            {
+                let value = self.expr(&arg.expr)?;
+                return self.resolve_thenable(value);
+            }
             let value = self.expr_expected(&arg.expr, context.map(stored))?;
             if let Type::Promise(_) = value.ty {
                 // PromiseResolve returns an internal promise itself.

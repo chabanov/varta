@@ -20,33 +20,55 @@ fn run(source: &str, expected: &[&str]) {
         );
     }
 }
+/// V38 (`expression_forms`) resolves `await t` and `Promise.resolve(t)` of a
+/// statically known thenable (`thenables`); every other resolution path,
+/// a `then` getter and every path of earlier profiles keep refusing it.
 #[test]
 fn static_thenables_are_rejected_on_every_resolution_path() {
     let prelude = "interface Thenable { then: (resolve: (value:number)=>void)=>void } function make():Thenable {return {then:(resolve:(value:number)=>void):void=>{resolve(7);}};}";
-    for expression in [
-        "await make()",
-        "Promise.resolve(make())",
-        "Promise.resolve(1).then(()=>make())",
-        "new Promise<Thenable>((resolve)=>resolve(make()))",
+    for (expression, admitted) in [
+        ("console.log(String(await make()))", true),
+        ("console.log(String(await Promise.resolve(make())))", true),
+        ("Promise.resolve(1).then(()=>make())", false),
+        ("new Promise<Thenable>((resolve)=>resolve(make()))", false),
     ] {
         let source =
             format!("{prelude} export async function main():Promise<void>{{ {expression}; }}");
         for profile in PROFILES {
-            let error =
-                varta_compiler::compile_typescript_with_profile(&source, profile).unwrap_err();
+            let compiled = varta_compiler::compile_typescript_with_profile(&source, profile);
+            if admitted && profile == LanguageProfile::CheckedF64Utf16V38 {
+                let bytes = compiled.unwrap_or_else(|e| panic!("{e}\n{source}"));
+                let result = VartaRuntime::new().run_wasm_bytes(&bytes, &[]).unwrap();
+                assert_eq!(result.lines, ["varta log: 7"], "{source}");
+                continue;
+            }
+            let error = compiled.unwrap_err();
             assert!(error.to_string().contains("thenable"), "{error}\n{source}");
         }
     }
-    for class in [
-        "class T {then(resolve:(value:number)=>void):void{resolve(7);}}",
-        "class T {get then():number{return 7;}}",
-        "class Base {then(resolve:(value:number)=>void):void{resolve(7);}} class T extends Base {}",
+    for (class, admitted) in [
+        (
+            "class T {then(resolve:(value:number)=>void):void{resolve(7);}}",
+            true,
+        ),
+        ("class T {get then():number{return 7;}}", false),
+        (
+            "class Base {then(resolve:(value:number)=>void):void{resolve(7);}} class T extends Base {}",
+            true,
+        ),
     ] {
-        let source =
-            format!("{class} export async function main():Promise<void>{{await new T();}}");
+        let source = format!(
+            "{class} export async function main():Promise<void>{{console.log(String(await new T()));}}"
+        );
         for profile in PROFILES {
-            let error =
-                varta_compiler::compile_typescript_with_profile(&source, profile).unwrap_err();
+            let compiled = varta_compiler::compile_typescript_with_profile(&source, profile);
+            if admitted && profile == LanguageProfile::CheckedF64Utf16V38 {
+                let bytes = compiled.unwrap_or_else(|e| panic!("{e}\n{source}"));
+                let result = VartaRuntime::new().run_wasm_bytes(&bytes, &[]).unwrap();
+                assert_eq!(result.lines, ["varta log: 7"], "{source}");
+                continue;
+            }
+            let error = compiled.unwrap_err();
             assert!(error.to_string().contains("thenable"), "{error}");
         }
     }

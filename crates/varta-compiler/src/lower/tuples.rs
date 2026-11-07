@@ -213,6 +213,49 @@ impl Lower<'_> {
             kind: E::Array(values),
         })
     }
+    /// The elements of the tuple `value` from position `start` on, as a
+    /// fresh tuple of their types (v38 `expression_forms` rest patterns),
+    /// or an empty array when none remain. `value` is a local, read once
+    /// per element. Optional remaining elements are refused: the rest's
+    /// length would depend on the value.
+    pub(super) fn tuple_rest(&mut self, value: Expr, start: usize) -> Result<Expr> {
+        let Type::Tuple(id) = value.ty else {
+            return Err(invalid("missing tuple type"));
+        };
+        let tuple = self.types.tuples[id as usize].clone();
+        let span = value.span;
+        if tuple.required < tuple.elements.len() {
+            return Err(unsupported("rest element over optional tuple elements"));
+        }
+        let remaining: Vec<Type> = tuple.elements.iter().skip(start).copied().collect();
+        if remaining.is_empty() {
+            return Ok(Expr {
+                span,
+                ty: tuple.array,
+                kind: E::Array(vec![]),
+            });
+        }
+        let ty = intern(remaining.clone(), remaining.len(), false, self.types)?;
+        let Type::Tuple(rest) = ty else {
+            return Err(invalid("missing rest tuple"));
+        };
+        let Type::Array(physical) = self.types.tuples[rest as usize].array else {
+            return Err(invalid("missing tuple array"));
+        };
+        let stored = self.types.arrays[physical as usize];
+        let mut elements = Vec::with_capacity(remaining.len());
+        for index in start..tuple.elements.len() {
+            let element = self.tuple_element(value.clone(), index)?;
+            let element = self.physical_array(element)?;
+            let element = unions::widen(element, Some(stored), self.types)?;
+            elements.push(Some(element));
+        }
+        Ok(Expr {
+            span,
+            ty,
+            kind: E::Array(elements),
+        })
+    }
     /// Position `index` of tuple `value` (a pure local read) as its own type.
     pub(super) fn tuple_element(&mut self, value: Expr, index: usize) -> Result<Expr> {
         let Type::Tuple(id) = value.ty else {

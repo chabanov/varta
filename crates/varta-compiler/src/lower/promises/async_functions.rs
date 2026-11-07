@@ -16,6 +16,12 @@ impl Lower<'_> {
             ));
         }
         let value = self.expr(&expression.arg)?;
+        // V38 (`expression_forms`): a structural thenable (`thenables`).
+        let value = if self.types.profile.expression_forms() && self.thenable(value.ty).is_some() {
+            self.resolve_thenable(value)?
+        } else {
+            value
+        };
         self.await_value(span, value)
     }
     /// `await value` of a lowered operand: a promise is awaited itself, any

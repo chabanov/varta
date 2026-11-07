@@ -718,7 +718,9 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
     let constructor = "error constructor arguments other than (message?, options?)";
     refused(
         V38,
-        &main("const args: [string] = ['m']; console.log(new Error(...args).message);"),
+        // A tuple spread expands into `new Error(args[0])` (v38
+        // `expression_forms`); an array of unknown length stays refused.
+        &main("const args: string[] = ['m']; console.log(new Error(...args).message);"),
         constructor,
     );
     refused(

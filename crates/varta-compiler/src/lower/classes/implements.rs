@@ -38,6 +38,14 @@ pub(super) fn check(
             iterable(id, &reference, source, types)?;
             continue;
         }
+        // `implements Disposable` / `AsyncDisposable` (v38 `expression_forms`):
+        // the class declares `[Symbol.dispose]()` / `[Symbol.asyncDispose]()`.
+        if types.profile.expression_forms()
+            && let Some(method) = disposable(name.sym.as_ref(), types)
+        {
+            disposes(id, method, &reference, source, types)?;
+            continue;
+        }
         let reference = ast::TsType::TsTypeRef(reference);
         let ty = keyword_type(&reference, types).map_err(|e| source.locate(e, clause.span))?;
         let fields = match ty {
@@ -138,6 +146,57 @@ fn iterable(
     Err(source.locate(
         type_error(format!(
             "class {} incorrectly implements Iterable: it needs a [Symbol.iterator]() method without parameters returning a generator that yields {yielded}",
+            class.name
+        )),
+        reference.span,
+    ))
+}
+
+/// The disposal method an `implements Disposable`/`AsyncDisposable` clause
+/// requires (unless the program declares the name itself).
+fn disposable(name: &str, types: &ir::ValueTypes) -> Option<&'static str> {
+    let method = match name {
+        "Disposable" => DISPOSE_METHOD,
+        "AsyncDisposable" => ASYNC_DISPOSE_METHOD,
+        _ => return None,
+    };
+    (!named::declared(types, name)).then_some(method)
+}
+
+/// Class `id` declares the disposal `method` without parameters, returning
+/// `void` (`Promise<void>` for `[Symbol.asyncDispose]()`).
+fn disposes(
+    id: u32,
+    method: &str,
+    reference: &ast::TsTypeRef,
+    source: &Source,
+    types: &ir::ValueTypes,
+) -> Result<()> {
+    if reference.type_params.is_some() {
+        return Err(source.locate(
+            type_error("Disposable and AsyncDisposable take no type arguments"),
+            reference.span,
+        ));
+    }
+    let class = types.classes.get(id);
+    let result = class
+        .methods
+        .get(method)
+        .filter(|found| !found.getter && found.signature.params.is_empty())
+        .map(|found| found.signature.result);
+    let conforms = match result {
+        Some(Type::Void) => method == DISPOSE_METHOD,
+        Some(Type::Promise(promise)) => {
+            method == ASYNC_DISPOSE_METHOD && types.promises[promise as usize].value == Type::Void
+        }
+        _ => false,
+    };
+    if conforms {
+        return Ok(());
+    }
+    Err(source.locate(
+        type_error(format!(
+            "class {} incorrectly implements its disposal interface: it needs a {method}() method without parameters",
             class.name
         )),
         reference.span,

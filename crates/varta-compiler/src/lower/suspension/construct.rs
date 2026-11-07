@@ -29,6 +29,12 @@ impl<'a> Namer<'a> {
             .map(|unit| &unit.ast);
         Self { module, profile }
     }
+    /// V38 (`expression_forms`): every intrinsic value block is split; its
+    /// roots become the statement's frame-saved temporaries, and its
+    /// statements keep their order around each suspension point.
+    pub(super) fn splits_all(&self) -> bool {
+        self.profile.expression_forms()
+    }
     pub(super) fn describe(&self, span: swc_common::Span) -> Construct {
         let mut find = Find {
             target: span,

@@ -112,6 +112,15 @@ impl Lower<'_> {
                     E::Index(Box::new(value), Box::new(index)),
                 )
             }
+            // V38 (`expression_forms`): the strings array of a tagged
+            // template carries no raw strings (`tagged_templates`).
+            ast::MemberProp::Ident(name)
+                if name.sym == "raw"
+                    && self.types.profile.expression_forms()
+                    && self.types.arrays[id as usize] == Type::String =>
+            {
+                return Err(unsupported(tagged_templates::RAW_REFUSED));
+            }
             _ => {
                 return Err(unsupported(
                     "array property other than length or numeric index",

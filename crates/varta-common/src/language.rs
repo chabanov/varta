@@ -816,6 +816,19 @@ impl LanguageProfile {
     pub fn declaration_forms(self) -> bool {
         self == Self::CheckedF64Utf16V38
     }
+    /// Batch v38, K9 C stream (expressions and functions): the comma
+    /// operator, `await` in every operand position of an async function,
+    /// object-literal methods with `this`, constant computed
+    /// keys, tagged templates and `String.raw`, explicit `this` parameters,
+    /// inferred class-field arrows, spreads into fixed parameters and `new`,
+    /// destructuring of iterables, hand-written iterators,
+    /// `using`/`await using`, `new.target`
+    /// comparisons and structural thenables. Changes no host ABI or value
+    /// layout.
+    #[must_use]
+    pub fn expression_forms(self) -> bool {
+        self == Self::CheckedF64Utf16V38
+    }
     /// Batch v38, K9 D standard-library stream: the ECMAScript 2025
     /// `Array.prototype` copying and reordering methods (`sort` and
     /// `toSorted` with V8's TimSort comparator order, `flat`, `flatMap`,
@@ -3332,6 +3345,7 @@ mod tests {
                 profile.declaration_forms(),
                 profile.module_evaluation(),
                 profile.type_level(),
+                profile.expression_forms(),
                 profile.standard_library(),
             ] {
                 assert_eq!(selector, profile == new, "{profile:?}");

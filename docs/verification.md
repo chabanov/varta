@@ -8,14 +8,16 @@ any previous check whose scope includes those inputs.
 
 ## Current verification evidence — 2026-11-06
 
-- **Latest successful full gate:** `target/verification/20261106-192642-e303l5b8/report.json` passes every
-  command with unchanged inputs: **4333 Rust tests, 0 failures, 25 ignored;
-  185 browser Node tests**; checked-v38 conformance matches its baseline
-  (155 passed, 5 known unsupported out of 160). It covers merged `main` with
-  the K8 CSS engine's font sizes, font-relative units and layout-time `calc`
-  (vendored Taffy) on top of the K9 A TypeScript type level, the first K9 D
-  standard library stream, the Tailwind compiler, native `img`, the
-  iteration protocol, overlay scrollbars and the audit fixes.
+- **Latest successful full gate:**
+  `target/verification/20261106-210416-u0nl9rmc/report.json` passes every
+  command with unchanged inputs: **4361 Rust tests, 0 failures, 25 ignored; 185
+  browser Node tests**; checked-v38 conformance matches its baseline (175
+  passed, 5 known unsupported out of 180). It covers merged `main` with the K9 A
+  type level steps 1–2 and K9 B declarations and classes (module evaluation,
+  static blocks, enum and namespace values, tsc enum assignability, class index
+  signatures) on top of the K8 CSS engine's font-relative units, the first K9 D
+  standard library stream, the Tailwind compiler, native `img`, the iteration
+  protocol, overlay scrollbars and the audit fixes.
 - **One full gate at a time:** `verify.py full` waits for the machine-wide
   lock (`VARTA_GATE_LOCK`, default `varta-full-gate.lock` in the temporary
   directory) before taking its fingerprint, so gates of several worktrees

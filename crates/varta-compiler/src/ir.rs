@@ -344,6 +344,9 @@ pub(crate) struct ValueTypes {
     pub engine: crate::lower::engine::EngineModules,
     /// Structural views admitted by width subtyping (v38).
     pub subtyping: crate::lower::subtyping::Views,
+    /// Property keys of `const` bindings initialized by a string or number
+    /// literal, by binding identity (v38 `expression_forms` computed keys).
+    pub constant_keys: std::collections::BTreeMap<(usize, u32), String>,
     /// Generic method signatures of object types (v38), erased.
     pub erased: crate::lower::erased_methods::ErasedMethods,
     /// The `unknown[]` view function of `Array.isArray` narrowing (v38).
