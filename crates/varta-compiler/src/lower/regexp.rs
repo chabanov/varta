@@ -80,6 +80,16 @@ impl Lower<'_> {
         call: &ast::CallExpr,
         name: &str,
     ) -> Result<Option<Expr>> {
+        // V38: `RegExp(pattern, flags)` called as a function.
+        if name == REGEXP_CLASS
+            && self.types.profile.full_regexp()
+            && let ast::Callee::Expr(callee) = &call.callee
+            && self
+                .class_callee(callee)
+                .is_some_and(|class| self.regexp_constructor(class))
+        {
+            return self.regexp_call(call).map(Some);
+        }
         if !engine::is_prelude_source(self.source) || !self.types.profile.regexp() {
             return Ok(None);
         }

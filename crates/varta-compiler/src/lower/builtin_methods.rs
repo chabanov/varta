@@ -168,6 +168,8 @@ impl Lower<'_> {
     }
     /// The array value that physically holds a tuple (v37); other arrays as is.
     pub(super) fn physical_array(&mut self, value: Expr) -> Result<Expr> {
+        // V38: a match array is the array of its elements (`full_regexp`).
+        let value = regexp::elements_value(value, self.types);
         match value.ty {
             Type::Tuple(id) => {
                 let ty = self.types.tuples[id as usize].array;
