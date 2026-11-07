@@ -235,14 +235,19 @@ fn sdk_path_enumerations_of_wider_views_are_refused() {
     let diagnostic = "own-key enumeration (Object.keys, values, entries, an Object.assign \
                       source or for...in) of a Narrow that may hold a wider Wide (a view)";
     for body in [
-        "return Object.keys(n).join(',');",
         "return JSON.stringify(Object.values(n));",
         "return JSON.stringify(Object.entries(n));",
         "return JSON.stringify(Object.assign({}, n));",
-        "let s = ''; for (const k in n) s += k; return s;",
     ] {
         refused(V38, &program(body), diagnostic);
     }
+    // Own keys enumerate the object's own layout (`layout_spreads`), as Node
+    // does.
+    matches_node(&program("return Object.keys(n).join(',');"), "b,a,c");
+    matches_node(
+        &program("let s = ''; for (const k in n) s += k; return s;"),
+        "bac",
+    );
     refused(
         V38,
         "interface Wide { b: number; a: number; c: string }
@@ -714,9 +719,17 @@ fn sdk_path_refused_forms_name_their_diagnostics() {
         &view("return JSON.stringify({ ...n });"),
         r#"{"b":1,"a":2,"c":"x"}"#,
     );
+    // Into a dictionary of `unknown`, through the object's JSON-object read
+    // (`layout_spreads`), as Node does.
+    matches_node(
+        &view("const q: Record<string, unknown> = { ...n }; return Object.keys(q).join(',');"),
+        "b,a,c",
+    );
     refused(
         V38,
-        &view("const q: Record<string, unknown> = { ...n }; return Object.keys(q).join(',');"),
+        &view(
+            "const q: Record<string, number | string> = { ...n }; return Object.keys(q).join(',');",
+        ),
         wider,
     );
     // Error constructors take (message?, options?) and nothing else.

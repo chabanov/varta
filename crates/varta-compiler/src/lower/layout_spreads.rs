@@ -34,8 +34,8 @@ pub(crate) enum Part {
     Value(String),
     /// A spread of a source of one layout: its field names.
     Static(Vec<String>),
-    /// The layout spread.
-    Layout,
+    /// The layout spread with this index among the literal's copies.
+    Layout(usize),
 }
 
 /// A `widen` function of one layout spread site.
@@ -44,10 +44,9 @@ struct Widen {
     index: usize,
     /// The literal's static result shape.
     result: u32,
-    /// The view shape the copy has.
-    copy: u32,
-    /// The copy's cell type when the source may be nullish.
-    nullable: Option<Type>,
+    /// The view shape of each copy and its cell type when the source may be
+    /// nullish, in member order.
+    copies: Vec<(u32, Option<Type>)>,
     parts: Vec<Part>,
     written: bool,
 }
@@ -121,38 +120,45 @@ impl Lower<'_> {
         })
     }
 
-    /// `widen(result, copy)` of a layout spread site.
+    /// `widen(result, copies…)` of a literal with layout spreads: each copy
+    /// with its view shape and nullable cell type.
     pub(super) fn layout_widen(
         &mut self,
         result: Expr,
-        copy: Expr,
-        shape: u32,
-        nullable: Option<Type>,
+        copies: Vec<(Expr, u32, Option<Type>)>,
         parts: Vec<Part>,
     ) -> Result<Expr> {
         let span = result.span;
         let Type::Record(id) = result.ty else {
             return Err(CompilerError::Internal("layout spread result".into()));
         };
+        let params: Vec<Type> = std::iter::once(result.ty)
+            .chain(copies.iter().map(|(copy, ..)| copy.ty))
+            .collect();
         let index = reserve(
             self.types,
             self.generated,
             self.next_function,
-            vec![result.ty, copy.ty],
+            params,
             result.ty,
         )?;
         self.types.layouts.widens.push(Widen {
             index,
             result: id,
-            copy: shape,
-            nullable,
+            copies: copies
+                .iter()
+                .map(|(_, shape, nullable)| (*shape, *nullable))
+                .collect(),
             parts,
             written: false,
         });
+        let args = std::iter::once(result)
+            .chain(copies.into_iter().map(|(copy, ..)| copy))
+            .collect();
         Ok(Expr {
             span,
-            ty: result.ty,
-            kind: E::Call(index, vec![result, copy]),
+            ty: Type::Record(id),
+            kind: E::Call(index, args),
         })
     }
 
@@ -166,16 +172,175 @@ impl Lower<'_> {
     ) -> Result<(Vec<S>, Vec<u32>)> {
         let view = Type::Record(shape);
         let target = rest_type(shape, excluded, self.types)?;
-        if self.types.subtyping.class_sources(shape) {
-            return Err(unsupported(&format!(
-                "spread of a {} that may hold a class instance",
-                subtyping::describe(view, self.types)
-            )));
+        let mut body = Vec::new();
+        let mut copies = Vec::new();
+        // A class instance (of a class viewed as `shape` or a subclass)
+        // copies its own fields: the declared ones, in declaration order.
+        let mut classes = Vec::new();
+        for class in self.types.subtyping.class_sources_of(shape) {
+            for member in std::iter::once(class).chain(self.types.classes.descendants(class)) {
+                if !classes.contains(&member) {
+                    classes.push(member);
+                }
+            }
+        }
+        for class in classes {
+            let (record, fields) = self.class_fields(class, span)?;
+            let instance = self.hidden(record);
+            let mut kept = Vec::new();
+            for (slot, mut field) in fields {
+                if excluded.contains(&field.name) {
+                    continue;
+                }
+                // An absent optional field holds `undefined` (every reader
+                // checks it).
+                if field.optional
+                    && !unions::members(field.ty, self.types).contains(&Type::Undefined)
+                {
+                    field.ty = unions::intern(vec![field.ty, Type::Undefined], self.types)?;
+                }
+                kept.push((slot, field));
+            }
+            let fields = kept;
+            let copy_ty =
+                records::intern(fields.iter().map(|(_, f)| f.clone()).collect(), self.types)?;
+            let Type::Record(copy) = copy_ty else {
+                return Err(CompilerError::Internal("class copy shape".into()));
+            };
+            let output = self.hidden(copy_ty);
+            let mut branch = vec![S::Init(
+                instance,
+                Expr {
+                    span,
+                    ty: record,
+                    kind: E::Reinterpret(Box::new(local_value(span, 0, view))),
+                },
+            )];
+            // The copy's slots by name (an interned shape orders its fields).
+            let copied = self.types.records[copy as usize].fields.clone();
+            let mut values = Vec::new();
+            let mut later = Vec::new();
+            let mut order = Vec::new();
+            for (slot, field) in &fields {
+                let target = copied
+                    .iter()
+                    .position(|own| own.name == field.name)
+                    .ok_or_else(|| invalid("class copy field"))?;
+                order.push((target as u32, target as u32));
+                let read = Expr {
+                    span,
+                    ty: self.types.records[record_shape(record)? as usize].fields[*slot as usize]
+                        .ty,
+                    kind: E::Field(Box::new(local_value(span, instance, record)), *slot),
+                };
+                if field.optional {
+                    let absent = unions::widen(
+                        Expr {
+                            span,
+                            ty: Type::Undefined,
+                            kind: E::Integer(0),
+                        },
+                        Some(field.ty),
+                        self.types,
+                    )?;
+                    values.push((target as u32, absent));
+                    later.push(S::If(
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::HasOwn(
+                                Box::new(local_value(span, instance, record)),
+                                Some(*slot),
+                            ),
+                        },
+                        vec![S::SetField(
+                            local_value(span, output, copy_ty),
+                            target as u32,
+                            unions::widen(read, Some(field.ty), self.types)?,
+                        )],
+                        vec![],
+                    ));
+                } else {
+                    values.push((
+                        target as u32,
+                        unions::widen(read, Some(field.ty), self.types)?,
+                    ));
+                }
+            }
+            values.sort_by_key(|(slot, _)| *slot);
+            let built = if copied.iter().any(|field| field.optional) {
+                let present = copied
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, field)| !field.optional)
+                    .fold(0u128, |mask, (slot, _)| mask | 1u128 << slot);
+                E::OptionalRecord(values, present)
+            } else {
+                E::Record(values)
+            };
+            branch.push(S::Init(
+                output,
+                Expr {
+                    span,
+                    ty: copy_ty,
+                    kind: built,
+                },
+            ));
+            branch.extend(later);
+            // An instance's own keys are in declaration order.
+            let slots = [
+                self.hidden(Type::Number),
+                self.hidden(Type::Number),
+                self.hidden(Type::Number),
+            ];
+            branch.push(S::RecordOrder {
+                target: output,
+                shape: copy,
+                source: None,
+                mapping: Vec::new(),
+                start: true,
+                slots,
+            });
+            branch.push(S::RecordOrder {
+                target: output,
+                shape: copy,
+                source: None,
+                mapping: order,
+                start: false,
+                slots,
+            });
+            let mut value =
+                subtyping::coerce(local_value(span, output, copy_ty), Some(target), self.types)?;
+            if value.ty != target {
+                let Type::Record(id) = target else {
+                    return Err(CompilerError::Internal("class copy view".into()));
+                };
+                subtyping::note_loose(copy_ty, id, self.types)?;
+                value = Expr {
+                    span,
+                    ty: target,
+                    kind: E::Reinterpret(Box::new(value)),
+                };
+            }
+            branch.push(S::Return(Some(value)));
+            copies.push(copy);
+            let descriptor = self.hidden(Type::Number);
+            body.push(S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::IsClass {
+                        value: Box::new(local_value(span, 0, view)),
+                        shapes: vec![self.types.classes.shape(class)],
+                        slot: descriptor,
+                    },
+                },
+                branch,
+                vec![],
+            ));
         }
         let mut layouts = self.types.subtyping.view_sources(shape);
         layouts.retain(|layout| *layout != shape);
-        let mut body = Vec::new();
-        let mut copies = Vec::new();
         for (n, layout) in layouts
             .iter()
             .copied()
@@ -259,239 +424,411 @@ impl Lower<'_> {
         Ok((body, copies))
     }
 
-    /// The body of a `widen` function (local 0 the result, local 1 the copy).
+    /// The body of a `widen` function (local 0 the result, then one local
+    /// per copy): one branch per combination of the copies' layouts with
+    /// extra own properties (a nullish copy has none), built from the
+    /// result's fields and those extras in the members' key order.
     fn widen_body(&mut self, widen: &Widen, span: swc_common::Span) -> Result<Vec<S>> {
         let result = Type::Record(widen.result);
-        let view = Type::Record(widen.copy);
-        let copy_ty = widen.nullable.unwrap_or(view);
         let mut body = Vec::new();
-        let copy = self.hidden(view);
-        if widen.nullable.is_some() {
-            body.push(S::If(
-                Expr {
-                    span,
-                    ty: Type::Boolean,
-                    kind: E::IsNullish(Box::new(local_value(span, 1, copy_ty))),
-                },
-                vec![S::Return(Some(local_value(span, 0, result)))],
-                vec![],
-            ));
-            body.push(S::Init(
-                copy,
-                Expr {
-                    span,
-                    ty: view,
-                    kind: E::UnboxUnion(Box::new(local_value(span, 1, copy_ty))),
-                },
-            ));
-        } else {
-            body.push(S::Init(copy, local_value(span, 1, view)));
+        // The copies as their view shapes (nullish: absent).
+        let mut copies = Vec::new();
+        for (n, (shape, nullable)) in widen.copies.iter().enumerate() {
+            let param = n as u32 + 1;
+            let view = Type::Record(*shape);
+            let copy = self.hidden(view);
+            match nullable {
+                Some(cell) => {
+                    let present = self.hidden(Type::Boolean);
+                    body.push(S::Init(
+                        present,
+                        Expr {
+                            span,
+                            ty: Type::Boolean,
+                            kind: E::Conditional(
+                                Box::new(Expr {
+                                    span,
+                                    ty: Type::Boolean,
+                                    kind: E::IsNullish(Box::new(local_value(span, param, *cell))),
+                                }),
+                                Box::new(Expr {
+                                    span,
+                                    ty: Type::Boolean,
+                                    kind: E::Integer(0),
+                                }),
+                                Box::new(Expr {
+                                    span,
+                                    ty: Type::Boolean,
+                                    kind: E::Integer(1),
+                                }),
+                            ),
+                        },
+                    ));
+                    // An absent copy is never read (its layout tests are
+                    // guarded by `present`).
+                    body.push(S::Init(
+                        copy,
+                        Expr {
+                            span,
+                            ty: view,
+                            kind: E::Zero,
+                        },
+                    ));
+                    body.push(S::If(
+                        local_value(span, present, Type::Boolean),
+                        vec![S::Set(
+                            copy,
+                            Expr {
+                                span,
+                                ty: view,
+                                kind: E::UnboxUnion(Box::new(local_value(span, param, *cell))),
+                            },
+                        )],
+                        vec![],
+                    ));
+                    copies.push((*shape, copy, Some(present)));
+                }
+                None => {
+                    body.push(S::Init(copy, local_value(span, param, view)));
+                    copies.push((*shape, copy, None));
+                }
+            }
         }
         let fields = self.types.records[widen.result as usize].fields.clone();
+        let mut chosen = Vec::new();
+        body.extend(self.widen_choose(widen, &copies, &fields, &mut chosen, span)?);
+        body.push(S::Return(Some(local_value(span, 0, result))));
+        Ok(body)
+    }
+
+    /// The branches choosing the layout of copy `chosen.len()` and the ones
+    /// after it.
+    fn widen_choose(
+        &mut self,
+        widen: &Widen,
+        copies: &[(u32, u32, Option<u32>)],
+        fields: &[ir::RecordField],
+        chosen: &mut Vec<Option<u32>>,
+        span: swc_common::Span,
+    ) -> Result<Vec<S>> {
+        let Some(&(shape, copy, present)) = copies.get(chosen.len()) else {
+            return self.widen_build(widen, copies, fields, chosen, span);
+        };
+        let view = Type::Record(shape);
         let layouts = self
             .types
             .layouts
             .copy_shapes
-            .get(&widen.copy)
+            .get(&shape)
             .cloned()
             .unwrap_or_default();
+        let mut branches = Vec::new();
         for layout in layouts {
-            let own = self.types.records[layout as usize].fields.clone();
-            let extras: Vec<ir::RecordField> = own
+            let extra = self.types.records[layout as usize]
+                .fields
                 .iter()
-                .filter(|field| !fields.iter().any(|known| known.name == field.name))
-                .cloned()
-                .collect();
-            if extras.is_empty() {
+                .any(|field| !fields.iter().any(|known| known.name == field.name));
+            if !extra {
                 continue;
             }
-            let mut wide = fields.clone();
-            wide.extend(extras.iter().cloned());
-            let wide_ty = records::intern(wide.clone(), self.types)?;
-            let Type::Record(wide_id) = wide_ty else {
-                return Err(CompilerError::Internal("widened layout".into()));
-            };
-            let wide = self.types.records[wide_id as usize].fields.clone();
-            let slot_of = |name: &str| {
-                wide.iter()
-                    .position(|field| field.name == name)
-                    .map(|slot| slot as u32)
-            };
-            let source = self.hidden(Type::Record(layout));
-            let output = self.hidden(wide_ty);
-            let mut branch = vec![S::Init(
-                source,
-                Expr {
-                    span,
-                    ty: Type::Record(layout),
-                    kind: E::Reinterpret(Box::new(local_value(span, copy, view))),
+            let descriptor = self.hidden(Type::Number);
+            let mut test = Expr {
+                span,
+                ty: Type::Boolean,
+                kind: E::IsClass {
+                    value: Box::new(local_value(span, copy, view)),
+                    shapes: vec![layout],
+                    slot: descriptor,
                 },
-            )];
-            // The result's fields (absent optional ones stay absent), then
-            // the copy's extra fields.
-            let mut values = Vec::new();
-            let mut later = Vec::new();
-            for (slot, field) in fields.iter().enumerate() {
-                let target = slot_of(&field.name).ok_or_else(|| invalid("widened field"))?;
-                let read = Expr {
+            };
+            if let Some(present) = present {
+                test = Expr {
                     span,
-                    ty: field.ty,
-                    kind: E::Field(Box::new(local_value(span, 0, result)), slot as u32),
+                    ty: Type::Boolean,
+                    kind: E::Binary(
+                        ast::BinaryOp::LogicalAnd,
+                        Box::new(local_value(span, present, Type::Boolean)),
+                        Box::new(test),
+                    ),
                 };
-                let ty = wide[target as usize].ty;
-                if field.optional {
-                    let absent = unions::widen(
-                        Expr {
-                            span,
-                            ty: Type::Undefined,
-                            kind: E::Integer(0),
-                        },
-                        Some(ty),
-                        self.types,
-                    )?;
-                    values.push((target, absent));
-                    later.push(S::If(
-                        Expr {
-                            span,
-                            ty: Type::Boolean,
-                            kind: E::HasOwn(
-                                Box::new(local_value(span, 0, result)),
-                                Some(slot as u32),
-                            ),
-                        },
-                        vec![S::SetField(
-                            local_value(span, output, wide_ty),
-                            target,
-                            unions::widen(read, Some(ty), self.types)?,
-                        )],
-                        vec![],
-                    ));
-                } else {
-                    values.push((target, unions::widen(read, Some(ty), self.types)?));
+            }
+            chosen.push(Some(layout));
+            let inner = self.widen_choose(widen, copies, fields, chosen, span)?;
+            chosen.pop();
+            branches.push((test, inner));
+        }
+        chosen.push(None);
+        let mut rest = self.widen_choose(widen, copies, fields, chosen, span)?;
+        chosen.pop();
+        for (test, inner) in branches.into_iter().rev() {
+            rest = vec![S::If(test, inner, rest)];
+        }
+        Ok(rest)
+    }
+
+    /// The widened object of one combination of copy layouts (`None`: the
+    /// copy adds no property), or nothing when no copy adds one.
+    fn widen_build(
+        &mut self,
+        widen: &Widen,
+        copies: &[(u32, u32, Option<u32>)],
+        fields: &[ir::RecordField],
+        chosen: &[Option<u32>],
+        span: swc_common::Span,
+    ) -> Result<Vec<S>> {
+        if chosen.iter().all(Option::is_none) {
+            return Ok(vec![]);
+        }
+        let result = Type::Record(widen.result);
+        // The extras by name: position of the first copy that has one, value
+        // of the last (CopyDataProperties keeps the first definition's place).
+        let mut extras: Vec<(ir::RecordField, usize, u32)> = Vec::new();
+        for (n, layout) in chosen.iter().enumerate() {
+            let Some(layout) = layout else { continue };
+            for (slot, field) in self.types.records[*layout as usize]
+                .fields
+                .iter()
+                .enumerate()
+            {
+                if fields.iter().any(|known| known.name == field.name) {
+                    continue;
+                }
+                match extras
+                    .iter_mut()
+                    .find(|(known, ..)| known.name == field.name)
+                {
+                    Some(entry) => *entry = (field.clone(), n, slot as u32),
+                    None => extras.push((field.clone(), n, slot as u32)),
                 }
             }
-            for field in &extras {
-                let target = slot_of(&field.name).ok_or_else(|| invalid("widened field"))?;
-                let from = own
-                    .iter()
-                    .position(|own| own.name == field.name)
-                    .ok_or_else(|| invalid("copied field"))?;
-                values.push((
-                    target,
-                    unions::widen(
-                        Expr {
+        }
+        let mut wide = fields.to_vec();
+        wide.extend(extras.iter().map(|(field, ..)| field.clone()));
+        let wide_ty = records::intern(wide, self.types)?;
+        let Type::Record(wide_id) = wide_ty else {
+            return Err(CompilerError::Internal("widened layout".into()));
+        };
+        let wide = self.types.records[wide_id as usize].fields.clone();
+        let slot_of = |name: &str| {
+            wide.iter()
+                .position(|field| field.name == name)
+                .map(|slot| slot as u32)
+        };
+        let mut branch = Vec::new();
+        // Each chosen copy as its exact layout.
+        let mut sources = Vec::new();
+        for (n, layout) in chosen.iter().enumerate() {
+            let source = layout.map(|layout| {
+                let slot = self.hidden(Type::Record(layout));
+                branch.push(S::Init(
+                    slot,
+                    Expr {
+                        span,
+                        ty: Type::Record(layout),
+                        kind: E::Reinterpret(Box::new(local_value(
                             span,
-                            ty: field.ty,
-                            kind: E::Field(
-                                Box::new(local_value(span, source, Type::Record(layout))),
-                                from as u32,
-                            ),
-                        },
-                        Some(wide[target as usize].ty),
-                        self.types,
-                    )?,
+                            copies[n].1,
+                            Type::Record(copies[n].0),
+                        ))),
+                    },
                 ));
-            }
-            values.sort_by_key(|(slot, _)| *slot);
-            let built = if wide.iter().any(|field| field.optional) {
-                let present = wide
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, field)| !field.optional)
-                    .fold(0u128, |mask, (slot, _)| mask | 1u128 << slot);
-                E::OptionalRecord(values, present)
-            } else {
-                E::Record(values)
+                (slot, layout)
+            });
+            sources.push(source);
+        }
+        let output = self.hidden(wide_ty);
+        let mut values = Vec::new();
+        let mut later = Vec::new();
+        for (slot, field) in fields.iter().enumerate() {
+            let target = slot_of(&field.name).ok_or_else(|| invalid("widened field"))?;
+            let read = Expr {
+                span,
+                ty: field.ty,
+                kind: E::Field(Box::new(local_value(span, 0, result)), slot as u32),
             };
-            branch.push(S::Init(
-                output,
+            let ty = wide[target as usize].ty;
+            if field.optional {
+                let absent = unions::widen(
+                    Expr {
+                        span,
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    },
+                    Some(ty),
+                    self.types,
+                )?;
+                values.push((target, absent));
+                later.push(S::If(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::HasOwn(Box::new(local_value(span, 0, result)), Some(slot as u32)),
+                    },
+                    vec![S::SetField(
+                        local_value(span, output, wide_ty),
+                        target,
+                        unions::widen(read, Some(ty), self.types)?,
+                    )],
+                    vec![],
+                ));
+            } else {
+                values.push((target, unions::widen(read, Some(ty), self.types)?));
+            }
+        }
+        for (field, n, from) in &extras {
+            let target = slot_of(&field.name).ok_or_else(|| invalid("widened field"))?;
+            let (source, layout) = sources[*n].ok_or_else(|| invalid("copied layout"))?;
+            let copied = local_value(span, source, Type::Record(layout));
+            let value = unions::widen(
                 Expr {
                     span,
-                    ty: wide_ty,
-                    kind: built,
+                    ty: field.ty,
+                    kind: E::Field(Box::new(copied.clone()), *from),
                 },
-            ));
-            branch.extend(later);
-            // Key order: the members again, the copy's keys at the spread.
-            let slots = [
-                self.hidden(Type::Number),
-                self.hidden(Type::Number),
-                self.hidden(Type::Number),
-            ];
-            branch.push(S::RecordOrder {
-                target: output,
-                shape: wide_id,
-                source: None,
-                mapping: Vec::new(),
-                start: true,
-                slots,
-            });
-            for part in &widen.parts {
-                let (source, mapping) = match part {
-                    Part::Value(name) => (
-                        None,
-                        slot_of(name)
-                            .map(|slot| vec![(slot, slot)])
-                            .unwrap_or_default(),
-                    ),
-                    Part::Static(names) => (
-                        Some((0, widen.result)),
-                        names
-                            .iter()
-                            .filter_map(|name| {
-                                let from = fields.iter().position(|field| field.name == *name)?;
-                                Some((from as u32, slot_of(name)?))
-                            })
-                            .collect(),
-                    ),
-                    Part::Layout => (
+                Some(wide[target as usize].ty),
+                self.types,
+            )?;
+            if field.optional {
+                let absent = unions::widen(
+                    Expr {
+                        span,
+                        ty: Type::Undefined,
+                        kind: E::Integer(0),
+                    },
+                    Some(wide[target as usize].ty),
+                    self.types,
+                )?;
+                values.push((target, absent));
+                later.push(S::If(
+                    Expr {
+                        span,
+                        ty: Type::Boolean,
+                        kind: E::HasOwn(Box::new(copied), Some(*from)),
+                    },
+                    vec![S::SetField(
+                        local_value(span, output, wide_ty),
+                        target,
+                        value,
+                    )],
+                    vec![],
+                ));
+            } else {
+                values.push((target, value));
+            }
+        }
+        values.sort_by_key(|(slot, _)| *slot);
+        let built = if wide.iter().any(|field| field.optional) {
+            let present = wide
+                .iter()
+                .enumerate()
+                .filter(|(_, field)| !field.optional)
+                .fold(0u128, |mask, (slot, _)| mask | 1u128 << slot);
+            E::OptionalRecord(values, present)
+        } else {
+            E::Record(values)
+        };
+        branch.push(S::Init(
+            output,
+            Expr {
+                span,
+                ty: wide_ty,
+                kind: built,
+            },
+        ));
+        branch.extend(later);
+        // Key order: the members again, each copy's keys at its spread.
+        let slots = [
+            self.hidden(Type::Number),
+            self.hidden(Type::Number),
+            self.hidden(Type::Number),
+        ];
+        branch.push(S::RecordOrder {
+            target: output,
+            shape: wide_id,
+            source: None,
+            mapping: Vec::new(),
+            start: true,
+            slots,
+        });
+        for part in &widen.parts {
+            let (source, mapping) = match part {
+                Part::Value(name) => (
+                    None,
+                    slot_of(name)
+                        .map(|slot| vec![(slot, slot)])
+                        .unwrap_or_default(),
+                ),
+                Part::Static(names) => (
+                    Some((0, widen.result)),
+                    names
+                        .iter()
+                        .filter_map(|name| {
+                            let from = fields.iter().position(|field| field.name == *name)?;
+                            Some((from as u32, slot_of(name)?))
+                        })
+                        .collect(),
+                ),
+                // A copy that adds no property keeps its keys' places in the
+                // result.
+                Part::Layout(n) => match sources.get(*n).copied().flatten() {
+                    Some((source, layout)) => (
                         Some((source, layout)),
-                        own.iter()
+                        self.types.records[layout as usize]
+                            .fields
+                            .iter()
                             .enumerate()
                             .filter_map(|(from, field)| Some((from as u32, slot_of(&field.name)?)))
                             .collect(),
                     ),
-                };
-                branch.push(S::RecordOrder {
-                    target: output,
-                    shape: wide_id,
-                    source,
-                    mapping,
-                    start: false,
-                    slots,
-                });
-            }
+                    None => {
+                        let shape = copies[*n].0;
+                        (
+                            Some((0, widen.result)),
+                            self.types.records[shape as usize]
+                                .fields
+                                .iter()
+                                .filter_map(|field| {
+                                    let from =
+                                        fields.iter().position(|own| own.name == field.name)?;
+                                    Some((from as u32, slot_of(&field.name)?))
+                                })
+                                .collect(),
+                        )
+                    }
+                },
+            };
             branch.push(S::RecordOrder {
                 target: output,
                 shape: wide_id,
-                source: None,
-                mapping: (0..wide.len() as u32).map(|slot| (slot, slot)).collect(),
+                source,
+                mapping,
                 start: false,
                 slots,
             });
-            let value =
-                subtyping::coerce(local_value(span, output, wide_ty), Some(result), self.types)?;
-            if value.ty != result {
-                return Err(CompilerError::Internal("widened view".into()));
-            }
-            branch.push(S::Return(Some(value)));
-            let descriptor = self.hidden(Type::Number);
-            body.push(S::If(
-                Expr {
-                    span,
-                    ty: Type::Boolean,
-                    kind: E::IsClass {
-                        value: Box::new(local_value(span, copy, view)),
-                        shapes: vec![layout],
-                        slot: descriptor,
-                    },
-                },
-                branch,
-                vec![],
-            ));
         }
-        body.push(S::Return(Some(local_value(span, 0, result))));
-        Ok(body)
+        branch.push(S::RecordOrder {
+            target: output,
+            shape: wide_id,
+            source: None,
+            mapping: (0..wide.len() as u32).map(|slot| (slot, slot)).collect(),
+            start: false,
+            slots,
+        });
+        let value =
+            subtyping::coerce(local_value(span, output, wide_ty), Some(result), self.types)?;
+        if value.ty != result {
+            return Err(CompilerError::Internal("widened view".into()));
+        }
+        branch.push(S::Return(Some(value)));
+        Ok(branch)
+    }
+}
+
+/// The shape of a record type.
+fn record_shape(ty: Type) -> Result<u32> {
+    match ty {
+        Type::Record(id) => Ok(id),
+        _ => Err(CompilerError::Internal("record shape".into())),
     }
 }
 
@@ -630,13 +967,21 @@ pub(super) fn finish(
                     widen.index,
                 );
                 let result = Type::Record(widen.result);
-                let copy = widen.nullable.unwrap_or(Type::Record(widen.copy));
-                lower.hidden(result);
-                lower.hidden(copy);
+                let params: Vec<Type> = std::iter::once(result)
+                    .chain(
+                        widen
+                            .copies
+                            .iter()
+                            .map(|(shape, nullable)| nullable.unwrap_or(Type::Record(*shape))),
+                    )
+                    .collect();
+                for param in &params {
+                    lower.hidden(*param);
+                }
                 let body = lower
                     .widen_body(&widen, span)
                     .map_err(|error| source.locate(error, span))?;
-                lower.function(body, vec![result, copy], result, span)
+                lower.function(body, params, result, span)
             };
             generated.insert(widen.index, function);
             if let Some(entry) = types

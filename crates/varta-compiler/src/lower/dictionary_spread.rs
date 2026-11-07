@@ -336,12 +336,33 @@ impl Lower<'_> {
                 Ok((provided, roots, body))
             }
             Type::Record(shape) if self.types.records[shape as usize].class.is_none() => {
-                // V38 (`sdk_paths`): a view of wider objects is refused by
-                // `subtyping::resolve` (its keys are the view's, not the object's).
+                // V38 (`layout_spreads`): a view of objects of other layouts
+                // into a dictionary of `unknown` copies the actual object's
+                // own entries through its JSON-object read (one branch per
+                // layout); another value type stays refused by
+                // `subtyping::resolve` (its keys are the view's).
+                if self.layout_site(span) && element == Type::Unknown {
+                    let provided = self.types.records[shape as usize]
+                        .fields
+                        .iter()
+                        .filter(|field| !field.optional)
+                        .map(|field| field.name.clone())
+                        .collect();
+                    let cell = unknown::widen(local(span, held, source_ty), self.types)?;
+                    let graph = self.record_graph(cell, span)?;
+                    let (_, more, statements) = self.spread_entries(graph, target, declared)?;
+                    roots.extend(more);
+                    body.extend(statements);
+                    return Ok((provided, roots, body));
+                }
                 if self.types.profile.sdk_paths() {
                     self.types.subtyping.note_key_copy(
                         shape,
-                        subtyping::KeyCopy::Spread,
+                        if self.types.profile.expression_forms() && element == Type::Unknown {
+                            subtyping::KeyCopy::LayoutSpread
+                        } else {
+                            subtyping::KeyCopy::Spread
+                        },
                         self.source,
                         span,
                     );

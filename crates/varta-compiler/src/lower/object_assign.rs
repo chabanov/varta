@@ -330,6 +330,19 @@ impl Lower<'_> {
         source_ty: Type,
     ) -> Result<Vec<S>> {
         if let Type::Record(shape) = source_ty {
+            // The target's closed layout cannot gain the properties a source
+            // of a wider layout has (a view): refused by `subtyping::resolve`.
+            if self.types.profile.sdk_paths()
+                && self.types.records[shape as usize].class.is_none()
+                && !self.types.layouts.exact
+            {
+                self.types.subtyping.note_key_copy(
+                    shape,
+                    subtyping::KeyCopy::Enumeration,
+                    self.source,
+                    span,
+                );
+            }
             let keys = self.enumerate_value(local(span, source, source_ty), Kind::Keys, span)?;
             let keys_ty = keys.ty;
             let key_array = self.hidden(keys_ty);

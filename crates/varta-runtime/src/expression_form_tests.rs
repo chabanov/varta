@@ -59,6 +59,12 @@ const CASES: &[(&str, &str, &str)] = &[
     case!("layout_rests"),
     case!("loose_receivers"),
     case!("optional_spreads"),
+    case!("layout_keys"),
+    case!("layout_merges"),
+    case!("layout_classes"),
+    case!("layout_dictionaries"),
+    case!("method_spreads"),
+    case!("accessor_optional_spreads"),
     case!("computed_keys"),
     case!("destructuring"),
     case!("callback_patterns"),
@@ -190,6 +196,16 @@ fn layout_spreads_and_rests_match_node() {
     matches_node("layout_spreads");
     matches_node("layout_rests");
     matches_node("optional_spreads");
+    // Several layout spreads in one literal (one branch per combination of
+    // their layouts), and own keys of a view (`Object.keys`, `for...in`).
+    matches_node("layout_merges");
+    matches_node("layout_keys");
+    // A class instance held by a record type copies its declared fields in
+    // declaration order (private names are no properties).
+    matches_node("layout_classes");
+    // Into a dictionary of `unknown` through the object's JSON-object read,
+    // which knows every record layout a boxed type may hold.
+    matches_node("layout_dictionaries");
 }
 
 /// Methods that use `this` see receivers of other layouts: a spread copy,
@@ -197,6 +213,8 @@ fn layout_spreads_and_rests_match_node() {
 #[test]
 fn methods_on_receivers_of_other_layouts_match_node() {
     matches_node("loose_receivers");
+    // Spreads in a literal whose methods use `this`.
+    matches_node("method_spreads");
 }
 
 /// A receiver whose member has another type than the method's `this` type
@@ -230,6 +248,8 @@ fn receivers_with_members_of_other_types_throw_at_the_read() {
 #[test]
 fn spreads_in_accessor_literals_match_node() {
     matches_node("accessor_spreads");
+    // Optional members of a spread are copied where the source has them.
+    matches_node("accessor_optional_spreads");
 }
 
 /// SerializeJSONObject/SerializeJSONArray step 1: an ancestor reached
@@ -348,8 +368,8 @@ fn unsupported_expression_forms_are_refused_by_name() {
             "of a unknown that may hold an object with getters",
         ),
         (
-            "interface O { n?: number; readonly two: number } export function main(): void { const base: { n?: number } = {}; const o: O = { ...base, get two(): number { return 2; } }; console.log(String(o.two)); }",
-            "with optional members or of a class instance into an object literal with getters or setters",
+            "class Base { n = 1; } interface O { n: number; readonly two: number } export function main(): void { const o: O = { ...new Base(), get two(): number { return 2; } }; console.log(String(o.two)); }",
+            "spread of a Base into an object literal with getters or setters",
         ),
         (
             "function tag(s: TemplateStringsArray): string { s.raw = ['x']; return s[0]; } export function main(): void { console.log(tag`a`); }",
@@ -362,10 +382,6 @@ fn unsupported_expression_forms_are_refused_by_name() {
         (
             "class P { constructor(...xs: number[]) {} } export function main(): void { const xs = [1, 2]; new P(...xs); }",
             "spread to a class constructor",
-        ),
-        (
-            "export function main(): void { const base = { n: 1 }; const o = { ...base, get(): number { return this.n; } }; console.log(String(o.get())); }",
-            "spread in an object literal whose methods use this",
         ),
         (
             "class C { v = 1; f = () => this.v; } export function main(): void { console.log(String(new C().f())); }",

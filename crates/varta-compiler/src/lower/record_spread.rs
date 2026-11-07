@@ -197,7 +197,7 @@ impl Lower<'_> {
         let mut members: Vec<Member> = Vec::new();
         // V38 (`layout_spreads`): the parts and copy of a layout spread.
         let mut parts: Vec<super::layout_spreads::Part> = Vec::new();
-        let mut layout: Option<(u32, u32, Option<Type>)> = None;
+        let mut layouts: Vec<(u32, u32, Option<Type>)> = Vec::new();
         // Field names in order of their first member, with their providers.
         let mut providers: Vec<(String, Vec<Provider>)> = Vec::new();
         let mut provide =
@@ -248,14 +248,6 @@ impl Lower<'_> {
                     // A layout spread copies the object first (its getters
                     // run in its own-key order); the literal reads the copy.
                     let value = if dynamic {
-                        if layout.is_some() {
-                            return Err(self.source.locate(
-                                unsupported(
-                                    "a second spread of a value that may hold objects of other layouts in one object literal",
-                                ),
-                                spread.expr.span(),
-                            ));
-                        }
                         match nullable {
                             None => self.layout_copy(value, shape, Vec::new())?,
                             Some(cell) => {
@@ -295,8 +287,8 @@ impl Lower<'_> {
                     roots.push(slot);
                     body.push(S::Init(slot, value));
                     if dynamic {
-                        layout = Some((slot, shape, nullable));
-                        parts.push(super::layout_spreads::Part::Layout);
+                        parts.push(super::layout_spreads::Part::Layout(layouts.len()));
+                        layouts.push((slot, shape, nullable));
                     } else {
                         parts.push(super::layout_spreads::Part::Static(
                             self.types.records[shape as usize]
@@ -558,15 +550,15 @@ impl Lower<'_> {
         }
         // V38 (`layout_spreads`): the copy's extra own properties, while the
         // copy is still rooted.
-        if let Some((copy, shape, nullable)) = layout {
-            let copy_ty = nullable.unwrap_or(Type::Record(shape));
-            let widened = self.layout_widen(
-                local(span, output, record),
-                local(span, copy, copy_ty),
-                shape,
-                nullable,
-                parts,
-            )?;
+        if !layouts.is_empty() {
+            let copies = layouts
+                .iter()
+                .map(|(copy, shape, nullable)| {
+                    let ty = nullable.unwrap_or(Type::Record(*shape));
+                    (local(span, *copy, ty), *shape, *nullable)
+                })
+                .collect();
+            let widened = self.layout_widen(local(span, output, record), copies, parts)?;
             body.push(S::Set(output, widened));
         }
         let marker = self.hidden(Type::Number);

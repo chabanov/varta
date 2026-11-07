@@ -10384,10 +10384,20 @@ such members.
   with the copy's extra own properties at the spread's position (the key
   order replays the members). A nullish source copies nothing. The copies,
   widened results and per-layout JSON walks (`object_accessors`) are
-  further view sources, which a later pass may need. Refused by name for
-  now: a second layout spread in one literal, a spread of a value that may
-  hold a class instance, layout spreads into dictionary literals and into
-  literals with accessors.
+  further view sources, which a later pass may need. A literal with several
+  layout spreads widens by every combination of their layouts (an extra key
+  two copies have takes the first one's place and the last one's value).
+  `Object.keys` and `for...in` of a view enumerate the actual layout's own
+  keys (`subtyping` dispatches the enumeration on the descriptor; a key the
+  view does not declare cannot be deleted). A class instance the type may
+  hold (of a class viewed as it, or a subclass) copies its declared fields
+  in declaration order, private names left out. A layout spread into a
+  dictionary of `unknown` reads the object's own entries through its
+  JSON-object read, whose branches cover every record layout the boxed
+  types may hold. Refused by name for now: layout spreads into dictionaries
+  of other value types and into literals with accessors, and
+  `Object.values`/`entries` and `Object.assign` sources of a view of other
+  layouts.
 - `obj.m?.()` on a class method is the ordinary call.
 - V38 boolean discriminants: `if (result.ok)`, its negation, logical guards
   and ternaries narrow the owning record/class union like an explicit comparison
@@ -11729,8 +11739,9 @@ Node 24 is the reference for every output below.
   members are read by name with the checked reads of TypeScript
   unsoundness (intentional deviation (3) of the type level). Spreads,
   `Object.assign` and own-key
-  enumeration of such objects are admitted. Generator methods that use
-  `this` and a spread in a literal whose methods use `this` stay refused by
+  enumeration of such objects are admitted, and such a literal may spread
+  closed objects around its methods. Generator methods that use
+  `this` stay refused by
   name.
 - **Object-literal getters and setters.** `get p() {…}` and `set p(v) {…}`
   define accessor properties (owner decision 2026-11-06): reading `o.p`
@@ -11799,11 +11810,13 @@ Node 24 is the reference for every output below.
     when it is reached, a later definition of a key replaces the earlier one
     in its first position (an accessor after a spread drops the copied
     value, a spread after an accessor makes the property data), and the
-    object takes the members' key order.
+    object takes the members' key order. An optional member of a spread is
+    copied only where its source has it (until a certain definition, the
+    property is optional in the object's shape).
   - Refused by name: a setter without a getter, a `this` parameter of a
     setter, accessors in a context that is not a closed object type, a
-    spread of a source with optional members or of a class instance into a
-    literal with accessors, a class with an index signature whose fields may
+    spread of a class instance (or of a value of a view of other layouts)
+    into a literal with accessors, a class with an index signature whose fields may
     hold such an object reaching a host, and (until the console notation
     shows accessors) logging a value that may hold one.
 - **Computed keys.** `{ [k]: v }` with a constant key — a string or number

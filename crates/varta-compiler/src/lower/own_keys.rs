@@ -105,6 +105,7 @@ impl Lower<'_> {
         value: Expr,
         key: Expr,
         shape: u32,
+        undeclared: bool,
     ) -> Expr {
         let record = Type::Record(shape);
         let source = self.hidden(record);
@@ -144,7 +145,7 @@ impl Lower<'_> {
                 Expr {
                     span,
                     ty: Type::Boolean,
-                    kind: E::Integer(0),
+                    kind: E::Integer(i32::from(undeclared)),
                 },
             ),
         ];

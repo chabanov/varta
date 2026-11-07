@@ -125,22 +125,23 @@ impl Views {
     pub(crate) fn is_loose(&self, source: Type, target: u32) -> bool {
         self.loose.borrow().contains(&(source, target))
     }
-    /// Whether a value of record `shape` may hold a class instance (a view
-    /// source, directly or through another view).
-    pub(crate) fn class_sources(&self, shape: u32) -> bool {
+    /// The classes whose instances a value of record `shape` may hold (view
+    /// sources, directly or through another view).
+    pub(crate) fn class_sources_of(&self, shape: u32) -> Vec<u32> {
         let edges = self.edges.borrow();
         let mut seen = BTreeSet::from([shape]);
         let mut stack = vec![shape];
+        let mut classes = Vec::new();
         while let Some(target) = stack.pop() {
             for (source, _) in edges.iter().filter(|(_, t)| *t == target) {
                 match source {
-                    Type::Class(_) => return true,
+                    Type::Class(class) if !classes.contains(class) => classes.push(*class),
                     Type::Record(id) if seen.insert(*id) => stack.push(*id),
                     _ => {}
                 }
             }
         }
-        false
+        classes
     }
     /// The spread sites this pass lowered statically although their source
     /// is a view of other layouts.
@@ -1055,7 +1056,7 @@ fn spread_views(edges: &BTreeSet<(Type, u32)>, types: &ir::ValueTypes) -> Result
                 // in the next lowering pass.
                 if *form == KeyCopy::LayoutSpread
                     && !types.subtyping.last_pass
-                    && matches!(wider, Type::Record(_))
+                    && matches!(wider, Type::Record(_) | Type::Class(_))
                 {
                     types
                         .subtyping
@@ -1405,16 +1406,45 @@ impl Rewriter<'_> {
                     // own insertion order (OrdinaryOwnPropertyKeys).
                     for accessor in self.record_sources(view) {
                         let fields = &self.types.records[view as usize].fields;
-                        let mapped = self.types.records[accessor as usize]
-                            .fields
-                            .iter()
-                            .map(|field| {
-                                fields
-                                    .iter()
-                                    .position(|own| own.name == field.name)
-                                    .map_or_else(|| values[0].clone(), |slot| values[slot].clone())
-                            })
-                            .collect();
+                        // A key the view does not declare is its own name
+                        // (a values enumeration of a wider layout is refused
+                        // by `spread_views`).
+                        let keys = values
+                            .first()
+                            .is_some_and(|value| matches!(value.kind, E::String(_)));
+                        let mut mapped = Vec::new();
+                        for field in &self.types.records[accessor as usize].fields {
+                            let value = match fields.iter().position(|own| own.name == field.name) {
+                                Some(slot) => values[slot].clone(),
+                                // A reserved accessor field is no property
+                                // (the enumeration skips it).
+                                None if super::object_accessors::hidden_field(&field.name) => {
+                                    values[0].clone()
+                                }
+                                None if keys => Expr {
+                                    span,
+                                    ty: Type::String,
+                                    kind: E::String(self.types.profile.string_bytes(&field.name)),
+                                },
+                                None => {
+                                    return Err(CompilerError::Internal(
+                                        "values enumeration of a wider layout".into(),
+                                    ));
+                                }
+                            };
+                            mapped.push(value);
+                        }
+                        // The layout's own entries, compacted to the present
+                        // ones in its own-key order.
+                        let array = self.locals[target as usize];
+                        let fill = S::Set(
+                            target,
+                            Expr {
+                                span,
+                                ty: array,
+                                kind: E::Array(mapped.iter().cloned().map(Some).collect()),
+                            },
+                        );
                         let own = S::RecordEnumerate {
                             source,
                             target,
@@ -1437,7 +1467,7 @@ impl Rewriter<'_> {
                                     slot: descriptor,
                                 },
                             },
-                            vec![own],
+                            vec![fill, own],
                             vec![viewed],
                         );
                     }
@@ -2371,7 +2401,18 @@ impl Rewriter<'_> {
             (locals.len() - 1) as u32
         };
         let slots = [(); 4].map(|()| hidden(Type::Number));
-        let boxed: Vec<u32> = types.subtyping.boxed.borrow().iter().copied().collect();
+        // A boxed shape's record view sources are objects it may hold.
+        let mut boxed: Vec<u32> = types.subtyping.boxed.borrow().iter().copied().collect();
+        for shape in boxed.clone() {
+            for source in types.subtyping.sources_of(shape) {
+                if let Type::Record(id) = source
+                    && types.records[*id as usize].class.is_none()
+                    && !boxed.contains(id)
+                {
+                    boxed.push(*id);
+                }
+            }
+        }
         let widest = boxed
             .iter()
             .map(|shape| types.records[*shape as usize].fields.len())

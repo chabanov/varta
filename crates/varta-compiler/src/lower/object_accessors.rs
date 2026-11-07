@@ -109,6 +109,10 @@ impl Lower<'_> {
         let mut roots: Vec<u32> = Vec::new();
         let mut members: Vec<super::record_spread::Member> = Vec::new();
         let mut explicit: Vec<String> = Vec::new();
+        // Properties only optional spread members provide so far, and the
+        // optional members to copy where their sources have them.
+        let mut optional_names: Vec<String> = Vec::new();
+        let mut pending: Vec<(String, Expr, u32, u32, u32)> = Vec::new();
         let mut ordered: Vec<String> = Vec::new();
         for prop in &object.props {
             let prop = match prop {
@@ -125,12 +129,10 @@ impl Lower<'_> {
                         ));
                     };
                     let declared = self.types.records[shape as usize].fields.clone();
-                    if self.types.records[shape as usize].class.is_some()
-                        || declared.iter().any(|field| field.optional)
-                    {
+                    if self.types.records[shape as usize].class.is_some() {
                         return Err(self.source.locate(
                             unsupported(&format!(
-                                "spread of a {} with optional members or of a class instance into an object literal with getters or setters",
+                                "spread of a {} that is a class instance into an object literal with getters or setters",
                                 subtyping::describe(value.ty, self.types)
                             )),
                             spread.expr.span(),
@@ -151,13 +153,57 @@ impl Lower<'_> {
                     roots.extend(locals.iter().copied());
                     prelude.extend(reads);
                     members.push(super::record_spread::Member::Spread(slot, shape, None));
-                    for (field, local) in declared.iter().zip(locals) {
+                    for (index, (field, local)) in declared.iter().zip(locals).enumerate() {
                         let expected = field_type(self, &field.name, spread.expr.span())?;
                         let read = unions::widen(
                             local_value(span, local, field.ty),
                             Some(expected),
                             self.types,
                         )?;
+                        // An optional member is copied only where the source
+                        // has it (after the object is built); until a certain
+                        // provider, the property is optional.
+                        if field.optional {
+                            if values.iter().any(|(name, _)| {
+                                accessor_field(name)
+                                    .is_some_and(|(property, _)| property == field.name)
+                            }) {
+                                return Err(self.source.locate(
+                                    unsupported(&format!(
+                                        "optional member {} of a spread after an accessor of that name",
+                                        field.name
+                                    )),
+                                    spread.expr.span(),
+                                ));
+                            }
+                            if !values.iter().any(|(name, _)| *name == field.name) {
+                                if !unions::members(expected, self.types).contains(&Type::Undefined)
+                                {
+                                    return Err(self.source.locate(
+                                        type_error(format!(
+                                            "optional member {} of a spread for a required member",
+                                            field.name
+                                        )),
+                                        spread.expr.span(),
+                                    ));
+                                }
+                                let absent = unions::widen(
+                                    Expr {
+                                        span,
+                                        ty: Type::Undefined,
+                                        kind: E::Integer(0),
+                                    },
+                                    Some(expected),
+                                    self.types,
+                                )?;
+                                values.push((field.name.clone(), absent));
+                                optional_names.push(field.name.clone());
+                            }
+                            pending.push((field.name.clone(), read, slot, shape, index as u32));
+                            continue;
+                        }
+                        optional_names.retain(|name| *name != field.name);
+                        pending.retain(|(name, ..)| *name != field.name);
                         // A data property replaces an accessor of that name.
                         values.retain(|(name, _)| {
                             accessor_field(name).is_none_or(|(property, _)| property != field.name)
@@ -284,6 +330,8 @@ impl Lower<'_> {
             explicit.push(name.clone());
             let property =
                 accessor_field(&name).map_or(name.clone(), |(property, _)| property.to_owned());
+            optional_names.retain(|known| *known != property);
+            pending.retain(|(known, ..)| *known != property);
             if !ordered.contains(&property) {
                 ordered.push(property.clone());
                 members.push(super::record_spread::Member::Value(property.clone()));
@@ -369,7 +417,7 @@ impl Lower<'_> {
                 .map(|(name, value)| ir::RecordField {
                     name: name.clone(),
                     ty: value.ty,
-                    optional: false,
+                    optional: optional_names.contains(name),
                 })
                 .collect(),
             self.types,
@@ -409,10 +457,20 @@ impl Lower<'_> {
             .collect::<Result<_>>()?;
         self.types.subtyping.note_view(physical, logical);
         self.types.receivers.logical.insert(shape, logical);
+        let physical_fields = self.types.records[shape as usize].fields.clone();
         let built = Expr {
             span,
             ty: physical,
-            kind: E::Record(fields),
+            kind: if physical_fields.iter().any(|field| field.optional) {
+                let present = physical_fields
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, field)| !field.optional)
+                    .fold(0u128, |mask, (slot, _)| mask | 1u128 << slot);
+                E::OptionalRecord(fields, present)
+            } else {
+                E::Record(fields)
+            },
         };
         if !spreads {
             return Ok(Expr {
@@ -424,6 +482,29 @@ impl Lower<'_> {
         let output = self.hidden(physical);
         roots.push(output);
         prelude.push(S::Init(output, built));
+        for (name, read, source, from, index) in pending {
+            let slot = physical_fields
+                .iter()
+                .position(|field| field.name == name)
+                .ok_or_else(|| invalid("missing accessor object field"))?;
+            let value = unions::widen(read, Some(physical_fields[slot].ty), self.types)?;
+            prelude.push(S::If(
+                Expr {
+                    span,
+                    ty: Type::Boolean,
+                    kind: E::HasOwn(
+                        Box::new(local_value(span, source, Type::Record(from))),
+                        Some(index),
+                    ),
+                },
+                vec![S::SetField(
+                    local_value(span, output, physical),
+                    slot as u32,
+                    value,
+                )],
+                vec![],
+            ));
+        }
         // Reserved fields keep their places after the properties.
         for field in self.types.records[shape as usize].fields.clone() {
             if hidden_field(&field.name) {
@@ -1527,7 +1608,7 @@ impl Lower<'_> {
     /// construction in declaration order (base class first); private names
     /// are not properties. A class with an index signature (keys added at
     /// run time) is refused by name.
-    fn class_fields(
+    pub(super) fn class_fields(
         &mut self,
         class: u32,
         span: swc_common::Span,

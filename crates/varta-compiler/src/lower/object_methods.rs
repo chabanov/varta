@@ -256,15 +256,6 @@ impl Lower<'_> {
             return Ok(None);
         }
         let span = object.span;
-        if let Some(spread) = object.props.iter().find_map(|prop| match prop {
-            ast::PropOrSpread::Spread(spread) => Some(spread.dot3_token),
-            ast::PropOrSpread::Prop(_) => None,
-        }) {
-            return Err(self.source.locate(
-                unsupported("spread in an object literal whose methods use this"),
-                spread,
-            ));
-        }
         let ty = match expected {
             Some(ty @ Type::Record(_)) => ty,
             None => self.receiver_type(object)?,
@@ -303,7 +294,9 @@ impl Lower<'_> {
             }
             **prop = self.bound_method(method)?;
         }
+        // Spreads copy data properties around the methods (record_spread).
         let value = self.record(&rewritten, Some(ty))?;
+        let value = subtyping::coerce(value, Some(ty), self.types)?;
         Ok(Some(unions::widen(value, Some(ty), self.types)?))
     }
 
@@ -545,10 +538,28 @@ impl Lower<'_> {
     /// The record type of a literal without a context: literal and binding
     /// field values, and the annotated signatures of its methods.
     fn receiver_type(&mut self, object: &ast::ObjectLit) -> Result<Type> {
-        let mut fields = Vec::with_capacity(object.props.len());
+        let mut fields: Vec<ir::RecordField> = Vec::with_capacity(object.props.len());
         for prop in &object.props {
-            let ast::PropOrSpread::Prop(prop) = prop else {
-                continue;
+            let prop = match prop {
+                ast::PropOrSpread::Prop(prop) => prop,
+                // A spread provides its source's fields.
+                ast::PropOrSpread::Spread(spread) => {
+                    let Type::Record(shape) =
+                        self.evident_type(&spread.expr, spread.expr.span())?
+                    else {
+                        return Err(self.source.locate(
+                            unsupported("spread of a value that is not a closed object into an unannotated object literal whose methods use this"),
+                            spread.expr.span(),
+                        ));
+                    };
+                    for field in self.types.records[shape as usize].fields.clone() {
+                        match fields.iter_mut().find(|own| own.name == field.name) {
+                            Some(own) => *own = field,
+                            None => fields.push(field),
+                        }
+                    }
+                    continue;
+                }
             };
             let (name, ty) = match &**prop {
                 ast::Prop::KeyValue(pair) => (
@@ -565,11 +576,15 @@ impl Lower<'_> {
                 ),
                 _ => return Err(unsupported("object literal member form")),
             };
-            fields.push(ir::RecordField {
+            let field = ir::RecordField {
                 name,
                 ty,
                 optional: false,
-            });
+            };
+            match fields.iter_mut().find(|own| own.name == field.name) {
+                Some(own) => *own = field,
+                None => fields.push(field),
+            }
         }
         records::intern(fields, self.types)
     }

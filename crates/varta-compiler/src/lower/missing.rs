@@ -176,7 +176,7 @@ impl Lower<'_> {
                     if key.ty != Type::String {
                         return Err(self.source.locate(type_error("dynamic record own key must be a narrowed string; coercion is unsupported"), key.span));
                     }
-                    return Ok(self.dynamic_record_own(call.span, value, key, id));
+                    return Ok(self.dynamic_record_own(call.span, value, key, id, false));
                 }
             }
         }

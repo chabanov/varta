@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- V38 K9 C layout spreads, continued: a literal may have several spreads
+  of views of other layouts; `Object.keys` and `for...in` of such a view
+  list the object's own keys; a class instance held by a record type is
+  copied by its declared fields; a spread into a dictionary of `unknown`
+  copies every own entry; literals whose methods use `this` and literals
+  with accessors may spread closed objects (optional members included).
+  `Object.values`/`entries` and `Object.assign` sources of views of other
+  layouts stay refused by name.
 - V38 K9 C layout spreads and receivers: a spread or rest of a value that
   may hold an object of another layout copies that object's own properties
   in its own-key order, as CopyDataProperties does (lowering runs in a

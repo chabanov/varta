@@ -131,10 +131,13 @@ impl Lower<'_> {
         };
         // V38 (`sdk_paths`): a view of wider objects is refused by
         // `subtyping::resolve` (its keys are the view's, not the object's).
-        // A synthesized layout copy reads one exact layout (`layout_spreads`).
+        // A synthesized layout copy reads one exact layout (`layout_spreads`);
+        // keys enumerate the object's own layout (`subtyping` dispatches the
+        // enumeration on its descriptor), so only values are noted.
         if self.types.profile.sdk_paths()
             && self.types.records[shape as usize].class.is_none()
             && !self.types.layouts.exact
+            && !matches!(kind, Kind::Keys)
         {
             self.types.subtyping.note_key_copy(
                 shape,
