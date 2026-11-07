@@ -215,6 +215,12 @@ struct ExecutionFlags {
     /// Run a checked-f64-utf16-v38 program as a long-lived application instance: the deadline renews per turn and output streams per turn.
     #[arg(long)]
     app: bool,
+    /// The IANA time zone of local-time Date (checked-f64-utf16-v38), a recorded host input; default: the system zone (TZ, else /etc/localtime, else UTC). An identifier the bundled tzdata does not know is UTC.
+    #[arg(long, value_name = "ID")]
+    time_zone: Option<String>,
+    /// The default BCP 47 locale (checked-f64-utf16-v38), a recorded host input; default: the system locale (LC_ALL, LC_MESSAGES or LANG, else en-US).
+    #[arg(long, value_name = "TAG")]
+    locale: Option<String>,
 }
 
 /// Print the output captured before any failure, then the budget report,
@@ -546,6 +552,8 @@ fn execute(
             let flags = ExecutionFlags {
                 budget_report: false,
                 app: false,
+                time_zone: None,
+                locale: None,
             };
             let report = run_report(&artifact, policy.as_ref(), decisions, &flags)?;
             return finish(report, false);
@@ -660,6 +668,17 @@ fn settings(
         observer: Some(observer(flags.budget_report)),
         file_roots: None,
         network: varta_project::NetworkMode::Live,
+        host_inputs: host_inputs(flags),
+    }
+}
+
+/// The recorded zone and locale of a run: the explicit flags over the
+/// system's.
+fn host_inputs(flags: &ExecutionFlags) -> varta_project::HostInputs {
+    let system = varta_project::system_host_inputs();
+    varta_project::HostInputs {
+        time_zone: flags.time_zone.clone().unwrap_or(system.time_zone),
+        locale: flags.locale.clone().unwrap_or(system.locale),
     }
 }
 

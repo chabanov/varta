@@ -6010,8 +6010,55 @@ export function main(): void {
 Two behaviours deviate from Node on purpose: a type predicate that lies
 throws `TypeError` where its narrowed value is read, and a `Square[]` used
 as `Shape[]` is copied, so pushing through one name is not seen through the
-other. Still refused by name: `unique symbol`, callable objects that also
-have properties, and overloads with type parameters or rest parameters.
+other. `unique symbol` is a `symbol` (see Symbol values below). Still refused
+by name: callable objects that also have properties, and overloads with type parameters or rest parameters.
+
+#### Symbol values (opt-in v38)
+
+`Symbol()` values, the global registry and the well-known symbols, with
+their own value tag, so records, arrays, unions, `unknown` and `Map`/`Set`
+keys hold them; `JSON.stringify` skips them as Node does:
+
+```ts
+const RED: unique symbol = Symbol('red');
+
+function describe(value: string | symbol): string {
+  return typeof value === 'symbol' ? `symbol ${String(value.description)}` : value;
+}
+
+export function main(): void {
+  const names = new Map<symbol, string>([[RED, 'red']]);
+  console.log(describe(RED)); // symbol red
+  console.log(String(names.get(RED))); // red
+  console.log(String(Symbol.for('app') === Symbol.for('app'))); // true
+  console.log(Symbol.iterator.toString()); // Symbol(Symbol.iterator)
+  console.log(JSON.stringify({ tag: RED, name: 'x' })); // {"name":"x"}
+}
+```
+
+A `unique symbol` constant keys members of records, interfaces and classes,
+across modules; `[Symbol.toPrimitive]`, `[Symbol.toStringTag]` and
+`static [Symbol.hasInstance]` drive conversions and `instanceof`:
+
+```ts
+const COUNT: unique symbol = Symbol('count');
+
+class Money {
+  readonly cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  [COUNT] = 1;
+  [Symbol.toPrimitive](hint: string): string | number {
+    return hint === 'number' ? this.cents / 100 : `$${(this.cents / 100).toFixed(2)}`;
+  }
+}
+
+export function main(): void {
+  const price = new Money(1250);
+  console.log(`${price} ${+price * 2} ${price[COUNT]}`); // $12.50 25 1
+}
+```
 
 #### Standard library (opt-in v38)
 
@@ -6051,8 +6098,8 @@ export function main(): void {
 }
 ```
 
-Local time is UTC unless the host grants the program a time zone (not
-defined yet), so a `Date` prints what Node prints with `TZ=UTC`. Sorting
+Local time is the host's time zone (below); with the default inputs of a
+library run it is UTC, so this `Date` prints what Node prints with `TZ=UTC`. Sorting
 without a comparator needs primitive elements, `flat` needs a literal
 depth, and `JSON.stringify` takes property lists but no replacer
 function. `Symbol()`, `WeakMap`/`WeakSet`/`WeakRef`, `Proxy`, `Reflect`,
@@ -6132,6 +6179,27 @@ export function main(): void {
 Node prints its process warnings (`console.countReset` of an unknown
 label, a repeated `console.time` label) later and with its process id;
 Varta prints them at once as `Warning: …` on standard error.
+
+#### Local time (opt-in v38)
+
+`Date` local time follows the host's time zone, and `toString` names the
+zone in the host's language, as Node does. The zone and locale are host
+inputs: `varta run` and `varta dev` read them from `TZ`, `/etc/localtime`
+and `LC_ALL`/`LC_MESSAGES`/`LANG`, and `--time-zone`/`--locale` state them
+explicitly; a browser passes its own. No capability is needed.
+
+```ts
+export function main(): void {
+  const start = new Date(2024, 2, 31, 3, 30); // a skipped hour in Kyiv
+  console.log(start.toString());
+  // varta dev --time-zone Europe/Kyiv --locale uk-UA:
+  // Sun Mar 31 2024 04:30:00 GMT+0300 (за східноєвропейським літнім часом)
+  console.log(Date.parse("2024-07-01T12:00") - Date.parse("2024-07-01T12:00Z")); // -10800000
+}
+```
+
+A date-time string without an offset is local time, a date-only string UTC.
+`Intl` and the `toLocale*String` methods are not available yet.
 
 #### Full RegExp (opt-in v38)
 

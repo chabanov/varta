@@ -147,6 +147,7 @@ pub(crate) fn register(linker: &mut Linker<RuntimeContext>) -> Result<(), wasmti
     crate::bigint::register(linker)?;
     crate::native_math::register(linker)?;
     crate::random::register(linker)?;
+    crate::local_time::register(linker)?;
     crate::scheduler::register(linker)?;
     crate::net::register(linker)?;
     crate::kv::register(linker)?;

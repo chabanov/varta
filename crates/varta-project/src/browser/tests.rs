@@ -797,6 +797,7 @@ fn kv_codec_matches_its_sources() {
             "src/value/error.rs",
             "src/value/primitive.rs",
             "src/value/reference.rs",
+            "src/value/symbol.rs",
             "src/value/vector.rs",
             "src/value/dictionary.rs",
             "src/function.rs",

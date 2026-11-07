@@ -354,6 +354,23 @@ operations! {
     /// V37 (`collections`) `Date.now()`: milliseconds since the Unix epoch as
     /// binary64, under the exact `time.now` grant (a denial is fatal).
     DateNow,
+    /// V38 (`local_time`, K9 D4): the host's IANA time zone identifier, a
+    /// recorded host input supplied once per instance (UTF-16 text in the
+    /// host result buffer). Capability-free: it reveals configuration, never
+    /// an effect, and every offset is computed in guest code.
+    IntlTimeZone,
+    /// V38 (`local_time`): the host's default BCP 47 locale tag, a recorded
+    /// host input like [`Self::IntlTimeZone`]. Capability-free.
+    IntlLocale,
+    /// V38 (`local_time`), linked: the offset in milliseconds of the named
+    /// zone (UTF-16 `ptr, len`) at a time value, as LocalTime (`local` 0) or
+    /// UTC(t) (`local` 1) of ECMA-262 §21.4.1.25–26 apply it; an unknown zone
+    /// is UTC.
+    DateZoneOffset,
+    /// V38 (`local_time`), linked: the localized long name of the named zone
+    /// at a time value in a locale (`zone ptr, len, locale ptr, len, time`),
+    /// as an owned string: the name `Date.prototype.toString` shows.
+    DateZoneName,
     LogFloatV2,
     LogFloat,
     FloatRemainder,
@@ -535,6 +552,9 @@ impl HostOperation {
                 | Self::NetGet16
                 | Self::NetRequestText
                 | Self::EnvSnapshot
+                | Self::IntlTimeZone
+                | Self::IntlLocale
+                | Self::DateZoneName
                 | Self::EventText
                 | Self::KvEntry
                 | Self::KvText
@@ -812,6 +832,10 @@ impl HostOperation {
             Self::StringCharAt16 => "string_char_at16",
             Self::StringCharCodeAt16 => "string_char_code_at16",
             Self::DateNow => "date_now",
+            Self::IntlTimeZone => "intl_time_zone",
+            Self::IntlLocale => "intl_locale",
+            Self::DateZoneOffset => "date_zone_offset",
+            Self::DateZoneName => "date_zone_name",
             Self::StringToUpperCase16 => "string_to_upper_case16",
             Self::StringToLowerCase16 => "string_to_lower_case16",
             Self::RegExpExec => "regexp_exec",
@@ -975,6 +999,20 @@ impl HostOperation {
                 | Self::ConsoleRender
                 // `String.prototype.normalize` (`varta_intrinsics::string`).
                 | Self::StringNormalize16
+                // Local time (`varta_intl`): zone offsets and names from the
+                // bundled tzdata and CLDR data.
+                | Self::DateZoneOffset
+                | Self::DateZoneName
+        )
+    }
+    /// The v38 local-time operations (`local_time`, K9 D4): the two
+    /// recorded host inputs and the linked zone offsets and names. None
+    /// takes a capability; the inputs are charged to the host-call budget.
+    #[must_use]
+    pub fn local_time(self) -> bool {
+        matches!(
+            self,
+            Self::IntlTimeZone | Self::IntlLocale | Self::DateZoneOffset | Self::DateZoneName
         )
     }
     /// The v37 (`collections`) Unicode case conversions.
@@ -1067,6 +1105,7 @@ impl HostOperation {
         if self.instance_events()
             || self.web_bytes()
             || self.kv()
+            || self.local_time()
             || matches!(
                 self,
                 Self::ViewCommit
@@ -1587,6 +1626,9 @@ impl HostOperation {
             Self::StringToUpperCase16 | Self::StringToLowerCase16 => (&[I32, I32], &[I32]),
             Self::RegExpExec => (&[I32, I32, I32, I32, F64, I32], &[I32]),
             Self::DateNow => (&[], &[F64]),
+            Self::IntlTimeZone | Self::IntlLocale => (&[], &[I32]),
+            Self::DateZoneOffset => (&[I32, I32, F64, F64], &[F64]),
+            Self::DateZoneName => (&[I32, I32, I32, I32, F64], &[I32]),
             Self::EnvHas16
             | Self::EnvGet16
             | Self::FsRead16
@@ -1823,6 +1865,10 @@ impl HostOperation {
             "number_remainder" => Self::FloatRemainder,
             "number_power" => Self::FloatPower,
             "number_random" => Self::MathRandom,
+            "intl_time_zone" => Self::IntlTimeZone,
+            "intl_locale" => Self::IntlLocale,
+            "date_zone_offset" => Self::DateZoneOffset,
+            "date_zone_name" => Self::DateZoneName,
             "number_acos" => Self::MathAcos,
             "number_acosh" => Self::MathAcosh,
             "number_asin" => Self::MathAsin,
@@ -2094,6 +2140,10 @@ impl HostOperation {
             | Self::JsonStringifyV4
             | Self::JsonParseV4
             | Self::LogUndefined
+            | Self::IntlTimeZone
+            | Self::IntlLocale
+            | Self::DateZoneOffset
+            | Self::DateZoneName
             | Self::HttpService => return None,
             Self::Time | Self::DateNow => "time.now",
             Self::TimerStart | Self::TimerStartV2 => "time.timer",

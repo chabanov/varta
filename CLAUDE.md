@@ -75,6 +75,7 @@ crates/
   varta-bigint/          # engine numeric foundation: budgeted BigInt arithmetic and transport
   varta-intrinsics/      # engine: pure no_std intrinsics, one implementation for host imports and linked guest code
   varta-intrinsics-wasm/ # wasm32-only guest shim of varta-intrinsics; built by scripts/build-intrinsics.py
+  varta-intl/            # engine: no_std time zones (TZif) and locale data (ICU4X) of local time and Intl, linked into guest code
   varta-kv-codec/        # engine: no_std KV value layer shared by the native runtime and the browser host
   varta-kv-codec-wasm/   # wasm32-only browser shim of varta-kv-codec; built by scripts/build-kv-codec.py
   varta-view/            # engine: headless L0 view renderer (common only; no Wasm, I/O or clocks)
@@ -105,8 +106,8 @@ scripts/build-kv-codec.py # rebuilds the browser KV codec module (offline, locke
 
 Placement rules:
 
-- Engine crates are `varta-common`, `varta-bigint`, `varta-intrinsics`, `varta-kv-codec`,
-  `varta-view`, `varta-compiler` and `varta-runtime`; `varta-intrinsics-wasm` is the wasm32 build of
+- Engine crates are `varta-common`, `varta-bigint`, `varta-intrinsics`, `varta-intl`,
+  `varta-kv-codec`, `varta-view`, `varta-compiler` and `varta-runtime`; `varta-intrinsics-wasm` is the wasm32 build of
   `varta-intrinsics` (a workspace member only so it shares the lockfile and the
   `intrinsics` profile; empty on host targets and not a default member), and
   `varta-kv-codec-wasm` likewise the wasm32 build of `varta-kv-codec`;

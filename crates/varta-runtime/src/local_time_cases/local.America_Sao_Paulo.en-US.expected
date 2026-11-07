@@ -1,0 +1,85 @@
+local 2024/0/15/12/0: 1705330800000 Mon Jan 15 2024 12:00:00 GMT-0300 (Brasilia Standard Time)
+  2024-0-15 12:0:0.0 day 1 offset 180
+local 2024/6/15/12/0: 1721055600000 Mon Jul 15 2024 12:00:00 GMT-0300 (Brasilia Standard Time)
+  2024-6-15 12:0:0.0 day 1 offset 180
+local 2024/2/10/2/30: 1710048600000 Sun Mar 10 2024 02:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-2-10 2:30:0.0 day 0 offset 180
+local 2024/2/31/2/30: 1711863000000 Sun Mar 31 2024 02:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-2-31 2:30:0.0 day 0 offset 180
+local 2024/3/7/2/30: 1712467800000 Sun Apr 07 2024 02:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-3-7 2:30:0.0 day 0 offset 180
+local 2024/9/6/2/30: 1728192600000 Sun Oct 06 2024 02:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-9-6 2:30:0.0 day 0 offset 180
+local 2024/9/27/0/30: 1729999800000 Sun Oct 27 2024 00:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-9-27 0:30:0.0 day 0 offset 180
+local 2024/10/3/1/30: 1730608200000 Sun Nov 03 2024 01:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-10-3 1:30:0.0 day 0 offset 180
+local 2024/9/27/2/30: 1730007000000 Sun Oct 27 2024 02:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-9-27 2:30:0.0 day 0 offset 180
+local 1970/0/1/0/0: 10800000 Thu Jan 01 1970 00:00:00 GMT-0300 (Brasilia Standard Time)
+  1970-0-1 0:0:0.0 day 4 offset 180
+local 1943/6/1/12/0: -836384400000 Thu Jul 01 1943 12:00:00 GMT-0300 (Brasilia Standard Time)
+  1943-6-1 12:0:0.0 day 4 offset 180
+local 1960/0/1/0/0: -315608400000 Fri Jan 01 1960 00:00:00 GMT-0300 (Brasilia Summer Time)
+  1960-0-1 0:0:0.0 day 5 offset 180
+local 2100/6/1/12/0: 4118137200000 Thu Jul 01 2100 12:00:00 GMT-0300 (Brasilia Standard Time)
+  2100-6-1 12:0:0.0 day 4 offset 180
+local 12000/0/1/0/0: 316516215600000 Sat Jan 01 12000 00:00:00 GMT-0300 (Brasilia Standard Time)
+  12000-0-1 0:0:0.0 day 6 offset 180
+instant 1710053999999: 1710053999999 Sun Mar 10 2024 03:59:59 GMT-0300 (Brasilia Standard Time)
+  2024-2-10 3:59:59.999 day 0 offset 180 | Sun Mar 10 2024 | 03:59:59 GMT-0300 (Brasilia Standard Time)
+instant 1710054000000: 1710054000000 Sun Mar 10 2024 04:00:00 GMT-0300 (Brasilia Standard Time)
+  2024-2-10 4:0:0.0 day 0 offset 180 | Sun Mar 10 2024 | 04:00:00 GMT-0300 (Brasilia Standard Time)
+instant 1711846799999: 1711846799999 Sat Mar 30 2024 21:59:59 GMT-0300 (Brasilia Standard Time)
+  2024-2-30 21:59:59.999 day 6 offset 180 | Sat Mar 30 2024 | 21:59:59 GMT-0300 (Brasilia Standard Time)
+instant 1711846800000: 1711846800000 Sat Mar 30 2024 22:00:00 GMT-0300 (Brasilia Standard Time)
+  2024-2-30 22:0:0.0 day 6 offset 180 | Sat Mar 30 2024 | 22:00:00 GMT-0300 (Brasilia Standard Time)
+instant 1712415540000: 1712415540000 Sat Apr 06 2024 11:59:00 GMT-0300 (Brasilia Standard Time)
+  2024-3-6 11:59:0.0 day 6 offset 180 | Sat Apr 06 2024 | 11:59:00 GMT-0300 (Brasilia Standard Time)
+instant 1712415600000: 1712415600000 Sat Apr 06 2024 12:00:00 GMT-0300 (Brasilia Standard Time)
+  2024-3-6 12:0:0.0 day 6 offset 180 | Sat Apr 06 2024 | 12:00:00 GMT-0300 (Brasilia Standard Time)
+instant 1728142140000: 1728142140000 Sat Oct 05 2024 12:29:00 GMT-0300 (Brasilia Standard Time)
+  2024-9-5 12:29:0.0 day 6 offset 180 | Sat Oct 05 2024 | 12:29:00 GMT-0300 (Brasilia Standard Time)
+instant 1728142200000: 1728142200000 Sat Oct 05 2024 12:30:00 GMT-0300 (Brasilia Standard Time)
+  2024-9-5 12:30:0.0 day 6 offset 180 | Sat Oct 05 2024 | 12:30:00 GMT-0300 (Brasilia Standard Time)
+instant 1729990740000: 1729990740000 Sat Oct 26 2024 21:59:00 GMT-0300 (Brasilia Standard Time)
+  2024-9-26 21:59:0.0 day 6 offset 180 | Sat Oct 26 2024 | 21:59:00 GMT-0300 (Brasilia Standard Time)
+instant 1729990800000: 1729990800000 Sat Oct 26 2024 22:00:00 GMT-0300 (Brasilia Standard Time)
+  2024-9-26 22:0:0.0 day 6 offset 180 | Sat Oct 26 2024 | 22:00:00 GMT-0300 (Brasilia Standard Time)
+instant 1730613540000: 1730613540000 Sun Nov 03 2024 02:59:00 GMT-0300 (Brasilia Standard Time)
+  2024-10-3 2:59:0.0 day 0 offset 180 | Sun Nov 03 2024 | 02:59:00 GMT-0300 (Brasilia Standard Time)
+instant 1730613600000: 1730613600000 Sun Nov 03 2024 03:00:00 GMT-0300 (Brasilia Standard Time)
+  2024-10-3 3:0:0.0 day 0 offset 180 | Sun Nov 03 2024 | 03:00:00 GMT-0300 (Brasilia Standard Time)
+instant 0: 0 Wed Dec 31 1969 21:00:00 GMT-0300 (Brasilia Standard Time)
+  1969-11-31 21:0:0.0 day 3 offset 180 | Wed Dec 31 1969 | 21:00:00 GMT-0300 (Brasilia Standard Time)
+instant -1: -1 Wed Dec 31 1969 20:59:59 GMT-0300 (Brasilia Standard Time)
+  1969-11-31 20:59:59.999 day 3 offset 180 | Wed Dec 31 1969 | 20:59:59 GMT-0300 (Brasilia Standard Time)
+instant -5351616000000: -5351616000000 Sat May 31 1800 20:53:32 GMT-0306 (Brasilia Standard Time)
+  20:53:32 20:53:32 GMT-0306 (Brasilia Standard Time)
+instant 8640000000000000: 8640000000000000 Fri Sep 12 275760 21:00:00 GMT-0300 (Brasilia Standard Time)
+  21:0:0 21:00:00 GMT-0300 (Brasilia Standard Time)
+instant -8640000000000000: -8640000000000000 Mon Apr 19 -271821 20:53:32 GMT-0306 (Brasilia Standard Time)
+  20:53:32 20:53:32 GMT-0306 (Brasilia Standard Time)
+setMonth: 1709434799999 Sat Mar 02 2024 23:59:59 GMT-0300 (Brasilia Standard Time)
+setHours: 1710048659999 Sun Mar 10 2024 02:30:59 GMT-0300 (Brasilia Standard Time)
+setFullYear: 1678599059999 Sun Mar 12 2023 02:30:59 GMT-0300 (Brasilia Standard Time)
+setMinutes: 1678602659999 Sun Mar 12 2023 03:30:59 GMT-0300 (Brasilia Standard Time)
+setSeconds: 1678602599999 Sun Mar 12 2023 03:29:59 GMT-0300 (Brasilia Standard Time)
+setMilliseconds: 1678602600500 Sun Mar 12 2023 03:30:00 GMT-0300 (Brasilia Standard Time)
+setUTCHours: 1719900000000 Tue Jul 02 2024 03:00:00 GMT-0300 (Brasilia Standard Time)
+NaN NaN Invalid Date NaN
+1704078000000
+parse 2024-07-01T12:00: 1719846000000
+parse 2024-07-01T12:00:30.5: 1719846030500
+parse 2024-03-10T02:30: 1710048600000
+parse 2024-07-01: 1719792000000
+parse 2024-07: 1719792000000
+parse 2024-07-01T12:00Z: 1719835200000
+parse 2024-07-01T12:00+02:00: 1719828000000
+parse +002024-07-01T00:00: 1719802800000
+parse Mon Jul 01 2024: 1719802800000
+parse Mon Jul 01 2024 12:00:00: 1719846000000
+parse Mon Jul 01 2024 12:00:00 GMT+0200: 1719828000000
+parse Mon, 01 Jul 2024 12:00:00 GMT: 1719835200000
+round trip true 1714878000000 2024-05-05T09:07:08.009Z Sun, 05 May 2024 09:07:08 GMT {"at":"2024-05-05T09:07:08.009Z"}
+1704067200000 1999

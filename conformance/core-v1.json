@@ -1497,9 +1497,35 @@
         "varta log: symbol"
       ],
       "baseline": {
-        "status": "known_unsupported",
-        "diagnostic": "unsupported_syntax",
-        "reason": "Symbol construction and value semantics are not implemented."
+        "status": "supported"
+      }
+    },
+    {
+      "id": "symbol-values",
+      "feature": "symbol",
+      "path": "cases/symbol-values.ts",
+      "sha256": "ea24db607c131860036f955ef4d5e982a10bd46a21c5922ab6300c0bfdbc9edb",
+      "stdout": [
+        "varta log: symbol false Symbol(a) undefined",
+        "varta log: {\"x\":1}[null]",
+        "varta log: a"
+      ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "symbol-registry",
+      "feature": "symbol",
+      "path": "cases/symbol-registry.ts",
+      "sha256": "eafd5e2223992cf3290274f0729d8ee1c6ac61c307112cf47fe1f45ee227ddea",
+      "stdout": [
+        "varta log: true app",
+        "varta log: Symbol(Symbol.iterator) undefined",
+        "varta log: app"
+      ],
+      "baseline": {
+        "status": "supported"
       }
     },
     {
@@ -3516,6 +3542,27 @@
         "varta log: round trip",
         "varta log: Invalid Date"
       ],
+      "baseline": {
+        "status": "supported"
+      }
+    },
+    {
+      "id": "date-local-time",
+      "feature": "date",
+      "path": "cases/date-local-time.ts",
+      "sha256": "a7504b0029fb9902add0171a5d78646ecb256b12ea6f1e58ad7e0c03b4f206f4",
+      "stdout": [
+        "varta log: Sun Mar 31 2024 04:30:00 GMT+0300 (за східноєвропейським літнім часом)",
+        "varta log: 1729989000000 -180",
+        "varta log: 14 14:00:00 GMT+0200 (за східноєвропейським стандартним часом)",
+        "varta log: 14 -180",
+        "varta log: -10800000",
+        "varta log: Thu Jan 01 1970"
+      ],
+      "hostInputs": {
+        "timeZone": "Europe/Kyiv",
+        "locale": "uk-UA"
+      },
       "baseline": {
         "status": "supported"
       }

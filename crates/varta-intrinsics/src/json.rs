@@ -26,13 +26,16 @@ use varta_common::{
         ARRAY_META_BYTES, ARRAY_SLOT_BYTES, Dictionary, ErrorObject,
         HASHED_DICTIONARY_VALUE_VERSION as VERSION, ModuleBounds, PRIVATE_KEY_PREFIX, PrimitiveBox,
         RecordShape, ReferenceBox, ValueKind as Kind, Vector, byte_at, byte_vector,
-        read_record_with, record_descriptor, string_range,
+        read_record_with, record_descriptor, string_range, symbol_record,
     },
 };
 
 /// How a logged function value reads: as Node shows an anonymous function,
 /// since closures carry no source name.
 pub const FUNCTION_DISPLAY: &str = "[Function (anonymous)]";
+/// How a logged symbol reads around its description (v38 `symbol_values`).
+pub const SYMBOL_OPEN: &str = "Symbol(";
+pub const SYMBOL_CLOSE: &str = ")";
 /// The field a record would need to call for `JSON.stringify` (not
 /// supported: guest call dispatch from the serializer).
 const TO_JSON: &[u8] = b"toJSON";
@@ -508,6 +511,12 @@ impl<'m, 's, M: Memory + ?Sized, S: Sink + ?Sized> Encoder<'m, 's, M, S> {
     fn resolve(&mut self, kind: u32, payload: u64) -> Result<(u32, u64), EncodeError> {
         if kind == Kind::Function as u32 {
             check_closure_envelope(self.memory, payload, &self.bounds.limits).map_err(layout)?;
+            return Ok((Kind::Undefined as u32, 0));
+        }
+        // A symbol (v38 `symbol_values`) is skipped in JSON like `undefined`
+        // (omitted in objects, `null` in arrays), after its record check.
+        if kind == Kind::Symbol as u32 {
+            symbol_record(self.memory, payload, VERSION, self.bounds).map_err(layout)?;
             return Ok((Kind::Undefined as u32, 0));
         }
         if kind == Kind::ReferenceUnion as u32 {

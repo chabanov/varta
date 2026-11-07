@@ -272,11 +272,32 @@ fn date_v38() -> &'static str {
             .source
             .split_once(DATE_V37_CLASS)
             .map_or(DATE.source, |(helpers, _)| helpers);
-        let helpers = lift(helpers, DATE_V37_PARSE, DATE_V38_PARSE);
+        let mut helpers = lift(helpers, DATE_V37_PARSE, DATE_V38_PARSE);
+        for (from, to) in DATE_V38_LOCAL_ISO {
+            helpers = lift(&helpers, from, to);
+        }
         format!("{helpers}{}", include_str!("../prelude/date_local.ts"))
     });
     &LIFTED
 }
+/// V38 (`local_time`): a date-time string without an offset is local time
+/// (ECMA-262 §21.4.3.2, Date Time String Format: "When the UTC offset
+/// representation is absent, date-only forms are interpreted as a UTC time
+/// and date-time forms are interpreted as a local time"); v37 read it as UTC.
+const DATE_V38_LOCAL_ISO: [(&str, &str); 3] = [
+    (
+        "  let time = 0;\n  if (!scan.done()) {\n    if (!(scan.take(0x54)",
+        "  let time = 0;\n  let local = false;\n  if (!scan.done()) {\n    local = true;\n    if (!(scan.take(0x54)",
+    ),
+    (
+        "    if (!scan.done()) {\n      if (scan.take(0x5a) || scan.take(0x7a)) {",
+        "    if (!scan.done()) {\n      local = false;\n      if (scan.take(0x5a) || scan.take(0x7a)) {",
+    ),
+    (
+        "  return clip(daysFromCivil(year, month, day) * MS_PER_DAY + time);\n}\n\n// The RFC 9110",
+        "  const value = daysFromCivil(year, month, day) * MS_PER_DAY + time;\n  return clip(local ? utcTime(value) : value);\n}\n\n// The RFC 9110",
+    ),
+];
 /// Where the v37 `Date` class starts in `prelude/date.ts`.
 const DATE_V37_CLASS: &str = "export class Date {";
 const DATE_V37_PARSE: &str = "  return Number.isNaN(iso) ? parseImf(text) : iso;";
@@ -354,6 +375,25 @@ pub(crate) const CONSOLE_LOADS: &[&str] = &[
     "console.timeEnd",
     "console.timeLog",
 ];
+/// `Symbol` values (v38 `symbol_values`, K9 D2): the symbol record class,
+/// the global symbol registry and the well-known symbols, called by
+/// `lower::symbols`; a builtin, so its instances stay opaque to every host
+/// reader that does not read them by their value tag.
+pub(crate) const SYMBOL: Prelude = Prelude {
+    path: "<varta>/builtins/symbol.ts",
+    source: include_str!("../prelude/symbol.ts"),
+    exports: &[],
+    members: &[],
+    triggers: &[],
+    admitted: LanguageProfile::symbol_values,
+    extended: None,
+    loads: &[SYMBOL_GLOBAL],
+    lifted: None,
+};
+/// The global that loads [`SYMBOL`].
+pub(crate) const SYMBOL_GLOBAL: &str = "Symbol";
+/// The class of a symbol's private record in [`SYMBOL`].
+pub(crate) const SYMBOL_CLASS: &str = "SymbolValue";
 /// The reference keys that load [`STANDARD`]: its method names and the
 /// static members `Array.from`, `Object.groupBy` and `Object.fromEntries`.
 pub(crate) const STANDARD_LOADS: &[&str] = &[
@@ -834,7 +874,7 @@ pub(crate) const VIEW_OBJECT: &str = "View";
 pub(crate) const VIEW_EVENT_CLASS: &str = "ViewEvent";
 /// The view prelude function the synthesized event export calls.
 pub(crate) const VIEW_DISPATCH: &str = "dispatchViewEvent";
-pub(crate) const PRELUDES: [&Prelude; 23] = [
+pub(crate) const PRELUDES: [&Prelude; 24] = [
     &HEADERS,
     &ABORT,
     &ABORT_TIMEOUT,
@@ -847,6 +887,7 @@ pub(crate) const PRELUDES: [&Prelude; 23] = [
     &AGGREGATE,
     &SUPPRESSED,
     &CONSOLE,
+    &SYMBOL,
     &REGEXP,
     &BLOB,
     &FETCH,
@@ -917,8 +958,15 @@ pub(crate) fn is_prelude_source(source: &crate::source::Source) -> bool {
 
 /// The v37 builtin preludes (`collections`), whose class instances are
 /// private to every host value reader.
-pub(crate) const BUILTINS: [&Prelude; 6] =
-    [&TEXT, &COLLECTIONS, &BINARY, &BASE64, &DATE, &STANDARD];
+pub(crate) const BUILTINS: [&Prelude; 7] = [
+    &TEXT,
+    &COLLECTIONS,
+    &BINARY,
+    &BASE64,
+    &DATE,
+    &STANDARD,
+    &SYMBOL,
+];
 
 /// Whether `source` is a v37 builtin prelude module.
 pub(crate) fn is_builtin_source(source: &crate::source::Source) -> bool {

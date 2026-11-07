@@ -65,6 +65,7 @@ fn execute(args: Args) -> Result<i32, Error> {
         Mode::Run(path) => {
             let (artifact, _) = artifact(path)?;
             let mut options = RunOptions::from_manifests(&artifact.manifest, host.as_ref())?;
+            options.host_inputs = varta_runtime::system_host_inputs();
             options.decisions = args
                 .decisions
                 .as_deref()

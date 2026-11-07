@@ -30,7 +30,7 @@ use varta_common::{
         HASHED_DICTIONARY_VALUE_VERSION as VERSION, ModuleBounds, PRIVATE_KEY_PREFIX,
         PROMISE_REASON_FIELD, PROMISE_STATE_FIELD, PROMISE_VALUE_FIELD, PrimitiveBox, PromiseState,
         RecordDisplay, RecordShape, ReferenceBox, ValueKind as Kind, Vector, byte_at, byte_vector,
-        read_record_with, record_descriptor, record_display, string_range,
+        read_record_with, record_descriptor, record_display, string_range, symbol_record,
     },
 };
 
@@ -830,6 +830,18 @@ impl<'m, 'b, M: Memory + ?Sized> Inspector<'m, 'b, M> {
             Kind::Undefined => ascii("undefined"),
             Kind::Null => ascii("null"),
             Kind::Function => ascii(crate::json::FUNCTION_DISPLAY),
+            // `Symbol(description)` (v38 `symbol_values`), as
+            // `Symbol.prototype.toString` writes it.
+            Kind::Symbol => {
+                let record = symbol_record(self.memory, value.payload, VERSION, self.bounds)
+                    .map_err(layout)?;
+                let mut text = ascii(crate::json::SYMBOL_OPEN);
+                if let Some(description) = record.description {
+                    text.extend(self.string(description)?);
+                }
+                text.extend(ascii(crate::json::SYMBOL_CLOSE));
+                text
+            }
             _ => return Err(EncodeError::Layout),
         })
     }

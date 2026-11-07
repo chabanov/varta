@@ -30,8 +30,9 @@ pub(super) fn canonical_layout(id: u32, shapes: &[ir::RecordShape]) -> LayoutKey
 }
 
 /// The static descriptor of layout `key` under value layout `version`;
-/// `byte_array` is the `Uint8Array` array type id (v38 `byte_values`),
-/// whose fields carry the byte-array tag. Under value18 the descriptor ends
+/// `tags` names the types with their own value tags (the `Uint8Array`
+/// array type, v38 `byte_values`; the symbol class, `symbol_values`).
+/// Under value18 the descriptor ends
 /// with the display trailer of its shape (`displays`, v38 `node_console`;
 /// a shape missing from it is a structural record).
 pub(super) fn descriptor(
@@ -39,7 +40,7 @@ pub(super) fn descriptor(
     shapes: &[ir::RecordShape],
     strings: &BTreeMap<Vec<u8>, u32>,
     version: u32,
-    byte_array: Option<u32>,
+    tags: ir::OwnTags,
     displays: &BTreeMap<u32, (abi::RecordDisplay, String)>,
 ) -> Result<Vec<u8>> {
     let shape = &shapes[key.0 as usize];
@@ -50,9 +51,8 @@ pub(super) fn descriptor(
     for index in &key.1 {
         let field = &shape.fields[*index as usize];
         let kind = match field.ty {
-            Type::Array(id) if byte_array == Some(id) && abi::bytes_layout(version) => {
-                abi::ValueKind::Bytes
-            }
+            ty if tags.is_bytes(ty) && abi::bytes_layout(version) => abi::ValueKind::Bytes,
+            ty if tags.is_symbol(ty) && abi::symbol_layout(version) => abi::ValueKind::Symbol,
             ty => ty
                 .layout_kind(version)
                 .ok_or_else(|| CompilerError::Internal("missing object field kind".into()))?,

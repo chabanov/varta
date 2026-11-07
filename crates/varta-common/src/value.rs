@@ -49,6 +49,13 @@ pub const HASHED_DICTIONARY_VALUE_VERSION: u32 = 18;
 pub fn bytes_layout(version: u32) -> bool {
     version == HASHED_DICTIONARY_VALUE_VERSION
 }
+/// Whether `version` tags a `Symbol` value with [`ValueKind::Symbol`]
+/// (value18, v38 `symbol_values`, K9 D2): an additive tag of the
+/// in-development value18 layout, which no earlier layout admits.
+#[must_use]
+pub fn symbol_layout(version: u32) -> bool {
+    version == HASHED_DICTIONARY_VALUE_VERSION
+}
 /// Whether `version` is a layout of the dynamic-value family (value15 and its
 /// value16, value17 and value18 extensions), which share the dictionary tag
 /// and the wide-record layout (value18 adds the dictionary hash table).
@@ -402,11 +409,15 @@ pub use display::{
     RECORD_DISPLAY_BYTES, RecordDisplay, display_layout, display_trailer, record_display,
 };
 mod reference;
+mod symbol;
 #[cfg(feature = "std")]
 pub use reference::validate_aggregate;
 pub use reference::{
     RecordEntry, RecordShape, ReferenceBox, read_record_in, read_record_with, record_descriptor,
     validate_aggregate_in,
+};
+pub use symbol::{
+    SYMBOL_DESCRIBED_FIELD, SYMBOL_DESCRIPTION_FIELD, SYMBOL_FIELDS, SymbolRecord, symbol_record,
 };
 
 /// What a module's layout-bound readers may accept (v38 `program_limits`
@@ -538,15 +549,21 @@ pub enum ValueKind {
     /// integers 0 to 255 (see [`byte_vector`]). Earlier layouts tag no byte
     /// array.
     Bytes = 15,
+    /// Value18 `Symbol` (v38 `symbol_values`, K9 D2): the payload is the
+    /// handle of the symbol's private record block, whose identity is the
+    /// symbol's identity (see [`symbol_record`]). Earlier layouts tag no
+    /// symbol.
+    Symbol = 16,
 }
 impl ValueKind {
     /// The kind with the largest tag (every tag from 0 to it is a kind).
-    pub const LAST: Self = Self::Bytes;
+    pub const LAST: Self = Self::Symbol;
     #[must_use]
     pub fn is_reference(self) -> bool {
         matches!(
             self,
-            Self::Bytes
+            Self::Symbol
+                | Self::Bytes
                 | Self::Dictionary
                 | Self::Promise
                 | Self::Function
@@ -578,6 +595,7 @@ impl ValueKind {
             13 => Self::Dictionary,
             14 => Self::Promise,
             15 => Self::Bytes,
+            16 => Self::Symbol,
             _ => return None,
         })
     }
@@ -589,6 +607,7 @@ impl ValueKind {
                 Self::Dictionary => dynamic_layout(version),
                 Self::Promise => promise_layout(version),
                 Self::Bytes => bytes_layout(version),
+                Self::Symbol => symbol_layout(version),
                 Self::BigInt => matches!(
                     version,
                     BIGINT_VALUE_VERSION

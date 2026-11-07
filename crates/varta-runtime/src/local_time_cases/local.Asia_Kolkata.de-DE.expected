@@ -1,0 +1,85 @@
+local 2024/0/15/12/0: 1705300200000 Mon Jan 15 2024 12:00:00 GMT+0530 (Indische Normalzeit)
+  2024-0-15 12:0:0.0 day 1 offset -330
+local 2024/6/15/12/0: 1721025000000 Mon Jul 15 2024 12:00:00 GMT+0530 (Indische Normalzeit)
+  2024-6-15 12:0:0.0 day 1 offset -330
+local 2024/2/10/2/30: 1710018000000 Sun Mar 10 2024 02:30:00 GMT+0530 (Indische Normalzeit)
+  2024-2-10 2:30:0.0 day 0 offset -330
+local 2024/2/31/2/30: 1711832400000 Sun Mar 31 2024 02:30:00 GMT+0530 (Indische Normalzeit)
+  2024-2-31 2:30:0.0 day 0 offset -330
+local 2024/3/7/2/30: 1712437200000 Sun Apr 07 2024 02:30:00 GMT+0530 (Indische Normalzeit)
+  2024-3-7 2:30:0.0 day 0 offset -330
+local 2024/9/6/2/30: 1728162000000 Sun Oct 06 2024 02:30:00 GMT+0530 (Indische Normalzeit)
+  2024-9-6 2:30:0.0 day 0 offset -330
+local 2024/9/27/0/30: 1729969200000 Sun Oct 27 2024 00:30:00 GMT+0530 (Indische Normalzeit)
+  2024-9-27 0:30:0.0 day 0 offset -330
+local 2024/10/3/1/30: 1730577600000 Sun Nov 03 2024 01:30:00 GMT+0530 (Indische Normalzeit)
+  2024-10-3 1:30:0.0 day 0 offset -330
+local 2024/9/27/2/30: 1729976400000 Sun Oct 27 2024 02:30:00 GMT+0530 (Indische Normalzeit)
+  2024-9-27 2:30:0.0 day 0 offset -330
+local 1970/0/1/0/0: -19800000 Thu Jan 01 1970 00:00:00 GMT+0530 (Indische Normalzeit)
+  1970-0-1 0:0:0.0 day 4 offset -330
+local 1943/6/1/12/0: -836418600000 Thu Jul 01 1943 12:00:00 GMT+0630 (Indische Normalzeit)
+  1943-6-1 12:0:0.0 day 4 offset -390
+local 1960/0/1/0/0: -315639000000 Fri Jan 01 1960 00:00:00 GMT+0530 (Indische Normalzeit)
+  1960-0-1 0:0:0.0 day 5 offset -330
+local 2100/6/1/12/0: 4118106600000 Thu Jul 01 2100 12:00:00 GMT+0530 (Indische Normalzeit)
+  2100-6-1 12:0:0.0 day 4 offset -330
+local 12000/0/1/0/0: 316516185000000 Sat Jan 01 12000 00:00:00 GMT+0530 (Indische Normalzeit)
+  12000-0-1 0:0:0.0 day 6 offset -330
+instant 1710053999999: 1710053999999 Sun Mar 10 2024 12:29:59 GMT+0530 (Indische Normalzeit)
+  2024-2-10 12:29:59.999 day 0 offset -330 | Sun Mar 10 2024 | 12:29:59 GMT+0530 (Indische Normalzeit)
+instant 1710054000000: 1710054000000 Sun Mar 10 2024 12:30:00 GMT+0530 (Indische Normalzeit)
+  2024-2-10 12:30:0.0 day 0 offset -330 | Sun Mar 10 2024 | 12:30:00 GMT+0530 (Indische Normalzeit)
+instant 1711846799999: 1711846799999 Sun Mar 31 2024 06:29:59 GMT+0530 (Indische Normalzeit)
+  2024-2-31 6:29:59.999 day 0 offset -330 | Sun Mar 31 2024 | 06:29:59 GMT+0530 (Indische Normalzeit)
+instant 1711846800000: 1711846800000 Sun Mar 31 2024 06:30:00 GMT+0530 (Indische Normalzeit)
+  2024-2-31 6:30:0.0 day 0 offset -330 | Sun Mar 31 2024 | 06:30:00 GMT+0530 (Indische Normalzeit)
+instant 1712415540000: 1712415540000 Sat Apr 06 2024 20:29:00 GMT+0530 (Indische Normalzeit)
+  2024-3-6 20:29:0.0 day 6 offset -330 | Sat Apr 06 2024 | 20:29:00 GMT+0530 (Indische Normalzeit)
+instant 1712415600000: 1712415600000 Sat Apr 06 2024 20:30:00 GMT+0530 (Indische Normalzeit)
+  2024-3-6 20:30:0.0 day 6 offset -330 | Sat Apr 06 2024 | 20:30:00 GMT+0530 (Indische Normalzeit)
+instant 1728142140000: 1728142140000 Sat Oct 05 2024 20:59:00 GMT+0530 (Indische Normalzeit)
+  2024-9-5 20:59:0.0 day 6 offset -330 | Sat Oct 05 2024 | 20:59:00 GMT+0530 (Indische Normalzeit)
+instant 1728142200000: 1728142200000 Sat Oct 05 2024 21:00:00 GMT+0530 (Indische Normalzeit)
+  2024-9-5 21:0:0.0 day 6 offset -330 | Sat Oct 05 2024 | 21:00:00 GMT+0530 (Indische Normalzeit)
+instant 1729990740000: 1729990740000 Sun Oct 27 2024 06:29:00 GMT+0530 (Indische Normalzeit)
+  2024-9-27 6:29:0.0 day 0 offset -330 | Sun Oct 27 2024 | 06:29:00 GMT+0530 (Indische Normalzeit)
+instant 1729990800000: 1729990800000 Sun Oct 27 2024 06:30:00 GMT+0530 (Indische Normalzeit)
+  2024-9-27 6:30:0.0 day 0 offset -330 | Sun Oct 27 2024 | 06:30:00 GMT+0530 (Indische Normalzeit)
+instant 1730613540000: 1730613540000 Sun Nov 03 2024 11:29:00 GMT+0530 (Indische Normalzeit)
+  2024-10-3 11:29:0.0 day 0 offset -330 | Sun Nov 03 2024 | 11:29:00 GMT+0530 (Indische Normalzeit)
+instant 1730613600000: 1730613600000 Sun Nov 03 2024 11:30:00 GMT+0530 (Indische Normalzeit)
+  2024-10-3 11:30:0.0 day 0 offset -330 | Sun Nov 03 2024 | 11:30:00 GMT+0530 (Indische Normalzeit)
+instant 0: 0 Thu Jan 01 1970 05:30:00 GMT+0530 (Indische Normalzeit)
+  1970-0-1 5:30:0.0 day 4 offset -330 | Thu Jan 01 1970 | 05:30:00 GMT+0530 (Indische Normalzeit)
+instant -1: -1 Thu Jan 01 1970 05:29:59 GMT+0530 (Indische Normalzeit)
+  1970-0-1 5:29:59.999 day 4 offset -330 | Thu Jan 01 1970 | 05:29:59 GMT+0530 (Indische Normalzeit)
+instant -5351616000000: -5351616000000 Sun Jun 01 1800 05:53:28 GMT+0553 (Indische Normalzeit)
+  5:53:28 05:53:28 GMT+0553 (Indische Normalzeit)
+instant 8640000000000000: 8640000000000000 Sat Sep 13 275760 05:30:00 GMT+0530 (Indische Normalzeit)
+  5:30:0 05:30:00 GMT+0530 (Indische Normalzeit)
+instant -8640000000000000: -8640000000000000 Tue Apr 20 -271821 05:53:28 GMT+0553 (Indische Normalzeit)
+  5:53:28 05:53:28 GMT+0553 (Indische Normalzeit)
+setMonth: 1709404199999 Sat Mar 02 2024 23:59:59 GMT+0530 (Indische Normalzeit)
+setHours: 1710018059999 Sun Mar 10 2024 02:30:59 GMT+0530 (Indische Normalzeit)
+setFullYear: 1678568459999 Sun Mar 12 2023 02:30:59 GMT+0530 (Indische Normalzeit)
+setMinutes: 1678572059999 Sun Mar 12 2023 03:30:59 GMT+0530 (Indische Normalzeit)
+setSeconds: 1678571999999 Sun Mar 12 2023 03:29:59 GMT+0530 (Indische Normalzeit)
+setMilliseconds: 1678572000500 Sun Mar 12 2023 03:30:00 GMT+0530 (Indische Normalzeit)
+setUTCHours: 1719900000000 Tue Jul 02 2024 11:30:00 GMT+0530 (Indische Normalzeit)
+NaN NaN Invalid Date NaN
+1704047400000
+parse 2024-07-01T12:00: 1719815400000
+parse 2024-07-01T12:00:30.5: 1719815430500
+parse 2024-03-10T02:30: 1710018000000
+parse 2024-07-01: 1719792000000
+parse 2024-07: 1719792000000
+parse 2024-07-01T12:00Z: 1719835200000
+parse 2024-07-01T12:00+02:00: 1719828000000
+parse +002024-07-01T00:00: 1719772200000
+parse Mon Jul 01 2024: 1719772200000
+parse Mon Jul 01 2024 12:00:00: 1719815400000
+parse Mon Jul 01 2024 12:00:00 GMT+0200: 1719828000000
+parse Mon, 01 Jul 2024 12:00:00 GMT: 1719835200000
+round trip true 1714847400000 2024-05-05T00:37:08.009Z Sun, 05 May 2024 00:37:08 GMT {"at":"2024-05-05T00:37:08.009Z"}
+1704067200000 1999

@@ -12,6 +12,7 @@ members = [
   "crates/varta-bigint",
   "crates/varta-intrinsics",
   "crates/varta-intrinsics-wasm",
+  "crates/varta-intl",
   "crates/varta-kv-codec",
   "crates/varta-kv-codec-wasm",
   "crates/varta-style",
@@ -72,6 +73,22 @@ unicode-segmentation = "=1.13.3"
 # Unicode emoji properties (TR51) for emoji presentation; already compiled in
 # through Parley's shaping analysis.
 icu_properties = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
+# The IANA Time Zone Database as TZif (RFC 8536), data only and `no_std`:
+# the zone rules of v38 local-time `Date` and `Intl` (K9 D4), resolved in
+# guest code (`varta-intl`) so every host computes the same offsets.
+# Unlicense/MIT; release 2026e. No dependencies.
+jiff-tzdb = "=0.1.9"
+# ICU4X 2.4 (Unicode-3.0, the release line of `icu_properties` above) with
+# its compiled CLDR 49 data: the locale-dependent text of v38 `Date` and
+# `Intl` in guest code (`varta-intl`), the same bytes on every host.
+# `icu_datetime`/`icu_time` supply time zone names and metazones;
+# `icu_locale_core` parses BCP 47 tags; `icu_provider` loads the baked data
+# structs. `unstable` exposes the data structs and the ECMA-402 field bag.
+icu_locale_core = { version = "=2.4.0", default-features = false, features = ["alloc"] }
+icu_provider = { version = "=2.4.0", default-features = false, features = ["baked"] }
+icu_time = { version = "=2.4.0", default-features = false, features = ["compiled_data", "unstable"] }
+icu_datetime = { version = "=2.4.0", default-features = false, features = ["compiled_data", "unstable"] }
+writeable = { version = "=0.6.4", default-features = false }
 # Native desktop window/input and CPU frame presentation.
 winit = "=0.30.12"
 # Safe CoreText/CoreGraphics wrappers for host-only native glyph coverage.
